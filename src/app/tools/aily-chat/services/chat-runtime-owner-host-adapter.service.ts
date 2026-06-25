@@ -6,11 +6,13 @@ import type { ChatListItem } from './chat-history.service';
 import type { ChatRuntimeOwnerContextAdapter } from './chat-runtime-owner-context.service';
 import type { LexOwnerFacade } from '../helpers/lex-stream.helper';
 import {
-  CHAT_RUNTIME_OWNER_BINDING,
+  CHAT_RUNTIME_OWNER_CONTEXT_BINDER,
+  CHAT_RUNTIME_OWNER_CONTEXT_MATERIALIZER,
   CHAT_RUNTIME_OWNER_SAVE_BRIDGE,
   CHAT_RUNTIME_OWNER_SESSION_CONTEXT,
   CHAT_RUNTIME_OWNER_STATE,
-  type ChatRuntimeOwnerBindingPort,
+  type ChatRuntimeOwnerContextBinderPort,
+  type ChatRuntimeOwnerContextMaterializerPort,
   type ChatRuntimeOwnerHostAdapterPort,
   type ChatRuntimeOwnerSaveBridgePort,
   type ChatRuntimeOwnerSessionContextPort,
@@ -26,7 +28,10 @@ import {
  */
 @Injectable()
 export class ChatRuntimeOwnerHostAdapterService implements ChatRuntimeOwnerContextAdapter, ChatRuntimeOwnerHostAdapterPort {
-  private readonly binding = inject<ChatRuntimeOwnerBindingPort>(CHAT_RUNTIME_OWNER_BINDING);
+  private readonly contextBinder = inject<ChatRuntimeOwnerContextBinderPort>(CHAT_RUNTIME_OWNER_CONTEXT_BINDER);
+  private readonly contextMaterializer = inject<ChatRuntimeOwnerContextMaterializerPort>(
+    CHAT_RUNTIME_OWNER_CONTEXT_MATERIALIZER,
+  );
   private readonly ownerSaveBridge = inject<ChatRuntimeOwnerSaveBridgePort>(CHAT_RUNTIME_OWNER_SAVE_BRIDGE);
   private readonly ownerState = inject<ChatRuntimeOwnerStatePort>(CHAT_RUNTIME_OWNER_STATE);
   private readonly ownerSessionContext = inject<ChatRuntimeOwnerSessionContextPort>(CHAT_RUNTIME_OWNER_SESSION_CONTEXT);
@@ -46,7 +51,8 @@ export class ChatRuntimeOwnerHostAdapterService implements ChatRuntimeOwnerConte
 
   ensureBound(): LexOwnerFacade {
     if (!this.ownerFacade) {
-      this.ownerFacade = this.binding.bindAdapter(this);
+      const context = this.contextMaterializer.bindAdapter(this);
+      this.ownerFacade = this.contextBinder.bindContext(context);
     }
     return this.ownerFacade;
   }

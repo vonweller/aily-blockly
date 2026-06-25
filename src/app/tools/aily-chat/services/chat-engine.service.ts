@@ -1286,8 +1286,8 @@ export class ChatEngineService implements IChatContext {
       if (!runtimeOwnerSessionId) {
         return {};
       }
-      const providerOptions = this.resolveRuntimeSessionProviderOptions(runtimeOwnerSessionId);
-      const selectedMode = this.resolveRuntimeSelectedMode(runtimeOwnerSessionId);
+      const providerOptions = this.resolveVisibleSessionProviderOptionsSnapshot(runtimeOwnerSessionId);
+      const selectedMode = this.resolveVisibleSelectedModeSnapshot(runtimeOwnerSessionId);
 
       return {
         runtimeOwnerSessionId,
@@ -1296,7 +1296,7 @@ export class ChatEngineService implements IChatContext {
         ), this.currentAgentRuntimeMode ?? this.chatService?.currentAgentRuntimeMode),
         selectedMode,
         currentMode: selectedMode.modeId,
-        currentResolvedMode: this.resolveRuntimeResolvedMode(runtimeOwnerSessionId),
+        currentResolvedMode: this.resolveVisibleResolvedModeSnapshot(runtimeOwnerSessionId),
         ...(providerOptions.permissionLevel ? { currentSessionPermissionLevel: providerOptions.permissionLevel } : {}),
         ...(providerOptions.approvalsReviewer ? { currentSessionApprovalsReviewer: providerOptions.approvalsReviewer } : {}),
         ...(providerOptions.approvalPolicy ? { currentSessionApprovalPolicy: providerOptions.approvalPolicy } : {}),
@@ -1516,7 +1516,9 @@ export class ChatEngineService implements IChatContext {
       const viewResource = typeof viewModelStore.currentSessionResource === 'string'
         ? viewModelStore.currentSessionResource.trim()
         : '';
-      return viewResource;
+      if (viewResource) {
+        return viewResource;
+      }
     }
 
     const currentSessionId = typeof this.chatService?.currentSessionId === 'string'
@@ -2029,8 +2031,8 @@ export class ChatEngineService implements IChatContext {
       return;
     }
 
-    const providerOptions = this.resolveRuntimeSessionProviderOptions(currentSessionId);
-    const selectedMode = this.resolveRuntimeSelectedMode(currentSessionId);
+    const providerOptions = this.resolveVisibleSessionProviderOptionsSnapshot(currentSessionId);
+    const selectedMode = this.resolveVisibleSelectedModeSnapshot(currentSessionId);
     const projectPath = providerOptions.folderPath ?? null;
 
     this.chatSessionEntryStateService?.setSessionEntryTarget({
@@ -2052,22 +2054,22 @@ export class ChatEngineService implements IChatContext {
   }
 
   get currentSessionPermissionMode() {
-    return this.resolveRuntimeSessionProviderOptions()?.permissionMode
+    return this.resolveVisibleSessionProviderOptionsSnapshot()?.permissionMode
       ?? this.chatService.currentSessionPermissionMode;
   }
 
   get currentSessionPermissionLevel() {
-    return this.resolveRuntimeSessionProviderOptions()?.permissionLevel
+    return this.resolveVisibleSessionProviderOptionsSnapshot()?.permissionLevel
       ?? this.chatService.currentSessionPermissionLevel;
   }
 
   get currentSessionApprovalsReviewer() {
-    return this.resolveRuntimeSessionProviderOptions()?.approvalsReviewer
+    return this.resolveVisibleSessionProviderOptionsSnapshot()?.approvalsReviewer
       ?? this.chatService.currentSessionApprovalsReviewer;
   }
 
   get currentSessionApprovalPolicy() {
-    return this.resolveRuntimeSessionProviderOptions()?.approvalPolicy
+    return this.resolveVisibleSessionProviderOptionsSnapshot()?.approvalPolicy
       ?? this.chatService.currentSessionApprovalPolicy;
   }
 
@@ -2078,7 +2080,7 @@ export class ChatEngineService implements IChatContext {
     }
 
     const targetSessionId = this.resolveRuntimeSessionIdForOwner(sessionId);
-    const currentProviderOptions = this.resolveRuntimeSessionProviderOptions(targetSessionId);
+    const currentProviderOptions = this.resolveVisibleSessionProviderOptionsSnapshot(targetSessionId);
     let nextProviderOptions: HostSessionProviderOptions | null = null;
 
     if (normalizedAction === 'permission-default') {
@@ -2126,11 +2128,11 @@ export class ChatEngineService implements IChatContext {
   get currentCustomAgentTarget() { return this.chatService.currentCustomAgentTarget; }
 
   get selectedMode(): ChatSelectedMode {
-    return this.resolveRuntimeSelectedMode();
+    return this.resolveVisibleSelectedModeSnapshot();
   }
 
   get currentResolvedMode(): ChatResolvedMode {
-    return this.resolveRuntimeResolvedMode();
+    return this.resolveVisibleResolvedModeSnapshot();
   }
 
   get currentModel() { return this.chatService.currentModel; }
@@ -2385,7 +2387,7 @@ export class ChatEngineService implements IChatContext {
       get sessionId() { return thisEngine.sessionId; },
       resolveActiveRuntimeSessionId: () => thisEngine.resolveActiveRuntimeSessionId(),
       readCurrentViewSessionResource: () => thisEngine.chatSessionViewModelStore.currentSessionResource,
-      get ailyChatConfigService() { return thisEngine.ailyChatConfigService; },
+      get toolApprovalPolicy() { return thisEngine.ailyChatConfigService; },
       get runtimeInteractionHost() { return thisEngine.runtimeInteractionHost; },
     };
   }
@@ -2659,7 +2661,9 @@ export class ChatEngineService implements IChatContext {
       attachSessionViewModel: (sessionId) => thisEngine.chatSessionViewModelStore.attach(sessionId),
       detachSessionViewModel: (sessionId) => thisEngine.chatSessionViewModelStore.detach(sessionId),
       readCurrentViewSessionResource: () => thisEngine.chatSessionViewModelStore.currentSessionResource,
+      get hostResponseProjection() { return thisEngine.hostResponseProjection; },
       createSessionSaveBridge: (ctx) => createSessionLifecycleHostSessionSaveBridge(ctx),
+      requestHostResourceOperation: (request) => thisEngine.runtimeHostForView().requestResourceOperation(request),
       clearEntryInputState: () => {
         thisEngine.legacyInputValue = '';
       },
@@ -2672,7 +2676,6 @@ export class ChatEngineService implements IChatContext {
       markVisibleSessionProjectionOwner: (sessionId) => thisEngine.markVisibleSessionProjectionOwner(sessionId),
       ensureBackgroundSessionCanRerun: (sessionId) => thisEngine.ensureBackgroundSessionCanRerun(sessionId),
       resetVisibleSessionProjection: (options) => thisEngine.resetVisibleSessionProjection(options),
-      requestStopRuntimeTurnForSessionShutdown: (sessionId) => thisEngine.requestStopRuntimeTurn(sessionId),
       buildRuntimeRestoreHostRecord: (request) => thisEngine.hostSessionRestoreBridge.buildRuntimeRestoreHostRecord(request),
       restoreSessionHostRecord: (hostRecord, options) => thisEngine.hostSessionRestoreBridge.restore(hostRecord, options),
       invalidateHostRequestGraph: () => this.invalidateHostRequestGraph(),
@@ -3548,34 +3551,7 @@ export class ChatEngineService implements IChatContext {
     const runtimeProviderOptions = targetSessionId
       ? this.chatSessionRuntimeStore?.read?.(targetSessionId)?.providerOptions
       : undefined;
-    if (runtimeProviderOptions) {
-      return normalizeHostSessionProviderOptions(runtimeProviderOptions);
-    }
-
-    const currentSessionId = typeof this.chatService?.currentSessionId === 'string'
-      ? this.chatService.currentSessionId.trim()
-      : '';
-    const canUseCurrentVisibleFallback = !targetSessionId || !currentSessionId || targetSessionId === currentSessionId;
-    const fallback = canUseCurrentVisibleFallback
-      ? this.chatService.getCurrentSessionProviderOptions?.()
-        ?? {
-          folderPath: this.chatService.currentSessionPath || null,
-          permissionMode: this.chatService.currentSessionPermissionMode,
-          ...(this.chatService.currentSessionPermissionLevel
-            ? { permissionLevel: this.chatService.currentSessionPermissionLevel }
-            : {}),
-          ...(this.chatService.currentSessionApprovalsReviewer
-            ? { approvalsReviewer: this.chatService.currentSessionApprovalsReviewer }
-            : {}),
-          ...(this.chatService.currentSessionApprovalPolicy
-            ? { approvalPolicy: this.chatService.currentSessionApprovalPolicy }
-            : {}),
-        }
-      : null;
-    const rawProviderOptions = targetSessionId
-      ? this.chatSessionItemsService?.sessionItemController?.getChatSessionProviderOptions?.(targetSessionId)
-      : this.chatSessionItemsService?.sessionItemController?.getChatSessionProviderOptions?.();
-    return normalizeHostSessionProviderOptions(rawProviderOptions, fallback);
+    return normalizeHostSessionProviderOptions(runtimeProviderOptions);
   }
 
   private rememberRuntimeSessionProviderOptions(
@@ -3609,28 +3585,7 @@ export class ChatEngineService implements IChatContext {
     const runtimeSelectedMode = targetSessionId
       ? this.chatSessionRuntimeStore?.read?.(targetSessionId)?.selectedMode
       : undefined;
-    if (runtimeSelectedMode) {
-      return normalizeChatSelectedMode(runtimeSelectedMode);
-    }
-
-    const currentSessionId = typeof this.chatService?.currentSessionId === 'string'
-      ? this.chatService.currentSessionId.trim()
-      : '';
-    if (!targetSessionId || targetSessionId === currentSessionId) {
-      return normalizeChatSelectedMode(this.chatService.selectedMode ?? { modeId: this.chatService.currentMode });
-    }
-
-    const inputState = this.chatSessionItemsService?.sessionItemController?.getChatSessionInputState?.(targetSessionId);
-    if (inputState) {
-      return resolveHostSessionSelectedModeFromMetadata({
-        inputState,
-      }, {
-        resolveModeById: (modeId) => this.chatService.findResolvedModeById?.(modeId),
-        resolveModeByName: (modeName) => this.chatService.findResolvedModeByName?.(modeName),
-      });
-    }
-
-    return normalizeChatSelectedMode(undefined);
+    return normalizeChatSelectedMode(runtimeSelectedMode);
   }
 
   private rememberRuntimeSelectedMode(
@@ -3671,15 +3626,94 @@ export class ChatEngineService implements IChatContext {
       ?? resolveChatCurrentMode(selectedMode);
   }
 
+  private resolveVisibleSessionProviderOptionsSnapshot(sessionId?: string | null): HostSessionProviderOptions {
+    const targetSessionId = this.resolveRuntimeSessionIdForOwner(sessionId);
+    const runtimeProviderOptions = targetSessionId
+      ? this.chatSessionRuntimeStore?.read?.(targetSessionId)?.providerOptions
+      : undefined;
+    if (runtimeProviderOptions) {
+      return normalizeHostSessionProviderOptions(runtimeProviderOptions);
+    }
+
+    const currentSessionId = typeof this.chatService?.currentSessionId === 'string'
+      ? this.chatService.currentSessionId.trim()
+      : '';
+    const canUseCurrentVisibleSnapshot = !targetSessionId || !currentSessionId || targetSessionId === currentSessionId;
+    const currentProviderOptions = canUseCurrentVisibleSnapshot
+      ? this.chatService.getCurrentSessionProviderOptions?.()
+        ?? {
+          folderPath: this.chatService.currentSessionPath || null,
+          permissionMode: this.chatService.currentSessionPermissionMode,
+          ...(this.chatService.currentSessionPermissionLevel
+            ? { permissionLevel: this.chatService.currentSessionPermissionLevel }
+            : {}),
+          ...(this.chatService.currentSessionApprovalsReviewer
+            ? { approvalsReviewer: this.chatService.currentSessionApprovalsReviewer }
+            : {}),
+          ...(this.chatService.currentSessionApprovalPolicy
+            ? { approvalPolicy: this.chatService.currentSessionApprovalPolicy }
+            : {}),
+        }
+      : null;
+    const sessionProviderOptions = targetSessionId
+      ? this.chatSessionItemsService?.sessionItemController?.getChatSessionProviderOptions?.(targetSessionId)
+      : this.chatSessionItemsService?.sessionItemController?.getChatSessionProviderOptions?.();
+    return normalizeHostSessionProviderOptions(sessionProviderOptions, currentProviderOptions);
+  }
+
+  private resolveVisibleSelectedModeSnapshot(sessionId?: string | null): ChatSelectedMode {
+    const targetSessionId = this.resolveRuntimeSessionIdForOwner(sessionId);
+    const runtimeSelectedMode = targetSessionId
+      ? this.chatSessionRuntimeStore?.read?.(targetSessionId)?.selectedMode
+      : undefined;
+    if (runtimeSelectedMode) {
+      return normalizeChatSelectedMode(runtimeSelectedMode);
+    }
+
+    const currentSessionId = typeof this.chatService?.currentSessionId === 'string'
+      ? this.chatService.currentSessionId.trim()
+      : '';
+    if (!targetSessionId || targetSessionId === currentSessionId) {
+      return normalizeChatSelectedMode(this.chatService.selectedMode ?? { modeId: this.chatService.currentMode });
+    }
+
+    const inputState = this.chatSessionItemsService?.sessionItemController?.getChatSessionInputState?.(targetSessionId);
+    if (inputState) {
+      return resolveHostSessionSelectedModeFromMetadata({
+        inputState,
+      }, {
+        resolveModeById: (modeId) => this.chatService.findResolvedModeById?.(modeId),
+        resolveModeByName: (modeName) => this.chatService.findResolvedModeByName?.(modeName),
+      });
+    }
+
+    return normalizeChatSelectedMode(undefined);
+  }
+
+  private resolveVisibleResolvedModeSnapshot(sessionId?: string | null): ChatResolvedMode {
+    const selectedMode = this.resolveVisibleSelectedModeSnapshot(sessionId);
+    const currentResolvedMode = this.chatService.currentResolvedMode;
+    if (selectedMode.modeId === currentResolvedMode.kind
+      && selectedMode.customAgentTarget === currentResolvedMode.customAgentTarget) {
+      return currentResolvedMode;
+    }
+
+    return (selectedMode.customAgentTarget
+      ? this.chatService.findResolvedModeById?.(selectedMode.customAgentTarget)
+      : undefined)
+      ?? this.chatService.findResolvedModeById?.(selectedMode.modeId)
+      ?? resolveChatCurrentMode(selectedMode);
+  }
+
   private buildExecutionSaveTarget(sessionId?: string | null): HostSessionSaveTarget | null {
     const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
     if (!targetSessionId) {
       return null;
     }
 
-    const providerOptions = this.resolveRuntimeSessionProviderOptions(targetSessionId);
-    const selectedMode = this.resolveRuntimeSelectedMode(targetSessionId);
-    const resolvedMode = this.resolveRuntimeResolvedMode(targetSessionId);
+    const providerOptions = this.resolveVisibleSessionProviderOptionsSnapshot(targetSessionId);
+    const selectedMode = this.resolveVisibleSelectedModeSnapshot(targetSessionId);
+    const resolvedMode = this.resolveVisibleResolvedModeSnapshot(targetSessionId);
     const projectPathHint = providerOptions.folderPath ?? null;
     const sessionEntry = (this.chatHistoryService as unknown as {
       findEntry?: (sessionId: string, projectPathHint?: string | null) => { title?: string } | null | undefined;
@@ -3719,6 +3753,44 @@ export class ChatEngineService implements IChatContext {
       resolvedMode,
       model: this.currentModel ? { ...this.currentModel } : null,
     };
+  }
+
+  private withHostRuntimeSessionInventoryMetadata(
+    sessionId: string | null | undefined,
+    metadata: TurnRequest['metadata'] | null | undefined,
+  ): TurnRequest['metadata'] {
+    const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    const baseMetadata = metadata && typeof metadata === 'object'
+      ? { ...metadata }
+      : {};
+    if (!normalizedSessionId) {
+      return baseMetadata;
+    }
+
+    const saveTarget = this.buildExecutionSaveTarget(normalizedSessionId);
+    if (!saveTarget) {
+      return baseMetadata;
+    }
+
+    const title = normalizeChatSessionTitleText(
+      saveTarget.sessionTitleCandidate?.text
+      || saveTarget.sessionTitle
+      || '',
+    );
+    return {
+      ...baseMetadata,
+      hostSessionInventory: {
+        ...(baseMetadata['hostSessionInventory'] && typeof baseMetadata['hostSessionInventory'] === 'object'
+          ? baseMetadata['hostSessionInventory'] as Record<string, unknown>
+          : {}),
+        ...(title ? { title } : {}),
+        ...(saveTarget.sessionTitleCandidate?.source ? { titleSource: saveTarget.sessionTitleCandidate.source } : {}),
+        titleDurable: saveTarget.sessionTitleCandidate?.source !== 'empty',
+        sessionType: saveTarget.sessionType,
+        projectPath: saveTarget.providerOptions.folderPath ?? null,
+        mode: saveTarget.selectedMode.modeId,
+      },
+    } as TurnRequest['metadata'];
   }
 
   private readSessionTurnResponses(
@@ -4687,13 +4759,35 @@ export class ChatEngineService implements IChatContext {
       eventAttached: event.kind === 'session-state' || event.kind === 'runtime-status'
         ? this.isRuntimeHostViewAttached(event.state)
         : null,
+      status: event.kind === 'session-state' || event.kind === 'runtime-status'
+        ? event.state.status
+        : null,
+      requestInProgress: event.kind === 'session-state' || event.kind === 'runtime-status'
+        ? event.state.requestInProgress
+        : null,
       transcriptTurns: event.kind === 'transcript' ? event.transcript.turnResponses.length : null,
+      transcriptLastTurn: event.kind === 'transcript'
+        ? event.transcript.turnResponses[event.transcript.turnResponses.length - 1]?.turnId ?? null
+        : null,
+      transcriptLastParts: event.kind === 'transcript'
+        ? event.transcript.turnResponses[event.transcript.turnResponses.length - 1]?.response?.parts?.length ?? 0
+        : null,
+      transcriptLastTextLength: event.kind === 'transcript'
+        ? event.transcript.turnResponses[event.transcript.turnResponses.length - 1]?.response?.resultText?.length ?? 0
+        : null,
+      error: event.kind === 'error'
+        ? {
+            code: event.error.code ?? null,
+            message: event.error.message,
+            retryable: event.error.retryable ?? null,
+          }
+        : null,
     });
 
     switch (event.kind) {
       case 'transcript':
         this.applyRuntimeHostTranscriptEvent(targetSessionId, event.transcript.turnResponses, {
-          visibleProjection: this.shouldProjectRuntimeHostVisibleEvent(targetSessionId),
+          visibleProjection: this.shouldProjectRuntimeHostTranscriptEvent(targetSessionId),
         });
         return;
       case 'session-state':
@@ -4737,6 +4831,19 @@ export class ChatEngineService implements IChatContext {
 
     const state = this.readRuntimeHostSessionState(targetSessionId);
     return !state || this.isRuntimeHostViewAttached(state);
+  }
+
+  private shouldProjectRuntimeHostTranscriptEvent(sessionId: string): boolean {
+    const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!targetSessionId) {
+      return false;
+    }
+
+    if (this.resolveCurrentViewSessionResource() === targetSessionId) {
+      return true;
+    }
+
+    return this.ensureRuntimeEventSessionViewAttached(targetSessionId);
   }
 
   private applyRuntimeHostViewRequestEvent(
@@ -4799,7 +4906,7 @@ export class ChatEngineService implements IChatContext {
     try {
       setTodos(blocklyTodos, sessionId);
     } catch {
-      // Keep view-side todo persistence failures isolated from the runtime owner.
+      // Keep view-side todo persistence failures isolated from the host runtime.
     }
 
     this.ngZone.run(() => {
@@ -4861,13 +4968,39 @@ export class ChatEngineService implements IChatContext {
     sessionId: string,
     snapshot: ChatRuntimeHostInteractionSnapshot,
   ): void {
-    this.runtimeInteractionHost.applyHostSnapshot(snapshot, request => this.dispatchRuntimeHostInteraction(request));
+    const visibleAttachmentGeneration = this.readVisibleAttachmentGenerationForSession(sessionId);
+    this.runtimeInteractionHost.applyHostSnapshot(
+      snapshot,
+      request => this.dispatchRuntimeHostInteraction(request, visibleAttachmentGeneration),
+    );
   }
 
   private async dispatchRuntimeHostInteraction(
-    request: ChatRuntimeHostInteractionRequest,
+    request: Omit<ChatRuntimeHostInteractionRequest, 'viewId' | 'visibleAttachmentGeneration'>,
+    visibleAttachmentGeneration: number | null,
   ): Promise<ChatRuntimeHostInteractionSnapshot | null> {
-    return this.runtimeHostForView().resolveInteraction(request);
+    if (typeof visibleAttachmentGeneration !== 'number' || !Number.isFinite(visibleAttachmentGeneration)) {
+      throw new Error('[AilyChat][RuntimeHost] Interaction decision requires an attached visible transcript generation.');
+    }
+    return this.runtimeHostForView().resolveInteraction({
+      ...request,
+      viewId: this.runtimeViewId,
+      visibleAttachmentGeneration,
+    });
+  }
+
+  private readVisibleAttachmentGenerationForSession(sessionId: string | null | undefined): number | null {
+    const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    const attachment = this.visibleTranscriptAttachment;
+    if (!targetSessionId
+      || !attachment
+      || attachment.sessionId !== targetSessionId
+      || !this.isVisibleTranscriptAttachmentCurrent(attachment)) {
+      return null;
+    }
+    return typeof attachment.generation === 'number' && Number.isFinite(attachment.generation)
+      ? attachment.generation
+      : null;
   }
 
   private applyRuntimeHostTranscriptEvent(
@@ -4886,17 +5019,6 @@ export class ChatEngineService implements IChatContext {
     const committedTurnResponses = replaceSessionModelTurnResponses.call(this, sessionId, turnResponses, {
       source: 'runtime-host-transcript',
     }) ?? turnResponses;
-    const syncExecutionRuntimeTurnResponses = (
-      (this as unknown as { syncExecutionRuntimeTurnResponses?: ChatEngineService['syncExecutionRuntimeTurnResponses'] })
-        .syncExecutionRuntimeTurnResponses
-      ?? ChatEngineService.prototype['syncExecutionRuntimeTurnResponses']
-    );
-    syncExecutionRuntimeTurnResponses.call(
-      this,
-      sessionId,
-      committedTurnResponses,
-      liveTranscriptProjection('execution'),
-    );
 
     const visibleCurrentSession = options?.visibleProjection === true
       && this.ensureRuntimeEventSessionViewAttached(sessionId);
@@ -4939,6 +5061,7 @@ export class ChatEngineService implements IChatContext {
         : null,
       stopSession,
       selectedMode: state.selectedMode ?? undefined,
+      providerOptions: state.providerOptions ?? undefined,
     };
     this.chatRuntimeViewMirrorProjection.projectRuntimeState({
       sessionId,
@@ -5020,6 +5143,24 @@ export class ChatEngineService implements IChatContext {
       viewId: this.runtimeViewId,
       ...detail,
     });
+
+    const scalar = [
+      `phase=${phase}`,
+      `sessionId=${sessionId || '<none>'}`,
+      `viewId=${this.runtimeViewId}`,
+      `kind=${typeof detail['kind'] === 'string' ? detail['kind'] : '<none>'}`,
+      `currentSessionId=${typeof detail['currentSessionId'] === 'string' && detail['currentSessionId'] ? detail['currentSessionId'] : '<none>'}`,
+      `currentViewSessionResource=${typeof detail['currentViewSessionResource'] === 'string' && detail['currentViewSessionResource'] ? detail['currentViewSessionResource'] : '<none>'}`,
+      `eventAttached=${String(detail['eventAttached'] ?? '<none>')}`,
+      `stateAttached=${String(detail['stateAttached'] ?? '<none>')}`,
+      `status=${String(detail['status'] ?? '<none>')}`,
+      `requestInProgress=${String(detail['requestInProgress'] ?? '<none>')}`,
+      `transcriptTurns=${String(detail['transcriptTurns'] ?? '<none>')}`,
+      `transcriptLastTurn=${typeof detail['transcriptLastTurn'] === 'string' && detail['transcriptLastTurn'] ? detail['transcriptLastTurn'] : '<none>'}`,
+      `transcriptLastParts=${String(detail['transcriptLastParts'] ?? '<none>')}`,
+      `transcriptLastTextLength=${String(detail['transcriptLastTextLength'] ?? '<none>')}`,
+    ].join(' ');
+    console.info('[AilyChat][RuntimeHostRouteScalar]', scalar);
   }
 
   private traceRuntimeHostEvent(
@@ -5046,6 +5187,18 @@ export class ChatEngineService implements IChatContext {
         : null,
       requestInProgress: event.kind === 'session-state' || event.kind === 'runtime-status'
         ? event.state.requestInProgress
+        : null,
+      resourceKind: event.kind === 'resource-request'
+        ? event.request.kind
+        : null,
+      resourcePhase: event.kind === 'resource-request'
+        ? event.request.phase
+        : null,
+      resourceId: event.kind === 'resource-request'
+        ? event.request.id
+        : null,
+      resourceLabel: event.kind === 'resource-request'
+        ? event.request.label ?? null
         : null,
     });
   }
@@ -5196,12 +5349,21 @@ export class ChatEngineService implements IChatContext {
       });
     }
     if (transcript?.turnResponses?.length) {
-      this.applyRuntimeHostTranscriptEvent(sessionId, transcript.turnResponses);
+      this.applyRuntimeHostTranscriptEvent(sessionId, transcript.turnResponses, {
+        visibleProjection: true,
+      });
     }
 
     const snapshot = await runtimeHost.readInteractionSnapshot(sessionId);
     if (snapshot) {
-      this.runtimeInteractionHost.applyHostSnapshot(snapshot, request => this.dispatchRuntimeHostInteraction(request));
+      const interactionVisibleAttachmentGeneration = typeof visibleAttachmentGeneration === 'number'
+        && Number.isFinite(visibleAttachmentGeneration)
+        ? visibleAttachmentGeneration
+        : this.readVisibleAttachmentGenerationForSession(sessionId);
+      this.runtimeInteractionHost.applyHostSnapshot(
+        snapshot,
+        request => this.dispatchRuntimeHostInteraction(request, interactionVisibleAttachmentGeneration),
+      );
     }
   }
 
@@ -5394,6 +5556,15 @@ export class ChatEngineService implements IChatContext {
     if (!attachment) {
       return;
     }
+    const viewModel = this.chatSessionViewModelStore?.attach?.(targetSessionId);
+    if (viewModel?.sessionResource !== targetSessionId) {
+      console.warn('[AilyChat][RuntimeHostView]', {
+        phase: 'attach-view-model-missing',
+        sessionId: targetSessionId,
+        viewId: this.runtimeViewId,
+      });
+      return;
+    }
 
     let hostViewAttached = false;
     const attachHostView = async (reason: string): Promise<void> => {
@@ -5420,7 +5591,6 @@ export class ChatEngineService implements IChatContext {
 
     const hostSessionState = this.readRuntimeHostSessionState(targetSessionId);
     const runtimeState = this.chatSessionRuntimeStore.read(targetSessionId);
-    this.chatSessionViewModelStore?.attach?.(targetSessionId);
     this.projectRuntimeViewOverlayToVisibleServices(runtimeState);
     this.projectRuntimeQuotaOverlayToVisibleServices(runtimeState, targetSessionId);
     await this.syncResolvedActiveModelForSession(targetSessionId);
@@ -5631,7 +5801,7 @@ export class ChatEngineService implements IChatContext {
         sessionId: result.sessionId,
         requestInProgress: result.state?.requestInProgress ?? true,
         status: result.state?.status ?? null,
-        detail: 'runtime owner reports an active request; keep the gate',
+        detail: 'host runtime state reports an active request; keep the gate',
       });
       return;
     }
@@ -5643,8 +5813,8 @@ export class ChatEngineService implements IChatContext {
       requestInProgress: result.state?.requestInProgress ?? false,
       status: result.state?.status ?? null,
       detail: result.staleGateCleared
-        ? 'runtime owner cleared stale request gate so session can rerun'
-        : 'runtime owner has no active request gate for this session',
+        ? 'host runtime state cleared stale request gate so session can rerun'
+        : 'host runtime state has no active request gate for this session',
     });
   }
 
@@ -6039,12 +6209,12 @@ Do not create non-existent boards and libraries.
     this.scheduleComposerInputFocus();
   }
   initializeEntryInventory(): Promise<boolean> { return this.session.initializeEntryInventory(); }
-  returnToEntryInventory(options?: { resetInitialization?: boolean; sessionId?: string | null; disposeRuntime?: boolean }): Promise<void> {
+  returnToEntryInventory(options?: { resetInitialization?: boolean; sessionId?: string | null }): Promise<void> {
     return this.session.returnToEntryInventory(options);
   }
 
   ensureSessionReadyForSubmit(): Promise<string | null> { return this.session.ensureSessionReadyForSubmit(); }
-  enterEntryState(options?: { resetInitialization?: boolean; sessionId?: string | null; disposeRuntime?: boolean }): void {
+  enterEntryState(options?: { resetInitialization?: boolean; sessionId?: string | null }): void {
     this.session.enterEntryState(options);
   }
   getHistory(): Promise<void> { return this.session.getHistory(); }
@@ -6226,8 +6396,9 @@ Do not create non-existent boards and libraries.
         sessionId: targetSessionId,
         requestText: prepared.llmText,
         displayText: prepared.displayText,
-        selectedMode: this.chatService.selectedMode ?? null,
-        metadata: prepared.requestMetadata ?? null,
+        selectedMode: this.resolveVisibleSelectedModeSnapshot(targetSessionId),
+        providerOptions: this.resolveVisibleSessionProviderOptionsSnapshot(targetSessionId),
+        metadata: this.withHostRuntimeSessionInventoryMetadata(targetSessionId, prepared.requestMetadata ?? null),
         activeResponseHandle,
       });
       if (isSendDebugTraceEnabled()) {
@@ -6239,132 +6410,6 @@ Do not create non-existent boards and libraries.
     } finally {
       updateAilyChatAgentLoopPendingCount(-1);
     }
-  }
-
-  private async prepareRuntimeHostSubmittedTurn(request: ChatRuntimeHostSubmitRequest): Promise<void> {
-    const targetSessionId = typeof request.sessionId === 'string' ? request.sessionId.trim() : '';
-    if (!targetSessionId) {
-      throw new Error('prepareRuntimeHostSubmittedTurn requires a sessionResource owner.');
-    }
-
-    const currentModel = this.chatService.currentModel as { model?: string; presetId?: string; name?: string } | null;
-    const requestModelRouting = request.metadata?.['modelRouting'] as Record<string, unknown> | undefined;
-    if (isSendDebugTraceEnabled()) {
-      console.info('[AilyChat][Send] request model routing:', {
-        currentModel: currentModel
-          ? {
-              model: currentModel.model,
-              presetId: currentModel.presetId,
-              name: currentModel.name,
-            }
-          : null,
-        modelRouting: requestModelRouting
-          ? { ...requestModelRouting }
-          : undefined,
-      });
-      console.info(
-        `[AilyChat][Send] request model routing scalar currentModel=${currentModel?.model ?? ''}/${currentModel?.presetId ?? ''}/${currentModel?.name ?? ''} requestedModel=${typeof requestModelRouting?.['requestedModel'] === 'string' ? requestModelRouting['requestedModel'] : ''} requestedPresetId=${typeof requestModelRouting?.['requestedPresetId'] === 'string' ? requestModelRouting['requestedPresetId'] : ''}`,
-      );
-    }
-
-    const ensureRuntimeStartedAt = Date.now();
-    if (isSendDebugTraceEnabled()) {
-      console.info('[AilyChat][SendDebug] before host turn prepare', {
-        runtimeSessionId: targetSessionId,
-      });
-    }
-
-    this.markVisibleSessionProjectionOwner(targetSessionId);
-    this.lexStream.hydrateTurnResponses?.(targetSessionId, this.readSessionTurnResponses(targetSessionId), {
-      visibility: 'visibleAttach',
-    });
-
-    await this.ensureBlankSessionRuntimeProviderOptions(targetSessionId);
-    await this.ensureRuntimeAgentForSession(targetSessionId);
-
-    const shouldCommitRestoredCheckpointForwardBranch = this.hasRestoredCheckpointForwardBranch(targetSessionId);
-    if (shouldCommitRestoredCheckpointForwardBranch) {
-      await this.commitRestoredCheckpointForwardBranchBeforeUserTurn(targetSessionId);
-    }
-
-    const waitForCheckpointMetadataSettled = this.editCheckpointService?.waitForCheckpointMetadataSettled;
-    if (typeof waitForCheckpointMetadataSettled === 'function') {
-      await waitForCheckpointMetadataSettled.call(this.editCheckpointService);
-    }
-
-    const titleModel = this.chatService.currentModel as { model?: string; isCustom?: boolean; apiKey?: string; baseUrl?: string } | null;
-    const hasCustomCredentials = !!(
-      titleModel?.isCustom
-      && typeof titleModel.apiKey === 'string'
-      && titleModel.apiKey.trim().length > 0
-      && typeof titleModel.baseUrl === 'string'
-      && titleModel.baseUrl.trim().length > 0
-    );
-    const displayText = request.displayText ?? request.requestText;
-    if (isSendTitleTraceEnabled()) {
-      console.info('[AilyChat][SendTitle]', {
-        event: 'before-title-flow',
-        sessionId: targetSessionId,
-        displayTextLength: displayText.trim().length,
-        requestTextLength: request.requestText.trim().length,
-        requestTextPreview: request.requestText.trim().slice(0, 120),
-        currentTitleBeforeSend: this.chatService.currentSessionTitle,
-        currentModelId: titleModel?.model ?? '',
-        currentModelIsCustom: titleModel?.isCustom === true,
-        titleRequestUsesCustomLlmPath: hasCustomCredentials,
-      });
-    }
-    this.applyDefaultSessionTitleIfNeeded(displayText, targetSessionId);
-    void this.titleCoordinator.generate(request.requestText, targetSessionId);
-
-    if (isSendDebugTraceEnabled()) {
-      console.info('[AilyChat][SendDebug] after host turn prepare', {
-        runtimeSessionId: targetSessionId,
-        durationMs: Date.now() - ensureRuntimeStartedAt,
-      });
-    }
-  }
-
-  private async completeRuntimeHostSubmittedTurn(sessionId?: string | null): Promise<void> {
-    const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
-    if (!targetSessionId) {
-      throw new Error('completeRuntimeHostSubmittedTurn requires a sessionResource owner.');
-    }
-
-    traceBackgroundSessionExecution('send-turn-run-finished', {
-      runtimeSessionId: targetSessionId,
-    });
-    const postTurnStartedAt = Date.now();
-    if (isSendDebugTraceEnabled()) {
-      console.info('[AilyChat][SendDebug] after turn.run before finalize side-effects', {
-        runtimeSessionId: targetSessionId,
-      });
-    }
-
-    this.acceptLiveRequestQuotaState(targetSessionId);
-    this.refreshAuthQuotaStateAfterSuccessfulTurn(targetSessionId);
-    if (isSendDebugTraceEnabled()) {
-      console.info('[AilyChat][SendDebug] after quota side-effects', {
-        runtimeSessionId: targetSessionId,
-        durationMs: Date.now() - postTurnStartedAt,
-      });
-    }
-
-    const resolvedModelProjected = await this.syncResolvedActiveModelForSession(targetSessionId);
-    if (isSendDebugTraceEnabled()) {
-      console.info('[AilyChat][SendDebug] after resolved model sync', {
-        runtimeSessionId: targetSessionId,
-        projected: resolvedModelProjected,
-        durationMs: Date.now() - postTurnStartedAt,
-      });
-    }
-    if (resolvedModelProjected) {
-      this.triggerSyncDetectChanges();
-    }
-
-    void this.presentPendingPlanReviewFromLatestContinuation(targetSessionId);
-    await this.processPendingFollowupRequests(targetSessionId);
-    await this.awaitRuntimeHostRequestCompletion(targetSessionId);
   }
 
   async send(sender: string, content: string, clear: boolean = true, sessionId?: string | null): Promise<void> {
@@ -6605,8 +6650,9 @@ Do not create non-existent boards and libraries.
         sessionId: runtimeSessionId,
         requestText: content,
         displayText: content,
-        selectedMode: this.chatService.selectedMode ?? null,
-        metadata: appliedRequestMetadata,
+        selectedMode: this.resolveVisibleSelectedModeSnapshot(runtimeSessionId),
+        providerOptions: this.resolveVisibleSessionProviderOptionsSnapshot(runtimeSessionId),
+        metadata: this.withHostRuntimeSessionInventoryMetadata(runtimeSessionId, appliedRequestMetadata),
         activeResponseHandle: readRequestMetadataRequestId(appliedRequestMetadata as Record<string, unknown>),
       });
     } finally {

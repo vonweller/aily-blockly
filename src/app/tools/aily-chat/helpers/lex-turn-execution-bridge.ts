@@ -15,6 +15,17 @@ type LexTurnExecutionContext = Pick<
   'activeToolExecutions' | 'currentStatelessMode' | 'toolCallingIteration' | 'isCancelled' | 'isWaiting'
 > & {
   readonly ownerScheduler: Pick<ChatRuntimeOwnerScheduler, 'runOutsideOwner'>;
+  emitExecutionRenderEvent?(
+    sessionId: string | null | undefined,
+    event: RenderEvent,
+    request?: {
+      readonly sessionId: string;
+      readonly requestText: string;
+      readonly displayText?: string;
+      readonly metadata?: TurnRequest['metadata'] | null;
+      readonly activeResponseHandle?: unknown;
+    } | null,
+  ): void;
 };
 
 type LexTurnRunOptions = {
@@ -138,6 +149,36 @@ function cloneExecutionTurnResponse(turn: TurnResponseTurn): TurnResponseTurn {
   } catch {
     return JSON.parse(JSON.stringify(turn)) as TurnResponseTurn;
   }
+}
+
+function hasAuthoritativeExecutionTurnResponses(turnResponses: readonly TurnResponseTurn[] | null | undefined): boolean {
+  if (!Array.isArray(turnResponses) || turnResponses.length === 0) {
+    return false;
+  }
+  return turnResponses.some(turn => {
+    const resultText = typeof turn.response?.resultText === 'string'
+      ? turn.response.resultText.trim()
+      : '';
+    return resultText.length > 0
+      || (Array.isArray(turn.response?.parts) && turn.response.parts.length > 0)
+      || (Array.isArray(turn.rounds) && turn.rounds.length > 0);
+  });
+}
+
+function selectAuthoritativeExecutionTurnResponses(
+  canonicalTurnResponses: readonly TurnResponseTurn[] | null | undefined,
+  sinkTurnResponses: readonly TurnResponseTurn[] | null | undefined,
+): readonly TurnResponseTurn[] | undefined {
+  if (hasAuthoritativeExecutionTurnResponses(canonicalTurnResponses)) {
+    return canonicalTurnResponses ?? undefined;
+  }
+  if (hasAuthoritativeExecutionTurnResponses(sinkTurnResponses)) {
+    return sinkTurnResponses ?? undefined;
+  }
+  if (Array.isArray(canonicalTurnResponses) && canonicalTurnResponses.length > 0) {
+    return canonicalTurnResponses;
+  }
+  return Array.isArray(sinkTurnResponses) ? sinkTurnResponses : undefined;
 }
 
 async function yieldOutsideOwner(ctx: Pick<LexTurnExecutionContext, 'ownerScheduler'>, label = 'turn'): Promise<void> {
@@ -362,10 +403,14 @@ export class LexTurnExecutionBridge {
           fallbackStatus,
         });
       }
+      const finalRenderEventSink = state.detachedRenderEventBridge ?? this._renderEventBridge;
+      const includePreFinalizedTurnResponses = state.usedRenderEventStream || !!state.detachedRenderEventBridge;
+      await this.uiEventBridge.finalizeTurn(this.buildExecutionSaveTarget(state, {
+        includeTurnResponses: includePreFinalizedTurnResponses,
+      }));
       if (state.usedRenderEventStream || state.detachedRenderEventBridge) {
-        this.syncExecutionRuntimeState(state, state.detachedRenderEventBridge ?? this._renderEventBridge);
+        this.syncExecutionRuntimeState(state, finalRenderEventSink);
       }
-      await this.uiEventBridge.finalizeTurn(this.buildExecutionSaveTarget(state));
       if (isBackgroundSessionTraceEnabled()) {
         console.info('[AilyChat][FinalizeDebug] finalizeTurnExecution completed', {
           sessionId: state.sessionId,
@@ -381,20 +426,31 @@ export class LexTurnExecutionBridge {
     }
   }
 
-  private buildExecutionSaveTarget(state: LexTurnExecutionRunState): HostSessionSaveTarget | null {
+  private buildExecutionSaveTarget(
+    state: LexTurnExecutionRunState,
+    options: { readonly includeTurnResponses?: boolean } = {},
+  ): HostSessionSaveTarget | null {
     if (!state.saveTarget) {
       return null;
     }
 
+    const {
+      turnResponses: existingTurnResponses,
+      ...baseSaveTarget
+    } = state.saveTarget;
+    const includeTurnResponses = options.includeTurnResponses !== false;
     return {
-      ...state.saveTarget,
+      ...baseSaveTarget,
       toolCallingIteration: this.ctx.toolCallingIteration,
       sessionSnapshot: this.readExecutionSessionSnapshot?.(state.sessionId) ?? state.saveTarget.sessionSnapshot ?? null,
-      turnResponses: [...(this.readCurrentExecutionTurnResponses(state) ?? state.saveTarget.turnResponses ?? [])],
+      ...(includeTurnResponses
+        ? { turnResponses: [...(this.readCurrentExecutionTurnResponses(state) ?? existingTurnResponses ?? [])] }
+        : {}),
     };
   }
 
   private readCurrentExecutionTurnResponses(state: LexTurnExecutionRunState): readonly TurnResponseTurn[] | undefined {
+    const canonicalTurnResponses = this.readExecutionTurnResponses?.(state.sessionId);
     if (state.sessionId
       && this.isExecutionSessionVisible(state.sessionId)
       && this.isVisibleRenderEventBridgeOwnedBy(state.sessionId)) {
@@ -402,16 +458,17 @@ export class LexTurnExecutionBridge {
         sessionId: state.sessionId,
         hasDetachedSink: !!state.detachedRenderEventBridge,
       });
-      return this._renderEventBridge?.turnResponses
-        ?? state.detachedRenderEventBridge?.turnResponses
-        ?? this.readExecutionTurnResponses?.(state.sessionId);
+      return selectAuthoritativeExecutionTurnResponses(
+        canonicalTurnResponses,
+        this._renderEventBridge?.turnResponses ?? state.detachedRenderEventBridge?.turnResponses,
+      );
     }
 
     if (state.detachedRenderEventBridge?.turnResponses) {
-      return state.detachedRenderEventBridge.turnResponses;
+      return selectAuthoritativeExecutionTurnResponses(canonicalTurnResponses, state.detachedRenderEventBridge.turnResponses);
     }
 
-    return this.readExecutionTurnResponses?.(state.sessionId);
+    return canonicalTurnResponses;
   }
 
   private resetRenderEventTurnState(
@@ -477,6 +534,7 @@ export class LexTurnExecutionBridge {
       const renderEventSink = this.resolveExecutionRenderEventSink(state);
       const routedEvents = this.routeRenderEventsForSubagentScope(state, event);
       for (const routedEvent of routedEvents) {
+        this.emitRenderEventToHost(state, routedEvent);
         renderEventSink.processEvent(routedEvent);
       }
 
@@ -894,8 +952,11 @@ export class LexTurnExecutionBridge {
     }
 
     const startedAt = performance.now();
-    const turnResponses = renderEventSink?.turnResponses
-      ?? this.readExecutionTurnResponses?.(executionSessionId);
+    const canonicalTurnResponses = this.readExecutionTurnResponses?.(executionSessionId);
+    const turnResponses = selectAuthoritativeExecutionTurnResponses(
+      canonicalTurnResponses,
+      renderEventSink?.turnResponses,
+    );
     this.syncExecutionRuntimeTurnResponses?.(
       executionSessionId,
       turnResponses,
@@ -975,6 +1036,23 @@ export class LexTurnExecutionBridge {
 
     state.visibleSinkGeneration = null;
     return state.detachedRenderEventBridge;
+  }
+
+  private emitRenderEventToHost(state: LexTurnExecutionRunState, event: RenderEvent): void {
+    if (typeof this.ctx.emitExecutionRenderEvent !== 'function') {
+      return;
+    }
+    const executionSessionId = state.sessionId;
+    if (!executionSessionId) {
+      return;
+    }
+    this.ctx.emitExecutionRenderEvent(executionSessionId, event, {
+      sessionId: executionSessionId,
+      requestText: state.requestContent,
+      displayText: state.requestDisplayContent,
+      metadata: state.requestMetadata ?? null,
+      activeResponseHandle: state.activeTurnId,
+    });
   }
 
   private acceptRenderEventForActiveTurn(state: LexTurnExecutionRunState, event: RenderEvent): boolean {

@@ -14,7 +14,6 @@ export const routes: Routes = [
         path: 'main',
         providers: [
             ...AILY_CHAT_VIEW_PROVIDERS,
-            ...AILY_CHAT_RUNTIME_OWNER_PROVIDERS,
         ],
         loadComponent: () => import('./main-window/main-window.component').then(m => m.MainWindowComponent),
         children: [
@@ -127,6 +126,13 @@ export const routes: Routes = [
             ...AILY_CHAT_VIEW_PROVIDERS,
         ],
         loadComponent: () => import('./tools/aily-chat/aily-chat.component').then(m => m.AilyChatComponent)
+    },
+    {
+        path: "aily-chat-execution-worker",
+        providers: [
+            ...AILY_CHAT_RUNTIME_OWNER_PROVIDERS,
+        ],
+        loadComponent: () => import('./tools/aily-chat/chat-runtime-execution-worker.component').then(m => m.ChatRuntimeExecutionWorkerComponent)
     },
     {
         path: "code-viewer",

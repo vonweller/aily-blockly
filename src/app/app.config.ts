@@ -1,4 +1,4 @@
-import { ApplicationConfig, importProvidersFrom, provideZoneChangeDetection } from '@angular/core';
+import { ApplicationConfig, importProvidersFrom, inject, provideAppInitializer, provideZoneChangeDetection } from '@angular/core';
 import { provideRouter, withHashLocation } from '@angular/router';
 import { provideTranslateService } from "@ngx-translate/core";
 import { routes } from './app.routes';
@@ -8,6 +8,7 @@ import { NzModalModule } from 'ng-zorro-antd/modal';
 import { authInterceptor } from './interceptors/auth.interceptor';
 import { retryInterceptor } from './interceptors/retry.interceptor';
 import { AILY_CHAT_SHARED_PROVIDERS } from './tools/aily-chat/aily-chat.providers';
+import { AilyChatHostInitializerService } from './tools/aily-chat/services/aily-chat-host-initializer.service';
 
 export const appConfig: ApplicationConfig = {
   providers: [
@@ -24,6 +25,9 @@ export const appConfig: ApplicationConfig = {
     ),
     provideAnimations(),
     importProvidersFrom(NzModalModule),
+    provideAppInitializer(() => {
+      inject(AilyChatHostInitializerService).ensureInitialized();
+    }),
     ...AILY_CHAT_SHARED_PROVIDERS
   ]
 };

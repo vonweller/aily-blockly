@@ -67,7 +67,7 @@
   <div class="window-box" #windowBoxRoot
     (keydown.control.n)="requestNewChat(); $event.preventDefault(); $event.stopPropagation()"
     (keydown.meta.n)="requestNewChat(); $event.preventDefault(); $event.stopPropagation()">
-    @if (debugBrowser.isOpen) {
+    @if (currentPaneSurface === 'debug-home' || currentPaneSurface === 'debug-session') {
     @switch (debugBrowser.viewState) {
     @case (debugBrowserViewState.Home) {
     <aily-chat-debug-home

@@ -560,12 +560,15 @@ export class HostSessionRestoreBridge {
       ?? request.target.inputState;
     const now = Date.now();
 
+    const durableTurnResponses = stableDurableTurnResponsesForRuntimeRestore(baseHostRecord?.turnResponses ?? []);
     const runtimeTurnResponses = Array.isArray(runtimeState.turnResponses)
       ? runtimeState.turnResponses
       : [];
-    const fallbackTurnResponses = runtimeTurnResponses.length > 0
+    const runtimeMatchesDurableRecord = durableTurnResponses.length === 0
+      || turnResponseIdsExactlyMatch(runtimeTurnResponses, durableTurnResponses);
+    const fallbackTurnResponses = runtimeTurnResponses.length > 0 && runtimeMatchesDurableRecord
       ? runtimeTurnResponses
-      : stableDurableTurnResponsesForRuntimeRestore(baseHostRecord?.turnResponses ?? []);
+      : durableTurnResponses;
     const runtimeAuxiliary = cloneHostSessionRuntimeAuxiliary({
       ...(baseHostRecord?.auxiliary ?? {}),
       pendingFollowupRequests: runtimeState.pendingFollowupRequests,
@@ -1020,6 +1023,25 @@ function areHostProjectionTurnResponsesEquivalent(
   }
 
   return true;
+}
+
+function turnResponseIdsExactlyMatch(
+  left: readonly TurnResponseTurn[] | null | undefined,
+  right: readonly TurnResponseTurn[] | null | undefined,
+): boolean {
+  if (!Array.isArray(left)
+    || !Array.isArray(right)
+    || left.length === 0
+    || right.length === 0
+    || left.length !== right.length) {
+    return false;
+  }
+
+  return left.every((leftTurn, index) => {
+    const leftTurnId = typeof leftTurn?.turnId === 'string' ? leftTurn.turnId.trim() : '';
+    const rightTurnId = typeof right[index]?.turnId === 'string' ? right[index].turnId.trim() : '';
+    return !!leftTurnId && leftTurnId === rightTurnId;
+  });
 }
 
 function formatHostSessionRestoreFailureDetails(details: HostSessionRestoreFailureDetails): string {

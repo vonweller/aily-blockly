@@ -3,8 +3,8 @@ import { ChatPerformanceTracer } from '../services/chat-perf-tracer';
 interface ChatSessionEntryCoordinatorContext {
   readonly isLoggedIn: boolean;
   readonly hasCurrentSession: boolean;
-  enterEntryState(options?: { resetInitialization?: boolean; sessionId?: string | null; disposeRuntime?: boolean; projectPath?: string | null }): void;
-  enterBlankSessionShell(options?: { resetInitialization?: boolean; sessionId?: string | null; disposeRuntime?: boolean; projectPath?: string | null }): void;
+  enterEntryState(options?: { resetInitialization?: boolean; sessionId?: string | null; projectPath?: string | null }): void;
+  enterBlankSessionShell(options?: { resetInitialization?: boolean; sessionId?: string | null; projectPath?: string | null }): void;
   startSession(): Promise<string | null>;
   restorePersistedSessionTarget(): Promise<boolean>;
   requestSessionListRefresh(input: { reason: 'entry' | 'reopen'; scope: 'summary' | 'full'; priority: 'after-paint' | 'normal' }): void;
@@ -28,7 +28,7 @@ export class ChatSessionEntryCoordinator {
       return true;
     }
 
-    this.ctx.enterEntryState({ disposeRuntime: false });
+    this.ctx.enterEntryState();
     ChatPerformanceTracer.increment('entry_open.entry_shell_visible');
     ChatPerformanceTracer.mark('entry_open.entry_shell_visible');
 
@@ -46,7 +46,7 @@ export class ChatSessionEntryCoordinator {
     return restored;
   }
 
-  async returnToEntryInventory(options: { resetInitialization?: boolean; sessionId?: string | null; disposeRuntime?: boolean; projectPath?: string | null } = {}): Promise<void> {
+  async returnToEntryInventory(options: { resetInitialization?: boolean; sessionId?: string | null; projectPath?: string | null } = {}): Promise<void> {
     this.ctx.enterEntryState(options);
     ChatPerformanceTracer.increment('entry_open.entry_shell_visible');
     ChatPerformanceTracer.mark('entry_open.entry_shell_visible', 'return-to-entry');

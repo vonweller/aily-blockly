@@ -48,7 +48,10 @@ import { collectDiagnostics } from '../core/diagnostics';
 import { resolveBlocklyMemoryStorageLayout } from './chat-memory-host';
 import { getProjectInfoTool } from '../tools/getProjectInfoTool';
 import { searchBoardsLibrariesTool } from '../tools/searchBoardsLibrariesTool';
-import { syncAbsFileHandler, type SyncAbsInvocationContext } from '../tools/syncAbsFileTool';
+import {
+  syncAbsFileHandler,
+  type SyncAbsInvocationContext,
+} from '../tools/syncAbsFileTool';
 import { analyzeLibraryBlocksTool } from '../tools/editBlockTool';
 import { TOOL_SETTINGS_CATALOG } from '../tools/tool-settings-catalog';
 import type { HostSessionRecord, PersistedHostResponseData } from '../services/chat-history.service';

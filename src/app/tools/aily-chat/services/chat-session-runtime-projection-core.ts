@@ -159,6 +159,26 @@ export class ChatSessionRuntimeProjectionCore {
     };
   }
 
+  appendOrReplaceTurnResponse(
+    turnResponses: readonly TurnResponseTurn[] | null | undefined,
+    turnResponse: TurnResponseTurn,
+  ): readonly TurnResponseTurn[] {
+    const turnId = typeof turnResponse.turnId === 'string' ? turnResponse.turnId.trim() : '';
+    const nextTurnResponses = Array.isArray(turnResponses) ? [...turnResponses] : [];
+    if (!turnId) {
+      return nextTurnResponses;
+    }
+
+    const existingIndex = nextTurnResponses.findIndex(turn => turn.turnId === turnId);
+    if (existingIndex >= 0) {
+      nextTurnResponses[existingIndex] = turnResponse;
+      return nextTurnResponses;
+    }
+
+    nextTurnResponses.push(turnResponse);
+    return nextTurnResponses;
+  }
+
   resolveProjectionChangeOptions(
     patch: ChatSessionRuntimeProjectionPatch,
     options?: ChatSessionRuntimeChangeOptions,

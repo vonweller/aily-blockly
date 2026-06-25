@@ -76,10 +76,8 @@ export function normalizeRuntimeOwnerSessionId(sessionId: unknown): string {
 
 export function resolveRuntimeOwnerDefaultSessionId(
   adapter: ChatRuntimeOwnerContextAdapter,
-  currentSessionId: unknown,
 ): string {
-  const adapterSessionId = normalizeRuntimeOwnerSessionId(adapter.sessionId);
-  return adapterSessionId || normalizeRuntimeOwnerSessionId(currentSessionId);
+  return normalizeRuntimeOwnerSessionId(adapter.sessionId);
 }
 
 export class ChatRuntimeOwnerContextCore {

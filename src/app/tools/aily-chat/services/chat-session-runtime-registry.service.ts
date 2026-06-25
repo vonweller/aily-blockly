@@ -1,7 +1,10 @@
 import { Inject, Injectable } from '@angular/core';
 
 import type { TurnResponseTurn } from 'aily-lex/browser';
-import type { HostTurnResponseState } from '../helpers/host-turn-response-state';
+import {
+  buildHostProjectionStateFromPersistedRecord,
+  type HostTurnResponseState,
+} from '../helpers/host-turn-response-state';
 import { ChatPerformanceTracer } from './chat-perf-tracer';
 import type {
   ChatSessionRuntimeChangeOptions,
@@ -37,6 +40,7 @@ import {
   CHAT_RUNTIME_OWNER_SCHEDULER,
   type ChatRuntimeOwnerSchedulerPort,
 } from './chat-runtime-owner-ports';
+import type { ChatRuntimeOwnerRuntimeRegistryPort } from './chat-runtime-owner-runtime-registry';
 
 export type {
   ChatSessionActiveRequestHandle,
@@ -67,7 +71,7 @@ function updateLexCompletionBackgroundOperation(delta: number): void {
 }
 
 @Injectable()
-export class ChatSessionRuntimeRegistryService {
+export class ChatSessionRuntimeRegistryService implements ChatRuntimeOwnerRuntimeRegistryPort {
   private readonly registryCore = new ChatSessionRuntimeRegistryCore();
   private readonly projectionCore = new ChatSessionRuntimeProjectionCore();
   private readonly completionQueueCore = new ChatSessionRuntimeCompletionQueueCore({
@@ -388,6 +392,41 @@ export class ChatSessionRuntimeRegistryService {
       this.projectionCore.buildTurnResponsesStatePatch(
         turnResponses,
         hostProjectionState,
+        handle,
+        this.buildProjectionCallbacks(normalizedSessionId),
+      ),
+      this.projectionCore.resolveTurnResponsesChangeOptions(options),
+    );
+  }
+
+  syncTurnResponse(
+    sessionId: string | null | undefined,
+    turnResponse: TurnResponseTurn | null | undefined,
+    hostProjectionState: HostTurnResponseState | null,
+    options?: ChatSessionRuntimeChangeOptions,
+  ): void {
+    const normalizedSessionId = this.normalizeSessionId(sessionId);
+    const normalizedTurnId = typeof turnResponse?.turnId === 'string'
+      ? turnResponse.turnId.trim()
+      : '';
+    if (!normalizedSessionId || !turnResponse || !normalizedTurnId) {
+      return;
+    }
+
+    const handle = this.upsertHandle(normalizedSessionId, {});
+    const previousState = this.runtimeMirror.read(normalizedSessionId);
+    const nextTurnResponses = this.projectionCore.appendOrReplaceTurnResponse(
+      previousState?.turnResponses ?? [],
+      turnResponse,
+    );
+    const nextHostProjectionState = nextTurnResponses.length > 0
+      ? buildHostProjectionStateFromPersistedRecord({ turnResponses: nextTurnResponses })
+      : hostProjectionState;
+    this.runtimeMirror.write(
+      normalizedSessionId,
+      this.projectionCore.buildTurnResponsesStatePatch(
+        nextTurnResponses,
+        nextHostProjectionState,
         handle,
         this.buildProjectionCallbacks(normalizedSessionId),
       ),

@@ -1,6 +1,7 @@
 // 扩展 Window 接口以包含 electronAPI
 declare global {
   interface Window {
+    openAndSendToAilyChat: (text: string, options?: Record<string, any>) => void;
     electronAPI: {
       SerialPort: {
         list: () => Promise<any[]>;
@@ -30,12 +31,16 @@ declare global {
         onEvent: (streamId: string, callback: (payload: any) => void) => () => void;
       };
       chatRuntimeHost?: {
-        registerOwner: (ownerId: string) => Promise<{ ok?: boolean; ownerId?: string }>;
-        unregisterOwner: (ownerId: string) => Promise<{ ok?: boolean }>;
+        registerExecutionWorker: (executionWorkerId: string) => Promise<{ ok?: boolean; executionWorkerId?: string }>;
+        unregisterExecutionWorker: (executionWorkerId: string) => Promise<{ ok?: boolean }>;
+        registerResourceOperationHandler: (handlerId: string) => Promise<{ ok?: boolean; handlerId?: string }>;
+        unregisterResourceOperationHandler: (handlerId: string) => Promise<{ ok?: boolean }>;
         call: (method: string, args: readonly unknown[]) => Promise<unknown>;
-        onOwnerCommand: (callback: (payload: unknown) => void) => () => void;
-        sendOwnerResponse: (payload: unknown) => void;
-        emitOwnerEvent: (payload: unknown) => void;
+        onExecutionWorkerCommand: (callback: (payload: unknown) => void) => () => void;
+        onResourceOperationCommand: (callback: (payload: unknown) => void) => () => void;
+        sendExecutionWorkerResponse: (payload: unknown) => void;
+        sendResourceOperationResponse: (payload: unknown) => void;
+        emitExecutionWorkerEvent: (payload: unknown) => void;
         onEvent: (callback: (payload: any) => void) => () => void;
       };
       iWindow: any;

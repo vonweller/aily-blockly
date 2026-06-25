@@ -7,11 +7,13 @@ import type {
   ChatRuntimeHostSubmitReadiness,
   ChatRuntimeHostTranscriptSnapshot,
 } from '../core/chat-runtime-host-contract';
-import { ChatSessionRuntimeRegistryService } from './chat-session-runtime-registry.service';
 import {
   type ChatSessionRuntimeState,
   type ChatSessionRuntimeStatus,
 } from './chat-session-runtime-store.service';
+import type {
+  ChatSessionRuntimeHandle,
+} from './chat-session-runtime-registry-core';
 import {
   CHAT_SESSION_RUNTIME_MIRROR_WRITER,
   type ChatSessionRuntimeMirrorWriterPort,
@@ -24,11 +26,16 @@ import type {
   ChatRuntimeOwnerRuntimeControllerPort,
   ChatRuntimeOwnerSessionSnapshotInput,
 } from './chat-runtime-owner-ports';
+import {
+  CHAT_RUNTIME_OWNER_RUNTIME_REGISTRY,
+  type ChatRuntimeOwnerRuntimeRegistryPort,
+} from './chat-runtime-owner-runtime-registry';
 
 @Injectable()
 export class ChatRuntimeOwnerRuntimeControllerService implements ChatRuntimeOwnerRuntimeControllerPort {
   constructor(
-    private readonly runtimeRegistry: ChatSessionRuntimeRegistryService,
+    @Inject(CHAT_RUNTIME_OWNER_RUNTIME_REGISTRY)
+    private readonly runtimeRegistry: ChatRuntimeOwnerRuntimeRegistryPort,
     @Inject(CHAT_SESSION_RUNTIME_MIRROR_WRITER)
     private readonly runtimeMirror: ChatSessionRuntimeMirrorWriterPort,
   ) {}
@@ -170,6 +177,15 @@ export class ChatRuntimeOwnerRuntimeControllerService implements ChatRuntimeOwne
     this.runtimeRegistry.syncTurnResponses(sessionId, turnResponses, hostProjectionState, options);
   }
 
+  syncRuntimeTurnResponse(
+    sessionId: Parameters<ChatRuntimeOwnerRuntimeControllerPort['syncRuntimeTurnResponse']>[0],
+    turnResponse: Parameters<ChatRuntimeOwnerRuntimeControllerPort['syncRuntimeTurnResponse']>[1],
+    hostProjectionState: Parameters<ChatRuntimeOwnerRuntimeControllerPort['syncRuntimeTurnResponse']>[2],
+    options?: Parameters<ChatRuntimeOwnerRuntimeControllerPort['syncRuntimeTurnResponse']>[3],
+  ): void {
+    this.runtimeRegistry.syncTurnResponse(sessionId, turnResponse, hostProjectionState, options);
+  }
+
   readSessionState(input: ChatRuntimeOwnerSessionSnapshotInput): ChatRuntimeHostSessionState | null {
     const runtimeState = this.readRuntimeState(input.sessionId);
     return runtimeState ? this.buildSessionState(input, runtimeState) : null;
@@ -179,12 +195,15 @@ export class ChatRuntimeOwnerRuntimeControllerService implements ChatRuntimeOwne
     input: ChatRuntimeOwnerSessionSnapshotInput,
     runtimeState = this.readRuntimeState(input.sessionId),
   ): ChatRuntimeHostSessionState {
+    const activeHandle = this.runtimeRegistry.readHandle(input.sessionId);
+    const handleRequestInProgress = activeHandle?.requestInProgress === true;
+    const requestInProgress = handleRequestInProgress || runtimeState?.requestInProgress === true;
     return {
       sessionId: input.sessionId,
-      status: this.toHostStatus(runtimeState?.status, runtimeState?.requestInProgress === true),
-      requestInProgress: runtimeState?.requestInProgress === true,
+      status: this.toHostStatus(runtimeState?.status, requestInProgress),
+      requestInProgress,
       attachedViewIds: input.attachedViewIds,
-      activeTurnId: this.readActiveTurnId(runtimeState),
+      activeTurnId: this.readActiveTurnId(runtimeState, activeHandle),
       transcriptRevision: input.transcriptRevision,
       selectedMode: runtimeState?.selectedMode ?? null,
     };
@@ -221,11 +240,37 @@ export class ChatRuntimeOwnerRuntimeControllerService implements ChatRuntimeOwne
     await this.runtimeRegistry.awaitPendingLexRequestCompleted(sessionId);
   }
 
-  private readActiveTurnId(runtimeState: ChatSessionRuntimeState | null): string | null {
+  private readActiveTurnId(
+    runtimeState: ChatSessionRuntimeState | null,
+    activeHandle?: ChatSessionRuntimeHandle,
+  ): string | null {
+    if (activeHandle?.requestInProgress === true) {
+      const activeResponseHandle = this.normalizeActiveResponseHandle(activeHandle.activeResponseHandle);
+      if (activeResponseHandle) {
+        return activeResponseHandle;
+      }
+    }
     const latestTurn = runtimeState?.turnResponses[runtimeState.turnResponses.length - 1];
     return typeof latestTurn?.turnId === 'string' && latestTurn.turnId.trim().length > 0
       ? latestTurn.turnId
       : null;
+  }
+
+  private normalizeActiveResponseHandle(value: unknown): string | null {
+    if (typeof value === 'string' && value.trim().length > 0) {
+      return value.trim();
+    }
+    if (!value || typeof value !== 'object') {
+      return null;
+    }
+    const record = value as { readonly turnId?: unknown; readonly id?: unknown };
+    if (typeof record.turnId === 'string' && record.turnId.trim().length > 0) {
+      return record.turnId.trim();
+    }
+    if (typeof record.id === 'string' && record.id.trim().length > 0) {
+      return record.id.trim();
+    }
+    return null;
   }
 
   private toHostStatus(

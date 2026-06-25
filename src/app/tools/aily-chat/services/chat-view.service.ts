@@ -464,10 +464,6 @@ export class ChatViewService {
   }
 
   get currentPaneSurface(): ChatPaneSurface {
-    if (this.debugBrowser.isOpen) {
-      return this.debugBrowser.activeImportedResourceSummary ? 'debug-session' : 'debug-home';
-    }
-
     if (this.showLoginSurface) {
       return 'login';
     }
@@ -482,7 +478,15 @@ export class ChatViewService {
 
     const hasCurrentSessionIdentity = this.hasCurrentSessionIdentity;
     const hasActiveCurrentSessionRequest = this.hasActiveCurrentSessionRequest;
-    if (!this.hasConversationContent && !hasActiveCurrentSessionRequest) {
+    const hasConversationContent = this.hasConversationContent;
+    if (this.debugBrowser.isOpen
+      && !hasCurrentSessionIdentity
+      && !hasConversationContent
+      && !hasActiveCurrentSessionRequest) {
+      return this.debugBrowser.activeImportedResourceSummary ? 'debug-session' : 'debug-home';
+    }
+
+    if (!hasConversationContent && !hasActiveCurrentSessionRequest) {
       if (hasCurrentSessionIdentity) {
         return 'blank-session';
       }
@@ -962,16 +966,17 @@ export class ChatViewService {
 
   private get hasCurrentSessionIdentity(): boolean {
     return this.currentViewSessionResource.length > 0
+      || this.liveCurrentSessionResource.length > 0
       || this.chatService.hasBlankSessionShell === true;
   }
 
   private get hasActiveCurrentSessionRequest(): boolean {
-    const currentViewSessionResource = this.currentViewSessionResource;
-    if (!currentViewSessionResource) {
+    const currentSessionResource = this.currentViewSessionResource || this.liveCurrentSessionResource;
+    if (!currentSessionResource) {
       return false;
     }
 
-    return this.chatSessionRuntimeStore.read(currentViewSessionResource)?.requestInProgress === true;
+    return this.chatSessionRuntimeStore.read(currentSessionResource)?.requestInProgress === true;
   }
 
   private get liveCurrentSessionResource(): string {

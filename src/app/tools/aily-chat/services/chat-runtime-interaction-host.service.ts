@@ -126,8 +126,12 @@ type PlanReviewRuntimeEntry = RuntimePlanReviewWidgetState & {
 };
 
 type RuntimeInteractionSnapshotListener = (snapshot: ChatRuntimeHostInteractionSnapshot) => void;
+type RuntimeInteractionDecisionRequest = Omit<
+  ChatRuntimeHostInteractionRequest,
+  'viewId' | 'visibleAttachmentGeneration'
+>;
 type RuntimeInteractionRemoteResolver = (
-  request: ChatRuntimeHostInteractionRequest,
+  request: RuntimeInteractionDecisionRequest,
 ) => Promise<ChatRuntimeHostInteractionSnapshot | null>;
 
 interface PlanReviewFileSyncState {
@@ -388,16 +392,16 @@ export class ChatRuntimeInteractionHostService implements ChatRuntimeOwnerIntera
   }
 
   skipQuestion(sessionId: string): void {
-    const remoteResolver = this.remoteResolvers.get(this.normalizeSessionId(sessionId));
-    if (remoteResolver) {
-      void remoteResolver({ sessionId, kind: 'question.skip' });
-      this.deleteQuestionEntry(sessionId);
-      return;
-    }
-
     const entry = this._questionEntries()[sessionId];
     if (!entry) {
       throw new Error('skipAskUserResponse requires an active question partId.');
+    }
+
+    const remoteResolver = this.remoteResolvers.get(this.normalizeSessionId(sessionId));
+    if (remoteResolver) {
+      void remoteResolver({ sessionId, kind: 'question.skip', id: entry.partId });
+      this.deleteQuestionEntry(sessionId);
+      return;
     }
 
     const answers = Object.fromEntries(entry.data.questions.map((question) => [question.question, {
@@ -449,7 +453,11 @@ export class ChatRuntimeInteractionHostService implements ChatRuntimeOwnerIntera
   navigateConfirmation(sessionId: string, delta: number): void {
     const remoteResolver = this.remoteResolvers.get(this.normalizeSessionId(sessionId));
     if (remoteResolver) {
-      void remoteResolver({ sessionId, kind: 'confirmation.navigate', delta });
+      const active = this.getActiveConfirmation(sessionId);
+      if (!active) {
+        throw new Error('navigateConfirmation requires an active confirmation id.');
+      }
+      void remoteResolver({ sessionId, kind: 'confirmation.navigate', id: active.id, delta });
     }
 
     const queue = this.getConfirmationQueue(sessionId);

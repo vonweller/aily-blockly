@@ -92,6 +92,20 @@ export class ChatRuntimeViewMirrorProjectionService {
       return false;
     }
 
+    if (input.projection.phase === 'live') {
+      const latestTurnResponse = ChatRuntimeViewMirrorProjectionService.resolveLatestTurnResponse(input.turnResponses);
+      if (!latestTurnResponse) {
+        return true;
+      }
+      this.runtimeStore.appendOrReplaceTurnResponse(
+        targetSessionId,
+        latestTurnResponse,
+        input.hostProjectionState,
+        runtimeChangeOptionsFromTranscriptProjection(input.projection),
+      );
+      return true;
+    }
+
     this.runtimeStore.replaceRuntimeState(
       targetSessionId,
       {
@@ -117,5 +131,17 @@ export class ChatRuntimeViewMirrorProjectionService {
 
   private static normalizeSessionId(sessionId: string | null | undefined): string {
     return typeof sessionId === 'string' ? sessionId.trim() : '';
+  }
+
+  private static resolveLatestTurnResponse(
+    turnResponses: readonly TurnResponseTurn[],
+  ): TurnResponseTurn | null {
+    for (let index = turnResponses.length - 1; index >= 0; index -= 1) {
+      const turn = turnResponses[index];
+      if (typeof turn?.turnId === 'string' && turn.turnId.trim().length > 0) {
+        return turn;
+      }
+    }
+    return null;
   }
 }

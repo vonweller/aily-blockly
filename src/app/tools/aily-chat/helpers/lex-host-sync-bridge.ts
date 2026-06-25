@@ -3,7 +3,6 @@ import type { MetricsSnapshot } from 'aily-lex/browser';
 import type { ChatRuntimeHostTodoItem } from '../core/chat-runtime-host-contract';
 import { resolveChatModeId, type ChatModeId } from '../core/chat-mode';
 import { normalizeReadSideToolName } from '../core/tool-name-normalizer';
-import type { ChatRuntimeOwnerViewRequestPort } from '../services/chat-runtime-owner-ports';
 import type { TodoItem as BlocklyTodoItem } from '../utils/todoStorage';
 
 /** Narrow context: host sync owns model/runtime facts and requests view side effects through the host boundary. */
@@ -11,7 +10,7 @@ type LexHostSyncContext = Pick<ISessionAccess, 'sessionId'>
   & Pick<IChatServiceAccess, 'editCheckpointService'>
   & Pick<IChatCoordination, 'lexStream'>
   & {
-    readonly viewRequests: ChatRuntimeOwnerViewRequestPort;
+    readonly viewRequests: LexHostViewRequestDispatcher;
   };
 
 type AilyLexModule = import('./lex-agent-bootstrap').AilyLexModule;
@@ -20,6 +19,19 @@ type LexTodoItem = {
   title: string;
   activeForm?: string;
   status: BlocklyTodoItem['status'];
+};
+type LexHostViewRequestDispatcher = {
+  syncTodoState(
+    sessionId: string | null | undefined,
+    items: readonly ChatRuntimeHostTodoItem[],
+  ): void;
+  requestHandoff(input: {
+    readonly sessionId: string | null | undefined;
+    readonly targetAgent?: string;
+    readonly targetModeId?: ChatModeId;
+    readonly message: string;
+    readonly suggestedInput?: string;
+  }): void;
 };
 
 /**

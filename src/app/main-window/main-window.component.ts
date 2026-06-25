@@ -35,7 +35,7 @@ import { isChildTool } from '../configs/tool.config';
 import { LibManagerToolComponent } from '../tools/lib-manager-tool/lib-manager-tool.component';
 import { ModeWelcomeComponent } from '../components/mode-welcome/mode-welcome.component';
 import type { DevelopmentModePreference } from '../services/config.service';
-import { ChatRuntimeHostBootstrapService } from '../tools/aily-chat/services/chat-runtime-host-bootstrap.service';
+import { ChatRuntimeHostResourceOperationHandlerService } from '../tools/aily-chat/services/chat-runtime-host-resource-operation-handler.service';
 
 @Component({
   selector: 'app-main-window',
@@ -118,17 +118,17 @@ export class MainWindowComponent {
     private configService: ConfigService,
     private modal: NzModalService,
     private onboardingService: OnboardingService,
-    private chatRuntimeHostBootstrap: ChatRuntimeHostBootstrapService
+    private readonly chatRuntimeHostResourceOperationHandler: ChatRuntimeHostResourceOperationHandlerService
   ) { }
 
   ngOnInit(): void {
+    void this.chatRuntimeHostResourceOperationHandler.start().catch(error => {
+      console.error('[AilyChat][RuntimeHostResourceOperationHandler] Failed to start:', error);
+    });
     this.uiService.init();
     this.projectService.init();
     this.updateService.init();
     this.npmService.init();
-    void this.chatRuntimeHostBootstrap.startMainWindowRuntimeOwner().catch((error) => {
-      console.error('[AilyChat] Failed to register main-window runtime owner:', error);
-    });
     // 重置 footer 状态
     this.uiService.updateFooterState({ text: '', timeout: 0 });
 

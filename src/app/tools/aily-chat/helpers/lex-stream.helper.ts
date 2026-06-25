@@ -33,7 +33,7 @@ import { LexRuntimeConfigBridge } from './lex-runtime-config-bridge';
 import { LexRenderEventBridge } from './lex-render-event-bridge';
 import { LexSessionRestoreBridge } from './lex-session-restore-bridge';
 import { LexSessionFacade } from './lex-session-facade';
-import type { IMetricsService, MetricsSnapshot, TurnResponseStatus, TurnResponseTurn } from 'aily-lex/browser';
+import type { IMetricsService, MetricsSnapshot, RenderEvent, TurnRequest, TurnResponseStatus, TurnResponseTurn } from 'aily-lex/browser';
 import type { IHostStreamListener } from './host-turn-response-state';
 import type { HostSessionSaveTarget } from './host-session-save-bridge';
 import type { HostItemLifecycleTextDeltaPolicy } from './lex-render-host-stream-emitter';
@@ -42,6 +42,7 @@ import {
   terminalTranscriptProjection,
   type ChatRuntimeTurnResponseSyncOptions,
 } from '../core/chat-runtime-projection-policy';
+import { buildTurnResponsesFromSessionSnapshot } from '../core/turn-response-builder';
 
 type LexOwnerRenderBridge = Parameters<LexTurnExecutionBridge['setRenderEventBridge']>[0] & {
   readonly turnResponses: readonly TurnResponseTurn[];
@@ -85,6 +86,17 @@ export type LexOwnerContext = BootstrapLexAgentContext
       options: ChatRuntimeTurnResponseSyncOptions,
     ): void;
     readSessionTurnResponses?(sessionId: string | null | undefined): readonly TurnResponseTurn[];
+    emitExecutionRenderEvent?(
+      sessionId: string | null | undefined,
+      event: RenderEvent,
+      request?: {
+        readonly sessionId: string;
+        readonly requestText: string;
+        readonly displayText?: string;
+        readonly metadata?: TurnRequest['metadata'] | null;
+        readonly activeResponseHandle?: unknown;
+      } | null,
+    ): void;
     appendSessionModelTurnResponse?(
       sessionId: string | null | undefined,
       turnResponse: TurnResponseTurn,
@@ -199,8 +211,17 @@ export class LexOwnerFacade {
       return [];
     }
 
-    if (this.isVisibleAttachedSession(targetSessionId)) {
+    const snapshotTurnResponses = this.readCanonicalSessionSnapshotTurnResponses(targetSessionId);
+    if (hasAuthoritativeResponseModel(snapshotTurnResponses)) {
+      return snapshotTurnResponses;
+    }
+
+    if (this.isRenderEventBridgeProjectedToSession(targetSessionId)) {
       return this._renderEventBridge.turnResponses;
+    }
+
+    if (snapshotTurnResponses.length > 0) {
+      return snapshotTurnResponses;
     }
 
     return this.ctx.readSessionRuntimeState?.(targetSessionId)?.turnResponses ?? [];
@@ -446,12 +467,20 @@ export class LexOwnerFacade {
           return [];
         }
 
+        const snapshotTurnResponses = this.readCanonicalSessionSnapshotTurnResponses(targetSessionId);
+        if (hasAuthoritativeResponseModel(snapshotTurnResponses)) {
+          return snapshotTurnResponses;
+        }
+
+        if (this.isRenderEventBridgeProjectedToSession(targetSessionId)) {
+          return renderEventBridge.turnResponses;
+        }
+        if (snapshotTurnResponses.length > 0) {
+          return snapshotTurnResponses;
+        }
         const runtimeTurnResponses = this.ctx.readSessionRuntimeState?.(targetSessionId)?.turnResponses;
         if (runtimeTurnResponses && runtimeTurnResponses.length > 0) {
           return runtimeTurnResponses;
-        }
-        if (this.isVisibleAttachedSession(targetSessionId)) {
-          return renderEventBridge.turnResponses;
         }
         return [];
       },
@@ -474,9 +503,6 @@ export class LexOwnerFacade {
             get isCancelled() { return ownerCtx.isCancelled; },
             get currentMessageSource() { return ownerCtx.currentMessageSource; },
             get contextBudgetService() { return ownerCtx.contextBudgetService; },
-            syncExecutionRuntimeTurnResponses: (targetSessionId, turnResponses, options) => {
-              ownerCtx.syncExecutionRuntimeTurnResponses?.(targetSessionId, turnResponses, options);
-            },
           },
           hostSyncBridge,
           {
@@ -484,6 +510,7 @@ export class LexOwnerFacade {
           },
           () => agentLifecycleBridge.getSessionSnapshot(sessionId),
         );
+        detachedRenderEventBridge.setProjectionSessionResource(sessionId);
         detachedRenderEventBridge.hydrateTurnResponses(seedTurnResponses);
         return detachedRenderEventBridge;
       },
@@ -512,6 +539,38 @@ export class LexOwnerFacade {
     return this.ctx.isRuntimeViewAttached?.(sessionId) === true;
   }
 
+  private isRenderEventBridgeProjectedToSession(sessionId: string): boolean {
+    const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!targetSessionId) {
+      return false;
+    }
+    const projectionSessionResource = this._renderEventBridge.getProjectionSessionResource?.();
+    return typeof projectionSessionResource === 'string'
+      && projectionSessionResource.trim() === targetSessionId;
+  }
+
+  private readCanonicalSessionSnapshotTurnResponses(sessionId: string): readonly TurnResponseTurn[] {
+    const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!targetSessionId) {
+      return [];
+    }
+    const handle = this._agentLifecycleBridge.getHandle(targetSessionId) as {
+      getSessionSnapshot?: () => ReturnType<LexSessionFacade['snapshot']>;
+    } | null;
+    const agent = this._agentLifecycleBridge.getAgent(targetSessionId) as {
+      getSessionSnapshot?: () => ReturnType<LexSessionFacade['snapshot']>;
+    } | null;
+    const snapshot = typeof handle?.getSessionSnapshot === 'function'
+      ? handle.getSessionSnapshot()
+      : typeof agent?.getSessionSnapshot === 'function'
+        ? agent.getSessionSnapshot()
+        : null;
+    if (!snapshot || snapshot.sessionId !== targetSessionId) {
+      return [];
+    }
+    return buildTurnResponsesFromSessionSnapshot(snapshot);
+  }
+
   private _resolveCompactionMetricsService(lex: AilyLexModule, sessionId: string): IMetricsService {
     if (!this._compactionMetricsService || this._compactionMetricsSessionId !== sessionId) {
       this._compactionMetricsService = new lex.InMemoryMetricsService();
@@ -520,5 +579,19 @@ export class LexOwnerFacade {
 
     return this._compactionMetricsService;
   }
+}
+
+function hasAuthoritativeResponseModel(turnResponses: readonly TurnResponseTurn[] | null | undefined): boolean {
+  if (!Array.isArray(turnResponses) || turnResponses.length === 0) {
+    return false;
+  }
+  return turnResponses.some(turn => {
+    const resultText = typeof turn.response?.resultText === 'string'
+      ? turn.response.resultText.trim()
+      : '';
+    return resultText.length > 0
+      || (Array.isArray(turn.response?.parts) && turn.response.parts.length > 0)
+      || (Array.isArray(turn.rounds) && turn.rounds.length > 0);
+  });
 }
 

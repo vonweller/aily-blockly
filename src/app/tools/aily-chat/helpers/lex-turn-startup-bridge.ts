@@ -13,8 +13,8 @@ type LexTurnStartupContext = Pick<
   & Pick<IChatServiceAccess, 'repetitionDetectionService' | 'editCheckpointService' | 'ailyChatConfigService' | 'contextBudgetService'>
   & {
     readonly turnStartupEditLifecycle: {
-      ensureAbsExport(): void;
-      saveCheckpointToDisk(): void;
+      ensureAbsExport(sessionId: string | null | undefined): void;
+      saveCheckpointToDisk(sessionId: string | null | undefined): void;
     };
     resolveActiveRuntimeSessionId?(): string | null | undefined;
     readCurrentViewSessionResource?(): string | null;
@@ -110,6 +110,7 @@ export class LexTurnStartupBridge {
       : typeof this.ctx.sessionId === 'string'
         ? this.ctx.sessionId.trim()
         : '';
+    const resourceSessionId = activeRuntimeSessionId || visibleSessionId;
     const isDetachedRuntimeOwner = !!activeRuntimeSessionId
       && !!visibleSessionId
       && activeRuntimeSessionId !== visibleSessionId;
@@ -133,9 +134,9 @@ export class LexTurnStartupBridge {
       this.ensureResponseItem(turnId);
     }
 
-    this.ctx.turnStartupEditLifecycle.ensureAbsExport();
+    this.ctx.turnStartupEditLifecycle.ensureAbsExport(resourceSessionId);
     this.ctx.editCheckpointService.autoSaveEdits = this.ctx.ailyChatConfigService.autoSaveEdits;
-    this.ctx.turnStartupEditLifecycle.saveCheckpointToDisk();
+    this.ctx.turnStartupEditLifecycle.saveCheckpointToDisk(resourceSessionId);
 
     const conversationMessages = this.getConversationMessages();
     const workspaceRoot = this.ctx.prjPath || this.ctx.prjRootPath || null;

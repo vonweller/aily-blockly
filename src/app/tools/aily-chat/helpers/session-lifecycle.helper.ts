@@ -141,11 +141,13 @@ type SessionLifecycleContext = ChatViewWriteBridgeContext
       ChatSessionEntryStateService,
       'readSessionEntryTarget' | 'setSessionEntryTarget' | 'clearSessionEntryTarget'
     >;
+    readonly hostResponseProjection?: HostSessionSaveContext['hostResponseProjection'];
     acquireExistingSessionModel?(sessionId?: string | null): ChatSessionModelReference | undefined;
     acquireSessionModel?(props: ChatSessionModelCreateProps): ChatSessionModelReference;
     attachSessionViewModel?(sessionId?: string | null): ChatSessionViewModel | null;
     detachSessionViewModel?(sessionId?: string | null): void;
     readCurrentViewSessionResource?(): string | null;
+    requestHostResourceOperation?: HostSessionSaveContext['requestHostResourceOperation'];
     createSessionSaveBridge(ctx: HostSessionSaveContext): SessionLifecycleSaveBridgePort;
     clearEntryInputState?(): void;
     buildExecutionSaveTarget?(sessionId: string | null | undefined): HostSessionSaveTarget | null;
@@ -172,7 +174,6 @@ type SessionLifecycleContext = ChatViewWriteBridgeContext
       readonly resetToolCallingIteration?: boolean;
       readonly detectChanges?: boolean;
     }): void;
-    requestStopRuntimeTurnForSessionShutdown?(sessionId?: string | null): boolean;
     buildRuntimeRestoreHostRecord?(request: RuntimeRestoreHostRecordRequest): HostSessionRecord | null;
     restoreSessionHostRecord(hostRecord: HostSessionRecord, options?: HostSessionRestoreOptions): Promise<void>;
     resumeRestoredInteraction?(
@@ -194,8 +195,6 @@ type SessionLifecycleContext = ChatViewWriteBridgeContext
   };
 
 type SessionSwitchRestoreStage = 'session-start' | 'host-restore' | 'missing-record';
-const ENTRY_DISPOSE_RUNTIME_GUARD_PREFIX = '[AilyChat][EntryLifecycleGuard]';
-
 function isSessionLifecycleTraceEnabled(): boolean {
   return isAilyCategoryDebugEnabled('aily.chat.traceSessionLifecycle', [
     '__AILY_CHAT_TRACE_SESSION_LIFECYCLE__',
@@ -1136,7 +1135,7 @@ export class SessionLifecycleHelper {
     return true;
   }
 
-  enterEntryState(options: { resetInitialization?: boolean; sessionId?: string | null; disposeRuntime?: boolean; projectPath?: string | null } = {}): void {
+  enterEntryState(options: { resetInitialization?: boolean; sessionId?: string | null; projectPath?: string | null } = {}): void {
     const explicitSessionId = typeof options.sessionId === 'string' ? options.sessionId.trim() : '';
     const currentSessionId = explicitSessionId || this.resolveCurrentViewSessionResource();
     const liveSessionId = typeof this.ctx.chatService.currentSessionId === 'string'
@@ -1158,7 +1157,6 @@ export class SessionLifecycleHelper {
         explicitSessionId: explicitSessionId || null,
         currentSessionId: currentSessionId || null,
         liveCurrentSessionId: this.ctx.chatService.currentSessionId || null,
-        disposeRuntime: options.disposeRuntime === true,
         resetInitialization: options.resetInitialization === true,
         projectPath: explicitProjectPath,
         hasBlankSessionShell: this.ctx.chatService.hasBlankSessionShell === true,
@@ -1183,12 +1181,6 @@ export class SessionLifecycleHelper {
       clearEditSummary: true,
     });
 
-    if (options.disposeRuntime === true) {
-      console.warn(ENTRY_DISPOSE_RUNTIME_GUARD_PREFIX, {
-        action: 'ignore-entry-dispose-runtime',
-        sessionId: currentSessionId || null,
-      });
-    }
     this.setActiveSessionId('');
     this.ctx.detachSessionViewModel?.(currentSessionId);
     this.ctx.chatService.hasBlankSessionShell = false;
@@ -1204,12 +1196,12 @@ export class SessionLifecycleHelper {
     }
   }
 
-  enterBlankSessionShell(options: { resetInitialization?: boolean; sessionId?: string | null; disposeRuntime?: boolean; projectPath?: string | null } = {}): void {
+  enterBlankSessionShell(options: { resetInitialization?: boolean; sessionId?: string | null; projectPath?: string | null } = {}): void {
     this.enterEntryState(options);
     this.ctx.chatService.hasBlankSessionShell = true;
   }
 
-  async returnToEntryInventory(options: { resetInitialization?: boolean; sessionId?: string | null; disposeRuntime?: boolean; projectPath?: string | null } = {}): Promise<void> {
+  async returnToEntryInventory(options: { resetInitialization?: boolean; sessionId?: string | null; projectPath?: string | null } = {}): Promise<void> {
     const targetSessionId = typeof options.sessionId === 'string' && options.sessionId.trim().length > 0
       ? options.sessionId.trim()
       : this.resolveCurrentViewSessionResource();
@@ -1220,7 +1212,6 @@ export class SessionLifecycleHelper {
 
     await this._entryCoordinator.returnToEntryInventory({
       ...options,
-      disposeRuntime: false,
     });
 
     if (targetSessionId) {
@@ -1228,12 +1219,11 @@ export class SessionLifecycleHelper {
     }
   }
 
-  /** 简化的停止+清理（替代旧 stopAndCloseSession） */
-  async stopAndCloseSession(skipSave: boolean = false): Promise<void> {
+  /** Detach the visible session surface without cancelling the host-owned runtime turn. */
+  async detachCurrentSessionSurface(skipSave: boolean = false): Promise<void> {
     const currentSessionId = this.resolveCurrentViewSessionResource();
     if (!skipSave) { this.saveCurrentSession(); }
     if (currentSessionId) {
-      this.ctx.requestStopRuntimeTurnForSessionShutdown?.(currentSessionId);
       this.ctx.detachSessionRuntimeView?.(currentSessionId);
     }
     this.ctx.chatService.clearResolvedActiveModel?.();
@@ -1257,7 +1247,6 @@ export class SessionLifecycleHelper {
     }
     this.enterEntryState({
       sessionId: currentSessionId,
-      disposeRuntime: false,
       projectPath: nextProjectPath,
     });
     this.requestSessionListRefresh({
@@ -1486,18 +1475,22 @@ export class SessionLifecycleHelper {
     sessionId: string,
     options: { readonly fallbackProjectPath?: string | null },
   ): Promise<boolean> {
-    const existingReference = this.ctx.acquireExistingSessionModel?.(sessionId);
-    if (existingReference) {
-      this.sessionModelReferences.get(sessionId)?.dispose();
-      this.sessionModelReferences.set(sessionId, existingReference);
-      return true;
-    }
-
     const entryProjectPath = this.ctx.chatHistoryService.findEntry(sessionId)?.projectPath ?? null;
     const restoreRequest = this.hostSessionItemController.resolveSessionSwitchRestoreRequest(sessionId, {
       fallbackProjectPath: options.fallbackProjectPath ?? entryProjectPath ?? this.resolveCurrentProjectPath(),
     });
     const hostRecord = restoreRequest.hostRecord ?? restoreRequest.sessionContent.hostRecord ?? null;
+
+    const existingReference = this.ctx.acquireExistingSessionModel?.(sessionId);
+    if (existingReference) {
+      if (this.existingSessionModelCanSatisfyRestore(existingReference.object, restoreRequest)) {
+        this.sessionModelReferences.get(sessionId)?.dispose();
+        this.sessionModelReferences.set(sessionId, existingReference);
+        return true;
+      }
+      existingReference.dispose();
+    }
+
     if (!hostRecord) {
       return false;
     }
@@ -1788,21 +1781,53 @@ export class SessionLifecycleHelper {
       ?? [];
     const hasDurableTurnResponses = Array.isArray(durableTurnResponses) && durableTurnResponses.length > 0;
 
-    const modelTurns = model.turnResponses;
-    if (Array.isArray(modelTurns) && modelTurns.length > 0) {
+    if (!hasDurableTurnResponses) {
+      const modelTurns = model.turnResponses;
+      if (Array.isArray(modelTurns) && modelTurns.length > 0) {
+        return true;
+      }
+
+      const runtimeState = this.ctx.readSessionRuntimeState?.(restoreRequest.target.sessionId);
+      if (Array.isArray(runtimeState?.turnResponses) && runtimeState.turnResponses.length > 0) {
+        return true;
+      }
+
+      return true;
+    }
+
+    if (this.turnResponsesExactlyMatchDurableSession(model.turnResponses, durableTurnResponses)) {
       return true;
     }
 
     const runtimeState = this.ctx.readSessionRuntimeState?.(restoreRequest.target.sessionId);
-    if (Array.isArray(runtimeState?.turnResponses) && runtimeState.turnResponses.length > 0) {
-      return true;
-    }
-
-    if (!hasDurableTurnResponses) {
+    if (this.turnResponsesExactlyMatchDurableSession(runtimeState?.turnResponses, durableTurnResponses)) {
       return true;
     }
 
     return false;
+  }
+
+  private turnResponsesExactlyMatchDurableSession(
+    candidateTurnResponses: readonly TurnResponseTurn[] | null | undefined,
+    durableTurnResponses: readonly TurnResponseTurn[] | null | undefined,
+  ): boolean {
+    if (!Array.isArray(candidateTurnResponses)
+      || !Array.isArray(durableTurnResponses)
+      || candidateTurnResponses.length === 0
+      || durableTurnResponses.length === 0
+      || candidateTurnResponses.length !== durableTurnResponses.length) {
+      return false;
+    }
+
+    return candidateTurnResponses.every((candidateTurn, index) => {
+      const candidateTurnId = typeof candidateTurn?.turnId === 'string'
+        ? candidateTurn.turnId.trim()
+        : '';
+      const durableTurnId = typeof durableTurnResponses[index]?.turnId === 'string'
+        ? durableTurnResponses[index].turnId.trim()
+        : '';
+      return !!candidateTurnId && candidateTurnId === durableTurnId;
+    });
   }
 
   private shouldRejectMissingRestoreRecord(
@@ -1868,7 +1893,6 @@ export class SessionLifecycleHelper {
     const runtimeProjectionDialogs = Array.isArray(runtimeProjection?.dialogItems)
       ? runtimeProjection.dialogItems.length
       : 0;
-    const lexSnapshotTurns = this.countLexSnapshotTurns(sessionId);
     const summaryBoundaries = this.countSummaryBoundaries(hostRecord?.turnResponses);
     const checkpointSidecars = this.countCheckpointSidecars(hostRecord?.turnResponses);
     const model = this.sessionModelReferences.get(sessionId)?.object;
@@ -1891,7 +1915,6 @@ export class SessionLifecycleHelper {
         `runtimeProjectionTurns=${runtimeProjectionTurns}`,
         `runtimeProjectionChatList=${runtimeProjectionChatList}`,
         `runtimeProjectionDialogs=${runtimeProjectionDialogs}`,
-        `lexSnapshotTurns=${lexSnapshotTurns}`,
         `summaryBoundaries=${summaryBoundaries}`,
         `checkpointSidecars=${checkpointSidecars}`,
         `modelTurns=${extra.modelTurns ?? '<unknown>'}`,
@@ -1938,15 +1961,6 @@ export class SessionLifecycleHelper {
   private countReferencedModelProjectionTurns(sessionId: string): number {
     const model = this.sessionModelReferences.get(sessionId)?.object;
     return model ? this.countModelProjectionTurns(model) : 0;
-  }
-
-  private countLexSnapshotTurns(sessionId: string): number {
-    try {
-      const snapshot = this.ctx.lexStream.session?.snapshot?.(sessionId);
-      return Array.isArray(snapshot?.turns) ? snapshot.turns.length : 0;
-    } catch {
-      return 0;
-    }
   }
 
   private countSummaryBoundaries(turnResponses: HostSessionRecord['turnResponses'] | null | undefined): number {
@@ -2024,13 +2038,17 @@ export class SessionLifecycleHelper {
       return false;
     }
 
-    const hasLiveRuntimeContent = runtimeState.requestInProgress === true
-      || !!runtimeState.activeResponseHandle
-      || (Array.isArray(runtimeState.turnResponses) && runtimeState.turnResponses.length > 0)
-      || hasHostResponseConversationContent(runtimeState.hostProjectionState ?? null);
+    const runtimeStillOwnsActiveTurn = runtimeState.requestInProgress === true
+      || runtimeState.status === 'in_progress'
+      || runtimeState.status === 'needs_input'
+      || !!runtimeState.activeResponseHandle;
+    if (!runtimeStillOwnsActiveTurn) {
+      return false;
+    }
 
     return runtimeState.attachedView === false
-      || hasLiveRuntimeContent;
+      || hasHostResponseConversationContent(runtimeState.hostProjectionState ?? null)
+      || (Array.isArray(runtimeState.turnResponses) && runtimeState.turnResponses.length > 0);
   }
 
   private async reattachDetachedRuntimeSession(

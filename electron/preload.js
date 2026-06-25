@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer, shell, safeStorage, webFrame, clipboard } = require("electron");
+﻿const { contextBridge, ipcRenderer, shell, safeStorage, webFrame, clipboard } = require("electron");
 const { SerialPort } = require("serialport");
 const { createThrottledSerialPort, createRawSerialPort, listPorts } = require("./serial");
 const { exec } = require("child_process");
@@ -149,16 +149,24 @@ contextBridge.exposeInMainWorld("electronAPI", {
     },
   },
   chatRuntimeHost: {
-    registerOwner: (ownerId) => ipcRenderer.invoke("aily-chat-runtime-owner-register", { ownerId }),
-    unregisterOwner: (ownerId) => ipcRenderer.invoke("aily-chat-runtime-owner-unregister", { ownerId }),
+    registerExecutionWorker: (executionWorkerId) => ipcRenderer.invoke("aily-chat-runtime-execution-worker-register", { executionWorkerId }),
+    unregisterExecutionWorker: (executionWorkerId) => ipcRenderer.invoke("aily-chat-runtime-execution-worker-unregister", { executionWorkerId }),
+    registerResourceOperationHandler: (handlerId) => ipcRenderer.invoke("aily-chat-runtime-resource-handler-register", { handlerId }),
+    unregisterResourceOperationHandler: (handlerId) => ipcRenderer.invoke("aily-chat-runtime-resource-handler-unregister", { handlerId }),
     call: (method, args) => ipcRenderer.invoke("aily-chat-runtime-host-command", { method, args }),
-    onOwnerCommand: (callback) => {
+    onExecutionWorkerCommand: (callback) => {
       const listener = (_event, payload) => callback(payload);
-      ipcRenderer.on("aily-chat-runtime-owner-command", listener);
-      return () => ipcRenderer.removeListener("aily-chat-runtime-owner-command", listener);
+      ipcRenderer.on("aily-chat-runtime-execution-worker-command", listener);
+      return () => ipcRenderer.removeListener("aily-chat-runtime-execution-worker-command", listener);
     },
-    sendOwnerResponse: (payload) => ipcRenderer.send("aily-chat-runtime-owner-response", payload),
-    emitOwnerEvent: (payload) => ipcRenderer.send("aily-chat-runtime-owner-event", payload),
+    onResourceOperationCommand: (callback) => {
+      const listener = (_event, payload) => callback(payload);
+      ipcRenderer.on("aily-chat-runtime-resource-handler-command", listener);
+      return () => ipcRenderer.removeListener("aily-chat-runtime-resource-handler-command", listener);
+    },
+    sendExecutionWorkerResponse: (payload) => ipcRenderer.send("aily-chat-runtime-execution-worker-response", payload),
+    sendResourceOperationResponse: (payload) => ipcRenderer.send("aily-chat-runtime-resource-handler-response", payload),
+    emitExecutionWorkerEvent: (payload) => ipcRenderer.send("aily-chat-runtime-execution-worker-event", payload),
     onEvent: (callback) => {
       const listener = (_event, payload) => callback(payload);
       ipcRenderer.on("aily-chat-runtime-host-event", listener);
@@ -827,3 +835,4 @@ contextBridge.exposeInMainWorld("electronAPI", {
     readText: () => clipboard.readText(),
   }
 });
+

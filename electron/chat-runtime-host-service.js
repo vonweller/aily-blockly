@@ -1,29 +1,37 @@
-const OWNER_REGISTER_CHANNEL = 'aily-chat-runtime-owner-register';
-const OWNER_UNREGISTER_CHANNEL = 'aily-chat-runtime-owner-unregister';
+﻿const EXECUTION_WORKER_REGISTER_CHANNEL = 'aily-chat-runtime-execution-worker-register';
+const EXECUTION_WORKER_UNREGISTER_CHANNEL = 'aily-chat-runtime-execution-worker-unregister';
 const HOST_COMMAND_CHANNEL = 'aily-chat-runtime-host-command';
-const OWNER_COMMAND_CHANNEL = 'aily-chat-runtime-owner-command';
-const OWNER_RESPONSE_CHANNEL = 'aily-chat-runtime-owner-response';
-const OWNER_EVENT_CHANNEL = 'aily-chat-runtime-owner-event';
+const EXECUTION_WORKER_COMMAND_CHANNEL = 'aily-chat-runtime-execution-worker-command';
+const EXECUTION_WORKER_RESPONSE_CHANNEL = 'aily-chat-runtime-execution-worker-response';
+const EXECUTION_WORKER_EVENT_CHANNEL = 'aily-chat-runtime-execution-worker-event';
 const HOST_EVENT_CHANNEL = 'aily-chat-runtime-host-event';
+const RESOURCE_HANDLER_REGISTER_CHANNEL = 'aily-chat-runtime-resource-handler-register';
+const RESOURCE_HANDLER_UNREGISTER_CHANNEL = 'aily-chat-runtime-resource-handler-unregister';
+const RESOURCE_HANDLER_COMMAND_CHANNEL = 'aily-chat-runtime-resource-handler-command';
+const RESOURCE_HANDLER_RESPONSE_CHANNEL = 'aily-chat-runtime-resource-handler-response';
 const {
-  ChatRuntimeHostMirrorController,
-  MIRROR_MISS,
+  ChatRuntimeHostSessionStore,
+  HOST_SESSION_STORE_MISS,
   isUsableWebContents,
   normalizeSessionId,
-} = require('./chat-runtime-host-mirror-controller');
+} = require('./chat-runtime-host-session-store');
 const {
-  ChatRuntimeHostOwnerController,
+  ChatRuntimeHostExecutionWorkerController,
   DEFAULT_COMMAND_TIMEOUT_MS,
-} = require('./chat-runtime-host-owner-controller');
+} = require('./chat-runtime-host-execution-worker-controller');
 
 const channels = {
-  OWNER_REGISTER_CHANNEL,
-  OWNER_UNREGISTER_CHANNEL,
+  EXECUTION_WORKER_REGISTER_CHANNEL,
+  EXECUTION_WORKER_UNREGISTER_CHANNEL,
   HOST_COMMAND_CHANNEL,
-  OWNER_COMMAND_CHANNEL,
-  OWNER_RESPONSE_CHANNEL,
-  OWNER_EVENT_CHANNEL,
+  EXECUTION_WORKER_COMMAND_CHANNEL,
+  EXECUTION_WORKER_RESPONSE_CHANNEL,
+  EXECUTION_WORKER_EVENT_CHANNEL,
   HOST_EVENT_CHANNEL,
+  RESOURCE_HANDLER_REGISTER_CHANNEL,
+  RESOURCE_HANDLER_UNREGISTER_CHANNEL,
+  RESOURCE_HANDLER_COMMAND_CHANNEL,
+  RESOURCE_HANDLER_RESPONSE_CHANNEL,
 };
 
 const ALLOWED_METHODS = new Set([
@@ -35,12 +43,112 @@ const ALLOWED_METHODS = new Set([
   'stopTurn',
   'disposeSession',
   'readSessionState',
+  'readSessionInventory',
   'readTranscript',
   'awaitRequestCompletion',
   'runWorkspaceFinalizeBoundaryProbe',
   'readInteractionSnapshot',
   'resolveInteraction',
+  'recordResourceRequest',
+  'requestResourceOperation',
 ]);
+
+function measureTextLength(value) {
+  if (typeof value === 'string') {
+    return value.length;
+  }
+  if (!value || typeof value !== 'object') {
+    return 0;
+  }
+  if (Array.isArray(value)) {
+    return value.reduce((total, item) => total + measureTextLength(item), 0);
+  }
+  if (typeof value.text === 'string') {
+    return value.text.length;
+  }
+  if (typeof value.content === 'string') {
+    return value.content.length;
+  }
+  if (typeof value.value === 'string') {
+    return value.value.length;
+  }
+  if (Array.isArray(value.parts)) {
+    return measureTextLength(value.parts);
+  }
+  if (Array.isArray(value.items)) {
+    return measureTextLength(value.items);
+  }
+  return 0;
+}
+
+function summarizeTurnResponse(turn) {
+  const response = turn && typeof turn === 'object' && turn.response && typeof turn.response === 'object'
+    ? turn.response
+    : null;
+  const parts = response && Array.isArray(response.parts)
+    ? response.parts
+    : [];
+  return {
+    turnId: typeof turn?.turnId === 'string' ? turn.turnId : undefined,
+    requestId: typeof turn?.requestId === 'string' ? turn.requestId : undefined,
+    status: typeof turn?.status === 'string' ? turn.status : undefined,
+    responseId: typeof response?.id === 'string' ? response.id : undefined,
+    parts: parts.length,
+    textLength: measureTextLength(parts),
+  };
+}
+
+function summarizeTranscript(transcript) {
+  const turns = transcript && Array.isArray(transcript.turns)
+    ? transcript.turns
+    : transcript && Array.isArray(transcript.turnResponses)
+      ? transcript.turnResponses
+      : [];
+  const lastTurn = turns.length > 0 ? turns[turns.length - 1] : null;
+  return {
+    turns: turns.length,
+    lastTurn: summarizeTurnResponse(lastTurn),
+  };
+}
+
+function summarizeExecutionWorkerPayload(payload) {
+  const event = payload && typeof payload.event === 'object' ? payload.event : null;
+  const state = event && typeof event.state === 'object' ? event.state : null;
+  const renderEvent = payload && typeof payload.renderEvent === 'object' ? payload.renderEvent : null;
+  return {
+    kind: typeof payload?.kind === 'string' ? payload.kind : undefined,
+    sessionId: typeof payload?.sessionId === 'string' ? payload.sessionId : undefined,
+    turnId: typeof payload?.turnId === 'string' ? payload.turnId : undefined,
+    revision: Number(payload?.revision) || 0,
+    hasTurn: !!payload?.turn,
+    turn: payload?.turn ? summarizeTurnResponse(payload.turn) : undefined,
+    hasRenderEvent: !!renderEvent,
+    renderEventType: typeof renderEvent?.type === 'string' ? renderEvent.type : undefined,
+    renderEventKind: typeof renderEvent?.kind === 'string' ? renderEvent.kind : undefined,
+    nestedEventKind: typeof event?.kind === 'string' ? event.kind : undefined,
+    stateRequestInProgress: typeof state?.requestInProgress === 'boolean' ? state.requestInProgress : undefined,
+    stateActiveTurnId: typeof state?.activeTurnId === 'string' ? state.activeTurnId : undefined,
+    hasInteraction: !!payload?.interaction,
+    hasError: !!payload?.error,
+  };
+}
+
+function summarizeCanonicalHostEvent(event) {
+  const state = event && typeof event.state === 'object' ? event.state : null;
+  return {
+    kind: typeof event?.kind === 'string' ? event.kind : undefined,
+    sessionId: typeof event?.sessionId === 'string' ? event.sessionId : undefined,
+    revision: Number(event?.revision) || 0,
+    transcript: event?.transcript ? summarizeTranscript(event.transcript) : undefined,
+    stateRequestInProgress: typeof state?.requestInProgress === 'boolean' ? state.requestInProgress : undefined,
+    stateActiveTurnId: typeof state?.activeTurnId === 'string' ? state.activeTurnId : undefined,
+    stateTranscriptRevision: Number(state?.transcriptRevision) || undefined,
+    hasInteraction: !!event?.interaction,
+    hasError: !!event?.error,
+    requestKind: typeof event?.request?.kind === 'string' ? event.request.kind : undefined,
+    requestPhase: typeof event?.request?.phase === 'string' ? event.request.phase : undefined,
+  };
+}
 
 class ChatRuntimeHostProcessService {
   constructor(options = {}) {
@@ -48,27 +156,76 @@ class ChatRuntimeHostProcessService {
       throw new Error('[AilyChat][RuntimeHost] BrowserWindow is required.');
     }
     this.BrowserWindow = options.BrowserWindow;
-    this.hostMirror = new ChatRuntimeHostMirrorController();
-    this.ownerController = new ChatRuntimeHostOwnerController({
+    this.hostSessionStore = new ChatRuntimeHostSessionStore();
+    this.executionWorkerController = new ChatRuntimeHostExecutionWorkerController({
       BrowserWindow: options.BrowserWindow,
       commandTimeoutMs: Number.isFinite(options.commandTimeoutMs)
         ? options.commandTimeoutMs
         : DEFAULT_COMMAND_TIMEOUT_MS,
-      ownerCommandChannel: OWNER_COMMAND_CHANNEL,
-      onCommandResult: (method, args, result) => this.hostMirror.cacheCommandResult(method, args, result),
+      executionWorkerCommandChannel: EXECUTION_WORKER_COMMAND_CHANNEL,
+      onCommandResult: (method, args, result) => this.hostSessionStore.cacheCommandResult(method, args, result),
+      onExecutionWorkerLost: error => this.handleExecutionWorkerLost(error),
     });
+    this.resourceOperationHandler = typeof options.resourceOperationHandler === 'function'
+      ? options.resourceOperationHandler
+      : null;
+    this.resourceOperationSeed = 0;
+    this.resourceOperationHandlerRenderer = null;
+    this.resourceOperationCommandSeed = 0;
+    this.pendingResourceOperationCommands = new Map();
+    this.resourceOperationCommandTimeoutMs = Number.isFinite(options.commandTimeoutMs)
+      ? options.commandTimeoutMs
+      : DEFAULT_COMMAND_TIMEOUT_MS;
   }
 
   setMainWindow(mainWindow) {
-    this.ownerController.setMainWindow(mainWindow);
+    this.mainWindowRef = mainWindow || null;
   }
 
-  async handleOwnerRegister(event, payload = {}) {
-    return this.ownerController.handleOwnerRegister(event, payload);
+  setExecutionWorkerWindow(executionWorkerWindow) {
+    this.executionWorkerController.setExecutionWorkerWindow(executionWorkerWindow);
   }
 
-  async handleOwnerUnregister(event, payload = {}) {
-    return this.ownerController.handleOwnerUnregister(event, payload);
+  async handleExecutionWorkerRegister(event, payload = {}) {
+    return this.executionWorkerController.handleExecutionWorkerRegister(event, payload);
+  }
+
+  async handleExecutionWorkerUnregister(event, payload = {}) {
+    return this.executionWorkerController.handleExecutionWorkerUnregister(event, payload);
+  }
+
+  async handleResourceOperationHandlerRegister(event, payload = {}) {
+    this.assertResourceHandlerSender(event);
+    const handlerId = typeof payload.handlerId === 'string' && payload.handlerId.trim()
+      ? payload.handlerId.trim()
+      : 'aily-chat-host-resource-handler';
+    if (this.resourceOperationHandlerRenderer
+      && this.resourceOperationHandlerRenderer.webContentsId !== event.sender.id) {
+      throw new Error('[AilyChat][RuntimeHost] A different runtime resource handler is already registered.');
+    }
+
+    this.resourceOperationHandlerRenderer = {
+      handlerId,
+      webContentsId: event.sender.id,
+      webContents: event.sender,
+    };
+    event.sender.once('destroyed', () => this.clearResourceOperationHandlerIfMatches(event.sender.id));
+    return { ok: true, handlerId };
+  }
+
+  async handleResourceOperationHandlerUnregister(event, payload = {}) {
+    if (!this.resourceOperationHandlerRenderer) {
+      return { ok: true };
+    }
+    this.assertRegisteredResourceHandlerSender(event);
+    const handlerId = typeof payload.handlerId === 'string' && payload.handlerId.trim()
+      ? payload.handlerId.trim()
+      : 'aily-chat-host-resource-handler';
+    if (this.resourceOperationHandlerRenderer.handlerId !== handlerId) {
+      throw new Error('[AilyChat][RuntimeHost] Runtime resource handler id mismatch during unregister.');
+    }
+    this.clearResourceOperationHandlerIfMatches(event.sender.id);
+    return { ok: true };
   }
 
   async handleHostCommand(event, payload = {}) {
@@ -79,60 +236,443 @@ class ChatRuntimeHostProcessService {
 
     const args = Array.isArray(payload.args) ? payload.args : [];
     if (method === 'attachView') {
-      this.hostMirror.attachView(args[0], args[1], event && event.sender);
+      return this.handleAttachView(event, args);
+    }
+    if (method === 'detachView') {
+      return this.handleDetachView(args);
+    }
+    if (method === 'stopTurn') {
+      return this.handleStopTurn(args);
+    }
+    if (method === 'disposeSession') {
+      return this.handleDisposeSession(args);
     }
     if (method === 'submitTurn') {
       return this.handleSubmitTurn(args);
     }
-    const mirroredResult = this.hostMirror.readMirrorCommandResult(method, args);
-    if (mirroredResult !== MIRROR_MISS) {
-      return mirroredResult;
+    if (method === 'resolveInteraction') {
+      return this.handleResolveInteraction(args);
+    }
+    if (method === 'recordResourceRequest') {
+      return this.handleRecordResourceRequest(args);
+    }
+    if (method === 'requestResourceOperation') {
+      return this.handleRequestResourceOperation(args);
+    }
+    if (method === 'runWorkspaceFinalizeBoundaryProbe') {
+      return Promise.resolve();
+    }
+    const hostResult = this.hostSessionStore.readHostCommandResult(method, args);
+    if (hostResult !== HOST_SESSION_STORE_MISS) {
+      return hostResult;
     }
 
-    if (!this.ownerController.hasUsableOwner()) {
-      const ownerUnavailableMirrorResult = this.hostMirror.readOwnerUnavailableMirrorCommandResult(method, args);
-      if (ownerUnavailableMirrorResult !== MIRROR_MISS) {
-        return ownerUnavailableMirrorResult;
-      }
-      throw new Error('[AilyChat][RuntimeHost] No registered host runtime owner.');
+    const executionWorkerUnavailableHostResult = this.hostSessionStore.readExecutionWorkerUnavailableHostCommandResult(method, args);
+    if (executionWorkerUnavailableHostResult !== HOST_SESSION_STORE_MISS) {
+      return executionWorkerUnavailableHostResult;
     }
+    throw new Error(`[AilyChat][RuntimeHost] Host command is not implemented by the host service: ${method}.`);
+  }
 
-    return this.ownerController.dispatchCommand(method, args);
+  handleAttachView(event, args) {
+    const state = this.hostSessionStore.attachView(args && args[0], args && args[1], event && event.sender, args && args[2]);
+    this.broadcastSessionState('session-state', state);
+    this.replayTranscriptForAttachedSession(state && state.sessionId);
+    this.replayPendingInteractionForAttachedSession(state && state.sessionId);
+    this.replayViewRequestsForAttachedSession(state && state.sessionId);
+    this.replayResourceRequestsForAttachedSession(state && state.sessionId);
+    return state;
+  }
+
+  handleDetachView(args) {
+    const state = this.hostSessionStore.detachView(args && args[0], args && args[1]);
+    if (state) {
+      this.broadcastSessionState('session-state', state);
+    }
+    return undefined;
   }
 
   async handleSubmitTurn(args) {
-    if (!this.ownerController.hasUsableOwner()) {
-      throw new Error('[AilyChat][RuntimeHost] No registered host runtime owner.');
-    }
-
-    const runningState = this.hostMirror.beginSubmittedTurn(args && args[0]);
+    const request = args && args[0];
+    const runningState = this.hostSessionStore.beginSubmittedTurn(request);
     this.broadcastSessionState('runtime-status', runningState);
-    this.ownerController.dispatchCommand('submitTurn', args)
-      .catch(error => {
-        const failedState = this.hostMirror.failSubmittedTurn(runningState.sessionId);
-        if (failedState) {
-          this.broadcastRuntimeError(runningState.sessionId, error, failedState.transcriptRevision);
-          this.broadcastSessionState('runtime-status', failedState);
-        }
-      });
-    return this.hostMirror.buildSessionState(runningState.sessionId);
+    this.replayTranscriptForAttachedSession(runningState.sessionId);
+    const startTurnCommand = {
+      sessionId: runningState.sessionId,
+      turnId: runningState.activeTurnId,
+      request,
+      executionContext: {
+        selectedMode: runningState.selectedMode ?? null,
+        providerOptions: runningState.providerOptions ?? null,
+        transcriptRevision: Number(runningState.transcriptRevision) || 0,
+      },
+    };
+    if (!this.dispatchExecutionWorkerCommandIfAvailable('startTurn', [startTurnCommand], runningState.sessionId, {
+      failSubmittedTurnOnError: true,
+      unavailableMessage: '[AilyChat][RuntimeHost] No registered execution worker.',
+    })) {
+      const error = new Error('[AilyChat][RuntimeHost] No registered execution worker.');
+      error.code = 'execution_worker_unavailable';
+      error.retryable = true;
+      this.failSubmittedTurnWithError(runningState.sessionId, error);
+    }
+    return this.hostSessionStore.buildSessionState(runningState.sessionId);
   }
 
-  handleOwnerResponse(event, payload = {}) {
+  handleStopTurn(args) {
+    const sessionId = normalizeSessionId(args && args[0]);
+    const previousState = this.hostSessionStore.buildSessionState(sessionId);
+    const stoppedState = this.hostSessionStore.stopSession(sessionId);
+    if (stoppedState) {
+      this.broadcastSessionState('runtime-status', stoppedState);
+    }
+    this.dispatchExecutionWorkerCommandIfAvailable('stopTurn', [{
+      sessionId,
+      turnId: previousState && previousState.activeTurnId,
+    }], sessionId);
+    return undefined;
+  }
+
+  handleDisposeSession(args) {
+    const sessionId = normalizeSessionId(args && args[0]);
+    const disposedState = this.hostSessionStore.disposeSession(sessionId);
+    if (disposedState) {
+      this.broadcastSessionState('runtime-status', disposedState);
+    }
+    this.dispatchExecutionWorkerCommandIfAvailable('disposeSessionResources', [{ sessionId }], sessionId);
+    return undefined;
+  }
+
+  async handleResolveInteraction(args) {
+    const request = args && args[0];
+    const sessionId = normalizeSessionId(request && request.sessionId);
+    if (!sessionId) {
+      throw new Error('[AilyChat][RuntimeHost] resolveInteraction requires a session id.');
+    }
+    if (!this.executionWorkerController.hasUsableExecutionWorker()) {
+      throw new Error('[AilyChat][RuntimeHost] No registered host runtime execution worker.');
+    }
+    const hostResolution = this.hostSessionStore.resolveInteractionRequest(request);
+    const hostEvents = Array.isArray(hostResolution.events) ? hostResolution.events : [];
+    for (const hostEvent of hostEvents) {
+      if (hostEvent) {
+        this.broadcastHostEvent(hostEvent);
+      }
+    }
+    const workerSnapshot = await this.executionWorkerController.dispatchCommand('resolveInteraction', [{
+      sessionId,
+      interactionId: typeof request.id === 'string' ? request.id : '',
+      request,
+    }]);
+    return workerSnapshot || hostResolution.snapshot;
+  }
+
+  handleRecordResourceRequest(args) {
+    const request = args && args[0];
+    const sessionId = normalizeSessionId(request && request.sessionId);
+    if (!sessionId) {
+      throw new Error('[AilyChat][RuntimeHost] recordResourceRequest requires a session id.');
+    }
+    const event = this.hostSessionStore.cacheResourceRequestEvent({
+      kind: 'resource-request',
+      sessionId,
+      request: {
+        ...request,
+        sessionId,
+      },
+    });
+    if (event) {
+      this.broadcastHostEvent(event);
+    }
+    return event;
+  }
+
+  async handleRequestResourceOperation(args) {
+    const request = args && args[0] && typeof args[0] === 'object' ? args[0] : {};
+    const sessionId = normalizeSessionId(request && request.sessionId);
+    const kind = this.normalizeResourceOperationKind(request && request.kind);
+    if (!sessionId) {
+      throw new Error('[AilyChat][RuntimeHost] requestResourceOperation requires a session id.');
+    }
+    if (!kind) {
+      throw new Error('[AilyChat][RuntimeHost] requestResourceOperation requires a resource kind.');
+    }
+
+    const id = this.normalizeResourceOperationId(request && request.id, kind);
+    const baseRequest = {
+      id,
+      sessionId,
+      kind,
+      ...(typeof request.label === 'string' && request.label.trim() ? { label: request.label.trim() } : {}),
+      ...(typeof request.detail === 'string' && request.detail.trim() ? { detail: request.detail.trim() } : {}),
+      ...(request.resource && typeof request.resource === 'object' ? { resource: request.resource } : {}),
+    };
+    const startedEvent = this.recordHostResourceRequest({
+      ...baseRequest,
+      phase: 'started',
+    });
+    if (!startedEvent) {
+      throw new Error(`[AilyChat][RuntimeHost] Unsupported resource operation kind: ${kind}.`);
+    }
+
     try {
-      this.ownerController.handleOwnerResponse(event, payload);
+      if (!this.resourceOperationHandler) {
+        const result = await this.dispatchResourceOperationToRegisteredHandler({
+          ...request,
+          id,
+          sessionId,
+          kind,
+        });
+        this.recordHostResourceRequest({
+          ...baseRequest,
+          phase: 'completed',
+        });
+        return {
+          id,
+          sessionId,
+          kind,
+          ok: true,
+          result,
+        };
+      }
+      const result = await this.resourceOperationHandler({
+        ...request,
+        id,
+        sessionId,
+        kind,
+      });
+      this.recordHostResourceRequest({
+        ...baseRequest,
+        phase: 'completed',
+      });
+      return {
+        id,
+        sessionId,
+        kind,
+        ok: true,
+        result,
+      };
     } catch (error) {
-      console.warn('[AilyChat][RuntimeHost] Ignored owner response:', error.message);
+      this.recordHostResourceRequest({
+        ...baseRequest,
+        phase: 'failed',
+        error: this.toResourceOperationError(error),
+      });
+      throw error;
     }
   }
 
-  handleOwnerEvent(event, payload = {}) {
+  dispatchResourceOperationToRegisteredHandler(request) {
+    const resourceHandlerWebContents = this.readResourceOperationHandlerWebContents();
+    if (!resourceHandlerWebContents) {
+      const error = new Error(`[AilyChat][RuntimeHost] No host resource operation handler registered for ${request.kind}.`);
+      error.code = 'resource_operation_handler_unavailable';
+      error.retryable = true;
+      throw error;
+    }
+
+    const requestId = this.nextResourceOperationCommandId(request.kind);
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pendingResourceOperationCommands.delete(requestId);
+        reject(new Error(`[AilyChat][RuntimeHost] Runtime resource operation timed out: ${request.kind}`));
+      }, this.resourceOperationCommandTimeoutMs);
+
+      this.pendingResourceOperationCommands.set(requestId, { resolve, reject, timer, request });
+      resourceHandlerWebContents.send(RESOURCE_HANDLER_COMMAND_CHANNEL, { requestId, request });
+    });
+  }
+
+  handleResourceOperationHandlerResponse(event, payload = {}) {
     try {
-      this.ownerController.assertRegisteredOwnerSender(event);
-      this.hostMirror.cacheHostEvent(payload);
-      this.broadcastHostEvent(payload);
+      this.assertRegisteredResourceHandlerSender(event);
+      const requestId = typeof payload.requestId === 'string' ? payload.requestId : '';
+      const pending = this.pendingResourceOperationCommands.get(requestId);
+      if (!pending) {
+        return;
+      }
+
+      clearTimeout(pending.timer);
+      this.pendingResourceOperationCommands.delete(requestId);
+      if (payload.ok === false) {
+        const error = new Error(payload.error?.message || '[AilyChat][RuntimeHost] Runtime resource operation failed.');
+        if (payload.error?.code) {
+          error.code = payload.error.code;
+        }
+        if (typeof payload.error?.retryable === 'boolean') {
+          error.retryable = payload.error.retryable;
+        }
+        pending.reject(error);
+        return;
+      }
+      pending.resolve(payload.result);
     } catch (error) {
-      console.warn('[AilyChat][RuntimeHost] Ignored owner event:', error.message);
+      console.warn('[AilyChat][RuntimeHost] Ignored resource handler response:', error.message);
+    }
+  }
+
+  clearResourceOperationHandlerIfMatches(webContentsId) {
+    if (!this.resourceOperationHandlerRenderer || this.resourceOperationHandlerRenderer.webContentsId !== webContentsId) {
+      return;
+    }
+    this.resourceOperationHandlerRenderer = null;
+    const error = new Error('[AilyChat][RuntimeHost] Registered runtime resource handler was destroyed.');
+    error.code = 'resource_handler_lost';
+    error.retryable = true;
+    for (const [requestId, pending] of this.pendingResourceOperationCommands) {
+      clearTimeout(pending.timer);
+      pending.reject(error);
+      this.pendingResourceOperationCommands.delete(requestId);
+    }
+  }
+
+  assertResourceHandlerSender(event) {
+    const senderWindow = event && event.sender ? this.BrowserWindow.fromWebContents(event.sender) : null;
+    if (this.mainWindowRef && senderWindow !== this.mainWindowRef) {
+      throw new Error('[AilyChat][RuntimeHost] Runtime resource handler must be registered by the host main window.');
+    }
+    if (!event || !event.sender) {
+      throw new Error('[AilyChat][RuntimeHost] Runtime resource handler registration requires a sender.');
+    }
+  }
+
+  assertRegisteredResourceHandlerSender(event) {
+    if (!this.resourceOperationHandlerRenderer
+      || !event
+      || !event.sender
+      || this.resourceOperationHandlerRenderer.webContentsId !== event.sender.id) {
+      throw new Error('[AilyChat][RuntimeHost] Runtime resource handler message came from a non-resource-handler renderer.');
+    }
+  }
+
+  readResourceOperationHandlerWebContents() {
+    if (!this.resourceOperationHandlerRenderer || !isUsableWebContents(this.resourceOperationHandlerRenderer.webContents)) {
+      if (this.resourceOperationHandlerRenderer) {
+        this.clearResourceOperationHandlerIfMatches(this.resourceOperationHandlerRenderer.webContentsId);
+      }
+      return null;
+    }
+    return this.resourceOperationHandlerRenderer.webContents;
+  }
+
+  nextResourceOperationCommandId(kind) {
+    this.resourceOperationCommandSeed += 1;
+    return `chat_runtime_resource_${kind}_${Date.now().toString(36)}_${this.resourceOperationCommandSeed.toString(36)}`;
+  }
+
+  recordHostResourceRequest(request) {
+    const sessionId = normalizeSessionId(request && request.sessionId);
+    if (!sessionId) {
+      return null;
+    }
+    const event = this.hostSessionStore.cacheResourceRequestEvent({
+      kind: 'resource-request',
+      sessionId,
+      request: {
+        ...request,
+        sessionId,
+      },
+    });
+    if (event) {
+      this.broadcastHostEvent(event);
+    }
+    return event;
+  }
+
+  normalizeResourceOperationKind(kind) {
+    return typeof kind === 'string' ? kind.trim() : '';
+  }
+
+  normalizeResourceOperationId(id, kind) {
+    if (typeof id === 'string' && id.trim()) {
+      return id.trim();
+    }
+    this.resourceOperationSeed += 1;
+    return `resource_operation_${kind}_${Date.now().toString(36)}_${this.resourceOperationSeed.toString(36)}`;
+  }
+
+  toResourceOperationError(error) {
+    const maybeError = error || {};
+    return {
+      code: typeof maybeError.code === 'string' ? maybeError.code : undefined,
+      message: typeof maybeError.message === 'string'
+        ? maybeError.message
+        : String(error || 'Resource operation failed.'),
+      retryable: typeof maybeError.retryable === 'boolean' ? maybeError.retryable : undefined,
+    };
+  }
+
+  dispatchExecutionWorkerCommandIfAvailable(method, args, sessionId, options = {}) {
+    if (!this.executionWorkerController.hasUsableExecutionWorker()) {
+      return false;
+    }
+    this.executionWorkerController.dispatchCommand(method, args)
+      .catch(error => {
+        console.error('[AilyChat][RuntimeHost] Execution worker command dispatch failed:', {
+          method,
+          sessionId,
+          message: error && error.message ? error.message : String(error || 'Unknown execution worker error'),
+          code: error && typeof error.code === 'string' ? error.code : undefined,
+          stack: error && error.stack ? error.stack : undefined,
+        });
+        if (options.failSubmittedTurnOnError) {
+          this.failSubmittedTurnWithError(sessionId, error);
+          return;
+        }
+        this.broadcastRuntimeError(sessionId, error);
+      });
+    return true;
+  }
+
+  failSubmittedTurnWithError(sessionId, error) {
+    const transcript = this.hostSessionStore.markSubmittedTurnFailed(sessionId, error);
+    const failedState = this.hostSessionStore.failSubmittedTurn(sessionId);
+    if (!failedState) {
+      return;
+    }
+    if (transcript) {
+      this.replayTranscriptForAttachedSession(failedState.sessionId);
+    }
+    this.broadcastRuntimeError(failedState.sessionId, error, failedState.transcriptRevision);
+    this.broadcastSessionState('runtime-status', failedState);
+  }
+
+  handleExecutionWorkerResponse(event, payload = {}) {
+    try {
+      this.executionWorkerController.handleExecutionWorkerResponse(event, payload);
+    } catch (error) {
+      console.warn('[AilyChat][RuntimeHost] Ignored execution worker response:', error.message);
+    }
+  }
+
+  handleExecutionWorkerLost(error) {
+    const failedStates = this.hostSessionStore.failRunningTurns();
+    for (const failedState of failedStates) {
+      this.broadcastRuntimeError(failedState.sessionId, error, failedState.transcriptRevision);
+      this.broadcastSessionState('runtime-status', failedState);
+    }
+  }
+
+  handleExecutionWorkerEvent(event, payload = {}) {
+    try {
+      this.executionWorkerController.assertRegisteredExecutionWorkerSender(event);
+      console.log('[AilyChat][ExecutionWorkerEventIn]', JSON.stringify(summarizeExecutionWorkerPayload(payload)));
+      const canonicalEvents = this.hostSessionStore.cacheExecutionWorkerEvent(payload);
+      const eventList = Array.isArray(canonicalEvents) ? canonicalEvents : [canonicalEvents];
+      console.log('[AilyChat][ExecutionWorkerEventOut]', JSON.stringify({
+        sourceKind: typeof payload?.kind === 'string' ? payload.kind : undefined,
+        sessionId: typeof payload?.sessionId === 'string' ? payload.sessionId : undefined,
+        turnId: typeof payload?.turnId === 'string' ? payload.turnId : undefined,
+        canonicalEvents: eventList.filter(Boolean).map(item => summarizeCanonicalHostEvent(item)),
+        dropped: !eventList.some(Boolean),
+      }));
+      for (const canonicalEvent of eventList) {
+        if (canonicalEvent) {
+          this.broadcastHostEvent(canonicalEvent);
+        }
+      }
+    } catch (error) {
+      console.warn('[AilyChat][RuntimeHost] Ignored execution worker event:', error.message);
     }
   }
 
@@ -189,12 +729,60 @@ class ChatRuntimeHostProcessService {
     if (!sessionId) {
       return;
     }
-    for (const webContents of this.hostMirror.readAttachedViewWebContents(sessionId)) {
+    for (const webContents of this.hostSessionStore.readAttachedViewWebContents(sessionId)) {
       try {
         webContents.send(HOST_EVENT_CHANNEL, payload);
       } catch (error) {
         console.warn('[AilyChat][RuntimeHost] Failed to send host event to attached view:', error.message);
       }
+    }
+  }
+
+  replayViewRequestsForAttachedSession(sessionId) {
+    const normalizedSessionId = normalizeSessionId(sessionId);
+    if (!normalizedSessionId) {
+      return;
+    }
+    for (const event of this.hostSessionStore.readViewRequestEvents(normalizedSessionId)) {
+      this.broadcastHostEventToAttachedViews(event);
+    }
+  }
+
+  replayTranscriptForAttachedSession(sessionId) {
+    const normalizedSessionId = normalizeSessionId(sessionId);
+    if (!normalizedSessionId) {
+      return;
+    }
+    const transcript = this.hostSessionStore.buildTranscriptSnapshot(normalizedSessionId);
+    if (!transcript || (!Array.isArray(transcript.turnResponses) || transcript.turnResponses.length === 0)) {
+      return;
+    }
+    this.broadcastHostEventToAttachedViews({
+      kind: 'transcript',
+      sessionId: normalizedSessionId,
+      revision: Number(transcript.revision) || 0,
+      transcript,
+    });
+  }
+
+  replayPendingInteractionForAttachedSession(sessionId) {
+    const normalizedSessionId = normalizeSessionId(sessionId);
+    if (!normalizedSessionId) {
+      return;
+    }
+    const event = this.hostSessionStore.buildPendingInteractionEvent(normalizedSessionId);
+    if (event) {
+      this.broadcastHostEventToAttachedViews(event);
+    }
+  }
+
+  replayResourceRequestsForAttachedSession(sessionId) {
+    const normalizedSessionId = normalizeSessionId(sessionId);
+    if (!normalizedSessionId) {
+      return;
+    }
+    for (const event of this.hostSessionStore.readResourceRequestEvents(normalizedSessionId)) {
+      this.broadcastHostEventToAttachedViews(event);
     }
   }
 
@@ -206,6 +794,7 @@ class ChatRuntimeHostProcessService {
       case 'transcript':
       case 'interaction':
       case 'view-request':
+      case 'resource-request':
       case 'error':
         return true;
       default:
@@ -218,3 +807,5 @@ module.exports = {
   ChatRuntimeHostProcessService,
   channels,
 };
+
+

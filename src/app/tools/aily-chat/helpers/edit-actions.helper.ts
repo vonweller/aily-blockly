@@ -6,7 +6,7 @@
  * - restoreToCheckpoint（还原到指定对话检查点�?
  * - editAndResendFromTurn（编辑并重发�?
  * - regenerateTurn（重新生成）
- * - ensureAbsExport / saveCheckpointToDisk / reloadAbsWorkspace（内部辅助）
+ * - reloadAbsWorkspace（内部辅助）
  *
  * �?ChatEngineService 中提取（Phase 4），减轻后者的体积�?
  */
@@ -21,7 +21,10 @@ import type {
 } from '../core/chat-context';
 import { AilyHost } from '../core/host';
 import { ChatViewWriteBridge, type ChatViewWriteBridgeContext } from './chat-view-write-bridge';
-import { syncAbsFileHandler } from '../tools/syncAbsFileTool';
+import {
+  syncAbsFileHandler,
+  type SyncAbsInvocationContext,
+} from '../tools/syncAbsFileTool';
 import type { TurnRequest, TurnResponseTurn } from 'aily-lex/browser';
 import type { ResourceItem } from '../core/chat-types';
 import type { HostSessionSaveTarget } from './host-session-save-bridge';
@@ -233,38 +236,6 @@ export class EditActionsHelper {
   // ==================== 内部辅助 ====================
 
   /**
-   * 确保 absAutoSyncService 已初始化并执行导�?
-   */
-  ensureAbsExport(): void {
-    const projectPath = this.ctx.getCurrentProjectPath()
-      || AilyHost.get().project.currentProjectPath
-      || AilyHost.get().project.projectRootPath;
-    if (projectPath) {
-      this.ctx.absAutoSyncService.initialize(projectPath);
-    }
-    if (typeof this.ctx.absAutoSyncService.scheduleSessionStartExport === 'function') {
-      this.ctx.absAutoSyncService.scheduleSessionStartExport();
-      return;
-    }
-    this.ctx.absAutoSyncService.exportToAbs().catch((err: any) => {
-      console.warn('[ChatEngine] ABS 自动导出失败:', err);
-    });
-  }
-
-  /**
-   * Turn 开始前提交并持久化前一轮的 checkpoint 数据到磁盘�?
-   * 确保前一轮的快照不因崩溃而丢失�?
-   */
-  saveCheckpointToDisk(): void {
-    if (this.ctx.editCheckpointService.getTotalEditCount() === 0) return;
-    try {
-      this.ctx.editCheckpointService.commitCurrentTurn();
-    } catch (err) {
-      console.warn('[ChatEngine] checkpoint commit before turn failed:', err);
-    }
-  }
-
-  /**
    * 回滚/还原后重新同�?ABS �?Blockly 工作区�?
    */
   private async reloadAbsWorkspace(): Promise<void> {
@@ -284,7 +255,8 @@ export class EditActionsHelper {
         { operation: 'import' },
         AilyHost.get().project,
         fsCompat,
-        this.ctx.absAutoSyncService
+        this.ctx.absAutoSyncService,
+        this.createReloadAbsWorkspaceInvocationContext(projectPath),
       );
       if (result.is_error) {
         console.warn('[reloadAbsWorkspace] ABS 导入失败:', result.content);
@@ -292,6 +264,17 @@ export class EditActionsHelper {
     } catch (err) {
       console.warn('[reloadAbsWorkspace] ABS 导入异常:', err);
     }
+  }
+
+  private createReloadAbsWorkspaceInvocationContext(_projectPath: string): SyncAbsInvocationContext {
+    const sessionId = this.resolveCurrentSessionResource();
+    if (!sessionId) {
+      throw new Error('[AilyChat][EditActions] reloadAbsWorkspace requires a host session resource.');
+    }
+    return {
+      sessionId,
+      runOutsideAngular: operation => this.ctx.ngZone.runOutsideAngular(operation),
+    };
   }
 
   private async restoreCheckpointSnapshot(

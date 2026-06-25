@@ -1,7 +1,7 @@
 import { Injectable } from '@angular/core';
 import { Subject } from 'rxjs';
 
-import type { TurnResponseTurn } from 'aily-lex/browser';
+import type { SessionSnapshot, TurnResponseTurn } from 'aily-lex/browser';
 import {
   DEFAULT_CHAT_SESSION_TYPE,
   LOCAL_CHAT_SESSION_TYPE,
@@ -9,7 +9,10 @@ import {
   type ChatSelectedMode,
 } from '../core/chat-mode';
 import type { ChatSessionTitleSource } from '../core/chat-session-title';
-import type { HostTurnResponseState } from '../helpers/host-turn-response-state';
+import {
+  buildHostProjectionStateFromPersistedRecord,
+  type HostTurnResponseState,
+} from '../helpers/host-turn-response-state';
 import type { PendingFollowupRequest } from '../helpers/chat-pending-request';
 import type { HostSessionProviderOptions } from '../helpers/host-session-input-state';
 import type { AuthQuotaInfo } from './auth-quota-state.service';
@@ -20,6 +23,7 @@ import type { RequestQuotaServiceState } from './request-quota-state.service';
 import { buildSessionTurnOwnerDiagnostics } from '../helpers/session-turn-owner-diagnostics';
 import { isAilyCategoryDebugEnabled } from '../core/chat-debug-flags';
 import { ChatPerformanceTracer } from './chat-perf-tracer';
+import { cloneSessionRequestContextSnapshot } from '../helpers/turn-request-prompt-context';
 
 export type ChatSessionRuntimeStatus = 'in_progress' | 'needs_input' | 'completed' | 'cancelled' | 'failed';
 
@@ -118,6 +122,8 @@ export interface ChatSessionRuntimeState {
   readonly turnResponses: readonly TurnResponseTurn[];
   readonly hostProjectionState: HostTurnResponseState | null;
   readonly liveMetadata?: ChatSessionRuntimeLiveMetadata;
+  readonly requestContext?: NonNullable<SessionSnapshot['requestContext']>;
+  readonly activeSkillNames?: readonly string[];
   readonly pendingFollowupRequests?: readonly PendingFollowupRequest[];
   readonly yieldRequested?: boolean;
   readonly status?: ChatSessionRuntimeStatus;
@@ -247,6 +253,8 @@ export type ChatSessionRuntimeStatePatch = Omit<
 > & {
   readonly turnResponses?: readonly TurnResponseTurn[] | null | undefined;
   readonly hostProjectionState?: HostTurnResponseState | null | undefined;
+  readonly requestContext?: NonNullable<SessionSnapshot['requestContext']> | null | undefined;
+  readonly activeSkillNames?: readonly string[] | null | undefined;
   readonly pendingFollowupRequests?: readonly PendingFollowupRequest[] | null | undefined;
   readonly yieldRequested?: boolean | null | undefined;
   readonly status?: ChatSessionRuntimeStatus | null | undefined;
@@ -337,6 +345,12 @@ export class ChatSessionRuntimeStoreService {
     const nextPendingFollowupRequests = state.pendingFollowupRequests !== undefined
       ? this.clonePendingFollowupRequests(state.pendingFollowupRequests ?? undefined)
       : previousState?.pendingFollowupRequests;
+    const nextRequestContext = state.requestContext !== undefined
+      ? cloneSessionRequestContextSnapshot(state.requestContext ?? undefined)
+      : previousState?.requestContext;
+    const nextActiveSkillNames = state.activeSkillNames !== undefined
+      ? this.cloneActiveSkillNames(state.activeSkillNames ?? undefined)
+      : previousState?.activeSkillNames;
     const nextYieldRequested = state.yieldRequested !== undefined
       ? state.yieldRequested === true
       : previousState?.yieldRequested === true;
@@ -409,6 +423,8 @@ export class ChatSessionRuntimeStoreService {
         debugSummary: nextDebugSummary,
         selectedMode: nextSelectedMode,
       }),
+      ...(nextRequestContext ? { requestContext: nextRequestContext } : {}),
+      ...(nextActiveSkillNames ? { activeSkillNames: nextActiveSkillNames } : {}),
       ...(nextPendingFollowupRequests?.length ? { pendingFollowupRequests: nextPendingFollowupRequests } : {}),
       ...(nextYieldRequested ? { yieldRequested: true } : {}),
       ...(nextStatus ? { status: nextStatus } : {}),
@@ -470,6 +486,35 @@ export class ChatSessionRuntimeStoreService {
     this.replaceRuntimeState(sessionId, { turnResponses }, {
       reason: 'transcript',
       highFrequency: true,
+    });
+  }
+
+  appendOrReplaceTurnResponse(
+    sessionId: string | null | undefined,
+    turnResponse: TurnResponseTurn | null | undefined,
+    hostProjectionState: HostTurnResponseState | null,
+    options?: ChatSessionRuntimeChangeOptions,
+  ): void {
+    const normalizedSessionId = this.normalizeSessionId(sessionId);
+    const normalizedTurnId = typeof turnResponse?.turnId === 'string'
+      ? turnResponse.turnId.trim()
+      : '';
+    if (!normalizedSessionId || !turnResponse || !normalizedTurnId) {
+      return;
+    }
+
+    const previousTurnResponses = this.runtimeStates.get(normalizedSessionId)?.turnResponses ?? [];
+    const nextTurnResponses = this.appendOrReplaceTurnResponseInList(previousTurnResponses, turnResponse);
+    const nextHostProjectionState = nextTurnResponses.length > 0
+      ? buildHostProjectionStateFromPersistedRecord({ turnResponses: nextTurnResponses })
+      : hostProjectionState;
+    this.replaceRuntimeState(normalizedSessionId, {
+      turnResponses: nextTurnResponses,
+      hostProjectionState: nextHostProjectionState,
+    }, options ?? {
+      reason: 'live_transcript',
+      highFrequency: true,
+      listAffecting: false,
     });
   }
 
@@ -588,6 +633,28 @@ export class ChatSessionRuntimeStoreService {
       default:
         return 'unknown';
     }
+  }
+
+  private appendOrReplaceTurnResponseInList(
+    turnResponses: readonly TurnResponseTurn[],
+    turnResponse: TurnResponseTurn,
+  ): readonly TurnResponseTurn[] {
+    const normalizedTurnId = typeof turnResponse.turnId === 'string'
+      ? turnResponse.turnId.trim()
+      : '';
+    if (!normalizedTurnId) {
+      return turnResponses;
+    }
+
+    const nextTurnResponses = [...turnResponses];
+    const existingIndex = nextTurnResponses.findIndex(turn => turn.turnId === normalizedTurnId);
+    if (existingIndex >= 0) {
+      nextTurnResponses[existingIndex] = turnResponse;
+      return nextTurnResponses;
+    }
+
+    nextTurnResponses.push(turnResponse);
+    return nextTurnResponses;
   }
 
   private traceRequestStateTransition(
@@ -981,6 +1048,17 @@ export class ChatSessionRuntimeStoreService {
 
   private cloneSelectedMode(selectedMode: ChatSelectedMode): ChatSelectedMode {
     return { ...selectedMode };
+  }
+
+  private cloneActiveSkillNames(names: readonly string[] | undefined): readonly string[] | undefined {
+    if (!Array.isArray(names)) {
+      return undefined;
+    }
+
+    return names
+      .filter((name): name is string => typeof name === 'string')
+      .map(name => name.trim())
+      .filter(name => name.length > 0);
   }
 
   private clonePendingFollowupRequests(

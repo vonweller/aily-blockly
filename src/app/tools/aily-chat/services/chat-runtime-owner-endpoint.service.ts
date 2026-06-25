@@ -1,8 +1,8 @@
-import { DestroyRef, Injectable, inject } from '@angular/core';
+﻿import { DestroyRef, Injectable, inject } from '@angular/core';
 
 import {
-  registerElectronChatRuntimeOwner,
-  type ElectronChatRuntimeOwnerRegistration,
+  registerElectronChatRuntimeExecutionWorker,
+  type ElectronChatRuntimeExecutionWorkerRegistration,
 } from '../core/electron-chat-runtime-host-transport';
 import {
   CHAT_RUNTIME_OWNER_HOST,
@@ -16,45 +16,51 @@ export class ChatRuntimeOwnerEndpointService {
   private readonly runtimeOwner = inject<ChatRuntimeOwnerHostPort>(CHAT_RUNTIME_OWNER_HOST);
   private readonly runtimeOwnerHostAdapter = inject<ChatRuntimeOwnerHostAdapterPort>(CHAT_RUNTIME_OWNER_HOST_ADAPTER);
   private readonly destroyRef = inject(DestroyRef);
-  private electronHostOwnerRegistration: ElectronChatRuntimeOwnerRegistration | null = null;
-  private electronHostOwnerRegistrationPromise: Promise<void> | null = null;
+  private electronHostExecutionWorkerRegistration: ElectronChatRuntimeExecutionWorkerRegistration | null = null;
+  private electronHostExecutionWorkerRegistrationPromise: Promise<void> | null = null;
 
   constructor() {
     this.destroyRef.onDestroy(() => {
-      const registration = this.electronHostOwnerRegistration;
-      this.electronHostOwnerRegistration = null;
+      const registration = this.electronHostExecutionWorkerRegistration;
+      this.electronHostExecutionWorkerRegistration = null;
       if (registration) {
         void registration.dispose().catch((error) => {
-          console.error('[AilyChat][RuntimeOwnerEndpoint] Failed to unregister Electron host runtime owner:', error);
+          console.error('[AilyChat][RuntimeOwnerEndpoint] Failed to unregister Electron host execution worker:', error);
         });
       }
     });
   }
 
-  async startElectronHostOwner(ownerId = 'aily-chat-main-runtime-owner'): Promise<void> {
-    const owner = this.runtimeOwnerHostAdapter.ensureBound();
-    const moduleLoaded = await owner.agent.loadModule();
+  async startElectronHostExecutionWorker(executionWorkerId = 'aily-chat-host-execution-worker'): Promise<void> {
+    const runtimeOwner = this.runtimeOwnerHostAdapter.ensureBound();
+    const moduleLoaded = await runtimeOwner.agent.loadModule();
     if (!moduleLoaded) {
-      throw new Error('[AilyChat][RuntimeHost] aily-lex module failed to load in host runtime owner.');
+      throw new Error('[AilyChat][RuntimeHost] aily-lex module failed to load in host execution worker.');
     }
-    await this.registerElectronHostOwner(ownerId);
+    await this.registerElectronHostExecutionWorker(executionWorkerId);
   }
 
-  private async registerElectronHostOwner(ownerId: string): Promise<void> {
-    if (this.electronHostOwnerRegistration) {
+  private async registerElectronHostExecutionWorker(executionWorkerId: string): Promise<void> {
+    if (this.electronHostExecutionWorkerRegistration) {
       return;
     }
-    if (this.electronHostOwnerRegistrationPromise) {
-      return this.electronHostOwnerRegistrationPromise;
+    if (this.electronHostExecutionWorkerRegistrationPromise) {
+      return this.electronHostExecutionWorkerRegistrationPromise;
     }
 
-    this.electronHostOwnerRegistrationPromise = registerElectronChatRuntimeOwner(this.runtimeOwner, ownerId)
+    this.electronHostExecutionWorkerRegistrationPromise = registerElectronChatRuntimeExecutionWorker(
+      this.runtimeOwner,
+      executionWorkerId,
+    )
       .then((registration) => {
-        this.electronHostOwnerRegistration = registration;
+        this.electronHostExecutionWorkerRegistration = registration;
       })
       .finally(() => {
-        this.electronHostOwnerRegistrationPromise = null;
+        this.electronHostExecutionWorkerRegistrationPromise = null;
       });
-    return this.electronHostOwnerRegistrationPromise;
+    return this.electronHostExecutionWorkerRegistrationPromise;
   }
 }
+
+
+

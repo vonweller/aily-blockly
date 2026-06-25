@@ -2,7 +2,10 @@
 const { ipcMain, BrowserWindow, app, screen } = require("electron");
 const { requestWindowAttention } = require('./window-attention');
 const { killCmdProcess, getActiveCmdProcesses } = require('./cmd');
-const { registerChatRuntimeHostIpc } = require('./chat-runtime-host');
+const {
+    registerChatRuntimeHostIpc,
+    startChatRuntimeExecutionWorkerWindow,
+} = require('./chat-runtime-host');
 const { exec, execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
@@ -282,6 +285,11 @@ function terminateAilyProcess() {
 
 function registerWindowHandlers(mainWindow) {
     registerChatRuntimeHostIpc(mainWindow);
+    try {
+        startChatRuntimeExecutionWorkerWindow();
+    } catch (e) {
+        console.error('[AilyChat][RuntimeHost] 启动执行 worker 窗口失败:', e);
+    }
 
     // 添加一个映射来存储已打开的窗口
     const openWindows = new Map();

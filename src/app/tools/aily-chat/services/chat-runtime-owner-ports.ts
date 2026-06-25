@@ -1,4 +1,4 @@
-import { InjectionToken } from '@angular/core';
+﻿import { InjectionToken } from '@angular/core';
 import type { TurnResponseTurn } from 'aily-lex/browser';
 
 import type {
@@ -7,28 +7,21 @@ import type {
 } from '../core/chat-agent-runtime-mode';
 import type {
   ChatSelectedMode,
-  ChatModeId,
 } from '../core/chat-mode';
 import type { ChatRuntimeOwnerScheduler } from '../core/chat-runtime-owner-scheduler';
 import type { AskUserFullResponse, AskUserPresentationContext, AskUserQuestion } from '../core/ask-user';
 import type {
-  ChatRuntimeHostAttachViewOptions,
   ChatRuntimeHostInteractionRequest,
   ChatRuntimeHostInteractionSnapshot,
-  ChatRuntimeHostNotificationSeverity,
   ChatRuntimeHost,
+  ChatRuntimeExecutionWorker,
   ChatRuntimeHostSessionId,
   ChatRuntimeHostSessionState,
   ChatRuntimeHostSubmitReadiness,
   ChatRuntimeHostSubmitRequest,
   ChatRuntimeHostTranscriptSnapshot,
-  ChatRuntimeHostTodoItem,
-  ChatRuntimeHostViewRequest,
   ChatRuntimeHostViewId,
 } from '../core/chat-runtime-host-contract';
-import type { ChatRuntimeTurnResponseSyncOptions } from '../core/chat-runtime-projection-policy';
-import type { ChatMessage } from '../core/chat-types';
-import type { ChatPartStore } from '../core/chat-part-store';
 import type { HostSessionSaveTarget } from '../helpers/host-session-save-bridge';
 import type { HostSessionProviderOptions } from '../helpers/host-session-input-state';
 import type { ToolApprovalAction, ToolApprovalRequest, ToolApprovalScope } from '../helpers/tool-approval-ui';
@@ -46,9 +39,10 @@ import type {
   HostResponseProjection,
 } from '../helpers/host-turn-response-state';
 import type { LexOwnerContext, LexOwnerFacade } from '../helpers/lex-stream.helper';
+import type { UserInteractionToolApprovalPolicy } from '../helpers/user-interaction.helper';
 import type { ChatSessionLexPostTurnResources } from './chat-session-lex-post-turn-resource-factory.service';
 import type { ChatSessionLexRequestCompletedInput } from './chat-session-runtime-completion-queue-core';
-import type { ChatListItem } from './chat-history.service';
+import type { ChatListItem, LiveHostSessionRecord } from './chat-history.service';
 import type { ChatSessionRuntimeHandlePatch } from './chat-session-runtime-registry-core';
 import type { ChatSessionRuntimeProjectionPatch } from './chat-session-runtime-projection-core';
 import type {
@@ -58,10 +52,6 @@ import type {
 } from './chat-session-runtime-store.service';
 import type { ChatRuntimeOwnerContextAdapter } from './chat-runtime-owner-context.service';
 import type { ChatSessionTurnOwnerPolicyOptions } from './chat-session-model-store.service';
-
-export interface ChatRuntimeOwnerBindingPort {
-  bindAdapter(adapter: ChatRuntimeOwnerContextAdapter): LexOwnerFacade;
-}
 
 export interface ChatRuntimeOwnerContextMaterializerPort {
   bindAdapter(adapter: ChatRuntimeOwnerContextAdapter): LexOwnerContext;
@@ -75,16 +65,10 @@ export interface ChatRuntimeOwnerHostAdapterPort {
   ensureBound(): LexOwnerFacade;
 }
 
-export type ChatRuntimeOwnerHostPort = ChatRuntimeHost;
+export type ChatRuntimeOwnerHostPort = ChatRuntimeExecutionWorker;
 
 export interface ChatRuntimeOwnerEndpointPort {
-  startElectronHostOwner(ownerId?: string): Promise<void>;
-}
-
-export interface ChatRuntimeOwnerWorkspaceEnvironmentPort {
-  readonly currentProjectPath: string;
-  readonly projectRootPath: string;
-  readonly projectPath: string;
+  startElectronHostExecutionWorker(executionWorkerId?: string): Promise<void>;
 }
 
 export interface ChatRuntimeOwnerInteractionHostPort {
@@ -92,7 +76,9 @@ export interface ChatRuntimeOwnerInteractionHostPort {
   readSnapshot(sessionId: string): ChatRuntimeHostInteractionSnapshot;
   applyHostSnapshot(
     snapshot: ChatRuntimeHostInteractionSnapshot,
-    remoteResolver: (request: ChatRuntimeHostInteractionRequest) => Promise<ChatRuntimeHostInteractionSnapshot | null>,
+    remoteResolver: (
+      request: Omit<ChatRuntimeHostInteractionRequest, 'viewId' | 'visibleAttachmentGeneration'>,
+    ) => Promise<ChatRuntimeHostInteractionSnapshot | null>,
   ): void;
   presentQuestion(
     sessionId: string,
@@ -148,10 +134,35 @@ export interface ChatRuntimeOwnerInteractionHostPort {
   ): Promise<RuntimeCommandSessionActionResult>;
 }
 
+export interface ChatRuntimeOwnerToolApprovalInput {
+  readonly lexStream: LexOwnerFacade | null | undefined;
+  readonly sessionId: string | null | undefined;
+  readonly defaultSessionId: string;
+  readonly request: ToolApprovalRequest;
+}
+
+export interface ChatRuntimeOwnerToolApprovalPort {
+  handleToolApproval(input: ChatRuntimeOwnerToolApprovalInput): Promise<{ approved: true } | { approved: false; reason?: string }>;
+}
+
+export type ChatRuntimeOwnerToolApprovalPolicyPort = UserInteractionToolApprovalPolicy;
+
 export interface ChatRuntimeOwnerSubmittedTurnLifecyclePort {
   bindOwner(owner: LexOwnerFacade): void;
   prepareSubmittedTurn(request: ChatRuntimeHostSubmitRequest, owner: LexOwnerFacade): Promise<void>;
+  settleSubmittedTurnStartupResources(sessionId?: string | null): Promise<void>;
   completeSubmittedTurn(sessionId?: string | null): Promise<void>;
+}
+
+export interface ChatRuntimeOwnerSubmittedTurnTitleInput {
+  readonly sessionId: string;
+  readonly requestText: string;
+  readonly displayText: string;
+  readonly owner: LexOwnerFacade;
+}
+
+export interface ChatRuntimeOwnerSubmittedTurnTitlePort {
+  prepareSubmittedTurnTitle(input: ChatRuntimeOwnerSubmittedTurnTitleInput): void;
 }
 
 export interface ChatRuntimeOwnerSaveCurrentSessionInput {
@@ -172,17 +183,7 @@ export interface ChatRuntimeOwnerSessionSaveBridgeOptions {
 }
 
 export interface ChatRuntimeOwnerSessionSaveBridgePort {
-  saveCurrentSession(options: ChatRuntimeOwnerSessionSaveBridgeOptions): boolean;
-}
-
-export interface ChatRuntimeOwnerSessionSaveBridgeFactoryInput {
-  readonly sessionId: string;
-  readonly sessionTitle: string;
-  readonly lexStream: LexOwnerFacade;
-}
-
-export interface ChatRuntimeOwnerSessionSaveBridgeFactoryPort {
-  create(input: ChatRuntimeOwnerSessionSaveBridgeFactoryInput): ChatRuntimeOwnerSessionSaveBridgePort;
+  buildLiveHostSessionRecord(options: ChatRuntimeOwnerSessionSaveBridgeOptions): LiveHostSessionRecord | null;
 }
 
 export interface ChatRuntimeOwnerSaveBridgePort {
@@ -231,58 +232,6 @@ export interface ChatRuntimeOwnerStatePort {
   beginRuntimeSessionOwnerScope(sessionId: string): () => void;
 }
 
-export interface ChatRuntimeOwnerHeadlessProjectionPort {
-  readonly partStore: ChatPartStore;
-  readonly viewAdapter: unknown;
-  readonly scrollManager: unknown;
-  readonly list: ChatMessage[];
-  setList(value: ChatMessage[]): void;
-  invalidateHostRequestGraph(): void;
-  triggerSyncDetectChanges(): void;
-}
-
-export interface ChatRuntimeOwnerViewAttachmentPort {
-  attachView(
-    viewId: ChatRuntimeHostViewId,
-    sessionId: ChatRuntimeHostSessionId,
-    options: ChatRuntimeHostAttachViewOptions | null | undefined,
-  ): void;
-  detachView(viewId: ChatRuntimeHostViewId): ChatRuntimeHostSessionId | null;
-  detachSession(sessionId: ChatRuntimeHostSessionId): void;
-  readSessionForView(viewId: ChatRuntimeHostViewId): ChatRuntimeHostSessionId | null;
-  readAttachedViewIds(sessionId: ChatRuntimeHostSessionId): readonly ChatRuntimeHostViewId[];
-  hasAttachedView(sessionId: ChatRuntimeHostSessionId | null | undefined): boolean;
-  readVisibleAttachmentGeneration(sessionId: ChatRuntimeHostSessionId | null | undefined): number | null;
-  isVisibleAttachmentCurrent(
-    sessionId: ChatRuntimeHostSessionId | null | undefined,
-    generation: number | null | undefined,
-  ): boolean;
-}
-
-export interface ChatRuntimeOwnerViewRequestSubscription {
-  dispose(): void;
-}
-
-export interface ChatRuntimeOwnerViewRequestPort {
-  onRequest(listener: (request: ChatRuntimeHostViewRequest) => void): ChatRuntimeOwnerViewRequestSubscription;
-  notify(
-    sessionId: ChatRuntimeHostSessionId | null | undefined,
-    severity: ChatRuntimeHostNotificationSeverity,
-    message: unknown,
-  ): void;
-  syncTodoState(
-    sessionId: ChatRuntimeHostSessionId | null | undefined,
-    items: readonly ChatRuntimeHostTodoItem[],
-  ): void;
-  requestHandoff(input: {
-    readonly sessionId: ChatRuntimeHostSessionId | null | undefined;
-    readonly targetAgent?: string;
-    readonly targetModeId?: ChatModeId;
-    readonly message: string;
-    readonly suggestedInput?: string;
-  }): void;
-}
-
 export interface ChatRuntimeOwnerSessionModelPort {
   readTurnResponses(sessionId: string | null | undefined): readonly TurnResponseTurn[];
   replaceTurnResponses(
@@ -297,43 +246,18 @@ export interface ChatRuntimeOwnerSessionModelPort {
   ): readonly TurnResponseTurn[] | null;
 }
 
-export interface ChatRuntimeOwnerExecutionProjectionInput {
-  readonly saveTarget: HostSessionSaveTarget | null | undefined;
-}
-
-export interface ChatRuntimeOwnerProjectionPatchInput {
-  readonly sessionId: string | null | undefined;
-  readonly patch: ChatSessionRuntimeProjectionPatch;
-  readonly options?: ChatSessionRuntimeChangeOptions;
-}
-
-export interface ChatRuntimeOwnerHandleProjectionInput {
-  readonly sessionId: string | null | undefined;
-  readonly patch: ChatSessionRuntimeHandlePatch;
-}
-
-export interface ChatRuntimeOwnerTurnResponsesProjectionInput {
-  readonly sessionId: string | null | undefined;
-  readonly turnResponses: readonly TurnResponseTurn[] | null | undefined;
-  readonly hostProjectionState: HostTurnResponseState | null;
-  readonly capabilities?: ChatSessionRuntimeCapabilities | null;
-  readonly concurrencyScope?: string | null;
-  readonly projection: ChatRuntimeTurnResponseSyncOptions;
-}
-
-export interface ChatRuntimeOwnerProjectionPort {
-  buildHostProjectionState(turnResponses: readonly TurnResponseTurn[] | null | undefined): HostTurnResponseState | null;
-  projectExecutionRuntimeState(input: ChatRuntimeOwnerExecutionProjectionInput): boolean;
-  projectRuntimeState(input: ChatRuntimeOwnerProjectionPatchInput): boolean;
-  syncHandleState(input: ChatRuntimeOwnerHandleProjectionInput): boolean;
-  syncTurnResponses(input: ChatRuntimeOwnerTurnResponsesProjectionInput): boolean;
-}
-
 export type ChatRuntimeOwnerSchedulerPort = ChatRuntimeOwnerScheduler;
 
 export interface ChatRuntimeOwnerTurnStartupEditLifecyclePort {
-  ensureAbsExport(): void;
-  saveCheckpointToDisk(): void;
+  ensureAbsExport(sessionId: string | null | undefined): void;
+  saveCheckpointToDisk(sessionId: string | null | undefined): void;
+  waitForCheckpointMetadataSettled(sessionId: string | null | undefined): Promise<void>;
+}
+
+export interface ChatRuntimeOwnerWorkspaceEditLifecycleResourcePort {
+  ensureSessionStartAbsExport(sessionId: string | null | undefined, projectPath: string | null | undefined): void;
+  commitCurrentTurn(sessionId: string | null | undefined): Promise<void>;
+  waitForCheckpointMetadataSettled(sessionId: string | null | undefined): Promise<void>;
 }
 
 export interface ChatRuntimeOwnerRerunGateState {
@@ -363,11 +287,6 @@ export interface ChatRuntimeOwnerSessionSnapshotInput {
 export interface ChatRuntimeOwnerHandleProjectionMetadata {
   readonly capabilities?: ChatSessionRuntimeCapabilities;
   readonly concurrencyScope: string | null;
-}
-
-export interface ChatRuntimeOwnerRuntimeStateReaderPort {
-  readSessionRuntimeState(sessionId: string | null | undefined): Readonly<ChatSessionRuntimeState> | undefined;
-  readHandleMetadata(sessionId: string | null | undefined): ChatRuntimeOwnerHandleProjectionMetadata;
 }
 
 export interface ChatRuntimeOwnerRuntimeControllerPort {
@@ -408,6 +327,12 @@ export interface ChatRuntimeOwnerRuntimeControllerPort {
     hostProjectionState: HostTurnResponseState | null,
     options?: ChatSessionRuntimeChangeOptions,
   ): void;
+  syncRuntimeTurnResponse(
+    sessionId: ChatRuntimeHostSessionId,
+    turnResponse: TurnResponseTurn | null | undefined,
+    hostProjectionState: HostTurnResponseState | null,
+    options?: ChatSessionRuntimeChangeOptions,
+  ): void;
   readSessionState(input: ChatRuntimeOwnerSessionSnapshotInput): ChatRuntimeHostSessionState | null;
   buildSessionState(
     input: ChatRuntimeOwnerSessionSnapshotInput,
@@ -421,10 +346,6 @@ export interface ChatRuntimeOwnerRuntimeControllerPort {
   awaitRequestCompletion(sessionId: ChatRuntimeHostSessionId): Promise<void>;
   runWorkspaceFinalizeBoundaryProbe(sessionId: ChatRuntimeHostSessionId): Promise<void>;
 }
-
-export const CHAT_RUNTIME_OWNER_BINDING = new InjectionToken<ChatRuntimeOwnerBindingPort>(
-  'AILY_CHAT_RUNTIME_OWNER_BINDING',
-);
 
 export const CHAT_RUNTIME_OWNER_CONTEXT_MATERIALIZER = new InjectionToken<ChatRuntimeOwnerContextMaterializerPort>(
   'AILY_CHAT_RUNTIME_OWNER_CONTEXT_MATERIALIZER',
@@ -446,24 +367,28 @@ export const CHAT_RUNTIME_OWNER_ENDPOINT = new InjectionToken<ChatRuntimeOwnerEn
   'AILY_CHAT_RUNTIME_OWNER_ENDPOINT',
 );
 
-export const CHAT_RUNTIME_OWNER_WORKSPACE_ENVIRONMENT = new InjectionToken<ChatRuntimeOwnerWorkspaceEnvironmentPort>(
-  'AILY_CHAT_RUNTIME_OWNER_WORKSPACE_ENVIRONMENT',
-);
-
 export const CHAT_RUNTIME_OWNER_INTERACTION_HOST = new InjectionToken<ChatRuntimeOwnerInteractionHostPort>(
   'AILY_CHAT_RUNTIME_OWNER_INTERACTION_HOST',
+);
+
+export const CHAT_RUNTIME_OWNER_TOOL_APPROVAL = new InjectionToken<ChatRuntimeOwnerToolApprovalPort>(
+  'AILY_CHAT_RUNTIME_OWNER_TOOL_APPROVAL',
+);
+
+export const CHAT_RUNTIME_OWNER_TOOL_APPROVAL_POLICY = new InjectionToken<ChatRuntimeOwnerToolApprovalPolicyPort>(
+  'AILY_CHAT_RUNTIME_OWNER_TOOL_APPROVAL_POLICY',
 );
 
 export const CHAT_RUNTIME_OWNER_SUBMITTED_TURN_LIFECYCLE = new InjectionToken<ChatRuntimeOwnerSubmittedTurnLifecyclePort>(
   'AILY_CHAT_RUNTIME_OWNER_SUBMITTED_TURN_LIFECYCLE',
 );
 
-export const CHAT_RUNTIME_OWNER_SAVE_BRIDGE = new InjectionToken<ChatRuntimeOwnerSaveBridgePort>(
-  'AILY_CHAT_RUNTIME_OWNER_SAVE_BRIDGE',
+export const CHAT_RUNTIME_OWNER_SUBMITTED_TURN_TITLE = new InjectionToken<ChatRuntimeOwnerSubmittedTurnTitlePort>(
+  'AILY_CHAT_RUNTIME_OWNER_SUBMITTED_TURN_TITLE',
 );
 
-export const CHAT_RUNTIME_OWNER_SESSION_SAVE_BRIDGE_FACTORY = new InjectionToken<ChatRuntimeOwnerSessionSaveBridgeFactoryPort>(
-  'AILY_CHAT_RUNTIME_OWNER_SESSION_SAVE_BRIDGE_FACTORY',
+export const CHAT_RUNTIME_OWNER_SAVE_BRIDGE = new InjectionToken<ChatRuntimeOwnerSaveBridgePort>(
+  'AILY_CHAT_RUNTIME_OWNER_SAVE_BRIDGE',
 );
 
 export const CHAT_RUNTIME_OWNER_SAVE_TARGET = new InjectionToken<ChatRuntimeOwnerSaveTargetPort>(
@@ -478,24 +403,8 @@ export const CHAT_RUNTIME_OWNER_STATE = new InjectionToken<ChatRuntimeOwnerState
   'AILY_CHAT_RUNTIME_OWNER_STATE',
 );
 
-export const CHAT_RUNTIME_OWNER_HEADLESS_PROJECTION = new InjectionToken<ChatRuntimeOwnerHeadlessProjectionPort>(
-  'AILY_CHAT_RUNTIME_OWNER_HEADLESS_PROJECTION',
-);
-
-export const CHAT_RUNTIME_OWNER_VIEW_ATTACHMENT = new InjectionToken<ChatRuntimeOwnerViewAttachmentPort>(
-  'AILY_CHAT_RUNTIME_OWNER_VIEW_ATTACHMENT',
-);
-
-export const CHAT_RUNTIME_OWNER_VIEW_REQUEST = new InjectionToken<ChatRuntimeOwnerViewRequestPort>(
-  'AILY_CHAT_RUNTIME_OWNER_VIEW_REQUEST',
-);
-
 export const CHAT_RUNTIME_OWNER_SESSION_MODEL = new InjectionToken<ChatRuntimeOwnerSessionModelPort>(
   'AILY_CHAT_RUNTIME_OWNER_SESSION_MODEL',
-);
-
-export const CHAT_RUNTIME_OWNER_PROJECTION = new InjectionToken<ChatRuntimeOwnerProjectionPort>(
-  'AILY_CHAT_RUNTIME_OWNER_PROJECTION',
 );
 
 export const CHAT_RUNTIME_OWNER_SCHEDULER = new InjectionToken<ChatRuntimeOwnerSchedulerPort>(
@@ -506,10 +415,13 @@ export const CHAT_RUNTIME_OWNER_TURN_STARTUP_EDIT_LIFECYCLE = new InjectionToken
   'AILY_CHAT_RUNTIME_OWNER_TURN_STARTUP_EDIT_LIFECYCLE',
 );
 
+export const CHAT_RUNTIME_OWNER_WORKSPACE_EDIT_LIFECYCLE_RESOURCE = new InjectionToken<ChatRuntimeOwnerWorkspaceEditLifecycleResourcePort>(
+  'AILY_CHAT_RUNTIME_OWNER_WORKSPACE_EDIT_LIFECYCLE_RESOURCE',
+);
+
 export const CHAT_RUNTIME_OWNER_RUNTIME_CONTROLLER = new InjectionToken<ChatRuntimeOwnerRuntimeControllerPort>(
   'AILY_CHAT_RUNTIME_OWNER_RUNTIME_CONTROLLER',
 );
 
-export const CHAT_RUNTIME_OWNER_RUNTIME_STATE_READER = new InjectionToken<ChatRuntimeOwnerRuntimeStateReaderPort>(
-  'AILY_CHAT_RUNTIME_OWNER_RUNTIME_STATE_READER',
-);
+
+

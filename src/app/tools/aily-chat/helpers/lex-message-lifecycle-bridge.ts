@@ -123,7 +123,7 @@ export class LexMessageLifecycleBridge {
   }
 
   async finalize(saveTarget?: HostSessionSaveTarget | null): Promise<void> {
-    const resolvedSaveTarget = saveTarget ? { ...saveTarget } : null;
+    let resolvedSaveTarget = saveTarget ? { ...saveTarget } : null;
     const visibleResponseHandle = this.currentPartStoreHandle;
     const shouldFinalizeVisibleOwner = this.shouldFinalizeVisibleOwner(resolvedSaveTarget) && !!visibleResponseHandle;
     const finalizeStartedAt = Date.now();
@@ -194,6 +194,9 @@ export class LexMessageLifecycleBridge {
     }
     logFinalizeStage('finalize_compaction');
 
+    resolvedSaveTarget = this.commitTerminalTurnResponseState(resolvedSaveTarget);
+    logFinalizeStage('terminal_response_commit');
+
     this.ctx.ownerScheduler.run(() => {
       this.ctx.isWaiting = false;
       this.ctx.isCompleted = true;
@@ -251,33 +254,16 @@ export class LexMessageLifecycleBridge {
       await yieldToBrowserTask(0);
       logDeferredStage('idle_boundary');
 
-      if (shouldFinalizeVisibleOwner) {
-        try {
-          this.finalizeCurrentTurnResponse?.(this.ctx.isCancelled ? 'cancelled' : 'completed');
-        } catch (error) {
-          console.warn('[LexStream] finalize current turn response failed:', error);
-        }
-      }
-      logDeferredStage('finalize_current_turn_response');
-
-      if (deferredSaveTarget) {
-        // Execution-owned save targets already carry the authoritative session-scoped
-        // turnResponses. Do not let visible-bridge snapshots overwrite detached owner truth.
-        const candidateTurnResponses = Array.isArray(deferredSaveTarget.turnResponses)
-          ? deferredSaveTarget.turnResponses
-          : this.readCurrentTurnResponses?.();
-        if (Array.isArray(candidateTurnResponses)) {
-          deferredSaveTarget.turnResponses = this.normalizeTerminalTurnResponses(candidateTurnResponses);
-        }
-      }
-      logDeferredStage('normalize_terminal_turn_responses');
-
       this.ctx.session.saveCurrentSession(deferredSaveTarget ? { target: deferredSaveTarget } : undefined);
-      this.ctx.syncExecutionRuntimeState?.(deferredSaveTarget);
       logDeferredStage('save_session_dispatch');
 
-      if (!AilyHost.get().electron?.isWindowFocused()) {
-        AilyHost.get().electron?.notify('Aily', '对话已完成');
+      try {
+        const electronHost = AilyHost.get().electron;
+        if (!electronHost?.isWindowFocused()) {
+          electronHost?.notify('Aily', '对话已完成');
+        }
+      } catch (error) {
+        console.warn('[LexStream] completion notification failed:', error);
       }
       logDeferredStage('notify_if_needed');
 
@@ -286,6 +272,32 @@ export class LexMessageLifecycleBridge {
     } catch (error) {
       console.warn('[LexStream] deferred finalize side effects failed:', error);
     }
+  }
+
+  private commitTerminalTurnResponseState(saveTarget: HostSessionSaveTarget | null): HostSessionSaveTarget | null {
+    try {
+      this.finalizeCurrentTurnResponse?.(this.ctx.isCancelled ? 'cancelled' : 'completed');
+    } catch (error) {
+      console.warn('[LexStream] finalize current turn response failed:', error);
+    }
+
+    let committedSaveTarget = saveTarget;
+    if (saveTarget) {
+      // Execution-owned save targets already carry the authoritative session-scoped
+      // turnResponses. Do not let visible-bridge snapshots overwrite detached owner truth.
+      const candidateTurnResponses = Array.isArray(saveTarget.turnResponses)
+        ? saveTarget.turnResponses
+        : this.readCurrentTurnResponses?.();
+      if (Array.isArray(candidateTurnResponses)) {
+        committedSaveTarget = {
+          ...saveTarget,
+          turnResponses: this.normalizeTerminalTurnResponses(candidateTurnResponses),
+        };
+      }
+    }
+
+    this.ctx.syncExecutionRuntimeState?.(committedSaveTarget);
+    return committedSaveTarget;
   }
 
   private shouldFinalizeVisibleOwner(saveTarget: HostSessionSaveTarget | null): boolean {

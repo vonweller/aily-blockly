@@ -4,6 +4,7 @@ import type {
   TurnResponseTurn,
 } from 'aily-lex/browser';
 import {
+  createTurnResponsePartsFromText,
   toTurnResponseStatus,
 } from 'aily-lex/browser';
 
@@ -99,4 +100,47 @@ export function buildTurnResponsesFromSessionHistory(
   }
 
   return turnResponses;
+}
+
+export function buildTurnResponsesFromSessionSnapshot(
+  snapshot: SessionSnapshot | null | undefined,
+  participant = MAIN_AGENT_TYPE,
+): TurnResponseTurn[] {
+  if (!snapshot || !Array.isArray(snapshot.turns)) {
+    return [];
+  }
+
+  return snapshot.turns
+    .map(turn => {
+      const persistedParts = Array.isArray(turn.response.parts) ? turn.response.parts : [];
+      const responseParts = persistedParts.length > 0
+        ? persistedParts
+        : createTurnResponsePartsFromText(turn.response.resultText);
+      const updatedAt = turn.response.updatedAt ?? turn.createdAt;
+      return buildTurnResponseTurn({
+        turnId: turn.id,
+        request: turn.request,
+        rounds: turn.rounds ?? [],
+        usage: turn.usage,
+        requestUsage: turn.responseModel?.requestUsage,
+        participant: turn.response.participant || participant,
+        slashCommand: turn.responseModel?.slashCommand,
+        followups: turn.responseModel?.followups,
+        modelName: getTurnResponseResolvedModelName(turn),
+        modelBillingLabel: turn.responseModel?.modelBillingLabel,
+        modelRouting: cloneTurnResponseModelRouting(turn.responseModel?.modelRouting),
+        quotaSnapshot: turn.responseModel?.quotaSnapshot,
+        usedContext: turn.response.usedContext,
+        contentReferences: turn.response.contentReferences,
+        codeCitations: turn.response.codeCitations,
+        progressMessages: turn.response.progressMessages,
+        status: toTurnResponseStatus(turn.status),
+        terminationReason: turn.terminationReason,
+        parts: responseParts,
+        resultText: turn.response.resultText,
+        createdAt: turn.createdAt,
+        updatedAt,
+      });
+    })
+    .sort((left, right) => left.createdAt - right.createdAt);
 }

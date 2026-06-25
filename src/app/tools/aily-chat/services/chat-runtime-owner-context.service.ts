@@ -1,13 +1,14 @@
-import { Injectable, inject } from '@angular/core';
+import { Injectable, inject, type OnDestroy } from '@angular/core';
 
 import type { LexOwnerContext } from '../helpers/lex-stream.helper';
+import { ChatPartStore } from '../core/chat-part-store';
+import type { ChatMessage } from '../core/chat-types';
 import { AilyChatConfigService } from './aily-chat-config.service';
 import { ChatService } from './chat.service';
 import { ContextBudgetService } from './context-budget.service';
 import { EditCheckpointService } from './edit-checkpoint.service';
 import { McpService } from './mcp.service';
 import { RepetitionDetectionService } from './repetition-detection.service';
-import { UserInteractionHelper } from '../helpers/user-interaction.helper';
 import {
   ChatRuntimeOwnerContextCore,
   createChatRuntimeOwnerContext,
@@ -16,17 +17,11 @@ import {
   type ChatRuntimeOwnerContextAdapter,
 } from './chat-runtime-owner-context-core';
 import {
-  CHAT_RUNTIME_OWNER_HEADLESS_PROJECTION,
-  type ChatRuntimeOwnerHeadlessProjectionPort,
   CHAT_RUNTIME_OWNER_INTERACTION_HOST,
   type ChatRuntimeOwnerInteractionHostPort,
-  CHAT_RUNTIME_OWNER_PROJECTION,
-  type ChatRuntimeOwnerProjectionPort,
   CHAT_RUNTIME_OWNER_RUNTIME_CONTROLLER,
   type ChatRuntimeOwnerContextMaterializerPort,
   type ChatRuntimeOwnerRuntimeControllerPort,
-  CHAT_RUNTIME_OWNER_RUNTIME_STATE_READER,
-  type ChatRuntimeOwnerRuntimeStateReaderPort,
   CHAT_RUNTIME_OWNER_SCHEDULER,
   type ChatRuntimeOwnerSchedulerPort,
   CHAT_RUNTIME_OWNER_SAVE_TARGET,
@@ -37,18 +32,22 @@ import {
   type ChatRuntimeOwnerSessionModelPort,
   CHAT_RUNTIME_OWNER_STATE,
   type ChatRuntimeOwnerStatePort,
+  CHAT_RUNTIME_OWNER_TOOL_APPROVAL,
+  type ChatRuntimeOwnerToolApprovalPort,
   CHAT_RUNTIME_OWNER_TURN_STARTUP_EDIT_LIFECYCLE,
   type ChatRuntimeOwnerTurnStartupEditLifecyclePort,
-  CHAT_RUNTIME_OWNER_VIEW_ATTACHMENT,
-  type ChatRuntimeOwnerViewAttachmentPort,
-  CHAT_RUNTIME_OWNER_VIEW_REQUEST,
-  type ChatRuntimeOwnerViewRequestPort,
 } from './chat-runtime-owner-ports';
+import {
+  buildRuntimeOwnerHostProjectionState,
+  projectExecutionRuntimeStateToRuntimeController,
+  syncHandleStateToRuntimeController,
+  syncTurnResponsesToRuntimeController,
+} from '../helpers/chat-runtime-owner-projection';
 
 export type { ChatRuntimeOwnerContextAdapter } from './chat-runtime-owner-context-core';
 
 @Injectable()
-export class ChatRuntimeOwnerContextService implements ChatRuntimeOwnerContextMaterializerPort {
+export class ChatRuntimeOwnerContextService implements ChatRuntimeOwnerContextMaterializerPort, OnDestroy {
   private readonly chatService = inject(ChatService);
   private readonly ailyChatConfigService = inject(AilyChatConfigService);
   private readonly mcpService = inject(McpService);
@@ -59,23 +58,47 @@ export class ChatRuntimeOwnerContextService implements ChatRuntimeOwnerContextMa
   private readonly ownerScheduler = inject<ChatRuntimeOwnerSchedulerPort>(CHAT_RUNTIME_OWNER_SCHEDULER);
   private readonly contextBudgetService = inject(ContextBudgetService);
   private readonly repetitionDetectionService = inject(RepetitionDetectionService);
-  private readonly runtimeState = inject<ChatRuntimeOwnerRuntimeStateReaderPort>(
-    CHAT_RUNTIME_OWNER_RUNTIME_STATE_READER,
-  );
   private readonly runtimeController = inject<ChatRuntimeOwnerRuntimeControllerPort>(CHAT_RUNTIME_OWNER_RUNTIME_CONTROLLER);
-  private readonly headlessProjection = inject<ChatRuntimeOwnerHeadlessProjectionPort>(CHAT_RUNTIME_OWNER_HEADLESS_PROJECTION);
   private readonly ownerState = inject<ChatRuntimeOwnerStatePort>(CHAT_RUNTIME_OWNER_STATE);
-  private readonly viewAttachments = inject<ChatRuntimeOwnerViewAttachmentPort>(CHAT_RUNTIME_OWNER_VIEW_ATTACHMENT);
-  private readonly viewRequests = inject<ChatRuntimeOwnerViewRequestPort>(CHAT_RUNTIME_OWNER_VIEW_REQUEST);
   private readonly ownerSessionModel = inject<ChatRuntimeOwnerSessionModelPort>(CHAT_RUNTIME_OWNER_SESSION_MODEL);
-  private readonly ownerProjection = inject<ChatRuntimeOwnerProjectionPort>(CHAT_RUNTIME_OWNER_PROJECTION);
   private readonly ownerSaveTarget = inject<ChatRuntimeOwnerSaveTargetPort>(CHAT_RUNTIME_OWNER_SAVE_TARGET);
   private readonly ownerSessionContext = inject<ChatRuntimeOwnerSessionContextPort>(CHAT_RUNTIME_OWNER_SESSION_CONTEXT);
+  private readonly ownerToolApproval = inject<ChatRuntimeOwnerToolApprovalPort>(CHAT_RUNTIME_OWNER_TOOL_APPROVAL);
   private readonly turnStartupEditLifecycle = inject<ChatRuntimeOwnerTurnStartupEditLifecyclePort>(
     CHAT_RUNTIME_OWNER_TURN_STARTUP_EDIT_LIFECYCLE,
   );
+  private readonly viewRequests = createUnboundViewRequestDispatcher();
   private readonly contextCore = new ChatRuntimeOwnerContextCore();
-  private ownerInteraction: UserInteractionHelper | null = null;
+  private readonly headlessPartStore = new ChatPartStore();
+  private headlessList: ChatMessage[] = [];
+  private readonly headlessViewAdapter = {
+    appendStreaming: () => {},
+    appendImmediate: () => {},
+    displayToolCallState: () => {},
+    markLastMessageDone: () => {},
+    checkAndTruncateAilyButtonBlock: () => false,
+    getClosingTagsForOpenBlocks: () => '',
+    reset: () => {
+      this.headlessList = [];
+    },
+    requestChangeDetection: () => {},
+  };
+  private readonly headlessScrollManager = {
+    scrollLock: false,
+    setScrollLock: (value: boolean) => {
+      this.headlessScrollManager.scrollLock = value;
+    },
+    startNewExchange: () => {},
+    scrollToBottom: () => {},
+    scrollToBottomIfNeeded: () => {},
+    resumeFollowBottom: () => {},
+    captureAutoScrollState: () => false,
+  };
+
+  ngOnDestroy(): void {
+    this.headlessPartStore.destroy();
+    this.headlessList = [];
+  }
 
   bindAdapter(adapter: ChatRuntimeOwnerContextAdapter): LexOwnerContext {
     return this.contextCore.bindAdapter(adapter, boundAdapter => this.createContext(boundAdapter));
@@ -106,17 +129,22 @@ export class ChatRuntimeOwnerContextService implements ChatRuntimeOwnerContextMa
         resolveActiveRuntimeSessionId: defaultSessionId => service.ownerState.resolveActiveRuntimeSessionId(defaultSessionId),
         runWithRuntimeSessionOwner: (sessionId, action) => service.ownerState.runWithRuntimeSessionOwner(sessionId, action),
         get runtimeInteractionHost() { return service.runtimeInteractionHost; },
-        handleToolApproval: request => service.resolveOwnerInteraction(adapter).handleToolApproval(request as never),
+        handleToolApproval: request => service.ownerToolApproval.handleToolApproval({
+          lexStream: adapter.lexStream,
+          sessionId: adapter.sessionId,
+          defaultSessionId: service.resolveDefaultRuntimeSessionId(adapter),
+          request: request as never,
+        }),
         get editCheckpointService() { return service.editCheckpointService; },
         get ownerScheduler() { return service.ownerScheduler; },
         get viewRequests() { return service.viewRequests; },
-        get list() { return service.headlessProjection.list; },
-        setList: value => service.headlessProjection.setList(value as never),
-        get partStore() { return service.headlessProjection.partStore; },
-        get viewAdapter() { return service.headlessProjection.viewAdapter; },
-        get scrollManager() { return service.headlessProjection.scrollManager; },
-        invalidateHostRequestGraph: () => service.headlessProjection.invalidateHostRequestGraph(),
-        triggerSyncDetectChanges: () => service.headlessProjection.triggerSyncDetectChanges(),
+        get list() { return service.headlessList; },
+        setList: value => { service.headlessList = Array.isArray(value) ? value as never : []; },
+        get partStore() { return service.headlessPartStore; },
+        get viewAdapter() { return service.headlessViewAdapter; },
+        get scrollManager() { return service.headlessScrollManager; },
+        invalidateHostRequestGraph: () => {},
+        triggerSyncDetectChanges: () => {},
         get currentMessageSource() { return service.ownerState.currentMessageSource; },
         setCurrentMessageSource: value => { service.ownerState.currentMessageSource = value as never; },
         get toolCallingIteration() { return service.ownerState.toolCallingIteration; },
@@ -126,7 +154,7 @@ export class ChatRuntimeOwnerContextService implements ChatRuntimeOwnerContextMa
         setIsWaiting: value => { service.ownerState.isWaiting = value as never; },
         get isCompleted() { return service.ownerState.isCompleted; },
         setIsCompleted: value => { service.ownerState.isCompleted = value as never; },
-        readSessionRuntimeState: sessionId => service.runtimeState.readSessionRuntimeState(sessionId),
+        readSessionRuntimeState: sessionId => service.readRuntimeState(sessionId),
         readSessionTurnResponses: sessionId => service.ownerSessionModel.readTurnResponses(sessionId),
         appendSessionModelTurnResponse: (sessionId, turnResponse, ownerPolicy) =>
           service.ownerSessionModel.appendOrReplaceTurnResponse(sessionId, turnResponse as never, ownerPolicy as never),
@@ -139,18 +167,17 @@ export class ChatRuntimeOwnerContextService implements ChatRuntimeOwnerContextMa
         getOrCreateLexPostTurnResources: (sessionId, cwd) =>
           service.getOrCreateLexPostTurnResources(sessionId, cwd),
         scheduleLexRequestCompleted: input => service.runtimeController.scheduleLexRequestCompleted(input as never),
-        isRuntimeViewAttached: sessionId => service.viewAttachments.hasAttachedView(sessionId),
-        readRuntimeViewAttachmentGeneration: sessionId => service.viewAttachments.readVisibleAttachmentGeneration(sessionId),
-        isRuntimeViewAttachmentCurrent: (sessionId, generation) =>
-          service.viewAttachments.isVisibleAttachmentCurrent(sessionId, generation as never),
+        isRuntimeViewAttached: () => false,
+        readRuntimeViewAttachmentGeneration: () => null,
+        isRuntimeViewAttachmentCurrent: () => false,
         syncExecutionRuntimeState: saveTarget =>
-          service.ownerProjection.projectExecutionRuntimeState({ saveTarget: saveTarget as never }),
+          projectExecutionRuntimeStateToRuntimeController(service.runtimeController, { saveTarget: saveTarget as never }),
         syncExecutionRuntimeTurnResponses: (sessionId, turnResponses, options) => {
-          const handleMetadata = service.runtimeState.readHandleMetadata(sessionId);
-          service.ownerProjection.syncTurnResponses({
+          const handleMetadata = service.readHandleProjectionMetadata(sessionId);
+          syncTurnResponsesToRuntimeController(service.runtimeController, {
             sessionId,
             turnResponses: turnResponses as never,
-            hostProjectionState: service.ownerProjection.buildHostProjectionState(turnResponses as never),
+            hostProjectionState: buildRuntimeOwnerHostProjectionState(turnResponses as never),
             capabilities: handleMetadata.capabilities,
             concurrencyScope: handleMetadata.concurrencyScope,
             projection: options as never,
@@ -170,11 +197,23 @@ export class ChatRuntimeOwnerContextService implements ChatRuntimeOwnerContextMa
   }
 
   private resolveDefaultRuntimeSessionId(adapter: ChatRuntimeOwnerContextAdapter): string {
-    return resolveRuntimeOwnerDefaultSessionId(adapter, this.chatService.currentSessionId);
+    return resolveRuntimeOwnerDefaultSessionId(adapter);
   }
 
   private normalizeSessionId(sessionId: unknown): string {
     return normalizeRuntimeOwnerSessionId(sessionId);
+  }
+
+  private readRuntimeState(sessionId: unknown) {
+    const targetSessionId = this.normalizeSessionId(sessionId);
+    return targetSessionId ? this.runtimeController.readRuntimeState(targetSessionId) ?? undefined : undefined;
+  }
+
+  private readHandleProjectionMetadata(sessionId: unknown) {
+    const targetSessionId = this.normalizeSessionId(sessionId);
+    return targetSessionId
+      ? this.runtimeController.readHandleProjectionMetadata(targetSessionId)
+      : { capabilities: undefined, concurrencyScope: null };
   }
 
   private syncRuntimeHostSubmitReadiness(sessionId: unknown): void {
@@ -183,7 +222,7 @@ export class ChatRuntimeOwnerContextService implements ChatRuntimeOwnerContextMa
       return;
     }
 
-    this.ownerProjection.syncHandleState({
+    syncHandleStateToRuntimeController(this.runtimeController, {
       sessionId: targetSessionId,
       patch: {
         capabilities: this.ownerSessionContext.resolveRuntimeCapabilities(targetSessionId),
@@ -226,24 +265,15 @@ export class ChatRuntimeOwnerContextService implements ChatRuntimeOwnerContextMa
       : undefined;
   }
 
-  private resolveOwnerInteraction(adapter: ChatRuntimeOwnerContextAdapter): UserInteractionHelper {
-    if (this.ownerInteraction) {
-      return this.ownerInteraction;
-    }
+}
 
-    const service = this;
-    this.ownerInteraction = new UserInteractionHelper({
-      get lexStream() { return adapter.lexStream; },
-      get isLoggedIn() { return false; },
-      getCurrentProjectPath: () => service.normalizeSessionId(service.ownerSessionContext.prjPath),
-      get sessionId() { return adapter.sessionId; },
-      resolveActiveRuntimeSessionId: () => service.ownerState.resolveActiveRuntimeSessionId(
-        service.resolveDefaultRuntimeSessionId(adapter),
-      ),
-      get runtimeInteractionHost() { return service.runtimeInteractionHost; },
-      get ailyChatConfigService() { return service.ailyChatConfigService; },
-    });
-    return this.ownerInteraction;
-  }
-
+function createUnboundViewRequestDispatcher() {
+  const failClosed = (): never => {
+    throw new Error('[AilyChat][RuntimeOwnerContext] View requests must be emitted through the execution-worker host event boundary.');
+  };
+  return {
+    notify: failClosed,
+    syncTodoState: failClosed,
+    requestHandoff: failClosed,
+  };
 }

@@ -28,7 +28,7 @@ import { ConfigService } from '../../services/config.service';
 import { AilyChatConfigService } from './services/aily-chat-config.service';
 import { MERMAID_DARK_THEME, MermaidCodeComponent } from 'ngx-x-markdown';
 import { AilyHost } from './core/host';
-import { createElectronHostAdapter } from './adapters/electron-host-adapter';
+import { AilyChatHostInitializerService } from './services/aily-chat-host-initializer.service';
 import { ScrollManagerService, type ChatRevealOptions, type ChatRevealTarget } from './services/scroll-manager.service';
 import { ResourceManagerService } from './services/resource-manager.service';
 import { MenuManagerService, type ChatSessionListItem } from './services/menu-manager.service';
@@ -279,6 +279,7 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
     private ngZone: NgZone,
     private builderService: BuilderService,
     private themeService: ThemeService,
+    private hostInitializer: AilyChatHostInitializerService,
     public runtimeInteractionHost: ChatRuntimeInteractionHostService,
     public engine: ChatEngineService,
     public scrollManager: ScrollManagerService,
@@ -452,22 +453,7 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
     this.lifecycleCoordinator = new ChatComponentLifecycleCoordinator({
       isHostInitialized: () => AilyHost.isInitialized(),
       initializeHost: () => {
-        AilyHost.init(createElectronHostAdapter({
-          projectService: this.projectService,
-          configService: this.configService,
-          authService: this.authService,
-          builderService: this.builderService,
-          platformService: this.platformService,
-          noticeService: this.noticeService,
-          blocklyService: this.blocklyService,
-          connectionGraphService: this.connectionGraphService,
-          cmdService: this.cmdService,
-          crossPlatformCmdService: this.crossPlatformCmdService,
-          absAutoSyncService: this.absAutoSyncService,
-          electronService: this.electronService,
-          uiService: this.uiService,
-          onboardingService: this.onboardingService,
-        }));
+        this.hostInitializer.ensureInitialized();
       },
       loadMermaid: () => import('mermaid'),
       setMermaidInstance: (instance) => {
