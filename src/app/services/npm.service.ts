@@ -1,8 +1,6 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable } from '@angular/core';
 import { ElectronService } from './electron.service';
-import { ConfigService } from './config.service';
-import { UiService } from './ui.service';
 import { API } from '../configs/api.config';
 import { ProjectService } from './project.service';
 import { CmdService } from './cmd.service';
@@ -22,6 +20,7 @@ import {
   runtimeDependenciesToBoardDependencies,
 } from '../utils/platform-runtime.utils';
 import { AppDataResourceLockService } from './appdata-resource-lock.service';
+import { BlocklyLibraryPackageService } from './blockly-library-package.service';
 
 @Injectable({
   providedIn: 'root'
@@ -30,15 +29,14 @@ export class NpmService {
   constructor(
     private http: HttpClient,
     private electronService: ElectronService,
-    private configService: ConfigService,
-    private uiService: UiService,
     private prjService: ProjectService,
     private cmdService: CmdService,
     private workflowService: WorkflowService,
     private translate: TranslateService,
     private noticeService: NoticeService,
     private logService: LogService,
-    private appDataResourceLock: AppDataResourceLockService
+    private appDataResourceLock: AppDataResourceLockService,
+    private blocklyLibraryPackageService: BlocklyLibraryPackageService
   ) {
     this.logService.stateSubject.subscribe((log) => {
       this.handleBoardDependencyProgressLog(log);
@@ -316,10 +314,10 @@ export class NpmService {
         });
       }, 0);
 
-      this.uiService.updateFooterState({
-        state: 'doing',
-        text: this.translate.instant('BLOCKLY_EDITOR.INSTALLING_DEPS'),
-      });
+      // this.uiService.updateFooterState({
+      //   state: 'doing',
+      //   text: this.translate.instant('BLOCKLY_EDITOR.INSTALLING_DEPS'),
+      // });
 
       await this.cmdService.runAsyncChecked(`npm install`, projectPath);
       await this.ensureAilyCodeBoardPackageInProjectNodeModules(projectPath);
@@ -1248,75 +1246,8 @@ export class NpmService {
     });
   }
 
-  async getAllInstalledLibraries(path: string) {
-    // let data = JSON.parse(await window['npm'].run({ cmd: `npm ls --all --json --prefix "${path}"` }));
-    let data = await getInstalledPackagesByFileRead(path);
-    // console.log("getInstalledPackagesByFileRead:", data);
-    // 提取所有依赖项到对象数组
-    const allDependencies = this.extractAllDependencies(data.dependencies || {});
-
-    // 过滤出以 @aily-project/lib- 开头的库
-    const libraryModules = allDependencies.filter(dep => dep.name.startsWith('@aily-project/lib-'));
-
-    // 让包含@aily-project/lib-core-的模块在最前面
-    libraryModules.sort((a, b) => {
-      if (a.name.startsWith('@aily-project/lib-core-') && !b.name.startsWith('@aily-project/lib-core-')) {
-        return -1;
-      } else if (!a.name.startsWith('@aily-project/lib-core-') && b.name.startsWith('@aily-project/lib-core-')) {
-        return 1;
-      } else {
-        return a.name.localeCompare(b.name);
-      }
-    });
-
-    // console.log('libraryModules:', libraryModules);
-    
-    return libraryModules;
-  }
-
-  /**
-   * 递归提取所有依赖项（包括子依赖）到对象数组
-   * @param dependencies 依赖对象
-   * @returns 包含所有依赖项完整信息的对象数组
-   */
-  private extractAllDependencies(dependencies: any): Array<any> {
-    const dependencyMap = new Map<string, any>();
-
-    const extractRecursively = (deps: any) => {
-      if (!deps || typeof deps !== 'object') {
-        return;
-      }
-
-      for (const [packageName, packageInfo] of Object.entries(deps)) {
-        // 保留packageInfo的所有信息，并添加name属性
-        if (packageInfo && typeof packageInfo === 'object') {
-          const fullPackageInfo = {
-            name: packageName,
-            ...packageInfo
-          };
-          
-          // 添加当前包的完整信息到Map中（避免重复）
-          dependencyMap.set(packageName, fullPackageInfo);
-
-          // 如果有子依赖，递归处理
-          if (packageInfo['dependencies']) {
-            extractRecursively(packageInfo['dependencies']);
-          }
-        } else {
-          // 如果packageInfo不是对象，创建基本信息对象
-          dependencyMap.set(packageName, {
-            name: packageName,
-            version: packageInfo || 'unknown'
-          });
-        }
-      }
-    };
-
-    extractRecursively(dependencies);
-
-    // 转换为对象数组并排序
-    return Array.from(dependencyMap.values())
-      .sort((a, b) => a.name.localeCompare(b.name));
+  async getAllInstalledLibraries(path: string): Promise<any[]> {
+    return this.blocklyLibraryPackageService.scanInstalledLibraries(path);
   }
 }
 
@@ -1345,181 +1276,5 @@ export interface ResponseModel {
   status: number;
   messages: string;
   data: any;
-}
-
-/**
- * 通过读取文件的方式获取已安装的包信息，模拟 npm ls --all --json 的效果
- * @param projectPath 项目路径
- * @returns 类似 npm ls 的数据结构
- */
-const LIBRARY_PACKAGE_PREFIX = '@aily-project/lib-';
-const PACKAGE_SCAN_DEPENDENCY_FIELDS = ['dependencies', 'devDependencies', 'optionalDependencies'];
-
-function getDeclaredLibraryPackageNames(projectPath: string): string[] {
-  const packageJsonPath = joinPackageScanPath(projectPath, 'package.json');
-  if (!window['fs'].existsSync(packageJsonPath)) {
-    return [];
-  }
-
-  let packageJson: any;
-  try {
-    packageJson = readJsonFileForPackageScan(packageJsonPath, 'package.json');
-  } catch (error) {
-    console.error('[PackageScan] failed to read project package.json:', error);
-    return [];
-  }
-
-  const packageNames = new Set<string>();
-  for (const field of PACKAGE_SCAN_DEPENDENCY_FIELDS) {
-    const dependencies = packageJson?.[field];
-    if (!dependencies || typeof dependencies !== 'object') {
-      continue;
-    }
-
-    for (const packageName of Object.keys(dependencies)) {
-      if (isAilyLibraryPackageName(packageName)) {
-        packageNames.add(packageName);
-      }
-    }
-  }
-
-  return Array.from(packageNames);
-}
-
-function isAilyLibraryPackageName(packageName: string): boolean {
-  return typeof packageName === 'string' && packageName.startsWith(LIBRARY_PACKAGE_PREFIX);
-}
-
-function getPackageInstallPath(projectPath: string, packageName: string): string {
-  return joinPackageScanPath(projectPath, 'node_modules', ...packageName.split('/'));
-}
-
-function joinPackageScanPath(...parts: string[]): string {
-  if (window['path']?.join) {
-    return window['path'].join(...parts);
-  }
-  return parts.join('/');
-}
-
-export async function getInstalledPackagesByFileRead(projectPath: string): Promise<any> {
-  const nodeModulesPath = `${projectPath}/node_modules`;
-
-  // 检查 node_modules 目录是否存在
-  if (!window['path'].isExists(nodeModulesPath)) {
-    return { dependencies: {} };
-  }
-
-  const dependencies = {};
-
-  for (const packageName of getDeclaredLibraryPackageNames(projectPath)) {
-    await scanSinglePackage(getPackageInstallPath(projectPath, packageName), packageName, dependencies);
-  }
-
-  // Scan only node_modules/@aily-project/lib-* as a fallback for undeclared local libraries.
-  await scanNodeModulesDirectory(nodeModulesPath, dependencies);
-
-  return {
-    name: 'project',
-    version: '1.0.0',
-    dependencies: dependencies
-  };
-}
-
-/**
- * 递归扫描 node_modules 目录
- * @param nodeModulesPath node_modules 目录路径
- * @param dependencies 依赖对象
- */
-export async function scanNodeModulesDirectory(nodeModulesPath: string, dependencies: any): Promise<void> {
-  try {
-    const ailyProjectScopePath = joinPackageScanPath(nodeModulesPath, '@aily-project');
-    if (window['fs'].isDirectory(ailyProjectScopePath)) {
-      await scanScopedPackages(ailyProjectScopePath, dependencies);
-    }
-  } catch (error) {
-    console.error('扫描 node_modules 目录失败:', error);
-  }
-}
-
-/**
- * 扫描 scoped packages
- * @param scopePath scope 目录路径
- * @param dependencies 依赖对象
- */
-export async function scanScopedPackages(scopePath: string, dependencies: any): Promise<void> {
-  try {
-    const scopeDirs = window['fs'].readDirSync(scopePath);
-    const scopeName = window['path'].basename(scopePath);
-
-    for (const dir of scopeDirs) {
-      const dirName = dir.name || dir;
-      if (!dirName.startsWith('lib-')) {
-        continue;
-      }
-      const packageName = `${scopeName}/${dirName}`;
-      const packagePath = `${scopePath}/${dirName}`;
-
-      if (window['fs'].isDirectory(packagePath)) {
-        await scanSinglePackage(packagePath, packageName, dependencies);
-      }
-    }
-  } catch (error) {
-    console.error('扫描 scoped packages 失败:', error);
-  }
-}
-
-/**
- * 扫描单个包
- * @param packagePath 包路径
- * @param packageName 包名
- * @param dependencies 依赖对象
- */
-export async function scanSinglePackage(packagePath: string, packageName: string, dependencies: any): Promise<void> {
-  try {
-    const packageJsonPath = `${packagePath}/package.json`;
-    const toolboxJsonPath = `${packagePath}/toolbox.json`;
-    // 检查 package.json 和 toolbox.json 是否存在
-    if (!window['fs'].existsSync(packageJsonPath) || !window['fs'].existsSync(toolboxJsonPath)) {
-      return;
-    }
-
-    // 读取 package.json
-    const packageJson = readJsonFileForPackageScan(packageJsonPath, 'package.json');
-    // 读取 toolbox.json
-    const toolboxJson = readJsonFileForPackageScan(toolboxJsonPath, 'toolbox.json');
-    // 构建包信息
-    const packageInfo: any = {
-      name: packageJson.name || packageName,
-      version: packageJson.version || '1.0.0',
-      description: packageJson.description || '',
-      author: packageJson.author || 'unknown',
-      nickname: packageJson.nickname || packageJson.name,
-      icon: toolboxJson.icon || 'fa-light fa-cube',
-      keywords: packageJson.keywords || [],
-    };
-
-    dependencies[packageName] = packageInfo;
-  } catch (error) {
-    console.error(`扫描包 ${packageName} 失败:`, error);
-  }
-}
-
-function readJsonFileForPackageScan(filePath: string, fileName: string): any {
-  let content: string;
-  try {
-    content = window['fs'].readFileSync(filePath, 'utf8');
-  } catch (error) {
-    throw new Error(`${fileName} 读取失败 (${filePath}): ${formatPackageScanError(error)}`);
-  }
-
-  try {
-    return JSON.parse(content);
-  } catch (error) {
-    throw new Error(`${fileName} 格式错误 (${filePath}): ${formatPackageScanError(error)}`);
-  }
-}
-
-function formatPackageScanError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 

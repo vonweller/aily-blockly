@@ -82,10 +82,16 @@ export class ProjectNewComponent implements OnDestroy {
   keyword = '';
 
   _boardList: any[] = [];
-  /** Blockly 模式开发板源（boards.json） */
+  /** Blockly 模式开发板源（boards.json，已按使用次数排序） */
   private _blocklyBoardList: any[] = [];
-  /** Coder 模式开发板源（coder_board_index.json） */
+  /** Coder 模式开发板源（coder_board_index.json，已按使用次数排序） */
   private _coderBoardList: any[] = [];
+  /** Blockly 配置文件原始顺序（未按使用次数排序） */
+  private _blocklyBoardListInConfigOrder: any[] = [];
+  /** Coder 配置文件原始顺序（未按使用次数排序） */
+  private _coderBoardListInConfigOrder: any[] = [];
+  /** 当前类别下配置文件原始顺序的开发板列表 */
+  private boardListInConfigOrder: any[] = [];
   boardList: any[] = [];
 
   private searchSubject = new Subject<string>();
@@ -189,12 +195,10 @@ export class ProjectNewComponent implements OnDestroy {
     // await this.configService.init();
 
     // 分别处理 Blockly / Coder 两套开发板数据源
-    this._blocklyBoardList = this.configService.sortBoardsByUsage(
-      this.process(this.configService.boardList)
-    );
-    this._coderBoardList = this.configService.sortBoardsByUsage(
-      this.process(this.configService.getCoderBoardList())
-    );
+    this._blocklyBoardListInConfigOrder = this.process(this.configService.boardList);
+    this._blocklyBoardList = this.configService.sortBoardsByUsage(this._blocklyBoardListInConfigOrder);
+    this._coderBoardListInConfigOrder = this.process(this.configService.getCoderBoardList());
+    this._coderBoardList = this.configService.sortBoardsByUsage(this._coderBoardListInConfigOrder);
 
     this.selectedProjectCategory = this.configService.getPreferredChatAgentRuntimeMode();
     this.syncActiveBoardList();
@@ -225,9 +229,13 @@ export class ProjectNewComponent implements OnDestroy {
 
   /** 根据当前项目类别切换开发板数据源 */
   private syncActiveBoardList(): void {
-    this._boardList = this.selectedProjectCategory === 'coder'
-      ? this._coderBoardList
-      : this._blocklyBoardList;
+    if (this.selectedProjectCategory === 'coder') {
+      this._boardList = this._coderBoardList;
+      this.boardListInConfigOrder = this._coderBoardListInConfigOrder;
+    } else {
+      this._boardList = this._blocklyBoardList;
+      this.boardListInConfigOrder = this._blocklyBoardListInConfigOrder;
+    }
   }
 
   /** Coder 模式下隐藏尚未支持的开发板（state=todo） */
@@ -747,14 +755,13 @@ export class ProjectNewComponent implements OnDestroy {
         );
       } else {
         // 普通品牌过滤
-        let filteredBoardList = this._boardList.filter(board => {
+        let filteredBoardList = this.boardListInConfigOrder.filter(board => {
           const boardBrand = board.brand ? board.brand.toLowerCase() : '';
           const selectedBrandValue = brand.value.toLowerCase();
           return boardBrand === selectedBrandValue
         });
-        // 对过滤后的列表按使用次数排序
         this.boardList = this.applyLocalization(
-          this.filterBoardsForCategory(this.configService.sortBoardsByUsage(filteredBoardList))
+          this.filterBoardsForCategory(JSON.parse(JSON.stringify(filteredBoardList)))
         );
       }
 
@@ -787,7 +794,7 @@ export class ProjectNewComponent implements OnDestroy {
       if (core.value === 'other') {
         // 当选择"其他核心架构"时，显示已有核心列表未覆盖的元素
         const definedCores = this.getDefinedCores();
-        filteredBoardList = this._boardList.filter(board => {
+        filteredBoardList = this.boardListInConfigOrder.filter(board => {
           if (board.type && typeof board.type === 'string') {
             const boardType = board.type.toLowerCase();
             // 检查是否包含任何已定义的核心架构
@@ -797,7 +804,7 @@ export class ProjectNewComponent implements OnDestroy {
         });
       } else {
         // 普通核心架构过滤
-        filteredBoardList = this._boardList.filter(board => {
+        filteredBoardList = this.boardListInConfigOrder.filter(board => {
           // 检查开发板的 type 字段是否包含指定的 core
           if (board.type && typeof board.type === 'string') {
             // 支持多种格式：esp32:esp32, arduino:avr, aily:esp32 等
@@ -807,9 +814,8 @@ export class ProjectNewComponent implements OnDestroy {
         });
       }
 
-      // 对过滤后的列表按使用次数排序
       this.boardList = this.applyLocalization(
-        this.filterBoardsForCategory(this.configService.sortBoardsByUsage(filteredBoardList))
+        this.filterBoardsForCategory(JSON.parse(JSON.stringify(filteredBoardList)))
       );
 
       console.log('按核心架构过滤后的开发板列表:', this.boardList);

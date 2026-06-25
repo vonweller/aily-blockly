@@ -8,9 +8,10 @@ import { HostSessionItemController } from '../helpers/host-session-item-controll
 import { ChatSessionStateService } from './chat-session-state.service';
 import type { ChatSessionRuntimeChangedEvent } from './chat-session-runtime-store.service';
 import { ChatSessionRuntimeStoreService } from './chat-session-runtime-store.service';
-import { ChatSessionRuntimeRegistryService } from './chat-session-runtime-registry.service';
 import { ChatSessionModelStoreService, type ChatSessionModel } from './chat-session-model-store.service';
 import { ChatSessionViewModelStoreService } from './chat-session-view-model-store.service';
+import { ChatRuntimeHostInventoryService } from './chat-runtime-host-inventory.service';
+import type { ChatRuntimeHostSessionInventoryItem } from '../core/chat-runtime-host-contract';
 import { ChatPerformanceTracer } from './chat-perf-tracer';
 import {
   chatSessionScopeProjectPath,
@@ -18,11 +19,14 @@ import {
   normalizeChatSessionScopePath,
   resolveChatSessionScopeFromProject,
 } from '../core/chat-session-scope';
+import { resolveChatSurfaceModeId } from '../core/chat-mode';
+import { normalizeChatSessionTitleSource } from '../core/chat-session-title';
 import type { ChatSessionListAction, ChatSessionListItem } from './menu-manager.service';
 import type {
   HostSessionHistoryItem,
   HostSessionListItem as HostSessionListProjectionItem,
   HostSessionListItemMetadata,
+  HostSessionListItemStatus,
   HostSessionListItemTiming,
   SessionInventorySummary,
 } from '../helpers/host-session-item-controller';
@@ -114,9 +118,9 @@ export class ChatSessionItemsService implements OnDestroy {
     private readonly chatSessionRuntimeStore: ChatSessionRuntimeStoreService,
     @Optional() private readonly editCheckpointService: EditCheckpointService | null = null,
     @Optional() private readonly chatSessionStateService: ChatSessionStateService | null = null,
-    @Optional() private readonly chatSessionRuntimeRegistry: ChatSessionRuntimeRegistryService | null = null,
     @Optional() private readonly chatSessionModelStore: ChatSessionModelStoreService | null = null,
     @Optional() private readonly chatSessionViewModelStore: ChatSessionViewModelStoreService | null = null,
+    @Optional() private readonly chatRuntimeHostInventory: ChatRuntimeHostInventoryService | null = null,
   ) {
     ChatPerformanceTracer.increment('session_list.service_created');
     ChatPerformanceTracer.mark('session_list.service_created');
@@ -157,6 +161,18 @@ export class ChatSessionItemsService implements OnDestroy {
         }
       }));
     }
+    if (this.chatRuntimeHostInventory) {
+      this.controllerSubscription.add(this.chatRuntimeHostInventory.changed$.subscribe((event) => {
+        this.bumpSessionInventoryRevision();
+        if (event.sessionIds.length === 0) {
+          this.scheduleFullRefresh(`host-inventory-${event.reason}`);
+          return;
+        }
+        for (const sessionId of event.sessionIds) {
+          this.scheduleSessionItemRefresh(sessionId, `host-inventory-${event.reason}`);
+        }
+      }));
+    }
     this.scheduleInitialSummaryLoad('service-created');
   }
 
@@ -169,13 +185,7 @@ export class ChatSessionItemsService implements OnDestroy {
   }
 
   private readLiveSessionRuntimeState(sessionId: string | null | undefined): ReturnType<ChatSessionRuntimeStoreService['read']> {
-    const projectedRuntimeState = this.chatSessionRuntimeRegistry?.readProjectedRuntimeState(sessionId);
-    if (projectedRuntimeState) {
-      return projectedRuntimeState;
-    }
-
-    const runtimeState = this.chatSessionRuntimeStore.read(sessionId);
-    return runtimeState;
+    return this.chatSessionRuntimeStore.read(sessionId);
   }
 
   get sessionListItems(): ChatSessionListItem[] {
@@ -604,7 +614,12 @@ export class ChatSessionItemsService implements OnDestroy {
     }
 
     this.refreshScheduled = true;
-    queueMicrotask(() => this.flushScheduledRefreshes());
+    if (typeof globalThis.requestAnimationFrame === 'function') {
+      globalThis.requestAnimationFrame(() => this.flushScheduledRefreshes());
+      return;
+    }
+
+    setTimeout(() => this.flushScheduledRefreshes(), 0);
   }
 
   private flushScheduledRefreshes(): void {
@@ -1032,26 +1047,25 @@ export class ChatSessionItemsService implements OnDestroy {
     projectPath?: string | null,
     projectRootPath?: string | null,
   ): ChatSessionListItem[] {
-    if (!this.chatSessionModelStore) {
-      return [...items];
-    }
-
     const mergedItems = new Map<string, ChatSessionListItem>();
     for (const item of items) {
       mergedItems.set(item.sessionId, item);
     }
 
-    for (const model of this.chatSessionModelStore.values()) {
-      const existing = mergedItems.get(model.sessionResource) ?? null;
-      if (!existing && !this.shouldProjectModelOnlySession(model)) {
-        continue;
+    if (this.chatSessionModelStore) {
+      for (const model of this.chatSessionModelStore.values()) {
+        const existing = mergedItems.get(model.sessionResource) ?? null;
+        if (!existing && !this.shouldProjectModelOnlySession(model)) {
+          continue;
+        }
+        const modelItem = this.toModelSessionListItem(model, existing, projectPath, projectRootPath);
+        if (!modelItem || !this.isSessionItemInViewScope(modelItem, projectPath, projectRootPath)) {
+          continue;
+        }
+        mergedItems.set(model.sessionResource, modelItem);
       }
-      const modelItem = this.toModelSessionListItem(model, existing, projectPath, projectRootPath);
-      if (!modelItem || !this.isSessionItemInViewScope(modelItem, projectPath, projectRootPath)) {
-        continue;
-      }
-      mergedItems.set(model.sessionResource, modelItem);
     }
+    this.mergeHostInventorySessionListItems(mergedItems, projectPath, projectRootPath);
 
     const nextItems = [...mergedItems.values()];
     nextItems.sort((left, right) => this.compareSessionListItems(left, right));
@@ -1066,13 +1080,14 @@ export class ChatSessionItemsService implements OnDestroy {
   ): ChatSessionListItem | null {
     const model = this.chatSessionModelStore?.get(sessionId);
     if (!model) {
-      return item;
+      return this.overlayHostInventorySessionListItem(sessionId, item, projectPath, projectRootPath);
     }
 
     const modelItem = this.toModelSessionListItem(model, item, projectPath, projectRootPath);
-    return modelItem && this.isSessionItemInViewScope(modelItem, projectPath, projectRootPath)
+    const overlaidModelItem = modelItem && this.isSessionItemInViewScope(modelItem, projectPath, projectRootPath)
       ? modelItem
       : item;
+    return this.overlayHostInventorySessionListItem(sessionId, overlaidModelItem, projectPath, projectRootPath);
   }
 
   private toModelSessionListItem(
@@ -1151,6 +1166,131 @@ export class ChatSessionItemsService implements OnDestroy {
 
     const projectionTurns = runtimeState?.hostProjectionState?.turnResponses;
     return Array.isArray(projectionTurns) && projectionTurns.length > 0;
+  }
+
+  private mergeHostInventorySessionListItems(
+    items: Map<string, ChatSessionListItem>,
+    projectPath?: string | null,
+    projectRootPath?: string | null,
+  ): void {
+    const snapshot = this.chatRuntimeHostInventory?.readSnapshot();
+    if (!snapshot || snapshot.sessions.length === 0) {
+      return;
+    }
+
+    for (const state of snapshot.sessions) {
+      const sessionId = this.normalizeSessionId(state.sessionId);
+      if (!sessionId) {
+        continue;
+      }
+      const existing = items.get(sessionId) ?? null;
+      if (!existing && !this.shouldProjectHostInventoryOnlySession(state)) {
+        continue;
+      }
+      const hostItem = this.toHostInventorySessionListItem(state, existing, projectPath, projectRootPath);
+      if (!hostItem || !this.isSessionItemInViewScope(hostItem, projectPath, projectRootPath)) {
+        continue;
+      }
+      items.set(sessionId, hostItem);
+    }
+  }
+
+  private overlayHostInventorySessionListItem(
+    sessionId: string,
+    item: ChatSessionListItem | null,
+    projectPath?: string | null,
+    projectRootPath?: string | null,
+  ): ChatSessionListItem | null {
+    const hostState = this.chatRuntimeHostInventory?.readSessionState(sessionId) ?? null;
+    if (!hostState) {
+      return item;
+    }
+    const hostItem = this.toHostInventorySessionListItem(hostState, item, projectPath, projectRootPath);
+    return hostItem && this.isSessionItemInViewScope(hostItem, projectPath, projectRootPath)
+      ? hostItem
+      : item;
+  }
+
+  private toHostInventorySessionListItem(
+    state: ChatRuntimeHostSessionInventoryItem,
+    existing: ChatSessionListItem | null | undefined,
+    projectPath?: string | null,
+    projectRootPath?: string | null,
+  ): ChatSessionListItem | null {
+    const sessionId = this.normalizeSessionId(state.sessionId);
+    if (!sessionId) {
+      return null;
+    }
+    const status = this.toSessionListStatusFromHostState(state, existing?.status);
+    const latestRevisionTime = state.transcriptRevision > 0 ? state.transcriptRevision : undefined;
+    const timing = existing?.timing ?? (
+      latestRevisionTime !== undefined
+        ? { created: latestRevisionTime, updated: latestRevisionTime }
+        : undefined
+    );
+
+    return this.toSessionListItem({
+      sessionId,
+      title: state.title ?? existing?.title,
+      titleSource: this.normalizeHostInventoryTitleSource(state.titleSource, existing?.titleSource),
+      titleDurable: state.titleDurable ?? existing?.titleDurable,
+      description: existing?.description,
+      sessionType: state.sessionType ?? existing?.sessionType,
+      projectPath: state.projectPath !== undefined ? state.projectPath : existing?.projectPath,
+      badge: existing?.badge,
+      ...(status ? { status } : {}),
+      timing,
+      metadata: existing?.metadata,
+      changes: existing?.changes,
+      mode: this.normalizeHostInventoryMode(state.mode ?? state.selectedMode?.modeId, existing?.mode),
+      requestRouting: existing?.requestRouting,
+      inputState: existing?.inputState,
+      archived: existing?.archived,
+      pinned: existing?.pinned,
+      read: existing?.read,
+      markedUnread: existing?.markedUnread,
+      actions: existing?.actions,
+    }, projectPath, projectRootPath);
+  }
+
+  private toSessionListStatusFromHostState(
+    state: ChatRuntimeHostSessionInventoryItem,
+    _existingStatus: string | undefined,
+  ): HostSessionListItemStatus | undefined {
+    if (state.requestInProgress === true || state.status === 'running') {
+      return 'in_progress';
+    }
+    if (state.status === 'needs_input') {
+      return 'needs_input';
+    }
+    if (state.status === 'failed' || state.status === 'cancelled') {
+      return state.status;
+    }
+    return undefined;
+  }
+
+  private shouldProjectHostInventoryOnlySession(state: ChatRuntimeHostSessionInventoryItem): boolean {
+    return state.requestInProgress === true
+      || state.status === 'running'
+      || state.status === 'needs_input';
+  }
+
+  private normalizeHostInventoryTitleSource(
+    value: string | undefined,
+    fallback: SessionListSourceLike['titleSource'] | undefined,
+  ): SessionListSourceLike['titleSource'] | undefined {
+    const normalized = normalizeChatSessionTitleSource(value);
+    if (normalized !== 'empty') {
+      return normalized;
+    }
+    return fallback;
+  }
+
+  private normalizeHostInventoryMode(
+    value: string | undefined,
+    fallback: unknown,
+  ): SessionListSourceLike['mode'] | undefined {
+    return resolveChatSurfaceModeId(value) ?? resolveChatSurfaceModeId(fallback);
   }
 
   private readLatestTurnUpdatedAt(turnResponses: readonly { readonly updatedAt?: unknown }[] | null | undefined): number | undefined {

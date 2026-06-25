@@ -151,7 +151,6 @@ export class TurnResponseIncrementalBuilder {
       return true;
     }
 
-    this.applyStreamingResultTextEvent(event);
     return this.runtime.process(event);
   }
 
@@ -174,10 +173,6 @@ export class TurnResponseIncrementalBuilder {
     const createdAt = options.snapshot?.createdAt
       ?? this.currentProjection.createdAt
       ?? options.updatedAt;
-    const streamingResultText = options.status === 'streaming' && !isPlanTurnRequest(request)
-      ? this.currentProjection.resultText
-      : undefined;
-
     this.currentProjection = {
       turnId: this.currentProjection.turnId,
       sourceTurnId: this.currentProjection.sourceTurnId,
@@ -207,7 +202,7 @@ export class TurnResponseIncrementalBuilder {
         ? [...this.currentProjection.progressMessages]
         : undefined,
       continuation: options.continuation ?? options.snapshot?.continuation ?? this.currentProjection.continuation,
-      resultText: streamingResultText,
+      resultText: undefined,
       createdAt,
     };
 
@@ -232,7 +227,7 @@ export class TurnResponseIncrementalBuilder {
       status: options.status,
       terminationReason: options.terminationReason ?? options.snapshot?.terminationReason,
       parts: this.runtime.collectTurnResponseParts(),
-      resultText: streamingResultText,
+      resultText: undefined,
       createdAt,
       updatedAt: options.updatedAt,
     });
@@ -351,21 +346,6 @@ export class TurnResponseIncrementalBuilder {
       default:
         return false;
     }
-  }
-
-  private applyStreamingResultTextEvent(event: RenderEvent): void {
-    if (!this.currentProjection || event.type !== 'markdown_delta') {
-      return;
-    }
-
-    if (isPlanTurnRequest(this.currentProjection.request)) {
-      return;
-    }
-
-    this.currentProjection = {
-      ...this.currentProjection,
-      resultText: `${this.currentProjection.resultText ?? ''}${event.text}`,
-    };
   }
 }
 

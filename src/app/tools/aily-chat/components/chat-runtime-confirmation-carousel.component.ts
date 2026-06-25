@@ -1,7 +1,9 @@
 import { ChangeDetectionStrategy, Component, HostBinding, Input, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 
+import { OPEN_MAX_REQUESTS_SETTINGS_ACTION_ID } from '../core/chat-runtime-confirmation-actions';
 import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } from '../services/chat-runtime-interaction-host.service';
+import { ChatViewService } from '../services/chat-view.service';
 import { XAilyConfirmationViewerComponent } from './x-dialog/x-aily-confirmation-viewer/x-aily-confirmation-viewer.component';
 
 @Component({
@@ -154,6 +156,7 @@ export class ChatRuntimeConfirmationCarouselComponent {
   @Input() sessionId = '';
 
   private readonly runtimeHost = inject(ChatRuntimeInteractionHostService);
+  private readonly chatViewState = inject(ChatViewService);
 
   get queue() {
     return this.sessionId ? this.runtimeHost.getConfirmationQueue(this.sessionId) : [];
@@ -187,6 +190,11 @@ export class ChatRuntimeConfirmationCarouselComponent {
     }
 
     if (decision.sideEffectOnly && typeof decision.actionId === 'string' && decision.actionId.length > 0) {
+      if (decision.actionId === OPEN_MAX_REQUESTS_SETTINGS_ACTION_ID) {
+        this.chatViewState.openSettings();
+        return;
+      }
+
       this.runtimeHost.triggerConfirmationAction(this.sessionId, active.id, decision.actionId);
       return;
     }

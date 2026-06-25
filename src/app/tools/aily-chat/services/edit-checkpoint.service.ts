@@ -20,7 +20,7 @@
  */
 
 import { Injectable } from '@angular/core';
-import { BehaviorSubject } from 'rxjs';
+import { BehaviorSubject, Subject } from 'rxjs';
 import { AilyHost } from '../core/host';
 import type { FileHistory, TurnRequest } from 'aily-lex/browser';
 import type { TurnResponseTurn } from 'aily-lex/browser';
@@ -260,9 +260,18 @@ export class EditCheckpointService {
 
   private summarySubject = new BehaviorSubject<EditsSummary | null>(null);
   summaryChanged$ = this.summarySubject.asObservable();
+  private diffPreviewRequestSubject = new Subject<EditsSummary>();
+  diffPreviewRequested$ = this.diffPreviewRequestSubject.asObservable();
 
   publishSummary(summary: EditsSummary | null): void {
     this.summarySubject.next(summary);
+  }
+
+  requestDiffPreview(summary: EditsSummary | null): void {
+    if (!summary?.files?.length) {
+      return;
+    }
+    this.diffPreviewRequestSubject.next(summary);
   }
 
   capturePublishedSummary(): EditsSummary | null {

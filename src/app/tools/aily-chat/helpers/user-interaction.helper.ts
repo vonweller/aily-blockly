@@ -20,7 +20,15 @@ import type { ToolApprovalRequest, ToolApprovalResult, ToolApprovalScope } from 
 import type { AskUserQuestion, AskUserFullResponse, AskUserAnswer, AskUserPresentationContext } from '../core/ask-user';
 import type { QuestionItem } from '../core/chat-parts';
 import { AILY_CHAT_ONBOARDING_CONFIG } from '../../../configs/onboarding.config';
-import type { AilyChatConfigService } from '../services/aily-chat-config.service';
+
+export interface UserInteractionToolApprovalPolicy {
+  terminalAllowList: string[];
+  save(): boolean | void;
+  hasWorkspaceToolApprovalRule(projectPath: string | null | undefined, toolName: string): boolean;
+  addWorkspaceToolApprovalRule(projectPath: string | null | undefined, toolName: string): boolean;
+  hasWorkspaceToolApprovalCombinationKey(projectPath: string | null | undefined, combinationKey: string): boolean;
+  addWorkspaceToolApprovalCombinationKey(projectPath: string | null | undefined, combinationKey: string): boolean;
+}
 
 type UserInteractionContext = Pick<IChatCoordination, 'lexStream'>
   & Pick<IProjectContext, 'isLoggedIn' | 'getCurrentProjectPath'>
@@ -29,15 +37,7 @@ type UserInteractionContext = Pick<IChatCoordination, 'lexStream'>
   & {
     resolveActiveRuntimeSessionId?(): string | null | undefined;
     readCurrentViewSessionResource?(): string | null | undefined;
-    readonly ailyChatConfigService: Pick<
-      AilyChatConfigService,
-      'terminalAllowList'
-      | 'save'
-      | 'hasWorkspaceToolApprovalRule'
-      | 'addWorkspaceToolApprovalRule'
-      | 'hasWorkspaceToolApprovalCombinationKey'
-      | 'addWorkspaceToolApprovalCombinationKey'
-    >;
+    readonly toolApprovalPolicy: UserInteractionToolApprovalPolicy;
   };
 
 function isTerminalApprovalTool(toolName: string): boolean {
@@ -293,7 +293,7 @@ export class UserInteractionHelper {
         return true;
       }
 
-      if (this.ctx.ailyChatConfigService.hasWorkspaceToolApprovalCombinationKey(this.ctx.getCurrentProjectPath(), combinationKey)) {
+      if (this.ctx.toolApprovalPolicy.hasWorkspaceToolApprovalCombinationKey(this.ctx.getCurrentProjectPath(), combinationKey)) {
         return true;
       }
     }
@@ -312,11 +312,11 @@ export class UserInteractionHelper {
         return true;
       }
 
-      return matchesTerminalPermissionList(command, this.ctx.ailyChatConfigService.terminalAllowList ?? []);
+      return matchesTerminalPermissionList(command, this.ctx.toolApprovalPolicy.terminalAllowList ?? []);
     }
 
     return this._sessionApprovedTools.has(toolName)
-      || this.ctx.ailyChatConfigService.hasWorkspaceToolApprovalRule(this.ctx.getCurrentProjectPath(), toolName);
+      || this.ctx.toolApprovalPolicy.hasWorkspaceToolApprovalRule(this.ctx.getCurrentProjectPath(), toolName);
   }
 
   private rememberApproval(request: ToolApprovalRequest, scope: ToolApprovalScope, actionId?: string): void {
@@ -341,8 +341,8 @@ export class UserInteractionHelper {
       }
 
       if (normalizedScope === 'workspace'
-        && this.ctx.ailyChatConfigService.addWorkspaceToolApprovalCombinationKey(this.ctx.getCurrentProjectPath(), combinationKey)) {
-        this.ctx.ailyChatConfigService.save();
+        && this.ctx.toolApprovalPolicy.addWorkspaceToolApprovalCombinationKey(this.ctx.getCurrentProjectPath(), combinationKey)) {
+        this.ctx.toolApprovalPolicy.save();
       }
       return;
     }
@@ -362,10 +362,10 @@ export class UserInteractionHelper {
       this._sessionApprovedTerminalCommands.add(exactRule);
 
       if (normalizedScope === 'workspace') {
-        const currentAllowList = this.ctx.ailyChatConfigService.terminalAllowList ?? [];
+        const currentAllowList = this.ctx.toolApprovalPolicy.terminalAllowList ?? [];
         if (!currentAllowList.includes(exactRule)) {
-          this.ctx.ailyChatConfigService.terminalAllowList = [...currentAllowList, exactRule];
-          this.ctx.ailyChatConfigService.save();
+          this.ctx.toolApprovalPolicy.terminalAllowList = [...currentAllowList, exactRule];
+          this.ctx.toolApprovalPolicy.save();
         }
       }
       return;
@@ -377,8 +377,8 @@ export class UserInteractionHelper {
     }
 
     if (normalizedScope === 'workspace'
-      && this.ctx.ailyChatConfigService.addWorkspaceToolApprovalRule(this.ctx.getCurrentProjectPath(), toolName)) {
-      this.ctx.ailyChatConfigService.save();
+      && this.ctx.toolApprovalPolicy.addWorkspaceToolApprovalRule(this.ctx.getCurrentProjectPath(), toolName)) {
+      this.ctx.toolApprovalPolicy.save();
     }
   }
 

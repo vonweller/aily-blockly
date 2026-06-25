@@ -8,7 +8,7 @@
   <i class="fa-light fa-paperclip"></i>
 </div>
 @if (showAddList) {
-  <div class="acc-expand-backdrop">
+  <div class="acc-expand-backdrop" [style.width.px]="expandedBackdropWidth">
     <div
       class="acc-back ccenter"
       [class.acc-back--composer]="appearance === 'composer'"
@@ -38,6 +38,17 @@
   >
     <i class="fa-light fa-folder-plus"></i>
   </div>
+  @if (showManageMemoryAction) {
+    <div
+      class="acc-sub ccenter"
+      nz-tooltip
+      nzTooltipPlacement="bottom"
+      [nzTooltipTitle]="'AILY_CHAT.MANAGE_MEMORY' | translate"
+      (click)="onManageMemory()"
+    >
+      <i class="fa-light fa-brain"></i>
+    </div>
+  }
 }
 <div
   #modeChipTooltip="nzTooltip"

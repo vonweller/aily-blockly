@@ -12,6 +12,7 @@ import { NpmService } from '../../services/npm.service';
 import { CmdService } from '../../services/cmd.service';
 import {
   AILY_BLOCKLY_USED_LIBRARIES_FIELD,
+  BlocklyProjectDocument,
   BlocklyService,
   BlocklyUsedLibraryManifest,
   BlocklyUsedLibraryManifestEntry,
@@ -31,6 +32,8 @@ import { LocalLibrarySyncService } from '../../services/local-library-sync.servi
 import { CodeViewerIpcService } from './services/code-viewer-ipc.service';
 import { CrossPlatformCmdService } from '../../services/cross-platform-cmd.service';
 import { MissingLibInfo, PasteInstallDialogComponent } from './components/paste-install-dialog/paste-install-dialog.component';
+import { Subscription } from 'rxjs';
+import { BlocklyLibraryPackageService } from '../../services/blockly-library-package.service';
 
 @Component({
   selector: 'app-blockly-editor',
@@ -77,6 +80,7 @@ export class BlocklyEditorComponent implements OnInit, AfterViewInit, OnDestroy 
     attempts: number;
   } | null = null;
   private boardDependencyReloadInProgress = false;
+  private boardConfigUpdatedSubscription: Subscription | null = null;
 
   devmode;
 
@@ -107,6 +111,7 @@ export class BlocklyEditorComponent implements OnInit, AfterViewInit, OnDestroy 
     private ngZone: NgZone,
     private localLibrarySyncService: LocalLibrarySyncService,
     private codeViewerIpcService: CodeViewerIpcService,
+    private blocklyLibraryPackageService: BlocklyLibraryPackageService,
   ) { }
 
   ngOnInit(): void {
@@ -129,6 +134,9 @@ export class BlocklyEditorComponent implements OnInit, AfterViewInit, OnDestroy 
     this._projectService.init();
     this._builderService.init();
     this._uploadService.init();
+    this.boardConfigUpdatedSubscription = this.projectService.boardConfigUpdatedSubject.subscribe((boardConfig) => {
+      this.applyRuntimeBoardConfig(boardConfig);
+    });
 
     // 阻止鼠标按键前进后退
     window.history.replaceState(null, '', window.location.href);
@@ -161,6 +169,8 @@ export class BlocklyEditorComponent implements OnInit, AfterViewInit, OnDestroy 
   }
 
   ngOnDestroy(): void {
+    this.boardConfigUpdatedSubscription?.unsubscribe();
+    this.boardConfigUpdatedSubscription = null;
     this.uiService.closeTool('code-viewer');
     this.clearProjectLoadedCodeRefreshTimer();
     this.localLibrarySyncService.stop();
@@ -210,7 +220,7 @@ export class BlocklyEditorComponent implements OnInit, AfterViewInit, OnDestroy 
       state: 'doing',
       text: this.translate.instant('BLOCKLY_EDITOR.LOADING_BOARD_CONFIG'),
     });
-    const boardJson = await this.projectService.getBoardJson();
+    const boardJson = await this.projectService.resolveBoardConfigForRuntime();
 
     this.projectService.currentBoardConfig = boardJson;
     this.blocklyService.boardConfig = boardJson;
@@ -242,11 +252,9 @@ export class BlocklyEditorComponent implements OnInit, AfterViewInit, OnDestroy 
       state: 'doing',
       text: this.translate.instant('BLOCKLY_EDITOR.LOADING_BLOCKLY_PROGRAM'),
     });
-    let jsonData = JSON.parse(
-      this.electronService.readFile(`${projectPath}/project.abi`),
-    );
+    const projectDocument = await this.loadProjectAbiDocument(projectPath);
 
-    const missingProjectLibraries = this.getMissingProjectLibraries(projectPath, packageJson, jsonData);
+    const missingProjectLibraries = this.getMissingProjectLibraries(projectPath, packageJson, projectDocument);
     if (missingProjectLibraries.length > 0) {
       const restored = await this.restoreMissingProjectLibraries(projectPath, missingProjectLibraries);
       if (!restored) {
@@ -259,8 +267,9 @@ export class BlocklyEditorComponent implements OnInit, AfterViewInit, OnDestroy 
       await this.loadInstalledBlocklyLibraries(projectPath);
     }
 
-    this.blocklyService.loadAbiJson(jsonData);
-    if (this._projectService.syncUsedLibraryManifest(projectPath)) {
+    await this.waitForNextFrame();
+    this.blocklyService.loadProjectDocument(projectDocument, false);
+    if (this._projectService.syncUsedLibraryManifest(projectPath, projectDocument)) {
       packageJson = this.readProjectPackageJson(projectPath) || packageJson;
       this.applyProjectPackageJson(packageJson);
     }
@@ -294,12 +303,112 @@ export class BlocklyEditorComponent implements OnInit, AfterViewInit, OnDestroy 
       .catch(() => undefined);
   }
 
+  private async loadProjectAbiDocument(projectPath: string): Promise<BlocklyProjectDocument> {
+    const abiPath = this.electronService.pathJoin(projectPath, 'project.abi');
+    let abiContent = await this.electronService.readFileAsync(abiPath);
+    const projectAbi = await this.parseProjectAbiContent(abiContent);
+    abiContent = '';
+    return this.blocklyService.normalizeProjectAbiForLoad(projectAbi);
+  }
+
+  private async parseProjectAbiContent(content: string): Promise<any> {
+    if (typeof Worker === 'undefined') {
+      return this.parseProjectAbiContentOnMainThread(content);
+    }
+
+    try {
+      return await this.parseProjectAbiContentInWorker(content);
+    } catch (error) {
+      if ((error as Error)?.name === 'ProjectAbiParseError') {
+        throw error;
+      }
+
+      console.warn('[ProjectAbiParser] worker unavailable, falling back to main thread parse:', error);
+      return this.parseProjectAbiContentOnMainThread(content);
+    }
+  }
+
+  private parseProjectAbiContentInWorker(content: string): Promise<any> {
+    return new Promise((resolve, reject) => {
+      const requestId = Date.now();
+      let worker: Worker;
+
+      try {
+        worker = new Worker(
+          new URL('./workers/project-abi-parser.worker.ts', import.meta.url),
+          { type: 'module' },
+        );
+      } catch (error) {
+        reject(error);
+        return;
+      }
+
+      const cleanup = () => worker.terminate();
+
+      worker.onmessage = (event: MessageEvent<{ id: number; data?: any; error?: string }>) => {
+        const message = event.data;
+        if (!message || message.id !== requestId) {
+          return;
+        }
+
+        cleanup();
+        if (message.error) {
+          const parseError = new Error(message.error);
+          parseError.name = 'ProjectAbiParseError';
+          reject(parseError);
+          return;
+        }
+
+        resolve(message.data);
+      };
+
+      worker.onerror = (error) => {
+        cleanup();
+        reject(new Error(error.message || 'Project ABI parser worker failed'));
+      };
+
+      try {
+        worker.postMessage({ id: requestId, content });
+      } catch (error) {
+        cleanup();
+        reject(error);
+      }
+    });
+  }
+
+  private async parseProjectAbiContentOnMainThread(content: string): Promise<any> {
+    await this.waitForNextFrame();
+    return JSON.parse(content);
+  }
+
+  private waitForNextFrame(): Promise<void> {
+    return new Promise((resolve) => {
+      if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => resolve());
+        return;
+      }
+
+      setTimeout(resolve, 0);
+    });
+  }
+
   private scheduleProjectLoadedCodeRefresh(): void {
     this.clearProjectLoadedCodeRefreshTimer();
     this.projectLoadedCodeRefreshTimer = setTimeout(() => {
       this.projectLoadedCodeRefreshTimer = null;
       this.blocklyService.requestCodeViewerRefresh(true);
     }, this.projectLoadedCodeRefreshDelayMs);
+  }
+
+  private applyRuntimeBoardConfig(boardConfig: any): void {
+    this.blocklyService.boardConfig = boardConfig;
+    window['boardConfig'] = boardConfig;
+    this.blocklyService.refreshBoardDependentBlockDefinitions();
+    this.blocklyService.syncSerialDynamicToolboxBlocks();
+    const updateSerialCustomPorts = (window as any).updateSerialCustomPorts;
+    if (typeof updateSerialCustomPorts === 'function') {
+      updateSerialCustomPorts();
+    }
   }
 
   private clearProjectLoadedCodeRefreshTimer(): void {
@@ -737,28 +846,17 @@ export class BlocklyEditorComponent implements OnInit, AfterViewInit, OnDestroy 
   }
 
   private compareBlocklyLibraryNames(a: string, b: string): number {
-    const aIsCore = a.startsWith('@aily-project/lib-core-');
-    const bIsCore = b.startsWith('@aily-project/lib-core-');
-    if (aIsCore && !bIsCore) {
-      return -1;
-    }
-    if (!aIsCore && bIsCore) {
-      return 1;
-    }
-    return a.localeCompare(b);
+    return this.blocklyLibraryPackageService.compareLibraryNames(a, b);
   }
 
   private isBlocklyLibraryLoaded(projectPath: string, libPackageName: string): boolean {
     return this.blocklyService.loadedLibraries.has(
-      this.getBlocklyLibraryPackagePath(projectPath, libPackageName),
+      this.blocklyLibraryPackageService.getPackagePath(projectPath, libPackageName),
     );
   }
 
   private isBlocklyLibraryPackageReady(projectPath: string, libPackageName: string): boolean {
-    const libPackagePath = this.getBlocklyLibraryPackagePath(projectPath, libPackageName);
-    return ['package.json', 'block.json', 'toolbox.json', 'generator.js'].every((fileName) =>
-      this.electronService.exists(this.electronService.pathJoin(libPackagePath, fileName)),
-    );
+    return this.blocklyLibraryPackageService.isPackageReady(projectPath, libPackageName);
   }
 
   /** 判断开发板包的核心文件是否已经安装完成。 */
@@ -769,22 +867,27 @@ export class BlocklyEditorComponent implements OnInit, AfterViewInit, OnDestroy 
     );
   }
 
-  private getBlocklyLibraryPackagePath(projectPath: string, libPackageName: string): string {
-    return this.getNodeModulePackagePath(projectPath, libPackageName);
-  }
-
   /** 生成 node_modules 下包路径，兼容 @scope/name 包名。 */
   private getNodeModulePackagePath(projectPath: string, packageName: string): string {
     return this.electronService.pathJoin(projectPath, 'node_modules', ...packageName.split('/'));
   }
 
-  private getMissingProjectLibraries(projectPath: string, packageJson: any, projectAbi: any): MissingLibInfo[] {
+  private getMissingProjectLibraries(
+    projectPath: string,
+    packageJson: any,
+    projectDocument: BlocklyProjectDocument,
+  ): MissingLibInfo[] {
     const manifest = this.normalizeUsedLibraryManifest(packageJson?.[AILY_BLOCKLY_USED_LIBRARIES_FIELD]);
-    const projectBlockTypes = new Set(this.blocklyService.collectBlockTypesFromProjectAbi(projectAbi));
+    const manifestEntries = Object.entries(manifest);
+    if (manifestEntries.length === 0) {
+      return [];
+    }
+
+    const projectBlockTypes = new Set(this.blocklyService.collectBlockTypesFromProjectDocument(projectDocument));
     const declaredLibraryDependencies = this.getDeclaredBlocklyLibraryDependencies(packageJson);
     const missingLibraries: MissingLibInfo[] = [];
 
-    for (const [packageName, entry] of Object.entries(manifest)) {
+    for (const [packageName, entry] of manifestEntries) {
       if (!this.isBlocklyLibraryPackageName(packageName)) {
         continue;
       }
@@ -978,7 +1081,7 @@ export class BlocklyEditorComponent implements OnInit, AfterViewInit, OnDestroy 
       return true;
     }
 
-    const currentBlockTypes = new Set(this.blocklyService.collectBlockTypesFromProjectAbi(this.blocklyService.getProjectDocument()));
+    const currentBlockTypes = new Set(this.blocklyService.collectBlockTypesFromProjectDocument(this.blocklyService.getProjectDocument()));
     return entry.blockTypes.some((blockType) => currentBlockTypes.has(blockType));
   }
 

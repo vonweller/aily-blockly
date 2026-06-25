@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer, shell, safeStorage, webFrame, clipboard } = require("electron");
+﻿const { contextBridge, ipcRenderer, shell, safeStorage, webFrame, clipboard } = require("electron");
 const { SerialPort } = require("serialport");
 const { createThrottledSerialPort, createRawSerialPort, listPorts } = require("./serial");
 const { exec } = require("child_process");
@@ -6,9 +6,49 @@ const { createHash } = require("crypto");
 const { existsSync, statSync } = require("fs");
 const { isAbsolute } = require("path");
 const { tmpdir } = require("os");
+const nodeFsp = require("node:fs/promises");
 
 // 单双杠虽不影响实用性，为了路径规范好看，还是单独使用
 const pt = process.platform === "win32" ? "\\" : "/"
+
+const pathApi = {
+  getUserHome: () => require("os").homedir(),
+  getAilyChildPath: () => process.env.AILY_CHILD_PATH,
+  getAppDataPath: () => process.env.AILY_APPDATA_PATH,
+  getAilyBuilderPath: () => process.env.AILY_BUILDER_PATH,
+  getAilyBuilderBuildPath: () => process.env.AILY_BUILDER_BUILD_PATH,
+  getUserDocuments: () => require("os").homedir() + `${pt}Documents`,
+  isExists: (path) => existsSync(path),
+  getElectronPath: () => {
+    if (__dirname.includes('app.asar.unpacked')) {
+      return __dirname.replace('app.asar.unpacked', 'app.asar');
+    }
+    return __dirname;
+  },
+  isDir: (path) => statSync(path).isDirectory(),
+  join: (...args) => require("path").join(...args),
+  dirname: (path) => require("path").dirname(path),
+  extname: (path) => require("path").extname(path),
+  normalize: (path) => require("path").normalize(path),
+  resolve: (path) => require("path").resolve(path),
+  relative: (from, to) => require("path").relative(from, to),
+  basename: (path, suffix = undefined) => require("path").basename(path, suffix),
+  isAbsolute: (path) => isAbsolute(path),
+};
+
+const fspApi = {
+  glob: (...args) => nodeFsp.glob(...args),
+  readFile: (...args) => nodeFsp.readFile(...args),
+  writeFile: (...args) => nodeFsp.writeFile(...args),
+  appendFile: (...args) => nodeFsp.appendFile(...args),
+  readdir: (...args) => nodeFsp.readdir(...args),
+  stat: (...args) => nodeFsp.stat(...args),
+  mkdir: (...args) => nodeFsp.mkdir(...args),
+  rm: (...args) => nodeFsp.rm(...args),
+  access: (...args) => nodeFsp.access(...args),
+  unlink: (...args) => nodeFsp.unlink(...args),
+  open: (...args) => nodeFsp.open(...args),
+};
 
 contextBridge.exposeInMainWorld("electronAPI", {
   ipcRenderer: {
@@ -16,31 +56,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     on: (channel, callback) => ipcRenderer.on(channel, callback),
     invoke: (channel, data) => ipcRenderer.invoke(channel, data),
   },
-  path: {
-    getUserHome: () => require("os").homedir(),
-    getAilyChildPath: () => process.env.AILY_CHILD_PATH,
-    getAppDataPath: () => process.env.AILY_APPDATA_PATH,
-    getAilyBuilderPath: () => process.env.AILY_BUILDER_PATH,
-    getAilyBuilderBuildPath: () => process.env.AILY_BUILDER_BUILD_PATH,
-    getUserDocuments: () => require("os").homedir() + `${pt}Documents`,
-    isExists: (path) => existsSync(path),
-    getElectronPath: () => {
-      // 当 preload.js 从 asar 解包后，将路径重定向到 asar 内部以便 fs 操作正常工作
-      if (__dirname.includes('app.asar.unpacked')) {
-        return __dirname.replace('app.asar.unpacked', 'app.asar');
-      }
-      return __dirname;
-    },
-    isDir: (path) => statSync(path).isDirectory(),
-    join: (...args) => require("path").join(...args),
-    dirname: (path) => require("path").dirname(path),
-    extname: (path) => require("path").extname(path),
-    normalize: (path) => require("path").normalize(path),
-    resolve: (path) => require("path").resolve(path),
-    relative: (from, to) => require("path").relative(from, to),
-    basename: (path, suffix = undefined) => require("path").basename(path, suffix),
-    isAbsolute: (path) => isAbsolute(path),
-  },
+  path: pathApi,
+  fsp: fspApi,
   versions: () => process.versions,
   SerialPort: {
     list: async () => await listPorts(),
@@ -148,6 +165,35 @@ contextBridge.exposeInMainWorld("electronAPI", {
       };
     },
   },
+  chatRuntimeHost: {
+    registerExecutionWorker: (executionWorkerId) => ipcRenderer.invoke("aily-chat-runtime-execution-worker-register", { executionWorkerId }),
+    unregisterExecutionWorker: (executionWorkerId) => ipcRenderer.invoke("aily-chat-runtime-execution-worker-unregister", { executionWorkerId }),
+    registerResourceOperationHandler: (handlerId) => ipcRenderer.invoke("aily-chat-runtime-resource-handler-register", { handlerId }),
+    unregisterResourceOperationHandler: (handlerId) => ipcRenderer.invoke("aily-chat-runtime-resource-handler-unregister", { handlerId }),
+    call: (method, args) => ipcRenderer.invoke("aily-chat-runtime-host-command", { method, args }),
+    onExecutionWorkerCommand: (callback) => {
+      const listener = (_event, payload) => callback(payload);
+      ipcRenderer.on("aily-chat-runtime-execution-worker-command", listener);
+      return () => ipcRenderer.removeListener("aily-chat-runtime-execution-worker-command", listener);
+    },
+    onResourceOperationCommand: (callback) => {
+      const listener = (_event, payload) => callback(payload);
+      ipcRenderer.on("aily-chat-runtime-resource-handler-command", listener);
+      return () => ipcRenderer.removeListener("aily-chat-runtime-resource-handler-command", listener);
+    },
+    sendExecutionWorkerResponse: (payload) => ipcRenderer.send("aily-chat-runtime-execution-worker-response", payload),
+    sendResourceOperationResponse: (payload) => ipcRenderer.send("aily-chat-runtime-resource-handler-response", payload),
+    emitExecutionWorkerEvent: (payload) => ipcRenderer.send("aily-chat-runtime-execution-worker-event", payload),
+    onEvent: (callback) => {
+      const listener = (_event, payload) => callback(payload);
+      ipcRenderer.on("aily-chat-runtime-host-event", listener);
+      return () => ipcRenderer.removeListener("aily-chat-runtime-host-event", listener);
+    },
+  },
+  webviewBridge: {
+    fetchPage: (data) => ipcRenderer.invoke("webview-bridge-fetch", data),
+    searchWeb: (data) => ipcRenderer.invoke("webview-bridge-search", data),
+  },
   iWindow: {
     minimize: () => ipcRenderer.send("window-minimize"),
     maximize: () => ipcRenderer.send("window-maximize"),
@@ -156,6 +202,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     close: () => ipcRenderer.send("window-close"),
     // 子窗口收回到主窗口事件
     goMain: (data) => ipcRenderer.send("window-go-main", data),
+    returnMain: (data) => ipcRenderer.invoke("window-return-main", data),
     // 向其他窗口发送消息
     send: (data) => ipcRenderer.invoke("window-send", data),
     onReceive: (callback) => ipcRenderer.on("window-receive", callback),
@@ -809,3 +856,4 @@ contextBridge.exposeInMainWorld("electronAPI", {
     readText: () => clipboard.readText(),
   }
 });
+

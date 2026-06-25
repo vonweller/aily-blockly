@@ -87,20 +87,22 @@ export class ChatMessagePartsComponent implements OnChanges {
   }
 
   private _refresh(): void {
-    const parts = this.parts || [];
-    const startedAt = performance.now();
-    this.renderItems = reuseStableRenderItems(this.renderItems, buildChatRenderItems(parts, this.doing));
-    ChatPerformanceTracer.recordDuration(
-      'message_parts_component_refresh',
-      performance.now() - startedAt,
-      `parts=${parts.length},items=${this.renderItems.length},doing=${this.doing}`,
-      { slowThresholdMs: 8 },
-    );
-    ChatPerformanceTracer.recordJankSnapshot('message_parts_component', {
-      parts: parts.length,
-      renderItems: this.renderItems.length,
-      doing: this.doing,
-    });
+    ChatPerformanceTracer.runWithSurface('chat_projection', () => {
+      const parts = this.parts || [];
+      const startedAt = performance.now();
+      this.renderItems = reuseStableRenderItems(this.renderItems, buildChatRenderItems(parts, this.doing));
+      ChatPerformanceTracer.recordDuration(
+        'message_parts_component_refresh',
+        performance.now() - startedAt,
+        `parts=${parts.length},items=${this.renderItems.length},doing=${this.doing}`,
+        { slowThresholdMs: 8 },
+      );
+      ChatPerformanceTracer.recordJankSnapshot('message_parts_component', {
+        parts: parts.length,
+        renderItems: this.renderItems.length,
+        doing: this.doing,
+      });
+    }, 'message_parts_component_refresh');
   }
 }
 

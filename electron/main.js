@@ -877,6 +877,7 @@ const { registerNpmHandlers, killAllNpmProcesses, getActiveNpmProcesses } = requ
 const { registerUpdaterHandlers } = require("./updater");
 const { registerCmdHandlers, killAllCmdProcesses, getActiveCmdProcesses } = require("./cmd");
 const { registerAilyServicesStreamHandlers, cancelAllAilyServicesStreams, getActiveAilyServicesStreams } = require("./aily-services-stream");
+const { registerWebviewBridgeHandlers } = require("./webview-bridge");
 const { registerMCPHandlers } = require("./mcp");
 const { registerAppDataResourceLockHandlers, releaseAllAppDataResourceLocks } = require("./appdata-resource-lock");
 // debug模块
@@ -2133,6 +2134,7 @@ function createWindow() {
   registerNpmHandlers(mainWindow);
   registerCmdHandlers(mainWindow);
   registerAilyServicesStreamHandlers(mainWindow);
+  registerWebviewBridgeHandlers();
   registerMCPHandlers(mainWindow);
   registerToolsHandlers(mainWindow);
   registerNotificationHandlers(mainWindow);
@@ -2552,7 +2554,7 @@ function cleanupRegisteredChildProcesses() {
     killAllTerminals(),
     cancelAllAilyServicesStreams()
   ]).then((results) => {
-    console.info('[PROC_TRACE][APP_CLEANUP_DONE]', { results });
+    // console.info('[PROC_TRACE][APP_CLEANUP_DONE]', { results });
   });
 }
 
@@ -2780,7 +2782,13 @@ ipcMain.handle("select-folder-saveAs", async (event, data) => {
 ipcMain.handle("dialog-select-files", async (event, options) => {
   const senderWindow = BrowserWindow.fromWebContents(event.sender);
   try {
-    const result = await dialog.showOpenDialog(senderWindow, options);
+    const normalizedOptions = {
+      ...(options || {}),
+      properties: Array.isArray(options?.properties) && options.properties.length > 0
+        ? options.properties
+        : ["openFile"],
+    };
+    const result = await dialog.showOpenDialog(senderWindow, normalizedOptions);
     return result;
   } catch (error) {
     throw error;

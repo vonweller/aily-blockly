@@ -54,9 +54,9 @@ export class PartEventProcessor {
 
   constructor(
     store: ChatPartMutationStoreAccess,
-    getCurrentMessageHandle: () => ChatPartStoreReadableHandle | null,
+    getCurrentStoreHandle: () => ChatPartStoreReadableHandle | null,
   ) {
-    this.mutations = new ChatPartMutationBridge(store, getCurrentMessageHandle);
+    this.mutations = new ChatPartMutationBridge(store, getCurrentStoreHandle);
   }
 
   // ==================== 事件处理 ====================

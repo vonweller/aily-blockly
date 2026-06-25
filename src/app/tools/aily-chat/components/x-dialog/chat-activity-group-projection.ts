@@ -261,6 +261,40 @@ export function buildPrimaryActivitySummary(part: ChatPart): PrimaryActivitySumm
   };
 }
 
+export function buildTodoPrimaryActivitySummary(part: StatePart): PrimaryActivitySummary | undefined {
+  if (part.kind !== 'todo') {
+    return undefined;
+  }
+
+  const metadata = asRecord(part.metadata);
+  if (!metadata) {
+    return undefined;
+  }
+
+  const timeline = asRecordArray(metadata['timeline']);
+  const latestEntry = timeline.at(-1) ?? metadata;
+  const phaseLabel = asString(latestEntry['phaseLabel']);
+  const phaseDetail = asString(latestEntry['phaseDetail']);
+  const activeTitle = asString(latestEntry['activeTitle']);
+  const summary = asString(latestEntry['summary']) || asString(metadata['summary']);
+  const totalCount = asNumber(latestEntry['totalCount']);
+  const currentStep = asNumber(latestEntry['currentStep']);
+  const completedCount = asNumber(latestEntry['completedCount']);
+  const progressLabel = typeof totalCount === 'number' && totalCount > 0
+    ? `${Math.max(0, currentStep ?? completedCount ?? 0)}/${totalCount}`
+    : undefined;
+
+  const subtitle = phaseDetail || progressLabel || activeTitle || summary;
+  if (!phaseLabel && !subtitle) {
+    return undefined;
+  }
+
+  return {
+    kicker: phaseLabel ? '当前记录' : undefined,
+    subtitle,
+  };
+}
+
 export function buildSubagentActivitySummary(
   part: Pick<ToolCallPart, 'toolCallId' | 'text' | 'state' | 'metadata'>,
 ): SubagentActivitySummary | undefined {

@@ -3,9 +3,11 @@ import { BehaviorSubject, Subject, debounceTime, filter, firstValueFrom, map, sw
 import * as Blockly from 'blockly';
 import { processI18n, processJsonVar, processStaticFilePath, processToolboxI18n } from '../components/blockly/abf';
 import { TranslateService } from '@ngx-translate/core';
-import { parse as parseJavaScript } from 'acorn';
 import { javascriptGenerator } from 'blockly/javascript';
 import { ElectronService } from '../../../services/electron.service';
+import { LogService } from '../../../services/log.service';
+import { NoticeService } from '../../../services/notice.service';
+import { BlocklyLibraryDiagnostics, BlocklyLibraryPackageService, BlocklyLibraryPackageSnapshot } from '../../../services/blockly-library-package.service';
 import { BlockCodeMapping, CodeLineRange } from '../components/blockly/generators/arduino/arduino';
 import { convertBlockTreeToAbs, convertAbiToAbsWithLineMap } from '../../../tools/aily-chat/public-api';
 import { BlockSearcher } from '../components/blockly/plugins/toolbox-search/src/block_searcher';
@@ -53,16 +55,12 @@ export interface BlocklyToolboxFacadeItem {
   toolboxItemId: string;
   libraryName?: string | null;
   libraryPath?: string | null;
+  isLocalLibrary?: boolean;
   parentKey: string | null;
   level: number;
   expanded: boolean;
   isCollapsible: boolean;
   children: BlocklyToolboxFacadeItem[];
-}
-
-interface BlocklyLibraryIntegrityCheckResult {
-  valid: boolean;
-  errors: string[];
 }
 
 interface LoadedBlocklyLibraryInfo {
@@ -119,6 +117,9 @@ export class BlocklyService {
   set workspace(workspace: Blockly.WorkspaceSvg | null) {
     this._workspace = workspace;
     this.workspaceReadySubject.next(workspace);
+    if (workspace) {
+      this.syncSerialDynamicToolboxBlocks(workspace);
+    }
   }
 
   toolbox = {
@@ -139,6 +140,9 @@ export class BlocklyService {
   // 追踪已加载的库,避免重复加载
   loadedLibraries = new Set<string>(); // libPackagePath
   loadedLibraryInfos = new Map<string, LoadedBlocklyLibraryInfo>(); // libPackagePath -> loaded metadata
+  private libraryLoadTasks = new Map<string, Promise<void>>();
+  private libraryIntegrityFailureLogSignatures = new Map<string, string>();
+  private libraryIntegrityWarningLogSignatures = new Map<string, string>();
   // blockType → 库信息映射（用于跨实例复制粘贴时携带库元信息）
   blockTypeToLibMap = new Map<string, { name: string; version: string; localPath?: string }>();
 
@@ -232,7 +236,10 @@ export class BlocklyService {
 
   constructor(
     private translateService: TranslateService,
-    private electronService: ElectronService
+    private electronService: ElectronService,
+    private logService: LogService,
+    private noticeService: NoticeService,
+    private blocklyLibraryPackageService: BlocklyLibraryPackageService
   ) {
     (window as any).__ailyBlockDefinitionsMap = this.blockDefinitionsMap;
     (window as any).__ailyBlockTypeToLibMap = this.blockTypeToLibMap;
@@ -693,7 +700,11 @@ export class BlocklyService {
 
   loadAbiJson(jsonData) {
     const document = this.normalizeProjectDocument(jsonData);
-    this.applyProjectDocument(document);
+    this.loadProjectDocument(document, false);
+  }
+
+  loadProjectDocument(document: BlocklyProjectDocument, cloneState = true) {
+    this.applyProjectDocument(document, cloneState);
     this.loadActivePageIntoWorkspace();
   }
 
@@ -703,6 +714,10 @@ export class BlocklyService {
 
   normalizeProjectAbi(jsonData: any): BlocklyProjectDocument {
     return this.normalizeProjectDocument(jsonData);
+  }
+
+  normalizeProjectAbiForLoad(jsonData: any): BlocklyProjectDocument {
+    return this.normalizeProjectDocument(jsonData, false);
   }
 
   switchPage(pageId: string): boolean {
@@ -890,12 +905,12 @@ export class BlocklyService {
   }
 
   // 加载 blockly 当前工作区的 JSON 数据
-  loadWorkspaceJson(jsonData: any) {
+  loadWorkspaceJson(jsonData: any, clone = true) {
     if (!this.workspace) {
       return;
     }
 
-    const workspaceJson = this.cloneJson(jsonData) || this.createEmptyWorkspaceContent();
+    const workspaceJson = (clone ? this.cloneJson(jsonData) : jsonData) || this.createEmptyWorkspaceContent();
     workspaceJson.blocks?.blocks?.forEach((block) => {
       const ailyIcons = this.iconsMap.get(block.type);
       if (ailyIcons) {
@@ -912,43 +927,51 @@ export class BlocklyService {
     // const normalizedProjectPath = projectPath.replace(/\//g, '\\');
     // const libPackagePath = normalizedProjectPath + '\\node_modules\\' + libPackageName.replace(/\//g, '\\');
 
-    const libPackagePath = this.electronService.pathJoin(
-      projectPath,
-      'node_modules',
-      ...libPackageName.split('/')
-    );
+    const libPackagePath = this.blocklyLibraryPackageService.getPackagePath(projectPath, libPackageName);
 
     // 防止重复加载
     if (this.loadedLibraries.has(libPackagePath)) {
       return;
     }
 
+    const existingLoadTask = this.libraryLoadTasks.get(libPackagePath);
+    if (existingLoadTask) {
+      await existingLoadTask;
+      return;
+    }
+
+    const loadTask = this.loadLibraryInternal(libPackageName, projectPath, libPackagePath);
+    this.libraryLoadTasks.set(libPackagePath, loadTask);
+    try {
+      await loadTask;
+    } finally {
+      if (this.libraryLoadTasks.get(libPackagePath) === loadTask) {
+        this.libraryLoadTasks.delete(libPackagePath);
+      }
+    }
+  }
+
+  private async loadLibraryInternal(libPackageName: string, projectPath: string, libPackagePath: string): Promise<void> {
+    const librarySnapshot = this.blocklyLibraryPackageService.readLibraryPackage(projectPath, libPackageName);
     // 检查库的完整性
-    const integrityCheck = this.checkLibraryIntegrity(libPackagePath);
+    const integrityCheck = this.checkLibraryIntegrity(librarySnapshot, libPackageName);
     if (!integrityCheck.valid) {
       return;
     }
 
     let generatorLoadSuccess = true;
     let loadedBlockTypes: string[] = [];
-    const generatorFilePath = this.electronService.pathJoin(libPackagePath, 'generator.js');
+    const generatorFilePath = librarySnapshot.paths.generatorJs;
     try {
       // 加载block
-      // const blockFileIsExist = this.electronService.exists(libPackagePath + '\\block.json');
-      const blockFileIsExist = this.electronService.exists(this.electronService.pathJoin(libPackagePath, 'block.json'));
-
-      if (blockFileIsExist) {
+      if (Array.isArray(librarySnapshot.blockJson)) {
         // 加载blocks
-        let blocks = JSON.parse(this.electronService.readFile(this.electronService.pathJoin(libPackagePath, 'block.json')));
+        let blocks = this.cloneJson(librarySnapshot.blockJson);
         loadedBlockTypes = blocks
           .map((block: any) => block?.type)
           .filter((type: any): type is string => typeof type === 'string' && type.length > 0);
         // 读取库版本号（用于跨实例复制粘贴时携带库元信息）
-        let libVersion = '';
-        const libPkgJsonPath = this.electronService.pathJoin(libPackagePath, 'package.json');
-        if (this.electronService.exists(libPkgJsonPath)) {
-          try { libVersion = JSON.parse(this.electronService.readFile(libPkgJsonPath)).version || ''; } catch (e) { }
-        }
+        const libVersion = librarySnapshot.packageJson?.version || '';
         let i18nData = null;
         // 检查多语言文件是否存在（先于 generator.js 加载，确保动态扩展能读取到 i18n 数据）
         const i18nFilePath = this.electronService.pathJoin(libPackagePath, 'i18n', this.translateService.currentLang + '.json');
@@ -973,25 +996,22 @@ export class BlocklyService {
           const projPkgJsonPath = this.electronService.pathJoin(projectPath, 'package.json');
           if (this.electronService.exists(projPkgJsonPath)) {
             const projPkgJson = JSON.parse(this.electronService.readFile(projPkgJsonPath));
-            const depVersion = projPkgJson?.dependencies?.[libPackageName] || '';
-            if (typeof depVersion === 'string' && depVersion.startsWith('file:')) {
-              const relativePath = depVersion.substring(5); // 去掉 "file:" 前缀
-              libLocalPath = this.electronService.pathJoin(projectPath, relativePath);
-            }
+            const depVersion = this.getPackageDependencySpec(projPkgJson, libPackageName);
+            libLocalPath = this.resolveFileDependencyPath(projectPath, depVersion);
           }
         } catch (e) { }
         // 替换block中静态图片路径
         const staticFileIsExist = this.electronService.exists(this.electronService.pathJoin(libPackagePath, 'static'));
         this.loadLibBlocks(blocks, staticFileIsExist ? this.electronService.pathJoin(libPackagePath, 'static') : null, libPackageName, libVersion, libLocalPath);
         // 加载toolbox
-        const toolboxFileIsExist = this.electronService.exists(this.electronService.pathJoin(libPackagePath, 'toolbox.json'));
-        if (toolboxFileIsExist) {
-          let toolbox = JSON.parse(this.electronService.readFile(this.electronService.pathJoin(libPackagePath, 'toolbox.json')));
+        if (librarySnapshot.toolboxRoot) {
+          let toolbox = this.cloneJson(librarySnapshot.toolboxRoot);
           // 处理 toolbox 多语言（包括 name 和 labels）
           if (i18nData) {
             toolbox = processToolboxI18n(toolbox, i18nData);
           }
-          this.attachLibraryMetadataToToolbox(toolbox, libPackageName, libPackagePath);
+          this.normalizeLibraryToolboxJson(toolbox);
+          this.attachLibraryMetadataToToolbox(toolbox, libPackageName, libPackagePath, !!libLocalPath);
           this.loadLibToolbox(toolbox);
         }
       } else {
@@ -1015,86 +1035,95 @@ export class BlocklyService {
     }
   }
 
-  private checkLibraryIntegrity(libPackagePath: string): BlocklyLibraryIntegrityCheckResult {
-    const errors: string[] = [];
-    const packageJsonPath = this.electronService.pathJoin(libPackagePath, 'package.json');
-    const toolboxJsonPath = this.electronService.pathJoin(libPackagePath, 'toolbox.json');
-    const blockJsonPath = this.electronService.pathJoin(libPackagePath, 'block.json');
-    const generatorFilePath = this.electronService.pathJoin(libPackagePath, 'generator.js');
+  private checkLibraryIntegrity(
+    snapshot: BlocklyLibraryPackageSnapshot,
+    expectedPackageName?: string,
+  ): BlocklyLibraryDiagnostics {
+    const diagnostics = this.blocklyLibraryPackageService.validateLibraryPackage(snapshot, expectedPackageName);
 
-    this.checkRequiredJsonLibraryFile(packageJsonPath, 'package.json', errors);
-    this.checkRequiredJsonLibraryFile(toolboxJsonPath, 'toolbox.json', errors);
-    this.checkRequiredJsonLibraryFile(blockJsonPath, 'block.json', errors);
-    this.checkRequiredGeneratorFile(generatorFilePath, errors);
-
-    if (errors.length > 0) {
-      console.error([
-        `[checkLibraryIntegrity] 库完整性检查失败`,
-        ...errors.map((error) => `- ${error}`),
-      ].join('\n'));
+    if (diagnostics.errors.length > 0) {
+      this.logLibraryIntegrityErrors(snapshot.ref.path, diagnostics.errors);
+    } else {
+      this.libraryIntegrityFailureLogSignatures.delete(snapshot.ref.path);
+    }
+    if (diagnostics.warnings.length > 0) {
+      this.logLibraryIntegrityWarnings(snapshot.ref.path, diagnostics.warnings);
+    } else {
+      this.libraryIntegrityWarningLogSignatures.delete(snapshot.ref.path);
     }
 
-    return {
-      valid: errors.length === 0,
-      errors,
-    };
+    return diagnostics;
   }
 
-  private checkRequiredJsonLibraryFile(filePath: string, fileName: string, errors: string[]) {
-    if (!this.electronService.exists(filePath)) {
-      errors.push(`${fileName} 不合规: 文件不存在 (${filePath})`);
+  private logLibraryIntegrityErrors(libPackagePath: string, errors: string[]): void {
+    const signature = this.buildLibraryIntegrityLogSignature(libPackagePath, errors);
+    if (this.libraryIntegrityFailureLogSignatures.get(libPackagePath) === signature) {
       return;
     }
 
-    try {
-      JSON.parse(this.electronService.readFile(filePath));
-    } catch (error) {
-      errors.push(`${fileName} 不合规: JSON 格式错误 (${filePath})，${this.formatLibraryIntegrityError(error)}`);
-    }
+    this.libraryIntegrityFailureLogSignatures.set(libPackagePath, signature);
+    console.error([
+      `[checkLibraryIntegrity] 库完整性检查失败`,
+      ...errors.map((error) => `- ${error}`),
+    ].join('\n'));
   }
 
-  private checkRequiredGeneratorFile(filePath: string, errors: string[]) {
-    if (!this.electronService.exists(filePath)) {
-      errors.push(`generator.js 不合规: 文件不存在 (${filePath})`);
+  private logLibraryIntegrityWarnings(libPackagePath: string, warnings: string[]): void {
+    const signature = this.buildLibraryIntegrityLogSignature(libPackagePath, warnings);
+    if (this.libraryIntegrityWarningLogSignatures.get(libPackagePath) === signature) {
       return;
     }
 
-    try {
-      const generatorSource = this.electronService.readFile(filePath);
-      const syntaxError = this.getJavaScriptSyntaxError(generatorSource);
-      if (syntaxError) {
-        errors.push(`generator.js 不合规: JS 语法错误 (${filePath})，${syntaxError}`);
-      }
-    } catch (error) {
-      errors.push(`generator.js 不合规: 读取失败 (${filePath})，${this.formatLibraryIntegrityError(error)}`);
-    }
+    this.libraryIntegrityWarningLogSignatures.set(libPackagePath, signature);
+    const warningMessage = warnings.map((warning) => `- ${warning}`).join('\n');
+    console.warn([
+      `[checkLibraryIntegrity] 库完整性检查警告`,
+      warningMessage,
+    ].join('\n'));
+    this.logService.update({
+      title: '库完整性检查警告',
+      detail: warningMessage,
+      state: 'warn',
+    });
+    this.noticeService.update({
+      title: '库完整性检查警告',
+      text: warnings[0],
+      detail: warningMessage,
+      state: 'warn',
+      showProgress: false,
+      setTimeout: 10000,
+      sendToLog: false,
+    });
   }
 
-  private getJavaScriptSyntaxError(source: string): string | null {
-    try {
-      parseJavaScript(source, {
-        ecmaVersion: 'latest',
-        sourceType: 'script',
-        allowHashBang: true,
-      });
-      return null;
-    } catch (error) {
-      return this.formatLibraryIntegrityError(error);
-    }
+  private buildLibraryIntegrityLogSignature(libPackagePath: string, messages: string[]): string {
+    const paths = this.blocklyLibraryPackageService.getPackagePaths(libPackagePath);
+    const fileSignatures = Object.values(paths)
+      .map((filePath) => this.blocklyLibraryPackageService.getIntegrityFileSignature(filePath));
+
+    return JSON.stringify({
+      messages,
+      files: fileSignatures,
+    });
   }
 
-  private formatLibraryIntegrityError(error: unknown): string {
-    return error instanceof Error ? error.message : String(error);
+  private normalizeLibraryToolboxJson(item: any) {
+    if (!item || typeof item !== 'object') {
+      return;
+    }
+
+    if (typeof item['kind'] === 'string' && item['kind'].trim().toLowerCase() === 'separator') {
+      item['kind'] = 'sep';
+    }
+
+    if (Array.isArray(item['contents'])) {
+      item['contents'].forEach((child: any) => this.normalizeLibraryToolboxJson(child));
+    }
   }
 
   // 卸载库（通过包名和项目路径）
   async unloadLibrary(libPackageName, projectPath) {
-    // 统一路径分隔符，使用electronService.pathJoin处理跨平台路径
-    const libPackagePath = this.electronService.pathJoin(
-      projectPath,
-      'node_modules',
-      ...libPackageName.split('/')
-    );
+    const libPackagePath = this.blocklyLibraryPackageService.getPackagePath(projectPath, libPackageName);
 
     // 直接调用 removeLibrary 函数
     this.removeLibrary(libPackagePath);
@@ -1152,7 +1181,63 @@ export class BlocklyService {
     this.syncToolboxFacadeWithWorkspace();
   }
 
-  private attachLibraryMetadataToToolbox(toolboxItem: any, libraryName: string, libraryPath: string) {
+  syncSerialDynamicToolboxBlocks(workspace: Blockly.WorkspaceSvg | null = this._workspace): void {
+    if (!workspace) {
+      return;
+    }
+
+    const ensureListener = (window as any).ensureSerialToolboxListener;
+    if (typeof ensureListener === 'function') {
+      ensureListener(workspace);
+    }
+
+    const syncFn = (window as any).loadExistingSerialBlockToToolbox;
+    if (typeof syncFn === 'function') {
+      syncFn(workspace);
+    }
+  }
+
+  refreshBoardDependentBlockDefinitions(): void {
+    for (const [libPackagePath, libraryInfo] of this.loadedLibraryInfos.entries()) {
+      const blockJsonPath = this.electronService.pathJoin(libPackagePath, 'block.json');
+      if (!this.electronService.exists(blockJsonPath)) {
+        continue;
+      }
+
+      try {
+        let blocks = JSON.parse(this.electronService.readFile(blockJsonPath));
+        const i18nFilePath = this.electronService.pathJoin(
+          libPackagePath,
+          'i18n',
+          `${this.translateService.currentLang}.json`,
+        );
+        if (this.electronService.exists(i18nFilePath)) {
+          const i18nData = JSON.parse(this.electronService.readFile(i18nFilePath));
+          blocks = processI18n(blocks, i18nData);
+        }
+
+        const staticPath = this.electronService.exists(this.electronService.pathJoin(libPackagePath, 'static'))
+          ? this.electronService.pathJoin(libPackagePath, 'static')
+          : null;
+        const libVersion = libraryInfo.packageName
+          ? (() => {
+            try {
+              const pkg = JSON.parse(this.electronService.readFile(this.electronService.pathJoin(libPackagePath, 'package.json')));
+              return pkg.version || '';
+            } catch {
+              return '';
+            }
+          })()
+          : '';
+
+        this.loadLibBlocks(blocks, staticPath, libraryInfo.packageName, libVersion);
+      } catch (error) {
+        console.warn('[BlocklyService] failed to refresh board-dependent blocks:', libPackagePath, error);
+      }
+    }
+  }
+
+  private attachLibraryMetadataToToolbox(toolboxItem: any, libraryName: string, libraryPath: string, isLocalLibrary: boolean) {
     if (!toolboxItem || typeof toolboxItem !== 'object') {
       return;
     }
@@ -1160,10 +1245,11 @@ export class BlocklyService {
     if (toolboxItem.kind === 'category') {
       toolboxItem.ailyLibraryName = libraryName;
       toolboxItem.ailyLibraryPath = libraryPath;
+      toolboxItem.ailyIsLocalLibrary = isLocalLibrary;
     }
 
     if (Array.isArray(toolboxItem.contents)) {
-      toolboxItem.contents.forEach((child: any) => this.attachLibraryMetadataToToolbox(child, libraryName, libraryPath));
+      toolboxItem.contents.forEach((child: any) => this.attachLibraryMetadataToToolbox(child, libraryName, libraryPath, isLocalLibrary));
     }
   }
 
@@ -1263,6 +1349,8 @@ export class BlocklyService {
   removeLibrary(libPackagePath) {
     // 路径已经是标准格式，无需再次分割
     // electronService.pathJoin已经处理了路径分隔符
+    this.libraryIntegrityFailureLogSignatures.delete(libPackagePath);
+    this.libraryIntegrityWarningLogSignatures.delete(libPackagePath);
 
     // 检查是否已加载
     if (!this.loadedLibraries.has(libPackagePath)) {
@@ -1466,6 +1554,9 @@ export class BlocklyService {
     this.loadedGenerators.clear();
     this.loadedLibraries.clear();
     this.loadedLibraryInfos.clear();
+    this.libraryLoadTasks.clear();
+    this.libraryIntegrityFailureLogSignatures.clear();
+    this.libraryIntegrityWarningLogSignatures.clear();
     this.blockTypeToLibMap.clear();
     this.nativeToolboxElement = null;
     this.externalToolboxHost = null;
@@ -1549,7 +1640,7 @@ export class BlocklyService {
     return this.composeWorkspacePayload(activePage?.content, this.sharedModelSubject.value);
   }
 
-  private collectBlockTypesFromProjectDocument(document: BlocklyProjectDocument): string[] {
+  collectBlockTypesFromProjectDocument(document: BlocklyProjectDocument): string[] {
     const blockTypes = new Set<string>();
 
     for (const page of document.pages || []) {
@@ -1594,6 +1685,23 @@ export class BlocklyService {
       ?? packageJson?.devDependencies?.[packageName]
       ?? '';
     return typeof dependencySpec === 'string' ? dependencySpec : String(dependencySpec || '');
+  }
+
+  private resolveFileDependencyPath(projectPath: string, dependencySpec: string): string | undefined {
+    if (!dependencySpec.startsWith('file:')) {
+      return undefined;
+    }
+
+    const filePath = dependencySpec.slice(5);
+    if (!filePath) {
+      return undefined;
+    }
+
+    if (window['path']?.isAbsolute?.(filePath)) {
+      return filePath;
+    }
+
+    return this.electronService.pathJoin(projectPath, filePath);
   }
 
   private isSameUsedLibraryManifestEntry(previousEntry: any, nextEntry: BlocklyUsedLibraryManifestEntry): boolean {
@@ -1682,6 +1790,7 @@ export class BlocklyService {
       toolboxItemId: item.toolboxitemid || item.categoryId || `${item.kind}:${item.name}`,
       libraryName: item.ailyLibraryName || null,
       libraryPath: item.ailyLibraryPath || null,
+      isLocalLibrary: item.ailyIsLocalLibrary === true,
       parentKey,
       level,
       expanded: this.normalizeToolboxExpandedState(item.expanded, false),
@@ -1989,10 +2098,10 @@ export class BlocklyService {
     return `page-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   }
 
-  private normalizeProjectDocument(jsonData: any): BlocklyProjectDocument {
+  private normalizeProjectDocument(jsonData: any, clone = true): BlocklyProjectDocument {
     if (Array.isArray(jsonData?.pages)) {
       const pages = jsonData.pages.length
-        ? jsonData.pages.map((page, index) => this.normalizePageSnapshot(page, index))
+        ? jsonData.pages.map((page, index) => this.normalizePageSnapshot(page, index, clone))
         : [this.createEmptyPageSnapshot('page-1', this.buildDefaultPageTitle(1))];
       const activePageId = pages.some((page) => page.id === jsonData.activePageId)
         ? jsonData.activePageId
@@ -2004,20 +2113,21 @@ export class BlocklyService {
         activePageId,
         openedPageIds,
         pages,
-        sharedModel: this.normalizeSharedModel(jsonData.sharedModel),
+        sharedModel: this.normalizeSharedModel(jsonData.sharedModel, clone),
       };
     }
 
-    const legacyWorkspaceJson = this.normalizeWorkspaceJson(jsonData);
+    const legacyWorkspaceJson = this.normalizeWorkspaceJson(jsonData, clone);
     const legacyPage = this.createEmptyPageSnapshot('page-1', this.buildDefaultPageTitle(1));
-    legacyPage.content = this.stripSharedModel(legacyWorkspaceJson);
+    const sharedModel = this.extractSharedModel(legacyWorkspaceJson, clone);
+    legacyPage.content = this.stripSharedModel(legacyWorkspaceJson, clone);
 
     return {
       schemaVersion: this.projectDocumentSchemaVersion,
       activePageId: legacyPage.id,
       openedPageIds: [legacyPage.id],
       pages: [legacyPage],
-      sharedModel: this.extractSharedModel(legacyWorkspaceJson),
+      sharedModel,
     };
   }
 
@@ -2033,17 +2143,17 @@ export class BlocklyService {
     return nextOpenedPageIds.length ? nextOpenedPageIds : [activePageId];
   }
 
-  private normalizePageSnapshot(page: any, index: number): BlocklyPageSnapshot {
+  private normalizePageSnapshot(page: any, index: number, clone = true): BlocklyPageSnapshot {
     return {
       id: page?.id || this.generatePageId(),
       title: page?.title || this.buildDefaultPageTitle(index + 1),
-      content: this.normalizePageContent(page?.content),
+      content: this.normalizePageContent(page?.content, clone),
       viewState: page?.viewState || this.createDefaultViewState(),
     };
   }
 
-  private normalizePageContent(content: any): any {
-    const workspaceJson = this.normalizeWorkspaceJson(content);
+  private normalizePageContent(content: any, clone = true): any {
+    const workspaceJson = this.normalizeWorkspaceJson(content, clone);
     delete workspaceJson.variables;
     workspaceJson.blocks.blocks = workspaceJson.blocks.blocks.filter(
       (block) => !this.isSharedProcedureBlock(block),
@@ -2051,8 +2161,8 @@ export class BlocklyService {
     return workspaceJson;
   }
 
-  private normalizeWorkspaceJson(workspaceJson: any): any {
-    const nextJson = this.cloneJson(workspaceJson) || this.createEmptyWorkspaceContent();
+  private normalizeWorkspaceJson(workspaceJson: any, clone = true): any {
+    const nextJson = (clone ? this.cloneJson(workspaceJson) : workspaceJson) || this.createEmptyWorkspaceContent();
 
     if (!nextJson.blocks) {
       nextJson.blocks = {
@@ -2068,20 +2178,22 @@ export class BlocklyService {
     return nextJson;
   }
 
-  private normalizeSharedModel(sharedModel: any): BlocklySharedModel {
+  private normalizeSharedModel(sharedModel: any, clone = true): BlocklySharedModel {
     return {
-      variables: sharedModel?.variables ? this.cloneJson(sharedModel.variables) : undefined,
+      variables: sharedModel?.variables
+        ? clone ? this.cloneJson(sharedModel.variables) : sharedModel.variables
+        : undefined,
       procedureBlocks: Array.isArray(sharedModel?.procedureBlocks)
-        ? sharedModel.procedureBlocks.map((block) => this.cloneJson(block))
+        ? clone ? sharedModel.procedureBlocks.map((block) => this.cloneJson(block)) : sharedModel.procedureBlocks
         : [],
     };
   }
 
-  private applyProjectDocument(document: BlocklyProjectDocument) {
-    this.pagesSubject.next(document.pages.map((page) => this.cloneJson(page)));
+  private applyProjectDocument(document: BlocklyProjectDocument, clone = true) {
+    this.pagesSubject.next(clone ? document.pages.map((page) => this.cloneJson(page)) : document.pages);
     this.activePageIdSubject.next(document.activePageId);
-    this.openedPageIdsSubject.next(this.cloneJson(document.openedPageIds));
-    this.sharedModelSubject.next(this.normalizeSharedModel(document.sharedModel));
+    this.openedPageIdsSubject.next(clone ? this.cloneJson(document.openedPageIds) : document.openedPageIds);
+    this.sharedModelSubject.next(this.normalizeSharedModel(document.sharedModel, clone));
   }
 
   private persistActiveWorkspaceToState() {
@@ -2132,7 +2244,7 @@ export class BlocklyService {
     try {
       Blockly.Events.disable();
       this.workspace.clear();
-      this.loadWorkspaceJson(workspaceJson);
+      this.loadWorkspaceJson(workspaceJson, false);
     } finally {
       if (wereEventsEnabled) {
         Blockly.Events.enable();
@@ -2185,8 +2297,8 @@ export class BlocklyService {
     return workspaceJson;
   }
 
-  private extractSharedModel(workspaceJson: any): BlocklySharedModel {
-    const normalizedWorkspaceJson = this.normalizeWorkspaceJson(workspaceJson);
+  private extractSharedModel(workspaceJson: any, clone = true): BlocklySharedModel {
+    const normalizedWorkspaceJson = this.normalizeWorkspaceJson(workspaceJson, clone);
     const workspaceBlocks = Array.isArray(normalizedWorkspaceJson.blocks?.blocks)
       ? normalizedWorkspaceJson.blocks.blocks
       : [];
@@ -2201,8 +2313,8 @@ export class BlocklyService {
     };
   }
 
-  private stripSharedModel(workspaceJson: any): any {
-    const normalizedWorkspaceJson = this.normalizeWorkspaceJson(workspaceJson);
+  private stripSharedModel(workspaceJson: any, clone = true): any {
+    const normalizedWorkspaceJson = this.normalizeWorkspaceJson(workspaceJson, clone);
     normalizedWorkspaceJson.blocks.blocks = normalizedWorkspaceJson.blocks.blocks.filter(
       (block) => !this.isSharedProcedureBlock(block),
     );

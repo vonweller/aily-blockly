@@ -28,14 +28,15 @@ import { AilyHost } from '../../core/host';
 import { ResourceItem } from '../../core/chat-types';
 import type { ChatPart } from '../../core/chat-parts';
 import {
-  buildDialogTurnContext,
   type DialogTurnContext,
 } from '../../core/user-turn-action-target';
+import type { ChatVisibleTranscriptDialogItem } from '../../core/chat-visible-transcript-model';
 import type { ChatSelectedMode } from '../../core/chat-mode';
 import { extractUserTurnResources, mergeUserTurnResources, parseUserTurnTextAndResources } from '../../helpers/chat-user-turn-context';
 import type { ChatTaskActionDetail } from '../../helpers/chat-task-action-coordinator';
 import { ChatMessagePartsComponent } from './chat-message-parts.component';
 import { ChatContextToolbarComponent } from '../chat-context-toolbar/chat-context-toolbar.component';
+import { AilyMarkdownExternalLinksDirective } from '../../directives/aily-markdown-external-links.directive';
 import type { TurnResponsePart, TurnResponseTurn } from 'aily-lex/browser';
 import { collectTurnResponseText } from 'aily-lex/browser';
 import {
@@ -46,15 +47,14 @@ import {
   getTurnResponseAssistantText,
   getTurnResponseResponseText,
 } from '../../core/turn-response-stream-contract';
-import { turnResponsePartToChatParts } from '../../core/turn-response-part-mapper';
 import { buildRenderableProgressParts, type RenderableChatPart } from './chat-render-parts';
 import type { HostResponseVoteDirection } from '../../helpers/host-turn-response-state';
 import { ChatRuntimeInteractionHostService } from '../../services/chat-runtime-interaction-host.service';
 import type { WorkspaceCheckpointPresentationMode } from '../../services/edit-checkpoint.service';
 import { ChatEngineService } from '../../services/chat-engine.service';
 
-const EMPTY_TURN_PARTS: readonly TurnResponsePart[] = [];
 const EMPTY_PROGRESS_MESSAGES: readonly NonNullable<TurnResponseTurn['response']['progressMessages']>[number][] = [];
+const EMPTY_CHAT_PARTS: readonly ChatPart[] = [];
 
 
 @Component({
@@ -70,60 +70,23 @@ const EMPTY_PROGRESS_MESSAGES: readonly NonNullable<TurnResponseTurn['response']
     XMarkdownComponent,
     ChatMessagePartsComponent,
     ChatContextToolbarComponent,
+    AilyMarkdownExternalLinksDirective,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChecked, OnDestroy {
-  @Input() role = 'user';
-  @Input() content = '';
-  @Input() doing = false;
+  @Input({ required: true }) item!: ChatVisibleTranscriptDialogItem;
   @Input() readOnly = false;
-  /** 当前消息对应的 turn-native 容器 */
-  @Input()
-  set turnResponse(value: TurnResponseTurn | null) {
-    this._turnResponse = value;
-    this.refreshCompatTurnContext();
-  }
-
-  get turnResponse(): TurnResponseTurn | null {
-    return this._turnResponse;
-  }
-  /** 当前消息对应的 turn-native UI 上下文 */
-  @Input()
-  set turnContext(value: DialogTurnContext | null) {
-    this._turnContext = value;
-  }
-
-  get turnContext(): DialogTurnContext | null {
-    return this._turnContext;
-  }
-  /** 是否为最后一条 aily 消息（显示操作按钮） */
-  @Input() isLastAily = false;
-  @Input() isFirstUserTurn = false;
   @Input() workspaceCheckpointPresentationMode: WorkspaceCheckpointPresentationMode = 'unknown';
   /** 当前会话 ID */
   @Input() sessionId = '';
-  @Input()
-  set responseVote(value: HostResponseVoteDirection | undefined) {
-    this._responseVote = value === 0 || value === 1 ? value : undefined;
-    this.feedbackState = this.mapVoteToFeedbackState(this._responseVote);
-  }
-
-  get responseVote(): HostResponseVoteDirection | undefined {
-    return this._responseVote;
-  }
   @Input() currentMode = 'agent';
   @Input() currentCustomAgentTarget: string | undefined;
   @Input() currentModelName = '';
   /** 与主输入区一致的模型展示文案，PRU 下会附带当前配置描述。 */
   @Input() currentModelChipLabel = '';
   @Input() currentModelBillingLabel = '';
-  /** 该消息创建时使用的模型名称 */
-  @Input() turnModelName = '';
-  /** 该消息创建时使用的模型倍率 */
-  @Input() turnModelBillingLabel = '';
   @Input() isWaiting = false;
-  @Input() liveParts: readonly ChatPart[] | null = null;
   @Input() selectedMode: Pick<ChatSelectedMode, 'modeId' | 'customAgentTarget'> | null | undefined;
   /** 全局互斥：当前允许展开编辑框的用户 turnId；与本条不一致时需收起（由父级统一传入） */
   @Input() exclusiveEditTurnId: string | undefined;
@@ -164,17 +127,15 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
   private visibilityObserver: IntersectionObserver | null = null;
   private contentResizeObserver: ResizeObserver | null = null;
 
-  private _turnResponse: TurnResponseTurn | null = null;
-  private _turnContext: DialogTurnContext | null = null;
-  private _responseVote: HostResponseVoteDirection | undefined;
-  private compatTurnContext: DialogTurnContext | null = null;
-  private _effectivePartsSource: readonly TurnResponsePart[] = EMPTY_TURN_PARTS;
-  private _effectiveLivePartsSource: readonly ChatPart[] | null = null;
+  private _effectivePartsSource: readonly ChatPart[] = EMPTY_CHAT_PARTS;
   private _effectiveProgressMessagesSource: readonly NonNullable<TurnResponseTurn['response']['progressMessages']>[number][] = EMPTY_PROGRESS_MESSAGES;
   private _effectivePartsDoing = false;
   private _effectivePartsRevisionKey = '';
+  private _effectivePartsItemId = '';
   private _effectivePartsCache = [] as RenderableChatPart[];
+  private renderStateItemId: string | null = null;
   private hostTextDeltaVisibilityTurnId: string | null = null;
+  private feedbackItemId: string | null = null;
 
   constructor(
     private cdr: ChangeDetectorRef,
@@ -219,6 +180,50 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
     this.dismissSessionMenus.emit();
   }
 
+  get role(): string {
+    return this.item.role;
+  }
+
+  get content(): string {
+    return this.item.content;
+  }
+
+  get doing(): boolean {
+    return this.item.doing;
+  }
+
+  get turnContext(): DialogTurnContext | null {
+    return this.item.turnContext;
+  }
+
+  get turnResponse(): TurnResponseTurn | null {
+    return this.item.turnResponse;
+  }
+
+  get isLastAily(): boolean {
+    return this.item.isLastAily;
+  }
+
+  get isFirstUserTurn(): boolean {
+    return this.item.isFirstUserTurn;
+  }
+
+  get turnModelName(): string {
+    return this.item.turnModelName;
+  }
+
+  get turnModelBillingLabel(): string {
+    return this.item.turnModelBillingLabel ?? '';
+  }
+
+  get responseVote(): HostResponseVoteDirection | undefined {
+    return this.item.responseVote;
+  }
+
+  get parts(): readonly ChatPart[] {
+    return this.item.parts;
+  }
+
   /** 是否可显示操作栏（非 doing 的最后一条 aily 消息） */
   get canShowActions(): boolean {
     return !this.readOnly && this.isLastAily && !this.effectiveDoing && this.role === 'aily';
@@ -259,56 +264,35 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
   }
 
   get effectiveParts() {
-    const liveParts = this.role === 'aily' && this.liveParts?.length ? this.liveParts : null;
-    if (liveParts) {
-      const doing = this.effectiveDoing;
-      const revisionKey = this.getLivePartsRevisionKey(liveParts);
-      if (liveParts === this._effectiveLivePartsSource
-        && doing === this._effectivePartsDoing
-        && revisionKey === this._effectivePartsRevisionKey) {
-        return this._effectivePartsCache;
-      }
-
-      this._effectiveLivePartsSource = liveParts;
-      this._effectivePartsSource = EMPTY_TURN_PARTS;
-      this._effectiveProgressMessagesSource = EMPTY_PROGRESS_MESSAGES;
-      this._effectivePartsDoing = doing;
-      this._effectivePartsRevisionKey = revisionKey;
-      this._effectivePartsCache = [
-        ...liveParts,
-        ...buildRenderableProgressParts(this.effectiveTurnContext?.response, doing, this.hasActiveConfirmationCarousel),
-      ];
-      return this._effectivePartsCache;
-    }
-
     const response = this.effectiveTurnContext?.response;
-    const turnParts = response?.parts ?? EMPTY_TURN_PARTS;
+    const itemParts = this.role === 'aily' ? this.parts : EMPTY_CHAT_PARTS;
     const progressMessages = response?.progressMessages ?? EMPTY_PROGRESS_MESSAGES;
     const doing = this.effectiveDoing;
-    const revisionKey = this.getEffectivePartsRevisionKey(response, turnParts);
-    if (this._effectiveLivePartsSource === null
-      && turnParts === this._effectivePartsSource
+    const revisionKey = this.getEffectivePartsRevisionKey(response, itemParts);
+    const itemId = this.item.id;
+    if (itemId === this._effectivePartsItemId
+      && itemParts === this._effectivePartsSource
       && progressMessages === this._effectiveProgressMessagesSource
       && doing === this._effectivePartsDoing
       && revisionKey === this._effectivePartsRevisionKey) {
       return this._effectivePartsCache;
     }
 
-    this._effectiveLivePartsSource = null;
-    this._effectivePartsSource = turnParts;
+    this._effectivePartsItemId = itemId;
+    this._effectivePartsSource = itemParts;
     this._effectiveProgressMessagesSource = progressMessages;
     this._effectivePartsDoing = doing;
     this._effectivePartsRevisionKey = revisionKey;
     this._effectivePartsCache = [
-      ...turnParts.flatMap(part => turnResponsePartToChatParts(part)),
-      ...buildRenderableProgressParts(response, doing, this.hasActiveConfirmationCarousel),
+      ...itemParts,
+      ...buildRenderableProgressParts(response, itemParts, doing, this.hasActiveConfirmationCarousel),
     ];
     return this._effectivePartsCache;
   }
 
   private getEffectivePartsRevisionKey(
     response: TurnResponseTurn['response'] | null | undefined,
-    parts: readonly TurnResponsePart[],
+    parts: readonly ChatPart[],
   ): string {
     const responseRecord = response as { updatedAt?: unknown; revision?: unknown } | null | undefined;
     const turnRecord = this.effectiveTurnContext?.turnResponse as { updatedAt?: unknown; revision?: unknown } | null | undefined;
@@ -316,18 +300,10 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
     const base = typeof value === 'number' && Number.isFinite(value) ? String(value) : '-1';
     const terminalKey = parts
       .map((part, index) => part.type === 'terminal'
-        ? buildTerminalPartRevisionKey(part, index)
-        : `${index}:${part.type}`)
-      .join('|');
-    return `${base}:${parts.length}:${terminalKey}`;
-  }
-
-  private getLivePartsRevisionKey(parts: readonly ChatPart[]): string {
-    return parts
-      .map((part, index) => part.type === 'terminal'
-        ? buildTerminalPartRevisionKey(part as TurnResponsePart, index)
+        ? buildTerminalPartRevisionKey(part as unknown as TurnResponsePart, index)
         : `${index}:${part.type}:${readChatPartStableRevision(part)}`)
       .join('|');
+    return `${base}:${parts.length}:${terminalKey}`;
   }
 
   private get hasActiveConfirmationCarousel(): boolean {
@@ -347,7 +323,7 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
   }
 
   get activityTurnResponse(): TurnResponseTurn | null {
-    return this.effectiveTurnContext?.turnResponse ?? this._turnResponse;
+    return this.effectiveTurnContext?.turnResponse ?? this.turnResponse;
   }
 
   get effectiveDoing(): boolean {
@@ -758,6 +734,16 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
     return vote === 1 ? 'helpful' : vote === 0 ? 'unhelpful' : null;
   }
 
+  private syncFeedbackStateFromItem(): void {
+    const itemId = this.item.id;
+    if (this.feedbackItemId === itemId) {
+      return;
+    }
+
+    this.feedbackItemId = itemId;
+    this.feedbackState = this.mapVoteToFeedbackState(this.responseVote);
+  }
+
   // ===== 编辑模式操作 =====
 
   /** 点击用户消息进入编辑模式 */
@@ -940,25 +926,8 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
       : normalized;
   }
 
-  private refreshCompatTurnContext(): void {
-    this.compatTurnContext = this._turnResponse
-      ? buildDialogTurnContext({
-          turnId: this._turnResponse.turnId,
-          turnResponse: this._turnResponse,
-          request: this._turnResponse.request,
-          response: this._turnResponse.response,
-          rounds: this._turnResponse.rounds,
-          displayContent: this.role === 'user'
-            ? (this.isBlankContent(this.content)
-                ? (this._turnResponse.request.displayContent ?? this._turnResponse.request.content)
-                : this.content)
-            : undefined,
-        })
-      : null;
-  }
-
   private get effectiveTurnContext(): DialogTurnContext | null {
-    return this.turnContext ?? this.compatTurnContext;
+    return this.turnContext;
   }
 
   private get renderableUserContent(): string {
@@ -981,7 +950,17 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
   private get renderableFallbackContent(): string {
     return this.role === 'user'
       ? this.renderableUserContent
-      : (this.content || '');
+      : this.renderableAssistantFallbackContent;
+  }
+
+  private get renderableAssistantFallbackContent(): string {
+    const response = this.effectiveTurnContext?.response;
+    if (response) {
+      return getTurnResponseResponseText(response);
+    }
+
+    const turnResponse = this.effectiveTurnContext?.turnResponse ?? this.turnResponse;
+    return turnResponse ? getTurnResponseAssistantText(turnResponse) : '';
   }
 
   private isBlankContent(content: string | null | undefined): boolean {
@@ -1044,14 +1023,10 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
       }
     }
 
-    if (changes['role'] || changes['content']) {
-      this.refreshCompatTurnContext();
-    }
-
-    if (changes['doing'] || changes['content'] || changes['parts'] || changes['turnResponse'] || changes['turnContext'] || changes['liveParts']) {
-      if (changes['turnResponse'] || changes['turnContext']) {
-        this.syncHostTextDeltaVisibility();
-      }
+    if (changes['item']) {
+      this.syncRowLocalStateFromItemId();
+      this.syncFeedbackStateFromItem();
+      this.syncHostTextDeltaVisibility();
       if (!this.shouldRenderHeavyContent) {
         this.streamingConfig.set({ hasNextChunk: this.effectiveDoing, enableAnimation: false });
         return;
@@ -1092,6 +1067,25 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
     if (this.isEditing) {
       this.editSessionClosed.emit();
     }
+  }
+
+  private syncRowLocalStateFromItemId(): void {
+    const itemId = this.item.id;
+    if (this.renderStateItemId === itemId) {
+      return;
+    }
+
+    this.renderStateItemId = itemId;
+    this._effectivePartsItemId = '';
+    this._effectivePartsSource = EMPTY_CHAT_PARTS;
+    this._effectiveProgressMessagesSource = EMPTY_PROGRESS_MESSAGES;
+    this._effectivePartsDoing = false;
+    this._effectivePartsRevisionKey = '';
+    this._effectivePartsCache = [];
+    this.lastRaw = '';
+    this.streamContent.set('');
+    this.lastRenderedContentHeight = 0;
+    this.forceCloseEditFromExclusiveLock();
   }
 
   private observeViewportVisibility(): void {

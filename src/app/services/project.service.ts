@@ -29,6 +29,7 @@ import {
   resolveCoderFrameworkOption,
   resolveDefaultCoderFramework,
 } from '../utils/coder-board.mapper';
+import { applyCdcSerialPortOverrides } from '../editors/blockly-editor/components/blockly/abf';
 
 interface ProjectPackageData {
   name: string;
@@ -73,6 +74,7 @@ export class ProjectService {
 
   // 开发板变更事件通知，只在变更时发出
   boardChangeSubject = new Subject<void>();
+  boardConfigUpdatedSubject = new Subject<any>();
 
   // 当前项目路径的订阅源
   private currentProjectPathSubject = new BehaviorSubject<string>('');
@@ -170,14 +172,15 @@ export class ProjectService {
     reject: (error: any) => void;
     timer: ReturnType<typeof setTimeout>;
   } | null = null;
+  private messageService: NzMessageService | null = null;
+  private modalService: NzModalService | null = null;
+  private routerService: Router | null = null;
   // STM32选择开发板时定义引脚使用
   currentStm32Config: { board: any, variant: any, variant_h: any } = { board: null, variant: null, variant_h: null };
 
   constructor(
     private uiService: UiService,
     private electronService: ElectronService,
-    private message: NzMessageService,
-    private router: Router,
     private cmdService: CmdService,
     private crossPlatformCmdService: CrossPlatformCmdService,
     private configService: ConfigService,
@@ -186,7 +189,6 @@ export class ProjectService {
     private workflowService: WorkflowService,
     private translate: TranslateService,
     private noticeService: NoticeService,
-    private modal: NzModalService,
     private appDataResourceLock: AppDataResourceLockService,
     private chatService: ChatService,
     private injector: Injector,
@@ -203,6 +205,27 @@ export class ProjectService {
 
   private warnBlockingChatRequest(): void {
     this.message.warning('AI 对话正在处理中，请先停止当前请求后再切换或关闭项目。');
+  }
+
+  private get message(): NzMessageService {
+    if (!this.messageService) {
+      this.messageService = this.injector.get(NzMessageService);
+    }
+    return this.messageService;
+  }
+
+  private get modal(): NzModalService {
+    if (!this.modalService) {
+      this.modalService = this.injector.get(NzModalService);
+    }
+    return this.modalService;
+  }
+
+  private get router(): Router {
+    if (!this.routerService) {
+      this.routerService = this.injector.get(Router);
+    }
+    return this.routerService;
   }
 
   // 初始化UI服务，这个init函数仅供main-window使用
@@ -1027,6 +1050,92 @@ export class ProjectService {
     } catch (e) {
       console.warn('同步开发板配置失败:', e);
       return false;
+    }
+  }
+
+  async resolveBoardConfigForRuntime(rawBoardJson?: any): Promise<any> {
+    const boardJson = rawBoardJson ?? await this.getBoardJson();
+    const resolvedBoardJson = JSON.parse(JSON.stringify(boardJson));
+    const cdcEnabled = await this.isCdcOnBootEnabledForProject(resolvedBoardJson);
+    applyCdcSerialPortOverrides(resolvedBoardJson, cdcEnabled);
+    return resolvedBoardJson;
+  }
+
+  async refreshRuntimeBoardConfig(): Promise<any> {
+    const resolvedBoardJson = await this.resolveBoardConfigForRuntime();
+    this.currentBoardConfig = resolvedBoardJson;
+    window['boardConfig'] = resolvedBoardJson;
+    this.boardConfigUpdatedSubject.next(resolvedBoardJson);
+    return resolvedBoardJson;
+  }
+
+  async isCdcOnBootEnabledForProject(
+    rawBoardJson?: any,
+    cdcOnBootOption?: string,
+  ): Promise<boolean> {
+    try {
+      const boardJson = rawBoardJson ?? await this.getBoardJson();
+      if (!Array.isArray(boardJson?.cdcSerialPort) || boardJson.cdcSerialPort.length === 0) {
+        return false;
+      }
+
+      const core = String(boardJson?.core || '');
+      if (!core.includes('esp32')) {
+        return false;
+      }
+
+      const boardName = this.getBoardNameFromBoardJson(boardJson);
+      if (!boardName) {
+        return false;
+      }
+
+      const packageJson = await this.getPackageJson();
+      const option = cdcOnBootOption ?? packageJson?.projectConfig?.CDCOnBoot;
+      if (!option) {
+        return false;
+      }
+
+      const rawBoardConfig = await this.getRawBoardsTxtConfig(boardName);
+      if (!rawBoardConfig) {
+        return false;
+      }
+
+      const cdcOnBootKey = `${boardName}.menu.CDCOnBoot.${option}.build.cdc_on_boot`;
+      return rawBoardConfig[cdcOnBootKey] === '1';
+    } catch (error) {
+      console.warn('[ProjectService] failed to resolve CDCOnBoot state:', error);
+      return false;
+    }
+  }
+
+  private getBoardNameFromBoardJson(boardJson: any): string | null {
+    const type = boardJson?.type;
+    if (typeof type !== 'string' || !type) {
+      return null;
+    }
+
+    const parts = type.split(':');
+    return parts[parts.length - 1] || null;
+  }
+
+  private async getRawBoardsTxtConfig(boardName: string): Promise<Record<string, string> | null> {
+    try {
+      const sdkPath = await this.getSdkPath();
+      if (!sdkPath) {
+        return null;
+      }
+
+      const boardsFilePath = `${sdkPath}/boards.txt`;
+      if (!window['fs'].existsSync(boardsFilePath)) {
+        return null;
+      }
+
+      const boardsContent = window['fs'].readFileSync(boardsFilePath, 'utf8');
+      const lines = boardsContent.split('\n');
+      return this.parseBoardsConfig(lines, boardName);
+    } catch (error) {
+      console.warn('[ProjectService] failed to read raw boards.txt config:', error);
+      return null;
     }
   }
 

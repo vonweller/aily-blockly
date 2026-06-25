@@ -1,4 +1,8 @@
 import { Routes } from '@angular/router';
+import {
+    AILY_CHAT_RUNTIME_OWNER_PROVIDERS,
+    AILY_CHAT_VIEW_PROVIDERS,
+} from './tools/aily-chat/aily-chat.providers';
 import { inject, provideEnvironmentInitializer } from '@angular/core';
 import { AILY_CHAT_RUNTIME_PROVIDERS } from './tools/aily-chat/aily-chat.providers';
 import { AilyChatChildProtocolService } from './tools/aily-chat/services/aily-chat-child-protocol.service';
@@ -11,6 +15,9 @@ export const routes: Routes = [
     },
     {
         path: 'main',
+        providers: [
+            ...AILY_CHAT_VIEW_PROVIDERS,
+        ],
         loadComponent: () => import('./main-window/main-window.component').then(m => m.MainWindowComponent),
         children: [
             {
@@ -129,8 +136,17 @@ export const routes: Routes = [
     },
     {
         path: "aily-chat",
-        providers: [...AILY_CHAT_RUNTIME_PROVIDERS],
+        providers: [
+            ...AILY_CHAT_VIEW_PROVIDERS,
+        ],
         loadComponent: () => import('./tools/aily-chat/aily-chat.component').then(m => m.AilyChatComponent)
+    },
+    {
+        path: "aily-chat-execution-worker",
+        providers: [
+            ...AILY_CHAT_RUNTIME_OWNER_PROVIDERS,
+        ],
+        loadComponent: () => import('./tools/aily-chat/chat-runtime-execution-worker.component').then(m => m.ChatRuntimeExecutionWorkerComponent)
     },
     {
         path: "code-viewer",

@@ -12,7 +12,7 @@ import { LexStateEventBridge, type LexStatePartProcessor } from './lex-state-eve
 export type LexAgentPartProcessor = LexStatePartProcessor & LexRuntimePartProcessor;
 export type LexAgentHostSyncAccess = LexRuntimeHostSyncAccess & Pick<LexHostSyncBridge, 'applyHandoffEvent' | 'getCompactionMetricsSnapshot'>;
 type LexAgentLifecycleAccess = {
-  ensureAilyMessage(): void;
+  ensureResponseItem(): void;
   closeNativeThinking(): void;
   startNativeThinking(): void;
 };
@@ -39,7 +39,7 @@ export class LexAgentEventBridge {
   private readonly stateEventBridge: LexAgentStateEventBridge;
   private readonly runtimeEventBridge: LexAgentRuntimeEventBridge;
   private readonly sessionDiagnosticsEventBridge: LexAgentSessionDiagnosticsBridge;
-  private readonly messageLifecycleBridge: Pick<LexAgentLifecycleAccess, 'ensureAilyMessage'>;
+  private readonly messageLifecycleBridge: Pick<LexAgentLifecycleAccess, 'ensureResponseItem'>;
 
   constructor(
     ctx: LexRuntimeEventContext,
@@ -54,7 +54,7 @@ export class LexAgentEventBridge {
   }
 
   processEvent(event: any): void {
-    this.messageLifecycleBridge.ensureAilyMessage();
+    this.messageLifecycleBridge.ensureResponseItem();
 
     if (this.stateEventBridge.processEvent(event)) {
       return;

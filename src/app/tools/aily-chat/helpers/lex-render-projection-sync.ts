@@ -1,12 +1,9 @@
 import type { IChatViewAccess } from '../core/chat-context';
 import {
-  TurnResponseHostProjectionBuilder,
   type IncrementalTurnResponsePartSource,
-  type TurnResponseProjectionHandle,
 } from '../core/turn-response-host-projection-builder';
 import type { TurnResponseTurn } from 'aily-lex/browser';
 
-import { findChatMessageHandleByTurnId } from './chat-message-handle';
 import { ChatPerformanceTracer } from '../services/chat-perf-tracer';
 import type {
   CanonicalRenderItemStatus,
@@ -16,109 +13,47 @@ import { CanonicalRenderPayloadProjector } from '../core/canonical-render-payloa
 
 type LexRenderProjectionSyncContext = Pick<
   IChatViewAccess,
-  'partStore' | 'list' | 'invalidateHostRequestGraph' | 'triggerSyncDetectChanges'
+  'partStore' | 'invalidateHostRequestGraph' | 'triggerSyncDetectChanges'
 >;
-
-type RenderProjectionLifecycleAccess = {
-  readonly currentMessageHandle: TurnResponseProjectionHandle | null;
-};
 
 type RenderProjectionVisibilityAccess = {
   readProjectionSessionResource?(): string | null | undefined;
-  readCurrentViewSessionResource?(): string | null | undefined;
+  readProjectionVisibleAttachmentGeneration?(): number | null | undefined;
+  isRuntimeViewAttached?(sessionId: string | null | undefined): boolean;
+  isRuntimeViewAttachmentCurrent?(
+    sessionId: string | null | undefined,
+    generation: number | null | undefined,
+  ): boolean;
 };
 
 type ViewRefreshHandle = {
   dispose(): void;
 };
 
-type CanonicalProjectionPayloadMode = 'legacy' | 'canonical';
-
 export class LexRenderProjectionSync {
-  private readonly _hostProjectionBuilder: TurnResponseHostProjectionBuilder;
   private readonly _canonicalPayloadProjector: CanonicalRenderPayloadProjector;
-  private readonly _canonicalReplayEventsByTurnId = new Map<string, CanonicalRenderLifecycleEvent[]>();
-  private readonly _canonicalReplayCountsByTurnId = new Map<string, WeakMap<object, number>>();
   private _viewRefreshHandle: ViewRefreshHandle | null = null;
   private _viewRefreshPending = false;
 
   constructor(
     private readonly ctx: LexRenderProjectionSyncContext,
-    private readonly messageLifecycleBridge: RenderProjectionLifecycleAccess,
     private readonly visibility: RenderProjectionVisibilityAccess = {},
   ) {
-    this._hostProjectionBuilder = new TurnResponseHostProjectionBuilder(ctx.partStore);
     this._canonicalPayloadProjector = new CanonicalRenderPayloadProjector(ctx.partStore);
-  }
-
-  private projectPayloadChanges(
-    currentTurn: Pick<TurnResponseTurn, 'turnId' | 'response'> | null,
-    source: IncrementalTurnResponsePartSource,
-    options: { syncContent?: boolean } = {},
-  ): void {
-    if (!this.canProjectToVisible()) {
-      return;
-    }
-
-    const handle = this.resolveProjectedMessageHandle(currentTurn);
-    if (!handle || !currentTurn) {
-      return;
-    }
-
-    const projectionStartedAt = performance.now();
-    const partsChanged = this._hostProjectionBuilder.projectIncrementalParts(handle, source, {
-      syncContent: false,
-    });
-    if (options.syncContent === true) {
-      handle.message.content = typeof currentTurn.response.resultText === 'string'
-        ? currentTurn.response.resultText
-        : '';
-    }
-    const metaChanged = this._hostProjectionBuilder.syncMessageMeta(handle, currentTurn);
-    ChatPerformanceTracer.recordDuration(
-      'visible_projection',
-      performance.now() - projectionStartedAt,
-      `syncContent=${options.syncContent === true},partsChanged=${partsChanged},metaChanged=${metaChanged}`,
-      { slowThresholdMs: 12 },
-    );
-
-    if (partsChanged || metaChanged) {
-      if (options.syncContent === true && typeof this.visibility.readCurrentViewSessionResource !== 'function') {
-        this.ctx.invalidateHostRequestGraph();
-        this.ctx.triggerSyncDetectChanges();
-        return;
-      }
-      this.scheduleViewRefresh();
-    }
   }
 
   projectCanonicalChanges(
     currentTurn: Pick<TurnResponseTurn, 'turnId' | 'response'> | null,
-    source: IncrementalTurnResponsePartSource,
+    _source: IncrementalTurnResponsePartSource,
     lifecycleEvents: readonly CanonicalRenderLifecycleEvent[],
     options: {
       syncContent?: boolean;
       applyTurnCompletion?: boolean;
-      payloadProjection?: CanonicalProjectionPayloadMode;
     } = {},
   ): void {
-    const payloadProjection = options.payloadProjection ?? 'canonical';
-    const projectedLifecycleEvents = payloadProjection === 'canonical'
-      ? this.selectCanonicalReplayEventsForCurrentHandle(currentTurn, lifecycleEvents)
-      : lifecycleEvents;
-    if (payloadProjection === 'legacy') {
-      this.projectPayloadChanges(currentTurn, source, {
-        syncContent: options.syncContent,
-      });
-    } else if (options.syncContent === true) {
-      this.syncProjectedCompatibilityContent(currentTurn);
-      this.syncProjectedMessageMeta(currentTurn);
-    } else {
-      this.syncProjectedMessageMeta(currentTurn);
-    }
-    this.applyCanonicalLifecycleEvents(currentTurn, projectedLifecycleEvents, {
+    this.syncProjectedMessageMeta(currentTurn);
+    this.applyCanonicalLifecycleEvents(currentTurn, lifecycleEvents, {
       applyTurnCompletion: options.applyTurnCompletion,
-      projectPayloads: payloadProjection === 'canonical',
     });
   }
 
@@ -127,31 +62,26 @@ export class LexRenderProjectionSync {
     events: readonly CanonicalRenderLifecycleEvent[],
     options: { applyTurnCompletion?: boolean } = {},
   ): void {
-    this.applyCanonicalLifecycleEvents(currentTurn, events, {
-      ...options,
-      projectPayloads: true,
-    });
+    this.applyCanonicalLifecycleEvents(currentTurn, events, options);
   }
 
   private applyCanonicalLifecycleEvents(
     currentTurn: Pick<TurnResponseTurn, 'turnId'> | null,
     events: readonly CanonicalRenderLifecycleEvent[],
-    options: { applyTurnCompletion?: boolean; projectPayloads?: boolean } = {},
+    options: { applyTurnCompletion?: boolean } = {},
   ): void {
     if (!events.length || !this.canProjectToVisible()) {
       return;
     }
 
-    const handle = this.resolveProjectedMessageHandle(currentTurn);
+    const handle = this.resolveCanonicalResponseHandle(currentTurn);
     if (!handle) {
       return;
     }
 
     let changed = false;
     const lifecycleStartedAt = performance.now();
-    if (options.projectPayloads === true) {
-      changed = this._canonicalPayloadProjector.project(handle, events) || changed;
-    }
+    changed = this._canonicalPayloadProjector.project(handle, events) || changed;
 
     for (const event of events) {
       if (event.type === 'itemCompleted') {
@@ -215,96 +145,23 @@ export class LexRenderProjectionSync {
       return;
     }
 
-    this._hostProjectionBuilder.clearHandle(this.resolveProjectedMessageHandle(currentTurn));
+    const handle = this.resolveCanonicalResponseHandle(currentTurn);
+    if (!handle) {
+      return;
+    }
+
+    this.ctx.partStore.clearMessageHandle(handle);
+    this.scheduleViewRefresh();
   }
 
   syncProjectedMessageMeta(currentTurn: Pick<TurnResponseTurn, 'turnId' | 'response'> | null): void {
-    if (!this.canProjectToVisible()) {
-      return;
-    }
-
-    const handle = this.resolveProjectedMessageHandle(currentTurn);
-    if (!handle || !currentTurn) {
-      return;
-    }
-
-    this.syncMessageMetaIfNeeded(handle, currentTurn);
-  }
-
-  private syncMessageMetaIfNeeded(
-    handle: TurnResponseProjectionHandle,
-    currentTurn: Pick<TurnResponseTurn, 'turnId' | 'response'>,
-  ): void {
-    if (this._hostProjectionBuilder.syncMessageMeta(handle, currentTurn)) {
+    if (currentTurn && this.canProjectToVisible()) {
       this.scheduleViewRefresh();
     }
   }
 
-  private syncProjectedCompatibilityContent(
-    currentTurn: Pick<TurnResponseTurn, 'turnId' | 'response'> | null,
-  ): void {
-    if (!this.canProjectToVisible()) {
-      return;
-    }
-
-    const handle = this.resolveProjectedMessageHandle(currentTurn);
-    if (!handle || !currentTurn) {
-      return;
-    }
-
-    handle.message.content = typeof currentTurn.response.resultText === 'string'
-      ? currentTurn.response.resultText
-      : '';
-  }
-
   dispose(): void {
     this.clearPendingViewRefresh();
-  }
-
-  private selectCanonicalReplayEventsForCurrentHandle(
-    currentTurn: Pick<TurnResponseTurn, 'turnId'> | null,
-    events: readonly CanonicalRenderLifecycleEvent[],
-  ): readonly CanonicalRenderLifecycleEvent[] {
-    const turnId = normalizeSessionResource(currentTurn?.turnId);
-    if (!turnId || events.length === 0) {
-      return events;
-    }
-
-    const handle = this.resolveProjectedMessageHandle(currentTurn);
-    if (!handle || !handle.message || typeof handle.message !== 'object') {
-      return events;
-    }
-
-    let replayEvents = this._canonicalReplayEventsByTurnId.get(turnId);
-    if (!replayEvents) {
-      replayEvents = [];
-      this._canonicalReplayEventsByTurnId.set(turnId, replayEvents);
-    }
-
-    let replayCounts = this._canonicalReplayCountsByTurnId.get(turnId);
-    if (!replayCounts) {
-      replayCounts = new WeakMap<object, number>();
-      this._canonicalReplayCountsByTurnId.set(turnId, replayCounts);
-    }
-
-    const messageKey = handle.message as object;
-    const startIndex = replayCounts.get(messageKey) ?? 0;
-    replayEvents.push(...events);
-    replayCounts.set(messageKey, replayEvents.length);
-    this.trimCanonicalReplayBuffers();
-    return replayEvents.slice(startIndex);
-  }
-
-  private trimCanonicalReplayBuffers(): void {
-    const maxTurns = 16;
-    while (this._canonicalReplayEventsByTurnId.size > maxTurns) {
-      const oldestTurnId = this._canonicalReplayEventsByTurnId.keys().next().value as string | undefined;
-      if (!oldestTurnId) {
-        return;
-      }
-      this._canonicalReplayEventsByTurnId.delete(oldestTurnId);
-      this._canonicalReplayCountsByTurnId.delete(oldestTurnId);
-    }
   }
 
   private scheduleViewRefresh(): void {
@@ -348,35 +205,43 @@ export class LexRenderProjectionSync {
     this._viewRefreshPending = false;
   }
 
-  private resolveProjectedMessageHandle(
+  private resolveCanonicalResponseHandle(
     currentTurn: Pick<TurnResponseTurn, 'turnId'> | null,
-  ): TurnResponseProjectionHandle | null {
-    if (currentTurn) {
-      const byTurnId = findChatMessageHandleByTurnId(this.ctx.list, currentTurn.turnId, { role: 'aily' });
-      if (byTurnId) {
-        return byTurnId;
-      }
-    }
-
-    return this.messageLifecycleBridge.currentMessageHandle;
+  ) {
+    const turnId = normalizeSessionResource(currentTurn?.turnId);
+    return turnId ? this.ctx.partStore.createResponseHandle(turnId) : null;
   }
 
   private canProjectToVisible(): boolean {
-    const readCurrentViewSessionResource = this.visibility.readCurrentViewSessionResource;
-    if (typeof readCurrentViewSessionResource !== 'function') {
+    const readProjectionSessionResource = this.visibility.readProjectionSessionResource;
+    const projectionSessionResource = normalizeSessionResource(readProjectionSessionResource?.());
+    if (!projectionSessionResource) {
       return true;
     }
 
-    const currentViewSessionResource = normalizeSessionResource(readCurrentViewSessionResource());
-    if (!currentViewSessionResource) {
+    const isRuntimeViewAttached = this.visibility.isRuntimeViewAttached;
+    if (typeof isRuntimeViewAttached === 'function' && !isRuntimeViewAttached(projectionSessionResource)) {
       return false;
     }
 
-    const projectionSessionResource = normalizeSessionResource(
-      this.visibility.readProjectionSessionResource?.(),
+    const isRuntimeViewAttachmentCurrent = this.visibility.isRuntimeViewAttachmentCurrent;
+    if (typeof isRuntimeViewAttachmentCurrent !== 'function') {
+      return true;
+    }
+
+    const expectedGeneration = normalizeVisibleAttachmentGeneration(
+      this.visibility.readProjectionVisibleAttachmentGeneration?.(),
     );
-    return !!projectionSessionResource && projectionSessionResource === currentViewSessionResource;
+    if (expectedGeneration === null) {
+      return false;
+    }
+
+    return isRuntimeViewAttachmentCurrent(projectionSessionResource, expectedGeneration);
   }
+}
+
+function normalizeVisibleAttachmentGeneration(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
 }
 
 function parseLifecycleToolCallId(itemId: string): string | null {

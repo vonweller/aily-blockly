@@ -18,7 +18,6 @@ type ChatStopCoordinatorContext = Pick<
     markExplicitInterrupt?(sessionId?: string | null): void;
     awaitPendingLexRequestCompleted?(sessionId?: string | null): Promise<void>;
     stopSettleTimeoutMs?: number;
-    processPendingFollowupRequests?(sessionId?: string | null): Promise<boolean> | boolean;
     requestStop?(sessionId?: string | null): boolean;
   };
 
@@ -27,7 +26,6 @@ const REQUEST_STATE_TRACE_PREFIX = '[AilyChat][RequestStateTrace]';
 
 export interface ChatStopVisibleSessionOptions {
   readonly applyPendingSwitch?: boolean;
-  readonly processPendingFollowupRequests?: boolean;
 }
 
 /**
@@ -138,9 +136,6 @@ export class ChatStopCoordinator {
     await this.waitForAbortSettle(sessionId);
     if (options.applyPendingSwitch !== false) {
       await this.ctx.applyPendingSwitch(sessionId);
-    }
-    if (options.processPendingFollowupRequests !== false) {
-      await this.ctx.processPendingFollowupRequests?.(sessionId);
     }
   }
 }

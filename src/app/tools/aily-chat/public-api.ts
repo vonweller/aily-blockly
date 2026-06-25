@@ -10,9 +10,6 @@ export { ChatService } from './services/chat.service';
 export type { ChatTextOptions } from './services/chat.service';
 export { AilyChatConfigService } from './services/aily-chat-config.service';
 
-// ===== aily-lex integration =====
-export { LexOwnerFacade } from './helpers/lex-stream.helper';
-
 // ===== ABI ↔ ABS converter (used by blockly-editor) =====
 export {
   convertAbiToAbs,

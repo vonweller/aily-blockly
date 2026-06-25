@@ -1,10 +1,8 @@
 import type {
   IAgentLifecycle,
   IChatCoordination,
-  IChatServiceAccess,
   IProjectContext,
   ISessionAccess,
-  IChatViewAccess,
 } from '../core/chat-context';
 import type { SessionSnapshot, TurnResponseCommand, TurnResponseFollowup, TurnResponseTurn } from 'aily-lex/browser';
 import type {
@@ -38,7 +36,6 @@ import {
   type HostTurnResponseState,
   hasHostResponseConversationContent,
 } from './host-turn-response-state';
-import { createChatMessageHandle } from './chat-message-handle';
 import {
   cloneTurnResponseModelSidecar,
   normalizeTurnResponseSummaryPreview,
@@ -59,6 +56,10 @@ import { resolveHostSessionInteractionActionSummary } from './host-session-inter
 import { cloneHostSessionRuntimeAuxiliary } from './host-session-runtime-auxiliary';
 import { cloneSessionRequestContextSnapshot } from './turn-request-prompt-context';
 import type { ChatSessionRuntimeState } from '../services/chat-session-runtime-store.service';
+import type {
+  ChatRuntimeHostResourceOperationRequest,
+  ChatRuntimeHostResourceOperationResult,
+} from '../core/chat-runtime-host-contract';
 import {
   canRedoSessionCheckpointTimeline,
   type SessionCheckpointTimelineState,
@@ -69,19 +70,28 @@ import {
   hasBlockingSessionTurnOwnerMismatch,
 } from './session-turn-owner-diagnostics';
 
-type HostSessionSaveContext = Pick<IAgentLifecycle, 'toolCallingIteration'>
+export interface HostSessionPersistenceAccess {
+  loadHostRecord?(sessionId: string, projectPathHint?: string | null): HostSessionRecord | null;
+  saveHostRecord?(record: LiveHostSessionRecord): void;
+}
+
+export type HostSessionSaveContext = Pick<IAgentLifecycle, 'toolCallingIteration'>
   & Pick<IProjectContext, 'currentMode' | 'currentAgentRuntimeMode' | 'currentAgentRuntimeModeSource' | 'currentModel'>
-  & Pick<ISessionAccess, 'sessionId' | 'sessionTitle' | 'chatService' | 'chatHistoryService'>
-  & Pick<IChatServiceAccess, 'contextBudgetService' | 'editCheckpointService'>
+  & Pick<ISessionAccess, 'sessionId' | 'sessionTitle'>
+  & Partial<Pick<ISessionAccess, 'chatService'>>
   & Pick<IChatCoordination, 'lexStream'>
-  & Pick<IChatViewAccess, 'list' | 'partStore'>
   & {
-    readonly hostRequestModel?: HostRequestModel | null;
+    readonly chatHistoryService?: HostSessionPersistenceAccess;
+    readonly contextBudgetService?: { getSnapshot(): ReturnType<import('../services/context-budget-facade').ContextBudgetFacade['getSnapshot']> } | null;
     readonly hostResponseProjection?: HostResponseProjection | null;
     readCurrentViewSessionResource?(): string | null | undefined;
+    readPersistedHostRecord?(sessionId: string, projectPath?: string | null): HostSessionRecord | null;
     readSessionTurnResponses?(sessionId?: string | null): readonly TurnResponseTurn[];
     readSessionRuntimeState?(sessionId?: string | null): Readonly<ChatSessionRuntimeState> | undefined;
     readSessionCheckpointTimelineState?(sessionId?: string | null): SessionCheckpointTimelineState | null;
+    requestHostResourceOperation?(
+      request: ChatRuntimeHostResourceOperationRequest,
+    ): Promise<ChatRuntimeHostResourceOperationResult>;
     invalidateHostRequestGraph?(): void;
   };
 
@@ -143,7 +153,6 @@ export class HostSessionSaveBridge {
       ?? null;
     const sessionSnapshot = options?.sessionSnapshotOverride
       ?? saveTarget.sessionSnapshot
-      ?? this.ctx.lexStream.session?.snapshot?.(saveTarget.sessionId)
       ?? null;
     const currentTurnResponses = this.resolveCurrentTurnResponses(
       saveTarget,
@@ -164,12 +173,10 @@ export class HostSessionSaveBridge {
     }
 
     const visibleChatList = options?.visibleChatList
-      ? options.visibleChatList.map(message => ({ ...message })) as HostSessionSaveContext['list']
+      ? options.visibleChatList.map(message => ({ ...message })) as ChatListItem[]
       : buildVisibleChatListForSave(
           previousHostProjection?.chatList ?? [],
           currentHostProjection?.chatList ?? [],
-          undefined,
-          undefined,
         );
     const canonicalTurnResponses = applyVisibleRequestDisplayContentToTurnResponses(
       visibleChatList,
@@ -230,8 +237,8 @@ export class HostSessionSaveBridge {
     const runtimeState = this.ctx.readSessionRuntimeState?.(sessionId);
     const skillInvocationTrace = deriveSkillInvocationTrace(currentTurnResponses);
     const runtimeAuxiliary = cloneHostSessionRuntimeAuxiliary({
-      requestContext: cloneSessionRequestContextSnapshot(sessionSnapshot?.requestContext),
-      activeSkillNames: Array.isArray(sessionSnapshot?.activeSkillNames) ? sessionSnapshot.activeSkillNames : undefined,
+      requestContext: cloneSessionRequestContextSnapshot(runtimeState?.requestContext),
+      activeSkillNames: Array.isArray(runtimeState?.activeSkillNames) ? runtimeState.activeSkillNames : undefined,
       skillInvocationTrace,
       pendingFollowupRequests: runtimeState?.pendingFollowupRequests,
       yieldRequested: runtimeState?.yieldRequested === true,
@@ -252,8 +259,8 @@ export class HostSessionSaveBridge {
         sessionType: normalizeChatSessionType(saveTarget.sessionType),
         projectPath,
         mode: selectedMode.modeId,
-        agentRuntimeMode: this.ctx.currentAgentRuntimeMode ?? this.ctx.chatService.currentAgentRuntimeMode,
-        agentRuntimeModeSource: this.ctx.currentAgentRuntimeModeSource ?? this.ctx.chatService.currentAgentRuntimeModeSource,
+        agentRuntimeMode: this.ctx.currentAgentRuntimeMode ?? this.ctx.chatService?.currentAgentRuntimeMode,
+        agentRuntimeModeSource: this.ctx.currentAgentRuntimeModeSource ?? this.ctx.chatService?.currentAgentRuntimeModeSource,
         modeDescriptor,
         inputState,
         requestRouting,
@@ -329,9 +336,7 @@ export class HostSessionSaveBridge {
       ?? (Array.isArray(rawTarget?.turnResponses) ? rawTarget.turnResponses : undefined)
       ?? this.resolveTargetTurnResponses(targetSessionId);
     const visibleTarget = this.isVisibleSaveTarget(targetSessionId);
-    const currentTurnResponses = targetTurnResponses.length > 0
-      ? targetTurnResponses
-      : (visibleTarget && Array.isArray(this.ctx.lexStream.turnResponses) ? this.ctx.lexStream.turnResponses : []);
+    const currentTurnResponses = targetTurnResponses;
     const ownerDiagnostics = buildSessionTurnOwnerDiagnostics(targetSessionId, currentTurnResponses);
     if (isHostSessionSaveTraceEnabled()) {
       console.info('[HostSessionSave][owner]', [
@@ -342,31 +347,12 @@ export class HostSessionSaveBridge {
         ...formatSessionTurnOwnerDiagnosticsFields('target', ownerDiagnostics),
       ].join(' '));
     }
+    const target = rawTarget ?? this.buildVisibleFallbackSaveTarget(targetSessionId, currentTurnResponses);
     return this.buildHostSessionRecord({
       ...options,
       allowPersistedLookup: false,
-      hostRequestModel: options?.hostRequestModel ?? (visibleTarget ? this.ctx.hostRequestModel ?? null : null),
       turnResponsesOverride: currentTurnResponses,
-      target: rawTarget ?? {
-        sessionId: targetSessionId,
-        sessionTitle: this.ctx.sessionTitle,
-        sessionTitleSource: this.ctx.chatService.currentSessionTitleSource,
-        sessionTitleRevision: this.ctx.chatService.currentSessionTitleRevision,
-        sessionType: this.ctx.chatService.currentSessionType,
-        providerOptions: {
-          folderPath: this.resolveProjectPath(),
-          permissionMode: this.ctx.chatService.currentSessionPermissionMode,
-          ...(this.ctx.chatService.currentSessionPermissionLevel
-            ? { permissionLevel: this.ctx.chatService.currentSessionPermissionLevel }
-            : {}),
-        },
-        selectedMode: this.ctx.chatService.selectedMode ?? {
-          modeId: this.ctx.currentMode,
-          customAgentTarget: this.ctx.chatService.currentCustomAgentTarget,
-        },
-        model: this.ctx.currentModel,
-        turnResponses: currentTurnResponses,
-      },
+      target,
     });
   }
 
@@ -382,23 +368,19 @@ export class HostSessionSaveBridge {
         return false;
       }
       const visibleTarget = this.isVisibleSaveTarget(saveTarget.sessionId);
-      const sessionSnapshot = saveTarget.sessionSnapshot
-        ?? this.ctx.lexStream.session?.save?.(saveTarget.sessionId)
-        ?? null;
-      const previousHostProjection = visibleTarget
-        ? options?.hostProjection ?? this.ctx.hostResponseProjection ?? null
-        : this.buildPersistedProjection(this.resolvePersistedRecord(saveTarget));
+      const sessionSnapshot = saveTarget.sessionSnapshot ?? null;
+      const previousHostProjection = options?.hostProjection
+        ?? this.buildPersistedProjection(this.resolvePersistedRecord(saveTarget));
+      let currentHostProjection = options?.hostProjection ?? null;
       if (visibleTarget) {
         this.ctx.invalidateHostRequestGraph?.();
+        currentHostProjection = this.ctx.hostResponseProjection ?? currentHostProjection;
       }
-      const hostProjection = visibleTarget
-        ? this.ctx.hostResponseProjection ?? options?.hostProjection
-        : options?.hostProjection;
       const record = this.buildHostSessionRecord({
         previousHostProjection,
-        hostProjection,
-        visibleChatList: options?.visibleChatList ?? (visibleTarget ? this.ctx.list : undefined),
-        hostRequestModel: options?.hostRequestModel ?? (visibleTarget ? this.ctx.hostRequestModel ?? null : null),
+        hostProjection: currentHostProjection,
+        visibleChatList: options?.visibleChatList,
+        hostRequestModel: options?.hostRequestModel,
         sessionSnapshotOverride: sessionSnapshot,
         target: saveTarget
           ? {
@@ -411,7 +393,25 @@ export class HostSessionSaveBridge {
         return false;
       }
 
-      this.ctx.chatHistoryService.saveHostRecord(record);
+      if (typeof this.ctx.requestHostResourceOperation !== 'function') {
+        return false;
+      }
+      void this.ctx.requestHostResourceOperation({
+        sessionId: saveTarget.sessionId,
+        kind: 'save-current-session',
+        label: 'Saving chat session',
+        resource: {
+          targetSessionId: saveTarget.sessionId,
+          sessionType: saveTarget.sessionType,
+          projectPath: saveTarget.providerOptions.folderPath ?? null,
+        },
+        payload: {
+          adapter: 'chatHistory',
+          record,
+        },
+      }).catch(error => {
+        console.warn('保存会话失败:', error);
+      });
       return true;
     } catch (error) {
       console.warn('保存会话失败:', error);
@@ -420,9 +420,17 @@ export class HostSessionSaveBridge {
   }
 
   private resolveProjectPath(): string | null {
-    const currentPath = AilyHost.get().project.currentProjectPath;
-    const rootPath = AilyHost.get().project.projectRootPath;
-    const cachedPath = this.ctx.chatService.currentSessionPath;
+    const cachedPath = this.ctx.chatService?.currentSessionPath;
+    let currentPath: string | null = null;
+    let rootPath: string | null = null;
+
+    try {
+      const project = AilyHost.get().project;
+      currentPath = project.currentProjectPath;
+      rootPath = project.projectRootPath;
+    } catch {
+      return cachedPath || null;
+    }
 
     if (cachedPath && !this.isSameAsRoot(cachedPath, rootPath)) {
       return cachedPath;
@@ -431,6 +439,37 @@ export class HostSessionSaveBridge {
       return currentPath;
     }
     return null;
+  }
+
+  private buildVisibleFallbackSaveTarget(
+    targetSessionId: string,
+    currentTurnResponses: readonly TurnResponseTurn[],
+  ): HostSessionSaveTarget | null {
+    const chatService = this.ctx.chatService;
+    if (!chatService) {
+      return null;
+    }
+
+    return {
+      sessionId: targetSessionId,
+      sessionTitle: this.ctx.sessionTitle,
+      sessionTitleSource: chatService.currentSessionTitleSource,
+      sessionTitleRevision: chatService.currentSessionTitleRevision,
+      sessionType: chatService.currentSessionType,
+      providerOptions: {
+        folderPath: this.resolveProjectPath(),
+        permissionMode: chatService.currentSessionPermissionMode,
+        ...(chatService.currentSessionPermissionLevel
+          ? { permissionLevel: chatService.currentSessionPermissionLevel }
+          : {}),
+      },
+      selectedMode: chatService.selectedMode ?? {
+        modeId: this.ctx.currentMode,
+        customAgentTarget: chatService.currentCustomAgentTarget,
+      },
+      model: this.ctx.currentModel,
+      turnResponses: currentTurnResponses,
+    };
   }
 
   private isSameAsRoot(path: string | null, rootPath: string | null): boolean {
@@ -449,14 +488,18 @@ export class HostSessionSaveBridge {
       return null;
     }
 
-    return this.ctx.chatHistoryService.loadHostRecord?.(
-      target.sessionId,
-      target.providerOptions.folderPath,
-    ) ?? null;
+    return this.ctx.readPersistedHostRecord?.(target.sessionId, target.providerOptions.folderPath)
+      ?? this.ctx.chatHistoryService?.loadHostRecord?.(
+        target.sessionId,
+        target.providerOptions.folderPath,
+      )
+      ?? null;
   }
 
   private loadPersistedRecord(sessionId: string, projectPath: string | null): HostSessionRecord | null {
-    return this.ctx.chatHistoryService.loadHostRecord?.(sessionId, projectPath ?? undefined) ?? null;
+    return this.ctx.readPersistedHostRecord?.(sessionId, projectPath)
+      ?? this.ctx.chatHistoryService?.loadHostRecord?.(sessionId, projectPath ?? undefined)
+      ?? null;
   }
 
   private buildPersistedProjection(record: HostSessionRecord | null): HostResponseProjection | null {
@@ -501,7 +544,9 @@ export class HostSessionSaveBridge {
       return runtimeTurnResponses;
     }
 
-    if (this.isVisibleSaveTarget(saveTarget.sessionId) && Array.isArray(this.ctx.lexStream.turnResponses)) {
+    if (this.isVisibleSaveTarget(saveTarget.sessionId)
+      && Array.isArray(this.ctx.lexStream.turnResponses)
+      && this.ctx.lexStream.turnResponses.length > 0) {
       return this.ctx.lexStream.turnResponses;
     }
 
@@ -520,7 +565,17 @@ export class HostSessionSaveBridge {
     }
 
     const runtimeTurnResponses = this.ctx.readSessionRuntimeState?.(normalizedSessionId)?.turnResponses;
-    return Array.isArray(runtimeTurnResponses) ? runtimeTurnResponses : [];
+    if (Array.isArray(runtimeTurnResponses) && runtimeTurnResponses.length > 0) {
+      return runtimeTurnResponses;
+    }
+
+    if (this.isVisibleSaveTarget(normalizedSessionId)
+      && Array.isArray(this.ctx.lexStream.turnResponses)
+      && this.ctx.lexStream.turnResponses.length > 0) {
+      return this.ctx.lexStream.turnResponses;
+    }
+
+    return [];
   }
 
   private isVisibleSaveTarget(sessionId: string): boolean {
@@ -705,7 +760,7 @@ function readRequestTextCandidate(candidate: unknown): string {
 }
 
 function applyVisibleRequestDisplayContentToTurnResponses(
-  visibleChatList: readonly HostSessionSaveContext['list'][number][],
+  visibleChatList: readonly ChatListItem[],
   turnResponses: readonly TurnResponseTurn[],
 ) : TurnResponseTurn[] {
   if (visibleChatList.length === 0 || turnResponses.length === 0) {
@@ -752,70 +807,13 @@ function applyVisibleRequestDisplayContentToTurnResponses(
 function buildVisibleChatListForSave(
   previousProjectedChatList: HostResponseProjection['chatList'],
   currentProjectedChatList: HostResponseProjection['chatList'],
-  liveChatList: HostSessionSaveContext['list'] | undefined,
-  partStore: HostSessionSaveContext['partStore'] | undefined,
-): HostSessionSaveContext['list'] {
+): ChatListItem[] {
   const projectedChatList = mergeProjectedChatListsForSave(
     previousProjectedChatList,
     currentProjectedChatList,
   );
 
-  if (!liveChatList?.length) {
-    return projectedChatList.map(message => ({ ...message })) as HostSessionSaveContext['list'];
-  }
-
-  const serializedLiveChatList = liveChatList.map((message, msgIndex) => {
-    const handle = createChatMessageHandle(message, msgIndex);
-    const existingContent = typeof message.content === 'string' ? message.content : '';
-    const shouldMaterializeCompatibilityContent = existingContent.length === 0 && message.state !== 'doing';
-    const content = shouldMaterializeCompatibilityContent && partStore?.hasPartsForHandle(handle)
-      ? (partStore.serializeToContentHandle(handle) || existingContent)
-      : existingContent;
-
-    return {
-      ...message,
-      content,
-    };
-  }) as HostSessionSaveContext['list'];
-
-  if (projectedChatList.length === 0) {
-    return serializedLiveChatList;
-  }
-
-  const consumedLiveIndexes = new Set<number>();
-  const mergedChatList = projectedChatList.map((projectedMessage) => {
-    const matchedLiveIndex = serializedLiveChatList.findIndex((liveMessage, liveIndex) => {
-      if (consumedLiveIndexes.has(liveIndex)) {
-        return false;
-      }
-
-      if (typeof projectedMessage.turnId === 'string' && projectedMessage.turnId.length > 0) {
-        return liveMessage.turnId === projectedMessage.turnId && liveMessage.role === projectedMessage.role;
-      }
-
-      return liveMessage.turnId === projectedMessage.turnId
-        && liveMessage.role === projectedMessage.role
-        && liveMessage.content === projectedMessage.content
-        && liveMessage.state === projectedMessage.state;
-    });
-
-    if (matchedLiveIndex === -1) {
-      return { ...projectedMessage };
-    }
-
-    consumedLiveIndexes.add(matchedLiveIndex);
-    return { ...serializedLiveChatList[matchedLiveIndex] };
-  });
-
-  serializedLiveChatList.forEach((liveMessage, liveIndex) => {
-    if (consumedLiveIndexes.has(liveIndex)) {
-      return;
-    }
-
-    mergedChatList.push({ ...liveMessage });
-  });
-
-  return mergedChatList as HostSessionSaveContext['list'];
+  return projectedChatList.map(message => ({ ...message }));
 }
 
 function mergeProjectedChatListsForSave(
@@ -1012,6 +1010,15 @@ function normalizePersistedSlashCommand(
 
 function cloneTurnResponse(turn: TurnResponseTurn): TurnResponseTurn {
   const responseModel = cloneTurnResponseModelSidecar(turn.responseModel);
+  if (!turn.response) {
+    return {
+      ...turn,
+      request: { ...turn.request },
+      rounds: cloneSessionSnapshotRounds(turn.rounds ?? []),
+      ...(turn.usage ? { usage: { ...turn.usage } } : {}),
+      ...(responseModel ? { responseModel } : {}),
+    } as TurnResponseTurn;
+  }
   const {
     slashCommand: _slashCommand,
     responseId: _responseId,

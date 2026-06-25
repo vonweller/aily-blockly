@@ -55,7 +55,7 @@ import {
 } from './host-session-debug-export';
 import { resolveHostSessionRuntimeAuxiliary } from '../helpers/host-session-runtime-auxiliary';
 import { HostSessionAdoptionBridge } from './host-session-adoption-bridge';
-import { HostSessionPersistenceBridge, type HostSessionDirtyOptions } from './host-session-persistence-bridge';
+import { HostSessionPersistenceBridge, type HostSessionDirtyOptions, type HostSessionFlushOptions } from './host-session-persistence-bridge';
 import { HostSessionRecordStore } from './host-session-record-store';
 import { ChatService } from './chat.service';
 import { ChatSessionEntryStateService } from './chat-session-entry-state.service';
@@ -383,6 +383,7 @@ export class ChatHistoryService implements OnDestroy {
   private readonly hostRecordStore: HostSessionRecordStore;
   private readonly hostSessionPersistenceBridge: HostSessionPersistenceBridge;
   private readonly hostSessionAdoptionBridge: HostSessionAdoptionBridge;
+  private autoSaveSessionActiveProvider: ((sessionId: string) => boolean) | null = null;
   private readonly importedDebugSessions = new Map<string, ImportedDebugSessionRecord>();
   private readonly latestRestoreFailures = new Map<string, HostSessionRestoreFailureSummary>();
   private readonly latestRestoreFailureImportedSessions = new Map<string, string>();
@@ -524,6 +525,10 @@ export class ChatHistoryService implements OnDestroy {
    */
   setLiveSessionProvider(provider: LiveSessionProvider | null): void {
     this.hostSessionPersistenceBridge.setLiveSessionProvider(provider);
+  }
+
+  setAutoSaveSessionActiveProvider(provider: ((sessionId: string) => boolean) | null): void {
+    this.autoSaveSessionActiveProvider = provider;
   }
 
   // =========================================================================
@@ -900,8 +905,8 @@ export class ChatHistoryService implements OnDestroy {
   /**
    * 强制保存所有脏数据（组件销毁/窗口关闭时调用）
    */
-  flushAll(): void {
-    this.hostSessionPersistenceBridge.flushAll();
+  flushAll(options?: HostSessionFlushOptions): void {
+    this.hostSessionPersistenceBridge.flushAll(options);
   }
 
   // =========================================================================
@@ -1228,7 +1233,16 @@ export class ChatHistoryService implements OnDestroy {
     this.autoSaveTimer = setInterval(() => {
       if (this.hostSessionPersistenceBridge.hasDirtySessions() || this.indexDirty) {
         console.log(`[ChatHistory] 定时保存: ${this.hostSessionPersistenceBridge.getDirtySessionCount()} 个脏会话, 索引dirty=${this.indexDirty}`);
-        this.flushAll();
+        this.flushAll({
+          shouldSkipSession: (sessionId, policy) => {
+            const active = this.autoSaveSessionActiveProvider?.(sessionId) === true;
+            if (active && policy === 'recovery-snapshot') {
+              console.log(`[ChatHistory] 跳过运行中会话兜底保存: ${sessionId}`);
+              return true;
+            }
+            return false;
+          },
+        });
       }
     }, 30000); // 30s
   }

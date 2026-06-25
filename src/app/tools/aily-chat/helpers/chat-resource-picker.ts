@@ -6,8 +6,9 @@ type FileDialogLike = Pick<IDialog, 'selectFiles'>;
 export async function pickFileResources(dialog: FileDialogLike): Promise<ResourceItem[]> {
   const result = await dialog.selectFiles({
     title: '选择文件',
-    properties: ['multiSelections'],
-    filters: [{ name: '所有文件', extensions: ['*'] }],
+    // Explicitly open the native file picker. Avoid wildcard filters here
+    // because some platforms handle "*" inconsistently for all-file views.
+    properties: ['openFile', 'multiSelections'],
   });
 
   if (isEmptySelection(result)) {

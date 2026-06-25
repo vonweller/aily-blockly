@@ -12,17 +12,14 @@ import type {
   IAgentLifecycle,
   IChatCoordination,
   IChatServiceAccess,
+  IChatViewAccess,
   IProjectContext,
   ISessionAccess,
 } from '../core/chat-context';
 import {
   buildHostProjectionStateFromPersistedRecord,
-  buildTurnNativeRestoreChatList,
-  type HostResponseProjection,
   type HostTurnResponseState,
 } from './host-turn-response-state';
-import { ChatViewWriteBridge, type ChatViewWriteBridgeContext } from './chat-view-write-bridge';
-import { projectTurnResponsesToHistory } from './turn-response-history-projector';
 import { normalizeTurnResponseSummaryPreview } from './turn-response-response-model';
 import {
   resolveHostSessionModeDescriptorFromMetadata,
@@ -205,10 +202,10 @@ function isMeaningfulRestoredSessionTitle(title: unknown): boolean {
     && normalizedTitle !== '新对话'
     && normalizedTitle !== '无标题会话';
 }
-type HostSessionRestoreContext = ChatViewWriteBridgeContext
+type HostSessionRestoreContext = Pick<IChatViewAccess, 'scrollManager' | 'invalidateHostRequestGraph' | 'triggerSyncDetectChanges'>
   & Pick<IAgentLifecycle, 'toolCallingIteration'>
-  & Pick<IProjectContext, 'currentMode'>
-  & Pick<ISessionAccess, 'conversationMessages' | 'chatService'>
+  & Pick<IProjectContext, 'currentMode' | 'currentModelName'>
+  & Pick<ISessionAccess, 'sessionId' | 'conversationMessages' | 'chatService' | 'chatHistoryService'>
   & Pick<IChatServiceAccess, 'contextBudgetService' | 'editCheckpointService' | 'ailyChatConfigService' | 'runtimeInteractionHost'>
   & Pick<IChatCoordination, 'lexStream'>
   & {
@@ -245,18 +242,7 @@ type HostSessionRestoreContext = ChatViewWriteBridgeContext
       state: HostTurnResponseState | null,
       options: { readonly sessionId: string | null; readonly attachedView?: boolean },
     ): void;
-    replaceSharedHostProjectionState?(
-      state: HostTurnResponseState | null,
-      options: { readonly sessionId: string | null; readonly attachedView?: boolean },
-    ): void;
   };
-
-type HostSessionRestoreViewWriteContext = ConstructorParameters<typeof ChatViewWriteBridge>[0];
-
-type HostSessionRestoreViewWriteAccess = Pick<
-  ChatViewWriteBridge,
-  'restoreLegacyHistoryList' | 'restoreTurnNativeHistoryList'
->;
 
 export interface RuntimeRestoreHostRecordRequest {
   readonly target: {
@@ -286,6 +272,10 @@ export interface HostSessionRestoreFailureDetails {
 export interface HostSessionRestoreOptions {
   readonly isCurrent?: () => boolean;
   readonly sessionId?: string | null;
+}
+
+export interface HostSessionProjectionRestoreOptions {
+  readonly isCurrent?: () => boolean;
 }
 
 export class HostSessionRestoreError extends Error {
@@ -414,50 +404,9 @@ function readStringRecord(value: unknown): Record<string, string> | null {
  * and post-restore host sync out of SessionLifecycleHelper.
  */
 export class HostSessionRestoreBridge {
-  private readonly viewWriteBridge: HostSessionRestoreViewWriteAccess;
   private readonly hostSessionContentProvider: HostSessionContentProvider;
 
   constructor(private readonly ctx: HostSessionRestoreContext) {
-    const viewWriteContext: HostSessionRestoreViewWriteContext = {
-      get list() {
-        return ctx.list;
-      },
-      set list(list) {
-        ctx.list = list;
-      },
-      get partStore() {
-        return ctx.partStore;
-      },
-      get viewAdapter() {
-        return ctx.viewAdapter;
-      },
-      get scrollManager() {
-        return ctx.scrollManager;
-      },
-      get invalidateHostRequestGraph() {
-        return ctx.invalidateHostRequestGraph;
-      },
-      get triggerSyncDetectChanges() {
-        return ctx.triggerSyncDetectChanges;
-      },
-      get sessionId() {
-        return ctx.sessionId;
-      },
-      get chatHistoryService() {
-        return ctx.chatHistoryService;
-      },
-      get currentModelName() {
-        return ctx.currentModelName;
-      },
-      get currentMessageSource() {
-        return ctx.currentMessageSource;
-      },
-      get ngZone() {
-        return ctx.ngZone;
-      },
-      markCurrentViewVisibleProjectionOwner: () => ctx.markCurrentViewVisibleProjectionOwner?.(),
-    };
-    this.viewWriteBridge = new ChatViewWriteBridge(viewWriteContext);
     this.hostSessionContentProvider = new HostSessionContentProvider({
       get sessionId() {
         return ctx.sessionId;
@@ -532,14 +481,8 @@ export class HostSessionRestoreBridge {
       }
 
       this.restoreSessionMetadata(sanitizedHostRecord, targetSessionId);
-      this.applyHostView(restoredHostResponseState);
       if (this.ctx.restoreSharedHostProjectionState) {
         this.ctx.restoreSharedHostProjectionState(restoredHostResponseState, {
-          sessionId: targetSessionId,
-          attachedView: true,
-        });
-      } else {
-        this.ctx.replaceSharedHostProjectionState?.(restoredHostResponseState, {
           sessionId: targetSessionId,
           attachedView: true,
         });
@@ -617,12 +560,15 @@ export class HostSessionRestoreBridge {
       ?? request.target.inputState;
     const now = Date.now();
 
+    const durableTurnResponses = stableDurableTurnResponsesForRuntimeRestore(baseHostRecord?.turnResponses ?? []);
     const runtimeTurnResponses = Array.isArray(runtimeState.turnResponses)
       ? runtimeState.turnResponses
       : [];
-    const fallbackTurnResponses = runtimeTurnResponses.length > 0
+    const runtimeMatchesDurableRecord = durableTurnResponses.length === 0
+      || turnResponseIdsExactlyMatch(runtimeTurnResponses, durableTurnResponses);
+    const fallbackTurnResponses = runtimeTurnResponses.length > 0 && runtimeMatchesDurableRecord
       ? runtimeTurnResponses
-      : stableDurableTurnResponsesForRuntimeRestore(baseHostRecord?.turnResponses ?? []);
+      : durableTurnResponses;
     const runtimeAuxiliary = cloneHostSessionRuntimeAuxiliary({
       ...(baseHostRecord?.auxiliary ?? {}),
       pendingFollowupRequests: runtimeState.pendingFollowupRequests,
@@ -665,7 +611,11 @@ export class HostSessionRestoreBridge {
     };
   }
 
-  async restoreSessionProjection(sessionId: string | null | undefined, projectPathHint?: string | null): Promise<boolean> {
+  async restoreSessionProjection(
+    sessionId: string | null | undefined,
+    projectPathHint?: string | null,
+    options: HostSessionProjectionRestoreOptions = {},
+  ): Promise<boolean> {
     const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
     if (!targetSessionId) {
       return false;
@@ -696,7 +646,10 @@ export class HostSessionRestoreBridge {
       return false;
     }
 
-    await this.restore(hostRecord, { sessionId: targetSessionId });
+    await this.restore(hostRecord, {
+      sessionId: targetSessionId,
+      isCurrent: options.isCurrent,
+    });
     return true;
   }
 
@@ -745,21 +698,6 @@ export class HostSessionRestoreBridge {
       details,
       cause,
     );
-  }
-
-  private applyHostView(hostResponseState: Pick<HostResponseProjection, 'turnResponses' | 'chatList'>): void {
-    if (hostResponseState.turnResponses.length === 0) {
-      this.viewWriteBridge.restoreLegacyHistoryList(hostResponseState.chatList);
-      return;
-    }
-
-    const turnIds = new Set(hostResponseState.turnResponses.map(turn => turn.turnId));
-    this.viewWriteBridge.restoreTurnNativeHistoryList(
-      buildTurnNativeRestoreChatList(hostResponseState.chatList, turnIds),
-      turnIds,
-    );
-
-    projectTurnResponsesToHistory(this.ctx, hostResponseState.turnResponses);
   }
 
   private resolveRuntimeHostProjectionState(
@@ -1085,6 +1023,25 @@ function areHostProjectionTurnResponsesEquivalent(
   }
 
   return true;
+}
+
+function turnResponseIdsExactlyMatch(
+  left: readonly TurnResponseTurn[] | null | undefined,
+  right: readonly TurnResponseTurn[] | null | undefined,
+): boolean {
+  if (!Array.isArray(left)
+    || !Array.isArray(right)
+    || left.length === 0
+    || right.length === 0
+    || left.length !== right.length) {
+    return false;
+  }
+
+  return left.every((leftTurn, index) => {
+    const leftTurnId = typeof leftTurn?.turnId === 'string' ? leftTurn.turnId.trim() : '';
+    const rightTurnId = typeof right[index]?.turnId === 'string' ? right[index].turnId.trim() : '';
+    return !!leftTurnId && leftTurnId === rightTurnId;
+  });
 }
 
 function formatHostSessionRestoreFailureDetails(details: HostSessionRestoreFailureDetails): string {
