@@ -723,8 +723,8 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
     }
 
     .cag-item:not(.cag-item-tool)::before {
-      mask-image: linear-gradient(to bottom, #000 0 8px, transparent 0px 21px, #000 28px 100%);
-      -webkit-mask-image: linear-gradient(to bottom, #000 0 8px, transparent 0px 21px, #000 28px 100%);
+      mask-image: linear-gradient(to bottom, #000 0 4px, transparent 0px 16px, #000 24px 100%);
+      -webkit-mask-image: linear-gradient(to bottom, #000 0 4px, transparent 0px 16px, #000 24px 100%);
     }
 
     .cag-item.cag-item-first::before {
@@ -733,8 +733,8 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
     }
 
     .cag-item.cag-item-first:not(.cag-item-tool)::before {
-      mask-image: linear-gradient(to bottom, transparent 0 22px, #000 28px 100%);
-      -webkit-mask-image: linear-gradient(to bottom, transparent 0 22px, #000 28px 100%);
+      mask-image: linear-gradient(to bottom, transparent 0 18px, #000 24px 100%);
+      -webkit-mask-image: linear-gradient(to bottom, transparent 0 18px, #000 24px 100%);
     }
 
     .cag-item.cag-item-last::before {
@@ -743,8 +743,8 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
     }
 
     .cag-item.cag-item-last:not(.cag-item-tool)::before {
-      mask-image: linear-gradient(to bottom, #000 0 8px, transparent 8px 100%);
-      -webkit-mask-image: linear-gradient(to bottom, #000 0 8px, transparent 8px 100%);
+      mask-image: linear-gradient(to bottom, #000 0 4px, transparent 4px 100%);
+      -webkit-mask-image: linear-gradient(to bottom, #000 0 4px, transparent 4px 100%);
     }
 
     .cag-item.cag-item-only::before {
@@ -760,8 +760,8 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
     }
 
     .cag-item[data-kind='thinking'] {
-      padding-top: 0px;
-      padding-bottom: 0;
+      padding-top: 4px;
+      padding-bottom: 4px;
       padding-left: 24px;
     }
 
@@ -774,7 +774,7 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
     }
 
     .cag-item:not(.cag-item-tool) .cag-item-icon-shell {
-      top: 10px;
+      top: 6px;
     }
 
     .cag-item-icon {
