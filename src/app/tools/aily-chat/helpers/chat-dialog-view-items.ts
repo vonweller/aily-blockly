@@ -1,6 +1,8 @@
 import type { TurnResponseTurn } from 'aily-lex/browser';
 
+import type { ChatPart } from '../core/chat-parts';
 import type { ChatMessage } from '../core/chat-types';
+import { turnResponsePartToChatParts } from '../core/turn-response-part-mapper';
 import {
   buildDialogTurnContext,
   type DialogTurnContext,
@@ -13,13 +15,18 @@ import {
 } from '../core/turn-response-stream-contract';
 
 export interface ChatDialogViewItem {
-  readonly trackId: string;
+  readonly id: string;
+  readonly turnId?: string;
+  readonly responseId?: string;
   readonly role: string;
   readonly content: string;
   readonly doing: boolean;
   readonly turnModelName: string;
   readonly turnModelBillingLabel?: string;
   readonly turnContext: DialogTurnContext | null;
+  readonly parts: readonly ChatPart[];
+  readonly turnResponse: TurnResponseTurn | null;
+  readonly revision: number;
   readonly responseVote?: 0 | 1;
   readonly isLastAily: boolean;
   readonly isFirstUserTurn: boolean;
@@ -150,7 +157,9 @@ function createDialogViewItem(
   });
 
   return {
-    trackId: `${trackBase}-${index}`,
+    id: `${trackBase}-${index}`,
+    ...(turnId ? { turnId } : {}),
+    ...(message.role === 'aily' && turnId ? { responseId: turnId } : {}),
     role: message.role,
     content: resolvedContent,
     doing: effectiveState === 'doing',
@@ -163,6 +172,9 @@ function createDialogViewItem(
       : undefined,
     resolvedTurnId: turnId,
     turnContext,
+    parts: getDialogItemParts(message.role, turnResponse),
+    turnResponse,
+    revision: getDialogItemRevision(turnResponse),
     responseVote: message.responseVote,
     isLastAily: false,
     isFirstUserTurn: false,
@@ -224,13 +236,21 @@ function attachAssociatedTurns(
       displayContent: item.role === 'user' ? nextContent : undefined,
     });
     const nextTrackBase = nextTurnId ?? `${item.role}-${getTurnResponseParticipant(item.source)}`;
-    const nextTrackId = `${nextTrackBase}-${index}`;
+    const nextId = `${nextTrackBase}-${index}`;
+    const nextTurnResponse = linkedTurn ?? actionTurn ?? null;
+    const nextParts = item.role === 'aily' && nextTurnResponse !== item.turnResponse
+      ? getDialogItemParts(item.role, nextTurnResponse)
+      : item.parts;
+    const nextRevision = getDialogItemRevision(nextTurnResponse);
 
     if (
       linkedTurn === item.turnContext?.turnResponse
       && nextTurnId === item.resolvedTurnId
-      && nextTrackId === item.trackId
+      && nextId === item.id
       && nextContent === item.content
+      && nextParts === item.parts
+      && nextTurnResponse === item.turnResponse
+      && nextRevision === item.revision
       && sameDialogTurnContext(item.turnContext, nextTurnContext)
     ) {
       return item;
@@ -239,9 +259,14 @@ function attachAssociatedTurns(
     return {
       ...item,
       content: nextContent,
-      trackId: nextTrackId,
+      id: nextId,
+      ...(nextTurnId ? { turnId: nextTurnId } : {}),
+      ...(item.role === 'aily' && nextTurnId ? { responseId: nextTurnId } : {}),
       resolvedTurnId: nextTurnId,
       turnContext: nextTurnContext,
+      parts: nextParts,
+      turnResponse: nextTurnResponse,
+      revision: nextRevision,
     } satisfies InternalChatDialogViewItem;
   });
 }
@@ -265,6 +290,29 @@ function sameDialogTurnContext(
     && left?.response === right?.response
     && left?.rounds === right?.rounds
     && left?.turnResponse === right?.turnResponse;
+}
+
+function getDialogItemParts(
+  role: string,
+  turnResponse: TurnResponseTurn | null | undefined,
+): readonly ChatPart[] {
+  if (role !== 'aily' || !turnResponse) {
+    return [];
+  }
+
+  return turnResponse.response.parts.flatMap(part => turnResponsePartToChatParts(part));
+}
+
+function getDialogItemRevision(turnResponse: TurnResponseTurn | null | undefined): number {
+  if (!turnResponse) {
+    return 0;
+  }
+
+  return turnResponse.response.updatedAt
+    ?? turnResponse.updatedAt
+    ?? turnResponse.response.createdAt
+    ?? turnResponse.createdAt
+    ?? 0;
 }
 
 function findAssociatedTurnId(

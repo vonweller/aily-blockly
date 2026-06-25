@@ -32,6 +32,7 @@ import { ChatRuntimeInteractionHostService } from '../../services/chat-runtime-i
 import {
   buildConfirmationActivityDisplayItem,
   buildPrimaryActivitySummary,
+  buildTodoPrimaryActivitySummary,
   buildSubagentActivityItems,
   buildActivityGroupPresentation,
   buildInvocationDetailDisplay,
@@ -488,6 +489,12 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked, 
   }
 
   private _refresh(options?: { forceDetailProjection?: boolean }): void {
+    ChatPerformanceTracer.runWithSurface('chat_projection', () => {
+      this._refreshProjected(options);
+    }, 'activity_group_refresh');
+  }
+
+  private _refreshProjected(options?: { forceDetailProjection?: boolean }): void {
     if (!this.parts.length) {
       this.displayItems = [];
       this.lastProjectionKey = '';
@@ -853,9 +860,20 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked, 
     if (part.type === 'state') {
       const sp = part as StatePart;
       const isSpinning = sp.state === 'doing';
-      const activitySummary = buildPrimaryActivitySummary(part);
+      const activitySummary = sp.kind === 'todo'
+        ? buildTodoPrimaryActivitySummary(sp)
+        : buildPrimaryActivitySummary(part);
       const useEmbeddedStateBody = sp.kind === 'instructions';
-      const detailSections = useEmbeddedStateBody ? undefined : getPreparedDetailSections(part);
+      const lazyTodoDetail = !useEmbeddedStateBody && sp.kind === 'todo'
+        ? () => {
+            const sections = getPreparedDetailSections(part);
+            return {
+              detailSections: sections,
+              detailKind: sections?.length ? 'state' as const : undefined,
+            };
+          }
+        : undefined;
+      const detailSections = useEmbeddedStateBody || lazyTodoDetail ? undefined : getPreparedDetailSections(part);
       const shell = buildStateActivityShellPresentation({
         state: sp.state,
         defaultKicker: activitySummary?.kicker,
@@ -873,9 +891,10 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked, 
         pill: shell.pill,
         pillTone: shell.pillTone,
         children: undefined,
+        loadDetail: lazyTodoDetail,
         detailSections,
         detailExpanded: useEmbeddedStateBody,
-        detailKind: detailSections?.length || useEmbeddedStateBody ? 'state' : undefined,
+        detailKind: detailSections?.length || useEmbeddedStateBody || lazyTodoDetail ? 'state' : undefined,
         instructionMetadata: useEmbeddedStateBody ? (sp.metadata || null) : undefined,
       }];
     }

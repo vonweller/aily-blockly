@@ -129,6 +129,43 @@ describe('RenderEventPartAdapter', () => {
     expect((parts[0] as any).text).toBe('File read successfully');
   });
 
+  it('patches duplicate tool ids only within the current response handle', () => {
+    const staleHandle = store.createDetachedHandle();
+    adapter.process({
+      type: 'tool_call_begin',
+      toolCallId: 'duplicate-tool',
+      toolName: 'readFile',
+      input: { path: '/old.ts' },
+      timestamp: 1,
+    }, staleHandle);
+
+    processCurrent({
+      type: 'tool_call_begin',
+      toolCallId: 'duplicate-tool',
+      toolName: 'readFile',
+      input: { path: '/new.ts' },
+      timestamp: 2,
+    });
+
+    processCurrent({
+      type: 'tool_call_end',
+      toolCallId: 'duplicate-tool',
+      toolName: 'readFile',
+      resultText: 'current response done',
+      durationMs: 12,
+      state: 'done',
+      isError: false,
+      timestamp: 3,
+    });
+
+    const stalePart = store.getPartsForHandle(staleHandle)[0] as any;
+    const currentPart = store.getPartsForHandle(currentHandle)[0] as any;
+    expect(stalePart.state).toBe('doing');
+    expect(stalePart.text).toBe('readFile…');
+    expect(currentPart.state).toBe('done');
+    expect(currentPart.text).toBe('current response done');
+  });
+
   it('should handle error tool call', () => {
     processCurrent({
       type: 'tool_call_begin',
@@ -170,6 +207,53 @@ describe('RenderEventPartAdapter', () => {
         label: '重试',
       },
     ]);
+  });
+
+  it('maps prefixed 29001 service errors without a code field to retry actions', () => {
+    processCurrent({
+      type: 'error_notice',
+      message: 'aily-services [29001]: 对话流处理异常，请稍后重试',
+      timestamp: 1,
+    });
+
+    const part = store.getPartsForHandle(currentHandle)[0] as any;
+    expect(part.type).toBe('error');
+    expect(part.message).toBe('模型服务当前访问量较高，请稍后重试。');
+    expect(part.metadata?.code).toBe('29001');
+    expect(part.metadata?.errorDetails).toEqual(jasmine.objectContaining({
+      code: '29001',
+      originalMessage: '对话流处理异常，请稍后重试',
+      confirmationButtons: jasmine.arrayContaining([
+        jasmine.objectContaining({
+          data: { ailyContinueOnError: true },
+          label: '重试',
+        }),
+      ]),
+    }));
+  });
+
+  it('prefers provider pressure messages from service error details', () => {
+    processCurrent({
+      type: 'error_notice',
+      message: 'aily-services [29001]: 对话流处理异常，请稍后重试',
+      details: {
+        error: {
+          code: '1305',
+          message: '该模型当前访问量过大，请您稍后再试',
+        },
+      },
+      timestamp: 1,
+    } as any);
+
+    const part = store.getPartsForHandle(currentHandle)[0] as any;
+    expect(part.message).toBe('该模型当前访问量过大，请您稍后再试');
+    expect(part.metadata?.errorDetails).toEqual(jasmine.objectContaining({
+      code: '29001',
+      providerMessage: '该模型当前访问量过大，请您稍后再试',
+      confirmationButtons: jasmine.arrayContaining([
+        jasmine.objectContaining({ label: '重试' }),
+      ]),
+    }));
   });
 
   it('preserves structured read_file metadata from lex tool results through the displayed tool header', () => {

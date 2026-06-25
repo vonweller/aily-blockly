@@ -803,6 +803,7 @@ export function mkSubagentToolCall(
 
   return subagentSnapshotToToolCall({
     toolCallId,
+    subAgentInvocationId: asString(initialMetadata['subAgentInvocationId']) || toolCallId,
     agentName,
     description,
     state: 'doing',

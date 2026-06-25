@@ -2091,17 +2091,33 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
       line-height: 1.2;
     }
 
-    :host ::ng-deep .cag-item-markdown {
-      font-size: 11px;
-      line-height: 1.45;
+    :host ::ng-deep .cag-item-markdown,
+    :host ::ng-deep .cag-item-markdown.x-markdown,
+    :host ::ng-deep .cag-item-markdown .x-markdown {
+      font-size: 12px;
+      line-height: 1.35;
       color: var(--chat-fg-dim, #8e8e8e);
+      font-weight: 400;
       word-break: break-word;
       overflow-wrap: anywhere;
     }
 
-    :host ::ng-deep .cag-item-thinking-content .cag-item-markdown {
+    :host ::ng-deep .cag-item-thinking-content .cag-item-markdown,
+    :host ::ng-deep .cag-item-thinking-content .cag-item-markdown.x-markdown,
+    :host ::ng-deep .cag-item-thinking-content .cag-item-markdown .x-markdown {
       font-size: 12px;
-      line-height: 1.45;
+      line-height: 1.35;
+      color: var(--chat-fg-dim, #8e8e8e);
+      font-weight: 400;
+    }
+
+    :host ::ng-deep .cag-item-markdown p,
+    :host ::ng-deep .cag-item-markdown li,
+    :host ::ng-deep .cag-item-markdown blockquote {
+      font-size: inherit;
+      line-height: inherit;
+      color: inherit;
+      font-weight: inherit;
     }
 
     :host ::ng-deep .cag-item-markdown p {
@@ -2110,6 +2126,31 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
 
     :host ::ng-deep .cag-item-markdown p:last-child {
       margin-bottom: 0;
+    }
+
+    :host ::ng-deep .cag-item-markdown ul,
+    :host ::ng-deep .cag-item-markdown ol {
+      margin: 2px 0 4px;
+      padding-left: 1.2em;
+      color: inherit;
+    }
+
+    :host ::ng-deep .cag-item-markdown strong {
+      color: inherit;
+      font-weight: 600;
+    }
+
+    :host ::ng-deep .cag-item-markdown a {
+      color: var(--chat-link, #4daafc);
+    }
+
+    :host ::ng-deep .cag-item-markdown code:not(pre code) {
+      font-size: 11px;
+      line-height: 1.25;
+      color: var(--chat-fg-dim, #8e8e8e);
+      background: var(--chat-bg-subtle, rgba(255,255,255,0.04));
+      border-radius: 3px;
+      padding: 0 3px;
     }
 
     @keyframes cag-spin {

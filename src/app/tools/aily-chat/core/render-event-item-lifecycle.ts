@@ -5,6 +5,7 @@ import { parseTerminalPayload, type ParsedTerminalPayload } from './terminal-pay
 import { extractRawToolResultPayloadText } from './tool-result-content';
 import { ProposedPlanParser, type ProposedPlanSegment } from './proposed-plan-parser';
 import type { QuestionItem, ToolCallPart } from './chat-parts';
+import { normalizeChatErrorNotice } from './chat-error-notice-normalizer';
 
 export type CanonicalRenderItemKind =
   | 'markdown'
@@ -993,17 +994,35 @@ function todoStatePayload(event: Extract<RenderEvent, { type: 'todo_update' }>):
 
 function noticePayload(event: Extract<RenderEvent, { type: 'warning_notice' | 'info_notice' | 'error_notice' }>): CanonicalRenderItemStructuredPayload {
   const rawCode = 'code' in event ? event.code : undefined;
+  const rawDetails = (event as { readonly details?: unknown }).details;
+  if (event.type === 'error_notice') {
+    const normalized = normalizeChatErrorNotice({
+      message: event.message,
+      code: typeof rawCode === 'string' ? rawCode : undefined,
+      details: rawDetails,
+    });
+    return {
+      type: 'notice',
+      message: normalized.message,
+      severity: 'error',
+      code: normalized.code,
+      metadata: boundedRecord({
+        ...(normalized.metadata ?? {}),
+      }),
+    };
+  }
+
   const code = typeof rawCode === 'string' && rawCode.trim().length > 0
     ? rawCode.trim()
     : undefined;
   return {
     type: 'notice',
     message: event.message,
-    severity: event.type === 'error_notice' ? 'error' : event.type === 'warning_notice' ? 'warning' : 'info',
+    severity: event.type === 'warning_notice' ? 'warning' : 'info',
     code,
     metadata: boundedRecord({
       ...(code ? { code } : {}),
-      ...('details' in event && event.details && typeof event.details === 'object' ? { details: event.details } : {}),
+      ...(rawDetails && typeof rawDetails === 'object' ? { details: rawDetails } : {}),
     }),
   };
 }

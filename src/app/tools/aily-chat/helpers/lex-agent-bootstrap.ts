@@ -23,6 +23,7 @@ import {
   type ChatAgentRuntimeMode,
   type ChatAgentRuntimeModeSource,
 } from '../core/chat-agent-runtime-mode';
+import type { ChatRuntimeOwnerScheduler } from '../core/chat-runtime-owner-scheduler';
 import { normalizeGovernanceToolName, toRuntimeGovernanceToolName } from '../core/tool-name-normalizer';
 import { getBlocklyContextSnapshotService } from '../core/blockly-context-snapshot-service';
 import { BLOCKLY_LEX_DEFERRED_GROUPS, createBlocklyToolProvider } from '../core/blockly-contributed-tools';
@@ -47,18 +48,17 @@ import { collectDiagnostics } from '../core/diagnostics';
 import { resolveBlocklyMemoryStorageLayout } from './chat-memory-host';
 import { getProjectInfoTool } from '../tools/getProjectInfoTool';
 import { searchBoardsLibrariesTool } from '../tools/searchBoardsLibrariesTool';
-import { syncAbsFileHandler, type SyncAbsInvocationContext } from '../tools/syncAbsFileTool';
+import {
+  syncAbsFileHandler,
+  type SyncAbsInvocationContext,
+} from '../tools/syncAbsFileTool';
 import { analyzeLibraryBlocksTool } from '../tools/editBlockTool';
 import { TOOL_SETTINGS_CATALOG } from '../tools/tool-settings-catalog';
 import type { HostSessionRecord, PersistedHostResponseData } from '../services/chat-history.service';
 import { AilyAgentSessionProviderOptionsSourceService } from '../services/chat-session-provider-options-source.service';
-import { ChatSessionRuntimeRegistryService } from '../services/chat-session-runtime-registry.service';
-import { BlocklyTrackedWorkspaceChangeCollector } from '../services/blockly-tracked-workspace-change-collector';
-import { EditingContentStore } from '../services/editing-content-store.service';
 import { EditingTextDiffService } from '../services/editing-text-diff.service';
-import { EditingTimelineRepository } from '../services/editing-timeline-repository.service';
-import { EditingTimelineRecordingBridge } from '../services/editing-timeline-recording-bridge';
 import type { EditingTimelineFileWriteEvent } from '../services/editing-timeline-recording-bridge';
+import type { ChatSessionLexPostTurnResources } from '../services/chat-session-lex-post-turn-resource-factory.service';
 import type { EditingTextLineChange } from '../services/editing-text-diff.types';
 import type { NormalizedTextEdit } from '../services/editing-timeline.types';
 import { LEGACY_HOST_EXTERNAL_TOOLS } from '../tools/legacy-host-tool-definitions';
@@ -219,14 +219,22 @@ export type BootstrapLexAgentContext = Pick<IProjectContext, 'prjPath' | 'prjRoo
   & Pick<IChatServiceAccess, 'ailyChatConfigService' | 'mcpService' | 'editCheckpointService'>
   & Pick<IChatCoordination, 'handleToolApproval' | 'syncSessionCustomizationContentProvider' | 'syncSessionCustomizationProvider' | 'syncSessionCustomizationProviders' | 'syncSessionProviderOptionsSource' | 'syncSessionProviderOptionsSources'>
   & {
-    readonly chatSessionRuntimeRegistry?: ChatSessionRuntimeRegistryService;
     readonly currentSessionPath?: string | null;
     readonly currentSessionPermissionMode?: ChatSessionPermissionMode;
     readonly currentSessionApprovalsReviewer?: 'user' | 'auto_review';
     readonly currentSessionApprovalPolicy?: 'on_request' | 'never';
-    readonly ngZone?: {
-      runOutsideAngular<T>(operation: () => Promise<T> | T): Promise<T> | T;
-    };
+    readonly ownerScheduler?: Pick<ChatRuntimeOwnerScheduler, 'runOutsideOwner'>;
+    getOrCreateLexPostTurnResources?(
+      sessionId: string | null | undefined,
+      cwd: string | null | undefined,
+    ): ChatSessionLexPostTurnResources | undefined;
+    scheduleLexRequestCompleted?(input: {
+      sessionId: string;
+      turnId: string;
+      reason: string;
+      runWorkspaceFinalize: () => Promise<void>;
+      runSessionEndHooks: () => Promise<void>;
+    }): void;
     selectAgentRuntimeMode?(
       mode: Exclude<ChatAgentRuntimeMode, 'unbound'>,
       source: ChatAgentRuntimeModeSource,
@@ -1242,8 +1250,8 @@ export function bootstrapBlocklyLexAgent(
   const createSyncAbsInvocationContext = (): SyncAbsInvocationContext => ({
     sessionId: runtimeSessionId || undefined,
     isStale: isRuntimeSessionStale,
-    runOutsideAngular: ctx.ngZone?.runOutsideAngular
-      ? <T>(operation: () => Promise<T> | T): Promise<T> | T => ctx.ngZone!.runOutsideAngular(operation)
+    runOutsideAngular: ctx.ownerScheduler?.runOutsideOwner
+      ? <T>(operation: () => Promise<T> | T): Promise<T> | T => ctx.ownerScheduler!.runOutsideOwner(operation)
       : undefined,
   });
   const { hostAPI, toolProvider, adapter } = createBlocklyStandardHostBinding(cwd, {
@@ -1305,81 +1313,73 @@ export function bootstrapBlocklyLexAgent(
     memoryStorage: createBlocklyMemoryStorageExtension(cwd),
     memoryFeatureConfig: createBlocklyMemoryFeatureConfigExtension(ctx.ailyChatConfigService),
   };
-  if (ctx.ngZone?.runOutsideAngular) {
+  if (ctx.ownerScheduler?.runOutsideOwner) {
     runtimeExtensions['hostExecutionBoundary'] = {
       runOutsideAngular: <T>(operation: () => Promise<T> | T): Promise<T> | T => {
-        return ctx.ngZone!.runOutsideAngular(operation);
+        return ctx.ownerScheduler!.runOutsideOwner(operation);
       },
     };
   }
   if (cwd && (sessionId || ctx.sessionId)) {
-    const lexPostTurnResources = ctx.chatSessionRuntimeRegistry?.getOrCreateLexPostTurnResources?.(
+    const lexPostTurnResources = ctx.getOrCreateLexPostTurnResources?.(
       sessionId || ctx.sessionId,
       cwd,
     );
-    const editingTimelineRecorder = lexPostTurnResources?.editingTimelineRecorder ?? new EditingTimelineRecordingBridge(
-      new EditingTimelineRepository({
-        joinPath: (...parts) => AilyHost.get().path.join(...parts),
-      }),
-      new EditingContentStore({
-        joinPath: (...parts) => AilyHost.get().path.join(...parts),
-      }),
-      cwd,
-      sessionId || ctx.sessionId,
-    );
-    runtimeExtensions['editingTimeline'] = {
-      recordFileWrite: async (event: EditingTimelineFileWriteEvent) => {
-        const edits = event.contentKind !== 'binary'
-          && event.beforeContent !== null
-          && event.beforeContent !== undefined
-          && event.afterContent !== null
-          && event.afterContent !== undefined
-          ? await computeNormalizedTextEdits(event.beforeContent, event.afterContent)
-          : undefined;
-        editingTimelineRecorder.recordFileWrite({
-          ...event,
-          ...(edits ? { edits } : {}),
-        });
-      },
-      reconcileWorktreeChanges: async (input: {
-        turnId: string;
-        filePaths: readonly string[];
-        repositoryRoots?: readonly string[];
-        changes?: readonly ({
-          filePath: string;
-          kind: 'create' | 'modify' | 'delete';
-          contentKind: 'text' | 'binary' | 'notebook';
-        } | {
-          filePath: string;
-          previousFilePath: string;
-          kind: 'rename';
-          contentKind: 'text' | 'binary' | 'notebook';
-        })[];
-      }) => {
-        ctx.editCheckpointService?.recordAdditionalRepositoryRoots?.(input.repositoryRoots);
-        await editingTimelineRecorder.reconcileWorktreeChanges({
-          ...input,
-          readCurrentText: async (filePath: string) => {
-            try {
-              return AilyHost.get().fs.readFileSync(filePath, 'utf-8');
-            } catch {
-              return null;
-            }
-          },
-          readCurrentBytes: async (filePath: string) => {
-            try {
-              return normalizeHostBytes((AilyHost.get().fs.readFileSync as any)(filePath));
-            } catch {
-              return null;
-            }
-          },
-          computeEdits: computeNormalizedTextEdits,
-        });
-      },
-    };
-    runtimeExtensions['workspaceChangeCollector'] = lexPostTurnResources?.workspaceChangeCollector
-      ?? new BlocklyTrackedWorkspaceChangeCollector();
-    if (ctx.chatSessionRuntimeRegistry) {
+    if (lexPostTurnResources) {
+      const editingTimelineRecorder = lexPostTurnResources.editingTimelineRecorder;
+      runtimeExtensions['editingTimeline'] = {
+        recordFileWrite: async (event: EditingTimelineFileWriteEvent) => {
+          const edits = event.contentKind !== 'binary'
+            && event.beforeContent !== null
+            && event.beforeContent !== undefined
+            && event.afterContent !== null
+            && event.afterContent !== undefined
+            ? await computeNormalizedTextEdits(event.beforeContent, event.afterContent)
+            : undefined;
+          editingTimelineRecorder.recordFileWrite({
+            ...event,
+            ...(edits ? { edits } : {}),
+          });
+        },
+        reconcileWorktreeChanges: async (input: {
+          turnId: string;
+          filePaths: readonly string[];
+          repositoryRoots?: readonly string[];
+          changes?: readonly ({
+            filePath: string;
+            kind: 'create' | 'modify' | 'delete';
+            contentKind: 'text' | 'binary' | 'notebook';
+          } | {
+            filePath: string;
+            previousFilePath: string;
+            kind: 'rename';
+            contentKind: 'text' | 'binary' | 'notebook';
+          })[];
+        }) => {
+          ctx.editCheckpointService?.recordAdditionalRepositoryRoots?.(input.repositoryRoots);
+          await editingTimelineRecorder.reconcileWorktreeChanges({
+            ...input,
+            readCurrentText: async (filePath: string) => {
+              try {
+                return AilyHost.get().fs.readFileSync(filePath, 'utf-8');
+              } catch {
+                return null;
+              }
+            },
+            readCurrentBytes: async (filePath: string) => {
+              try {
+                return normalizeHostBytes((AilyHost.get().fs.readFileSync as any)(filePath));
+              } catch {
+                return null;
+              }
+            },
+            computeEdits: computeNormalizedTextEdits,
+          });
+        },
+      };
+      runtimeExtensions['workspaceChangeCollector'] = lexPostTurnResources.workspaceChangeCollector;
+    }
+    if (ctx.scheduleLexRequestCompleted) {
       runtimeExtensions['sessionCompletionCoordinator'] = {
         scheduleRequestCompleted: (input: {
           sessionId: string;
@@ -1388,7 +1388,7 @@ export function bootstrapBlocklyLexAgent(
           runWorkspaceFinalize: () => Promise<void>;
           runSessionEndHooks: () => Promise<void>;
         }) => {
-          ctx.chatSessionRuntimeRegistry?.scheduleLexRequestCompleted(input);
+          ctx.scheduleLexRequestCompleted?.(input);
         },
       };
     }

@@ -15,7 +15,7 @@ import type {
   CanonicalRenderItemScope,
   CanonicalRenderLifecycleEvent,
 } from '../core/render-event-item-lifecycle';
-import { collectMainTurnResponseText } from '../core/turn-response-part-mapper';
+import { collectMainTurnResponseText, turnResponsePartToChatParts } from '../core/turn-response-part-mapper';
 import {
   buildDialogTurnContext,
   type DialogTurnContext,
@@ -3262,12 +3262,16 @@ function buildCanonicalRequestDialogItemForEntry(
   }
 
   return {
-    trackId: `request:${entry.turnId}`,
+    id: `request:${entry.turnId}`,
+    turnId: entry.turnId,
     role: 'user',
     content: userProjection.content,
     doing: userProjection.state === 'doing',
     turnModelName: '',
     turnContext: userTurnContext,
+    parts: [],
+    turnResponse: entry.turnResponse,
+    revision: readDialogItemRevision(entry.turnResponse),
     isLastAily: false,
     isFirstUserTurn: false,
     showCheckpointRestore: false,
@@ -3293,18 +3297,31 @@ function buildCanonicalResponseDialogItemForEntry(
   }
 
   return {
-    trackId: `response:${entry.turnId}`,
+    id: `response:${entry.turnId}`,
+    turnId: entry.turnId,
+    responseId: entry.turnId,
     role: 'aily',
     content: assistantProjection.content || getTurnResponseAssistantText(entry.turnResponse),
     doing: assistantProjection.state === 'doing',
     turnModelName: assistantProjection.modelName || '',
     turnModelBillingLabel: assistantProjection.modelBillingLabel,
     turnContext: assistantTurnContext,
+    parts: entry.turnResponse.response.parts.flatMap(part => turnResponsePartToChatParts(part)),
+    turnResponse: entry.turnResponse,
+    revision: readDialogItemRevision(entry.turnResponse),
     responseVote: entry.runtimeState?.responseSidecar?.vote,
     isLastAily: false,
     isFirstUserTurn: false,
     showCheckpointRestore: false,
   };
+}
+
+function readDialogItemRevision(turnResponse: TurnResponseTurn): number {
+  return turnResponse.response.updatedAt
+    ?? turnResponse.updatedAt
+    ?? turnResponse.response.createdAt
+    ?? turnResponse.createdAt
+    ?? 0;
 }
 
 class HostDialogItemProjectionStore {
@@ -3395,9 +3412,9 @@ class HostDialogItemProjectionStore {
     previousItems: readonly ChatDialogViewItem[] | null,
     durationMs: number,
   ): void {
-    const previousByTrackId = new Map((previousItems ?? []).map(item => [item.trackId, item] as const));
+    const previousById = new Map((previousItems ?? []).map(item => [item.id, item] as const));
     const changedItemCount = previousItems
-      ? items.reduce((count, item) => count + (previousByTrackId.get(item.trackId) === item ? 0 : 1), 0)
+      ? items.reduce((count, item) => count + (previousById.get(item.id) === item ? 0 : 1), 0)
       : items.length;
     this.lastMetrics = {
       ...this.currentMetrics,
@@ -3605,10 +3622,10 @@ function stabilizeCanonicalDialogItems(
     return [...nextItems];
   }
 
-  const previousByTrackId = new Map(previousItems.map(item => [item.trackId, item]));
+  const previousById = new Map(previousItems.map(item => [item.id, item]));
   let reusedCount = 0;
   const stabilized = nextItems.map((item) => {
-    const previous = previousByTrackId.get(item.trackId);
+    const previous = previousById.get(item.id);
     if (!previous || !canReuseCanonicalDialogItem(previous, item)) {
       return item;
     }
@@ -3628,11 +3645,33 @@ function canReuseCanonicalDialogItem(
     && previous.doing === next.doing
     && previous.turnModelName === next.turnModelName
     && previous.turnModelBillingLabel === next.turnModelBillingLabel
+    && getCanonicalDialogPartsSignature(previous.parts) === getCanonicalDialogPartsSignature(next.parts)
+    && previous.turnResponse === next.turnResponse
+    && previous.revision === next.revision
     && previous.responseVote === next.responseVote
     && previous.isLastAily === next.isLastAily
     && previous.isFirstUserTurn === next.isFirstUserTurn
     && previous.showCheckpointRestore === next.showCheckpointRestore
     && getCanonicalDialogContextSignature(previous) === getCanonicalDialogContextSignature(next);
+}
+
+function getCanonicalDialogPartsSignature(parts: readonly ChatPart[]): string {
+  return parts
+    .map((part, index) => {
+      const record = part as unknown as Record<string, unknown>;
+      return [
+        index,
+        part.type,
+        typeof record['partId'] === 'string' ? record['partId'] : '',
+        typeof record['toolCallId'] === 'string' ? record['toolCallId'] : '',
+        typeof record['status'] === 'string' ? record['status'] : '',
+        typeof record['state'] === 'string' ? record['state'] : '',
+        typeof record['content'] === 'string' ? record['content'].length : '',
+        typeof record['text'] === 'string' ? record['text'].length : '',
+        typeof record['output'] === 'string' ? record['output'].length : '',
+      ].join(':');
+    })
+    .join('\u0000');
 }
 
 function getCanonicalDialogContextSignature(item: ChatDialogViewItem): string {

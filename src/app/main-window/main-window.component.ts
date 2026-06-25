@@ -6,7 +6,6 @@ import { NzLayoutModule } from 'ng-zorro-antd/layout';
 import { NzResizableModule, NzResizeEvent } from 'ng-zorro-antd/resizable';
 import { NzTabsModule } from 'ng-zorro-antd/tabs';
 import { AilyChatComponent } from '../tools/aily-chat/aily-chat.component';
-import { AILY_CHAT_RUNTIME_PROVIDERS } from '../tools/aily-chat/aily-chat.providers';
 import { TerminalComponent } from '../tools/terminal/terminal.component';
 import { LogComponent } from '../tools/log/log.component';
 import { UiService } from '../services/ui.service';
@@ -40,6 +39,7 @@ import { ToolI18nService } from '../services/tool-i18n.service';
 import { LibManagerToolComponent } from '../tools/lib-manager-tool/lib-manager-tool.component';
 import { ModeWelcomeComponent } from '../components/mode-welcome/mode-welcome.component';
 import type { DevelopmentModePreference } from '../services/config.service';
+import { ChatRuntimeHostResourceOperationHandlerService } from '../tools/aily-chat/services/chat-runtime-host-resource-operation-handler.service';
 
 @Component({
   selector: 'app-main-window',
@@ -74,7 +74,6 @@ import type { DevelopmentModePreference } from '../services/config.service';
   ],
   templateUrl: './main-window.component.html',
   styleUrl: './main-window.component.scss',
-  providers: [...AILY_CHAT_RUNTIME_PROVIDERS],
 })
 export class MainWindowComponent implements OnDestroy {
   @ViewChild('logComponent') logComponent!: LogComponent;
@@ -128,10 +127,14 @@ export class MainWindowComponent implements OnDestroy {
     private onboardingService: OnboardingService,
     private authService: AuthService,
     private electronService: ElectronService,
-    private toolI18n: ToolI18nService
+    private toolI18n: ToolI18nService,
+    private readonly chatRuntimeHostResourceOperationHandler: ChatRuntimeHostResourceOperationHandlerService
   ) { }
 
   async ngOnInit(): Promise<void> {
+    void this.chatRuntimeHostResourceOperationHandler.start().catch(error => {
+        console.error('[AilyChat][RuntimeHostResourceOperationHandler] Failed to start:', error);
+    });
     this.watchConfigNotices();
     await this.toolI18n.loadChildTools();
     this.uiService.init();

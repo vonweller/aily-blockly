@@ -1,6 +1,7 @@
 // 扩展 Window 接口以包含 electronAPI
 declare global {
   interface Window {
+    openAndSendToAilyChat: (text: string, options?: Record<string, any>) => void;
     electronAPI: {
       SerialPort: {
         list: () => Promise<any[]>;
@@ -28,6 +29,19 @@ declare global {
         start: (data: any) => Promise<{ ok?: boolean; streamId?: string; error?: string }>;
         cancel: (streamId: string) => Promise<any>;
         onEvent: (streamId: string, callback: (payload: any) => void) => () => void;
+      };
+      chatRuntimeHost?: {
+        registerExecutionWorker: (executionWorkerId: string) => Promise<{ ok?: boolean; executionWorkerId?: string }>;
+        unregisterExecutionWorker: (executionWorkerId: string) => Promise<{ ok?: boolean }>;
+        registerResourceOperationHandler: (handlerId: string) => Promise<{ ok?: boolean; handlerId?: string }>;
+        unregisterResourceOperationHandler: (handlerId: string) => Promise<{ ok?: boolean }>;
+        call: (method: string, args: readonly unknown[]) => Promise<unknown>;
+        onExecutionWorkerCommand: (callback: (payload: unknown) => void) => () => void;
+        onResourceOperationCommand: (callback: (payload: unknown) => void) => () => void;
+        sendExecutionWorkerResponse: (payload: unknown) => void;
+        sendResourceOperationResponse: (payload: unknown) => void;
+        emitExecutionWorkerEvent: (payload: unknown) => void;
+        onEvent: (callback: (payload: any) => void) => () => void;
       };
       iWindow: any;
       subWindow: any;

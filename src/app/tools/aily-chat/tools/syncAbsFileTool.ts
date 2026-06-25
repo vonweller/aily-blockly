@@ -21,6 +21,10 @@ import {
   type BlocklyEditorOperationProgressReporter,
 } from './blocklyEditorOperationQueue';
 import type { EditorOperationEventSink } from './editorOperationEvents';
+import type {
+  ChatRuntimeHostResourceRequestKind,
+} from '../core/chat-runtime-host-contract';
+import { createElectronChatRuntimeHostTransport } from '../core/electron-chat-runtime-host-transport';
 
 declare const Blockly: any;
 
@@ -113,13 +117,13 @@ async function writeGeneratedSketchIno(
 // 类型定义
 // =============================================================================
 
-interface SyncAbsArgs {
+export interface SyncAbsArgs {
   operation: 'export' | 'import' | 'status';
   includeHeader?: boolean;
   pendingAbsContent?: string;
 }
 
-interface SyncAbsResult {
+export interface SyncAbsResult {
   is_error: boolean;
   content: string;
   metadata?: {
@@ -355,6 +359,26 @@ function isSyncAbsCancellationError(error: unknown): boolean {
     && (error.name === 'AbortError' || /cancelled|canceled|aborted/i.test(error.message));
 }
 
+function normalizeSyncAbsSessionId(invocationContext?: SyncAbsInvocationContext): string {
+  return typeof invocationContext?.sessionId === 'string'
+    ? invocationContext.sessionId.trim()
+    : '';
+}
+
+function toSyncAbsResourceError(error: unknown): { readonly message: string; readonly code?: string; readonly retryable?: boolean } {
+  if (error instanceof Error) {
+    return {
+      message: error.message || 'syncAbs resource operation failed.',
+      retryable: isSyncAbsCancellationError(error) ? false : undefined,
+    };
+  }
+  return {
+    message: typeof error === 'string' && error.trim().length > 0
+      ? error.trim()
+      : 'syncAbs resource operation failed.',
+  };
+}
+
 // =============================================================================
 // 辅助函数
 // =============================================================================
@@ -402,6 +426,43 @@ export async function syncAbsFileHandler(
   absAutoSyncService?: AbsAutoSyncService,
   invocationContext?: SyncAbsInvocationContext,
 ): Promise<SyncAbsResult> {
+  const sessionId = normalizeSyncAbsSessionId(invocationContext);
+  if (!sessionId) {
+    return {
+      is_error: true,
+      content: 'syncAbs requires a host session id.',
+    };
+  }
+
+  const runtimeHost = createElectronChatRuntimeHostTransport();
+  if (!runtimeHost) {
+    return {
+      is_error: true,
+      content: 'syncAbs requires the Electron runtime host resource operation boundary.',
+    };
+  }
+
+  const hostOperation = buildSyncAbsHostResourceOperation(args, projectService, sessionId);
+  try {
+    const result = await runtimeHost.requestResourceOperation(hostOperation);
+    return normalizeSyncAbsHostOperationResult(result.result);
+  } catch (error: unknown) {
+    return {
+      is_error: true,
+      content: error instanceof Error
+        ? error.message
+        : String(error),
+    };
+  }
+}
+
+export async function runSyncAbsFileConcreteHandler(
+  args: SyncAbsArgs,
+  projectService: any,
+  electronService: any,
+  absAutoSyncService?: AbsAutoSyncService,
+  invocationContext?: SyncAbsInvocationContext,
+): Promise<SyncAbsResult> {
   const { operation, includeHeader = true } = args;
   
   // 获取项目路径（优先使用当前项目路径，否则使用根路径）
@@ -418,6 +479,12 @@ export async function syncAbsFileHandler(
   
   const absFilePath = `${projectPath}/project.abs`;
   const abiFilePath = `${projectPath}/project.abi`;
+  const resourceBase = {
+    projectPath,
+    absFilePath,
+    abiFilePath,
+    toolName: 'syncAbs',
+  };
   
   switch (operation) {
     case 'export': {
@@ -447,7 +514,8 @@ export async function syncAbsFileHandler(
           ...invocationContext,
           reportOperationProgress,
           editorFrameBudget: operationContext.frameBudget,
-        }, args.pendingAbsContent),
+        },
+        args.pendingAbsContent),
         {
           sessionId: invocationContext?.sessionId,
           turnId: invocationContext?.turnId,
@@ -470,6 +538,88 @@ export async function syncAbsFileHandler(
         content: `未知操作: ${operation}`
       };
   }
+}
+
+function buildSyncAbsHostResourceOperation(
+  args: SyncAbsArgs,
+  projectService: any,
+  sessionId: string,
+) {
+  const projectPath = projectService?.currentProjectPath || projectService?.projectRootPath || '';
+  const absFilePath = projectPath ? `${projectPath}/project.abs` : '';
+  const abiFilePath = projectPath ? `${projectPath}/project.abi` : '';
+  const operation = args.operation;
+  const kind: ChatRuntimeHostResourceRequestKind = operation === 'import'
+    ? 'workspace-mutation'
+    : operation === 'export'
+      ? 'file-write'
+      : 'file-read';
+  const operationKind = `blockly.syncAbs.${operation}`;
+  const labels = readSyncAbsResourceLabels(operation);
+
+  return {
+    sessionId,
+    kind,
+    label: labels.startedLabel,
+    detail: labels.detail,
+    resource: {
+      projectPath,
+      absFilePath,
+      abiFilePath,
+      toolName: 'syncAbs',
+      operation,
+      operationKind,
+      ...(operation === 'import'
+        ? { hasPendingAbsContent: typeof args.pendingAbsContent === 'string' && args.pendingAbsContent.trim().length > 0 }
+        : {}),
+    },
+    payload: {
+      adapter: 'syncAbs',
+      args: {
+        operation,
+        includeHeader: args.includeHeader,
+        pendingAbsContent: args.pendingAbsContent,
+      },
+    },
+  } as const;
+}
+
+function readSyncAbsResourceLabels(operation: SyncAbsArgs['operation']): {
+  readonly startedLabel: string;
+  readonly detail: string;
+} {
+  switch (operation) {
+    case 'export':
+      return {
+        startedLabel: 'Exporting Blockly workspace to ABS',
+        detail: 'syncAbs export serializes the Blockly workspace and writes project.abs.',
+      };
+    case 'import':
+      return {
+        startedLabel: 'Applying ABS to Blockly workspace',
+        detail: 'syncAbs import parses project.abs and mutates the Blockly workspace in frame-budgeted batches.',
+      };
+    case 'status':
+      return {
+        startedLabel: 'Reading ABS sync status',
+        detail: 'syncAbs status reads project.abs/project.abi availability and metadata.',
+      };
+  }
+}
+
+function normalizeSyncAbsHostOperationResult(result: unknown): SyncAbsResult {
+  if (!result || typeof result !== 'object') {
+    return {
+      is_error: true,
+      content: 'syncAbs host resource operation returned an invalid result.',
+    };
+  }
+  const candidate = result as Partial<SyncAbsResult>;
+  return {
+    is_error: candidate.is_error === true,
+    content: typeof candidate.content === 'string' ? candidate.content : '',
+    ...(candidate.metadata ? { metadata: candidate.metadata } : {}),
+  };
 }
 
 /**

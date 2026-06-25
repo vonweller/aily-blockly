@@ -1,18 +1,13 @@
-import type { IAgentLifecycle, IChatCoordination, IChatServiceAccess } from '../core/chat-context';
+import type { IAgentLifecycle, IChatCoordination, IChatServiceAccess, IChatViewAccess } from '../core/chat-context';
 import type { ChatPart } from '../core/chat-parts';
+import type { ChatRuntimeOwnerScheduler } from '../core/chat-runtime-owner-scheduler';
 import type { TurnResponseStatus, TurnResponseTurn } from 'aily-lex/browser';
 import { AilyHost } from '../core/host';
-import type { ChatListItem } from '../services/chat-history.service';
 import type { HostSessionSaveTarget } from './host-session-save-bridge';
-import { ChatViewWriteBridge } from './chat-view-write-bridge';
-import type { ChatMessageHandle } from './chat-message-handle';
-import { findChatMessageHandleByMessage } from './chat-message-handle';
+import type { ChatPartStoreResponseHandle } from '../core/chat-part-store';
 import { yieldToBrowserFrame, yieldToBrowserIdle, yieldToBrowserTask } from '../tools/browserTaskScheduler';
 import { isAilyCategoryDebugEnabled } from '../core/chat-debug-flags';
-
-type LexMessageLifecycleViewWriteContext = ConstructorParameters<typeof ChatViewWriteBridge>[0];
-
-import type { EditsSummary } from '../services/edit-checkpoint.service';
+import { ChatPerformanceTracer } from '../services/chat-perf-tracer';
 
 function isFinalizeTraceEnabled(): boolean {
   return isAilyCategoryDebugEnabled('aily.chat.traceFinalize', [
@@ -21,21 +16,18 @@ function isFinalizeTraceEnabled(): boolean {
   ]);
 }
 
-type LexMessageLifecycleContext = LexMessageLifecycleViewWriteContext
+const FINALIZE_SLOW_STAGE_LOG_MS = 32;
+
+type LexMessageLifecycleContext = Pick<IChatViewAccess, 'partStore' | 'viewAdapter'>
   & Pick<IAgentLifecycle, 'isWaiting' | 'isCompleted' | 'isCancelled'>
   & Pick<IChatServiceAccess, 'editCheckpointService' | 'ailyChatConfigService'>
   & Pick<IChatCoordination, 'session' | 'applyPendingSwitch'>
   & {
+    readonly sessionId: string;
+    readonly ownerScheduler: Pick<ChatRuntimeOwnerScheduler, 'run'>;
     readCurrentViewSessionResource?(): string | null;
-    processPendingFollowupRequests?(sessionId?: string | null): Promise<boolean> | boolean;
     syncExecutionRuntimeState?(saveTarget?: HostSessionSaveTarget | null): void;
-    triggerAiEditDiffPreview?(summary: EditsSummary | null): void;
   };
-
-type LexMessageLifecycleViewWriteAccess = Pick<
-  ChatViewWriteBridge,
-  'ensureTrailingAilyPartsMessageHandle'
->;
 
 export interface LexTurnDraft {
   assistantText: string;
@@ -52,9 +44,7 @@ export interface LexTurnDraft {
 export class LexMessageLifecycleBridge {
   /** 原生 thinking 事件是否已开启（已输出 <think> 标签，等待闭合） */
   private _nativeThinkStarted = false;
-  /** 当前 aily 消息引用；msgIndex 仅在需要写回 partStore 时即时解析 */
-  private _currentMessage: ChatListItem | null = null;
-  private readonly viewWriteBridge: LexMessageLifecycleViewWriteAccess;
+  private _currentTurnId: string | null = null;
 
   constructor(
     private readonly ctx: LexMessageLifecycleContext,
@@ -62,52 +52,15 @@ export class LexMessageLifecycleBridge {
     private readonly runFinalizeCompaction?: () => Promise<boolean> | boolean,
     private readonly finalizeCurrentTurnResponse?: (fallbackStatus?: TurnResponseStatus) => boolean,
     private readonly readCurrentTurnResponses?: () => readonly TurnResponseTurn[] | null | undefined,
-  ) {
-    const viewWriteContext: LexMessageLifecycleViewWriteContext = {
-      get list() {
-        return ctx.list;
-      },
-      set list(list) {
-        ctx.list = list;
-      },
-      get partStore() {
-        return ctx.partStore;
-      },
-      get viewAdapter() {
-        return ctx.viewAdapter;
-      },
-      get scrollManager() {
-        return ctx.scrollManager;
-      },
-      get invalidateHostRequestGraph() {
-        return ctx.invalidateHostRequestGraph;
-      },
-      get triggerSyncDetectChanges() {
-        return ctx.triggerSyncDetectChanges;
-      },
-      get sessionId() {
-        return ctx.sessionId;
-      },
-      get chatHistoryService() {
-        return ctx.chatHistoryService;
-      },
-      get currentModelName() {
-        return ctx.currentModelName;
-      },
-      get currentMessageSource() {
-        return ctx.currentMessageSource;
-      },
-      get ngZone() {
-        return ctx.ngZone;
-      },
-      markCurrentViewVisibleProjectionOwner: () => ctx.markCurrentViewVisibleProjectionOwner(),
-    };
-    this.viewWriteBridge = new ChatViewWriteBridge(viewWriteContext);
+  ) {}
+
+  get currentTurnId(): string | null {
+    return this._currentTurnId;
   }
 
-  get currentMessageHandle(): ChatMessageHandle<ChatListItem> | null {
-    return this._currentMessage
-      ? findChatMessageHandleByMessage(this.ctx.list, this._currentMessage, { role: 'aily' })
+  get currentResponseHandle(): ChatPartStoreResponseHandle | null {
+    return this._currentTurnId
+      ? this.ctx.partStore.createResponseHandle(this._currentTurnId)
       : null;
   }
 
@@ -125,12 +78,12 @@ export class LexMessageLifecycleBridge {
 
   resetTurnState(): void {
     this.closeNativeThinking();
-    this._currentMessage = null;
+    this._currentTurnId = null;
     this.partProcessor.reset();
   }
 
   getCurrentTurnDraft(): LexTurnDraft {
-    const handle = this.currentMessageHandle;
+    const handle = this.currentPartStoreHandle;
     if (!handle) {
       return { assistantText: '', toolCallCount: 0, partCount: 0 };
     }
@@ -154,38 +107,52 @@ export class LexMessageLifecycleBridge {
   }
 
   /**
-   * ★ Phase 4: 预创建 aily 消息条目
-    * 不再依赖 legacy appendMessage/appendStreaming 自动创建，而是在 turn 开始时显式推入空消息。
-   * 同时处理 source 切换（subagent）— 自动为新 source 创建消息。
+   * Ensures the current live response is addressed by canonical response key.
    *
-    * ★ Phase 2: 所有 aily 消息统一走 Part-based 渲染，无需 useParts 标记。
-    * 主发送路径和 regenerate 都统一走 ensureAilyMessage()。
+   * The visible row itself is owned by TurnResponse/ChatVisibleTranscriptModel.
+   * This method intentionally does not create or search a trailing ChatListItem.
    */
-  ensureAilyMessage(turnId?: string): void {
-    const handle = this.viewWriteBridge.ensureTrailingAilyPartsMessageHandle({
-      source: this.ctx.currentMessageSource,
-      state: 'doing',
-      scrollOnCreate: true,
-      turnId,
-    });
-    this._currentMessage = handle.message;
+  ensureResponseItem(turnId?: string): void {
+    const normalizedTurnId = normalizeTurnId(turnId);
+    const effectiveTurnId = normalizedTurnId || this._currentTurnId;
+    if (!effectiveTurnId) {
+      throw new Error('Cannot ensure assistant response without a canonical turn id.');
+    }
+
+    this._currentTurnId = effectiveTurnId;
   }
 
   async finalize(saveTarget?: HostSessionSaveTarget | null): Promise<void> {
-    const resolvedSaveTarget = saveTarget ? { ...saveTarget } : null;
-    const shouldFinalizeVisibleOwner = this.shouldFinalizeVisibleOwner(resolvedSaveTarget);
+    let resolvedSaveTarget = saveTarget ? { ...saveTarget } : null;
+    const visibleResponseHandle = this.currentPartStoreHandle;
+    const shouldFinalizeVisibleOwner = this.shouldFinalizeVisibleOwner(resolvedSaveTarget) && !!visibleResponseHandle;
     const finalizeStartedAt = Date.now();
     let stageStartedAt = finalizeStartedAt;
     const logFinalizeStage = (stage: string): void => {
+      const now = Date.now();
+      const stageMs = now - stageStartedAt;
+      ChatPerformanceTracer.recordDuration(
+        'finalize_stage',
+        stageMs,
+        `stage=${stage},session=${resolvedSaveTarget?.sessionId ?? this.ctx.sessionId ?? '<none>'},elapsed=${now - finalizeStartedAt}`,
+        { slowThresholdMs: 16 },
+      );
+      if (stageMs >= FINALIZE_SLOW_STAGE_LOG_MS) {
+        console.info('[AilyChat][FinalizeDebug] slow finalize stage', {
+          sessionId: resolvedSaveTarget?.sessionId ?? this.ctx.sessionId ?? null,
+          stage,
+          stageMs,
+          elapsedMs: now - finalizeStartedAt,
+        });
+      }
       if (!isFinalizeTraceEnabled()) {
-        stageStartedAt = Date.now();
+        stageStartedAt = now;
         return;
       }
-      const now = Date.now();
       console.info('[AilyChat][FinalizeDebug] finalize stage', {
         sessionId: resolvedSaveTarget?.sessionId ?? this.ctx.sessionId ?? null,
         stage,
-        stageMs: now - stageStartedAt,
+        stageMs,
         elapsedMs: now - finalizeStartedAt,
       });
       stageStartedAt = now;
@@ -194,7 +161,7 @@ export class LexMessageLifecycleBridge {
     if (shouldFinalizeVisibleOwner) {
       this.closeNativeThinking();
       await this.partProcessor.finalize?.();
-      this.ctx.partStore.finalizeRunningPartsForHandle(this.currentMessageHandle, {
+      this.ctx.partStore.finalizeRunningPartsForHandle(visibleResponseHandle, {
         status: this.ctx.isCancelled ? 'cancelled' : 'completed',
       });
       logFinalizeStage('part_processor_finalize');
@@ -203,7 +170,7 @@ export class LexMessageLifecycleBridge {
       if (this.ctx.editCheckpointService.hasEditsInCurrentTurn()) {
         const summary = await this.ctx.editCheckpointService.getEditsSummary();
         const autoSave = this.ctx.ailyChatConfigService.autoSaveEdits;
-        this.ctx.triggerAiEditDiffPreview?.(summary);
+        this.ctx.editCheckpointService.requestDiffPreview(summary);
         if (autoSave) {
           this.ctx.editCheckpointService.acceptAllAsBaseline();
           this.ctx.editCheckpointService.dismissSummary();
@@ -215,7 +182,7 @@ export class LexMessageLifecycleBridge {
 
       this.ctx.viewAdapter.markLastMessageDone();
     } else {
-      logFinalizeStage('skip_detached_visible_finalize');
+      logFinalizeStage(visibleResponseHandle ? 'skip_detached_visible_finalize' : 'skip_missing_visible_response_owner');
     }
 
     if (shouldFinalizeVisibleOwner) {
@@ -227,7 +194,10 @@ export class LexMessageLifecycleBridge {
     }
     logFinalizeStage('finalize_compaction');
 
-    this.ctx.ngZone.run(() => {
+    resolvedSaveTarget = this.commitTerminalTurnResponseState(resolvedSaveTarget);
+    logFinalizeStage('terminal_response_commit');
+
+    this.ctx.ownerScheduler.run(() => {
       this.ctx.isWaiting = false;
       this.ctx.isCompleted = true;
     });
@@ -249,15 +219,30 @@ export class LexMessageLifecycleBridge {
     const deferredSaveTarget = resolvedSaveTarget ? { ...resolvedSaveTarget } : null;
     let stageStartedAt = Date.now();
     const logDeferredStage = (stage: string): void => {
+      const now = Date.now();
+      const stageMs = now - stageStartedAt;
+      ChatPerformanceTracer.recordDuration(
+        'finalize_deferred_stage',
+        stageMs,
+        `stage=${stage},session=${deferredSaveTarget?.sessionId ?? this.ctx.sessionId ?? '<none>'},elapsed=${now - finalizeStartedAt}`,
+        { slowThresholdMs: 16 },
+      );
+      if (stageMs >= FINALIZE_SLOW_STAGE_LOG_MS) {
+        console.info('[AilyChat][FinalizeDebug] slow deferred finalize stage', {
+          sessionId: deferredSaveTarget?.sessionId ?? this.ctx.sessionId ?? null,
+          stage,
+          stageMs,
+          elapsedMs: now - finalizeStartedAt,
+        });
+      }
       if (!isFinalizeTraceEnabled()) {
-        stageStartedAt = Date.now();
+        stageStartedAt = now;
         return;
       }
-      const now = Date.now();
       console.info('[AilyChat][FinalizeDebug] deferred finalize stage', {
         sessionId: deferredSaveTarget?.sessionId ?? this.ctx.sessionId ?? null,
         stage,
-        stageMs: now - stageStartedAt,
+        stageMs,
         elapsedMs: now - finalizeStartedAt,
       });
       stageStartedAt = now;
@@ -269,43 +254,50 @@ export class LexMessageLifecycleBridge {
       await yieldToBrowserTask(0);
       logDeferredStage('idle_boundary');
 
-      if (shouldFinalizeVisibleOwner) {
-        try {
-          this.finalizeCurrentTurnResponse?.(this.ctx.isCancelled ? 'cancelled' : 'completed');
-        } catch (error) {
-          console.warn('[LexStream] finalize current turn response failed:', error);
-        }
-      }
-      logDeferredStage('finalize_current_turn_response');
-
-      if (deferredSaveTarget) {
-        // Execution-owned save targets already carry the authoritative session-scoped
-        // turnResponses. Do not let visible-bridge snapshots overwrite detached owner truth.
-        const candidateTurnResponses = Array.isArray(deferredSaveTarget.turnResponses)
-          ? deferredSaveTarget.turnResponses
-          : this.readCurrentTurnResponses?.();
-        if (Array.isArray(candidateTurnResponses)) {
-          deferredSaveTarget.turnResponses = this.normalizeTerminalTurnResponses(candidateTurnResponses);
-        }
-      }
-      logDeferredStage('normalize_terminal_turn_responses');
-
       this.ctx.session.saveCurrentSession(deferredSaveTarget ? { target: deferredSaveTarget } : undefined);
-      this.ctx.syncExecutionRuntimeState?.(deferredSaveTarget);
       logDeferredStage('save_session_dispatch');
 
-      if (!AilyHost.get().electron?.isWindowFocused()) {
-        AilyHost.get().electron?.notify('Aily', '对话已完成');
+      try {
+        const electronHost = AilyHost.get().electron;
+        if (!electronHost?.isWindowFocused()) {
+          electronHost?.notify('Aily', '对话已完成');
+        }
+      } catch (error) {
+        console.warn('[LexStream] completion notification failed:', error);
       }
       logDeferredStage('notify_if_needed');
 
       await this.ctx.applyPendingSwitch(deferredSaveTarget?.sessionId);
       logDeferredStage('apply_pending_switch');
-
-      void this.ctx.processPendingFollowupRequests?.(deferredSaveTarget?.sessionId ?? this.ctx.sessionId);
     } catch (error) {
       console.warn('[LexStream] deferred finalize side effects failed:', error);
     }
+  }
+
+  private commitTerminalTurnResponseState(saveTarget: HostSessionSaveTarget | null): HostSessionSaveTarget | null {
+    try {
+      this.finalizeCurrentTurnResponse?.(this.ctx.isCancelled ? 'cancelled' : 'completed');
+    } catch (error) {
+      console.warn('[LexStream] finalize current turn response failed:', error);
+    }
+
+    let committedSaveTarget = saveTarget;
+    if (saveTarget) {
+      // Execution-owned save targets already carry the authoritative session-scoped
+      // turnResponses. Do not let visible-bridge snapshots overwrite detached owner truth.
+      const candidateTurnResponses = Array.isArray(saveTarget.turnResponses)
+        ? saveTarget.turnResponses
+        : this.readCurrentTurnResponses?.();
+      if (Array.isArray(candidateTurnResponses)) {
+        committedSaveTarget = {
+          ...saveTarget,
+          turnResponses: this.normalizeTerminalTurnResponses(candidateTurnResponses),
+        };
+      }
+    }
+
+    this.ctx.syncExecutionRuntimeState?.(committedSaveTarget);
+    return committedSaveTarget;
   }
 
   private shouldFinalizeVisibleOwner(saveTarget: HostSessionSaveTarget | null): boolean {
@@ -323,6 +315,10 @@ export class LexMessageLifecycleBridge {
         ? this.ctx.sessionId.trim()
         : '';
     return !!visibleSessionId && targetSessionId === visibleSessionId;
+  }
+
+  private get currentPartStoreHandle(): ChatPartStoreResponseHandle | null {
+    return this.currentResponseHandle;
   }
 
   private normalizeTerminalTurnResponses(turnResponses: readonly TurnResponseTurn[]): TurnResponseTurn[] {
@@ -360,4 +356,8 @@ export class LexMessageLifecycleBridge {
   private isToolBearingPart(part: ChatPart): boolean {
     return part.type === 'tool_call';
   }
+}
+
+function normalizeTurnId(turnId: unknown): string {
+  return typeof turnId === 'string' ? turnId.trim() : '';
 }

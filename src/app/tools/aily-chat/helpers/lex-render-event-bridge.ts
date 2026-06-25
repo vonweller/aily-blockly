@@ -7,7 +7,6 @@ import type {
   TurnResponseStatus,
   TurnResponseTurn,
 } from 'aily-lex/browser';
-import type { TurnResponseProjectionHandle } from '../core/turn-response-host-projection-builder';
 import { TurnResponseIncrementalBuilder } from '../core/turn-response-stream-builder';
 import type { LexHostSyncBridge } from './lex-host-sync-bridge';
 import {
@@ -29,27 +28,21 @@ import {
   getTurnResponseParticipant,
   resolveInitialResponseSlashCommand,
 } from '../core/turn-response-stream-contract';
-import {
-  hydrateQuestionAnswersFromAskUserToolMetadata,
-} from '../core/turn-response-part-mapper';
+import { turnResponsePartToChatParts } from '../core/turn-response-part-mapper';
 import {
   type HostResponseClearToPreviousToolInvocationReason,
   type IHostStreamListener,
 } from './host-turn-response-state';
 import {
-  cloneTurnResponseModelSidecar,
   getTurnResponseResolvedModelName,
   withExplicitAgentSummaryPreview,
 } from './turn-response-response-model';
-import { buildSessionTurnOwnerDiagnostics } from './session-turn-owner-diagnostics';
 import { ChatPerformanceTracer } from '../services/chat-perf-tracer';
-import { scheduleBrowserTask, yieldToBrowserIdle, yieldToBrowserTask } from '../tools/browserTaskScheduler';
 import { isAilyCategoryDebugEnabled } from '../core/chat-debug-flags';
 import {
-  liveTranscriptProjection,
-  terminalTranscriptProjection,
-  type ChatRuntimeTurnResponseSyncOptions,
-} from '../core/chat-runtime-projection-policy';
+  CanonicalTurnResponseStore,
+  cloneCanonicalTurnResponseTurn,
+} from '../core/canonical-turn-response-store';
 
 /** Narrow context: only needs partStore for rendering + toolCallingIteration for turn tracking */
 type LexRenderEventBridgeContext =
@@ -57,17 +50,16 @@ type LexRenderEventBridgeContext =
   & Pick<IAgentLifecycle, 'toolCallingIteration' | 'isCancelled' | 'currentMessageSource'>
   & Pick<IChatServiceAccess, 'contextBudgetService'>
   & {
-    readCurrentViewSessionResource?(): string | null;
-    syncExecutionRuntimeTurnResponses?(
+    isRuntimeViewAttached?(sessionId: string | null | undefined): boolean;
+    readRuntimeViewAttachmentGeneration?(sessionId: string | null | undefined): number | null | undefined;
+    isRuntimeViewAttachmentCurrent?(
       sessionId: string | null | undefined,
-      turnResponses: readonly TurnResponseTurn[] | null | undefined,
-      options: ChatRuntimeTurnResponseSyncOptions,
-    ): void;
+      generation: number | null | undefined,
+    ): boolean;
   };
 
 type RenderMessageLifecycleAccess = {
-  ensureAilyMessage(turnId?: string): void;
-  readonly currentMessageHandle: TurnResponseProjectionHandle | null;
+  ensureResponseItem(turnId?: string): void;
 };
 
 interface PendingLiveTurnSnapshotOptions {
@@ -148,15 +140,13 @@ function isLexRenderTraceEnabled(): boolean {
  */
 export class LexRenderEventBridge {
   private static readonly LIVE_TURN_SNAPSHOT_COMMIT_INTERVAL_MS = 750;
-  private static readonly OWNER_COMMIT_MIN_INTERVAL_MS = 1000;
-  private static readonly OWNER_COMMIT_IDLE_TIMEOUT_MS = 1500;
   private readonly _streamBuilder: TurnResponseIncrementalBuilder;
   private readonly _sideEffects: LexSideEffectHandler;
   private readonly _itemLifecycleNormalizer = new RenderEventItemLifecycleNormalizer();
   private readonly _hostStreamEmitter = new LexRenderHostStreamEmitter();
   private readonly _projectionSync: LexRenderProjectionSync;
   private readonly _turnMaterializer: LexRenderTurnMaterializer;
-  private readonly _turnResponses = new Map<string, TurnResponseTurn>();
+  private readonly _turnStore = new CanonicalTurnResponseStore();
   private _currentTurn: TurnResponseTurn | null = null;
   private _hostStreamBaselineTurn: TurnResponseTurn | null = null;
   private _pendingRequestContent = '';
@@ -164,16 +154,11 @@ export class LexRenderEventBridge {
   private _pendingRequestMetadata: TurnResponseTurn['request']['metadata'];
   private _currentTurnHasExecutionError = false;
   private _projectionSessionResource: string | null = null;
-  private _ownerCommitHandle: { dispose(): void } | null = null;
-  private _ownerCommitPending = false;
-  private _ownerCommitToken = 0;
-  private _ownerCommitLastAt = 0;
-  private _turnResponsesRevision = 0;
-  private _ownerCommittedRevision = -1;
   private _liveSnapshotCommitHandle: { dispose(): void } | null = null;
   private _liveSnapshotCommitPending = false;
   private _liveSnapshotCommitTimestamp = 0;
   private _liveSnapshotCommitOptions: PendingLiveTurnSnapshotOptions | null = null;
+  private _projectionVisibleAttachmentGeneration: number | null = null;
 
   constructor(
     private readonly ctx: LexRenderEventBridgeContext,
@@ -183,10 +168,14 @@ export class LexRenderEventBridge {
   ) {
     this._streamBuilder = new TurnResponseIncrementalBuilder();
     this._sideEffects = new LexSideEffectHandler(ctx, hostSyncBridge);
-    this._projectionSync = new LexRenderProjectionSync(ctx, messageLifecycleBridge, {
+    this._projectionSync = new LexRenderProjectionSync(ctx, {
       readProjectionSessionResource: () => this._projectionSessionResource,
-      readCurrentViewSessionResource: typeof ctx.readCurrentViewSessionResource === 'function'
-        ? () => ctx.readCurrentViewSessionResource?.() ?? null
+      readProjectionVisibleAttachmentGeneration: () => this._projectionVisibleAttachmentGeneration,
+      isRuntimeViewAttached: typeof ctx.isRuntimeViewAttached === 'function'
+        ? (sessionId) => ctx.isRuntimeViewAttached?.(sessionId) === true
+        : undefined,
+      isRuntimeViewAttachmentCurrent: typeof ctx.isRuntimeViewAttachmentCurrent === 'function'
+        ? (sessionId, generation) => ctx.isRuntimeViewAttachmentCurrent?.(sessionId, generation) === true
         : undefined,
     });
     this._turnMaterializer = new LexRenderTurnMaterializer(ctx, getSessionSnapshot);
@@ -205,9 +194,10 @@ export class LexRenderEventBridge {
     this._hostStreamEmitter.setTextDeltaDeliveryPolicy(turnId, policy, itemId);
   }
 
-  setProjectionSessionResource(sessionResource: string | null | undefined): void {
+  setProjectionSessionResource(sessionResource: string | null | undefined, visibleAttachmentGeneration?: number | null): void {
     const normalized = normalizeSessionResource(sessionResource);
     this._projectionSessionResource = normalized || null;
+    this._projectionVisibleAttachmentGeneration = normalizeVisibleAttachmentGeneration(visibleAttachmentGeneration);
   }
 
   getProjectionSessionResource(): string | null {
@@ -230,7 +220,7 @@ export class LexRenderEventBridge {
     displayContent?: string,
     metadata?: TurnResponseTurn['request']['metadata'],
   ): void {
-    if (!turnId || this._turnResponses.has(turnId)) {
+    if (!turnId || this._turnStore.has(turnId)) {
       return;
     }
 
@@ -243,28 +233,23 @@ export class LexRenderEventBridge {
     });
 
     this.setRetainedTurnResponse(seededTurn);
-    this.commitTurnResponsesToOwner();
     this.invalidateVisibleProjection();
   }
 
   get turnResponses(): readonly TurnResponseTurn[] {
-    if (!this.canUseCurrentTurnResponses()) {
+    if (!this.hasProjectionSessionResource()) {
       return [];
     }
 
-    return [...this._turnResponses.values()]
-      .sort((left, right) => left.createdAt - right.createdAt)
-      .map(turn => clonePublicTurnResponseTurn(turn));
+    return this._turnStore.snapshot();
   }
 
   hydrateTurnResponses(turnResponses: readonly TurnResponseTurn[]): void {
+    const previousTurnIds = this._turnStore.turnIds();
     this.reset();
-    this.clearRetainedTurnResponses();
+    this._turnStore.replace(turnResponses);
 
-    for (const turn of turnResponses) {
-      this.setRetainedTurnResponse(cloneTurnResponseTurn(turn));
-    }
-
+    this.replaceProjectedResponseParts(turnResponses, previousTurnIds);
     this.restoreHydratedCurrentTurn();
   }
 
@@ -303,7 +288,6 @@ export class LexRenderEventBridge {
       },
     };
     this.setRetainedTurnResponse(this._currentTurn);
-    this.commitTurnResponsesToOwner('immediate');
     this.invalidateVisibleProjection();
     return true;
   }
@@ -334,7 +318,6 @@ export class LexRenderEventBridge {
         },
       };
       this.setRetainedTurnResponse(finalizedTurn);
-      this.commitTurnResponsesToOwner('immediate');
       this.invalidateVisibleProjection();
       this.finalizeCanonicalItemLifecycle(
         mapTurnResponseStatusToCanonicalLifecycleStatus(fallbackStatus),
@@ -343,10 +326,9 @@ export class LexRenderEventBridge {
       return true;
     }
 
-    this.syncCurrentTurn(Date.now(), fallbackStatus, undefined, undefined, undefined, undefined, undefined, undefined, undefined, 'immediate');
+    this.syncCurrentTurn(Date.now(), fallbackStatus);
     this._projectionSync.projectCanonicalChanges(this._currentTurn, this._streamBuilder, [], {
       syncContent: true,
-      payloadProjection: 'canonical',
     });
     this.finalizeCanonicalItemLifecycle(
       mapTurnResponseStatusToCanonicalLifecycleStatus(fallbackStatus),
@@ -355,24 +337,28 @@ export class LexRenderEventBridge {
     return true;
   }
 
-  appendExecutionError(message: string): boolean {
+  appendExecutionError(message: string, options: { readonly retry?: boolean } = {}): boolean {
     if (!this._currentTurn) {
       return false;
     }
 
     this._currentTurnHasExecutionError = true;
     if (this.canProjectToVisible()) {
-      this.messageLifecycleBridge.ensureAilyMessage(this._currentTurn.turnId);
+      this.messageLifecycleBridge.ensureResponseItem(this._currentTurn.turnId);
     }
-    const errorEvent: RenderEvent = { type: 'error_notice', message, timestamp: Date.now() };
+    const errorEvent: RenderEvent = {
+      type: 'error_notice',
+      message,
+      timestamp: Date.now(),
+      ...(options.retry ? { details: { retryable: true } } : {}),
+    } as RenderEvent;
     const lifecycleEvents = this._itemLifecycleNormalizer.process(errorEvent);
     this.recordCanonicalItemLifecycleEvents(lifecycleEvents);
     this.emitCanonicalItemLifecycleEvents(lifecycleEvents, errorEvent);
     this._streamBuilder.processEvent(errorEvent);
-    this.syncCurrentTurn(errorEvent.timestamp, 'error', undefined, undefined, undefined, undefined, undefined, undefined, undefined, 'immediate');
+    this.syncCurrentTurn(errorEvent.timestamp, 'error');
     this._projectionSync.projectCanonicalChanges(this._currentTurn, this._streamBuilder, lifecycleEvents, {
       syncContent: true,
-      payloadProjection: 'canonical',
     });
     this.finalizeCanonicalItemLifecycle('failed', this._currentTurn.turnId);
     return true;
@@ -403,8 +389,10 @@ export class LexRenderEventBridge {
       return;
     }
 
-    if (this.canProjectToVisible()) {
-      this.messageLifecycleBridge.ensureAilyMessage(this._currentTurn.turnId);
+    const canProjectToVisible = this.canProjectToVisible();
+    this.recordLiveWritePath(event, canProjectToVisible ? 'visible-render-event-bridge' : 'runtime-only-render-event-bridge');
+    if (canProjectToVisible) {
+      this.messageLifecycleBridge.ensureResponseItem(this._currentTurn.turnId);
     }
 
     if (event.type === 'turn_begin') {
@@ -442,13 +430,11 @@ export class LexRenderEventBridge {
           snapshotOptions.modelRouting,
           snapshotOptions.quotaSnapshot,
           snapshotOptions.terminationReason,
-          'immediate',
         );
         this.invalidateVisibleProjection();
         this._projectionSync.projectCanonicalChanges(this._currentTurn, this._streamBuilder, lifecycleEvents, {
           syncContent: true,
           applyTurnCompletion: true,
-          payloadProjection: 'canonical',
         });
       }
       if (isIntermediateToolTurnEnd(event)) {
@@ -471,7 +457,7 @@ export class LexRenderEventBridge {
     const responseModelChanged = this._streamBuilder.processEvent(event) && isResponseModelEvent;
     if (isResponseModelEvent) {
       if (responseModelChanged) {
-        this.syncCurrentTurn(event.timestamp, this.resolveLiveFallbackStatus(), undefined, undefined, undefined, undefined, undefined, undefined, undefined, 'deferred');
+        this.syncCurrentTurn(event.timestamp, this.resolveLiveFallbackStatus());
         this._projectionSync.syncProjectedMessageMeta(this._currentTurn);
       }
       if (event.type === 'response_followups') {
@@ -485,18 +471,16 @@ export class LexRenderEventBridge {
     if (isLiveTextStreamEvent) {
       this._projectionSync.projectCanonicalChanges(this._currentTurn, this._streamBuilder, lifecycleEvents, {
         syncContent: false,
-        payloadProjection: 'canonical',
       });
       this.emitLiveHostStreamPartChanges(event.timestamp);
     } else {
       this._projectionSync.projectCanonicalChanges(this._currentTurn, this._streamBuilder, lifecycleEvents, {
         syncContent: false,
-        payloadProjection: 'canonical',
       });
       this.emitLiveHostStreamPartChanges(event.timestamp);
     }
     if (shouldCommitLiveTurnSnapshotImmediately(event)) {
-      this.syncCurrentTurn(event.timestamp, this.resolveLiveFallbackStatus(), undefined, undefined, undefined, undefined, undefined, undefined, undefined, 'deferred');
+      this.syncCurrentTurn(event.timestamp, this.resolveLiveFallbackStatus());
     } else if (!isLiveTextStreamEvent) {
       this.scheduleLiveTurnSnapshotCommit(event.timestamp);
     }
@@ -519,7 +503,6 @@ export class LexRenderEventBridge {
     this._pendingRequestDisplayContent = undefined;
     this._pendingRequestMetadata = undefined;
     this._currentTurnHasExecutionError = false;
-    this.clearPendingOwnerCommit();
     this.clearPendingLiveTurnSnapshotCommit();
   }
 
@@ -586,7 +569,6 @@ export class LexRenderEventBridge {
 
   /** Clean up. */
   dispose(): void {
-    this.clearPendingOwnerCommit();
     this.clearPendingLiveTurnSnapshotCommit();
     this._projectionSync.dispose();
     this._streamBuilder.destroy();
@@ -614,14 +596,13 @@ export class LexRenderEventBridge {
         this._currentTurn = continuedTurn;
         this._hostStreamBaselineTurn = continuedTurn;
         this.setRetainedTurnResponse(this._currentTurn);
-        this.commitTurnResponsesToOwner('immediate');
         this._hostStreamEmitter.emitTurnDelta(this._currentTurn, previousTurn, []);
         return 'continued';
       }
     }
 
     if (this._currentTurn) {
-      this.syncCurrentTurn(timestamp, 'completed', undefined, undefined, undefined, undefined, undefined, undefined, undefined, 'immediate');
+      this.syncCurrentTurn(timestamp, 'completed');
     }
 
     this._currentTurn = this._streamBuilder.beginTurn({
@@ -633,7 +614,6 @@ export class LexRenderEventBridge {
     });
     this._hostStreamBaselineTurn = this._currentTurn;
     this.setRetainedTurnResponse(this._currentTurn);
-    this.commitTurnResponsesToOwner('immediate');
     this._hostStreamEmitter.emitTurnStarted(this._currentTurn);
     this._hostStreamEmitter.emitInitialTurnFieldUpdates(this._currentTurn);
     return 'fresh';
@@ -649,18 +629,7 @@ export class LexRenderEventBridge {
   }
 
   private resolveLatestStreamingTurn(): TurnResponseTurn | null {
-    let latest: TurnResponseTurn | null = null;
-    for (const turn of this._turnResponses.values()) {
-      if (turn.response.status !== 'streaming') {
-        continue;
-      }
-
-      if (!latest || turn.updatedAt > latest.updatedAt) {
-        latest = turn;
-      }
-    }
-
-    return latest;
+    return this._turnStore.resolveLatestStreamingTurn();
   }
 
   private restoreHydratedCurrentTurn(): void {
@@ -671,7 +640,7 @@ export class LexRenderEventBridge {
       return;
     }
 
-    this._currentTurn = cloneTurnResponseTurn(latestStreamingTurn);
+    this._currentTurn = cloneCanonicalTurnResponseTurn(latestStreamingTurn);
     this._currentTurnHasExecutionError = false;
     this._streamBuilder.hydrateTurn(this._currentTurn);
   }
@@ -683,14 +652,14 @@ export class LexRenderEventBridge {
       : 'streaming';
   }
 
-  private emitLiveHostStreamPartChanges(updatedAt: number): void {
+  private emitLiveHostStreamPartChanges(updatedAt: number): boolean {
     if (!this._currentTurn) {
-      return;
+      return false;
     }
 
     const partChanges = this._streamBuilder.drainTurnResponsePartChanges();
     if (partChanges.length === 0) {
-      return;
+      return false;
     }
 
     const previousTurn = this._hostStreamBaselineTurn ?? this._currentTurn;
@@ -703,6 +672,7 @@ export class LexRenderEventBridge {
     this._hostStreamBaselineTurn = nextTurn;
     this._currentTurn = nextTurn;
     this.setRetainedTurnResponse(nextTurn);
+    return true;
   }
 
   private syncCurrentTurn(
@@ -715,7 +685,6 @@ export class LexRenderEventBridge {
     modelRouting?: NonNullable<TurnResponseTurn['responseModel']>['modelRouting'],
     quotaSnapshot?: TurnResponseTurn['responseModel']['quotaSnapshot'],
     terminationReason?: TurnResponseTurn['response']['terminationReason'],
-    ownerCommitMode: 'immediate' | 'deferred' = 'immediate',
   ): void {
     if (!this._currentTurn) {
       return;
@@ -773,20 +742,9 @@ export class LexRenderEventBridge {
     }
 
     this.setRetainedTurnResponse(this._currentTurn);
-    this.commitTurnResponsesToOwner(ownerCommitMode);
     const partChanges = this._streamBuilder.drainTurnResponsePartChanges();
     this._hostStreamEmitter.emitTurnDelta(this._currentTurn, previousHostStreamTurn, partChanges);
     this._hostStreamBaselineTurn = this._currentTurn;
-  }
-
-  private commitTurnResponsesToOwner(mode: 'immediate' | 'deferred' = 'immediate'): void {
-    if (mode === 'deferred') {
-      this.scheduleOwnerCommit();
-      return;
-    }
-
-    this.clearPendingOwnerCommit();
-    this.commitTurnResponsesToOwnerNow('immediate');
   }
 
   private scheduleLiveTurnSnapshotCommit(timestamp: number, options?: PendingLiveTurnSnapshotOptions): void {
@@ -822,7 +780,6 @@ export class LexRenderEventBridge {
         commitOptions?.modelRouting,
         commitOptions?.quotaSnapshot,
         commitOptions?.terminationReason,
-        'deferred',
       );
     }, LexRenderEventBridge.LIVE_TURN_SNAPSHOT_COMMIT_INTERVAL_MS);
 
@@ -839,114 +796,51 @@ export class LexRenderEventBridge {
     this._liveSnapshotCommitOptions = null;
   }
 
-  private scheduleOwnerCommit(): void {
-    this._ownerCommitPending = true;
-    if (this._ownerCommitHandle !== null) {
-      return;
-    }
-
-    const elapsedSinceLastCommit = Date.now() - this._ownerCommitLastAt;
-    const delay = Math.max(0, LexRenderEventBridge.OWNER_COMMIT_MIN_INTERVAL_MS - elapsedSinceLastCommit);
-    const token = ++this._ownerCommitToken;
-    const timerId = scheduleBrowserTask(() => {
-      this._ownerCommitHandle = null;
-      void this.flushScheduledOwnerCommit(token);
-    }, delay);
-    this._ownerCommitHandle = {
-      dispose: () => clearTimeout(timerId),
-    };
-  }
-
-  private clearPendingOwnerCommit(): void {
-    this._ownerCommitHandle?.dispose();
-    this._ownerCommitHandle = null;
-    this._ownerCommitPending = false;
-    this._ownerCommitToken += 1;
-  }
-
-  private async flushScheduledOwnerCommit(token: number): Promise<void> {
-    await yieldToBrowserIdle(LexRenderEventBridge.OWNER_COMMIT_IDLE_TIMEOUT_MS);
-    await yieldToBrowserTask(0);
-    if (token !== this._ownerCommitToken || !this._ownerCommitPending) {
-      return;
-    }
-
-    this._ownerCommitPending = false;
-    this.commitTurnResponsesToOwnerNow('deferred');
-  }
-
-  private commitTurnResponsesToOwnerNow(mode: 'immediate' | 'deferred'): void {
-    if (typeof this.ctx.syncExecutionRuntimeTurnResponses !== 'function') {
-      return;
-    }
-
-    const projectionSessionResource = normalizeSessionResource(this._projectionSessionResource);
-    if (!projectionSessionResource) {
-      return;
-    }
-
-    const revision = this._turnResponsesRevision;
-    if (revision === this._ownerCommittedRevision) {
-      return;
-    }
-
-    const startedAt = performance.now();
-    let committed = false;
-    let turnCount = 0;
-    ChatPerformanceTracer.runWithSurface('chat_projection', () => {
-      const turnResponses = this.snapshotRetainedTurnResponses();
-      turnCount = turnResponses.length;
-      const ownerDiagnostics = buildSessionTurnOwnerDiagnostics(projectionSessionResource, turnResponses);
-      if (turnResponses.length > 0
-        && ownerDiagnostics.ownerSamples.length > 0
-        && !ownerDiagnostics.ownerSamples.includes(projectionSessionResource)) {
-        console.warn('[LexRender][blocked-owner-commit]', {
-          projectionSessionResource,
-          ownerSamples: ownerDiagnostics.ownerSamples,
-          firstTurnId: ownerDiagnostics.firstTurnId,
-          firstRequestPreview: ownerDiagnostics.firstRequestPreview,
-        });
-        return;
-      }
-
-      this.ctx.syncExecutionRuntimeTurnResponses?.(
-        projectionSessionResource,
-        turnResponses,
-        mode === 'deferred'
-          ? liveTranscriptProjection('visible-render')
-          : terminalTranscriptProjection('visible-render'),
-      );
-      committed = true;
-    }, `owner_snapshot:${mode}`);
-
-    if (committed) {
-      this._ownerCommittedRevision = revision;
-      this._ownerCommitLastAt = Date.now();
-    }
-    ChatPerformanceTracer.recordDuration(
-      'owner_turn_snapshot_commit',
-      performance.now() - startedAt,
-      `mode=${mode},turns=${turnCount},revision=${revision},committed=${committed}`,
-      { slowThresholdMs: 16 },
-    );
-  }
-
   private setRetainedTurnResponse(turn: TurnResponseTurn): void {
-    this._turnResponses.set(turn.turnId, turn);
-    this._turnResponsesRevision += 1;
+    this._turnStore.set(turn);
+  }
+
+  private replaceProjectedResponseParts(
+    turns: readonly TurnResponseTurn[],
+    clearTurnIds: readonly string[] = [],
+  ): void {
+    if (!this.canProjectToVisible()) {
+      return;
+    }
+
+    const turnsById = new Map<string, TurnResponseTurn>();
+    for (const turn of turns) {
+      const turnId = normalizeSessionResource(turn.turnId);
+      if (turnId) {
+        turnsById.set(turnId, turn);
+      }
+    }
+
+    const turnIds = new Set<string>();
+    for (const turnId of clearTurnIds) {
+      const normalizedTurnId = normalizeSessionResource(turnId);
+      if (normalizedTurnId) {
+        turnIds.add(normalizedTurnId);
+      }
+    }
+    for (const turnId of turnsById.keys()) {
+      turnIds.add(turnId);
+    }
+
+    for (const turnId of turnIds) {
+      this.ctx.partStore.replacePartsForResponse(
+        turnId,
+        turnResponsePartsToChatParts(turnsById.get(turnId)?.response?.parts),
+      );
+    }
   }
 
   private clearRetainedTurnResponses(): void {
-    if (this._turnResponses.size > 0) {
-      this._turnResponsesRevision += 1;
-    }
-    this._turnResponses.clear();
+    this._turnStore.clear();
   }
 
   private snapshotRetainedTurnResponses(): readonly TurnResponseTurn[] {
-    return [...this._turnResponses.values()]
-      .sort((left, right) => left.createdAt - right.createdAt)
-      .map(turn => clonePublicTurnResponseTurn(turn));
+    return this._turnStore.snapshot();
   }
 
   private invalidateVisibleProjection(): void {
@@ -959,26 +853,66 @@ export class LexRenderEventBridge {
   }
 
   private canProjectToVisible(): boolean {
-    return this.canUseCurrentTurnResponses();
-  }
-
-  private canUseCurrentTurnResponses(): boolean {
-    if (typeof this.ctx.readCurrentViewSessionResource !== 'function') {
-      return true;
-    }
-
-    const currentViewSessionResource = normalizeSessionResource(this.ctx.readCurrentViewSessionResource());
-    if (!currentViewSessionResource) {
+    if (!this.hasProjectionSessionResource()) {
       return false;
     }
 
+    return this.hasCurrentVisibleProjectionAttachment();
+  }
+
+  private hasProjectionSessionResource(): boolean {
     const projectionSessionResource = normalizeSessionResource(this._projectionSessionResource);
-    return !!projectionSessionResource && projectionSessionResource === currentViewSessionResource;
+    return !!projectionSessionResource;
+  }
+
+  private hasCurrentVisibleProjectionAttachment(): boolean {
+    const projectionSessionResource = normalizeSessionResource(this._projectionSessionResource);
+    if (!projectionSessionResource) {
+      return false;
+    }
+
+    if (typeof this.ctx.isRuntimeViewAttached === 'function'
+      && !this.ctx.isRuntimeViewAttached(projectionSessionResource)) {
+      return false;
+    }
+
+    const expectedGeneration = this._projectionVisibleAttachmentGeneration;
+    if (typeof this.ctx.isRuntimeViewAttachmentCurrent !== 'function') {
+      return true;
+    }
+    if (expectedGeneration === null) {
+      return false;
+    }
+
+    return this.ctx.isRuntimeViewAttachmentCurrent(projectionSessionResource, expectedGeneration);
+  }
+
+  private recordLiveWritePath(event: RenderEvent, writePath: string): void {
+    if (!ChatPerformanceTracer.isEnabled() || !this._currentTurn?.turnId) {
+      return;
+    }
+
+    ChatPerformanceTracer.recordRenderEvent('live_event_write_path', {
+      eventType: event.type,
+      writePath,
+      turnId: this._currentTurn.turnId,
+      responseItemId: `response:${this._currentTurn.turnId}`,
+      projectionSessionResource: this._projectionSessionResource,
+      visibleAttachmentGeneration: this._projectionVisibleAttachmentGeneration,
+      currentVisibleAttachmentGeneration: normalizeVisibleAttachmentGeneration(
+        this.ctx.readRuntimeViewAttachmentGeneration?.(this._projectionSessionResource),
+      ),
+      legacyHandleUsed: false,
+    });
   }
 }
 
 function normalizeSessionResource(value: string | null | undefined): string {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function normalizeVisibleAttachmentGeneration(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
 }
 
 function resolveCanonicalLifecycleTurnId(
@@ -1080,94 +1014,6 @@ function toHostClearToPreviousToolInvocationReason(
   return reason;
 }
 
-function cloneTurnResponseTurn(turn: TurnResponseTurn): TurnResponseTurn {
-  const responseModel = cloneTurnResponseModelSidecar(turn.responseModel);
-
-  return {
-    ...turn,
-    ...(turn.usage ? { usage: { ...turn.usage } } : {}),
-    request: { ...turn.request },
-    rounds: turn.rounds.map(round => ({
-      ...round,
-      toolCalls: round.toolCalls.map(toolCall => ({ ...toolCall })),
-    })),
-    response: {
-      ...turn.response,
-      ...(turn.response.usedContext
-        ? {
-          usedContext: {
-            ...turn.response.usedContext,
-            documents: turn.response.usedContext.documents.map(document => ({
-              ...document,
-              ranges: document.ranges.map(range => ({ ...range })),
-            })),
-          },
-        }
-        : {}),
-      contentReferences: (turn.response.contentReferences ?? []).map(reference => ({
-        ...reference,
-        ...(reference.options
-          ? {
-            options: {
-              ...reference.options,
-              ...(reference.options.status ? { status: { ...reference.options.status } } : {}),
-              ...(reference.options.diffMeta ? { diffMeta: { ...reference.options.diffMeta } } : {}),
-            },
-          }
-          : {}),
-      })),
-      codeCitations: (turn.response.codeCitations ?? []).map(citation => ({ ...citation })),
-      progressMessages: (turn.response.progressMessages ?? []).map(message => ({ ...message })),
-      parts: hydrateQuestionAnswersFromAskUserToolMetadata(turn.response.parts).map(part => ({ ...part })),
-    },
-    ...(responseModel ? { responseModel } : {}),
-  };
-}
-
-function clonePublicTurnResponseTurn(turn: TurnResponseTurn): TurnResponseTurn {
-  const responseModel = cloneTurnResponseModelSidecar(turn.responseModel);
-
-  return {
-    ...turn,
-    ...(turn.usage ? { usage: { ...turn.usage } } : {}),
-    request: { ...turn.request },
-    rounds: turn.rounds.map(round => ({
-      ...round,
-      toolCalls: round.toolCalls.map(toolCall => ({ ...toolCall })),
-    })),
-    response: {
-      ...turn.response,
-      ...(turn.response.usedContext
-        ? {
-          usedContext: {
-            ...turn.response.usedContext,
-            documents: turn.response.usedContext.documents.map(document => ({
-              ...document,
-              ranges: document.ranges.map(range => ({ ...range })),
-            })),
-          },
-        }
-        : {}),
-      contentReferences: (turn.response.contentReferences ?? []).map(reference => ({
-        ...reference,
-        ...(reference.options
-          ? {
-            options: {
-              ...reference.options,
-              ...(reference.options.status ? { status: { ...reference.options.status } } : {}),
-              ...(reference.options.diffMeta ? { diffMeta: { ...reference.options.diffMeta } } : {}),
-            },
-          }
-          : {}),
-      })),
-      codeCitations: (turn.response.codeCitations ?? []).map(citation => ({ ...citation })),
-      progressMessages: (turn.response.progressMessages ?? []).map(message => ({ ...message })),
-      parts: hydrateQuestionAnswersFromAskUserToolMetadata(turn.response.parts).map(part => ({ ...part })),
-    },
-    ...(responseModel ? { responseModel } : {}),
-  };
-}
-
 function cloneQuestionAnswers(answers: TurnResponseQuestionPart['answers']): TurnResponseQuestionPart['answers'] {
   if (!answers) {
     return undefined;
@@ -1212,6 +1058,14 @@ function findQuestionAnswerTargetIndex(
   return -1;
 }
 
+function turnResponsePartsToChatParts(
+  parts: TurnResponseTurn['response']['parts'] | null | undefined,
+) {
+  return Array.isArray(parts)
+    ? parts.flatMap(part => turnResponsePartToChatParts(part))
+    : [];
+}
+
 function questionAnswersMatchPart(
   answers: TurnResponseQuestionPart['answers'],
   part: Partial<TurnResponseQuestionPart>,
@@ -1252,15 +1106,28 @@ function shouldCommitLiveTurnSnapshotImmediately(event: RenderEvent): boolean {
     || event.type === 'approval_request'
     || event.type === 'approval_resolve'
     || event.type === 'thinking_complete'
+    || event.type === 'tool_call_begin'
+    || event.type === 'tool_call_end'
     || event.type === 'approval_auto_review_start'
     || event.type === 'approval_auto_review_complete'
     || event.type === 'state_update'
     || event.type === 'error_notice'
     || event.type === 'subagent_begin'
     || event.type === 'subagent_end'
+    || isStructuralSubagentActivityEvent(event)
     || event.type === 'background_task_update'
     || event.type === 'todo_update'
     || event.type === 'session_meta';
+}
+
+function isStructuralSubagentActivityEvent(event: RenderEvent): boolean {
+  if (event.type !== 'subagent_activity') {
+    return false;
+  }
+
+  return event.activityKind === 'tool_started'
+    || event.activityKind === 'tool_completed'
+    || event.activityKind === 'tool_failed';
 }
 
 function isIntermediateToolTurnEnd(event: Extract<RenderEvent, { type: 'turn_end' }>): boolean {

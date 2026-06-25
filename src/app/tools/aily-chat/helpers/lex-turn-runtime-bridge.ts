@@ -78,7 +78,7 @@ type TurnExecutionAccess = {
 
 type TurnUiAccess = {
   getCurrentTurnDraft(): LexTurnDraft;
-  ensureAilyMessage(): void;
+  ensureResponseItem(): void;
   appendLifecycleError(message: string): void;
 };
 
@@ -181,7 +181,7 @@ export class LexTurnRuntimeBridge {
   }
 
   ensureMessage(): void {
-    this.uiEventBridge.ensureAilyMessage();
+    this.uiEventBridge.ensureResponseItem();
   }
 
   appendError(message: string): void {

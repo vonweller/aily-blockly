@@ -79,6 +79,14 @@ export class ChatSubscriptionCoordinator {
       return;
     }
 
+    const currentSessionId = typeof this.ctx.sessionId === 'string'
+      ? this.ctx.sessionId.trim()
+      : '';
+    if (currentSessionId.length > 0) {
+      this.ctx.hasInitializedForThisLogin = true;
+      return;
+    }
+
     this.ctx.hasInitializedForThisLogin = true;
     await this.ctx.session.initializeEntryInventory({ restorePersistedTarget: false });
   }
@@ -322,7 +330,7 @@ export class ChatSubscriptionCoordinator {
       }
 
       try {
-        await this.ctx.session.stopAndCloseSession();
+        await this.ctx.session.detachCurrentSessionSurface();
       } catch (error) {
         console.warn('清理会话时出错:', error);
       }
@@ -348,7 +356,7 @@ export class ChatSubscriptionCoordinator {
       const hasConversationHistory = this.hasConversationHistory();
       if (!hasConversationHistory && this.ctx.sessionId && this.isReadyForLoggedInSessionWork()) {
         try {
-          await this.ctx.session.stopAndCloseSession(true);
+          await this.ctx.session.detachCurrentSessionSurface(true);
           await this.ctx.session.startSession();
           this.ctx.message.success('配置已更新并生效');
         } catch (error) {
@@ -376,7 +384,7 @@ export class ChatSubscriptionCoordinator {
       }
 
       try {
-        await this.ctx.session.stopAndCloseSession(true);
+        await this.ctx.session.detachCurrentSessionSurface(true);
         await this.ctx.session.startSession();
         this.ctx.message.success('服务节点已切换，后续请求将使用新的 endpoint');
       } catch (error) {

@@ -1,4 +1,4 @@
-import type { TurnResponsePart, TurnResponseTurn } from 'aily-lex/browser';
+import type { TurnResponseTurn } from 'aily-lex/browser';
 
 import type { ChatPart } from '../../core/chat-parts';
 
@@ -27,6 +27,7 @@ export function mkProgressMessageDisplayPart(
 
 export function buildRenderableProgressParts(
   response: TurnResponseTurn['response'] | null | undefined,
+  baseParts: readonly ChatPart[],
   doing: boolean,
   showConfirmationPendingProgress = false,
 ): readonly ProgressMessageDisplayPart[] {
@@ -34,7 +35,7 @@ export function buildRenderableProgressParts(
     return [];
   }
 
-  const parts: ProgressMessageDisplayPart[] = [];
+  const progressParts: ProgressMessageDisplayPart[] = [];
   const existingContents = new Set<string>();
   for (const message of response.progressMessages ?? []) {
     if (message?.kind !== 'progressMessage' || typeof message.content !== 'string' || !message.content.trim()) {
@@ -47,33 +48,28 @@ export function buildRenderableProgressParts(
     }
 
     existingContents.add(content);
-    parts.push(mkProgressMessageDisplayPart(content, 'working'));
+    progressParts.push(mkProgressMessageDisplayPart(content, 'working'));
   }
 
-  const responseParts = response.parts ?? [];
   const pendingConfirmationCount = showConfirmationPendingProgress
-    ? getPendingConfirmationCount(responseParts, false)
+    ? getPendingConfirmationCount(baseParts, false)
     : 0;
   const shouldShowFallbackConfirmationProgress = showConfirmationPendingProgress
     && pendingConfirmationCount === 0
-    && !getPendingConfirmationCount(responseParts, true)
-    && !hasActiveSubagentPart(responseParts);
+    && !getPendingConfirmationCount(baseParts, true)
+    && !hasActiveSubagentPart(baseParts);
   if (pendingConfirmationCount > 0 || shouldShowFallbackConfirmationProgress) {
     const content = getConfirmationPendingLabel(pendingConfirmationCount || 1);
     if (!existingContents.has(content)) {
-      parts.push(mkProgressMessageDisplayPart(content, 'confirmation_pending'));
+      progressParts.push(mkProgressMessageDisplayPart(content, 'confirmation_pending'));
     }
   }
 
-  return parts;
+  return progressParts;
 }
 
-function hasActiveSubagentPart(parts: readonly TurnResponsePart[]): boolean {
+function hasActiveSubagentPart(parts: readonly ChatPart[]): boolean {
   return parts.some(part => {
-    if (part.type === 'subagent') {
-      return part.state !== 'done' && part.state !== 'error';
-    }
-
     if (part.type !== 'tool_call') {
       return false;
     }
@@ -84,7 +80,7 @@ function hasActiveSubagentPart(parts: readonly TurnResponsePart[]): boolean {
   });
 }
 
-function getPendingConfirmationCount(parts: readonly TurnResponsePart[], includeSubagentConfirmations: boolean): number {
+function getPendingConfirmationCount(parts: readonly ChatPart[], includeSubagentConfirmations: boolean): number {
   let count = 0;
   for (const part of parts) {
     if (part.type === 'tool_call' && part.state === 'pending_approval' && isSubagentToolCall(part) === includeSubagentConfirmations) {
@@ -100,7 +96,7 @@ function getPendingConfirmationCount(parts: readonly TurnResponsePart[], include
   return count;
 }
 
-function isSubagentToolCall(part: Extract<TurnResponsePart, { type: 'tool_call' }>): boolean {
+function isSubagentToolCall(part: Extract<ChatPart, { type: 'tool_call' }>): boolean {
   const metadata = asRecord(part.metadata);
   const toolSpecificData = asRecord(metadata?.['toolSpecificData']);
   return isSubagentToolSpecificData(toolSpecificData);

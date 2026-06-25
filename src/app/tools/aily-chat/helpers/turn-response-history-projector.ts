@@ -68,6 +68,7 @@ export function projectTurnResponsesToHistory(
       return ctx.ngZone;
     },
     markCurrentViewVisibleProjectionOwner: () => ctx.markCurrentViewVisibleProjectionOwner?.(),
+    legacyListProjectionBoundary: 'history-import',
   };
   const viewWriteBridge: TurnResponseHistoryProjectorViewWriteAccess = new ChatViewWriteBridge(viewWriteContext);
   const projectionBuilder = new TurnResponseHostProjectionBuilder(ctx.partStore);

@@ -9,6 +9,11 @@ import {
   stopBlocklyCommandSession,
   type BlocklyCommandSessionSnapshot,
 } from '../helpers/lex-agent-bootstrap';
+import type {
+  ChatRuntimeHostInteractionRequest,
+  ChatRuntimeHostInteractionSnapshot,
+} from '../core/chat-runtime-host-contract';
+import type { ChatRuntimeOwnerInteractionHostPort } from './chat-runtime-owner-ports';
 
 export interface RuntimeQuestionWidgetState {
   readonly sessionId: string;
@@ -120,6 +125,15 @@ type PlanReviewRuntimeEntry = RuntimePlanReviewWidgetState & {
   readonly resolve: (result: RuntimePlanReviewDecision) => void;
 };
 
+type RuntimeInteractionSnapshotListener = (snapshot: ChatRuntimeHostInteractionSnapshot) => void;
+type RuntimeInteractionDecisionRequest = Omit<
+  ChatRuntimeHostInteractionRequest,
+  'viewId' | 'visibleAttachmentGeneration'
+>;
+type RuntimeInteractionRemoteResolver = (
+  request: RuntimeInteractionDecisionRequest,
+) => Promise<ChatRuntimeHostInteractionSnapshot | null>;
+
 interface PlanReviewFileSyncState {
   readonly id: string;
   readonly absolutePath: string;
@@ -127,18 +141,130 @@ interface PlanReviewFileSyncState {
 }
 
 @Injectable()
-export class ChatRuntimeInteractionHostService {
+export class ChatRuntimeInteractionHostService implements ChatRuntimeOwnerInteractionHostPort {
   private readonly _questionEntries = signal<Record<string, QuestionRuntimeEntry | undefined>>({});
   private readonly _confirmationEntries = signal<Record<string, readonly ConfirmationRuntimeEntry[] | undefined>>({});
   private readonly _confirmationActiveIndices = signal<Record<string, number | undefined>>({});
   private readonly _planReviewEntries = signal<Record<string, PlanReviewRuntimeEntry | undefined>>({});
   private readonly _planReviewFileSyncs = new Map<string, PlanReviewFileSyncState>();
   private readonly _backgroundCommandSessions = new Set<string>();
+  private readonly snapshotListeners = new Set<RuntimeInteractionSnapshotListener>();
+  private readonly remoteResolvers = new Map<string, RuntimeInteractionRemoteResolver>();
+  private interactionRevision = 0;
+
+  onSnapshot(listener: RuntimeInteractionSnapshotListener): { dispose(): void } {
+    this.snapshotListeners.add(listener);
+    return {
+      dispose: () => {
+        this.snapshotListeners.delete(listener);
+      },
+    };
+  }
+
+  readSnapshot(sessionId: string): ChatRuntimeHostInteractionSnapshot {
+    const normalizedSessionId = this.normalizeSessionId(sessionId);
+    return this.buildSnapshot(normalizedSessionId);
+  }
+
+  applyHostSnapshot(
+    snapshot: ChatRuntimeHostInteractionSnapshot,
+    remoteResolver: RuntimeInteractionRemoteResolver,
+  ): void {
+    const sessionId = this.normalizeSessionId(snapshot.sessionId);
+    this.remoteResolvers.set(sessionId, remoteResolver);
+
+    const question = snapshot.question as unknown as RuntimeQuestionWidgetState | null;
+    const confirmations = (snapshot.confirmationQueue ?? []) as unknown as readonly RuntimeConfirmationWidgetState[];
+    const planReview = snapshot.activePlanReview as unknown as RuntimePlanReviewWidgetState | null;
+
+    const nextQuestions = { ...this._questionEntries() };
+    if (question) {
+      nextQuestions[sessionId] = {
+        ...question,
+        resolve: (result) => {
+          void remoteResolver({
+            sessionId,
+            kind: 'question.complete',
+            id: question.partId,
+            payload: { result },
+          });
+        },
+      };
+    } else {
+      delete nextQuestions[sessionId];
+    }
+    this._questionEntries.set(nextQuestions);
+
+    const nextConfirmations = { ...this._confirmationEntries() };
+    if (confirmations.length > 0) {
+      nextConfirmations[sessionId] = confirmations.map((confirmation) => ({
+        ...confirmation,
+        resolve: (result) => {
+          void remoteResolver({
+            sessionId,
+            kind: 'confirmation.resolve',
+            id: confirmation.id,
+            payload: { result },
+          });
+        },
+      }));
+    } else {
+      delete nextConfirmations[sessionId];
+    }
+    this._confirmationEntries.set(nextConfirmations);
+    this._confirmationActiveIndices.set({
+      ...this._confirmationActiveIndices(),
+      [sessionId]: snapshot.activeConfirmationIndex ?? 0,
+    });
+
+    const nextPlanReviews = { ...this._planReviewEntries() };
+    if (planReview) {
+      nextPlanReviews[sessionId] = {
+        ...planReview,
+        resolve: (result) => {
+          void remoteResolver({
+            sessionId,
+            kind: 'planReview.resolve',
+            id: planReview.id,
+            payload: { result },
+          });
+        },
+      };
+    } else {
+      delete nextPlanReviews[sessionId];
+    }
+    this._planReviewEntries.set(nextPlanReviews);
+
+    for (const key of [...this._backgroundCommandSessions]) {
+      if (key.startsWith(`${sessionId}::`)) {
+        this._backgroundCommandSessions.delete(key);
+      }
+    }
+    for (const key of snapshot.backgroundCommandSessionKeys ?? []) {
+      if (typeof key === 'string' && key.startsWith(`${sessionId}::`)) {
+        this._backgroundCommandSessions.add(key);
+      }
+    }
+  }
 
   async requestCommandSessionAction(
     sessionId: string,
     request: RuntimeCommandSessionActionRequest,
   ): Promise<RuntimeCommandSessionActionResult> {
+    const remoteResolver = this.remoteResolvers.get(this.normalizeSessionId(sessionId));
+    if (remoteResolver) {
+      const snapshot = await remoteResolver({
+        sessionId,
+        kind: 'commandSession.action',
+        payload: { request },
+      });
+      const result = (snapshot as unknown as { commandSessionActionResult?: RuntimeCommandSessionActionResult } | null)
+        ?.commandSessionActionResult;
+      if (result) {
+        return result;
+      }
+    }
+
     const processId = request.processId?.trim();
     if (!processId) {
       return {
@@ -179,6 +305,7 @@ export class ChatRuntimeInteractionHostService {
     const key = this.getCommandSessionDisplayKey(sessionId, processId);
     if (key) {
       this._backgroundCommandSessions.add(key);
+      this.emitSnapshot(sessionId);
     }
   }
 
@@ -186,6 +313,7 @@ export class ChatRuntimeInteractionHostService {
     const key = this.getCommandSessionDisplayKey(sessionId, processId);
     if (key) {
       this._backgroundCommandSessions.delete(key);
+      this.emitSnapshot(sessionId);
     }
   }
 
@@ -230,6 +358,7 @@ export class ChatRuntimeInteractionHostService {
           },
         },
       });
+      this.emitSnapshot(sessionId);
     });
   }
 
@@ -266,6 +395,13 @@ export class ChatRuntimeInteractionHostService {
     const entry = this._questionEntries()[sessionId];
     if (!entry) {
       throw new Error('skipAskUserResponse requires an active question partId.');
+    }
+
+    const remoteResolver = this.remoteResolvers.get(this.normalizeSessionId(sessionId));
+    if (remoteResolver) {
+      void remoteResolver({ sessionId, kind: 'question.skip', id: entry.partId });
+      this.deleteQuestionEntry(sessionId);
+      return;
     }
 
     const answers = Object.fromEntries(entry.data.questions.map((question) => [question.question, {
@@ -315,6 +451,15 @@ export class ChatRuntimeInteractionHostService {
   }
 
   navigateConfirmation(sessionId: string, delta: number): void {
+    const remoteResolver = this.remoteResolvers.get(this.normalizeSessionId(sessionId));
+    if (remoteResolver) {
+      const active = this.getActiveConfirmation(sessionId);
+      if (!active) {
+        throw new Error('navigateConfirmation requires an active confirmation id.');
+      }
+      void remoteResolver({ sessionId, kind: 'confirmation.navigate', id: active.id, delta });
+    }
+
     const queue = this.getConfirmationQueue(sessionId);
     if (queue.length <= 1) {
       return;
@@ -325,6 +470,7 @@ export class ChatRuntimeInteractionHostService {
       ...this._confirmationActiveIndices(),
       [sessionId]: nextIndex,
     });
+    this.emitSnapshot(sessionId);
   }
 
   presentToolApproval(sessionId: string, request: ToolApprovalRequest): Promise<RuntimeConfirmationDecision> {
@@ -432,6 +578,7 @@ export class ChatRuntimeInteractionHostService {
       });
 
       this.installPlanReviewFileSync(sessionId, review.id, review.planUri);
+      this.emitSnapshot(sessionId);
     });
   }
 
@@ -442,6 +589,16 @@ export class ChatRuntimeInteractionHostService {
     }
 
     const target = queue.find(entry => entry.id === id);
+    const remoteResolver = this.remoteResolvers.get(this.normalizeSessionId(sessionId));
+    if (remoteResolver) {
+      void remoteResolver({
+        sessionId,
+        kind: 'confirmation.action',
+        id,
+        payload: { actionId },
+      });
+      return;
+    }
     target?.onAction?.(actionId);
   }
 
@@ -505,6 +662,7 @@ export class ChatRuntimeInteractionHostService {
       nextIndices[sessionId] = Math.max(0, Math.min(currentIndex, nextQueue.length - 1));
     }
     this._confirmationActiveIndices.set(nextIndices);
+    this.emitSnapshot(sessionId);
   }
 
   clearConfirmations(sessionId: string): void {
@@ -524,6 +682,7 @@ export class ChatRuntimeInteractionHostService {
     const nextIndices = { ...this._confirmationActiveIndices() };
     delete nextIndices[sessionId];
     this._confirmationActiveIndices.set(nextIndices);
+    this.emitSnapshot(sessionId);
   }
 
   resolvePlanReview(sessionId: string, id: string, result: RuntimePlanReviewDecision): void {
@@ -567,6 +726,7 @@ export class ChatRuntimeInteractionHostService {
         ...this._confirmationActiveIndices(),
         [sessionId]: nextQueue.length - 1,
       });
+      this.emitSnapshot(sessionId);
     });
   }
 
@@ -574,6 +734,7 @@ export class ChatRuntimeInteractionHostService {
     const current = { ...this._questionEntries() };
     delete current[sessionId];
     this._questionEntries.set(current);
+    this.emitSnapshot(sessionId);
   }
 
   private deletePlanReviewEntry(sessionId: string): void {
@@ -581,6 +742,7 @@ export class ChatRuntimeInteractionHostService {
     const current = { ...this._planReviewEntries() };
     delete current[sessionId];
     this._planReviewEntries.set(current);
+    this.emitSnapshot(sessionId);
   }
 
   private installPlanReviewFileSync(sessionId: string, id: string, planUri: string | undefined): void {
@@ -653,6 +815,7 @@ export class ChatRuntimeInteractionHostService {
         },
       },
     });
+    this.emitSnapshot(sessionId);
   }
 
   private resolvePlanReviewContentFromFile(
@@ -695,5 +858,75 @@ export class ChatRuntimeInteractionHostService {
     } catch {
       return undefined;
     }
+  }
+
+  private buildSnapshot(sessionId: string): ChatRuntimeHostInteractionSnapshot {
+    const confirmationQueue = this.getConfirmationQueue(sessionId);
+    const question = (this.stripQuestionEntry(this._questionEntries()[sessionId]) as unknown) as Readonly<Record<string, unknown>> | null;
+    const confirmationSnapshot = (confirmationQueue.map(entry => this.stripConfirmationEntry(entry)) as unknown) as ReadonlyArray<Readonly<Record<string, unknown>>>;
+    const activePlanReview = (this.stripPlanReviewEntry(this._planReviewEntries()[sessionId]) as unknown) as Readonly<Record<string, unknown>> | null;
+    return {
+      sessionId,
+      revision: this.interactionRevision,
+      question,
+      confirmationQueue: confirmationSnapshot,
+      activeConfirmationIndex: this.getActiveConfirmationIndex(sessionId),
+      activePlanReview,
+      backgroundCommandSessionKeys: [...this._backgroundCommandSessions]
+        .filter(key => key.startsWith(`${sessionId}::`)),
+    };
+  }
+
+  private stripQuestionEntry(entry: QuestionRuntimeEntry | undefined): RuntimeQuestionWidgetState | null {
+    if (!entry) {
+      return null;
+    }
+    return {
+      sessionId: entry.sessionId,
+      partId: entry.partId,
+      context: entry.context,
+      data: entry.data,
+    };
+  }
+
+  private stripConfirmationEntry(entry: RuntimeConfirmationWidgetState): RuntimeConfirmationWidgetState {
+    return {
+      sessionId: entry.sessionId,
+      id: entry.id,
+      kind: entry.kind,
+      partId: entry.partId,
+      askId: entry.askId,
+      toolCallId: entry.toolCallId,
+      toolName: entry.toolName,
+      data: entry.data,
+    };
+  }
+
+  private stripPlanReviewEntry(entry: PlanReviewRuntimeEntry | undefined): RuntimePlanReviewWidgetState | null {
+    if (!entry) {
+      return null;
+    }
+    return {
+      sessionId: entry.sessionId,
+      id: entry.id,
+      data: entry.data,
+    };
+  }
+
+  private emitSnapshot(sessionId: string): void {
+    const normalizedSessionId = this.normalizeSessionId(sessionId);
+    this.interactionRevision += 1;
+    const snapshot = this.buildSnapshot(normalizedSessionId);
+    for (const listener of [...this.snapshotListeners]) {
+      listener(snapshot);
+    }
+  }
+
+  private normalizeSessionId(sessionId: string): string {
+    const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!normalizedSessionId) {
+      throw new Error('[AilyChat][InteractionHost] Missing session id.');
+    }
+    return normalizedSessionId;
   }
 }

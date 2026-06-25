@@ -28,6 +28,7 @@ import { AilyChatLanguageModelsService } from './aily-chat-language-models.servi
 import { ChatDebugBrowserService } from './chat-debug-browser.service';
 import { ChatSessionItemsService, type ChatSessionListLoadState } from './chat-session-items.service';
 import { ChatSessionModelStoreService } from './chat-session-model-store.service';
+import { ChatSessionRuntimeStoreService } from './chat-session-runtime-store.service';
 import { ChatSessionViewModelStoreService, type ChatSessionViewModel } from './chat-session-view-model-store.service';
 import { ChatSessionsControlService } from './chat-sessions-control.service';
 import { ChatService } from './chat.service';
@@ -45,12 +46,23 @@ import { isSameChatSessionScopePath, normalizeChatSessionScopePath } from '../co
 import { AilyHost } from '../core/host';
 import type { ChatHostHeaderActionContext } from '../core/chat-host-header-actions';
 import type { ChatHostHeaderActionRequest } from '../core/chat-host-header-actions';
+import { isAilyCategoryDebugEnabled } from '../core/chat-debug-flags';
 import type { ChatSessionTitleActionContext, ChatSessionTitleActionRequest, ChatSessionTitleSurfaceModel } from '../core/chat-session-title-actions';
 import { ChatHostHeaderActionRegistry } from '../helpers/chat-host-header-action-registry';
 import { ChatSessionTitleActionRegistry } from '../helpers/chat-session-title-action-registry';
 import type { ChatSessionInventoryGroup } from '../helpers/chat-session-presentation';
 
 const BUILTIN_AGENT_PICKER_NAMES = new Set(['agent', 'ask', 'edit', 'qa']);
+
+function isPaneStateTraceEnabled(): boolean {
+  return isAilyCategoryDebugEnabled('aily.chat.tracePaneState', [
+    '__AILY_CHAT_TRACE_PANE_STATE__',
+    'AILY_CHAT_TRACE_PANE_STATE',
+  ]) || isAilyCategoryDebugEnabled('aily.chat.traceRequestState', [
+    '__AILY_CHAT_TRACE_REQUEST_STATE__',
+    'AILY_CHAT_TRACE_REQUEST_STATE',
+  ]);
+}
 
 export type ChatPaneSurface = 'chat' | 'blank-session' | 'session-loading' | 'entry' | 'welcome' | 'login' | 'debug-home' | 'debug-session';
 
@@ -143,6 +155,7 @@ export class ChatViewService {
   private readonly debugBrowser = inject(ChatDebugBrowserService);
   private readonly chatSessionItemsService = inject(ChatSessionItemsService);
   private readonly chatSessionModelStore = inject(ChatSessionModelStoreService);
+  private readonly chatSessionRuntimeStore = inject(ChatSessionRuntimeStoreService);
   private readonly chatSessionViewModelStore = inject(ChatSessionViewModelStoreService);
   private readonly chatSessionsControlService = inject(ChatSessionsControlService);
   private readonly chatService = inject(ChatService);
@@ -417,9 +430,13 @@ export class ChatViewService {
       return null;
     }
 
-    const showSidebarSessionList = paneSurface !== 'welcome'
+    const showSessionInventory = paneSurface === 'entry'
+      || paneSurface === 'welcome'
+      || paneSurface === 'blank-session'
+      || paneSurface === 'session-loading';
+    const showSidebarSessionList = showSessionInventory
       && this.showSessionSidebar;
-    const showStackedSessionList = paneSurface !== 'welcome'
+    const showStackedSessionList = showSessionInventory
       && this.showStackedSessionList;
 
     return {
@@ -447,10 +464,6 @@ export class ChatViewService {
   }
 
   get currentPaneSurface(): ChatPaneSurface {
-    if (this.debugBrowser.isOpen) {
-      return this.debugBrowser.activeImportedResourceSummary ? 'debug-session' : 'debug-home';
-    }
-
     if (this.showLoginSurface) {
       return 'login';
     }
@@ -464,7 +477,16 @@ export class ChatViewService {
     }
 
     const hasCurrentSessionIdentity = this.hasCurrentSessionIdentity;
-    if (!this.hasConversationContent) {
+    const hasActiveCurrentSessionRequest = this.hasActiveCurrentSessionRequest;
+    const hasConversationContent = this.hasConversationContent;
+    if (this.debugBrowser.isOpen
+      && !hasCurrentSessionIdentity
+      && !hasConversationContent
+      && !hasActiveCurrentSessionRequest) {
+      return this.debugBrowser.activeImportedResourceSummary ? 'debug-session' : 'debug-home';
+    }
+
+    if (!hasConversationContent && !hasActiveCurrentSessionRequest) {
       if (hasCurrentSessionIdentity) {
         return 'blank-session';
       }
@@ -709,7 +731,7 @@ export class ChatViewService {
   }
 
   private emitPaneDiagnostics(): void {
-    if (!this.debugBrowser.isOpen) {
+    if (!this.debugBrowser.isOpen && !isPaneStateTraceEnabled()) {
       return;
     }
 
@@ -732,6 +754,10 @@ export class ChatViewService {
       ? currentProjection.dialogItems.length
       : 0;
     const hasConversationContent = this.hasConversationContent;
+    const liveSessionId = this.liveCurrentSessionResource;
+    const liveRuntimeState = liveSessionId
+      ? this.chatSessionRuntimeStore.read(liveSessionId)
+      : undefined;
     const diagnostics = {
       paneSurface,
       hasConversationContent,
@@ -741,6 +767,9 @@ export class ChatViewService {
       hasBlankSessionShell: this.chatService.hasBlankSessionShell === true,
       currentSessionId: this.chatService.currentSessionId,
       currentViewSessionResource: this.currentViewSessionResource,
+      liveSessionId,
+      liveRequestInProgress: liveRuntimeState?.requestInProgress === true,
+      liveStatus: liveRuntimeState?.status ?? null,
       currentModelTurnCount,
       currentProjectionTurnCount,
       currentProjectionChatListCount,
@@ -768,6 +797,9 @@ export class ChatViewService {
       hasBlankSessionShell: this.chatService.hasBlankSessionShell === true,
       currentSessionId: this.chatService.currentSessionId,
       currentViewSessionResource: this.currentViewSessionResource,
+      liveSessionId,
+      liveRequestInProgress: liveRuntimeState?.requestInProgress === true,
+      liveStatus: liveRuntimeState?.status ?? null,
       currentModelTurnCount,
       currentProjectionTurnCount,
       currentProjectionChatListCount,
@@ -816,6 +848,9 @@ export class ChatViewService {
         `identity=${this.hasCurrentSessionIdentity}`,
         `currentSessionId=${this.chatService.currentSessionId || '<empty>'}`,
         `viewResource=${this.currentViewSessionResource || '<empty>'}`,
+        `liveSessionId=${liveSessionId || '<empty>'}`,
+        `liveRequest=${liveRuntimeState?.requestInProgress === true}`,
+        `liveStatus=${liveRuntimeState?.status ?? '<none>'}`,
         `modelTurns=${currentModelTurnCount}`,
         `projectionTurns=${currentProjectionTurnCount}`,
         `projectionChatList=${currentProjectionChatListCount}`,
@@ -832,6 +867,10 @@ export class ChatViewService {
     const model = this.currentViewModel?.model;
     if (!model) {
       return fallback === true;
+    }
+
+    if (this.hasActiveCurrentSessionRequest) {
+      return true;
     }
 
     const projection = model.hostProjectionState;
@@ -927,7 +966,23 @@ export class ChatViewService {
 
   private get hasCurrentSessionIdentity(): boolean {
     return this.currentViewSessionResource.length > 0
+      || this.liveCurrentSessionResource.length > 0
       || this.chatService.hasBlankSessionShell === true;
+  }
+
+  private get hasActiveCurrentSessionRequest(): boolean {
+    const currentSessionResource = this.currentViewSessionResource || this.liveCurrentSessionResource;
+    if (!currentSessionResource) {
+      return false;
+    }
+
+    return this.chatSessionRuntimeStore.read(currentSessionResource)?.requestInProgress === true;
+  }
+
+  private get liveCurrentSessionResource(): string {
+    return typeof this.chatService.currentSessionId === 'string'
+      ? this.chatService.currentSessionId.trim()
+      : '';
   }
 
   private get hasActiveSessionTitleOwner(): boolean {

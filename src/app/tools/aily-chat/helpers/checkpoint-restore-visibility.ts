@@ -1,4 +1,4 @@
-import type { ChatDialogViewItem } from './chat-dialog-view-items';
+import type { ChatVisibleTranscriptDialogItem } from '../core/chat-visible-transcript-model';
 import type { WorkspaceCheckpointPresentationMode } from '../services/edit-checkpoint.service';
 
 export interface CheckpointRestoreSurface {
@@ -10,9 +10,9 @@ export interface CheckpointRestoreSurface {
 }
 
 export function applyCheckpointRestoreVisibility(
-  dialogItems: readonly ChatDialogViewItem[],
+  dialogItems: readonly ChatVisibleTranscriptDialogItem[],
   _canShowCheckpointRestore: boolean,
-): ChatDialogViewItem[] {
+): ChatVisibleTranscriptDialogItem[] {
   if (dialogItems.length === 0) {
     return [];
   }
