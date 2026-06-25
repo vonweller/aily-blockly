@@ -1,4 +1,4 @@
-import { Injectable, signal } from '@angular/core';
+import { DestroyRef, Injectable, inject, signal } from '@angular/core';
 
 import type { AskUserAnswer, AskUserFullResponse, AskUserQuestion, AskUserPresentationContext } from '../core/ask-user';
 import { AilyHost } from '../core/host';
@@ -6,7 +6,10 @@ import type { IFileWatchHandle } from '../core/host-api';
 import type { ToolApprovalAction, ToolApprovalRequest, ToolApprovalScope } from '../helpers/tool-approval-ui';
 import { resolveBlocklyArtifactReferenceTarget } from '../helpers/chat-artifact-reference';
 import {
+  listBlocklyCommandSessionSnapshots,
+  setBlocklyCommandSessionBackground,
   stopBlocklyCommandSession,
+  subscribeBlocklyCommandSessionUpdates,
   type BlocklyCommandSessionSnapshot,
 } from '../helpers/lex-agent-bootstrap';
 import type {
@@ -142,6 +145,7 @@ interface PlanReviewFileSyncState {
 
 @Injectable()
 export class ChatRuntimeInteractionHostService implements ChatRuntimeOwnerInteractionHostPort {
+  private readonly destroyRef = inject(DestroyRef);
   private readonly _questionEntries = signal<Record<string, QuestionRuntimeEntry | undefined>>({});
   private readonly _confirmationEntries = signal<Record<string, readonly ConfirmationRuntimeEntry[] | undefined>>({});
   private readonly _confirmationActiveIndices = signal<Record<string, number | undefined>>({});
@@ -151,6 +155,17 @@ export class ChatRuntimeInteractionHostService implements ChatRuntimeOwnerIntera
   private readonly snapshotListeners = new Set<RuntimeInteractionSnapshotListener>();
   private readonly remoteResolvers = new Map<string, RuntimeInteractionRemoteResolver>();
   private interactionRevision = 0;
+
+  constructor() {
+    const subscription = subscribeBlocklyCommandSessionUpdates((sessionId) => {
+      if (sessionId) {
+        this.emitSnapshot(sessionId);
+      }
+    });
+    this.destroyRef.onDestroy(() => {
+      subscription.dispose();
+    });
+  }
 
   onSnapshot(listener: RuntimeInteractionSnapshotListener): { dispose(): void } {
     this.snapshotListeners.add(listener);
@@ -276,12 +291,14 @@ export class ChatRuntimeInteractionHostService implements ChatRuntimeOwnerIntera
     }
 
     if (request.actionId === 'continue_background') {
+      setBlocklyCommandSessionBackground(sessionId, processId, true);
       this.markCommandSessionBackground(sessionId, processId);
       return { ok: true, actionId: request.actionId, processId };
     }
 
     if (request.actionId === 'stop') {
       const snapshot = await stopBlocklyCommandSession(processId, { yieldTimeMs: 250 });
+      setBlocklyCommandSessionBackground(sessionId, processId, false);
       this.clearCommandSessionBackground(sessionId, processId);
       return snapshot
         ? { ok: true, actionId: request.actionId, processId, snapshot }
@@ -874,6 +891,11 @@ export class ChatRuntimeInteractionHostService implements ChatRuntimeOwnerIntera
       activePlanReview,
       backgroundCommandSessionKeys: [...this._backgroundCommandSessions]
         .filter(key => key.startsWith(`${sessionId}::`)),
+      backgroundProcessIds: [...this._backgroundCommandSessions]
+        .filter(key => key.startsWith(`${sessionId}::`))
+        .map(key => key.slice(`${sessionId}::`.length)),
+      processInventoryRevision: this.interactionRevision,
+      processes: listBlocklyCommandSessionSnapshots(sessionId),
     };
   }
 

@@ -275,6 +275,9 @@ class ChatRuntimeHostSessionStore {
       activeConfirmationIndex: 0,
       activePlanReview: null,
       backgroundCommandSessionKeys: [],
+      backgroundProcessIds: [],
+      processInventoryRevision: 0,
+      processes: [],
     };
   }
 
@@ -567,8 +570,12 @@ class ChatRuntimeHostSessionStore {
     if (snapshot.activePlanReview && typeof snapshot.activePlanReview === 'object') {
       return true;
     }
-    return Array.isArray(snapshot.backgroundCommandSessionKeys)
-      && snapshot.backgroundCommandSessionKeys.length > 0;
+    return (
+      (Array.isArray(snapshot.backgroundCommandSessionKeys)
+        && snapshot.backgroundCommandSessionKeys.length > 0)
+      || (Array.isArray(snapshot.backgroundProcessIds)
+        && snapshot.backgroundProcessIds.length > 0)
+    );
   }
 
   applyInteractionDerivedSessionState(sessionId) {
@@ -760,6 +767,15 @@ class ChatRuntimeHostSessionStore {
         ? patch.activePlanReview
         : current.activePlanReview ?? null,
       backgroundCommandSessionKeys: clonePayload(current.backgroundCommandSessionKeys) ?? [],
+      backgroundProcessIds: Object.prototype.hasOwnProperty.call(patch, 'backgroundProcessIds')
+        ? clonePayload(patch.backgroundProcessIds) ?? []
+        : clonePayload(current.backgroundProcessIds) ?? [],
+      processInventoryRevision: Object.prototype.hasOwnProperty.call(patch, 'processInventoryRevision')
+        ? Number(patch.processInventoryRevision) || 0
+        : Number(current.processInventoryRevision) || 0,
+      processes: Object.prototype.hasOwnProperty.call(patch, 'processes')
+        ? clonePayload(patch.processes) ?? []
+        : clonePayload(current.processes) ?? [],
     };
     return { snapshot, changed: true };
   }
@@ -1724,4 +1740,3 @@ module.exports = {
   normalizeSessionId,
   normalizeViewId,
 };
-

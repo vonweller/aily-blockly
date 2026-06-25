@@ -87,6 +87,28 @@ export interface ChatRuntimeHostInteractionSnapshot {
   readonly activeConfirmationIndex: number;
   readonly activePlanReview: Readonly<Record<string, unknown>> | null;
   readonly backgroundCommandSessionKeys: readonly string[];
+  readonly backgroundProcessIds?: readonly string[];
+  readonly processInventoryRevision?: number;
+  readonly processes?: readonly ChatRuntimeHostSessionProcessSummary[];
+}
+
+export interface ChatRuntimeHostSessionProcessSummary {
+  readonly processId: string;
+  readonly sessionId: string;
+  readonly outputSessionId: string;
+  readonly command: string;
+  readonly cwd: string;
+  readonly status: string;
+  readonly running: boolean;
+  readonly exitCode?: number;
+  readonly pid?: number;
+  readonly startedAt: number;
+  readonly lastOutputAt?: number;
+  readonly completedAt?: number;
+  readonly elapsedMs: number;
+  readonly bytesTotal: number;
+  readonly background?: boolean;
+  readonly outputFilePath?: string;
 }
 
 export type ChatRuntimeHostInteractionRequestKind =

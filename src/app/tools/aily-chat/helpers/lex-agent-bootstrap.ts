@@ -121,13 +121,20 @@ export interface LexRuntimeApiConfig {
 
 const DEFAULT_INTERACTION_HARD_ROUND_CAP = 200;
 const FAST_SUMMARIZER_PRESET_ID = 'auto-fast';
+const PROJECT_CHAT_DIR = '.chat_history';
+const GLOBAL_CHAT_DATA_DIR = 'chat_history';
+const PROCESS_RECORDS_DIR = 'process';
 
 type BlocklyExternalTerminal = NonNullable<IExternalHostAPI['terminal']>;
 
 const blocklyCommandSessionControllers = new Set<BlocklyExternalTerminal>();
 const blocklyCommandSessionOwners = new Map<string, BlocklyExternalTerminal>();
+const blocklyCommandSessions = new Map<string, ExternalTerminalSession>();
+const blocklyCommandSessionIdsBySession = new Map<string, Set<string>>();
+const blocklyCommandSessionListeners = new Set<(sessionId: string, processId: string) => void>();
 
 export type BlocklyCommandSessionSnapshot = Awaited<ReturnType<NonNullable<BlocklyExternalTerminal['getProcessStatus']>>>;
+export type BlocklyCommandSessionSummary = ReturnType<typeof createBlocklyCommandSessionSummary>;
 
 function registerBlocklyCommandSessionController(terminal: BlocklyExternalTerminal | undefined): void {
   if (!terminal) {
@@ -196,6 +203,56 @@ export async function resizeBlocklyCommandSession(
       ? terminal.resizeProcess(processId, size)
       : null;
   });
+}
+
+export function listBlocklyCommandSessionSnapshots(sessionId: string): BlocklyCommandSessionSummary[] {
+  const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+  if (!normalizedSessionId) {
+    return [];
+  }
+
+  const processIds = blocklyCommandSessionIdsBySession.get(normalizedSessionId);
+  if (!processIds || processIds.size === 0) {
+    return [];
+  }
+
+  return [...processIds]
+    .map(processId => blocklyCommandSessions.get(processId))
+    .filter((session): session is ExternalTerminalSession => !!session)
+    .map(session => createBlocklyCommandSessionSummary(session))
+    .sort((left, right) => right.startedAt - left.startedAt);
+}
+
+export function subscribeBlocklyCommandSessionUpdates(
+  listener: (sessionId: string, processId: string) => void,
+): { dispose(): void } {
+  blocklyCommandSessionListeners.add(listener);
+  return {
+    dispose: () => {
+      blocklyCommandSessionListeners.delete(listener);
+    },
+  };
+}
+
+export function setBlocklyCommandSessionBackground(
+  sessionId: string,
+  processId: string,
+  background: boolean,
+): void {
+  const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+  const normalizedProcessId = typeof processId === 'string' ? processId.trim() : '';
+  if (!normalizedSessionId || !normalizedProcessId) {
+    return;
+  }
+
+  const session = blocklyCommandSessions.get(normalizedProcessId);
+  if (!session || session.sessionId !== normalizedSessionId || session.background === background) {
+    return;
+  }
+
+  session.background = background;
+  persistBlocklyCommandSessionRecord(session);
+  notifyBlocklyCommandSessionUpdate(normalizedSessionId, normalizedProcessId);
 }
 
 interface ResolvePersistedLexSessionOptions {
@@ -740,6 +797,7 @@ function positionToOffset(lineStarts: readonly number[], contentLength: number, 
 
 interface BlocklyExternalHostApiOptions {
   readonly createSyncAbsInvocationContext?: () => SyncAbsInvocationContext | undefined;
+  readonly sessionId?: string;
 }
 
 const BLOCKLY_WORKSPACE_OVERVIEW_CODE_PREVIEW_LIMIT = 4096;
@@ -782,7 +840,7 @@ export function buildExternalHostAPI(
   );
   const hasBlocklyWorkspace = !!(host.absSync || host.editor || prjPath());
   const hasLibraryAnalysis = !!(host.project && host.fs && prjPath());
-  const terminal = createExternalTerminal(host, prjPath);
+  const terminal = createExternalTerminal(host, prjPath, options.sessionId);
 
   return {
     fs: {
@@ -1024,6 +1082,7 @@ export function createBlocklyStandardHostBinding(
   cwd = '',
   options: {
     readonly runtimeMode?: ChatAgentRuntimeMode;
+    readonly sessionId?: string;
     readonly onRuntimeModeSelected?: (
       mode: Exclude<ChatAgentRuntimeMode, 'unbound'>,
       source: ChatAgentRuntimeModeSource,
@@ -1034,6 +1093,7 @@ export function createBlocklyStandardHostBinding(
 ): BlocklyStandardHostBinding {
   const hostAPI = buildExternalHostAPI({
     createSyncAbsInvocationContext: options.createSyncAbsInvocationContext,
+    sessionId: options.sessionId,
   });
   const toolProvider = createBlocklyToolProvider(hostAPI, {
     runtimeMode: normalizeChatAgentRuntimeMode(options.runtimeMode, 'blockly'),
@@ -1330,6 +1390,7 @@ export function bootstrapBlocklyLexAgent(
   });
   const { hostAPI, toolProvider, adapter } = createBlocklyStandardHostBinding(cwd, {
     runtimeMode: agentRuntimeMode,
+    sessionId: runtimeSessionId,
     onRuntimeModeSelected: ctx.selectAgentRuntimeMode,
     createSyncAbsInvocationContext,
   });
@@ -2711,7 +2772,171 @@ async function loadNpmLibraries(command: string): Promise<void> {
   }
 }
 
-function createExternalTerminal(host: any, prjPath: () => string): IExternalHostAPI['terminal'] {
+function createBlocklyCommandSessionSummary(session: ExternalTerminalSession) {
+  const completedAt = typeof session.completedAt === 'number' ? session.completedAt : undefined;
+  const lastOutputAt = typeof session.lastOutputAt === 'number' ? session.lastOutputAt : undefined;
+  const exitCode = typeof session.exitCode === 'number' ? session.exitCode : undefined;
+  const pid = typeof session.pid === 'number' ? session.pid : undefined;
+  const outputFilePath = typeof session.outputFilePath === 'string' && session.outputFilePath.trim().length > 0
+    ? session.outputFilePath
+    : undefined;
+  const lastTimestamp = completedAt ?? Date.now();
+  return {
+    processId: session.id,
+    sessionId: session.sessionId,
+    outputSessionId: session.outputSessionId,
+    command: session.command,
+    cwd: session.cwd,
+    status: session.status,
+    running: session.running,
+    ...(exitCode !== undefined ? { exitCode } : {}),
+    ...(pid !== undefined ? { pid } : {}),
+    startedAt: session.startedAt,
+    ...(lastOutputAt !== undefined ? { lastOutputAt } : {}),
+    ...(completedAt !== undefined ? { completedAt } : {}),
+    elapsedMs: Math.max(0, lastTimestamp - session.startedAt),
+    bytesTotal: byteLength(session.stdout) + byteLength(session.stderr),
+    background: session.background === true,
+    ...(outputFilePath ? { outputFilePath } : {}),
+  };
+}
+
+function notifyBlocklyCommandSessionUpdate(sessionId: string, processId: string): void {
+  const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+  const normalizedProcessId = typeof processId === 'string' ? processId.trim() : '';
+  if (!normalizedSessionId || !normalizedProcessId) {
+    return;
+  }
+  for (const listener of [...blocklyCommandSessionListeners]) {
+    listener(normalizedSessionId, normalizedProcessId);
+  }
+}
+
+function attachBlocklyCommandSession(session: ExternalTerminalSession): void {
+  const previous = blocklyCommandSessions.get(session.id);
+  if (previous && previous.sessionId && previous.sessionId !== session.sessionId) {
+    const previousIds = blocklyCommandSessionIdsBySession.get(previous.sessionId);
+    previousIds?.delete(session.id);
+    if (previousIds && previousIds.size === 0) {
+      blocklyCommandSessionIdsBySession.delete(previous.sessionId);
+    }
+  }
+
+  blocklyCommandSessions.set(session.id, session);
+  if (session.sessionId) {
+    let processIds = blocklyCommandSessionIdsBySession.get(session.sessionId);
+    if (!processIds) {
+      processIds = new Set<string>();
+      blocklyCommandSessionIdsBySession.set(session.sessionId, processIds);
+    }
+    processIds.add(session.id);
+    notifyBlocklyCommandSessionUpdate(session.sessionId, session.id);
+  }
+}
+
+function sanitizeBlocklyCommandSessionFileName(processId: string): string {
+  return processId.replace(/[^a-zA-Z0-9._-]/g, '_');
+}
+
+function appendBlocklyCommandSessionFile(
+  host: any,
+  filePath: string,
+  content: string,
+): void {
+  if (!filePath || !content) {
+    return;
+  }
+
+  try {
+    if (typeof host.fs.appendFileSync === 'function') {
+      host.fs.appendFileSync(filePath, content, 'utf-8');
+      return;
+    }
+  } catch {
+    // Fall back to read + write below.
+  }
+
+  const previous = host.fs.existsSync(filePath)
+    ? host.fs.readFileSync(filePath, 'utf-8')
+    : '';
+  host.fs.writeFileSync(filePath, `${previous}${content}`, 'utf-8');
+}
+
+function resolveBlocklyCommandSessionStoragePaths(
+  host: any,
+  cwd: string,
+  sessionId: string,
+  processId: string,
+): { outputFilePath: string; metadataFilePath: string } | null {
+  const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+  if (!normalizedSessionId) {
+    return null;
+  }
+
+  const projectPath = cwd || host.project?.currentProjectPath || host.project?.projectRootPath || '';
+  const appDataPath = host.path?.getAppDataPath?.();
+  if (!projectPath && !appDataPath) {
+    return null;
+  }
+  const rootDir = projectPath
+    ? host.path.join(projectPath, PROJECT_CHAT_DIR, normalizedSessionId)
+    : host.path.join(appDataPath, GLOBAL_CHAT_DATA_DIR, normalizedSessionId);
+  const processDir = host.path.join(rootDir, PROCESS_RECORDS_DIR);
+  host.fs.mkdirSync(processDir, { recursive: true });
+  const safeName = sanitizeBlocklyCommandSessionFileName(processId);
+  return {
+    outputFilePath: host.path.join(processDir, `${safeName}.log`),
+    metadataFilePath: host.path.join(processDir, `${safeName}.json`),
+  };
+}
+
+function persistBlocklyCommandSessionRecord(session: ExternalTerminalSession): void {
+  if (!session.metadataFilePath) {
+    return;
+  }
+
+  const payload = {
+    version: 1,
+    processId: session.id,
+    sessionId: session.sessionId,
+    outputSessionId: session.outputSessionId,
+    command: session.command,
+    cwd: session.cwd,
+    status: session.status,
+    running: session.running,
+    exitCode: typeof session.exitCode === 'number' ? session.exitCode : null,
+    pid: typeof session.pid === 'number' ? session.pid : null,
+    ptyPid: typeof session.ptyPid === 'number' ? session.ptyPid : null,
+    startedAt: session.startedAt,
+    lastOutputAt: session.lastOutputAt,
+    completedAt: typeof session.completedAt === 'number' ? session.completedAt : null,
+    bytesTotal: byteLength(session.stdout) + byteLength(session.stderr),
+    stdoutBytes: byteLength(session.stdout),
+    stderrBytes: byteLength(session.stderr),
+    outputFilePath: session.outputFilePath ?? null,
+    background: session.background === true,
+    executionKind: session.executionKind,
+  };
+  try {
+    AilyHost.get().fs.writeFileSync(session.metadataFilePath, JSON.stringify(payload, null, 2), 'utf-8');
+  } catch {
+    // Keep runtime flow resilient if persistence fails.
+  }
+}
+
+function persistBlocklyCommandSessionOutput(
+  host: any,
+  session: ExternalTerminalSession,
+  text: string,
+): void {
+  if (!text || !session.outputFilePath) {
+    return;
+  }
+
+  appendBlocklyCommandSessionFile(host, session.outputFilePath, text);
+}
+
+function createExternalTerminal(host: any, prjPath: () => string, runtimeSessionId?: string): IExternalHostAPI['terminal'] {
   const hasRawTerminal = !!(host.terminal?.run && host.terminal?.onData);
   const hasCmdService = !!(host.cmd?.spawn && host.cmd?.kill && host.cmd?.sendInput);
   const hasPtyTerminal = !!(
@@ -2725,13 +2950,12 @@ function createExternalTerminal(host: any, prjPath: () => string): IExternalHost
   if (!hasRawTerminal && !hasCmdService && !hasPtyTerminal) {
     return undefined;
   }
-
-  const sessions = new Map<string, ExternalTerminalSession>();
   let terminalApi: BlocklyExternalTerminal;
 
   const createSnapshot = (session: ExternalTerminalSession) => ({
     id: session.id,
     processId: session.id,
+    sessionId: session.sessionId,
     command: session.command,
     cwd: session.cwd,
     stdout: session.stdout,
@@ -2741,10 +2965,12 @@ function createExternalTerminal(host: any, prjPath: () => string): IExternalHost
     exitCode: session.exitCode,
     pid: session.pid,
     outputSessionId: session.outputSessionId,
+    ...(session.outputFilePath ? { outputFilePath: session.outputFilePath } : {}),
     bytesTotal: byteLength(session.stdout) + byteLength(session.stderr),
     startedAt: session.startedAt,
     lastOutputAt: session.lastOutputAt,
     completedAt: session.completedAt,
+    background: session.background,
   });
 
   const settleReady = (session: ExternalTerminalSession) => {
@@ -2777,6 +3003,10 @@ function createExternalTerminal(host: any, prjPath: () => string): IExternalHost
     session.subscription = undefined;
     session.abortCleanup?.();
     session.abortCleanup = undefined;
+    persistBlocklyCommandSessionRecord(session);
+    if (session.sessionId) {
+      notifyBlocklyCommandSessionUpdate(session.sessionId, session.id);
+    }
   };
 
   const attachCmdServiceSession = (
@@ -2795,12 +3025,14 @@ function createExternalTerminal(host: any, prjPath: () => string): IExternalHost
           case 'stdout':
             session.stdout += data.data ?? '';
             session.lastOutputAt = Date.now();
+            persistBlocklyCommandSessionOutput(host, session, data.data ?? '');
             emitExternalTerminalOutput(session, 'stdout', data.data ?? '');
             settleReady(session);
             break;
           case 'stderr':
             session.stderr += data.data ?? '';
             session.lastOutputAt = Date.now();
+            persistBlocklyCommandSessionOutput(host, session, data.data ?? '');
             emitExternalTerminalOutput(session, 'stderr', data.data ?? '');
             settleReady(session);
             break;
@@ -2839,12 +3071,14 @@ function createExternalTerminal(host: any, prjPath: () => string): IExternalHost
         case 'stdout':
           session.stdout += data.data ?? '';
           session.lastOutputAt = Date.now();
+          persistBlocklyCommandSessionOutput(host, session, data.data ?? '');
           emitExternalTerminalOutput(session, 'stdout', data.data ?? '');
           settleReady(session);
           break;
         case 'stderr':
           session.stderr += data.data ?? '';
           session.lastOutputAt = Date.now();
+          persistBlocklyCommandSessionOutput(host, session, data.data ?? '');
           emitExternalTerminalOutput(session, 'stderr', data.data ?? '');
           settleReady(session);
           break;
@@ -2870,6 +3104,7 @@ function createExternalTerminal(host: any, prjPath: () => string): IExternalHost
       }
       session.stdout += text;
       session.lastOutputAt = Date.now();
+      persistBlocklyCommandSessionOutput(host, session, text);
       emitExternalTerminalOutput(session, 'stdout', text);
       settleReady(session);
     });
@@ -2895,10 +3130,13 @@ function createExternalTerminal(host: any, prjPath: () => string): IExternalHost
   }) => {
     const id = opts?.processId?.trim() || `terminal_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     const cwd = opts?.cwd ?? prjPath();
+    const sessionId = typeof runtimeSessionId === 'string' ? runtimeSessionId.trim() : '';
     let resolveReady!: () => void;
     let resolveFinished!: () => void;
+    const storagePaths = resolveBlocklyCommandSessionStoragePaths(host, cwd, sessionId, id);
     const session: ExternalTerminalSession = {
       id,
+      sessionId,
       outputSessionId: id,
       command,
       cwd,
@@ -2908,6 +3146,10 @@ function createExternalTerminal(host: any, prjPath: () => string): IExternalHost
       status: 'running',
       startedAt: Date.now(),
       lastOutputAt: Date.now(),
+      ...(storagePaths ? {
+        outputFilePath: storagePaths.outputFilePath,
+        metadataFilePath: storagePaths.metadataFilePath,
+      } : {}),
       readyResolved: false,
       finishedResolved: false,
       ready: new Promise<void>((resolve) => { resolveReady = resolve; }),
@@ -2916,6 +3158,7 @@ function createExternalTerminal(host: any, prjPath: () => string): IExternalHost
       resolveFinished,
       outputListener: opts?.onOutput,
       executionKind: opts?.tty ? 'pty' : 'buffered',
+      background: false,
     };
 
     if (opts?.tty) {
@@ -2943,7 +3186,8 @@ function createExternalTerminal(host: any, prjPath: () => string): IExternalHost
       }
     }, timeout);
 
-    sessions.set(id, session);
+    attachBlocklyCommandSession(session);
+    persistBlocklyCommandSessionRecord(session);
     registerBlocklyCommandSessionOwner(id, terminalApi);
 
     try {
@@ -2997,12 +3241,13 @@ function createExternalTerminal(host: any, prjPath: () => string): IExternalHost
   terminalApi = {
     exec: async (command: string, opts?: { cwd?: string; timeout?: number; env?: Record<string, string> }) => {
       const snapshot = await start(command, opts);
-      const session = sessions.get(snapshot.id);
+      const session = blocklyCommandSessions.get(snapshot.id);
       if (session?.running) {
         await session.finished;
       }
-      const finalSnapshot = sessions.get(snapshot.id) ? createSnapshot(sessions.get(snapshot.id)!) : snapshot;
-      sessions.delete(snapshot.id);
+      const finalSnapshot = blocklyCommandSessions.get(snapshot.id)
+        ? createSnapshot(blocklyCommandSessions.get(snapshot.id)!)
+        : snapshot;
       return {
         stdout: finalSnapshot.stdout,
         stderr: finalSnapshot.stderr,
@@ -3011,7 +3256,7 @@ function createExternalTerminal(host: any, prjPath: () => string): IExternalHost
     },
     start,
     getOutput: async (id: string) => {
-      const session = sessions.get(id);
+      const session = blocklyCommandSessions.get(id);
       return session ? createSnapshot(session) : null;
     },
     execCommand: async (command: string, opts?: { processId?: string; cwd?: string; timeoutMs?: number; timeout?: number; yieldTimeMs?: number; signal?: AbortSignal; env?: Record<string, string>; tty?: boolean; streamStdin?: boolean; streamStdoutStderr?: boolean; size?: { rows: number; cols: number }; onOutput?: (event: any) => void }) => {
@@ -3026,7 +3271,7 @@ function createExternalTerminal(host: any, prjPath: () => string): IExternalHost
         size: opts?.size,
         onOutput: opts?.onOutput,
       });
-      const session = sessions.get(snapshot.id);
+      const session = blocklyCommandSessions.get(snapshot.id);
       if (!session) {
         return snapshot;
       }
@@ -3041,7 +3286,7 @@ function createExternalTerminal(host: any, prjPath: () => string): IExternalHost
       return waitForExternalSession(session, opts?.yieldTimeMs, opts?.signal);
     },
     writeStdin: async (id: string, input: string, opts?: { yieldTimeMs?: number; signal?: AbortSignal; onOutput?: (event: any) => void }) => {
-      const session = sessions.get(id);
+      const session = blocklyCommandSessions.get(id);
       if (!session) {
         return null;
       }
@@ -3064,7 +3309,7 @@ function createExternalTerminal(host: any, prjPath: () => string): IExternalHost
       return waitForExternalSession(session, opts?.yieldTimeMs, opts?.signal);
     },
     resizeProcess: async (id: string, size: { cols: number; rows: number }) => {
-      const session = sessions.get(id);
+      const session = blocklyCommandSessions.get(id);
       if (!session) {
         return null;
       }
@@ -3086,11 +3331,11 @@ function createExternalTerminal(host: any, prjPath: () => string): IExternalHost
       return createSnapshot(session);
     },
     getProcessStatus: async (id: string) => {
-      const session = sessions.get(id);
+      const session = blocklyCommandSessions.get(id);
       return session ? createSnapshot(session) : null;
     },
     stopProcess: async (id: string, opts?: { yieldTimeMs?: number }) => {
-      const session = sessions.get(id);
+      const session = blocklyCommandSessions.get(id);
       if (!session) {
         return null;
       }
@@ -3108,26 +3353,26 @@ function createExternalTerminal(host: any, prjPath: () => string): IExternalHost
       return waitForExternalSession(session, opts?.yieldTimeMs ?? 250);
     },
     readOutput: async (id: string, opts?: { offset?: number; maxBytes?: number }) => {
-      const session = sessions.get(id);
+      const session = blocklyCommandSessions.get(id);
       return session ? readExternalOutput(session, opts?.offset, opts?.maxBytes) : null;
     },
     tailOutput: async (id: string, maxBytes?: number) => {
-      const session = sessions.get(id);
+      const session = blocklyCommandSessions.get(id);
       return session ? tailExternalOutput(session, maxBytes) : null;
     },
     searchOutput: async (id: string, opts: { query?: string; regex?: string; beforeLines?: number; afterLines?: number; maxMatches?: number }) => {
-      const session = sessions.get(id);
+      const session = blocklyCommandSessions.get(id);
       return session ? searchExternalOutput(session, opts) : null;
     },
     sendInput: async (id: string, input: string) => {
-      const session = sessions.get(id);
+      const session = blocklyCommandSessions.get(id);
       if (!session) {
         return false;
       }
       return sendExternalInput(session, host, input);
     },
     kill: async (id: string) => {
-      const session = sessions.get(id);
+      const session = blocklyCommandSessions.get(id);
       const kill = host.cmd?.kill ?? host.terminal?.kill;
       if (!session || typeof kill !== 'function') {
         return false;
@@ -3145,6 +3390,7 @@ function createExternalTerminal(host: any, prjPath: () => string): IExternalHost
 
 interface ExternalTerminalSession {
   id: string;
+  sessionId: string;
   outputSessionId: string;
   command: string;
   cwd: string;
@@ -3158,6 +3404,8 @@ interface ExternalTerminalSession {
   startedAt: number;
   lastOutputAt: number;
   completedAt?: number;
+  outputFilePath?: string;
+  metadataFilePath?: string;
   readyResolved: boolean;
   finishedResolved: boolean;
   ready: Promise<void>;
@@ -3169,6 +3417,7 @@ interface ExternalTerminalSession {
   timer?: ReturnType<typeof setTimeout>;
   outputListener?: (event: {
     processId: string;
+    sessionId: string;
     outputSessionId: string;
     command: string;
     cwd: string;
@@ -3178,9 +3427,11 @@ interface ExternalTerminalSession {
     running?: boolean;
     bytesTotal: number;
     timestamp: number;
+    outputFilePath?: string;
   }) => void;
   abortCleanup?: () => void;
   executionKind: 'buffered' | 'pty';
+  background: boolean;
 }
 
 function delay(ms: number): Promise<void> {
@@ -3216,6 +3467,7 @@ async function waitForExternalSession(
   return {
     id: session.id,
     processId: session.id,
+    sessionId: session.sessionId,
     command: session.command,
     cwd: session.cwd,
     stdout: session.stdout,
@@ -3225,10 +3477,12 @@ async function waitForExternalSession(
     exitCode: session.exitCode,
     pid: session.pid,
     outputSessionId: session.outputSessionId,
+    ...(session.outputFilePath ? { outputFilePath: session.outputFilePath } : {}),
     bytesTotal: byteLength(session.stdout) + byteLength(session.stderr),
     startedAt: session.startedAt,
     lastOutputAt: session.lastOutputAt,
     completedAt: session.completedAt,
+    background: session.background,
   };
 }
 
@@ -3262,6 +3516,7 @@ function emitExternalTerminalOutput(
   const now = Date.now();
   session.outputListener({
     processId: session.id,
+    sessionId: session.sessionId,
     outputSessionId: session.outputSessionId,
     command: session.command,
     cwd: session.cwd,
@@ -3271,6 +3526,7 @@ function emitExternalTerminalOutput(
     running: options.running ?? session.running,
     bytesTotal: byteLength(session.stdout) + byteLength(session.stderr),
     timestamp: now,
+    ...(session.outputFilePath ? { outputFilePath: session.outputFilePath } : {}),
   });
 }
 
