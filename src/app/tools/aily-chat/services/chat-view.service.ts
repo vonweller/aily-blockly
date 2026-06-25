@@ -431,6 +431,7 @@ export class ChatViewService {
     }
 
     const showSessionInventory = paneSurface === 'entry'
+      || paneSurface === 'chat'
       || paneSurface === 'welcome'
       || paneSurface === 'blank-session'
       || paneSurface === 'session-loading';

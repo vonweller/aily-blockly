@@ -3,6 +3,7 @@ import { Injectable, inject } from '@angular/core';
 import {
   normalizeChatAgentRuntimeMode,
   normalizeChatAgentRuntimeModeSource,
+  resolveChatAgentRuntimeModeForProject,
   type ChatAgentRuntimeMode,
   type ChatAgentRuntimeModeSource,
 } from '../core/chat-agent-runtime-mode';
@@ -17,12 +18,12 @@ import {
   type HostSessionProviderOptions,
 } from '../helpers/host-session-input-state';
 import { buildHostSessionCurrentPickerRoutingSummary } from '../helpers/host-session-request-routing';
-import { ChatService } from './chat.service';
 import { readChatRuntimeWorkspaceEnvironment } from '../core/chat-runtime-workspace-environment';
 import { ChatSessionEntryStateService } from './chat-session-entry-state.service';
 import {
   resolveChatSessionRuntimeCapabilities,
   resolveChatSessionRuntimeConcurrencyScope,
+  type ChatSessionRuntimeState,
   type ChatSessionRuntimeCapabilities,
 } from './chat-session-runtime-store.service';
 import {
@@ -33,7 +34,6 @@ import {
 
 @Injectable()
 export class ChatRuntimeOwnerSessionContextService implements ChatRuntimeOwnerSessionContextPort {
-  private readonly chatService = inject(ChatService);
   private readonly chatSessionEntryStateService = inject(ChatSessionEntryStateService);
   private readonly runtimeController = inject<ChatRuntimeOwnerRuntimeControllerPort>(CHAT_RUNTIME_OWNER_RUNTIME_CONTROLLER);
 
@@ -46,23 +46,26 @@ export class ChatRuntimeOwnerSessionContextService implements ChatRuntimeOwnerSe
   }
 
   get currentModel(): any {
-    return this.chatService.currentModel;
+    const currentModel = this.readCurrentRuntimeState()?.currentModel;
+    return currentModel && typeof currentModel === 'object'
+      ? { ...(currentModel as Record<string, unknown>) }
+      : null;
   }
 
   get currentAgentRuntimeMode(): ChatAgentRuntimeMode {
-    return this.chatService.currentAgentRuntimeMode;
+    return this.resolveCurrentRuntimeMode().mode;
   }
 
   get currentAgentRuntimeModeSource(): ChatAgentRuntimeModeSource {
-    return this.chatService.currentAgentRuntimeModeSource;
+    return this.resolveCurrentRuntimeMode().source;
   }
 
   get sessionTitle(): string {
-    return this.chatService.currentSessionTitle;
+    return this.readCurrentRuntimeState()?.liveMetadata?.title ?? '';
   }
 
   get currentSessionId(): string {
-    return this.normalizeSessionId(this.chatService.currentSessionId);
+    return this.resolveCurrentRuntimeSessionId();
   }
 
   currentSessionPath(sessionId?: string | null): string | null {
@@ -89,7 +92,6 @@ export class ChatRuntimeOwnerSessionContextService implements ChatRuntimeOwnerSe
   ): void {
     const normalizedMode = normalizeChatAgentRuntimeMode(mode, this.currentAgentRuntimeMode);
     const normalizedSource = normalizeChatAgentRuntimeModeSource(source, 'user_selected');
-    this.chatService.setCurrentAgentRuntimeMode(normalizedMode, normalizedSource);
     this.syncSessionEntryTargetRuntimeMode(sessionId, normalizedMode, normalizedSource);
   }
 
@@ -178,5 +180,36 @@ export class ChatRuntimeOwnerSessionContextService implements ChatRuntimeOwnerSe
 
   private normalizeSessionId(sessionId: unknown): string {
     return typeof sessionId === 'string' ? sessionId.trim() : '';
+  }
+
+  private resolveCurrentRuntimeSessionId(): string {
+    const sessionIds = this.runtimeController.getSessionIds();
+    for (let index = sessionIds.length - 1; index >= 0; index -= 1) {
+      const sessionId = this.normalizeSessionId(sessionIds[index]);
+      if (sessionId) {
+        return sessionId;
+      }
+    }
+    return '';
+  }
+
+  private readCurrentRuntimeState(): ChatSessionRuntimeState | null {
+    const sessionId = this.resolveCurrentRuntimeSessionId();
+    return sessionId ? this.runtimeController.readRuntimeState(sessionId) : null;
+  }
+
+  private resolveCurrentRuntimeMode(): {
+    readonly mode: ChatAgentRuntimeMode;
+    readonly source: ChatAgentRuntimeModeSource;
+  } {
+    const providerOptions = this.readCurrentRuntimeState()?.providerOptions;
+    const resolution = resolveChatAgentRuntimeModeForProject({
+      projectPath: providerOptions?.folderPath ?? null,
+      fallback: 'unbound',
+    });
+    return {
+      mode: resolution.mode,
+      source: resolution.source,
+    };
   }
 }

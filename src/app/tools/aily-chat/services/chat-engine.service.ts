@@ -60,6 +60,7 @@ import type {
   ChatRuntimeHostSubmitRequest,
   ChatRuntimeHostViewRequest,
   ChatRuntimeHostViewId,
+  ChatRuntimeHostModelSelectionSnapshot,
 } from '../core/chat-runtime-host-contract';
 import { createElectronChatRuntimeHostTransport } from '../core/electron-chat-runtime-host-transport';
 import { AuthQuotaStateService, readAuthQuotaStateSnapshot, type AuthQuotaInfo } from './auth-quota-state.service';
@@ -3317,7 +3318,6 @@ export class ChatEngineService implements IChatContext {
       get contextBudgetService() { return thisEngine.contextBudgetService; },
       get languageModelsService() { return thisEngine.languageModelsService; },
       get message() { return thisEngine.message; },
-      get lexStream() { return thisEngine.lexStream; },
     };
   }
 
@@ -3688,6 +3688,21 @@ export class ChatEngineService implements IChatContext {
     }
 
     return normalizeChatSelectedMode(undefined);
+  }
+
+  private resolveVisibleCurrentModelSnapshot(sessionId?: string | null): ChatRuntimeHostModelSelectionSnapshot | null {
+    const targetSessionId = this.resolveRuntimeSessionIdForOwner(sessionId);
+    const runtimeCurrentModel = targetSessionId
+      ? this.chatSessionRuntimeStore?.read?.(targetSessionId)?.currentModel
+      : undefined;
+    if (runtimeCurrentModel && typeof runtimeCurrentModel === 'object') {
+      return { ...(runtimeCurrentModel as Record<string, unknown>) } as ChatRuntimeHostModelSelectionSnapshot;
+    }
+
+    const currentModel = this.chatService.currentModel;
+    return currentModel
+      ? { ...(currentModel as unknown as Record<string, unknown>) } as ChatRuntimeHostModelSelectionSnapshot
+      : null;
   }
 
   private resolveVisibleResolvedModeSnapshot(sessionId?: string | null): ChatResolvedMode {
@@ -5062,6 +5077,7 @@ export class ChatEngineService implements IChatContext {
       stopSession,
       selectedMode: state.selectedMode ?? undefined,
       providerOptions: state.providerOptions ?? undefined,
+      currentModel: state.currentModel ?? undefined,
     };
     this.chatRuntimeViewMirrorProjection.projectRuntimeState({
       sessionId,
@@ -6348,7 +6364,6 @@ Do not create non-existent boards and libraries.
         throw new Error('executePreparedUserSend requires the target session to be attached before submit.');
       }
 
-      const activeResponseHandle = (readPreparedPendingFollowupRequestId(prepared) ?? targetSessionId) || null;
       const existingTurnResponses = this.readSessionTurnResponses(targetSessionId);
       this.markVisibleSessionProjectionOwner(targetSessionId);
       this.lexStream.hydrateTurnResponses?.(targetSessionId, existingTurnResponses, {
@@ -6392,14 +6407,22 @@ Do not create non-existent boards and libraries.
           displayTextLength: (prepared.displayText || prepared.text).trim().length,
         });
       }
+      const currentModelSnapshot = this.resolveVisibleCurrentModelSnapshot(targetSessionId);
+      const currentServiceSessionId = typeof this.chatService?.currentSessionId === 'string'
+        ? this.chatService.currentSessionId.trim()
+        : '';
+      console.info(
+        `[AilyChat][HostSubmitModel] session=${targetSessionId || ''} currentSession=${currentServiceSessionId} model=${currentModelSnapshot?.model ?? ''} preset=${currentModelSnapshot?.presetId ?? ''} name=${currentModelSnapshot?.name ?? ''}`,
+      );
       await this.runtimeHostForView().submitTurn({
         sessionId: targetSessionId,
         requestText: prepared.llmText,
         displayText: prepared.displayText,
         selectedMode: this.resolveVisibleSelectedModeSnapshot(targetSessionId),
         providerOptions: this.resolveVisibleSessionProviderOptionsSnapshot(targetSessionId),
+        currentModel: currentModelSnapshot,
         metadata: this.withHostRuntimeSessionInventoryMetadata(targetSessionId, prepared.requestMetadata ?? null),
-        activeResponseHandle,
+        activeResponseHandle: null,
       });
       if (isSendDebugTraceEnabled()) {
         console.info('[AilyChat][SendDebug] after turn.run', {
@@ -6646,14 +6669,22 @@ Do not create non-existent boards and libraries.
     updateAilyChatAgentLoopPendingCount(1);
     try {
       const runtimeHost = this.runtimeHostForView();
+      const currentModelSnapshot = this.resolveVisibleCurrentModelSnapshot(runtimeSessionId);
+      const currentServiceSessionId = typeof this.chatService?.currentSessionId === 'string'
+        ? this.chatService.currentSessionId.trim()
+        : '';
+      console.info(
+        `[AilyChat][HostSubmitModel] session=${runtimeSessionId || ''} currentSession=${currentServiceSessionId} model=${currentModelSnapshot?.model ?? ''} preset=${currentModelSnapshot?.presetId ?? ''} name=${currentModelSnapshot?.name ?? ''}`,
+      );
       await runtimeHost.submitTurn({
         sessionId: runtimeSessionId,
         requestText: content,
         displayText: content,
         selectedMode: this.resolveVisibleSelectedModeSnapshot(runtimeSessionId),
         providerOptions: this.resolveVisibleSessionProviderOptionsSnapshot(runtimeSessionId),
+        currentModel: currentModelSnapshot,
         metadata: this.withHostRuntimeSessionInventoryMetadata(runtimeSessionId, appliedRequestMetadata),
-        activeResponseHandle: readRequestMetadataRequestId(appliedRequestMetadata as Record<string, unknown>),
+        activeResponseHandle: null,
       });
     } finally {
       updateAilyChatAgentLoopPendingCount(-1);
