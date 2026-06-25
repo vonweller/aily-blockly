@@ -363,10 +363,15 @@ export class ProjectRelatedFileStorage {
     const scopeLabel = scope === 'session'
       ? (normalizedSessionId ? 'session' : 'sessions')
       : scope;
+    const hasLinkEntries = entries.some((entry) => entry.type === 'link');
     const lines = [
       `Reference related content when it may help with the current ${scopeLabel}.`,
-      ...(entries.some((entry) => entry.type === 'link')
-        ? ['For link entries, use the fetch tool to read the webpage when needed.']
+      `The following related-files entries are attached reference materials for the current ${scopeLabel}.`,
+      'Treat related-files as the project\'s attached reference context.',
+      'Related-files are distinct from memory notes. Do not use memory files or the memory tool to satisfy requests about these attached references unless the user explicitly asks for memory.',
+      'Requests to read, inspect, summarize, or compare attached references or their links refer to these entries.',
+      ...(hasLinkEntries
+        ? ['For link entries, fetch the URL when their contents are needed.']
         : []),
       ...entries.map((entry) => this.formatPromptEntry(entry)),
     ];

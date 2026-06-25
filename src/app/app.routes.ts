@@ -128,6 +128,10 @@ export const routes: Routes = [
         loadComponent: () => import('./tools/aily-chat/aily-chat.component').then(m => m.AilyChatComponent)
     },
     {
+        path: "aily-chat-process-detail/:sessionId/:processId",
+        loadComponent: () => import('./tools/aily-chat/components/process-detail-window/chat-process-detail-window.component').then(m => m.ChatProcessDetailWindowComponent)
+    },
+    {
         path: "aily-chat-execution-worker",
         providers: [
             ...AILY_CHAT_RUNTIME_OWNER_PROVIDERS,

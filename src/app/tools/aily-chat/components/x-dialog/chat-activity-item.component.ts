@@ -27,6 +27,7 @@ import {
   type InstructionDiagnosticFilter,
 } from './x-aily-state-viewer/activity-detail-items';
 import { getBlocklyArtifactReferenceLabel, resolveBlocklyArtifactReferenceTarget } from '../../helpers/chat-artifact-reference';
+import { openChatProcessWindow } from '../../helpers/chat-process-window';
 import {
   ChatRuntimeInteractionHostService,
   type RuntimeCommandSessionActionResult,
@@ -2332,6 +2333,9 @@ export class ChatActivityItemComponent implements OnChanges {
     if (action.id === 'open-output-file') {
       return !action.disabled;
     }
+    if (action.id === 'open-process-window') {
+      return !!this.getToolbarProcessId(action) && !action.disabled;
+    }
     return true;
   }
 
@@ -2380,6 +2384,9 @@ export class ChatActivityItemComponent implements OnChanges {
         return;
       case 'open-output-file':
         this.openToolbarOutputFile(action);
+        return;
+      case 'open-process-window':
+        this.openToolbarProcessWindow(action);
         return;
       case 'continue-background':
         void this.continueToolbarProcessInBackground(action);
@@ -2493,6 +2500,27 @@ export class ChatActivityItemComponent implements OnChanges {
     }
 
     AilyHost.get().shell?.openByExplorer?.(outputFilePath);
+  }
+
+  private openToolbarProcessWindow(action: ActivityToolbarActionDisplayData): void {
+    const processId = this.getToolbarProcessId(action);
+    if (!processId || !this.sessionId) {
+      return;
+    }
+
+    openChatProcessWindow({
+      sessionId: this.sessionId,
+      processId,
+      outputSessionId: typeof action.data?.['outputSessionId'] === 'string'
+        ? action.data['outputSessionId']
+        : undefined,
+      outputFilePath: typeof action.data?.['outputFilePath'] === 'string'
+        ? action.data['outputFilePath']
+        : undefined,
+      command: typeof action.data?.['command'] === 'string'
+        ? action.data['command']
+        : undefined,
+    });
   }
 
   hasDetailContent(): boolean {

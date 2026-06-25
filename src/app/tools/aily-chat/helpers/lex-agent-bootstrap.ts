@@ -3026,6 +3026,7 @@ function createExternalTerminal(host: any, prjPath: () => string, runtimeSession
             session.stdout += data.data ?? '';
             session.lastOutputAt = Date.now();
             persistBlocklyCommandSessionOutput(host, session, data.data ?? '');
+            persistBlocklyCommandSessionRecord(session);
             emitExternalTerminalOutput(session, 'stdout', data.data ?? '');
             settleReady(session);
             break;
@@ -3033,6 +3034,7 @@ function createExternalTerminal(host: any, prjPath: () => string, runtimeSession
             session.stderr += data.data ?? '';
             session.lastOutputAt = Date.now();
             persistBlocklyCommandSessionOutput(host, session, data.data ?? '');
+            persistBlocklyCommandSessionRecord(session);
             emitExternalTerminalOutput(session, 'stderr', data.data ?? '');
             settleReady(session);
             break;
@@ -3072,6 +3074,7 @@ function createExternalTerminal(host: any, prjPath: () => string, runtimeSession
           session.stdout += data.data ?? '';
           session.lastOutputAt = Date.now();
           persistBlocklyCommandSessionOutput(host, session, data.data ?? '');
+          persistBlocklyCommandSessionRecord(session);
           emitExternalTerminalOutput(session, 'stdout', data.data ?? '');
           settleReady(session);
           break;
@@ -3079,6 +3082,7 @@ function createExternalTerminal(host: any, prjPath: () => string, runtimeSession
           session.stderr += data.data ?? '';
           session.lastOutputAt = Date.now();
           persistBlocklyCommandSessionOutput(host, session, data.data ?? '');
+          persistBlocklyCommandSessionRecord(session);
           emitExternalTerminalOutput(session, 'stderr', data.data ?? '');
           settleReady(session);
           break;
@@ -3105,6 +3109,7 @@ function createExternalTerminal(host: any, prjPath: () => string, runtimeSession
       session.stdout += text;
       session.lastOutputAt = Date.now();
       persistBlocklyCommandSessionOutput(host, session, text);
+      persistBlocklyCommandSessionRecord(session);
       emitExternalTerminalOutput(session, 'stdout', text);
       settleReady(session);
     });
@@ -3207,6 +3212,7 @@ function createExternalTerminal(host: any, prjPath: () => string, runtimeSession
           });
           session.pid = result?.pid;
           session.ptyPid = result?.pid;
+          persistBlocklyCommandSessionRecord(session);
           if (!result?.success) {
             session.stderr += result?.error ?? 'PTY command start failed';
             session.status = 'failed';
@@ -3218,6 +3224,7 @@ function createExternalTerminal(host: any, prjPath: () => string, runtimeSession
       } else if (hasRawTerminal) {
         const result = await host.terminal.run({ command, cwd, streamId: id, env: opts?.env });
         session.pid = result?.pid;
+        persistBlocklyCommandSessionRecord(session);
         if (!result?.success) {
           session.stderr += result?.error ?? 'Terminal start failed';
           session.status = 'failed';
