@@ -33,6 +33,7 @@ import { CodeViewerIpcService } from './services/code-viewer-ipc.service';
 import { CrossPlatformCmdService } from '../../services/cross-platform-cmd.service';
 import { MissingLibInfo, PasteInstallDialogComponent } from './components/paste-install-dialog/paste-install-dialog.component';
 import { Subscription } from 'rxjs';
+import { BlocklyLibraryPackageService } from '../../services/blockly-library-package.service';
 
 @Component({
   selector: 'app-blockly-editor',
@@ -110,6 +111,7 @@ export class BlocklyEditorComponent implements OnInit, AfterViewInit, OnDestroy 
     private ngZone: NgZone,
     private localLibrarySyncService: LocalLibrarySyncService,
     private codeViewerIpcService: CodeViewerIpcService,
+    private blocklyLibraryPackageService: BlocklyLibraryPackageService,
   ) { }
 
   ngOnInit(): void {
@@ -844,28 +846,17 @@ export class BlocklyEditorComponent implements OnInit, AfterViewInit, OnDestroy 
   }
 
   private compareBlocklyLibraryNames(a: string, b: string): number {
-    const aIsCore = a.startsWith('@aily-project/lib-core-');
-    const bIsCore = b.startsWith('@aily-project/lib-core-');
-    if (aIsCore && !bIsCore) {
-      return -1;
-    }
-    if (!aIsCore && bIsCore) {
-      return 1;
-    }
-    return a.localeCompare(b);
+    return this.blocklyLibraryPackageService.compareLibraryNames(a, b);
   }
 
   private isBlocklyLibraryLoaded(projectPath: string, libPackageName: string): boolean {
     return this.blocklyService.loadedLibraries.has(
-      this.getBlocklyLibraryPackagePath(projectPath, libPackageName),
+      this.blocklyLibraryPackageService.getPackagePath(projectPath, libPackageName),
     );
   }
 
   private isBlocklyLibraryPackageReady(projectPath: string, libPackageName: string): boolean {
-    const libPackagePath = this.getBlocklyLibraryPackagePath(projectPath, libPackageName);
-    return ['package.json', 'block.json', 'toolbox.json', 'generator.js'].every((fileName) =>
-      this.electronService.exists(this.electronService.pathJoin(libPackagePath, fileName)),
-    );
+    return this.blocklyLibraryPackageService.isPackageReady(projectPath, libPackageName);
   }
 
   /** 判断开发板包的核心文件是否已经安装完成。 */
@@ -874,10 +865,6 @@ export class BlocklyEditorComponent implements OnInit, AfterViewInit, OnDestroy 
     return ['package.json', 'board.json'].every((fileName) =>
       this.electronService.exists(this.electronService.pathJoin(boardPackagePath, fileName)),
     );
-  }
-
-  private getBlocklyLibraryPackagePath(projectPath: string, libPackageName: string): string {
-    return this.getNodeModulePackagePath(projectPath, libPackageName);
   }
 
   /** 生成 node_modules 下包路径，兼容 @scope/name 包名。 */
