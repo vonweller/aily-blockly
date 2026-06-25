@@ -51,7 +51,16 @@ import type {
   ChatSessionRuntimeState,
 } from './chat-session-runtime-store.service';
 import type { ChatRuntimeOwnerContextAdapter } from './chat-runtime-owner-context.service';
+import type {
+  ChatRuntimeOwnerContextBudgetPort,
+  ChatRuntimeOwnerEditCheckpointPort,
+} from './chat-runtime-owner-context-capabilities';
 import type { ChatSessionTurnOwnerPolicyOptions } from './chat-session-model-store.service';
+
+export type {
+  ChatRuntimeOwnerContextBudgetPort,
+  ChatRuntimeOwnerEditCheckpointPort,
+} from './chat-runtime-owner-context-capabilities';
 
 export interface ChatRuntimeOwnerContextMaterializerPort {
   bindAdapter(adapter: ChatRuntimeOwnerContextAdapter): LexOwnerContext;
@@ -409,6 +418,14 @@ export const CHAT_RUNTIME_OWNER_SESSION_MODEL = new InjectionToken<ChatRuntimeOw
 
 export const CHAT_RUNTIME_OWNER_SCHEDULER = new InjectionToken<ChatRuntimeOwnerSchedulerPort>(
   'AILY_CHAT_RUNTIME_OWNER_SCHEDULER',
+);
+
+export const CHAT_RUNTIME_OWNER_EDIT_CHECKPOINT = new InjectionToken<ChatRuntimeOwnerEditCheckpointPort>(
+  'AILY_CHAT_RUNTIME_OWNER_EDIT_CHECKPOINT',
+);
+
+export const CHAT_RUNTIME_OWNER_CONTEXT_BUDGET = new InjectionToken<ChatRuntimeOwnerContextBudgetPort>(
+  'AILY_CHAT_RUNTIME_OWNER_CONTEXT_BUDGET',
 );
 
 export const CHAT_RUNTIME_OWNER_TURN_STARTUP_EDIT_LIFECYCLE = new InjectionToken<ChatRuntimeOwnerTurnStartupEditLifecyclePort>(

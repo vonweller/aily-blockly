@@ -16,7 +16,7 @@ import type {
 } from '../services/chat-history.service';
 import { AilyHost } from '../core/host';
 import { normalizeChatSessionType, type ChatResolvedMode, type ChatSelectedMode, type ChatSessionType } from '../core/chat-mode';
-import type { ModelConfig } from '../services/chat.service';
+import type { ChatRuntimeHostModelSelectionSnapshot } from '../core/chat-runtime-host-contract';
 import {
   getChatSessionTitleSourcePriority,
   isCustomSessionTitleSource,
@@ -76,7 +76,7 @@ export interface HostSessionPersistenceAccess {
 }
 
 export type HostSessionSaveContext = Pick<IAgentLifecycle, 'toolCallingIteration'>
-  & Pick<IProjectContext, 'currentMode' | 'currentAgentRuntimeMode' | 'currentAgentRuntimeModeSource' | 'currentModel'>
+  & Pick<IProjectContext, 'currentMode' | 'currentAgentRuntimeMode' | 'currentAgentRuntimeModeSource'>
   & Pick<ISessionAccess, 'sessionId' | 'sessionTitle'>
   & Partial<Pick<ISessionAccess, 'chatService'>>
   & Pick<IChatCoordination, 'lexStream'>
@@ -93,6 +93,7 @@ export type HostSessionSaveContext = Pick<IAgentLifecycle, 'toolCallingIteration
       request: ChatRuntimeHostResourceOperationRequest,
     ): Promise<ChatRuntimeHostResourceOperationResult>;
     invalidateHostRequestGraph?(): void;
+    readonly currentModel: ChatRuntimeHostModelSelectionSnapshot | null;
   };
 
 function isHostSessionSaveTraceEnabled(): boolean {
@@ -112,7 +113,7 @@ export interface HostSessionSaveTarget {
   readonly providerOptions: HostSessionProviderOptions;
   readonly selectedMode: ChatSelectedMode;
   readonly resolvedMode?: Pick<ChatResolvedMode, 'id' | 'kind' | 'isBuiltin' | 'name' | 'modeInstructions' | 'uri'> | null;
-  readonly model: ModelConfig | null;
+  readonly model: ChatRuntimeHostModelSelectionSnapshot | null;
   readonly sessionSnapshot?: SessionSnapshot | null;
   readonly turnResponses?: readonly TurnResponseTurn[];
   readonly toolCallingIteration?: number;

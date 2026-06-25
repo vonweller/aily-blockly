@@ -169,7 +169,7 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
     }
 
     .cag.cag-expanded.cag-first-item-not-tool::after {
-      height: 20px;
+      height: 16px;
     }
 
     .cag-header {

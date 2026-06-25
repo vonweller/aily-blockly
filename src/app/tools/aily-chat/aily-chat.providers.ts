@@ -21,7 +21,11 @@ import { ChatRuntimeOwnerTurnStartupEditLifecycleService } from './services/chat
 import { ChatRuntimeOwnerWorkspaceEditLifecycleResourceService } from './services/chat-runtime-owner-workspace-edit-lifecycle-resource.service';
 import {
   CHAT_RUNTIME_OWNER_CONTEXT_BINDER,
+  CHAT_RUNTIME_OWNER_CONTEXT_BUDGET,
+  type ChatRuntimeOwnerContextBudgetPort,
   CHAT_RUNTIME_OWNER_CONTEXT_MATERIALIZER,
+  CHAT_RUNTIME_OWNER_EDIT_CHECKPOINT,
+  type ChatRuntimeOwnerEditCheckpointPort,
   CHAT_RUNTIME_OWNER_ENDPOINT,
   CHAT_RUNTIME_OWNER_HOST,
   CHAT_RUNTIME_OWNER_HOST_ADAPTER,
@@ -65,11 +69,107 @@ import { ChatSessionViewModelStoreService } from './services/chat-session-view-m
 import { ChatSessionsControlService } from './services/chat-sessions-control.service';
 import { ChatSetupSuggestionService } from './services/chat-setup-suggestion.service';
 import { ChatViewService } from './services/chat-view.service';
+import { ContextBudgetService } from './services/context-budget.service';
 import { EditCheckpointService } from './services/edit-checkpoint.service';
 import { GitWorkspaceCheckpointProviderService } from './services/git-workspace-checkpoint-provider.service';
 import { MenuManagerService } from './services/menu-manager.service';
 import { ResourceManagerService } from './services/resource-manager.service';
 import { ScrollManagerService } from './services/scroll-manager.service';
+
+function createRuntimeOwnerContextBudgetPort(
+  service: ContextBudgetService,
+): ChatRuntimeOwnerContextBudgetPort {
+  return {
+    getSnapshot: () => service.getSnapshot(),
+    get budget$() { return service.budget$; },
+    get maxContextTokens() { return service.maxContextTokens; },
+    get compressionThreshold() { return service.compressionThreshold; },
+    get summarizationThreshold() { return service.summarizationThreshold; },
+    updateModelContextSize: model => service.updateModelContextSize(model),
+    refreshLocalEstimate: (messages, tools) => service.refreshLocalEstimate(messages, tools),
+    applyLexBudgetEvent: (maxTokens, usedTokens, extra) =>
+      service.applyLexBudgetEvent(maxTokens, usedTokens, extra),
+    reset: () => service.reset(),
+  };
+}
+
+function createRuntimeOwnerEditCheckpointPort(
+  service: EditCheckpointService,
+): ChatRuntimeOwnerEditCheckpointPort {
+  return {
+    get autoSaveEdits() { return service.autoSaveEdits; },
+    set autoSaveEdits(value) { service.autoSaveEdits = value; },
+    get canUndo() { return service.canUndo; },
+    get canRedo() { return service.canRedo; },
+    setFileHistory: fileHistory => service.setFileHistory(fileHistory as never),
+    setTimelineContext: (sessionId, workspaceRoot) => service.setTimelineContext(sessionId, workspaceRoot),
+    startTurn: (
+      turnIndex,
+      turnStartListIndex,
+      responseStartListIndex,
+      turnId,
+      requestContent,
+      displayContent,
+      checkpointId,
+      requestMetadata,
+    ) => service.startTurn(
+      turnIndex,
+      turnStartListIndex,
+      responseStartListIndex,
+      turnId,
+      requestContent,
+      displayContent,
+      checkpointId,
+      requestMetadata as never,
+    ),
+    recordAdditionalRepositoryRootCandidates: paths => service.recordAdditionalRepositoryRootCandidates(paths),
+    recordEdit: (filePath, type) => service.recordEdit(filePath, type),
+    publishCurrentSummary: () => service.publishCurrentSummary(),
+    commitCurrentTurn: () => service.commitCurrentTurn(),
+    hasEditsInCurrentTurn: () => service.hasEditsInCurrentTurn(),
+    getEditsSummary: checkpointId => service.getEditsSummary(checkpointId ?? undefined),
+    requestDiffPreview: summary => service.requestDiffPreview(summary as never),
+    acceptAllAsBaseline: () => service.acceptAllAsBaseline(),
+    dismissSummary: () => service.dismissSummary(),
+    publishSummary: summary => service.publishSummary(summary as never),
+    getSnapshotByRoundId: roundId => service.getSnapshotByRoundId(roundId),
+    getSnapshotByTurnId: turnId => service.getSnapshotByTurnId(turnId),
+    isSnapshotActive: snapshot => service.isSnapshotActive(snapshot as never),
+    getTurnContextForSnapshot: (snapshot, fallbackTurnId) =>
+      service.getTurnContextForSnapshot(snapshot as never, fallbackTurnId),
+    getTurnStartListIndexForSnapshot: snapshot =>
+      service.getTurnStartListIndexForSnapshot(snapshot as never),
+    getResponseStartListIndexForSnapshot: snapshot =>
+      service.getResponseStartListIndexForSnapshot(snapshot as never),
+    rebuildFromTurnResponses: turnResponses => service.rebuildFromTurnResponses(turnResponses),
+    undo: () => service.undo(),
+    redo: () => service.redo(),
+    acceptFile: filePath => service.acceptFile(filePath),
+    rejectFile: filePath => service.rejectFile(filePath),
+    getLatestSnapshot: () => service.getLatestSnapshot(),
+    restoreRebuildState: snapshot => service.restoreRebuildState(snapshot as never),
+    restorePublishedSummary: summary => service.restorePublishedSummary(summary as never),
+    applyRebuildStateWithSummary: (snapshot, summary) =>
+      service.applyRebuildStateWithSummary(snapshot as never, summary as never),
+    applyRebuildState: snapshot => service.applyRebuildState(snapshot as never),
+    truncateStateFromCheckpoint: checkpointId => service.truncateStateFromCheckpoint(checkpointId),
+    captureRebuildState: () => service.captureRebuildState(),
+    capturePublishedSummary: () => service.capturePublishedSummary(),
+    buildRebuildStateFromTurnResponses: turnResponses =>
+      service.buildRebuildStateFromTurnResponses(turnResponses),
+    buildPublishedSummaryForRebuildState: snapshot =>
+      service.buildPublishedSummaryForRebuildState(snapshot as never),
+    getRequestCheckpointMetadataByCheckpointId: checkpointId =>
+      service.getRequestCheckpointMetadataByCheckpointId(checkpointId),
+    forkRequestCheckpointMetadata: input => service.forkRequestCheckpointMetadata(input),
+    setWorkspaceCheckpointProvider: provider => service.setWorkspaceCheckpointProvider(provider as never),
+    waitForCheckpointMetadataSettled: () => service.waitForCheckpointMetadataSettled(),
+    getInitialContent: filePath => service.getInitialContent(filePath),
+    getTotalEditCount: () => service.getTotalEditCount(),
+    getRequestEditsSummarySync: turnId => service.getRequestEditsSummarySync(turnId),
+    clear: () => service.clear(),
+  };
+}
 
 // Background-session alignment: shared session/model stores must outlive the chat pane component.
 export const AILY_CHAT_SHARED_PROVIDERS: Provider[] = [
@@ -113,6 +213,16 @@ export const AILY_CHAT_RUNTIME_OWNER_PROVIDERS: Provider[] = [
   ChatRuntimeOwnerHostAdapterService,
   ChatRuntimeOwnerContextService,
   ChatRuntimeOwnerEndpointService,
+  {
+    provide: CHAT_RUNTIME_OWNER_CONTEXT_BUDGET,
+    deps: [ContextBudgetService],
+    useFactory: createRuntimeOwnerContextBudgetPort,
+  },
+  {
+    provide: CHAT_RUNTIME_OWNER_EDIT_CHECKPOINT,
+    deps: [EditCheckpointService],
+    useFactory: createRuntimeOwnerEditCheckpointPort,
+  },
   { provide: CHAT_RUNTIME_OWNER_CONTEXT_BINDER, useExisting: ChatRuntimeOwnerService },
   { provide: CHAT_RUNTIME_OWNER_CONTEXT_MATERIALIZER, useExisting: ChatRuntimeOwnerContextService },
   { provide: CHAT_RUNTIME_OWNER_HOST, useExisting: ChatRuntimeOwnerService },

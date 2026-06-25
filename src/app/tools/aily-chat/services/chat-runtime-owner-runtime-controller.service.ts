@@ -206,6 +206,8 @@ export class ChatRuntimeOwnerRuntimeControllerService implements ChatRuntimeOwne
       activeTurnId: this.readActiveTurnId(runtimeState, activeHandle),
       transcriptRevision: input.transcriptRevision,
       selectedMode: runtimeState?.selectedMode ?? null,
+      providerOptions: runtimeState?.providerOptions ?? null,
+      currentModel: runtimeState?.currentModel ?? null,
     };
   }
 

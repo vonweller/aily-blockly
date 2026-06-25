@@ -16,6 +16,7 @@ import {
 import type { PendingFollowupRequest } from '../helpers/chat-pending-request';
 import type { HostSessionProviderOptions } from '../helpers/host-session-input-state';
 import type { AuthQuotaInfo } from './auth-quota-state.service';
+import type { ChatRuntimeHostModelSelectionSnapshot } from '../core/chat-runtime-host-contract';
 import type { ChatInputNotice } from './chat-input-notice';
 import type { ContextBudgetSnapshot } from './context-budget-snapshot';
 import type { RequestQuotaSnapshot } from './request-quota-snapshot';
@@ -85,6 +86,7 @@ export interface ChatSessionRuntimeDebugSummary {
   readonly inputNoticeOverlayPresent?: boolean;
   readonly providerOptionsPresent?: boolean;
   readonly selectedModePresent?: boolean;
+  readonly currentModelPresent?: boolean;
   readonly lastExplicitInterruptAt?: number;
   readonly lastExplicitDisposeAt?: number;
   readonly lastViewDetachAt?: number;
@@ -140,6 +142,7 @@ export interface ChatSessionRuntimeState {
   readonly viewOverlay?: ChatSessionRuntimeViewOverlay;
   readonly providerOptions?: HostSessionProviderOptions;
   readonly selectedMode?: ChatSelectedMode;
+  readonly currentModel?: ChatRuntimeHostModelSelectionSnapshot | null;
 }
 
 function resolveRuntimeTracePhase(
@@ -250,6 +253,7 @@ export type ChatSessionRuntimeStatePatch = Omit<
   | 'viewOverlay'
   | 'providerOptions'
   | 'selectedMode'
+  | 'currentModel'
 > & {
   readonly turnResponses?: readonly TurnResponseTurn[] | null | undefined;
   readonly hostProjectionState?: HostTurnResponseState | null | undefined;
@@ -268,6 +272,7 @@ export type ChatSessionRuntimeStatePatch = Omit<
   readonly viewOverlay?: ChatSessionRuntimeViewOverlay | null | undefined;
   readonly providerOptions?: HostSessionProviderOptions | null | undefined;
   readonly selectedMode?: ChatSelectedMode | null | undefined;
+  readonly currentModel?: ChatRuntimeHostModelSelectionSnapshot | null | undefined;
 };
 
 export interface ChatSessionRuntimeChangeOptions {
@@ -387,6 +392,9 @@ export class ChatSessionRuntimeStoreService {
     const nextSelectedMode = state.selectedMode !== undefined
       ? state.selectedMode ?? undefined
       : previousState?.selectedMode;
+    const nextCurrentModel = state.currentModel !== undefined
+      ? state.currentModel ? this.cloneCurrentModel(state.currentModel) : undefined
+      : previousState?.currentModel ? this.cloneCurrentModel(previousState.currentModel) : undefined;
     const nextAttachedView = typeof state.attachedView === 'boolean'
       ? state.attachedView
       : previousState?.attachedView ?? false;
@@ -402,7 +410,8 @@ export class ChatSessionRuntimeStoreService {
         || !!nextQuotaOverlay
         || !!nextViewOverlay
         || !!nextProviderOptions
-        || !!nextSelectedMode,
+        || !!nextSelectedMode
+        || !!nextCurrentModel,
       quotaOverlayPresent: !!nextQuotaOverlay,
       requestQuotaNotice: !!nextQuotaOverlay?.requestInputNotice,
       authQuotaProjected: !!nextQuotaOverlay?.authQuotaInfo,
@@ -410,6 +419,7 @@ export class ChatSessionRuntimeStoreService {
       inputNoticeOverlayPresent: !!nextViewOverlay?.chatInputNotice,
       providerOptionsPresent: !!nextProviderOptions,
       selectedModePresent: !!nextSelectedMode,
+      currentModelPresent: !!nextCurrentModel,
     });
     const nextState: ChatSessionRuntimeState = {
       turnResponses: nextTurnResponses,
@@ -437,6 +447,7 @@ export class ChatSessionRuntimeStoreService {
       ...(nextViewOverlay ? { viewOverlay: this.cloneViewOverlay(nextViewOverlay) } : {}),
       ...(nextProviderOptions ? { providerOptions: this.cloneProviderOptions(nextProviderOptions) } : {}),
       ...(nextSelectedMode ? { selectedMode: this.cloneSelectedMode(nextSelectedMode) } : {}),
+      ...(nextCurrentModel ? { currentModel: this.cloneCurrentModel(nextCurrentModel) } : {}),
       ...(typeof state.stopSession === 'function'
         ? { stopSession: state.stopSession }
         : state.stopSession === null
@@ -466,7 +477,8 @@ export class ChatSessionRuntimeStoreService {
       && !nextState.quotaOverlay
       && !nextState.viewOverlay
       && !nextState.providerOptions
-      && !nextState.selectedMode) {
+      && !nextState.selectedMode
+      && !nextState.currentModel) {
       this.clearSession(normalizedSessionId, {
         reason: options?.reason ?? 'clear',
         listAffecting: options?.listAffecting,
@@ -1004,6 +1016,7 @@ export class ChatSessionRuntimeStoreService {
       readonly inputNoticeOverlayPresent: boolean;
       readonly providerOptionsPresent: boolean;
       readonly selectedModePresent: boolean;
+      readonly currentModelPresent: boolean;
     },
   ): ChatSessionRuntimeDebugSummary {
     const previousSummary = previousState?.debugSummary;
@@ -1048,6 +1061,10 @@ export class ChatSessionRuntimeStoreService {
 
   private cloneSelectedMode(selectedMode: ChatSelectedMode): ChatSelectedMode {
     return { ...selectedMode };
+  }
+
+  private cloneCurrentModel(currentModel: ChatRuntimeHostModelSelectionSnapshot): ChatRuntimeHostModelSelectionSnapshot {
+    return { ...(currentModel as Record<string, unknown>) } as ChatRuntimeHostModelSelectionSnapshot;
   }
 
   private cloneActiveSkillNames(names: readonly string[] | undefined): readonly string[] | undefined {

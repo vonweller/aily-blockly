@@ -59,10 +59,6 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
       min-width: 0;
     }
 
-    .chat-part {
-      margin-top: 3px;
-      margin-bottom: 3px;
-    }
     .chat-part:first-child { margin-top: 0; }
     .chat-part:last-child  { margin-bottom: 0; }
   `],
