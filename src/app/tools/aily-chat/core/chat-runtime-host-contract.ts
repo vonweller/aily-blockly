@@ -23,12 +23,25 @@ export type ChatRuntimeHostSessionStatus =
   | 'cancelled'
   | 'failed';
 
+export interface ChatRuntimeHostModelSelectionSnapshot {
+  readonly model?: string;
+  readonly name?: string;
+  readonly family?: string;
+  readonly presetId?: string;
+  readonly contextWindowTokens?: number;
+  readonly reasoningEffort?: string;
+  readonly baseUrl?: string;
+  readonly apiKey?: string;
+  readonly providerContextManagementSupport?: unknown;
+}
+
 export interface ChatRuntimeHostSubmitRequest {
   readonly sessionId: ChatRuntimeHostSessionId;
   readonly requestText: string;
   readonly displayText?: string;
   readonly selectedMode?: ChatSelectedMode | null;
   readonly providerOptions?: HostSessionProviderOptions | null;
+  readonly currentModel?: ChatRuntimeHostModelSelectionSnapshot | null;
   readonly metadata?: Readonly<Record<string, unknown>> | null;
   readonly activeResponseHandle?: unknown | null;
 }
@@ -48,6 +61,7 @@ export interface ChatRuntimeHostSessionState {
   readonly transcriptRevision: number;
   readonly selectedMode?: ChatSelectedMode | null;
   readonly providerOptions?: HostSessionProviderOptions | null;
+  readonly currentModel?: ChatRuntimeHostModelSelectionSnapshot | null;
 }
 
 export interface ChatRuntimeHostSessionInventoryMetadata {
@@ -304,6 +318,7 @@ export type ChatRuntimeExecutionWorkerCommandMethod =
 export interface ChatRuntimeExecutionWorkerStartTurnExecutionContext {
   readonly selectedMode?: ChatSelectedMode | null;
   readonly providerOptions?: HostSessionProviderOptions | null;
+  readonly currentModel?: ChatRuntimeHostModelSelectionSnapshot | null;
   readonly transcriptRevision?: number;
 }
 

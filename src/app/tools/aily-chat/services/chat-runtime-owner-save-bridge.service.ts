@@ -63,7 +63,7 @@ export class ChatRuntimeOwnerSaveBridgeService implements ChatRuntimeOwnerSaveBr
       },
       get currentAgentRuntimeMode() { return 'unbound' as const; },
       get currentAgentRuntimeModeSource() { return 'restored' as const; },
-      get currentModel() { return null; },
+      get currentModel() { return service.readRuntimeState(input.sessionId)?.currentModel ?? null; },
       get sessionId() { return input.sessionId; },
       get sessionTitle() { return input.sessionTitle; },
       get lexStream() { return input.lexStream; },

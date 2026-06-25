@@ -1,6 +1,5 @@
 import type {
   IAgentLifecycle,
-  IChatCoordination,
   IChatServiceAccess,
   IProjectContext,
   ISessionAccess,
@@ -18,11 +17,14 @@ type ChatSwitchCoordinatorContext = Pick<
   'isWaiting' | '_pendingModelSwitch' | '_pendingModeSwitch' | '_pendingSwitchSessionId'
 > & Pick<IProjectContext, 'currentModel' | 'currentMode'>
   & Pick<ISessionAccess, 'chatService' | 'conversationMessages' | 'sessionId'>
-  & Pick<IChatServiceAccess, 'contextBudgetService' | 'languageModelsService' | 'message'>
-  & Pick<IChatCoordination, 'lexStream'>;
+  & Pick<IChatServiceAccess, 'contextBudgetService' | 'languageModelsService' | 'message'>;
 
 /**
  * Coordinates model/mode switching and deferred switch application.
+ *
+ * This is a visible-session selection coordinator only. It must not rebuild or
+ * ensure a renderer-local agent; the host/runtime owner reads the saved
+ * selection when the next turn starts.
  */
 export class ChatSwitchCoordinator {
   constructor(private readonly ctx: ChatSwitchCoordinatorContext) {}
@@ -35,7 +37,8 @@ export class ChatSwitchCoordinator {
   }
 
   private readCurrentSessionId(): string | null {
-    const sessionId = typeof this.ctx.chatService.currentSessionId === 'string' && this.ctx.chatService.currentSessionId.trim().length > 0
+    const sessionId = typeof this.ctx.chatService.currentSessionId === 'string'
+      && this.ctx.chatService.currentSessionId.trim().length > 0
       ? this.ctx.chatService.currentSessionId.trim()
       : typeof this.ctx.sessionId === 'string' && this.ctx.sessionId.trim().length > 0
         ? this.ctx.sessionId.trim()
@@ -93,6 +96,14 @@ export class ChatSwitchCoordinator {
   private shouldRefreshLocalEstimate(): boolean {
     const snapshot = this.ctx.contextBudgetService?.getSnapshot();
     return !snapshot || snapshot.currentTokens <= 0 || snapshot.maxContextTokens <= 0;
+  }
+
+  private refreshLocalEstimateIfNeeded(): void {
+    if (!this.shouldRefreshLocalEstimate()) {
+      return;
+    }
+
+    this.ctx.contextBudgetService?.refreshLocalEstimate(this.ctx.conversationMessages);
   }
 
   async switchToModel(model: ModelConfig): Promise<void> {
@@ -239,20 +250,7 @@ export class ChatSwitchCoordinator {
       this.ctx.chatService.saveCurrentCustomAgentTarget(effectiveAgentTarget);
     }
 
-    try {
-      await this.ctx.lexStream.agent.ensureAgent();
-    } catch (err) {
-      console.error('切换智能体失败:', err);
-      this.ctx.chatService.setChatMode('agent', true);
-      return;
-    }
-
-    if (this.shouldRefreshLocalEstimate()) {
-      this.ctx.contextBudgetService?.refreshLocalEstimate(
-        this.ctx.conversationMessages,
-        this.ctx.lexStream.runtime.tools(),
-      );
-    }
+    this.refreshLocalEstimateIfNeeded();
   }
 
   async applyPendingSwitch(sessionId?: string | null): Promise<void> {
@@ -292,20 +290,8 @@ export class ChatSwitchCoordinator {
       return;
     }
 
-    try {
-      await this.ctx.lexStream.agent.ensureAgent();
-    } catch (err) {
-      console.error('切换模型失败:', err);
-      return;
-    }
-
     this.ctx.contextBudgetService?.updateModelContextSize(model);
-    if (this.shouldRefreshLocalEstimate()) {
-      this.ctx.contextBudgetService?.refreshLocalEstimate(
-        this.ctx.conversationMessages,
-        this.ctx.lexStream.runtime.tools(),
-      );
-    }
+    this.refreshLocalEstimateIfNeeded();
   }
 
   private async doSwitchMode(mode: string): Promise<void> {
@@ -316,20 +302,6 @@ export class ChatSwitchCoordinator {
 
     this.ctx.chatService.saveChatMode(normalizedMode);
     this.ctx.chatService.clearCurrentCustomAgentTarget();
-
-    try {
-      await this.ctx.lexStream.agent.ensureAgent();
-    } catch (err) {
-      console.error('切换模式失败:', err);
-      this.ctx.chatService.saveChatMode('agent');
-      return;
-    }
-
-    if (this.shouldRefreshLocalEstimate()) {
-      this.ctx.contextBudgetService?.refreshLocalEstimate(
-        this.ctx.conversationMessages,
-        this.ctx.lexStream.runtime.tools(),
-      );
-    }
+    this.refreshLocalEstimateIfNeeded();
   }
 }

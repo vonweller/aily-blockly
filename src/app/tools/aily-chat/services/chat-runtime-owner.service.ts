@@ -110,6 +110,9 @@ export class ChatRuntimeOwnerService implements ChatRuntimeExecutionWorker, Chat
       ...request,
       sessionId: command.sessionId || request.sessionId,
       activeResponseHandle: command.turnId || request.activeResponseHandle,
+      currentModel: request.currentModel !== undefined
+        ? request.currentModel
+        : command.executionContext?.currentModel ?? null,
     });
     this.projectSubmittedTurnExecutionContext(normalizedRequest);
     return this.startSubmittedTurn(normalizedRequest);
@@ -811,7 +814,8 @@ export class ChatRuntimeOwnerService implements ChatRuntimeExecutionWorker, Chat
   private projectSubmittedTurnExecutionContext(request: ChatRuntimeHostSubmitRequest): void {
     const hasProviderOptions = request.providerOptions !== undefined;
     const hasSelectedMode = request.selectedMode !== undefined;
-    if (!hasProviderOptions && !hasSelectedMode) {
+    const hasCurrentModel = request.currentModel !== undefined;
+    if (!hasProviderOptions && !hasSelectedMode && !hasCurrentModel) {
       return;
     }
 
@@ -821,6 +825,9 @@ export class ChatRuntimeOwnerService implements ChatRuntimeExecutionWorker, Chat
         : {}),
       ...(hasSelectedMode
         ? { selectedMode: request.selectedMode ? normalizeChatSelectedMode(request.selectedMode) : null }
+        : {}),
+      ...(hasCurrentModel
+        ? { currentModel: request.currentModel ?? null }
         : {}),
       debugSummary: {
         ...(hasProviderOptions ? { providerOptionsPresent: !!request.providerOptions } : {}),

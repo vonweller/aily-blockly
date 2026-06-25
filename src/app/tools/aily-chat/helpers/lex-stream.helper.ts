@@ -76,7 +76,7 @@ type AilyLexModule = import('./lex-agent-bootstrap').AilyLexModule;
 export type LexOwnerContext = BootstrapLexAgentContext
   & Pick<IChatCoordination, 'lexStream' | 'syncCustomAgentProviderSource' | 'syncCustomAgentProviderModes' | 'syncRegisteredAgentNames'>
   & Pick<IChatServiceAccess, 'runtimeInteractionHost'>
-  & Pick<ISessionAccess, 'sessionTitle' | 'chatService'>
+  & Pick<ISessionAccess, 'sessionTitle'>
   & {
     buildExecutionSaveTarget?(sessionId: string | null | undefined): HostSessionSaveTarget | null;
     resolveActiveRuntimeSessionId?(): string | null | undefined;
@@ -431,34 +431,7 @@ export class LexOwnerFacade {
           return runtimeScopedTarget;
         }
 
-        const chatService = this.ctx.chatService;
-        if (!chatService) {
-          return null;
-        }
-
-        const sessionTitleCandidate = typeof chatService.readCurrentSessionTitleCandidate === 'function'
-          ? chatService.readCurrentSessionTitleCandidate()
-          : {
-            text: this.ctx.sessionTitle || '',
-            source: chatService.currentSessionTitleSource,
-            revision: chatService.currentSessionTitleRevision,
-          };
-
-        return {
-          sessionId: targetSessionId,
-          sessionTitleCandidate,
-          sessionType: chatService.currentSessionType,
-          providerOptions: {
-            folderPath: chatService.currentSessionPath || null,
-            permissionMode: chatService.currentSessionPermissionMode,
-            ...(chatService.currentSessionPermissionLevel
-              ? { permissionLevel: chatService.currentSessionPermissionLevel }
-              : {}),
-          },
-          selectedMode: chatService.selectedMode,
-          resolvedMode: chatService.currentResolvedMode,
-          model: this.ctx.currentModel ? { ...this.ctx.currentModel } : null,
-        };
+        return null;
       },
       (sessionId) => agentLifecycleBridge.saveSession(sessionId),
       (sessionId) => {

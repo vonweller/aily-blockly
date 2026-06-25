@@ -1,4 +1,8 @@
 import type { LexOwnerContext } from '../helpers/lex-stream.helper';
+import type {
+  ChatRuntimeOwnerContextBudgetPort,
+  ChatRuntimeOwnerEditCheckpointPort,
+} from './chat-runtime-owner-context-capabilities';
 
 export interface ChatRuntimeOwnerContextAdapter {
   sessionId: any;
@@ -14,11 +18,10 @@ export interface ChatRuntimeOwnerContextCoreServices {
   readonly currentAgentRuntimeMode: any;
   readonly currentAgentRuntimeModeSource: any;
   readonly sessionTitle: string | null | undefined;
-  readonly chatService: any;
   readonly ailyChatConfigService: any;
   readonly mcpService: any;
   readonly runtimeInteractionHost: any;
-  readonly editCheckpointService: any;
+  readonly editCheckpointService: ChatRuntimeOwnerEditCheckpointPort;
   readonly ownerScheduler: any;
   readonly viewRequests: any;
   readonly list: any;
@@ -27,7 +30,7 @@ export interface ChatRuntimeOwnerContextCoreServices {
   readonly scrollManager: any;
   readonly currentMessageSource: any;
   readonly toolCallingIteration: any;
-  readonly contextBudgetService: any;
+  readonly contextBudgetService: ChatRuntimeOwnerContextBudgetPort;
   readonly isWaiting: any;
   readonly isCompleted: any;
   readonly repetitionDetectionService: any;
@@ -115,7 +118,6 @@ export function createChatRuntimeOwnerContext(
       services.selectAgentRuntimeMode(mode, source, reason, resolveDefaultRuntimeSessionId()),
     get sessionId() { return adapter.sessionId; },
     get sessionTitle() { return services.sessionTitle; },
-    get chatService() { return services.chatService; },
     get currentSessionPath() { return services.currentSessionPath(adapter.sessionId); },
     get currentSessionPermissionMode() { return services.currentSessionPermissionMode(adapter.sessionId); },
     get currentSessionApprovalsReviewer() { return services.currentSessionApprovalsReviewer(adapter.sessionId); },

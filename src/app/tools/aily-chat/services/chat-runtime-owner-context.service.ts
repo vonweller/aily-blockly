@@ -4,9 +4,6 @@ import type { LexOwnerContext } from '../helpers/lex-stream.helper';
 import { ChatPartStore } from '../core/chat-part-store';
 import type { ChatMessage } from '../core/chat-types';
 import { AilyChatConfigService } from './aily-chat-config.service';
-import { ChatService } from './chat.service';
-import { ContextBudgetService } from './context-budget.service';
-import { EditCheckpointService } from './edit-checkpoint.service';
 import { McpService } from './mcp.service';
 import { RepetitionDetectionService } from './repetition-detection.service';
 import {
@@ -17,6 +14,10 @@ import {
   type ChatRuntimeOwnerContextAdapter,
 } from './chat-runtime-owner-context-core';
 import {
+  CHAT_RUNTIME_OWNER_CONTEXT_BUDGET,
+  type ChatRuntimeOwnerContextBudgetPort,
+  CHAT_RUNTIME_OWNER_EDIT_CHECKPOINT,
+  type ChatRuntimeOwnerEditCheckpointPort,
   CHAT_RUNTIME_OWNER_INTERACTION_HOST,
   type ChatRuntimeOwnerInteractionHostPort,
   CHAT_RUNTIME_OWNER_RUNTIME_CONTROLLER,
@@ -48,15 +49,18 @@ export type { ChatRuntimeOwnerContextAdapter } from './chat-runtime-owner-contex
 
 @Injectable()
 export class ChatRuntimeOwnerContextService implements ChatRuntimeOwnerContextMaterializerPort, OnDestroy {
-  private readonly chatService = inject(ChatService);
   private readonly ailyChatConfigService = inject(AilyChatConfigService);
   private readonly mcpService = inject(McpService);
   private readonly runtimeInteractionHost = inject<ChatRuntimeOwnerInteractionHostPort>(
     CHAT_RUNTIME_OWNER_INTERACTION_HOST,
   );
-  private readonly editCheckpointService = inject(EditCheckpointService);
+  private readonly editCheckpointService = inject<ChatRuntimeOwnerEditCheckpointPort>(
+    CHAT_RUNTIME_OWNER_EDIT_CHECKPOINT,
+  );
   private readonly ownerScheduler = inject<ChatRuntimeOwnerSchedulerPort>(CHAT_RUNTIME_OWNER_SCHEDULER);
-  private readonly contextBudgetService = inject(ContextBudgetService);
+  private readonly contextBudgetService = inject<ChatRuntimeOwnerContextBudgetPort>(
+    CHAT_RUNTIME_OWNER_CONTEXT_BUDGET,
+  );
   private readonly repetitionDetectionService = inject(RepetitionDetectionService);
   private readonly runtimeController = inject<ChatRuntimeOwnerRuntimeControllerPort>(CHAT_RUNTIME_OWNER_RUNTIME_CONTROLLER);
   private readonly ownerState = inject<ChatRuntimeOwnerStatePort>(CHAT_RUNTIME_OWNER_STATE);
@@ -118,7 +122,6 @@ export class ChatRuntimeOwnerContextService implements ChatRuntimeOwnerContextMa
         selectAgentRuntimeMode: (mode, source, reason, sessionId) =>
           service.ownerSessionContext.selectAgentRuntimeMode(mode, source, reason, sessionId),
         get sessionTitle() { return service.ownerSessionContext.sessionTitle; },
-        get chatService() { return service.chatService; },
         currentSessionPath: sessionId => service.ownerSessionContext.currentSessionPath(sessionId),
         currentSessionPermissionMode: sessionId => service.ownerSessionContext.currentSessionPermissionMode(sessionId),
         currentSessionApprovalsReviewer: sessionId => service.ownerSessionContext.currentSessionApprovalsReviewer(sessionId),
