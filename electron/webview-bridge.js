@@ -252,87 +252,96 @@ async function loadUrlWithTimeout(win, url, timeoutMs, operationLabel = "loadURL
   };
   logBridgeInfo("starting bridge navigation", meta);
 
-  await Promise.race([
-    new Promise((resolve, reject) => {
-      let settled = false;
-      const cleanup = () => {
-        win.webContents.removeListener("did-finish-load", onFinish);
-        win.webContents.removeListener("did-fail-load", onFail);
-        win.webContents.removeListener("render-process-gone", onGone);
-        win.removeListener("unresponsive", onUnresponsive);
-        win.removeListener("closed", onClosed);
-      };
-      const settleReject = (error) => {
-        if (settled) {
-          return;
-        }
-        settled = true;
-        cleanup();
-        reject(error);
-      };
-      const onFinish = () => {
-        if (settled) {
-          return;
-        }
-        settled = true;
-        cleanup();
-        logBridgeInfo("bridge navigation finished", {
-          ...meta,
-          finalUrl: getSafeUrl(win),
-        });
-        resolve();
-      };
-      const onFail = (_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
-        if (!isMainFrame || settled) {
-          return;
-        }
-        logBridgeWarn("bridge navigation failed", {
-          ...meta,
-          errorCode,
-          errorDescription,
-          validatedUrl,
-        });
-        settleReject(new Error(`Load failed (${errorCode}): ${errorDescription || validatedUrl || url}`));
-      };
-      const onGone = (_event, details) => {
-        logBridgeError("bridge renderer process gone during navigation", {
-          ...meta,
-          reason: details?.reason,
-          exitCode: details?.exitCode,
-        });
-        settleReject(
-          new Error(`Bridge renderer process gone during ${operationLabel}: ${details?.reason || "unknown"}`),
-        );
-      };
-      const onUnresponsive = () => {
-        logBridgeError("bridge window unresponsive during navigation", meta);
-        settleReject(new Error(`Bridge window became unresponsive during ${operationLabel}`));
-      };
-      const onClosed = () => {
-        logBridgeWarn("bridge window closed during navigation", meta);
-        settleReject(new Error(`Bridge window closed during ${operationLabel}`));
-      };
-
-      win.webContents.once("did-finish-load", onFinish);
-      win.webContents.on("did-fail-load", onFail);
-      win.webContents.once("render-process-gone", onGone);
-      win.once("unresponsive", onUnresponsive);
-      win.once("closed", onClosed);
-      void win.loadURL(url).catch(error => {
-        logBridgeError("bridge loadURL threw", {
-          ...meta,
-          error: describeError(error),
-        });
-        settleReject(error);
+  await new Promise((resolve, reject) => {
+    let settled = false;
+    let timeoutHandle = null;
+    const cleanup = () => {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+        timeoutHandle = null;
+      }
+      win.webContents.removeListener("did-finish-load", onFinish);
+      win.webContents.removeListener("did-fail-load", onFail);
+      win.webContents.removeListener("render-process-gone", onGone);
+      win.removeListener("unresponsive", onUnresponsive);
+      win.removeListener("closed", onClosed);
+    };
+    const settleResolve = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      resolve();
+    };
+    const settleReject = (error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+    const onFinish = () => {
+      logBridgeInfo("bridge navigation finished", {
+        ...meta,
+        finalUrl: getSafeUrl(win),
       });
-    }),
-    new Promise((_, reject) => {
-      setTimeout(() => {
-        logBridgeWarn("bridge navigation timed out", meta);
-        reject(new Error(`webview bridge timed out after ${timeoutMs}ms`));
-      }, timeoutMs);
-    }),
-  ]);
+      settleResolve();
+    };
+    const onFail = (_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
+      if (!isMainFrame || settled) {
+        return;
+      }
+      logBridgeWarn("bridge navigation failed", {
+        ...meta,
+        errorCode,
+        errorDescription,
+        validatedUrl,
+      });
+      settleReject(new Error(`Load failed (${errorCode}): ${errorDescription || validatedUrl || url}`));
+    };
+    const onGone = (_event, details) => {
+      logBridgeError("bridge renderer process gone during navigation", {
+        ...meta,
+        reason: details?.reason,
+        exitCode: details?.exitCode,
+      });
+      settleReject(
+        new Error(`Bridge renderer process gone during ${operationLabel}: ${details?.reason || "unknown"}`),
+      );
+    };
+    const onUnresponsive = () => {
+      logBridgeError("bridge window unresponsive during navigation", meta);
+      settleReject(new Error(`Bridge window became unresponsive during ${operationLabel}`));
+    };
+    const onClosed = () => {
+      logBridgeWarn("bridge window closed during navigation", meta);
+      settleReject(new Error(`Bridge window closed during ${operationLabel}`));
+    };
+    const onTimeout = () => {
+      if (settled) {
+        return;
+      }
+      logBridgeWarn("bridge navigation timed out", meta);
+      settleReject(new Error(`webview bridge timed out after ${timeoutMs}ms`));
+      destroyBridgeWindow(win, "navigation-timeout", meta);
+    };
+
+    timeoutHandle = setTimeout(onTimeout, timeoutMs);
+    win.webContents.once("did-finish-load", onFinish);
+    win.webContents.on("did-fail-load", onFail);
+    win.webContents.once("render-process-gone", onGone);
+    win.once("unresponsive", onUnresponsive);
+    win.once("closed", onClosed);
+    void win.loadURL(url).catch(error => {
+      logBridgeError("bridge loadURL threw", {
+        ...meta,
+        error: describeError(error),
+      });
+      settleReject(error);
+    });
+  });
 }
 
 async function withBridgeWindow(task) {

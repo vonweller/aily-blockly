@@ -799,6 +799,8 @@ export function buildExternalHostAPI(
       delete: (path: string) =>
         Promise.resolve(host.fs.unlinkSync(path)),
     },
+    path: host.path,
+    fsp: (window as any)?.electronAPI?.fsp,
     terminal,
     platform: {
         type: resolvePlatformType(host.platform?.type, host.platform?.isWindows, host.platform?.isMacOS),
