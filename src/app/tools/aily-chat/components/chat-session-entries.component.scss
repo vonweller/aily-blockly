@@ -246,11 +246,8 @@ $session-activity-slot-offset: $session-activity-slot-width + $session-activity-
 }
 
 .session-list-item-title {
-  display: -webkit-box;
-  line-height: 1.4;
-  white-space: normal;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .session-picker-title {

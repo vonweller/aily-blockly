@@ -254,7 +254,9 @@
         }
         }
     </div>
-    @if (paneStageSurface.showSender) {
+    @if (vm.showSettings) {
+    <aily-chat-settings (close)="closeSettings()" (saved)="closeSettings()"></aily-chat-settings>
+    } @else if (paneStageSurface.showSender) {
     <!-- 发送部分 -->
     <div class="sender">
       @if (paneStageSurface.showConversation && scrollManager.showFollowBottomButton) {
@@ -717,9 +719,6 @@
         </aily-chat-input-part-host>
       </div>
     </div>
-    }
-    @if(vm.showSettings){
-    <aily-chat-settings (close)="closeSettings()" (saved)="closeSettings()"></aily-chat-settings>
     }
       </div>
     </div>
