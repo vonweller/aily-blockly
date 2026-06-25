@@ -368,7 +368,6 @@ export class ProjectRelatedFileStorage {
       `Reference related content when it may help with the current ${scopeLabel}.`,
       `The following related-files entries are attached reference materials for the current ${scopeLabel}.`,
       'Treat related-files as the project\'s attached reference context.',
-      'Related-files are distinct from memory notes. Do not use memory files or the memory tool to satisfy requests about these attached references unless the user explicitly asks for memory.',
       'Requests to read, inspect, summarize, or compare attached references or their links refer to these entries.',
       ...(hasLinkEntries
         ? ['For link entries, fetch the URL when their contents are needed.']

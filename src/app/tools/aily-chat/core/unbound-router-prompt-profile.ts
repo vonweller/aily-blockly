@@ -5,7 +5,6 @@ import {
   appendStandardPromptEnv,
   collectRuntimePromptFileContext,
 } from './runtime-prompt-shared';
-import { buildProjectRelatedFilesPromptText } from '../components/memory/project-related-file-prompt';
 
 export const UNBOUND_ROUTER_REQUIRED_CONTEXT = {
   scopes: ['workspaceIdentity', 'projectInfo', 'boardInfo'],
@@ -65,13 +64,6 @@ export const UNBOUND_ROUTER_PROMPT_PROFILE: IPromptProfile = {
 
     const fileContext = collectRuntimePromptFileContext(host, []);
     const platformType = appendStandardPromptEnv(envExtra, host, fileContext);
-    const projectRelatedContentPrompt = buildProjectRelatedFilesPromptText(
-      'project',
-      projectPath || undefined,
-    );
-    if (projectRelatedContentPrompt) {
-      envExtra.push(projectRelatedContentPrompt);
-    }
 
     return {
       platform: platformType,
