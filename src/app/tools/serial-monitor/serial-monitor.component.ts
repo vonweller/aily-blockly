@@ -471,6 +471,8 @@ export class SerialMonitorComponent {
   portList: PortItem[] = []
   boardKeywords = []; // 这个用来高亮显示正确开发板，如['arduino uno']，则端口菜单中如有包含'arduino uno'的串口则高亮显示
   position = { x: 0, y: 0 }; // 右键菜单位置
+  private portListGeneration = 0;
+
   openPortList(el) {
     // console.log(el.srcElement);
     // 获取元素左下角位置
@@ -482,12 +484,34 @@ export class SerialMonitorComponent {
       let boardname = this.currentBoard.replace(' 2560', ' ').replace(' R3', '');
       this.boardKeywords = [boardname];
     }
-    this.getDevicePortList();
+    if (this.portList.length === 0) {
+      this.portList = [
+        {
+          name: 'Loading...',
+          text: '',
+          type: 'serial',
+          icon: 'fa-light fa-spinner',
+          disabled: true,
+        }
+      ];
+    }
     this.showPortList = true;
+    this.getDevicePortList();
   }
 
   async getDevicePortList() {
-    let ports = await this.serialService.getSerialPorts();
+    const generation = ++this.portListGeneration;
+    let ports: PortItem[] = [];
+    try {
+      ports = await this.serialService.getSerialPorts();
+    } catch (error) {
+      console.warn('获取串口列表失败:', error);
+    }
+
+    if (generation !== this.portListGeneration) {
+      return;
+    }
+
     if (ports && ports.length > 0) {
       this.portList = ports;
     } else {
@@ -501,6 +525,7 @@ export class SerialMonitorComponent {
         }
       ]
     }
+    this.cd.detectChanges();
   }
 
   closePortList() {
