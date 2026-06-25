@@ -16,6 +16,7 @@ import { GitWorkspaceCheckpointProviderService } from './services/git-workspace-
 import { MenuManagerService } from './services/menu-manager.service';
 import { ResourceManagerService } from './services/resource-manager.service';
 import { ScrollManagerService } from './services/scroll-manager.service';
+import { AilyChatChildProtocolService } from './services/aily-chat-child-protocol.service';
 
 // Background-session alignment: these owners must outlive the chat pane component.
 export const AILY_CHAT_RUNTIME_PROVIDERS: Provider[] = [
@@ -35,4 +36,5 @@ export const AILY_CHAT_RUNTIME_PROVIDERS: Provider[] = [
   GitWorkspaceCheckpointProviderService,
   ChatEngineService,
   ChatRuntimeInteractionHostService,
+  AilyChatChildProtocolService,
 ];

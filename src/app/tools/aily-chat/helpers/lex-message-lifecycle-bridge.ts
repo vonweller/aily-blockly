@@ -1,7 +1,6 @@
 import type { IAgentLifecycle, IChatCoordination, IChatServiceAccess } from '../core/chat-context';
 import type { ChatPart } from '../core/chat-parts';
 import type { TurnResponseStatus, TurnResponseTurn } from 'aily-lex/browser';
-import { AilyHost } from '../core/host';
 import type { ChatListItem } from '../services/chat-history.service';
 import type { HostSessionSaveTarget } from './host-session-save-bridge';
 import { ChatViewWriteBridge } from './chat-view-write-bridge';
@@ -9,6 +8,7 @@ import type { ChatMessageHandle } from './chat-message-handle';
 import { findChatMessageHandleByMessage } from './chat-message-handle';
 import { yieldToBrowserFrame, yieldToBrowserIdle, yieldToBrowserTask } from '../tools/browserTaskScheduler';
 import { isAilyCategoryDebugEnabled } from '../core/chat-debug-flags';
+import { notifyAilyChatIfBackground } from './user-feedback-notify.helper';
 
 type LexMessageLifecycleViewWriteContext = ConstructorParameters<typeof ChatViewWriteBridge>[0];
 
@@ -294,9 +294,7 @@ export class LexMessageLifecycleBridge {
       this.ctx.syncExecutionRuntimeState?.(deferredSaveTarget);
       logDeferredStage('save_session_dispatch');
 
-      if (!AilyHost.get().electron?.isWindowFocused()) {
-        AilyHost.get().electron?.notify('Aily', '对话已完成');
-      }
+      notifyAilyChatIfBackground('Aily', '对话已完成');
       logDeferredStage('notify_if_needed');
 
       await this.ctx.applyPendingSwitch(deferredSaveTarget?.sessionId);

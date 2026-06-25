@@ -1397,8 +1397,18 @@ export class ChatEngineService implements IChatContext {
   }
 
   get dialogItems(): ChatDialogViewItem[] {
+    return this.readDialogItems(false);
+  }
+
+  /** Bypass cached dialog items — used by child-protocol snapshots during streaming. */
+  readLiveDialogItemsForSnapshot(): ChatDialogViewItem[] {
+    return this.readDialogItems(true);
+  }
+
+  private readDialogItems(invalidateCache: boolean): ChatDialogViewItem[] {
     const hostResponseProjection = this.hostResponseProjection;
-    if (this.dialogItemsCache
+    if (!invalidateCache
+      && this.dialogItemsCache
       && this.dialogItemsCache.projection === hostResponseProjection) {
       return this.dialogItemsCache.items;
     }

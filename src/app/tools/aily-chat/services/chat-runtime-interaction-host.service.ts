@@ -5,6 +5,7 @@ import { AilyHost } from '../core/host';
 import type { IFileWatchHandle } from '../core/host-api';
 import type { ToolApprovalAction, ToolApprovalRequest, ToolApprovalScope } from '../helpers/tool-approval-ui';
 import { resolveBlocklyArtifactReferenceTarget } from '../helpers/chat-artifact-reference';
+import { notifyAwaitingUserFeedbackIfBackground } from '../helpers/user-feedback-notify.helper';
 import {
   stopBlocklyCommandSession,
   type BlocklyCommandSessionSnapshot,
@@ -230,6 +231,7 @@ export class ChatRuntimeInteractionHostService {
           },
         },
       });
+      notifyAwaitingUserFeedbackIfBackground('Aily', '有问题需要你回答');
     });
   }
 
@@ -432,6 +434,7 @@ export class ChatRuntimeInteractionHostService {
       });
 
       this.installPlanReviewFileSync(sessionId, review.id, review.planUri);
+      notifyAwaitingUserFeedbackIfBackground('Aily', '计划已生成，等待你的审核');
     });
   }
 
@@ -553,6 +556,7 @@ export class ChatRuntimeInteractionHostService {
     return new Promise<RuntimeConfirmationDecision>((resolve) => {
       const currentQueues = this._confirmationEntries();
       const currentQueue = currentQueues[sessionId] ?? [];
+      const isNewEntry = !currentQueue.some((item) => item.id === entry.id);
       const nextQueue = currentQueue.filter((item) => item.id !== entry.id).concat({
         ...entry,
         resolve,
@@ -567,6 +571,13 @@ export class ChatRuntimeInteractionHostService {
         ...this._confirmationActiveIndices(),
         [sessionId]: nextQueue.length - 1,
       });
+
+      if (isNewEntry) {
+        notifyAwaitingUserFeedbackIfBackground(
+          'Aily',
+          entry.kind === 'approval' ? '有操作需要你确认' : '需要你完成一项确认',
+        );
+      }
     });
   }
 

@@ -36,6 +36,7 @@ import { isChildTool } from '../configs/tool.config';
 import { LibManagerToolComponent } from '../tools/lib-manager-tool/lib-manager-tool.component';
 import { ModeWelcomeComponent } from '../components/mode-welcome/mode-welcome.component';
 import type { DevelopmentModePreference } from '../services/config.service';
+import { AilyChatChildProtocolService } from '../tools/aily-chat/services/aily-chat-child-protocol.service';
 
 @Component({
   selector: 'app-main-window',
@@ -118,7 +119,8 @@ export class MainWindowComponent {
     private router: Router,
     private configService: ConfigService,
     private modal: NzModalService,
-    private onboardingService: OnboardingService
+    private onboardingService: OnboardingService,
+    private readonly ailyChatChildProtocol: AilyChatChildProtocolService
   ) { }
 
   ngOnInit(): void {
