@@ -194,6 +194,61 @@ function centerSubWindowOnMainDisplay(subWindow, mainWin, width, height) {
     }
 }
 
+function clampNumber(value, min, max) {
+    return Math.min(Math.max(value, min), max);
+}
+
+function setCurrentWindowSize(senderWindow, requestedWidth, requestedHeight) {
+    if (!senderWindow || senderWindow.isDestroyed()) {
+        return { success: false, error: 'window-not-found' };
+    }
+
+    const width = Math.round(Number(requestedWidth));
+    const height = Math.round(Number(requestedHeight));
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+        return { success: false, error: 'invalid-size' };
+    }
+
+    const display = screen.getDisplayMatching(senderWindow.getBounds());
+    const workArea = display.workArea;
+    const [minWidth, minHeight] = senderWindow.getMinimumSize();
+    const nextWidth = clampNumber(width, minWidth || 1, workArea.width);
+    const nextHeight = clampNumber(height, minHeight || 1, workArea.height);
+    const currentBounds = senderWindow.getBounds();
+    const centerX = currentBounds.x + currentBounds.width / 2;
+    const centerY = currentBounds.y + currentBounds.height / 2;
+    const nextX = clampNumber(
+        Math.round(centerX - nextWidth / 2),
+        workArea.x,
+        workArea.x + workArea.width - nextWidth
+    );
+    const nextY = clampNumber(
+        Math.round(centerY - nextHeight / 2),
+        workArea.y,
+        workArea.y + workArea.height - nextHeight
+    );
+
+    if (senderWindow.isFullScreen()) {
+        senderWindow.setFullScreen(false);
+    }
+    if (senderWindow.isMaximized()) {
+        senderWindow.unmaximize();
+    }
+
+    senderWindow.setBounds({
+        x: nextX,
+        y: nextY,
+        width: nextWidth,
+        height: nextHeight,
+    });
+
+    return {
+        success: true,
+        requested: { width, height },
+        bounds: senderWindow.getBounds(),
+    };
+}
+
 function terminateAilyProcess() {
     console.info('[PROC_TRACE][APP_NAME_KILL_DISABLED]');
 }
@@ -551,6 +606,11 @@ function registerWindowHandlers(mainWindow) {
         if (senderWindow && !senderWindow.isMaximized()) {
             senderWindow.maximize();
         }
+    });
+
+    ipcMain.handle("window-set-size", (event, data = {}) => {
+        const senderWindow = BrowserWindow.fromWebContents(event.sender);
+        return setCurrentWindowSize(senderWindow, data.width, data.height);
     });
 
     ipcMain.on("window-close", (event) => {
