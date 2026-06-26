@@ -448,7 +448,7 @@
         "TYPE_BUILD_UPLOAD": "빌드/업로드 문제",
         "TYPE_LIBRARY": "라이브러리 문제",
         "LIBRARY_NAME_PLACEHOLDER": "<라이브러리 이름>",
-        "LIBRARY_ISSUE_CONTENT": "라이브러리 이름: {{name}}\n\n발생한 문제를 설명해 주세요:",
+        "LIBRARY_ISSUE_CONTENT": "라이브러리 이름: {{name}}\n\n발생한 문제를 설명해 주세요:\n",
         "TYPE_OTHER": "기타 문제",
         "TYPE_FEATURE": "기능 제안",
         "TITLE_LABEL": "제목",

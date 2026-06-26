@@ -511,7 +511,7 @@
         "TYPE_BUILD_UPLOAD": "Build/Upload Issue",
         "TYPE_LIBRARY": "Library Issue",
         "LIBRARY_NAME_PLACEHOLDER": "<Library name>",
-        "LIBRARY_ISSUE_CONTENT": "Library name: {{name}}\n\nPlease describe the issue you encountered:",
+        "LIBRARY_ISSUE_CONTENT": "Library name: {{name}}\n\nPlease describe the issue you encountered:\n",
         "TYPE_OTHER": "Other Issue",
         "TYPE_FEATURE": "Feature Suggestion",
         "TITLE_LABEL": "Title",

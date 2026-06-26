@@ -460,7 +460,7 @@
         "TYPE_BUILD_UPLOAD": "Problema de compilação/upload",
         "TYPE_LIBRARY": "Problema de biblioteca",
         "LIBRARY_NAME_PLACEHOLDER": "<Nome da biblioteca>",
-        "LIBRARY_ISSUE_CONTENT": "Nome da biblioteca: {{name}}\n\nDescreva o problema encontrado:",
+        "LIBRARY_ISSUE_CONTENT": "Nome da biblioteca: {{name}}\n\nDescreva o problema encontrado:\n",
         "TYPE_OTHER": "Outro problema",
         "TYPE_FEATURE": "Sugestão de recurso",
         "TITLE_LABEL": "Título",

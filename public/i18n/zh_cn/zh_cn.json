@@ -506,7 +506,7 @@
         "TYPE_BUILD_UPLOAD": "编译/上传问题",
         "TYPE_LIBRARY": "库问题",
         "LIBRARY_NAME_PLACEHOLDER": "<库名称>",
-        "LIBRARY_ISSUE_CONTENT": "库名称：{{name}}\n\n请描述你遇到的问题：",
+        "LIBRARY_ISSUE_CONTENT": "库名称：{{name}}\n\n请描述你遇到的问题：\n",
         "TYPE_OTHER": "其他问题",
         "TYPE_FEATURE": "功能建议",
         "TITLE_LABEL": "标题",

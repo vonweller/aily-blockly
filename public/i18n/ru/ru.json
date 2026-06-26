@@ -460,7 +460,7 @@
         "TYPE_BUILD_UPLOAD": "Проблема сборки/загрузки",
         "TYPE_LIBRARY": "Проблема библиотеки",
         "LIBRARY_NAME_PLACEHOLDER": "<Имя библиотеки>",
-        "LIBRARY_ISSUE_CONTENT": "Имя библиотеки: {{name}}\n\nОпишите возникшую проблему:",
+        "LIBRARY_ISSUE_CONTENT": "Имя библиотеки: {{name}}\n\nОпишите возникшую проблему:\n",
         "TYPE_OTHER": "Другая проблема",
         "TYPE_FEATURE": "Предложение функции",
         "TITLE_LABEL": "Заголовок",

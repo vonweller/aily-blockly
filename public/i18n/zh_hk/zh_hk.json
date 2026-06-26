@@ -460,7 +460,7 @@
         "TYPE_BUILD_UPLOAD": "編譯/上傳問題",
         "TYPE_LIBRARY": "庫問題",
         "LIBRARY_NAME_PLACEHOLDER": "<庫名稱>",
-        "LIBRARY_ISSUE_CONTENT": "庫名稱：{{name}}\n\n請描述你遇到的問題：",
+        "LIBRARY_ISSUE_CONTENT": "庫名稱：{{name}}\n\n請描述你遇到的問題：\n",
         "TYPE_OTHER": "其他問題",
         "TYPE_FEATURE": "功能建議",
         "TITLE_LABEL": "標題",
