@@ -21,6 +21,7 @@
 import type { IPromptProfile, IPromptSection } from 'aily-lex/types/prompt';
 import { PromptLayer } from 'aily-lex/types/prompt';
 import { AilyHost } from './host';
+import { readChatRuntimeWorkspaceEnvironment } from './chat-runtime-workspace-environment';
 import { getBlocklyContextSnapshotService } from './blockly-context-snapshot-service';
 import {
   appendStandardPromptEnv,
@@ -136,6 +137,8 @@ export const CODER_PROMPT_PROFILE: IPromptProfile = {
   cacheBreakpoint: PromptLayer.HostDomain,
   getContext: async () => {
     const host = AilyHost.get();
+    const workspaceEnvironment = readChatRuntimeWorkspaceEnvironment();
+    const promptProjectPath = workspaceEnvironment.projectPath;
     const contextSnapshotService = getBlocklyContextSnapshotService();
     const envExtra = [...await contextSnapshotService.getSummary({
       scopes: CODER_MAIN_AGENT_REQUIRED_CONTEXT.scopes,
@@ -146,17 +149,19 @@ export const CODER_PROMPT_PROFILE: IPromptProfile = {
     const platformType = appendStandardPromptEnv(envExtra, host, fileContext);
     const projectRelatedContentPrompt = buildProjectRelatedFilesPromptText(
       'project',
-      host.project?.currentProjectPath,
+      promptProjectPath,
     );
     if (projectRelatedContentPrompt) {
       envExtra.push(projectRelatedContentPrompt);
     }
 
-    const sessionRelatedContentPrompt = buildProjectRelatedFilesPromptText(
-      'session',
-      host.project?.currentProjectPath,
-      undefined,
-    );
+    const sessionRelatedContentPrompt = workspaceEnvironment.currentSessionId
+      ? buildProjectRelatedFilesPromptText(
+        'session',
+        promptProjectPath,
+        workspaceEnvironment.currentSessionId,
+      )
+      : '';
     if (sessionRelatedContentPrompt) {
       envExtra.push(sessionRelatedContentPrompt);
     }

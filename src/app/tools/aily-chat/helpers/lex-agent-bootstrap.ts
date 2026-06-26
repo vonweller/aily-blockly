@@ -8,6 +8,7 @@
 
 import type { IChatCoordination, IChatServiceAccess, IProjectContext, ISessionAccess } from '../core/chat-context';
 import { AilyHost } from '../core/host';
+import { setChatRuntimeWorkspaceEnvironmentOverride } from '../core/chat-runtime-workspace-environment';
 import { isAilyCategoryDebugEnabled } from '../core/chat-debug-flags';
 import {
   normalizeChatSessionPermissionMode,
@@ -1615,6 +1616,11 @@ export function bootstrapBlocklyLexAgent(
 ): BlocklyLexAgentInstance {
   const { ctx, lex, sessionId, askHandler, metrics } = options;
   const cwd = resolveLexRuntimeCwd(ctx);
+  const runtimeSessionId = (sessionId || ctx.sessionId || '').trim();
+  setChatRuntimeWorkspaceEnvironmentOverride({
+    cwd,
+    sessionId: runtimeSessionId,
+  });
   const agentRuntimeMode = normalizeChatAgentRuntimeMode(
     options.runtimeMode ?? ctx.currentAgentRuntimeMode,
     cwd ? 'coder' : 'unbound',
@@ -1622,7 +1628,6 @@ export function bootstrapBlocklyLexAgent(
   const promptProfile = resolveRuntimePromptProfile(agentRuntimeMode);
   const requiredContext = resolveRuntimeRequiredContext(agentRuntimeMode);
   const subagentRequiredContext = createSubagentRequiredContext(requiredContext);
-  const runtimeSessionId = (sessionId || ctx.sessionId || '').trim();
   const isRuntimeSessionStale = () => {
     const currentSessionId = (ctx.sessionId || '').trim();
     return runtimeSessionId.length > 0
