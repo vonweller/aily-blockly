@@ -55,9 +55,7 @@ export function projectTurnResponsesToHistory(
         .readCurrentViewSessionResource?.();
       return typeof viewResource === 'string' ? viewResource.trim() : '';
     },
-    get chatHistoryService() {
-      return ctx.chatHistoryService;
-    },
+    markHistoryDirty: (sessionId) => ctx.markHistoryDirty(sessionId),
     get currentModelName() {
       return ctx.currentModelName;
     },

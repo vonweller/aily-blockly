@@ -107,6 +107,75 @@ export function createChatAgentRuntimeModeConfigKey(mode: ChatAgentRuntimeMode):
   return `agent-runtime:${mode}`;
 }
 
+export function extractChatAgentRuntimeModeFromConfigKey(
+  configKey: string | null | undefined,
+): ChatAgentRuntimeMode | undefined {
+  if (typeof configKey !== 'string' || configKey.trim().length === 0) {
+    return undefined;
+  }
+
+  const match = configKey.match(/(?:^|::)agent-runtime:([^:]+)/);
+  return normalizeOptionalChatAgentRuntimeMode(match?.[1]);
+}
+
+export interface ChatAgentRuntimeModelConfigLike {
+  readonly model?: unknown;
+  readonly presetId?: unknown;
+  readonly reasoningEffort?: unknown;
+  readonly contextWindowTokens?: unknown;
+  readonly providerContextManagementSupport?: unknown;
+  readonly isCustom?: unknown;
+  readonly baseUrl?: unknown;
+  readonly apiKeyId?: unknown;
+}
+
+export function createChatAgentModelConfigKey(model: ChatAgentRuntimeModelConfigLike | null | undefined): string {
+  const segment = (value: unknown, fallback = ''): string => {
+    if (typeof value === 'string') {
+      return value.trim() || fallback;
+    }
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return String(value);
+    }
+    if (typeof value === 'boolean') {
+      return value ? 'true' : 'false';
+    }
+    if (value && typeof value === 'object') {
+      try {
+        return JSON.stringify(value);
+      } catch {
+        return fallback;
+      }
+    }
+    return fallback;
+  };
+  const encode = (value: unknown, fallback = ''): string => encodeURIComponent(segment(value, fallback));
+  return [
+    'agent-model',
+    `model=${encode(model?.model, 'default')}`,
+    `preset=${encode(model?.presetId)}`,
+    `reasoning=${encode(model?.reasoningEffort)}`,
+    `context=${encode(model?.contextWindowTokens)}`,
+    `custom=${encode(model?.isCustom, 'false')}`,
+    `base=${encode(model?.baseUrl)}`,
+    `key=${encode(model?.apiKeyId)}`,
+    `context-management=${encode(model?.providerContextManagementSupport)}`,
+  ].join(':');
+}
+
+export function createChatAgentRuntimeConfigKey(
+  providerOptionsKey: string,
+  runtimeMode: unknown,
+  model?: ChatAgentRuntimeModelConfigLike | null,
+): string {
+  const runtimeKey = providerOptionsKey.includes('::agent-runtime:')
+    ? providerOptionsKey
+    : `${providerOptionsKey}::${createChatAgentRuntimeModeConfigKey(normalizeChatAgentRuntimeMode(runtimeMode, 'unbound'))}`;
+  return runtimeKey.includes('::agent-model:')
+    ? runtimeKey
+    : `${runtimeKey}::${createChatAgentModelConfigKey(model)}`;
+}
+
 export function resolveChatAgentRuntimeModeForProject(
   input: ChatAgentRuntimeModeResolveInput = {},
 ): ChatAgentRuntimeModeResolution {

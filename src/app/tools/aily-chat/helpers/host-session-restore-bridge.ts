@@ -42,6 +42,7 @@ import type { HostSessionRecord } from '../services/chat-history.service';
 import type { ChatSessionRuntimeState } from '../services/chat-session-runtime-store.service';
 import type { AskUserAnswer, AskUserQuestion } from '../core/ask-user';
 import type { ConfirmationPart, QuestionPart } from '../core/chat-parts';
+import { createElectronChatRuntimeHostTransport } from '../core/electron-chat-runtime-host-transport';
 import type { RuntimePlanReviewAction, RuntimePlanReviewDecision } from '../services/chat-runtime-interaction-host.service';
 import {
   createSessionCheckpointTimelineState,
@@ -206,7 +207,7 @@ type HostSessionRestoreContext = Pick<IChatViewAccess, 'scrollManager' | 'invali
   & Pick<IAgentLifecycle, 'toolCallingIteration'>
   & Pick<IProjectContext, 'currentMode' | 'currentModelName'>
   & Pick<ISessionAccess, 'sessionId' | 'conversationMessages' | 'chatService' | 'chatHistoryService'>
-  & Pick<IChatServiceAccess, 'contextBudgetService' | 'editCheckpointService' | 'ailyChatConfigService' | 'runtimeInteractionHost'>
+  & Pick<IChatServiceAccess, 'contextBudgetService' | 'ailyChatConfigService' | 'runtimeInteractionHost'>
   & Pick<IChatCoordination, 'lexStream'>
   & {
     readSessionRuntimeState?(sessionId?: string | null): Readonly<ChatSessionRuntimeState> | undefined;
@@ -519,7 +520,11 @@ export class HostSessionRestoreBridge {
         );
       }
 
-      await this.restoreEditCheckpoints(restoredHostResponseState.turnResponses);
+      await this.restoreEditCheckpoints(
+        targetSessionId,
+        this.resolveRestoreWorkspaceRoot(sanitizedHostRecord, targetSessionId),
+        restoredHostResponseState.turnResponses,
+      );
       if (!isCurrent()) {
         return;
       }
@@ -832,33 +837,44 @@ export class HostSessionRestoreBridge {
     this.ctx.toolCallingIteration = hostRecord.metadata?.toolCallingIteration || 0;
   }
 
-  private async restoreEditCheckpoints(turnResponses: readonly TurnResponseTurn[]): Promise<void> {
-    this.ctx.editCheckpointService?.clear();
-    try {
-      const fileHistory = this.ctx.lexStream.agent.getHandle?.()?.getFileHistory()
-        ?? this.ctx.lexStream.agent.getAgent()?.getFileHistory?.();
-      if (fileHistory) {
-        this.ctx.editCheckpointService.setFileHistory(fileHistory);
-      }
-    } catch {
-      // ignore file history restore failures
+  private resolveRestoreWorkspaceRoot(hostRecord: HostSessionRecord, sessionId: string): string | null {
+    const metadataProjectPath = typeof hostRecord.metadata?.projectPath === 'string'
+      ? hostRecord.metadata.projectPath.trim()
+      : '';
+    if (metadataProjectPath) {
+      return metadataProjectPath;
     }
 
-    if (turnResponses.length > 0) {
-      await this.ctx.editCheckpointService?.rebuildFromTurnResponses?.(turnResponses);
-    }
+    const indexProjectPath = this.ctx.chatHistoryService.findEntry(sessionId)?.projectPath;
+    return typeof indexProjectPath === 'string' && indexProjectPath.trim()
+      ? indexProjectPath.trim()
+      : null;
+  }
 
-    if (this.ctx.editCheckpointService?.hasUnsavedEdits()) {
-      if (this.ctx.ailyChatConfigService.autoSaveEdits) {
-        this.ctx.editCheckpointService.acceptAllAsBaseline();
-        this.ctx.editCheckpointService.dismissSummary();
-      } else {
-        this.ctx.editCheckpointService.publishCurrentSummary();
-      }
-      return;
+  private async restoreEditCheckpoints(
+    sessionId: string,
+    workspaceRoot: string | null,
+    turnResponses: readonly TurnResponseTurn[],
+  ): Promise<void> {
+    const runtimeHost = createElectronChatRuntimeHostTransport();
+    if (!runtimeHost) {
+      throw new Error('[AilyChat][Restore] Runtime host transport is required to restore edit tracking state.');
     }
-
-    this.ctx.editCheckpointService?.dismissSummary();
+    await runtimeHost.requestResourceOperation({
+      sessionId,
+      kind: 'edit-tracking',
+      label: 'Restoring edit tracking timeline',
+      resource: {
+        workspaceRoot,
+      },
+      payload: {
+        adapter: 'editTracking',
+        action: 'restoreFromTurnResponses',
+        workspaceRoot,
+        turnResponses,
+        autoSaveEdits: this.ctx.ailyChatConfigService.autoSaveEdits === true,
+      },
+    });
   }
 
   private finalizeRestoreUi(_restoredLexSession: boolean): void {

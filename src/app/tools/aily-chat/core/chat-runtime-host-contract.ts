@@ -194,6 +194,7 @@ export type ChatRuntimeHostResourceRequestKind =
   | 'file-write'
   | 'file-edit'
   | 'workspace-mutation'
+  | 'edit-tracking'
   | 'save-current-session'
   | 'history-persistence';
 
@@ -238,6 +239,91 @@ export interface ChatRuntimeHostEditCheckpointSettlePayload {
   readonly action: 'settleMetadata';
 }
 
+export interface ChatRuntimeHostEditTrackingSetAutoSavePayload {
+  readonly adapter: 'editTracking';
+  readonly action: 'setAutoSaveEdits';
+  readonly autoSaveEdits: boolean;
+}
+
+export interface ChatRuntimeHostEditTrackingSetTimelineContextPayload {
+  readonly adapter: 'editTracking';
+  readonly action: 'setTimelineContext';
+  readonly workspaceRoot?: string | null;
+}
+
+export interface ChatRuntimeHostEditTrackingStartTurnPayload {
+  readonly adapter: 'editTracking';
+  readonly action: 'startTurn';
+  readonly turnIndex: number;
+  readonly turnStartListIndex: number | null;
+  readonly responseStartListIndex: number | null;
+  readonly turnId?: string;
+  readonly requestContent?: string;
+  readonly displayContent?: string;
+  readonly checkpointId?: string;
+  readonly requestMetadata?: unknown;
+  readonly autoSaveEdits?: boolean;
+}
+
+export interface ChatRuntimeHostEditTrackingRecordRootCandidatesPayload {
+  readonly adapter: 'editTracking';
+  readonly action: 'recordAdditionalRepositoryRootCandidates';
+  readonly paths: readonly string[];
+}
+
+export interface ChatRuntimeHostEditTrackingRecordEditPayload {
+  readonly adapter: 'editTracking';
+  readonly action: 'recordEdit';
+  readonly filePath: string;
+  readonly editType: 'create' | 'modify' | 'delete';
+}
+
+export interface ChatRuntimeHostEditTrackingPublishSummaryPayload {
+  readonly adapter: 'editTracking';
+  readonly action: 'publishCurrentSummary';
+}
+
+export interface ChatRuntimeHostEditTrackingFinalizeCurrentTurnPayload {
+  readonly adapter: 'editTracking';
+  readonly action: 'finalizeCurrentTurn';
+  readonly autoSaveEdits?: boolean;
+  readonly requestDiffPreview?: boolean;
+}
+
+export interface ChatRuntimeHostEditTrackingRestorePayload {
+  readonly adapter: 'editTracking';
+  readonly action: 'restoreFromTurnResponses';
+  readonly workspaceRoot?: string | null;
+  readonly turnResponses: readonly unknown[];
+  readonly autoSaveEdits?: boolean;
+}
+
+export interface ChatRuntimeHostEditTrackingForkRequestMetadataPayload {
+  readonly adapter: 'editTracking';
+  readonly action: 'forkRequestCheckpointMetadata';
+  readonly sourceSessionResource: string;
+  readonly targetSessionResource: string;
+  readonly retainedTurnResponses: readonly unknown[];
+}
+
+export interface ChatRuntimeHostEditTrackingClearSessionStatePayload {
+  readonly adapter: 'editTracking';
+  readonly action: 'clearSessionState';
+  readonly dismissSummary?: boolean;
+}
+
+export type ChatRuntimeHostEditTrackingPayload =
+  | ChatRuntimeHostEditTrackingSetAutoSavePayload
+  | ChatRuntimeHostEditTrackingSetTimelineContextPayload
+  | ChatRuntimeHostEditTrackingStartTurnPayload
+  | ChatRuntimeHostEditTrackingRecordRootCandidatesPayload
+  | ChatRuntimeHostEditTrackingRecordEditPayload
+  | ChatRuntimeHostEditTrackingPublishSummaryPayload
+  | ChatRuntimeHostEditTrackingFinalizeCurrentTurnPayload
+  | ChatRuntimeHostEditTrackingRestorePayload
+  | ChatRuntimeHostEditTrackingForkRequestMetadataPayload
+  | ChatRuntimeHostEditTrackingClearSessionStatePayload;
+
 export interface ChatRuntimeHostSyncAbsPayload {
   readonly adapter: 'syncAbs';
   readonly args: {
@@ -258,6 +344,7 @@ export type ChatRuntimeHostResourceOperationPayload =
   | ChatRuntimeHostAbsSessionStartExportPayload
   | ChatRuntimeHostEditCheckpointCommitPayload
   | ChatRuntimeHostEditCheckpointSettlePayload
+  | ChatRuntimeHostEditTrackingPayload
   | ChatRuntimeHostSyncAbsPayload
   | ChatRuntimeHostSessionPersistencePayload;
 

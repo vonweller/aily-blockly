@@ -1,6 +1,7 @@
 import { Injectable, OnDestroy } from '@angular/core';
 
 import type {
+  ChatRuntimeHostEditTrackingPayload,
   ChatRuntimeHostResourceOperationPayload,
   ChatRuntimeHostResourceOperationRequest,
   ChatRuntimeHostSyncAbsPayload,
@@ -27,6 +28,25 @@ type HostResourceOperationPayload = {
   readonly liveHostSessionRecord?: unknown;
   readonly projectPath?: unknown;
   readonly args?: unknown;
+  readonly autoSaveEdits?: unknown;
+  readonly workspaceRoot?: unknown;
+  readonly turnIndex?: unknown;
+  readonly turnStartListIndex?: unknown;
+  readonly responseStartListIndex?: unknown;
+  readonly turnId?: unknown;
+  readonly requestContent?: unknown;
+  readonly displayContent?: unknown;
+  readonly checkpointId?: unknown;
+  readonly requestMetadata?: unknown;
+  readonly turnResponses?: unknown;
+  readonly retainedTurnResponses?: unknown;
+  readonly sourceSessionResource?: unknown;
+  readonly targetSessionResource?: unknown;
+  readonly requestDiffPreview?: unknown;
+  readonly dismissSummary?: unknown;
+  readonly paths?: unknown;
+  readonly filePath?: unknown;
+  readonly editType?: unknown;
 };
 
 class HostResourceOperationError extends Error {
@@ -90,6 +110,8 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
         return this.commitWorkspaceCheckpoint(request);
       case 'checkpoint-settle':
         return this.waitForWorkspaceCheckpointMetadata(request);
+      case 'edit-tracking':
+        return this.runEditTrackingOperation(request);
       case 'file-read':
       case 'file-write':
       case 'workspace-mutation':
@@ -166,6 +188,111 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
       settled: true,
       sessionId,
       kind: request.kind,
+    };
+  }
+
+  private async runEditTrackingOperation(request: ChatRuntimeHostResourceOperationRequest): Promise<{
+    readonly applied: true;
+    readonly sessionId: string;
+    readonly kind: ChatRuntimeHostResourceOperationRequest['kind'];
+    readonly action: ChatRuntimeHostEditTrackingPayload['action'];
+    readonly forkedTurnResponses?: readonly unknown[] | null;
+  }> {
+    const sessionId = this.requireSessionId(request, 'edit tracking');
+    const payload = this.readEditTrackingPayload(request.payload);
+    switch (payload.action) {
+      case 'setAutoSaveEdits':
+        this.editCheckpointService.autoSaveEdits = payload.autoSaveEdits;
+        break;
+      case 'setTimelineContext':
+        this.editCheckpointService.setTimelineContext(sessionId, payload.workspaceRoot ?? null);
+        break;
+      case 'startTurn':
+        if (typeof payload.autoSaveEdits === 'boolean') {
+          this.editCheckpointService.autoSaveEdits = payload.autoSaveEdits;
+        }
+        this.editCheckpointService.startTurn(
+          payload.turnIndex,
+          payload.turnStartListIndex,
+          payload.responseStartListIndex,
+          payload.turnId,
+          payload.requestContent,
+          payload.displayContent,
+          payload.checkpointId,
+          payload.requestMetadata as never,
+        );
+        break;
+      case 'recordAdditionalRepositoryRootCandidates':
+        this.editCheckpointService.recordAdditionalRepositoryRootCandidates(payload.paths);
+        break;
+      case 'recordEdit':
+        this.editCheckpointService.recordEdit(payload.filePath, payload.editType);
+        break;
+      case 'publishCurrentSummary':
+        await this.editCheckpointService.publishCurrentSummary();
+        break;
+      case 'finalizeCurrentTurn':
+        if (typeof payload.autoSaveEdits === 'boolean') {
+          this.editCheckpointService.autoSaveEdits = payload.autoSaveEdits;
+        }
+        await this.editCheckpointService.commitCurrentTurn();
+        if (this.editCheckpointService.hasEditsInCurrentTurn()) {
+          const summary = await this.editCheckpointService.getEditsSummary();
+          if (payload.requestDiffPreview !== false) {
+            this.editCheckpointService.requestDiffPreview(summary);
+          }
+          if (payload.autoSaveEdits === true) {
+            this.editCheckpointService.acceptAllAsBaseline();
+            this.editCheckpointService.dismissSummary();
+          } else {
+            this.editCheckpointService.publishSummary(summary);
+          }
+        }
+        break;
+      case 'restoreFromTurnResponses':
+        this.editCheckpointService.clear();
+        if (typeof payload.autoSaveEdits === 'boolean') {
+          this.editCheckpointService.autoSaveEdits = payload.autoSaveEdits;
+        }
+        this.editCheckpointService.setTimelineContext(sessionId, payload.workspaceRoot ?? null);
+        await this.editCheckpointService.rebuildFromTurnResponses(payload.turnResponses as never);
+        if (this.editCheckpointService.hasUnsavedEdits()) {
+          if (payload.autoSaveEdits === true) {
+            this.editCheckpointService.acceptAllAsBaseline();
+            this.editCheckpointService.dismissSummary();
+          } else {
+            await this.editCheckpointService.publishCurrentSummary();
+          }
+        } else {
+          this.editCheckpointService.dismissSummary();
+        }
+        break;
+      case 'forkRequestCheckpointMetadata': {
+        const forkedTurnResponses = await this.editCheckpointService.forkRequestCheckpointMetadata?.({
+          sourceSessionResource: payload.sourceSessionResource,
+          targetSessionResource: payload.targetSessionResource,
+          retainedTurnResponses: payload.retainedTurnResponses as never,
+        });
+        return {
+          applied: true,
+          sessionId,
+          kind: request.kind,
+          action: payload.action,
+          forkedTurnResponses: Array.isArray(forkedTurnResponses) ? forkedTurnResponses : null,
+        };
+      }
+      case 'clearSessionState':
+        this.editCheckpointService.clear();
+        if (payload.dismissSummary !== false) {
+          this.editCheckpointService.dismissSummary();
+        }
+        break;
+    }
+    return {
+      applied: true,
+      sessionId,
+      kind: request.kind,
+      action: payload.action,
     };
   }
 
@@ -271,6 +398,36 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
     return typeof sessionId === 'string' ? sessionId.trim() : '';
   }
 
+  private normalizeNullableString(value: unknown): string | null {
+    const normalized = this.normalizeSessionId(value);
+    return normalized || null;
+  }
+
+  private normalizeStringList(value: unknown): string[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+    return value
+      .map(item => this.normalizeSessionId(item))
+      .filter(item => item.length > 0);
+  }
+
+  private normalizeFiniteNumber(value: unknown, fallback: number): number {
+    return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+  }
+
+  private normalizeNullableFiniteNumber(value: unknown): number | null {
+    return typeof value === 'number' && Number.isFinite(value) ? value : null;
+  }
+
+  private optionalStringProperty<const K extends string>(
+    key: K,
+    value: unknown,
+  ): { readonly [P in K]?: string } {
+    const normalized = this.normalizeSessionId(value);
+    return normalized ? { [key]: normalized } as { readonly [P in K]?: string } : {};
+  }
+
   private readProjectPath(payload: unknown): string {
     if (!payload || typeof payload !== 'object') {
       return '';
@@ -315,6 +472,129 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
         'resource_operation_payload_invalid',
         false,
       );
+    }
+  }
+
+  private readEditTrackingPayload(
+    payload: ChatRuntimeHostResourceOperationPayload | undefined,
+  ): ChatRuntimeHostEditTrackingPayload {
+    if (!payload || typeof payload !== 'object') {
+      throw new HostResourceOperationError(
+        '[AilyChat][RuntimeHost] edit tracking operation requires a typed payload.',
+        'resource_operation_payload_missing',
+        false,
+      );
+    }
+    const payloadObject = payload as HostResourceOperationPayload;
+    if (payloadObject.adapter !== 'editTracking') {
+      throw new HostResourceOperationError(
+        '[AilyChat][RuntimeHost] edit tracking operation payload must use editTracking.',
+        'resource_operation_payload_invalid',
+        false,
+      );
+    }
+    switch (payloadObject.action) {
+      case 'setAutoSaveEdits':
+        return {
+          adapter: 'editTracking',
+          action: 'setAutoSaveEdits',
+          autoSaveEdits: payloadObject.autoSaveEdits === true,
+        };
+      case 'setTimelineContext':
+        return {
+          adapter: 'editTracking',
+          action: 'setTimelineContext',
+          workspaceRoot: this.normalizeNullableString(payloadObject.workspaceRoot),
+        };
+      case 'startTurn':
+        return {
+          adapter: 'editTracking',
+          action: 'startTurn',
+          turnIndex: this.normalizeFiniteNumber(payloadObject.turnIndex, 0),
+          turnStartListIndex: this.normalizeNullableFiniteNumber(payloadObject.turnStartListIndex),
+          responseStartListIndex: this.normalizeNullableFiniteNumber(payloadObject.responseStartListIndex),
+          ...this.optionalStringProperty('turnId', payloadObject.turnId),
+          ...this.optionalStringProperty('requestContent', payloadObject.requestContent),
+          ...this.optionalStringProperty('displayContent', payloadObject.displayContent),
+          ...this.optionalStringProperty('checkpointId', payloadObject.checkpointId),
+          ...(payloadObject.requestMetadata !== undefined ? { requestMetadata: payloadObject.requestMetadata } : {}),
+          ...(typeof payloadObject.autoSaveEdits === 'boolean' ? { autoSaveEdits: payloadObject.autoSaveEdits } : {}),
+        };
+      case 'recordAdditionalRepositoryRootCandidates':
+        return {
+          adapter: 'editTracking',
+          action: 'recordAdditionalRepositoryRootCandidates',
+          paths: this.normalizeStringList(payloadObject.paths),
+        };
+      case 'recordEdit': {
+        const filePath = this.normalizeSessionId(payloadObject.filePath);
+        const editType = payloadObject.editType;
+        if (!filePath || (editType !== 'create' && editType !== 'modify' && editType !== 'delete')) {
+          throw new HostResourceOperationError(
+            '[AilyChat][RuntimeHost] edit tracking recordEdit requires filePath and editType.',
+            'resource_operation_payload_invalid',
+            false,
+          );
+        }
+        return {
+          adapter: 'editTracking',
+          action: 'recordEdit',
+          filePath,
+          editType,
+        };
+      }
+      case 'publishCurrentSummary':
+        return {
+          adapter: 'editTracking',
+          action: 'publishCurrentSummary',
+        };
+      case 'finalizeCurrentTurn':
+        return {
+          adapter: 'editTracking',
+          action: 'finalizeCurrentTurn',
+          ...(typeof payloadObject.autoSaveEdits === 'boolean' ? { autoSaveEdits: payloadObject.autoSaveEdits } : {}),
+          ...(typeof payloadObject.requestDiffPreview === 'boolean'
+            ? { requestDiffPreview: payloadObject.requestDiffPreview }
+            : {}),
+        };
+      case 'restoreFromTurnResponses':
+        return {
+          adapter: 'editTracking',
+          action: 'restoreFromTurnResponses',
+          workspaceRoot: this.normalizeNullableString(payloadObject.workspaceRoot),
+          turnResponses: Array.isArray(payloadObject.turnResponses) ? payloadObject.turnResponses : [],
+          ...(typeof payloadObject.autoSaveEdits === 'boolean' ? { autoSaveEdits: payloadObject.autoSaveEdits } : {}),
+        };
+      case 'forkRequestCheckpointMetadata': {
+        const sourceSessionResource = this.normalizeSessionId(payloadObject.sourceSessionResource);
+        const targetSessionResource = this.normalizeSessionId(payloadObject.targetSessionResource);
+        if (!sourceSessionResource || !targetSessionResource || !Array.isArray(payloadObject.retainedTurnResponses)) {
+          throw new HostResourceOperationError(
+            '[AilyChat][RuntimeHost] edit tracking forkRequestCheckpointMetadata requires source, target, and retained turn responses.',
+            'resource_operation_payload_invalid',
+            false,
+          );
+        }
+        return {
+          adapter: 'editTracking',
+          action: 'forkRequestCheckpointMetadata',
+          sourceSessionResource,
+          targetSessionResource,
+          retainedTurnResponses: payloadObject.retainedTurnResponses,
+        };
+      }
+      case 'clearSessionState':
+        return {
+          adapter: 'editTracking',
+          action: 'clearSessionState',
+          ...(typeof payloadObject.dismissSummary === 'boolean' ? { dismissSummary: payloadObject.dismissSummary } : {}),
+        };
+      default:
+        throw new HostResourceOperationError(
+          '[AilyChat][RuntimeHost] edit tracking operation has an unsupported action.',
+          'resource_operation_payload_invalid',
+          false,
+        );
     }
   }
 

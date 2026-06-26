@@ -1,4 +1,4 @@
-import type { ISessionAccess, IChatCoordination, IChatServiceAccess } from '../core/chat-context';
+import type { ISessionAccess, IChatCoordination } from '../core/chat-context';
 import type { MetricsSnapshot } from 'aily-lex/browser';
 import type { ChatRuntimeHostTodoItem } from '../core/chat-runtime-host-contract';
 import { resolveChatModeId, type ChatModeId } from '../core/chat-mode';
@@ -7,9 +7,13 @@ import type { TodoItem as BlocklyTodoItem } from '../utils/todoStorage';
 
 /** Narrow context: host sync owns model/runtime facts and requests view side effects through the host boundary. */
 type LexHostSyncContext = Pick<ISessionAccess, 'sessionId'>
-  & Pick<IChatServiceAccess, 'editCheckpointService'>
   & Pick<IChatCoordination, 'lexStream'>
   & {
+    readonly editTracking: {
+      recordAdditionalRepositoryRootCandidates(paths: readonly string[] | undefined | null): void;
+      recordEdit(filePath: string, type: 'create' | 'modify' | 'delete'): void;
+      publishCurrentSummary(): Promise<void>;
+    };
     readonly viewRequests: LexHostViewRequestDispatcher;
   };
 
@@ -61,7 +65,7 @@ export class LexHostSyncBridge {
     if (!input) return;
 
     if (normalizedToolName === 'run_in_terminal' && input.cwd) {
-      this.ctx.editCheckpointService.recordAdditionalRepositoryRootCandidates?.([input.cwd]);
+      this.ctx.editTracking.recordAdditionalRepositoryRootCandidates([input.cwd]);
     }
 
     if (!editType) return;
@@ -73,7 +77,7 @@ export class LexHostSyncBridge {
           ? (replacement as { filePath?: unknown }).filePath
           : undefined;
         if (typeof filePath === 'string' && filePath.trim()) {
-          this.ctx.editCheckpointService.recordEdit(filePath, editType);
+          this.ctx.editTracking.recordEdit(filePath, editType);
         }
       }
       return;
@@ -81,13 +85,13 @@ export class LexHostSyncBridge {
 
     const filePath = input.filePath || input.path;
     if (filePath) {
-      this.ctx.editCheckpointService.recordEdit(filePath, editType);
+      this.ctx.editTracking.recordEdit(filePath, editType);
     }
   }
 
   /** 文件工具写盘完成后刷新 edits 摘要 UI（流式实时更新） */
   refreshFileEditSummary(): void {
-    void this.ctx.editCheckpointService.publishCurrentSummary();
+    void this.ctx.editTracking.publishCurrentSummary();
   }
 
   applyLexTodos(sessionId: string, lexTodos: readonly LexTodoItem[]): void {

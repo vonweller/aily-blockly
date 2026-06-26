@@ -8,6 +8,7 @@ import type { ChatPartStoreResponseHandle } from '../core/chat-part-store';
 import { yieldToBrowserFrame, yieldToBrowserIdle, yieldToBrowserTask } from '../tools/browserTaskScheduler';
 import { isAilyCategoryDebugEnabled } from '../core/chat-debug-flags';
 import { ChatPerformanceTracer } from '../services/chat-perf-tracer';
+import { createElectronChatRuntimeHostTransport } from '../core/electron-chat-runtime-host-transport';
 
 function isFinalizeTraceEnabled(): boolean {
   return isAilyCategoryDebugEnabled('aily.chat.traceFinalize', [
@@ -20,7 +21,7 @@ const FINALIZE_SLOW_STAGE_LOG_MS = 32;
 
 type LexMessageLifecycleContext = Pick<IChatViewAccess, 'partStore' | 'viewAdapter'>
   & Pick<IAgentLifecycle, 'isWaiting' | 'isCompleted' | 'isCancelled'>
-  & Pick<IChatServiceAccess, 'editCheckpointService' | 'ailyChatConfigService'>
+  & Pick<IChatServiceAccess, 'ailyChatConfigService'>
   & Pick<IChatCoordination, 'session' | 'applyPendingSwitch'>
   & {
     readonly sessionId: string;
@@ -166,18 +167,7 @@ export class LexMessageLifecycleBridge {
       });
       logFinalizeStage('part_processor_finalize');
 
-      await this.ctx.editCheckpointService.commitCurrentTurn();
-      if (this.ctx.editCheckpointService.hasEditsInCurrentTurn()) {
-        const summary = await this.ctx.editCheckpointService.getEditsSummary();
-        const autoSave = this.ctx.ailyChatConfigService.autoSaveEdits;
-        this.ctx.editCheckpointService.requestDiffPreview(summary);
-        if (autoSave) {
-          this.ctx.editCheckpointService.acceptAllAsBaseline();
-          this.ctx.editCheckpointService.dismissSummary();
-        } else {
-          this.ctx.editCheckpointService.publishSummary(summary);
-        }
-      }
+      await this.finalizeCurrentTurnEditTracking(resolvedSaveTarget?.sessionId ?? this.ctx.sessionId);
       logFinalizeStage('edit_checkpoint_finalize');
 
       this.ctx.viewAdapter.markLastMessageDone();
@@ -274,6 +264,29 @@ export class LexMessageLifecycleBridge {
     }
   }
 
+  private async finalizeCurrentTurnEditTracking(sessionId: string | null | undefined): Promise<void> {
+    const targetSessionId = normalizeSessionId(sessionId);
+    if (!targetSessionId) {
+      throw new Error('[AilyChat][RuntimeHost] edit tracking finalize requires a host session id.');
+    }
+    const runtimeHost = createElectronChatRuntimeHostTransport();
+    if (!runtimeHost) {
+      throw new Error('[AilyChat][RuntimeHost] edit tracking finalize requires the host transport.');
+    }
+    await runtimeHost.requestResourceOperation({
+      sessionId: targetSessionId,
+      kind: 'edit-tracking',
+      label: 'Finalizing edit tracking turn',
+      detail: 'Host edit tracking resource is committing and publishing the current turn summary.',
+      payload: {
+        adapter: 'editTracking',
+        action: 'finalizeCurrentTurn',
+        autoSaveEdits: this.ctx.ailyChatConfigService.autoSaveEdits === true,
+        requestDiffPreview: true,
+      },
+    });
+  }
+
   private commitTerminalTurnResponseState(saveTarget: HostSessionSaveTarget | null): HostSessionSaveTarget | null {
     try {
       this.finalizeCurrentTurnResponse?.(this.ctx.isCancelled ? 'cancelled' : 'completed');
@@ -360,4 +373,8 @@ export class LexMessageLifecycleBridge {
 
 function normalizeTurnId(turnId: unknown): string {
   return typeof turnId === 'string' ? turnId.trim() : '';
+}
+
+function normalizeSessionId(sessionId: unknown): string {
+  return typeof sessionId === 'string' ? sessionId.trim() : '';
 }

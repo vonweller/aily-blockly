@@ -133,7 +133,7 @@ export class LexUiEventBridge {
   presentQuestion(questions: QuestionItem[], scope?: ChatPartScope): string {
     const requestId = `question-${Date.now()}`;
     const partId = buildQuestionPartId(questions, requestId);
-    if (this.renderEventBridge?.processInteractionEvent({
+    const event = {
       type: 'question_request',
       requestId,
       questions: questions.map(question => ({
@@ -147,7 +147,12 @@ export class LexUiEventBridge {
       subAgentInvocationId: scope?.subAgentInvocationId,
       parentToolCallId: scope?.parentToolCallId,
       sequence: scope?.sequence,
-    })) {
+    } as const;
+    if (this.renderEventBridge?.processInteractionEvent(event)) {
+      return partId;
+    }
+
+    if (this.emitHostInteractionRenderEvent(event)) {
       return partId;
     }
 

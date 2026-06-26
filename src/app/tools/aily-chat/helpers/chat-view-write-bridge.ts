@@ -33,12 +33,13 @@ import type { ChatListItem } from '../services/chat-history.service';
 export type ChatViewWriteBridgeContext = Pick<
   IChatViewAccess,
   'list' | 'partStore' | 'viewAdapter' | 'scrollManager' | 'invalidateHostRequestGraph' | 'triggerSyncDetectChanges'
-> & Pick<ISessionAccess, 'sessionId' | 'chatHistoryService'>
+> & Pick<ISessionAccess, 'sessionId'>
   & Pick<IProjectContext, 'currentModelName' | 'currentModelBillingLabel'>
   & Pick<IAgentLifecycle, 'currentMessageSource'>
   & Pick<IChatServiceAccess, 'ngZone'>
   & {
     markCurrentViewVisibleProjectionOwner: () => void;
+    markHistoryDirty: (sessionId: string) => void;
     readonly legacyListProjectionBoundary?: 'history-import' | 'edit-action-result' | 'session-restore';
   };
 
@@ -54,7 +55,7 @@ type ChatViewWriteStoreAccess = Pick<
 
 type ChatViewWriteHistoryAccess = Pick<
   ChatViewWriteBridgeContext,
-  'sessionId' | 'chatHistoryService'
+  'sessionId' | 'markHistoryDirty'
 >;
 
 type ChatViewWriteAdapterAccess = Pick<
@@ -400,7 +401,7 @@ class ChatViewPartMutationHelper {
     }
 
     if (options.markDirty !== false && this.access.sessionId) {
-      this.access.chatHistoryService.markDirty(this.access.sessionId);
+      this.access.markHistoryDirty(this.access.sessionId);
     }
 
     return handle;
@@ -694,9 +695,7 @@ export class ChatViewWriteBridge {
         get sessionId() {
           return bridge.historyAccess.sessionId;
         },
-        get chatHistoryService() {
-          return bridge.historyAccess.chatHistoryService;
-        },
+        markHistoryDirty: (sessionId) => bridge.historyAccess.markHistoryDirty(sessionId),
       },
       handle => this.messageHandleHelper.resolveWriteHandle(handle),
       () => this.messageHandleHelper.findLatestAilyPartsMessageHandle(),
@@ -890,7 +889,7 @@ export class ChatViewWriteBridge {
       return;
     }
 
-    this.historyAccess.chatHistoryService.markDirty(this.historyAccess.sessionId);
+    this.historyAccess.markHistoryDirty(this.historyAccess.sessionId);
   }
 
   private assertLegacyListProjectionBoundary(method: string): void {

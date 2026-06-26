@@ -16,8 +16,8 @@ import {
 import {
   CHAT_RUNTIME_OWNER_CONTEXT_BUDGET,
   type ChatRuntimeOwnerContextBudgetPort,
-  CHAT_RUNTIME_OWNER_EDIT_CHECKPOINT,
-  type ChatRuntimeOwnerEditCheckpointPort,
+  CHAT_RUNTIME_OWNER_EDIT_TRACKING,
+  type ChatRuntimeOwnerEditTrackingPort,
   CHAT_RUNTIME_OWNER_INTERACTION_HOST,
   type ChatRuntimeOwnerInteractionHostPort,
   CHAT_RUNTIME_OWNER_RUNTIME_CONTROLLER,
@@ -54,8 +54,8 @@ export class ChatRuntimeOwnerContextService implements ChatRuntimeOwnerContextMa
   private readonly runtimeInteractionHost = inject<ChatRuntimeOwnerInteractionHostPort>(
     CHAT_RUNTIME_OWNER_INTERACTION_HOST,
   );
-  private readonly editCheckpointService = inject<ChatRuntimeOwnerEditCheckpointPort>(
-    CHAT_RUNTIME_OWNER_EDIT_CHECKPOINT,
+  private readonly editTracking = inject<ChatRuntimeOwnerEditTrackingPort>(
+    CHAT_RUNTIME_OWNER_EDIT_TRACKING,
   );
   private readonly ownerScheduler = inject<ChatRuntimeOwnerSchedulerPort>(CHAT_RUNTIME_OWNER_SCHEDULER);
   private readonly contextBudgetService = inject<ChatRuntimeOwnerContextBudgetPort>(
@@ -138,7 +138,7 @@ export class ChatRuntimeOwnerContextService implements ChatRuntimeOwnerContextMa
           defaultSessionId: service.resolveDefaultRuntimeSessionId(adapter),
           request: request as never,
         }),
-        get editCheckpointService() { return service.editCheckpointService; },
+        get editTracking() { return service.editTracking; },
         get ownerScheduler() { return service.ownerScheduler; },
         get viewRequests() { return service.viewRequests; },
         get list() { return service.headlessList; },

@@ -54,6 +54,7 @@ function normalizeResourceRequestKind(kind) {
     || kind === 'file-write'
     || kind === 'file-edit'
     || kind === 'workspace-mutation'
+    || kind === 'edit-tracking'
     || kind === 'save-current-session'
     || kind === 'history-persistence'
     ? kind

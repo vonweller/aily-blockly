@@ -9,7 +9,6 @@ export { getAbsSyntaxTool } from './getAbsSyntaxTool';
 
 // 仍有 UI 消费者的工具（保留运行时函数/类型/服务）
 export { executeCommandTool } from './executeCommandTool';
-export { registerAskUserCallback, unregisterAskUserCallback, askUserSingle } from '../core/ask-user';
 export type { AskUserArgs, AskUserQuestion, AskUserOption, AskUserAnswer, AskUserFullResponse } from '../core/ask-user';
 export { collectDiagnostics, setLastBuildErrors, clearLastBuildErrors } from '../core/diagnostics';
 

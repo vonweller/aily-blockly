@@ -43,7 +43,12 @@ import { createBlocklySubagentExtension } from '../core/blockly-subagent-extensi
 import { createElectronAilyServicesTransport } from '../core/aily-services-host-transport';
 import { BlocklySkillProvider } from '../core/blockly-skill-provider';
 import { SkillRegistry as BlocklySkillRegistry } from '../core/skill-registry';
-import { askUserMany, askUserSingle, type AskUserPresentationContext } from '../core/ask-user';
+import type {
+  AskUserBridgeResponse,
+  AskUserFullResponse,
+  AskUserPresentationContext,
+  AskUserQuestion,
+} from '../core/ask-user';
 import { collectDiagnostics } from '../core/diagnostics';
 import { resolveBlocklyMemoryStorageLayout } from './chat-memory-host';
 import { getProjectInfoTool } from '../tools/getProjectInfoTool';
@@ -210,15 +215,19 @@ interface BootstrapLexAgentOptions {
   ctx: BootstrapLexAgentContext;
   lex: AilyLexModule;
   sessionId?: string;
+  runtimeMode?: ChatAgentRuntimeMode;
   askHandler?: (askContext: any) => Promise<boolean>;
   metrics?: IMetricsService;
 }
 
 export type BootstrapLexAgentContext = Pick<IProjectContext, 'prjPath' | 'prjRootPath' | 'currentModel' | 'currentAgentRuntimeMode' | 'currentAgentRuntimeModeSource'>
   & Pick<ISessionAccess, 'sessionId'>
-  & Pick<IChatServiceAccess, 'ailyChatConfigService' | 'mcpService' | 'editCheckpointService'>
-  & Pick<IChatCoordination, 'handleToolApproval' | 'syncSessionCustomizationContentProvider' | 'syncSessionCustomizationProvider' | 'syncSessionCustomizationProviders' | 'syncSessionProviderOptionsSource' | 'syncSessionProviderOptionsSources'>
+  & Pick<IChatServiceAccess, 'ailyChatConfigService' | 'mcpService' | 'runtimeInteractionHost'>
+  & Pick<IChatCoordination, 'handleToolApproval' | 'lexStream' | 'syncSessionCustomizationContentProvider' | 'syncSessionCustomizationProvider' | 'syncSessionCustomizationProviders' | 'syncSessionProviderOptionsSource' | 'syncSessionProviderOptionsSources'>
   & {
+    readonly editTracking: {
+      recordAdditionalRepositoryRootCandidates(paths: readonly string[] | undefined | null): void;
+    };
     readonly currentSessionPath?: string | null;
     readonly currentSessionPermissionMode?: ChatSessionPermissionMode;
     readonly currentSessionApprovalsReviewer?: 'user' | 'auto_review';
@@ -235,6 +244,7 @@ export type BootstrapLexAgentContext = Pick<IProjectContext, 'prjPath' | 'prjRoo
       runWorkspaceFinalize: () => Promise<void>;
       runSessionEndHooks: () => Promise<void>;
     }): void;
+    resolveActiveRuntimeSessionId?(): string | null | undefined;
     selectAgentRuntimeMode?(
       mode: Exclude<ChatAgentRuntimeMode, 'unbound'>,
       source: ChatAgentRuntimeModeSource,
@@ -319,6 +329,36 @@ const LEX_CORE_SAFE_TOOLS = new Set([
   'tool_search',
   'load_skill',
 ]);
+
+function toAskUserBridgeResponse(
+  questions: readonly AskUserQuestion[],
+  response: AskUserFullResponse | undefined,
+): AskUserBridgeResponse {
+  if (!response) {
+    return { answer: '', cancelled: true };
+  }
+
+  const parts: string[] = [];
+  for (const question of questions) {
+    const answer = response.answers[question.question];
+    if (!answer || answer.skipped) {
+      return { answer: '', cancelled: true };
+    }
+
+    if (answer.selected.length > 0) {
+      parts.push(answer.selected.join(', '));
+    }
+    if (answer.freeText) {
+      parts.push(answer.freeText);
+    }
+  }
+
+  return {
+    answer: parts.join('\n'),
+    cancelled: false,
+    fullResponse: response,
+  };
+}
 
 const TOOL_CONFIG_AGENTS = [MAIN_AGENT_TYPE, SCHEMATIC_AGENT_TYPE] as const;
 
@@ -1236,7 +1276,10 @@ export function bootstrapBlocklyLexAgent(
 ): BlocklyLexAgentInstance {
   const { ctx, lex, sessionId, askHandler, metrics } = options;
   const cwd = resolveLexRuntimeCwd(ctx);
-  const agentRuntimeMode = normalizeChatAgentRuntimeMode(ctx.currentAgentRuntimeMode, cwd ? 'coder' : 'unbound');
+  const agentRuntimeMode = normalizeChatAgentRuntimeMode(
+    options.runtimeMode ?? ctx.currentAgentRuntimeMode,
+    cwd ? 'coder' : 'unbound',
+  );
   const promptProfile = resolveRuntimePromptProfile(agentRuntimeMode);
   const requiredContext = resolveRuntimeRequiredContext(agentRuntimeMode);
   const subagentRequiredContext = createSubagentRequiredContext(requiredContext);
@@ -1292,6 +1335,47 @@ export function bootstrapBlocklyLexAgent(
     };
   };
 
+  const presentAskUserQuestions = async (
+    questions: readonly AskUserQuestion[],
+    context?: AskUserPresentationContext,
+  ): Promise<AskUserBridgeResponse> => {
+    const targetSessionId = (
+      runtimeSessionId
+      || ctx.resolveActiveRuntimeSessionId?.()
+      || ctx.sessionId
+      || ''
+    ).trim();
+    if (!targetSessionId) {
+      throw new Error('ask_user requires a runtime session owner.');
+    }
+
+    const partId = ctx.lexStream.ui.presentQuestion(questions.map(question => ({
+      question: question.question,
+      options: question.options?.map(option => ({
+        label: option.label,
+        description: option.description,
+        recommended: option.recommended,
+      })),
+      allow_freeform: question.allow_freeform,
+      multi_select: question.multi_select,
+    })), context);
+    if (!partId) {
+      throw new Error('ask_user requires an active question part.');
+    }
+
+    const response = await ctx.runtimeInteractionHost.presentQuestion(
+      targetSessionId,
+      partId,
+      [...questions],
+      context,
+    );
+    if (response?.answers) {
+      ctx.lexStream.ui.updateQuestionAnswers(response.answers, partId);
+    }
+
+    return toAskUserBridgeResponse(questions, response);
+  };
+
   const runtimeExtensions: Record<string, unknown> = {
     environment: createEnvironmentProviderFromContext(
       contextSnapshotService,
@@ -1301,10 +1385,28 @@ export function bootstrapBlocklyLexAgent(
     contextSnapshot: contextSnapshotService,
     askUser: {
       ask: async (opts: { question: string; options?: { label: string; description?: string; recommended?: boolean }[]; multiSelect: boolean; allowFreeform?: boolean; signal?: AbortSignal; toolCallId?: string; trace?: { toolCallId?: string; parentToolCallId?: string } }) => {
-        return askUserSingle(opts.question, opts.options, opts.multiSelect, opts.allowFreeform ?? true, askUserPresentationContext(opts));
+        return presentAskUserQuestions([{
+          question: opts.question,
+          options: opts.options?.map(option => ({
+            label: option.label,
+            description: option.description,
+            recommended: option.recommended,
+          })),
+          allow_freeform: opts.allowFreeform ?? true,
+          multi_select: opts.multiSelect,
+        }], askUserPresentationContext(opts));
       },
       askMany: async (opts: { questions: { question: string; options?: { label: string; description?: string; recommended?: boolean }[]; allow_freeform?: boolean; multi_select?: boolean }[]; signal?: AbortSignal; toolCallId?: string; trace?: { toolCallId?: string; parentToolCallId?: string } }) => {
-        return askUserMany(opts.questions, askUserPresentationContext(opts));
+        return presentAskUserQuestions(opts.questions.map(question => ({
+          question: question.question,
+          options: question.options?.map(option => ({
+            label: option.label,
+            description: option.description,
+            recommended: option.recommended,
+          })),
+          allow_freeform: question.allow_freeform,
+          multi_select: question.multi_select,
+        })), askUserPresentationContext(opts));
       },
     },
     diagnostics: {
@@ -1356,7 +1458,7 @@ export function bootstrapBlocklyLexAgent(
             contentKind: 'text' | 'binary' | 'notebook';
           })[];
         }) => {
-          ctx.editCheckpointService?.recordAdditionalRepositoryRoots?.(input.repositoryRoots);
+          ctx.editTracking.recordAdditionalRepositoryRootCandidates(input.repositoryRoots);
           await editingTimelineRecorder.reconcileWorktreeChanges({
             ...input,
             readCurrentText: async (filePath: string) => {
