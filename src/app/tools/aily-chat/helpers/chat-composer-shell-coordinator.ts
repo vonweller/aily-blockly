@@ -77,6 +77,10 @@ export class ChatComposerShellCoordinator {
   }
 
   async handleKeyDown(event: KeyboardEvent): Promise<void> {
+    if (isComposerImeEvent(event)) {
+      return;
+    }
+
     const textarea = event.target as HTMLTextAreaElement | null;
     const inputValue = this.deps.getInputValue();
     if (this.tryNavigateInputHistory(event, textarea, inputValue)) {
@@ -205,4 +209,13 @@ export class ChatComposerShellCoordinator {
     this.lastInputTruncationNoticeAt = now;
     this.deps.notifyInputTruncated(AILY_CHAT_INPUT_MAX_CHARS);
   }
+}
+
+function isComposerImeEvent(event: KeyboardEvent): boolean {
+  if (event.isComposing) {
+    return true;
+  }
+
+  const legacyKeyCode = (event as KeyboardEvent & { keyCode?: number }).keyCode;
+  return legacyKeyCode === 229;
 }

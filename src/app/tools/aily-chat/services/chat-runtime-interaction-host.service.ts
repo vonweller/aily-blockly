@@ -1,4 +1,5 @@
 import { DestroyRef, Injectable, inject, signal } from '@angular/core';
+import { TranslateService } from '@ngx-translate/core';
 
 import type { AskUserAnswer, AskUserFullResponse, AskUserQuestion, AskUserPresentationContext } from '../core/ask-user';
 import { AilyHost } from '../core/host';
@@ -146,6 +147,7 @@ interface PlanReviewFileSyncState {
 @Injectable()
 export class ChatRuntimeInteractionHostService implements ChatRuntimeOwnerInteractionHostPort {
   private readonly destroyRef = inject(DestroyRef);
+  private readonly translate = inject(TranslateService);
   private readonly _questionEntries = signal<Record<string, QuestionRuntimeEntry | undefined>>({});
   private readonly _confirmationEntries = signal<Record<string, readonly ConfirmationRuntimeEntry[] | undefined>>({});
   private readonly _confirmationActiveIndices = signal<Record<string, number | undefined>>({});
@@ -286,7 +288,7 @@ export class ChatRuntimeInteractionHostService implements ChatRuntimeOwnerIntera
         ok: false,
         actionId: request.actionId,
         processId: '',
-        error: '缺少命令进程 ID',
+        error: this.translate.instant('AILY_CHAT.PROCESS_ERROR_MISSING_ID'),
       };
     }
 
@@ -306,7 +308,7 @@ export class ChatRuntimeInteractionHostService implements ChatRuntimeOwnerIntera
             ok: false,
             actionId: request.actionId,
             processId,
-            error: `未找到命令进程：${processId}`,
+            error: this.translate.instant('AILY_CHAT.PROCESS_ERROR_NOT_FOUND', { processId }),
           };
     }
 
@@ -314,7 +316,7 @@ export class ChatRuntimeInteractionHostService implements ChatRuntimeOwnerIntera
       ok: false,
       actionId: request.actionId,
       processId,
-      error: `不支持的命令会话操作：${request.actionId}`,
+      error: this.translate.instant('AILY_CHAT.PROCESS_ERROR_UNSUPPORTED_ACTION', { actionId: request.actionId }),
     };
   }
 
@@ -506,7 +508,7 @@ export class ChatRuntimeInteractionHostService implements ChatRuntimeOwnerIntera
         partId: request.toolCallId,
         toolCallId: request.toolCallId,
         toolName: request.toolName,
-        title: request.title || '确认操作',
+        title: request.title || this.translate.instant('AILY_CHAT.PROCESS_APPROVAL_DEFAULT_TITLE'),
         subtitle: request.subtitle,
         message: request.message,
         args: request.args,
@@ -632,7 +634,10 @@ export class ChatRuntimeInteractionHostService implements ChatRuntimeOwnerIntera
     });
   }
 
-  rejectActiveConfirmation(sessionId: string, reason = '用户拒绝执行'): void {
+  rejectActiveConfirmation(
+    sessionId: string,
+    reason = this.translate.instant('AILY_CHAT.PROCESS_CONFIRM_REJECT_REASON'),
+  ): void {
     const active = this.getActiveConfirmation(sessionId);
     if (!active) {
       return;
@@ -689,7 +694,10 @@ export class ChatRuntimeInteractionHostService implements ChatRuntimeOwnerIntera
     }
 
     for (const entry of queue) {
-      entry.resolve({ approved: false, reason: '用户拒绝执行' });
+      entry.resolve({
+        approved: false,
+        reason: this.translate.instant('AILY_CHAT.PROCESS_CONFIRM_REJECT_REASON'),
+      });
     }
 
     const nextQueues = { ...this._confirmationEntries() };

@@ -126,6 +126,7 @@ export interface LexRuntimeApiConfig {
 
 const DEFAULT_INTERACTION_HARD_ROUND_CAP = 200;
 const FAST_SUMMARIZER_PRESET_ID = 'auto-fast';
+const DEFAULT_EXTERNAL_COMMAND_TIMEOUT_MS = 90_000;
 const PROJECT_CHAT_DIR = '.chat_history';
 const GLOBAL_CHAT_DATA_DIR = 'chat_history';
 const PROCESS_RECORDS_DIR = 'process';
@@ -140,6 +141,42 @@ const blocklyCommandSessionListeners = new Set<(sessionId: string, processId: st
 
 export type BlocklyCommandSessionSnapshot = Awaited<ReturnType<NonNullable<BlocklyExternalTerminal['getProcessStatus']>>>;
 export type BlocklyCommandSessionSummary = ReturnType<typeof createBlocklyCommandSessionSummary>;
+interface PersistedBlocklyCommandSessionRecord {
+  readonly processId?: string;
+  readonly sessionId?: string;
+  readonly outputSessionId?: string;
+  readonly command?: string;
+  readonly cwd?: string;
+  readonly status?: string;
+  readonly running?: boolean;
+  readonly exitCode?: number | null;
+  readonly pid?: number | null;
+  readonly startedAt?: number;
+  readonly lastOutputAt?: number | null;
+  readonly completedAt?: number | null;
+  readonly bytesTotal?: number;
+  readonly background?: boolean;
+  readonly outputFilePath?: string | null;
+  readonly removed?: boolean;
+  readonly removedAt?: number | null;
+}
+
+function normalizeBlocklyCommandSessionStatus(
+  status: string | undefined,
+  running: boolean,
+): ExternalTerminalSession['status'] {
+  switch (status) {
+    case 'running':
+    case 'completed':
+    case 'failed':
+    case 'timeout':
+    case 'killed':
+    case 'cancelled':
+      return status;
+    default:
+      return running ? 'running' : 'completed';
+  }
+}
 
 function registerBlocklyCommandSessionController(terminal: BlocklyExternalTerminal | undefined): void {
   if (!terminal) {
@@ -228,6 +265,42 @@ export function listBlocklyCommandSessionSnapshots(sessionId: string): BlocklyCo
     .sort((left, right) => right.startedAt - left.startedAt);
 }
 
+export function listPersistedBlocklyCommandSessionSnapshots(
+  sessionId: string,
+  projectPathHint?: string | null,
+): BlocklyCommandSessionSummary[] {
+  const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+  if (!normalizedSessionId) {
+    return [];
+  }
+
+  const host = AilyHost.get();
+  const processDirCandidates = resolveBlocklyCommandSessionProcessDirCandidates(host, normalizedSessionId, projectPathHint);
+  const summaries = new Map<string, BlocklyCommandSessionSummary>();
+
+  for (const processDir of processDirCandidates) {
+    if (!host.fs?.existsSync?.(processDir)) {
+      continue;
+    }
+
+    const entries = readBlocklyCommandSessionProcessDirEntries(host, processDir);
+    for (const entryName of entries) {
+      if (!entryName.endsWith('.json')) {
+        continue;
+      }
+      const filePath = host.path.join(processDir, entryName);
+      const record = readPersistedBlocklyCommandSessionRecord(host, filePath);
+      const summary = record ? createBlocklyCommandSessionSummaryFromPersistedRecord(record, normalizedSessionId) : null;
+      if (!summary) {
+        continue;
+      }
+      summaries.set(summary.processId, summary);
+    }
+  }
+
+  return [...summaries.values()].sort((left, right) => right.startedAt - left.startedAt);
+}
+
 export function subscribeBlocklyCommandSessionUpdates(
   listener: (sessionId: string, processId: string) => void,
 ): { dispose(): void } {
@@ -258,6 +331,138 @@ export function setBlocklyCommandSessionBackground(
   session.background = background;
   persistBlocklyCommandSessionRecord(session);
   notifyBlocklyCommandSessionUpdate(normalizedSessionId, normalizedProcessId);
+}
+
+export function deleteBlocklyCommandSession(
+  processId: string,
+  sessionId?: string,
+): boolean {
+  const normalizedProcessId = typeof processId === 'string' ? processId.trim() : '';
+  if (!normalizedProcessId) {
+    return false;
+  }
+
+  const host = AilyHost.get();
+  const runtimeSession = blocklyCommandSessions.get(normalizedProcessId);
+  const targetSessionId = typeof sessionId === 'string' && sessionId.trim()
+    ? sessionId.trim()
+    : runtimeSession?.sessionId ?? '';
+  let outputFilePath = runtimeSession?.outputFilePath;
+  let metadataFilePath = runtimeSession?.metadataFilePath;
+
+  const persisted = targetSessionId
+    ? listPersistedBlocklyCommandSessionSnapshots(targetSessionId)
+      .find(candidate => candidate.processId === normalizedProcessId)
+    : null;
+
+  if ((!outputFilePath || !metadataFilePath) && targetSessionId) {
+    outputFilePath = outputFilePath || persisted?.outputFilePath;
+    metadataFilePath = metadataFilePath || (
+      persisted?.outputFilePath?.trim()
+        ? persisted.outputFilePath.replace(/\.log$/i, '.json')
+        : undefined
+    );
+  }
+
+  if (runtimeSession) {
+    blocklyCommandSessions.delete(normalizedProcessId);
+    blocklyCommandSessionOwners.delete(normalizedProcessId);
+    const sessionIds = blocklyCommandSessionIdsBySession.get(runtimeSession.sessionId);
+    sessionIds?.delete(normalizedProcessId);
+    if (sessionIds && sessionIds.size === 0) {
+      blocklyCommandSessionIdsBySession.delete(runtimeSession.sessionId);
+    }
+    notifyBlocklyCommandSessionUpdate(runtimeSession.sessionId, normalizedProcessId);
+  } else if (targetSessionId) {
+    notifyBlocklyCommandSessionUpdate(targetSessionId, normalizedProcessId);
+  }
+
+  const removedAt = Date.now();
+  let markedRemoved = false;
+  const normalizedMetadataFilePath = typeof metadataFilePath === 'string' ? metadataFilePath.trim() : '';
+  if (normalizedMetadataFilePath) {
+    const existingRecord = readPersistedBlocklyCommandSessionRecord(host, normalizedMetadataFilePath);
+    if (existingRecord) {
+      try {
+        host.fs.writeFileSync(normalizedMetadataFilePath, JSON.stringify({
+          ...existingRecord,
+          removed: true,
+          removedAt,
+        }, null, 2), 'utf-8');
+        markedRemoved = true;
+      } catch {
+        // best-effort
+      }
+    }
+  }
+
+  if (runtimeSession) {
+    runtimeSession.removed = true;
+    runtimeSession.removedAt = removedAt;
+  }
+
+  return markedRemoved || !!runtimeSession || !!persisted;
+}
+
+export function purgeBlocklyCommandSession(
+  processId: string,
+  sessionId?: string,
+): boolean {
+  const normalizedProcessId = typeof processId === 'string' ? processId.trim() : '';
+  if (!normalizedProcessId) {
+    return false;
+  }
+
+  const host = AilyHost.get();
+  const runtimeSession = blocklyCommandSessions.get(normalizedProcessId);
+  const targetSessionId = typeof sessionId === 'string' && sessionId.trim()
+    ? sessionId.trim()
+    : runtimeSession?.sessionId ?? '';
+  let outputFilePath = runtimeSession?.outputFilePath;
+  let metadataFilePath = runtimeSession?.metadataFilePath;
+
+  const persisted = targetSessionId
+    ? listPersistedBlocklyCommandSessionSnapshots(targetSessionId)
+      .find(candidate => candidate.processId === normalizedProcessId)
+    : null;
+
+  if ((!outputFilePath || !metadataFilePath) && persisted) {
+    outputFilePath = outputFilePath || persisted.outputFilePath;
+    metadataFilePath = metadataFilePath || (
+      persisted.outputFilePath?.trim()
+        ? persisted.outputFilePath.replace(/\.log$/i, '.json')
+        : undefined
+    );
+  }
+
+  if (runtimeSession) {
+    blocklyCommandSessions.delete(normalizedProcessId);
+    blocklyCommandSessionOwners.delete(normalizedProcessId);
+    const sessionIds = blocklyCommandSessionIdsBySession.get(runtimeSession.sessionId);
+    sessionIds?.delete(normalizedProcessId);
+    if (sessionIds && sessionIds.size === 0) {
+      blocklyCommandSessionIdsBySession.delete(runtimeSession.sessionId);
+    }
+    notifyBlocklyCommandSessionUpdate(runtimeSession.sessionId, normalizedProcessId);
+  } else if (targetSessionId) {
+    notifyBlocklyCommandSessionUpdate(targetSessionId, normalizedProcessId);
+  }
+
+  let deletedAny = false;
+  for (const filePath of [outputFilePath, metadataFilePath]) {
+    const normalizedPath = typeof filePath === 'string' ? filePath.trim() : '';
+    if (!normalizedPath || !host.fs?.existsSync?.(normalizedPath)) {
+      continue;
+    }
+    try {
+      host.fs.unlinkSync(normalizedPath);
+      deletedAny = true;
+    } catch {
+      // best-effort
+    }
+  }
+
+  return deletedAny || !!runtimeSession || !!persisted;
 }
 
 interface ResolvePersistedLexSessionOptions {
@@ -2899,6 +3104,8 @@ function createBlocklyCommandSessionSummary(session: ExternalTerminalSession) {
     elapsedMs: Math.max(0, lastTimestamp - session.startedAt),
     bytesTotal: byteLength(session.stdout) + byteLength(session.stderr),
     background: session.background === true,
+    removed: session.removed === true,
+    ...(typeof session.removedAt === 'number' ? { removedAt: session.removedAt } : {}),
     ...(outputFilePath ? { outputFilePath } : {}),
   };
 }
@@ -2938,6 +3145,128 @@ function attachBlocklyCommandSession(session: ExternalTerminalSession): void {
 
 function sanitizeBlocklyCommandSessionFileName(processId: string): string {
   return processId.replace(/[^a-zA-Z0-9._-]/g, '_');
+}
+
+function resolveBlocklyCommandSessionProcessDirCandidates(
+  host: any,
+  sessionId: string,
+  projectPathHint?: string | null,
+): string[] {
+  const candidates = new Set<string>();
+  const normalizedProjectPath = typeof projectPathHint === 'string' ? projectPathHint.trim() : '';
+  if (normalizedProjectPath) {
+    candidates.add(host.path.join(normalizedProjectPath, PROJECT_CHAT_DIR, sessionId, PROCESS_RECORDS_DIR));
+  }
+  const currentProjectPath = host.project?.currentProjectPath || host.project?.projectRootPath || '';
+  if (currentProjectPath) {
+    candidates.add(host.path.join(currentProjectPath, PROJECT_CHAT_DIR, sessionId, PROCESS_RECORDS_DIR));
+  }
+  const userHome = host.path?.getUserHome?.();
+  if (userHome) {
+    candidates.add(host.path.join(userHome, '.aily', GLOBAL_CHAT_DATA_DIR, sessionId, PROCESS_RECORDS_DIR));
+  }
+  const appDataPath = host.path?.getAppDataPath?.();
+  if (appDataPath) {
+    candidates.add(host.path.join(appDataPath, GLOBAL_CHAT_DATA_DIR, sessionId, PROCESS_RECORDS_DIR));
+  }
+  return [...candidates];
+}
+
+function readBlocklyCommandSessionProcessDirEntries(host: any, dirPath: string): string[] {
+  try {
+    if (typeof host.fs?.readDirSync === 'function') {
+      return host.fs.readDirSync(dirPath)
+        .filter((entry: { name?: string; isFile?: () => boolean }) => typeof entry?.isFile === 'function' ? entry.isFile() : true)
+        .map((entry: { name?: string }) => String(entry?.name || ''))
+        .filter(Boolean);
+    }
+    return host.fs?.readdirSync?.(dirPath) ?? [];
+  } catch {
+    return [];
+  }
+}
+
+function readPersistedBlocklyCommandSessionRecord(
+  host: any,
+  filePath: string,
+): PersistedBlocklyCommandSessionRecord | null {
+  try {
+    const raw = host.fs?.readFileSync?.(filePath, 'utf-8');
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(String(raw));
+    return parsed && typeof parsed === 'object' ? parsed as PersistedBlocklyCommandSessionRecord : null;
+  } catch {
+    return null;
+  }
+}
+
+function createBlocklyCommandSessionSummaryFromPersistedRecord(
+  record: PersistedBlocklyCommandSessionRecord,
+  fallbackSessionId: string,
+): BlocklyCommandSessionSummary | null {
+  const processId = typeof record.processId === 'string' ? record.processId.trim() : '';
+  const outputSessionId = typeof record.outputSessionId === 'string' ? record.outputSessionId.trim() : processId;
+  if (!processId || !outputSessionId) {
+    return null;
+  }
+
+  const startedAt = typeof record.startedAt === 'number' && Number.isFinite(record.startedAt)
+    ? record.startedAt
+    : 0;
+  const lastOutputAt = typeof record.lastOutputAt === 'number' && Number.isFinite(record.lastOutputAt)
+    ? record.lastOutputAt
+    : undefined;
+  const completedAt = typeof record.completedAt === 'number' && Number.isFinite(record.completedAt)
+    ? record.completedAt
+    : undefined;
+  const pid = typeof record.pid === 'number' && Number.isFinite(record.pid)
+    ? record.pid
+    : undefined;
+  const exitCode = typeof record.exitCode === 'number' && Number.isFinite(record.exitCode)
+    ? record.exitCode
+    : undefined;
+  const bytesTotal = typeof record.bytesTotal === 'number' && Number.isFinite(record.bytesTotal)
+    ? record.bytesTotal
+    : 0;
+  const sessionId = typeof record.sessionId === 'string' && record.sessionId.trim()
+    ? record.sessionId.trim()
+    : fallbackSessionId;
+  const outputFilePath = typeof record.outputFilePath === 'string' && record.outputFilePath.trim()
+    ? record.outputFilePath.trim()
+    : undefined;
+  const removed = record.removed === true;
+  const removedAt = typeof record.removedAt === 'number' && Number.isFinite(record.removedAt)
+    ? record.removedAt
+    : undefined;
+  const running = record.running === true;
+  const normalizedStatus = normalizeBlocklyCommandSessionStatus(
+    typeof record.status === 'string' ? record.status : undefined,
+    running,
+  );
+  const lastTimestamp = completedAt ?? lastOutputAt ?? Date.now();
+
+  return {
+    processId,
+    sessionId,
+    outputSessionId,
+    command: typeof record.command === 'string' ? record.command : processId,
+    cwd: typeof record.cwd === 'string' ? record.cwd : '',
+    status: normalizedStatus,
+    running,
+    ...(exitCode !== undefined ? { exitCode } : {}),
+    ...(pid !== undefined ? { pid } : {}),
+    startedAt,
+    ...(lastOutputAt !== undefined ? { lastOutputAt } : {}),
+    ...(completedAt !== undefined ? { completedAt } : {}),
+    elapsedMs: Math.max(0, lastTimestamp - startedAt),
+    bytesTotal,
+    background: record.background === true,
+    removed,
+    ...(removedAt !== undefined ? { removedAt } : {}),
+    ...(outputFilePath ? { outputFilePath } : {}),
+  };
 }
 
 function appendBlocklyCommandSessionFile(
@@ -3017,6 +3346,8 @@ function persistBlocklyCommandSessionRecord(session: ExternalTerminalSession): v
     stderrBytes: byteLength(session.stderr),
     outputFilePath: session.outputFilePath ?? null,
     background: session.background === true,
+    removed: session.removed === true,
+    removedAt: typeof session.removedAt === 'number' ? session.removedAt : null,
     executionKind: session.executionKind,
   };
   try {
@@ -3278,7 +3609,7 @@ function createExternalTerminal(host: any, prjPath: () => string, runtimeSession
       attachRawTerminalSession(session);
     }
 
-    const timeout = opts?.timeout ?? 30_000;
+    const timeout = opts?.timeout ?? DEFAULT_EXTERNAL_COMMAND_TIMEOUT_MS;
     session.timer = setTimeout(async () => {
       if (!session.running) {
         return;
@@ -3515,6 +3846,8 @@ interface ExternalTerminalSession {
   completedAt?: number;
   outputFilePath?: string;
   metadataFilePath?: string;
+  removed?: boolean;
+  removedAt?: number;
   readyResolved: boolean;
   finishedResolved: boolean;
   ready: Promise<void>;

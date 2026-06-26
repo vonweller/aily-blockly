@@ -212,6 +212,8 @@ export class ChatSessionEntryStateService {
       normalized.folderPath == null
       && normalized.permissionMode === undefined
       && normalized.permissionLevel === undefined
+      && normalized.approvalsReviewer === undefined
+      && normalized.approvalPolicy === undefined
     ) {
       return undefined;
     }
@@ -233,6 +235,8 @@ export class ChatSessionEntryStateService {
       && !normalized.requestModeId
       && !normalized.customAgentTarget
       && !normalized.permissionLevel
+      && !normalized.approvalsReviewer
+      && !normalized.approvalPolicy
     ) {
       return undefined;
     }

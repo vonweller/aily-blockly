@@ -5,6 +5,7 @@
  * core/index.ts re-exports these contracts directly for the remaining barrel path.
  */
 
+import { TranslateService } from '@ngx-translate/core';
 import {
   buildToolInvocationDisplaySummary,
   flattenToolInvocationDisplaySummary,
@@ -80,27 +81,44 @@ export interface ToolApprovalResult {
 
 export type ToolApprovalCallback = (request: ToolApprovalRequest) => Promise<ToolApprovalResult>;
 
+let translateServiceRef: Pick<TranslateService, 'instant'> | null = null;
+
+export function setToolApprovalTranslateService(translate: Pick<TranslateService, 'instant'> | null | undefined): void {
+  translateServiceRef = translate ?? null;
+}
+
+function t(key: string, params?: Record<string, unknown>, fallback?: string): string {
+  const translated = translateServiceRef?.instant?.(key, params);
+  if (typeof translated === 'string' && translated && translated !== key) {
+    return translated;
+  }
+  return fallback ?? key;
+}
+
 export function getToolApprovalTitle(toolName: string | undefined, fallbackTitle?: string): string {
   const normalizedToolName = normalizeReadSideToolName(toolName);
 
   switch (normalizedToolName) {
     case 'run_in_terminal':
     case 'command_exec':
-      return '运行终端命令';
+      return t('AILY_CHAT.PROCESS_APPROVAL_RUN_COMMAND', undefined, 'Run Terminal Command');
     case 'send_to_terminal':
     case 'command_write_stdin':
-      return '发送终端输入';
+      return t('AILY_CHAT.PROCESS_APPROVAL_SEND_INPUT', undefined, 'Send Terminal Input');
     case 'command_resize':
-      return '调整终端尺寸';
+      return t('AILY_CHAT.PROCESS_APPROVAL_RESIZE', undefined, 'Resize Terminal');
     case 'kill_terminal':
     case 'command_stop':
-      return '结束命令进程';
+      return t('AILY_CHAT.PROCESS_APPROVAL_STOP', undefined, 'Stop Command Process');
     default:
-      return fallbackTitle && !fallbackTitle.startsWith('确认执行: ')
-        ? fallbackTitle
-        : normalizedToolName
-          ? `确认执行 ${normalizedToolName}`
-          : (fallbackTitle || '确认操作');
+      {
+        const defaultTitle = t('AILY_CHAT.PROCESS_APPROVAL_DEFAULT_TITLE', undefined, 'Confirm Action');
+        return fallbackTitle && !fallbackTitle.startsWith(defaultTitle)
+          ? fallbackTitle
+          : normalizedToolName
+            ? `${defaultTitle}: ${normalizedToolName}`
+            : (fallbackTitle || defaultTitle);
+      }
   }
 }
 
@@ -121,23 +139,23 @@ export function getToolApprovalActions(toolName: string | undefined): readonly T
         {
           id: 'session',
           scope: 'session',
-          label: '在当前对话中自动运行此命令',
-          description: '后续相同命令将直接运行，不再重复询问。',
-          tooltip: '记住这条命令，并在当前对话中自动运行。',
+          label: t('AILY_CHAT.PROCESS_APPROVAL_ALLOW_SESSION', undefined, 'Always allow in this chat'),
+          description: t('AILY_CHAT.PROCESS_APPROVAL_ALLOW_SESSION_DESC', undefined, 'Future identical commands run directly without asking again.'),
+          tooltip: t('AILY_CHAT.PROCESS_APPROVAL_ALLOW_SESSION_TIP', undefined, 'Remember this command and auto-run it in the current chat.'),
         },
         {
           id: 'workspace',
           scope: 'workspace',
-          label: '在当前工作区中自动运行此命令',
-          description: '把这条命令加入工作区级 allow list。',
-          tooltip: '把这条命令写入当前工作区规则。',
+          label: t('AILY_CHAT.PROCESS_APPROVAL_ALLOW_WORKSPACE', undefined, 'Always allow in this workspace'),
+          description: t('AILY_CHAT.PROCESS_APPROVAL_ALLOW_WORKSPACE_DESC', undefined, 'Add this command to the workspace-level allow list.'),
+          tooltip: t('AILY_CHAT.PROCESS_APPROVAL_ALLOW_WORKSPACE_TIP', undefined, 'Write this command into the current workspace rules.'),
         },
         {
           id: 'session-all-terminal',
           scope: 'session-all-terminal',
-          label: '允许当前对话中的所有终端命令',
-          description: '后续 terminal 命令在本对话中直接运行。',
-          tooltip: '当前对话中的后续终端命令将不再逐条确认。',
+          label: t('AILY_CHAT.PROCESS_APPROVAL_ALLOW_ALL_TERMINAL', undefined, 'Allow all terminal commands in this chat'),
+          description: t('AILY_CHAT.PROCESS_APPROVAL_ALLOW_ALL_TERMINAL_DESC', undefined, 'Future terminal commands run directly in this chat.'),
+          tooltip: t('AILY_CHAT.PROCESS_APPROVAL_ALLOW_ALL_TERMINAL_TIP', undefined, 'Subsequent terminal commands in this chat will no longer require individual confirmation.'),
           isSecondary: true,
         },
       ];
@@ -224,24 +242,48 @@ export function generateApprovalMessage(
     case 'command_exec':
       return {
         title: getToolApprovalTitle(normalizedToolName),
-        message: `即将运行终端命令：\n${args?.command || '(未知命令)'}${args?.goal ? '\n目标：' + args.goal : ''}`,
+        message: [
+          t('AILY_CHAT.PROCESS_APPROVAL_MESSAGE_RUN_PREFIX', undefined, 'Run terminal command:'),
+          args?.command || t('AILY_CHAT.PROCESS_UNKNOWN_COMMAND', undefined, '(unknown command)'),
+          ...(args?.goal ? [`${t('AILY_CHAT.PROCESS_APPROVAL_GOAL_PREFIX', undefined, 'Goal:')} ${args.goal}`] : []),
+        ].join('\n'),
       };
     case 'send_to_terminal':
     case 'command_write_stdin':
       return {
         title: getToolApprovalTitle(normalizedToolName),
-        message: `即将向终端发送输入：\n${args?.input || args?.command || '(空输入 / 轮询)'}`,
+        message: t(
+          'AILY_CHAT.PROCESS_APPROVAL_MESSAGE_INPUT',
+          {
+            input: args?.input || args?.command || t('AILY_CHAT.PROCESS_EMPTY_INPUT', undefined, '(empty input / poll)'),
+          },
+          `Send input to terminal:\n${args?.input || args?.command || '(empty input / poll)'}`,
+        ),
       };
     case 'command_resize':
       return {
         title: getToolApprovalTitle(normalizedToolName),
-        message: `即将调整命令进程终端尺寸：${args?.processId || '(未知进程)'}\nrows=${args?.size?.rows ?? '(未知)'} cols=${args?.size?.cols ?? '(未知)'}`,
+        message: t(
+          'AILY_CHAT.PROCESS_APPROVAL_MESSAGE_RESIZE',
+          {
+            processId: args?.processId || t('AILY_CHAT.PROCESS_UNKNOWN_ID', undefined, '(unknown process)'),
+            rows: args?.size?.rows ?? t('AILY_CHAT.PROCESS_UNKNOWN_VALUE', undefined, '(unknown)'),
+            cols: args?.size?.cols ?? t('AILY_CHAT.PROCESS_UNKNOWN_VALUE', undefined, '(unknown)'),
+          },
+          `Resize terminal for process ${args?.processId || '(unknown process)'}\nrows=${args?.size?.rows ?? '(unknown)'} cols=${args?.size?.cols ?? '(unknown)'}`,
+        ),
       };
     case 'kill_terminal':
     case 'command_stop':
       return {
         title: getToolApprovalTitle(normalizedToolName),
-        message: `即将结束命令进程：${args?.processId || args?.id || args?.terminalId || '(未知进程)'}`,
+        message: t(
+          'AILY_CHAT.PROCESS_APPROVAL_MESSAGE_STOP',
+          {
+            processId: args?.processId || args?.id || args?.terminalId || t('AILY_CHAT.PROCESS_UNKNOWN_ID', undefined, '(unknown process)'),
+          },
+          `Stop command process: ${args?.processId || args?.id || args?.terminalId || '(unknown process)'}`,
+        ),
       };
     default:
       {

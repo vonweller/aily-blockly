@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, ChangeDetectorRef, Component, Input, OnChanges, SimpleChanges, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { TranslateModule } from '@ngx-translate/core';
 import { XMarkdownComponent } from 'ngx-x-markdown';
 import type { ComponentMap } from 'ngx-x-markdown';
 
@@ -38,7 +39,7 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
 @Component({
   selector: 'aily-chat-activity-item',
   standalone: true,
-  imports: [CommonModule, XMarkdownComponent, XAilyConfirmationViewerComponent, ChatTerminalPartComponent, XAilyThinkViewerComponent, AilyMarkdownExternalLinksDirective],
+  imports: [CommonModule, TranslateModule, XMarkdownComponent, XAilyConfirmationViewerComponent, ChatTerminalPartComponent, XAilyThinkViewerComponent, AilyMarkdownExternalLinksDirective],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div
@@ -78,9 +79,9 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
             @if (isToolHeader()) {
               <div class="cag-item-tool-title">
                 <div class="cag-item-tool-title-main">
-                  <span class="cag-item-tool-title-label">{{ item.toolHeader?.title || item.label }}</span>
+                  <span class="cag-item-tool-title-label">{{ (item.toolHeader?.title || item.label) | translate }}</span>
                   @if (item.toolHeader?.subtitle) {
-                    <small class="cag-item-tool-title-subtitle">{{ item.toolHeader?.subtitle }}</small>
+                    <small class="cag-item-tool-title-subtitle">{{ item.toolHeader?.subtitle | translate }}</small>
                   }
                 </div>
                 <span class="cag-item-tool-title-side">
@@ -91,8 +92,8 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
                           type="button"
                           class="cag-item-toolbar-button"
                           [disabled]="isToolbarActionDisabled(action)"
-                          [attr.title]="action.tooltip || action.label"
-                          [attr.aria-label]="action.label"
+                          [attr.title]="(action.tooltip || action.label) | translate"
+                          [attr.aria-label]="action.label | translate"
                           (click)="handleToolbarAction(action, $event)">
                           <i [class]="action.iconClass"></i>
                         </button>
@@ -103,7 +104,7 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
                     <span class="cag-item-head-meta">{{ item.toolHeader?.meta }}</span>
                   }
                   @if (item.toolHeader?.pill) {
-                    <span class="cag-item-pill" [attr.data-tone]="item.toolHeader?.pillTone">{{ item.toolHeader?.pill }}</span>
+                    <span class="cag-item-pill" [attr.data-tone]="item.toolHeader?.pillTone">{{ item.toolHeader?.pill | translate }}</span>
                   }
                   @if (hasDetailContent()) {
                     <span class="cag-item-chevron-wrap" aria-hidden="true">
@@ -114,13 +115,13 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
               </div>
             } @else {
               <div class="cag-item-head">
-                <span class="cag-item-label">{{ item.label }}</span>
+                <span class="cag-item-label">{{ item.label | translate }}</span>
                 <span class="cag-item-head-trailing">
                   @if (item.headerMeta) {
                     <span class="cag-item-head-meta">{{ item.headerMeta }}</span>
                   }
                   @if (item.pill) {
-                    <span class="cag-item-pill" [attr.data-tone]="item.pillTone">{{ item.pill }}</span>
+                    <span class="cag-item-pill" [attr.data-tone]="item.pillTone">{{ item.pill | translate }}</span>
                   }
                   @if (hasDetailContent()) {
                     <span class="cag-item-chevron-wrap" aria-hidden="true">
@@ -242,14 +243,14 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
                   @for (section of getInstructionProjection().sections; track section.title) {
                     <div class="cag-item-detail-section">
                       @if (section.title) {
-                        <div class="cag-item-detail-section-title">{{ section.title }}</div>
+                        <div class="cag-item-detail-section-title">{{ section.title | translate }}</div>
                       }
                       @for (row of section.rows; track row.id) {
                         <div class="cag-item-detail-row" [attr.data-tone]="row.tone || 'neutral'">
                           <div class="cag-item-detail-row-head">
-                            <span class="cag-item-detail-row-title">{{ row.title }}</span>
+                            <span class="cag-item-detail-row-title">{{ row.title | translate }}</span>
                             @if (row.trailing) {
-                              <span class="cag-item-detail-row-pill" [attr.data-tone]="row.tone || 'neutral'">{{ row.trailing }}</span>
+                              <span class="cag-item-detail-row-pill" [attr.data-tone]="row.tone || 'neutral'">{{ row.trailing | translate }}</span>
                             }
                           </div>
                           @if (row.subtitle) {

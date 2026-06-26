@@ -7,18 +7,25 @@ import {
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { NZ_MODAL_DATA, NzModalRef } from 'ng-zorro-antd/modal';
+import { NzPopconfirmModule } from 'ng-zorro-antd/popconfirm';
 
 import { BaseDialogComponent } from '../../../../components/base-dialog/base-dialog.component';
+import { ChatProcessDetailPanelComponent } from '../process-detail-panel/chat-process-detail-panel.component';
 import type { ChatRuntimeHostSessionProcessSummary } from '../../core/chat-runtime-host-contract';
 import {
+  deleteBlocklyCommandSession,
   getBlocklyCommandSessionStatus,
+  listPersistedBlocklyCommandSessionSnapshots,
+  purgeBlocklyCommandSession,
   subscribeBlocklyCommandSessionUpdates,
 } from '../../helpers/lex-agent-bootstrap';
 import { openChatProcessWindow, readChatProcessOutputFile } from '../../helpers/chat-process-window';
+import { ChatHistoryService } from '../../services/chat-history.service';
 import { ChatRuntimeInteractionHostService } from '../../services/chat-runtime-interaction-host.service';
 
-type ProcessFilter = 'all' | 'running' | 'background' | 'completed' | 'failed';
+type ProcessFilter = 'all' | 'running' | 'background' | 'completed' | 'failed' | 'removed';
 
 interface ChatProcessManagerDialogData {
   readonly sessionId: string;
@@ -27,7 +34,7 @@ interface ChatProcessManagerDialogData {
 @Component({
   selector: 'app-chat-process-manager-dialog',
   standalone: true,
-  imports: [CommonModule, FormsModule, BaseDialogComponent],
+  imports: [CommonModule, FormsModule, TranslateModule, NzPopconfirmModule, BaseDialogComponent, ChatProcessDetailPanelComponent],
   templateUrl: './chat-process-manager-dialog.component.html',
   styleUrl: './chat-process-manager-dialog.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -38,6 +45,8 @@ export class ChatProcessManagerDialogComponent {
   private readonly modalRef = inject(NzModalRef);
   private readonly data = inject<ChatProcessManagerDialogData>(NZ_MODAL_DATA);
   private readonly runtimeInteractionHost = inject(ChatRuntimeInteractionHostService);
+  private readonly chatHistoryService = inject(ChatHistoryService);
+  private readonly translate = inject(TranslateService);
 
   readonly sessionId = typeof this.data.sessionId === 'string' ? this.data.sessionId.trim() : '';
 
@@ -47,6 +56,7 @@ export class ChatProcessManagerDialogComponent {
   processes: readonly ChatRuntimeHostSessionProcessSummary[] = [];
   selectedProcessOutput = '';
   selectedProcessStatusLabel = '';
+  private refreshTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor() {
     this.refreshProcesses();
@@ -55,7 +65,14 @@ export class ChatProcessManagerDialogComponent {
         this.refreshProcesses();
       }
     });
-    this.destroyRef.onDestroy(() => subscription.dispose());
+    this.startPolling();
+    this.destroyRef.onDestroy(() => {
+      subscription.dispose();
+      if (this.refreshTimer) {
+        clearInterval(this.refreshTimer);
+        this.refreshTimer = null;
+      }
+    });
   }
 
   closeDialog(): void {
@@ -105,6 +122,22 @@ export class ChatProcessManagerDialogComponent {
     this.refreshProcesses();
   }
 
+  deleteProcess(process: ChatRuntimeHostSessionProcessSummary): void {
+    deleteBlocklyCommandSession(process.processId, this.sessionId);
+    if (this.selectedProcessId === process.processId) {
+      this.selectedProcessId = '';
+    }
+    this.refreshProcesses();
+  }
+
+  hardDeleteProcess(process: ChatRuntimeHostSessionProcessSummary): void {
+    purgeBlocklyCommandSession(process.processId, this.sessionId);
+    if (this.selectedProcessId === process.processId) {
+      this.selectedProcessId = '';
+    }
+    this.refreshProcesses();
+  }
+
   trackByProcessId(_: number, process: ChatRuntimeHostSessionProcessSummary): string {
     return process.processId;
   }
@@ -112,54 +145,90 @@ export class ChatProcessManagerDialogComponent {
   get filteredProcesses(): readonly ChatRuntimeHostSessionProcessSummary[] {
     switch (this.selectedFilter) {
       case 'running':
-        return this.processes.filter(process => process.running);
+        return this.processes.filter(process => process.removed !== true && process.running);
       case 'background':
-        return this.processes.filter(process => process.running && process.background === true);
+        return this.processes.filter(process => process.removed !== true && process.running && process.background === true);
       case 'completed':
-        return this.processes.filter(process => !process.running && process.status === 'completed');
+        return this.processes.filter(process => process.removed !== true && !process.running && process.status === 'completed');
       case 'failed':
         return this.processes.filter(process =>
-          !process.running && process.status !== 'completed',
+          process.removed !== true && !process.running && process.status !== 'completed',
         );
+      case 'removed':
+        return this.processes.filter(process => process.removed === true);
       case 'all':
       default:
-        return this.processes;
+        return this.processes.filter(process => process.removed !== true);
     }
   }
 
   get selectedProcess(): ChatRuntimeHostSessionProcessSummary | null {
-    const selected = this.processes.find(process => process.processId === this.selectedProcessId);
+    const selected = this.filteredProcesses.find(process => process.processId === this.selectedProcessId);
     return selected ?? this.filteredProcesses[0] ?? null;
   }
 
   formatElapsed(process: ChatRuntimeHostSessionProcessSummary): string {
     const totalSeconds = Math.max(0, Math.floor(process.elapsedMs / 1000));
     if (totalSeconds < 60) {
-      return `${totalSeconds}s`;
+      return this.translate.instant('AILY_CHAT.PROCESS_DURATION_SECONDS', { count: totalSeconds });
     }
     const minutes = Math.floor(totalSeconds / 60);
     const seconds = totalSeconds % 60;
-    return `${minutes}m ${seconds}s`;
+    return this.translate.instant('AILY_CHAT.PROCESS_DURATION_MINUTES_SECONDS', { minutes, seconds });
   }
 
   summarizeStatus(process: ChatRuntimeHostSessionProcessSummary): string {
+    const rawStatus = typeof process.status === 'string' && process.status.trim()
+      ? process.status.trim()
+      : 'unknown';
     if (process.running) {
-      return process.background ? '后台运行' : '执行中';
+      return this.translate.instant(
+        process.background
+          ? 'AILY_CHAT.PROCESS_STATUS_BACKGROUND'
+          : 'AILY_CHAT.PROCESS_STATUS_RUNNING',
+      );
+    }
+    if (rawStatus === 'completed') {
+      return this.translate.instant('AILY_CHAT.PROCESS_STATUS_COMPLETED');
+    }
+    if (rawStatus === 'failed') {
+      return this.translate.instant('AILY_CHAT.PROCESS_STATUS_FAILED');
+    }
+    if (rawStatus === 'timeout') {
+      return `${this.translate.instant('AILY_CHAT.PROCESS_STATUS_FAILED')} · ${this.translate.instant('AILY_CHAT.PROCESS_REASON_TIMEOUT')}`;
+    }
+    if (rawStatus === 'killed') {
+      return `${this.translate.instant('AILY_CHAT.PROCESS_STATUS_KILLED')} · ${this.translate.instant('AILY_CHAT.PROCESS_REASON_KILLED')}`;
+    }
+    if (rawStatus === 'cancelled') {
+      return `${this.translate.instant('AILY_CHAT.PROCESS_STATUS_CANCELLED')} · ${this.translate.instant('AILY_CHAT.PROCESS_REASON_CANCELLED')}`;
+    }
+    return this.translate.instant('AILY_CHAT.PROCESS_STATUS_FAILED');
+  }
+
+  resolveStatusTone(process: ChatRuntimeHostSessionProcessSummary): 'info' | 'success' | 'error' | 'neutral' {
+    if (process.running) {
+      return process.background ? 'neutral' : 'info';
     }
     if (typeof process.exitCode === 'number' && process.exitCode !== 0) {
-      return `失败 · ${process.exitCode}`;
+      return 'error';
     }
-    return process.status === 'completed' ? '已完成' : process.status;
+    if (process.status === 'completed') {
+      return 'success';
+    }
+    return 'neutral';
   }
 
   private refreshProcesses(): void {
     const snapshot = this.runtimeInteractionHost.readSnapshot(this.sessionId);
-    const nextProcesses = Array.isArray(snapshot.processes)
-      ? [...snapshot.processes].sort((left, right) => right.startedAt - left.startedAt)
-      : [];
+    const liveProcesses = Array.isArray(snapshot.processes) ? snapshot.processes : [];
+    const projectPathHint = this.chatHistoryService.findEntry(this.sessionId)?.projectPath ?? null;
+    const persistedProcesses = listPersistedBlocklyCommandSessionSnapshots(this.sessionId, projectPathHint);
+    const nextProcesses = this.mergeProcessSummaries(liveProcesses, persistedProcesses);
     this.processes = nextProcesses;
-    if (!this.selectedProcessId || !nextProcesses.some(process => process.processId === this.selectedProcessId)) {
-      this.selectedProcessId = this.filteredProcesses[0]?.processId ?? nextProcesses[0]?.processId ?? '';
+    const nextFilteredProcesses = this.filteredProcesses;
+    if (!this.selectedProcessId || !nextFilteredProcesses.some(process => process.processId === this.selectedProcessId)) {
+      this.selectedProcessId = nextFilteredProcesses[0]?.processId ?? '';
     }
     void this.refreshSelectedProcessDetail();
   }
@@ -174,9 +243,9 @@ export class ChatProcessManagerDialogComponent {
     }
 
     const snapshot = await getBlocklyCommandSessionStatus(process.processId);
-    this.selectedProcessOutput = snapshot?.stdout
-      ?? readChatProcessOutputFile(process.outputFilePath)
-      ?? '';
+    this.selectedProcessOutput = readChatProcessOutputFile(process.outputFilePath)
+      || snapshot?.stdout
+      || '';
     this.selectedProcessStatusLabel = snapshot?.status
       ? this.summarizeStatus({
           ...process,
@@ -189,12 +258,40 @@ export class ChatProcessManagerDialogComponent {
     this.cdr.markForCheck();
   }
 
+  private startPolling(): void {
+    this.refreshTimer = setInterval(() => {
+      this.refreshProcesses();
+    }, 1000);
+  }
+
+  private mergeProcessSummaries(
+    liveProcesses: readonly ChatRuntimeHostSessionProcessSummary[],
+    persistedProcesses: readonly ChatRuntimeHostSessionProcessSummary[],
+  ): readonly ChatRuntimeHostSessionProcessSummary[] {
+    const merged = new Map<string, ChatRuntimeHostSessionProcessSummary>();
+    for (const process of persistedProcesses) {
+      merged.set(process.processId, process);
+    }
+    for (const process of liveProcesses) {
+      const existing = merged.get(process.processId);
+      merged.set(process.processId, existing
+        ? {
+            ...existing,
+            ...process,
+            outputFilePath: process.outputFilePath ?? existing.outputFilePath,
+          }
+        : process);
+    }
+    return [...merged.values()].sort((left, right) => right.startedAt - left.startedAt);
+  }
+
   private normalizeFilter(value: string): ProcessFilter {
     switch (value) {
       case 'running':
       case 'background':
       case 'completed':
       case 'failed':
+      case 'removed':
         return value;
       default:
         return 'all';

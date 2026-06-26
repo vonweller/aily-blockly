@@ -136,7 +136,10 @@ export class MainWindowComponent implements OnDestroy {
         console.error('[AilyChat][RuntimeHostResourceOperationHandler] Failed to start:', error);
     });
     this.watchConfigNotices();
-    await this.toolI18n.loadChildTools();
+    await Promise.all([
+      this.toolI18n.loadChildTools(),
+      this.toolI18n.load('aily-chat'),
+    ]);
     this.uiService.init();
     this.projectService.init();
     this.updateService.init();

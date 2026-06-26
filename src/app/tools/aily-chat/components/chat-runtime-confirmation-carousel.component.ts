@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, HostBinding, Input, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { TranslateModule } from '@ngx-translate/core';
 
 import { OPEN_MAX_REQUESTS_SETTINGS_ACTION_ID } from '../core/chat-runtime-confirmation-actions';
 import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } from '../services/chat-runtime-interaction-host.service';
@@ -9,7 +10,7 @@ import { XAilyConfirmationViewerComponent } from './x-dialog/x-aily-confirmation
 @Component({
   selector: 'aily-chat-runtime-confirmation-carousel',
   standalone: true,
-  imports: [CommonModule, XAilyConfirmationViewerComponent],
+  imports: [CommonModule, TranslateModule, XAilyConfirmationViewerComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @if (activeConfirmation; as active) {
@@ -17,14 +18,14 @@ import { XAilyConfirmationViewerComponent } from './x-dialog/x-aily-confirmation
         @if (queue.length > 1) {
           <div class="rtc-header">
             <div class="rtc-title-group">
-              <div class="rtc-title">{{ active.kind === 'approval' ? '工具审批' : '确认请求' }}</div>
+              <div class="rtc-title">{{ active.kind === 'approval' ? ('AILY_CHAT.PROCESS_CAROUSEL_APPROVAL_TITLE' | translate) : ('AILY_CHAT.PROCESS_CAROUSEL_CONFIRMATION_TITLE' | translate) }}</div>
               <div class="rtc-step">{{ activeIndex + 1 }}/{{ queue.length }}</div>
             </div>
             <div class="rtc-nav">
-              <button type="button" class="rtc-nav-btn" (click)="navigate(-1)" aria-label="上一个确认">
+              <button type="button" class="rtc-nav-btn" (click)="navigate(-1)" [attr.aria-label]="'AILY_CHAT.PROCESS_CAROUSEL_PREVIOUS' | translate">
                 <i class="fa-light fa-chevron-left"></i>
               </button>
-              <button type="button" class="rtc-nav-btn" (click)="navigate(1)" aria-label="下一个确认">
+              <button type="button" class="rtc-nav-btn" (click)="navigate(1)" [attr.aria-label]="'AILY_CHAT.PROCESS_CAROUSEL_NEXT' | translate">
                 <i class="fa-light fa-chevron-right"></i>
               </button>
             </div>

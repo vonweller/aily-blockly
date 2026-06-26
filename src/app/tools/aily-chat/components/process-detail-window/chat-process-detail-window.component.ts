@@ -7,9 +7,15 @@ import {
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute } from '@angular/router';
+import { TranslateModule, TranslateService } from '@ngx-translate/core';
 
 import { SubWindowComponent } from '../../../../components/sub-window/sub-window.component';
+import { ToolI18nService } from '../../../../services/tool-i18n.service';
+import { ChatProcessDetailPanelComponent } from '../process-detail-panel/chat-process-detail-panel.component';
 import { AilyHost } from '../../core/host';
+import { readChatProcessOutputFile } from '../../helpers/chat-process-window';
+import { listPersistedBlocklyCommandSessionSnapshots } from '../../helpers/lex-agent-bootstrap';
+import { ChatHistoryService } from '../../services/chat-history.service';
 
 interface ProcessWindowInitData {
   readonly sessionId?: string;
@@ -39,7 +45,7 @@ interface ProcessWindowProcessSummary {
 @Component({
   selector: 'app-chat-process-detail-window',
   standalone: true,
-  imports: [CommonModule, SubWindowComponent],
+  imports: [CommonModule, TranslateModule, SubWindowComponent, ChatProcessDetailPanelComponent],
   templateUrl: './chat-process-detail-window.component.html',
   styleUrl: './chat-process-detail-window.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -52,7 +58,7 @@ export class ChatProcessDetailWindowComponent implements OnInit, OnDestroy {
   command = '';
   summary: ProcessWindowProcessSummary | null = null;
   output = '';
-  windowTitle = '终端执行详情';
+  windowTitle = '';
 
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private initDataCleanup: (() => void) | null = null;
@@ -60,9 +66,14 @@ export class ChatProcessDetailWindowComponent implements OnInit, OnDestroy {
   constructor(
     private readonly route: ActivatedRoute,
     private readonly cdr: ChangeDetectorRef,
+    private readonly chatHistoryService: ChatHistoryService,
+    private readonly translate: TranslateService,
+    private readonly toolI18n: ToolI18nService,
   ) {}
 
   ngOnInit(): void {
+    void this.initializeTranslations();
+    this.windowTitle = this.translate.instant('AILY_CHAT.PROCESS_WINDOW_TITLE') || 'Terminal Process Detail';
     this.route.paramMap.subscribe((params) => {
       this.sessionId = decodeURIComponent(params.get('sessionId') || '');
       this.processId = decodeURIComponent(params.get('processId') || '');
@@ -94,11 +105,11 @@ export class ChatProcessDetailWindowComponent implements OnInit, OnDestroy {
   formatElapsedMs(value: number | undefined): string {
     const totalSeconds = Math.max(0, Math.floor((value ?? 0) / 1000));
     if (totalSeconds < 60) {
-      return `${totalSeconds}s`;
+      return this.translate.instant('AILY_CHAT.PROCESS_DURATION_SECONDS', { count: totalSeconds });
     }
     const minutes = Math.floor(totalSeconds / 60);
     const seconds = totalSeconds % 60;
-    return `${minutes}m ${seconds}s`;
+    return this.translate.instant('AILY_CHAT.PROCESS_DURATION_MINUTES_SECONDS', { minutes, seconds });
   }
 
   openOutputFile(): void {
@@ -108,10 +119,47 @@ export class ChatProcessDetailWindowComponent implements OnInit, OnDestroy {
     AilyHost.get().shell?.openByExplorer?.(this.outputFilePath);
   }
 
+  get displayStatus(): string {
+    const summary = this.summary;
+    if (!summary) {
+      return '-';
+    }
+    const rawStatus = typeof summary.status === 'string' && summary.status.trim()
+      ? summary.status.trim()
+      : 'unknown';
+    if (summary.running === true) {
+      return this.translate.instant('AILY_CHAT.PROCESS_STATUS_RUNNING');
+    }
+    if (rawStatus === 'completed') {
+      return this.translate.instant('AILY_CHAT.PROCESS_STATUS_COMPLETED');
+    }
+    if (rawStatus === 'failed') {
+      return this.translate.instant('AILY_CHAT.PROCESS_STATUS_FAILED');
+    }
+    if (rawStatus === 'timeout') {
+      return `${this.translate.instant('AILY_CHAT.PROCESS_STATUS_FAILED')} · ${this.translate.instant('AILY_CHAT.PROCESS_REASON_TIMEOUT')}`;
+    }
+    if (rawStatus === 'killed') {
+      return `${this.translate.instant('AILY_CHAT.PROCESS_STATUS_KILLED')} · ${this.translate.instant('AILY_CHAT.PROCESS_REASON_KILLED')}`;
+    }
+    if (rawStatus === 'cancelled') {
+      return `${this.translate.instant('AILY_CHAT.PROCESS_STATUS_CANCELLED')} · ${this.translate.instant('AILY_CHAT.PROCESS_REASON_CANCELLED')}`;
+    }
+    return this.translate.instant('AILY_CHAT.PROCESS_STATUS_FAILED');
+  }
+
   private startPolling(): void {
     this.pollTimer = setInterval(() => {
       this.refresh();
     }, 1000);
+  }
+
+  private async initializeTranslations(): Promise<void> {
+    await this.toolI18n.load('aily-chat');
+    this.windowTitle = this.summary
+      ? `${this.translate.instant('AILY_CHAT.PROCESS_WINDOW_TITLE') || 'Terminal Process Detail'} · ${this.command || this.processId}`
+      : this.translate.instant('AILY_CHAT.PROCESS_WINDOW_TITLE') || 'Terminal Process Detail';
+    this.cdr.markForCheck();
   }
 
   private applyInitData(data: ProcessWindowInitData | null | undefined): void {
@@ -148,7 +196,7 @@ export class ChatProcessDetailWindowComponent implements OnInit, OnDestroy {
       this.outputSessionId = summary.outputSessionId || this.outputSessionId;
       this.outputFilePath = summary.outputFilePath || this.outputFilePath;
       this.command = summary.command || this.command;
-      this.windowTitle = `终端执行详情 · ${this.command || this.processId}`;
+      this.windowTitle = `${this.translate.instant('AILY_CHAT.PROCESS_WINDOW_TITLE') || 'Terminal Process Detail'} · ${this.command || this.processId}`;
     }
 
     this.output = this.readOutput();
@@ -161,26 +209,26 @@ export class ChatProcessDetailWindowComponent implements OnInit, OnDestroy {
       const snapshot = await electronApi?.chatRuntimeHost?.call?.('readInteractionSnapshot', [this.sessionId]) as {
         processes?: readonly ProcessWindowProcessSummary[];
       } | null;
-      const process = snapshot?.processes?.find(item => item.processId === this.processId) ?? null;
-      return process;
+      const liveProcess = snapshot?.processes?.find(item => item.processId === this.processId) ?? null;
+      const projectPathHint = this.chatHistoryService.findEntry(this.sessionId)?.projectPath ?? null;
+      const persistedProcess = listPersistedBlocklyCommandSessionSnapshots(this.sessionId, projectPathHint)
+        .find(item => item.processId === this.processId) ?? null;
+      if (liveProcess && persistedProcess) {
+        return {
+          ...persistedProcess,
+          ...liveProcess,
+          outputFilePath: liveProcess.outputFilePath ?? persistedProcess.outputFilePath,
+        };
+      }
+      return liveProcess ?? persistedProcess;
     } catch {
-      return null;
+      const projectPathHint = this.chatHistoryService.findEntry(this.sessionId)?.projectPath ?? null;
+      return listPersistedBlocklyCommandSessionSnapshots(this.sessionId, projectPathHint)
+        .find(item => item.processId === this.processId) ?? null;
     }
   }
 
   private readOutput(): string {
-    const outputFilePath = typeof this.outputFilePath === 'string' ? this.outputFilePath.trim() : '';
-    if (!outputFilePath) {
-      return '';
-    }
-    try {
-      const host = AilyHost.get();
-      if (!host.fs?.existsSync?.(outputFilePath)) {
-        return '';
-      }
-      return String(host.fs.readFileSync(outputFilePath, 'utf-8') ?? '');
-    } catch {
-      return '';
-    }
+    return readChatProcessOutputFile(this.outputFilePath);
   }
 }

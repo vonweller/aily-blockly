@@ -9,6 +9,7 @@ import { codeToHtml } from 'shiki';
 import { Observable, from, of } from 'rxjs';
 import { catchError, map } from 'rxjs/operators';
 import { ConfigService } from '../../../services/config.service';
+import { chatI18n } from '../helpers/chat-i18n';
 
 /**
  * 库/开发板验证回调事件
@@ -327,7 +328,7 @@ export class MarkdownPipe implements PipeTransform {
             partId: jsonData.partId || (askId ? `confirmation:${askId}` : ''),
             askId,
             toolName: jsonData.toolName || '',
-            title: jsonData.title || '确认操作',
+            title: jsonData.title || chatI18n('AILY_CHAT.PROCESS_APPROVAL_DEFAULT_TITLE', undefined, 'Confirm Action'),
             subtitle: jsonData.subtitle || '',
             message: jsonData.message || '',
             args: jsonData.args,

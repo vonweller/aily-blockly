@@ -12,13 +12,14 @@ import {
   ViewChild,
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { TranslateModule } from '@ngx-translate/core';
 
 import type { ActivityToolbarActionDisplayData } from '../chat-activity-group.types';
 
 @Component({
   selector: 'aily-chat-terminal-part',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, TranslateModule],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="terminal-tool-card" [attr.data-tone]="tone">
@@ -27,7 +28,7 @@ import type { ActivityToolbarActionDisplayData } from '../chat-activity-group.ty
           <i [class]="iconClass"></i>
         </span>
         <div class="terminal-tool-command">
-          <span class="terminal-tool-command-label">命令</span>
+          <span class="terminal-tool-command-label">{{ 'AILY_CHAT.PROCESS_COMMAND_LABEL' | translate }}</span>
           <code [textContent]="command || 'terminal command'"></code>
         </div>
         @if (subtitle) {
@@ -37,14 +38,14 @@ import type { ActivityToolbarActionDisplayData } from '../chat-activity-group.ty
           <span class="terminal-tool-status" [attr.data-tone]="tone">{{ status }}</span>
         }
         @if (actions.length) {
-          <span class="terminal-action-bar" aria-label="终端操作">
+          <span class="terminal-action-bar" [attr.aria-label]="'AILY_CHAT.PROCESS_ACTIONS_ARIA' | translate">
             @for (action of actions; track action.id) {
               <button
                 type="button"
                 class="terminal-action-button"
                 [disabled]="action.disabled"
-                [attr.title]="action.tooltip || action.label"
-                [attr.aria-label]="action.label"
+                [attr.title]="(action.tooltip || action.label) | translate"
+                [attr.aria-label]="action.label | translate"
                 (click)="selectAction(action, $event)">
                 <i [class]="action.iconClass"></i>
               </button>
@@ -57,12 +58,12 @@ import type { ActivityToolbarActionDisplayData } from '../chat-activity-group.ty
         #outputContainer
         [class.terminal-output-container-no-output]="!hasOutput"
         role="region"
-        [attr.aria-label]="'命令输出：' + (command || 'terminal command')">
+        [attr.aria-label]="('AILY_CHAT.PROCESS_OUTPUT_TERMINAL' | translate) + '：' + (command || 'terminal command')">
         @if (hasOutput) {
-          <div class="terminal-output-label">标准输出</div>
+          <div class="terminal-output-label">{{ 'AILY_CHAT.PROCESS_OUTPUT_STDOUT' | translate }}</div>
           <pre class="terminal-output"><code [textContent]="output"></code></pre>
         } @else {
-          <div class="terminal-output-empty">命令未产生输出</div>
+          <div class="terminal-output-empty">{{ 'AILY_CHAT.PROCESS_OUTPUT_NONE' | translate }}</div>
         }
       </div>
     </div>

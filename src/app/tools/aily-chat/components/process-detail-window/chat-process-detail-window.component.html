@@ -1,37 +1,20 @@
 <app-sub-window [title]="windowTitle" [winBtns]="['minimize', 'maximize', 'close']">
   <div class="process-detail-window">
-    <div class="process-detail-window-head">
-      <div class="process-detail-window-title">{{ command || processId || '终端命令' }}</div>
-      @if (outputFilePath) {
-        <button type="button" class="process-detail-window-open-btn" (click)="openOutputFile()">
-          <i class="fa-light fa-arrow-up-right-from-square"></i>
-          <span>打开输出文件</span>
-        </button>
-      }
-    </div>
-
-    <div class="process-detail-window-meta">
-      <div class="meta-card">
-        <span class="label">状态</span>
-        <span class="value">{{ summary?.status || 'unknown' }}</span>
-      </div>
-      <div class="meta-card">
-        <span class="label">执行时长</span>
-        <span class="value">{{ formatElapsedMs(summary?.elapsedMs) }}</span>
-      </div>
-      <div class="meta-card">
-        <span class="label">工作目录</span>
-        <span class="value">{{ summary?.cwd || '-' }}</span>
-      </div>
-      <div class="meta-card">
-        <span class="label">退出码</span>
-        <span class="value">{{ summary?.exitCode ?? '-' }}</span>
-      </div>
-    </div>
-
-    <div class="process-detail-window-console">
-      <div class="console-title">终端输出</div>
-      <pre><code [textContent]="output || '暂无输出'"></code></pre>
-    </div>
+    <app-chat-process-detail-panel
+      [title]="command || processId || ('AILY_CHAT.PROCESS_FALLBACK_TERMINAL_COMMAND' | translate)"
+      [actionVisible]="!!outputFilePath"
+      actionLabel="AILY_CHAT.PROCESS_ACTION_OPEN_OUTPUT"
+      actionIconClass="fa-light fa-arrow-up-right-from-square"
+      [statusText]="displayStatus"
+      [elapsedText]="summary ? formatElapsedMs(summary?.elapsedMs) : '-'"
+      [running]="summary?.running === true"
+      [startedAt]="summary?.startedAt ?? null"
+      [completedAt]="summary?.completedAt ?? null"
+      [exitCode]="summary?.exitCode ?? null"
+      outputTitle="AILY_CHAT.PROCESS_OUTPUT_TERMINAL"
+      [output]="output"
+      emptyOutputText="AILY_CHAT.PROCESS_OUTPUT_EMPTY"
+      (actionClick)="openOutputFile()"
+    />
   </div>
 </app-sub-window>

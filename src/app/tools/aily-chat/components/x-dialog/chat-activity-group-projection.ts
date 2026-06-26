@@ -32,6 +32,7 @@ import {
 import { getMarkdownContentWindow } from '../../core/markdown-content-store';
 import { getThinkContentWindow } from '../../core/think-content-store';
 import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
+import { chatI18n } from '../../helpers/chat-i18n';
 import type {
   ActivityApprovalDisplayData,
   ActivityApprovalSummaryDisplayData,
@@ -539,8 +540,10 @@ function buildConfirmationLikeActivityDisplayItem(
     ? (approval.approved === false ? 'warn' : 'success')
     : 'warn';
   const pill = approval.resolved
-    ? (approval.approved === false ? '已取消' : '已确认')
-    : '待确认';
+    ? (approval.approved === false
+      ? chatI18n('AILY_CHAT.PROCESS_CONFIRM_RESOLVED_CANCELLED')
+      : chatI18n('AILY_CHAT.PROCESS_CONFIRM_RESOLVED_APPROVED'))
+    : chatI18n('AILY_CHAT.PROCESS_CONFIRM_PENDING');
   const detailSections = buildApprovalDetailSections({
     message: approval.message,
     description: approval.description,
@@ -553,7 +556,7 @@ function buildConfirmationLikeActivityDisplayItem(
     kind: 'activity',
     headerKind: 'tool',
     toolHeader: {
-      title: approval.title,
+      title: approval.title || chatI18n('AILY_CHAT.PROCESS_APPROVAL_DEFAULT_TITLE', undefined, 'Confirm Action'),
       subtitle: approval.subtitle,
       meta,
       pill,
@@ -564,8 +567,8 @@ function buildConfirmationLikeActivityDisplayItem(
       : 'fa-light fa-circle-pause',
     isSpinning: false,
     iconColor: getStateColor(approval.resolved ? (approval.approved === false ? 'warn' : 'done') : 'pending_approval'),
-    kicker: approval.resolved ? undefined : '审批',
-    label: approval.title,
+    kicker: approval.resolved ? undefined : chatI18n('AILY_CHAT.PROCESS_APPROVAL_KICKER'),
+    label: approval.title || chatI18n('AILY_CHAT.PROCESS_APPROVAL_DEFAULT_TITLE', undefined, 'Confirm Action'),
     subtitle: undefined,
     note: undefined,
     headerMeta: undefined,
@@ -589,10 +592,10 @@ function buildApprovalDetailSections(input: {
 
   if (input.message.trim()) {
     sections.push({
-      title: '当前记录',
+      title: chatI18n('AILY_CHAT.PROCESS_APPROVAL_SECTION_CURRENT'),
       rows: [{
         id: 'approval-message',
-        title: '审批说明',
+        title: chatI18n('AILY_CHAT.PROCESS_APPROVAL_DETAIL_TITLE'),
         note: input.message,
       }],
     });
@@ -600,7 +603,7 @@ function buildApprovalDetailSections(input: {
 
   if (input.description?.trim()) {
     sections.push({
-      title: '工具输出',
+      title: chatI18n('AILY_CHAT.PROCESS_APPROVAL_SECTION_OUTPUT'),
       rows: parseApprovalDescriptionRows(input.description),
     });
   }
@@ -729,7 +732,7 @@ export function buildTerminalActivityDisplayItem(
     kind: 'activity',
     headerKind: 'tool',
     toolHeader: {
-      title: '运行终端命令',
+      title: chatI18n('AILY_CHAT.PROCESS_TOOL_RUN_COMMAND'),
       subtitle: part.command || undefined,
       meta,
       pill: pill || undefined,
@@ -741,7 +744,7 @@ export function buildTerminalActivityDisplayItem(
     isSpinning: part.isRunning,
     iconColor: getStateColor(part.isRunning ? 'doing' : (part.exitCode != null && part.exitCode !== 0 ? 'error' : 'done')),
     kicker: undefined,
-    label: '运行终端命令',
+    label: chatI18n('AILY_CHAT.PROCESS_TOOL_RUN_COMMAND'),
     subtitle: undefined,
     note: undefined,
     headerMeta: undefined,
@@ -763,8 +766,8 @@ function buildTerminalToolbarActions(part: TerminalPart): readonly ActivityToolb
     {
       id: 'toggle-output',
       iconClass: 'fa-light fa-chevron-down',
-      label: '显示或隐藏输出',
-      tooltip: '显示或隐藏命令输出',
+      label: chatI18n('AILY_CHAT.PROCESS_ACTION_TOGGLE_OUTPUT'),
+      tooltip: chatI18n('AILY_CHAT.PROCESS_ACTION_TOGGLE_OUTPUT_TOOLTIP'),
     },
   ];
 
@@ -772,8 +775,8 @@ function buildTerminalToolbarActions(part: TerminalPart): readonly ActivityToolb
     actions.push({
       id: 'open-output-file',
       iconClass: 'fa-light fa-arrow-up-right-from-square',
-      label: '打开输出文件',
-      tooltip: '在系统文件管理器中打开输出文件',
+      label: chatI18n('AILY_CHAT.PROCESS_ACTION_OPEN_OUTPUT'),
+      tooltip: chatI18n('AILY_CHAT.PROCESS_ACTION_OPEN_OUTPUT_TOOLTIP'),
       data: { outputFilePath: part.outputFilePath },
     });
   }
@@ -789,16 +792,16 @@ function buildTerminalToolbarActions(part: TerminalPart): readonly ActivityToolb
     actions.push({
       id: 'continue-background',
       iconClass: 'fa-light fa-window-minimize',
-      label: '后端执行',
-      tooltip: '折叠输出并让命令继续在后端执行',
+      label: chatI18n('AILY_CHAT.PROCESS_ACTION_BACKGROUND'),
+      tooltip: chatI18n('AILY_CHAT.PROCESS_ACTION_BACKGROUND_TOOLTIP'),
       data: sessionData,
     });
 
     actions.push({
       id: 'stop-process',
       iconClass: 'fa-light fa-stop',
-      label: '中断',
-      tooltip: '中断正在运行的命令进程',
+      label: chatI18n('AILY_CHAT.PROCESS_ACTION_INTERRUPT'),
+      tooltip: chatI18n('AILY_CHAT.PROCESS_ACTION_INTERRUPT_TOOLTIP'),
       data: sessionData,
     });
   }
@@ -807,8 +810,8 @@ function buildTerminalToolbarActions(part: TerminalPart): readonly ActivityToolb
     actions.push({
       id: 'open-process-window',
       iconClass: 'fa-light fa-square-terminal',
-      label: '打开终端详情',
-      tooltip: '在独立窗口中查看终端执行详情',
+      label: chatI18n('AILY_CHAT.PROCESS_ACTION_OPEN_WINDOW'),
+      tooltip: chatI18n('AILY_CHAT.PROCESS_ACTION_OPEN_WINDOW_TOOLTIP'),
       data: {
         processId: part.processId,
         command: part.command,
@@ -858,14 +861,24 @@ export function buildResolvedApprovalSummary(
   return {
     tone: approved ? 'success' : 'warn',
     statusLabel: isConfirmation
-      ? (approved ? '已确认' : '已取消')
-      : (approved ? '已批准执行' : '已拒绝执行'),
+      ? (approved
+        ? chatI18n('AILY_CHAT.PROCESS_CONFIRM_RESOLVED_APPROVED')
+        : chatI18n('AILY_CHAT.PROCESS_CONFIRM_RESOLVED_CANCELLED'))
+      : (approved
+        ? chatI18n('AILY_CHAT.PROCESS_APPROVAL_RESOLVED_APPROVED')
+        : chatI18n('AILY_CHAT.PROCESS_APPROVAL_RESOLVED_REJECTED')),
     scopeLabel: isConfirmation ? undefined : scopeLabel,
     note: isConfirmation
-      ? (approved ? '该确认请求已被接受。' : '该确认请求已被取消。')
+      ? (approved
+        ? chatI18n('AILY_CHAT.PROCESS_CONFIRM_NOTE_APPROVED')
+        : chatI18n('AILY_CHAT.PROCESS_CONFIRM_NOTE_CANCELLED'))
       : (approved
-        ? (scopeLabel ? `该操作已按${scopeLabel}范围确认，后续执行结果在下方显示。` : '该操作已确认，后续执行结果在下方显示。')
-        : (scopeLabel ? `该操作已被拒绝，确认范围为${scopeLabel}。` : '该操作已被拒绝。')),
+        ? (scopeLabel
+          ? chatI18n('AILY_CHAT.PROCESS_APPROVAL_NOTE_APPROVED_SCOPED', { scope: scopeLabel })
+          : chatI18n('AILY_CHAT.PROCESS_APPROVAL_NOTE_APPROVED'))
+        : (scopeLabel
+          ? chatI18n('AILY_CHAT.PROCESS_APPROVAL_NOTE_REJECTED_SCOPED', { scope: scopeLabel })
+          : chatI18n('AILY_CHAT.PROCESS_APPROVAL_NOTE_REJECTED'))),
   };
 }
 
@@ -1156,7 +1169,7 @@ function buildActivityToolSummaryCandidate(part: ToolCallPart | ConfirmationPart
   if (part.type === 'terminal') {
     return {
       toolName: 'run_in_terminal',
-      label: '运行终端命令',
+      label: 'AILY_CHAT.PROCESS_TOOL_RUN_COMMAND',
       subtitle: normalizeThinkingHeaderText(part.command),
       rawText: normalizeThinkingHeaderText(part.command),
       args: { command: part.command },
@@ -1459,9 +1472,9 @@ function buildTerminalMetadataRows(part: TerminalPart, terminalKey: string): Sta
   if (typeof part.bytesTotal === 'number' && Number.isFinite(part.bytesTotal)) {
     rows.push({
       id: `${terminalKey}:bytes`,
-      title: '已记录输出',
+      title: chatI18n('AILY_CHAT.PROCESS_OUTPUT_RECORDED'),
       note: formatTerminalByteCount(part.bytesTotal),
-      trailing: part.outputSessionId ? '可按需读取' : undefined,
+      trailing: part.outputSessionId ? chatI18n('AILY_CHAT.PROCESS_OUTPUT_READ_ON_DEMAND') : undefined,
       tone: 'neutral',
       outputKind: 'default',
     });
@@ -1470,9 +1483,9 @@ function buildTerminalMetadataRows(part: TerminalPart, terminalKey: string): Sta
   if (part.outputFilePath) {
     rows.push({
       id: `${terminalKey}:output-file`,
-      title: '输出文件',
+      title: chatI18n('AILY_CHAT.PROCESS_OUTPUT_FILE'),
       note: part.outputFilePath,
-      trailing: '完整输出',
+      trailing: chatI18n('AILY_CHAT.PROCESS_OUTPUT_FULL'),
       tone: 'neutral',
       outputKind: 'resource',
       outputUri: part.outputFilePath,
@@ -1482,7 +1495,7 @@ function buildTerminalMetadataRows(part: TerminalPart, terminalKey: string): Sta
   if (part.processId || part.outputSessionId) {
     rows.push({
       id: `${terminalKey}:identity`,
-      title: '进程会话',
+      title: chatI18n('AILY_CHAT.PROCESS_SESSION_TITLE'),
       note: [
         part.processId ? `processId=${part.processId}` : undefined,
         part.outputSessionId ? `outputSessionId=${part.outputSessionId}` : undefined,
@@ -1496,12 +1509,12 @@ function buildTerminalMetadataRows(part: TerminalPart, terminalKey: string): Sta
 }
 
 function formatTerminalTailSubtitle(part: TerminalPart, stream: 'stdout' | 'stderr'): string | undefined {
-  const parts: string[] = ['live tail'];
+  const parts: string[] = [chatI18n('AILY_CHAT.PROCESS_TAIL_LIVE')];
   if (typeof part.bytesTotal === 'number' && Number.isFinite(part.bytesTotal)) {
     parts.push(formatTerminalByteCount(part.bytesTotal));
   }
   if (stream === 'stdout' && part.outputFilePath) {
-    parts.push('full output in file');
+    parts.push(chatI18n('AILY_CHAT.PROCESS_OUTPUT_FULL_IN_FILE'));
   }
   return parts.join(' · ');
 }
@@ -1524,21 +1537,21 @@ function formatTerminalByteCount(value: number): string {
 
 function formatTerminalStatusLabel(part: TerminalPart): string {
   if (part.isRunning) {
-    return '运行中';
+    return chatI18n('AILY_CHAT.PROCESS_STATUS_RUNNING');
   }
   if (part.status === 'killed') {
-    return '已停止';
+    return chatI18n('AILY_CHAT.PROCESS_STATUS_STOPPED');
   }
   if (part.status === 'timeout') {
-    return '已超时';
+    return chatI18n('AILY_CHAT.PROCESS_STATUS_TIMED_OUT');
   }
   if (part.exitCode != null) {
-    return `退出码 ${part.exitCode}`;
+    return `${chatI18n('AILY_CHAT.PROCESS_LABEL_EXIT_CODE')} ${part.exitCode}`;
   }
   if (part.status) {
     return part.status;
   }
-  return '已完成';
+  return chatI18n('AILY_CHAT.PROCESS_STATUS_COMPLETED');
 }
 
 function getTerminalDisplayKey(part: TerminalPart): string {
@@ -1547,12 +1560,12 @@ function getTerminalDisplayKey(part: TerminalPart): string {
 
 function getActivityGroupStateLabel(state: ActivityGroupState): string {
   if (state === 'error') {
-    return '失败';
+    return chatI18n('AILY_CHAT.PROCESS_STATUS_FAILED');
   }
   if (state === 'done') {
-    return '已完成';
+    return chatI18n('AILY_CHAT.PROCESS_STATUS_COMPLETED');
   }
-  return '运行中';
+  return chatI18n('AILY_CHAT.PROCESS_STATUS_RUNNING');
 }
 
 function getToolIconClass(state: ToolCallPart['state']): string {
@@ -1612,7 +1625,7 @@ function getStatePill(state: string): string {
     case 'warn':
       return '警告';
     case 'pending_approval':
-      return '待审批';
+      return chatI18n('AILY_CHAT.PROCESS_APPROVAL_PENDING');
     default:
       return '';
   }

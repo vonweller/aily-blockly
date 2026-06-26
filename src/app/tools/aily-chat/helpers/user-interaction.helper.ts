@@ -15,6 +15,7 @@ import {
   normalizeReadSideToolName,
 } from '../core/tool-name-normalizer';
 import { AilyHost } from '../core/host';
+import { chatI18n } from './chat-i18n';
 import { normalizeToolApprovalRequest } from './tool-approval-ui';
 import type { ToolApprovalRequest, ToolApprovalResult, ToolApprovalScope } from './tool-approval-ui';
 import type { AskUserQuestion, AskUserFullResponse, AskUserAnswer, AskUserPresentationContext } from '../core/ask-user';
@@ -392,7 +393,7 @@ export class UserInteractionHelper {
       this.ctx.lexStream.ui.resolveToolCallApproval(request.toolCallId, !!result.approved, result.scope);
       return {
         approved: !!result.approved,
-        reason: result.reason || (result.approved ? undefined : '用户拒绝执行'),
+        reason: result.reason || (result.approved ? undefined : chatI18n('AILY_CHAT.PROCESS_CONFIRM_REJECT_REASON')),
         scope: result.scope || 'once',
         actionId: typeof result.actionId === 'string' ? result.actionId : undefined,
       };
@@ -419,7 +420,7 @@ export class UserInteractionHelper {
       toolCallId,
       {
         approved: false,
-        reason: reason || '用户拒绝执行',
+        reason: reason || chatI18n('AILY_CHAT.PROCESS_CONFIRM_REJECT_REASON'),
       },
     );
   }
