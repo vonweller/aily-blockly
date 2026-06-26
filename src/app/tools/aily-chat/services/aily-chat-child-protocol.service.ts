@@ -210,7 +210,7 @@ export class AilyChatChildProtocolService {
       case 'session.action':
         return this.runSessionOperation(async () => this.handleSessionAction(params));
       case 'surface.back':
-        await this.engine.returnToEntryInventory({ sessionId: this.engine.sessionId, disposeRuntime: false });
+        await this.engine.returnToEntryInventory({ sessionId: this.engine.sessionId });
         return { ok: true };
       case 'surface.toggleSettings':
         this.viewState.toggleSettings();
@@ -505,7 +505,7 @@ export class AilyChatChildProtocolService {
           if (remaining?.sessionId) {
             await this.engine.switchToSession(remaining.sessionId);
           } else {
-            await this.engine.returnToEntryInventory({ sessionId, disposeRuntime: false });
+            await this.engine.returnToEntryInventory({ sessionId });
           }
         }
         break;
@@ -764,7 +764,7 @@ export class AilyChatChildProtocolService {
       })),
       notices: [],
       modeId: this.engine.currentMode,
-      modeLabel: this.engine.currentCustomAgentTarget || this.engine.currentMode || '代理',
+      modeLabel: this.resolveModeLabel(),
       modeOptions,
       modelOptions,
       permissionLabel: permissionMode === 'full'
@@ -1012,6 +1012,17 @@ export class AilyChatChildProtocolService {
     const sessionRunning = activeItem?.status === 'in_progress'
       || activeItem?.status === 'running';
     return sessionRunning || this.engine.isWaiting ? 'running' : 'idle';
+  }
+
+  private resolveModeLabel(): string {
+    const selectedMode = this.engine.selectedMode;
+    const customAgentTarget = typeof selectedMode.customAgentTarget === 'string'
+      ? selectedMode.customAgentTarget.trim()
+      : '';
+    if (selectedMode.modeId === 'agent' && customAgentTarget) {
+      return customAgentTarget;
+    }
+    return '';
   }
 
   private serializeDialogItem(

@@ -93,13 +93,13 @@ export const AILY_CHAT_SHARED_PROVIDERS: Provider[] = [
   EditCheckpointService,
   GitWorkspaceCheckpointProviderService,
   ChatRuntimeInteractionHostService,
-  AilyChatChildProtocolService,
 ];
 
 // Visible Chat is a view/controller adapter and is route-scoped, not a root runtime owner.
 export const AILY_CHAT_VIEW_PROVIDERS: Provider[] = [
   ChatEngineService,
   ChatRuntimeHostResourceOperationHandlerService,
+  AilyChatChildProtocolService,
 ];
 
 // Runtime owner providers are installed only by the host-created hidden execution-worker route.

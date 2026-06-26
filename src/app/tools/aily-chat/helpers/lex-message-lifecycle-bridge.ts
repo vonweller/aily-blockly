@@ -10,9 +10,6 @@ import { isAilyCategoryDebugEnabled } from '../core/chat-debug-flags';
 import { ChatPerformanceTracer } from '../services/chat-perf-tracer';
 import { notifyAilyChatIfBackground } from './user-feedback-notify.helper';
 
-type LexMessageLifecycleViewWriteContext = ConstructorParameters<typeof ChatViewWriteBridge>[0];
-
-import type { EditsSummary } from '../services/edit-checkpoint.service';
 
 function isFinalizeTraceEnabled(): boolean {
   return isAilyCategoryDebugEnabled('aily.chat.traceFinalize', [

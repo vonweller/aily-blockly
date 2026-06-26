@@ -130,7 +130,6 @@ export class MainWindowComponent implements OnDestroy {
     private electronService: ElectronService,
     private toolI18n: ToolI18nService,
     private readonly chatRuntimeHostResourceOperationHandler: ChatRuntimeHostResourceOperationHandlerService,
-    private onboardingService: OnboardingService,
     private readonly ailyChatChildProtocol: AilyChatChildProtocolService
   ) { }
 

@@ -1412,16 +1412,16 @@ export class ChatEngineService implements IChatContext {
       return this.lexStream.conversation.messages();
   }
 
-  get dialogItems(): ChatDialogViewItem[] {
+  get dialogItems(): readonly ChatVisibleTranscriptDialogItem[] {
     return this.readDialogItems(false);
   }
 
   /** Bypass cached dialog items — used by child-protocol snapshots during streaming. */
-  readLiveDialogItemsForSnapshot(): ChatDialogViewItem[] {
+  readLiveDialogItemsForSnapshot(): readonly ChatVisibleTranscriptDialogItem[] {
     return this.readDialogItems(true);
   }
 
-  private readDialogItems(invalidateCache: boolean): ChatDialogViewItem[] {
+  private readDialogItems(invalidateCache: boolean): readonly ChatVisibleTranscriptDialogItem[] {
     const model = this.getCurrentViewSessionModel();
     if (!model) {
       this.dialogItemsCache = null;
@@ -1434,7 +1434,7 @@ export class ChatEngineService implements IChatContext {
     const lastTurnId = lastTurn?.turnId ?? '';
     const lastUpdatedAt = lastTurn?.updatedAt ?? lastTurn?.response?.updatedAt ?? -1;
     if (!invalidateCache
-      && this.dialogItemsCache
+          && this.dialogItemsCache
       && this.dialogItemsCache.sessionResource === model.sessionResource
       && this.dialogItemsCache.projectionSource === projectionSource
       && this.dialogItemsCache.turnResponses === turnResponses

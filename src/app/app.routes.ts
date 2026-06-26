@@ -4,7 +4,6 @@ import {
     AILY_CHAT_VIEW_PROVIDERS,
 } from './tools/aily-chat/aily-chat.providers';
 import { inject, provideEnvironmentInitializer } from '@angular/core';
-import { AILY_CHAT_RUNTIME_PROVIDERS } from './tools/aily-chat/aily-chat.providers';
 import { AilyChatChildProtocolService } from './tools/aily-chat/services/aily-chat-child-protocol.service';
 
 export const routes: Routes = [
@@ -108,7 +107,7 @@ export const routes: Routes = [
     {
         path: "child-tool/aily-chat-react",
         providers: [
-            ...AILY_CHAT_RUNTIME_PROVIDERS,
+            ...AILY_CHAT_VIEW_PROVIDERS,
             provideEnvironmentInitializer(() => {
                 inject(AilyChatChildProtocolService);
             })
