@@ -1,5 +1,6 @@
 import { Component, Input, OnChanges, SimpleChanges } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { TranslateModule } from '@ngx-translate/core';
 import { AilyHost } from '../../../core/host';
 import {
   appendDetailSections,
@@ -32,7 +33,7 @@ interface StateViewerData {
 @Component({
   selector: 'x-aily-state-viewer',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, TranslateModule],
   template: `
     <div
       class="ac-state"
@@ -55,7 +56,7 @@ interface StateViewerData {
           class="ac-state-header"
           [class.ac-state-header-clickable]="hasExpandableDetails && !embedded"
           [attr.aria-expanded]="(hasExpandableDetails && !embedded) ? expanded : null"
-          [attr.aria-label]="(hasExpandableDetails && !embedded) ? (expanded ? '收起状态详情' : '展开状态详情') : null"
+          [attr.aria-label]="(hasExpandableDetails && !embedded) ? ((expanded ? 'AILY_CHAT.DETAIL_COLLAPSE_STATE' : 'AILY_CHAT.DETAIL_EXPAND_STATE') | translate) : null"
           (click)="hasExpandableDetails && !embedded ? toggleExpanded() : null">
           <i [class]="stateIconClass"></i>
           <div class="ac-state-title-group">
@@ -82,7 +83,7 @@ interface StateViewerData {
               <div class="ac-state-badges ac-state-badges-standalone">
                 @for (badge of summaryBadges; track badge.label + ':' + badge.value) {
                   <span class="ac-state-badge" [attr.data-tone]="badge.tone || 'neutral'">
-                    <span class="ac-state-badge-label">{{ badge.label }}</span>
+                    <span class="ac-state-badge-label">{{ badge.label | translate }}</span>
                     <span class="ac-state-badge-value">{{ badge.value }}</span>
                   </span>
                 }
@@ -94,9 +95,9 @@ interface StateViewerData {
                 type="button"
                 class="ac-state-toggle"
                 [attr.aria-expanded]="expanded"
-                [attr.aria-label]="expanded ? '收起详情' : '展开详情'"
+                [attr.aria-label]="(expanded ? 'AILY_CHAT.DETAIL_COLLAPSE' : 'AILY_CHAT.DETAIL_EXPAND') | translate"
                 (click)="toggleExpanded()">
-                <span class="ac-state-toggle-label">{{ expanded ? '收起详情' : '展开详情' }}</span>
+                <span class="ac-state-toggle-label">{{ (expanded ? 'AILY_CHAT.DETAIL_COLLAPSE' : 'AILY_CHAT.DETAIL_EXPAND') | translate }}</span>
                 <i class="fa-light fa-chevron-down ac-state-toggle-icon" aria-hidden="true"></i>
               </button>
             }
@@ -125,7 +126,7 @@ interface StateViewerData {
             @for (section of sections; track section.title) {
               <div class="ac-state-section">
                 @if (section.title) {
-                  <div class="ac-state-section-title">{{ section.title }}</div>
+                  <div class="ac-state-section-title">{{ section.title | translate }}</div>
                 }
                 @if (getOutputGroups(section).length > 0) {
                   <div class="ac-state-output-groups">
@@ -134,9 +135,9 @@ interface StateViewerData {
                         @for (row of group.rows; track row.id) {
                           <div class="ac-state-list-item" [attr.data-tone]="row.tone || 'neutral'" [attr.data-output-kind]="row.outputKind || 'default'">
                             <div class="ac-state-list-head">
-                              <span class="ac-state-list-title">{{ row.title }}</span>
+                              <span class="ac-state-list-title">{{ row.title | translate }}</span>
                               @if (row.trailing) {
-                                <span class="ac-state-list-pill" [attr.data-tone]="row.tone || 'neutral'">{{ row.trailing }}</span>
+                                <span class="ac-state-list-pill" [attr.data-tone]="row.tone || 'neutral'">{{ row.trailing | translate }}</span>
                               }
                             </div>
                             @if (row.subtitle) {

@@ -65,6 +65,8 @@ import { ChatProcessManagerDialogComponent } from './components/process-manager-
 import { isSessionLifecycleSupersededError, readSessionLifecycleRestoreErrorDetails } from './helpers/session-lifecycle.helper';
 import { openChatProcessWindow } from './helpers/chat-process-window';
 import { listPersistedBlocklyCommandSessionSnapshots } from './helpers/lex-agent-bootstrap';
+import { setChatTranslateService } from './helpers/chat-i18n';
+import { setToolApprovalTranslateService } from './helpers/tool-approval-ui';
 import type { ChatTaskActionDetail } from './helpers/chat-task-action-coordinator';
 import { ProjectRelatedFileStorage } from './components/memory/project-related-file-storage';
 
@@ -75,7 +77,7 @@ import { AilyEditsViewerComponent } from './components/aily-edits-viewer/aily-ed
 import { TodoUpdateService } from './services/todoUpdate.service';
 import { ArduinoLintService } from './services/arduino-lint.service';
 import { BlocklyService } from '../../editors/blockly-editor/services/blockly.service';
-import { TranslateModule } from '@ngx-translate/core';
+import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { LoginComponent } from '../../components/login/login.component';
 import { NoticeService } from '../../services/notice.service';
 import { AilyChatDebugHomeComponent } from './components/aily-chat-debug-home/aily-chat-debug-home.component';
@@ -107,6 +109,7 @@ import { ChatHistoryService } from './services/chat-history.service';
 import { ChatDebugBrowserService, ChatDebugBrowserViewState } from './services/chat-debug-browser.service';
 import { ChatRuntimeInteractionHostService } from './services/chat-runtime-interaction-host.service';
 import { ThemeService } from '../../services/theme.service';
+import { ToolI18nService } from '../../services/tool-i18n.service';
 import type {
   ChatPaneEntryInfoSurfaceModel,
   ChatPaneSessionPickerSurfaceModel,
@@ -281,10 +284,12 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
     private repetitionDetectionService: RepetitionDetectionService,
     private chatHistoryService: ChatHistoryService,
     public debugBrowser: ChatDebugBrowserService,
+    private translate: TranslateService,
     private cdr: ChangeDetectorRef,
     private ngZone: NgZone,
     private builderService: BuilderService,
     private themeService: ThemeService,
+    private toolI18n: ToolI18nService,
     private hostInitializer: AilyChatHostInitializerService,
     public runtimeInteractionHost: ChatRuntimeInteractionHostService,
     public engine: ChatEngineService,
@@ -294,6 +299,8 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
     public menuManager: MenuManagerService,
     public viewState: ChatViewService,
   ) {
+    setChatTranslateService(this.translate);
+    setToolApprovalTranslateService(this.translate);
     ChatPerformanceTracer.increment('entry_open.component_constructor');
     ChatPerformanceTracer.mark('entry_open.component_constructor');
     this.vm = new ChatComponentViewModel({
@@ -666,6 +673,9 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
   ngOnInit() {
     ChatPerformanceTracer.increment('entry_open.component_ng_on_init');
     ChatPerformanceTracer.mark('entry_open.component_ng_on_init');
+    void this.toolI18n.load('aily-chat').then(() => {
+      this.cdr.markForCheck();
+    });
     this.lifecycleCoordinator.initialize();
     this.ailyChatConfigService.reloadRemoteModelCatalog('chat_view_open');
     this.syncSessionListDisplayState();

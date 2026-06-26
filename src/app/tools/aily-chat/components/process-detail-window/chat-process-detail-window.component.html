@@ -1,9 +1,9 @@
 <app-sub-window [title]="windowTitle" [winBtns]="['minimize', 'maximize', 'close']">
   <div class="process-detail-window">
     <app-chat-process-detail-panel
-      [title]="command || processId || '终端命令'"
+      [title]="command || processId || ('AILY_CHAT.PROCESS_FALLBACK_TERMINAL_COMMAND' | translate)"
       [actionVisible]="!!outputFilePath"
-      actionLabel="打开输出文件"
+      actionLabel="AILY_CHAT.PROCESS_ACTION_OPEN_OUTPUT"
       actionIconClass="fa-light fa-arrow-up-right-from-square"
       [statusText]="displayStatus"
       [elapsedText]="summary ? formatElapsedMs(summary?.elapsedMs) : '-'"
@@ -11,9 +11,9 @@
       [startedAt]="summary?.startedAt ?? null"
       [completedAt]="summary?.completedAt ?? null"
       [exitCode]="summary?.exitCode ?? null"
-      outputTitle="终端输出"
+      outputTitle="AILY_CHAT.PROCESS_OUTPUT_TERMINAL"
       [output]="output"
-      emptyOutputText="暂无输出"
+      emptyOutputText="AILY_CHAT.PROCESS_OUTPUT_EMPTY"
       (actionClick)="openOutputFile()"
     />
   </div>

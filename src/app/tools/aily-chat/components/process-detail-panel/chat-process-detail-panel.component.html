@@ -1,6 +1,6 @@
 <div class="process-detail-panel">
   <div class="process-detail-panel-head">
-    <div class="process-detail-panel-title">{{ title || '终端命令' }}</div>
+    <div class="process-detail-panel-title">{{ title || ('AILY_CHAT.PROCESS_FALLBACK_TERMINAL_COMMAND' | translate) }}</div>
     @if (actionVisible) {
       <button
         type="button"

@@ -14,7 +14,7 @@ import {
   ViewChild,
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { TranslateModule } from '@ngx-translate/core';
+import { TranslateModule, TranslateService } from '@ngx-translate/core';
 
 @Component({
   selector: 'app-chat-process-detail-panel',
@@ -38,13 +38,14 @@ export class ChatProcessDetailPanelComponent implements AfterViewInit, OnChanges
   @Input() startedAt?: number | null;
   @Input() completedAt?: number | null;
   @Input() exitCode: number | string | null | undefined = null;
-  @Input() outputTitle = 'command 预览';
+  @Input() outputTitle = 'AILY_CHAT.PROCESS_OUTPUT_PREVIEW';
   @Input() output = '';
-  @Input() emptyOutputText = '暂无输出';
+  @Input() emptyOutputText = 'AILY_CHAT.PROCESS_OUTPUT_EMPTY';
 
   @Output() actionClick = new EventEmitter<void>();
 
   private readonly cdr = inject(ChangeDetectorRef);
+  private readonly translate = inject(TranslateService);
   private elapsedTimer: ReturnType<typeof setInterval> | null = null;
 
   ngAfterViewInit(): void {
@@ -107,10 +108,10 @@ export class ChatProcessDetailPanelComponent implements AfterViewInit, OnChanges
   private formatElapsed(durationMs: number): string {
     const totalSeconds = Math.max(0, Math.floor(durationMs / 1000));
     if (totalSeconds < 60) {
-      return `${totalSeconds}s`;
+      return this.translate.instant('AILY_CHAT.PROCESS_DURATION_SECONDS', { count: totalSeconds });
     }
     const minutes = Math.floor(totalSeconds / 60);
     const seconds = totalSeconds % 60;
-    return `${minutes}m ${seconds}s`;
+    return this.translate.instant('AILY_CHAT.PROCESS_DURATION_MINUTES_SECONDS', { minutes, seconds });
   }
 }

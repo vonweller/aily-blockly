@@ -1,5 +1,6 @@
-import { Component, Input, OnChanges, SimpleChanges, ChangeDetectionStrategy, ChangeDetectorRef, Output, EventEmitter } from '@angular/core';
+import { Component, Input, OnChanges, SimpleChanges, ChangeDetectionStrategy, ChangeDetectorRef, Output, EventEmitter, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import type { ToolApprovalAction, ToolApprovalScope } from '../../../helpers/tool-approval-ui';
 import {
   isTerminalCommandToolName,
@@ -12,7 +13,7 @@ import { ChatPartHeaderShellComponent } from '../chat-part-header-shell.componen
 @Component({
   selector: 'x-aily-confirmation-viewer',
   standalone: true,
-  imports: [CommonModule, ChatCommandPreviewComponent, ChatConfirmationActionsComponent, ChatPartHeaderShellComponent],
+  imports: [CommonModule, TranslateModule, ChatCommandPreviewComponent, ChatConfirmationActionsComponent, ChatPartHeaderShellComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
     'class': 'aa-container',
@@ -145,6 +146,7 @@ import { ChatPartHeaderShellComponent } from '../chat-part-header-shell.componen
   `],
 })
 export class XAilyConfirmationViewerComponent implements OnChanges {
+  private readonly translate = inject(TranslateService);
   @Input() data: any = null;
   @Input() embedded = false;
   @Input() interactive = true;
@@ -164,7 +166,7 @@ export class XAilyConfirmationViewerComponent implements OnChanges {
   askId = '';
   toolCallId = '';
   toolName = '';
-  title = '确认操作';
+  title = '';
   subtitle = '';
   message = '';
   args: any = null;
@@ -180,8 +182,8 @@ export class XAilyConfirmationViewerComponent implements OnChanges {
   primaryActionValue = 'once';
   customPrimaryButtonLabel = '';
   customPrimaryButtonTooltip = '';
-  rejectButtonLabel = '跳过';
-  rejectButtonTooltip = '继续当前对话，但不执行此操作';
+  rejectButtonLabel = '';
+  rejectButtonTooltip = '';
   collapsed = false;
 
   get hasMoreActions(): boolean {
@@ -210,10 +212,14 @@ export class XAilyConfirmationViewerComponent implements OnChanges {
     }
 
     if (this.kind === 'confirmation') {
-      return this.approved ? '已确认' : '已取消';
+      return this.approved
+        ? this.translate.instant('AILY_CHAT.PROCESS_CONFIRM_RESOLVED_APPROVED')
+        : this.translate.instant('AILY_CHAT.PROCESS_CONFIRM_RESOLVED_CANCELLED');
     }
 
-    return this.approved ? '已允许' : '已跳过';
+    return this.approved
+      ? this.translate.instant('AILY_CHAT.PROCESS_CONFIRM_SCOPE_ALLOWED')
+      : this.translate.instant('AILY_CHAT.PROCESS_CONFIRM_RESOLVED_SKIPPED');
   }
 
   get headerIconClass(): string {
@@ -244,14 +250,14 @@ export class XAilyConfirmationViewerComponent implements OnChanges {
     }
 
     if (this.primaryScope === 'once') {
-      return '允许这次执行';
+      return this.translate.instant('AILY_CHAT.PROCESS_APPROVAL_ALLOW_ONCE_TOOLTIP');
     }
 
     return this.approvalActions.find(action => action.scope === this.primaryScope)?.tooltip || this.primaryButtonLabel;
   }
 
   get moreActionsTooltip(): string {
-    return '显示更多允许选项';
+    return this.translate.instant('AILY_CHAT.PROCESS_APPROVAL_MORE_OPTIONS_TOOLTIP');
   }
 
   get showDisplayMessage(): boolean {
@@ -286,7 +292,7 @@ export class XAilyConfirmationViewerComponent implements OnChanges {
       return '';
     }
 
-    return [this.headerPill, this.headerMeta].filter(Boolean).join('，');
+    return [this.headerPill, this.headerMeta].filter(Boolean).join(' · ');
   }
 
   constructor(private cdr: ChangeDetectorRef) {}
@@ -298,7 +304,7 @@ export class XAilyConfirmationViewerComponent implements OnChanges {
       this.askId = this.data.askId || '';
       this.toolCallId = this.data.toolCallId || '';
       this.toolName = normalizeReadSideToolName(this.data.toolName || '');
-      this.title = this.data.title || '确认操作';
+      this.title = this.data.title || this.translate.instant('AILY_CHAT.PROCESS_APPROVAL_DEFAULT_TITLE');
       this.subtitle = this.data.subtitle || '';
       this.message = this.data.message || '';
       this.args = this.data.args;
@@ -313,10 +319,10 @@ export class XAilyConfirmationViewerComponent implements OnChanges {
       this.customPrimaryButtonTooltip = typeof this.data.primaryTooltip === 'string' ? this.data.primaryTooltip : '';
       this.rejectButtonLabel = typeof this.data.rejectLabel === 'string' && this.data.rejectLabel.trim()
         ? this.data.rejectLabel
-        : '跳过';
+        : this.translate.instant('AILY_CHAT.PROCESS_APPROVAL_REJECT');
       this.rejectButtonTooltip = typeof this.data.rejectTooltip === 'string' && this.data.rejectTooltip.trim()
         ? this.data.rejectTooltip
-        : '继续当前对话，但不执行此操作';
+        : this.translate.instant('AILY_CHAT.PROCESS_APPROVAL_REJECT_TOOLTIP');
       this.primaryButtonLabel = this.getPrimaryButtonLabel(this.primaryScope);
       this.primaryActionValue = this.getPrimaryActionValue(this.primaryScope);
       this.resolvedText = this.resolved ? this.formatResolvedText(this.approved, this.data.scope) : '';
@@ -355,11 +361,11 @@ export class XAilyConfirmationViewerComponent implements OnChanges {
     }
 
     if (isTerminalCommandToolName(toolName) && typeof args.goal === 'string' && args.goal.trim()) {
-      return `目标：${args.goal.trim()}`;
+      return `${this.translate.instant('AILY_CHAT.PROCESS_APPROVAL_GOAL_PREFIX')} ${args.goal.trim()}`;
     }
 
     if (normalizeReadSideToolName(toolName) === 'execute_command' && typeof args.cwd === 'string' && args.cwd.trim()) {
-      return `工作目录：${args.cwd.trim()}`;
+      return `${this.translate.instant('AILY_CHAT.PROCESS_META_CWD_PREFIX')} ${args.cwd.trim()}`;
     }
 
     return '';
@@ -377,31 +383,31 @@ export class XAilyConfirmationViewerComponent implements OnChanges {
     const normalizedToolName = normalizeReadSideToolName(toolName);
 
     if (isTerminalCommandToolName(normalizedToolName)) {
-      return '执行前请确认此终端命令。';
+      return this.translate.instant('AILY_CHAT.PROCESS_CONFIRM_TERMINAL_BEFORE_RUN');
     }
 
     if (normalizedToolName === 'execute_command') {
-      return '执行前请确认此命令。';
+      return this.translate.instant('AILY_CHAT.PROCESS_CONFIRM_COMMAND_BEFORE_RUN');
     }
 
     return message;
   }
 
   private isBoilerplateConfirmationMessage(message: string): boolean {
-    return message === '执行前请确认此终端命令。'
-      || message === '执行前请确认此命令。';
+    return message === this.translate.instant('AILY_CHAT.PROCESS_CONFIRM_TERMINAL_BEFORE_RUN')
+      || message === this.translate.instant('AILY_CHAT.PROCESS_CONFIRM_COMMAND_BEFORE_RUN');
   }
 
   getActionMenuLabel(action: ToolApprovalAction): string {
     switch (action.scope) {
       case 'session':
-        return '本对话总是允许';
+        return this.translate.instant('AILY_CHAT.PROCESS_APPROVAL_MENU_SESSION');
       case 'workspace':
-        return '工作区总是允许';
+        return this.translate.instant('AILY_CHAT.PROCESS_APPROVAL_MENU_WORKSPACE');
       case 'session-all-terminal':
-        return '本对话允许全部终端命令';
+        return this.translate.instant('AILY_CHAT.PROCESS_APPROVAL_MENU_ALL_TERMINAL');
       case 'session-safe':
-        return '本对话允许安全终端命令';
+        return this.translate.instant('AILY_CHAT.PROCESS_APPROVAL_MENU_SAFE_TERMINAL');
       default:
         return action.label;
     }
@@ -413,40 +419,42 @@ export class XAilyConfirmationViewerComponent implements OnChanges {
     }
 
     if (this.kind === 'confirmation') {
-      return '确认';
+      return this.translate.instant('AILY_CHAT.PROCESS_CONFIRM_BUTTON_CONFIRM');
     }
 
     switch (scope) {
       case 'session':
-        return '本对话总是允许';
+        return this.translate.instant('AILY_CHAT.PROCESS_APPROVAL_MENU_SESSION');
       case 'workspace':
-        return '工作区总是允许';
+        return this.translate.instant('AILY_CHAT.PROCESS_APPROVAL_MENU_WORKSPACE');
       case 'session-all-terminal':
-        return '本对话允许全部终端命令';
+        return this.translate.instant('AILY_CHAT.PROCESS_APPROVAL_MENU_ALL_TERMINAL');
       case 'session-safe':
-        return '本对话允许安全终端命令';
+        return this.translate.instant('AILY_CHAT.PROCESS_APPROVAL_MENU_SAFE_TERMINAL');
       default:
-        return '允许';
+        return this.translate.instant('AILY_CHAT.PROCESS_APPROVAL_ALLOW');
     }
   }
 
   private formatResolvedText(approved: boolean, scope: ToolApprovalScope | undefined): string {
     if (this.kind === 'confirmation') {
-      return approved ? '已确认' : '已取消';
+      return approved
+        ? this.translate.instant('AILY_CHAT.PROCESS_CONFIRM_RESOLVED_APPROVED')
+        : this.translate.instant('AILY_CHAT.PROCESS_CONFIRM_RESOLVED_CANCELLED');
     }
 
     if (!approved) {
-      return '已跳过';
+      return this.translate.instant('AILY_CHAT.PROCESS_CONFIRM_RESOLVED_SKIPPED');
     }
 
     const normalizedScope = scope === 'session-safe' ? 'session-all-terminal' : scope;
-    let scopeLabel = '已允许';
+    let scopeLabel = this.translate.instant('AILY_CHAT.PROCESS_CONFIRM_SCOPE_ALLOWED');
     if (normalizedScope === 'workspace') {
-      scopeLabel = '已允许，工作区自动执行';
+      scopeLabel = this.translate.instant('AILY_CHAT.PROCESS_CONFIRM_SCOPE_ALLOWED_WORKSPACE');
     } else if (normalizedScope === 'session-all-terminal') {
-      scopeLabel = '已允许，本对话自动执行终端命令';
+      scopeLabel = this.translate.instant('AILY_CHAT.PROCESS_CONFIRM_SCOPE_ALLOWED_ALL_TERMINAL');
     } else if (normalizedScope === 'session') {
-      scopeLabel = '已允许，本对话自动执行';
+      scopeLabel = this.translate.instant('AILY_CHAT.PROCESS_CONFIRM_SCOPE_ALLOWED_SESSION');
     }
 
     return scopeLabel;
@@ -455,15 +463,15 @@ export class XAilyConfirmationViewerComponent implements OnChanges {
   private formatScopeMeta(scope: ToolApprovalScope | undefined): string | undefined {
     switch (scope) {
       case 'once':
-        return '仅本次执行';
+        return this.translate.instant('AILY_CHAT.PROCESS_CONFIRM_SCOPE_ONCE');
       case 'session':
-        return '本对话自动执行';
+        return this.translate.instant('AILY_CHAT.PROCESS_CONFIRM_SCOPE_SESSION');
       case 'workspace':
-        return '工作区自动执行';
+        return this.translate.instant('AILY_CHAT.PROCESS_CONFIRM_SCOPE_WORKSPACE');
       case 'session-all-terminal':
-        return '本对话自动执行终端命令';
+        return this.translate.instant('AILY_CHAT.PROCESS_CONFIRM_SCOPE_ALL_TERMINAL');
       case 'session-safe':
-        return '本对话自动执行终端命令';
+        return this.translate.instant('AILY_CHAT.PROCESS_CONFIRM_SCOPE_SAFE_TERMINAL');
       default:
         return undefined;
     }
@@ -514,7 +522,7 @@ export class XAilyConfirmationViewerComponent implements OnChanges {
     this.resolvedText = this.formatResolvedText(false, undefined);
     this.cdr.markForCheck();
     this.decision.emit(this.toolCallId
-      ? { toolCallId: this.toolCallId, approved: false, reason: '用户拒绝执行' }
-      : { askId: this.askId, partId: this.partId, approved: false, reason: '用户拒绝执行' });
+      ? { toolCallId: this.toolCallId, approved: false, reason: this.translate.instant('AILY_CHAT.PROCESS_CONFIRM_REJECT_REASON') }
+      : { askId: this.askId, partId: this.partId, approved: false, reason: this.translate.instant('AILY_CHAT.PROCESS_CONFIRM_REJECT_REASON') });
   }
 }

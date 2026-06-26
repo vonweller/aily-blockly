@@ -1,5 +1,5 @@
 <app-base-dialog
-  title="进程管理"
+  [title]="'AILY_CHAT.PROCESS_TITLE' | translate"
   [showFooter]="false"
   (closeDialog)="closeDialog()"
 >
@@ -12,7 +12,7 @@
           [class.active]="selectedFilter === 'all'"
           (click)="updateFilter('all')"
         >
-          全部
+          {{ 'AILY_CHAT.PROCESS_FILTER_ALL' | translate }}
         </button>
       <button
         type="button"
@@ -20,7 +20,7 @@
         [class.active]="selectedFilter === 'removed'"
         (click)="updateFilter('removed')"
       >
-        已归档
+        {{ 'AILY_CHAT.PROCESS_FILTER_ARCHIVED' | translate }}
       </button>
       </div>
 
@@ -29,12 +29,12 @@
         [ngModel]="selectedFilter"
         (ngModelChange)="updateFilter($event)"
       >
-        <option value="all">全部状态</option>
-        <option value="removed">已归档</option>
-        <option value="running">执行中</option>
-        <option value="background">后台运行</option>
-        <option value="completed">已完成</option>
-        <option value="failed">失败 / 已停止</option>
+        <option value="all">{{ 'AILY_CHAT.PROCESS_FILTER_ALL_STATUS' | translate }}</option>
+        <option value="removed">{{ 'AILY_CHAT.PROCESS_FILTER_ARCHIVED' | translate }}</option>
+        <option value="running">{{ 'AILY_CHAT.PROCESS_FILTER_RUNNING' | translate }}</option>
+        <option value="background">{{ 'AILY_CHAT.PROCESS_FILTER_BACKGROUND' | translate }}</option>
+        <option value="completed">{{ 'AILY_CHAT.PROCESS_FILTER_COMPLETED' | translate }}</option>
+        <option value="failed">{{ 'AILY_CHAT.PROCESS_FILTER_FAILED' | translate }}</option>
       </select>
     </div>
 
@@ -64,8 +64,8 @@
                   <button
                     type="button"
                     class="process-icon-btn process-icon-btn-danger"
-                    title="取消进程"
-                    aria-label="取消进程"
+                    [title]="'AILY_CHAT.PROCESS_ACTION_CANCEL' | translate"
+                    [attr.aria-label]="'AILY_CHAT.PROCESS_ACTION_CANCEL' | translate"
                     (click)="stopProcess(process); $event.stopPropagation()"
                   >
                     <i class="fa-light fa-ban"></i>
@@ -75,11 +75,11 @@
                     <button
                       type="button"
                       class="process-icon-btn"
-                      title="彻底删除"
-                      aria-label="彻底删除"
+                      [title]="'AILY_CHAT.PROCESS_ACTION_PURGE' | translate"
+                      [attr.aria-label]="'AILY_CHAT.PROCESS_ACTION_PURGE' | translate"
                       nz-popconfirm
                       nzPopconfirmPlacement="left"
-                      [nzPopconfirmTitle]="'彻底删除后将移除该进程的记录和输出文件，无法恢复。'"
+                      [nzPopconfirmTitle]="'AILY_CHAT.PROCESS_PURGE_CONFIRM' | translate"
                       (nzOnConfirm)="hardDeleteProcess(process)"
                       (click)="$event.stopPropagation()"
                     >
@@ -89,8 +89,8 @@
                     <button
                       type="button"
                       class="process-icon-btn"
-                      title="移除记录"
-                      aria-label="移除记录"
+                      [title]="'AILY_CHAT.PROCESS_ACTION_ARCHIVE' | translate"
+                      [attr.aria-label]="'AILY_CHAT.PROCESS_ACTION_ARCHIVE' | translate"
                       (click)="deleteProcess(process); $event.stopPropagation()"
                     >
                       <i class="fa-light fa-box-archive"></i>
@@ -101,7 +101,7 @@
             </div>
           }
         } @else {
-          <div class="process-empty">当前 session 还没有匹配的进程。</div>
+          <div class="process-empty">{{ 'AILY_CHAT.PROCESS_EMPTY' | translate }}</div>
         }
       </section>
 
@@ -110,7 +110,7 @@
           <app-chat-process-detail-panel
             [title]="process.command"
             [actionVisible]="true"
-            actionLabel="独立窗口"
+            actionLabel="AILY_CHAT.PROCESS_ACTION_OPEN_WINDOW"
             actionIconClass="fa-light fa-square-terminal"
             [statusText]="selectedProcessStatusLabel"
             [elapsedText]="formatElapsed(process)"
@@ -118,13 +118,13 @@
             [startedAt]="process.startedAt"
             [completedAt]="process.completedAt ?? null"
             [exitCode]="process.exitCode ?? null"
-            outputTitle="command 预览"
+            outputTitle="AILY_CHAT.PROCESS_OUTPUT_PREVIEW"
             [output]="selectedProcessOutput"
-            emptyOutputText="暂无输出"
+            emptyOutputText="AILY_CHAT.PROCESS_OUTPUT_EMPTY"
             (actionClick)="openProcessWindow(process)"
           />
         } @else {
-          <div class="process-empty process-empty-detail">选择左侧进程查看详情。</div>
+          <div class="process-empty process-empty-detail">{{ 'AILY_CHAT.PROCESS_EMPTY_DETAIL' | translate }}</div>
         }
       </section>
     </div>

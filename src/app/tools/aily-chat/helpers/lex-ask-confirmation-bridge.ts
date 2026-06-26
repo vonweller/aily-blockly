@@ -118,27 +118,29 @@ export class LexAskConfirmationBridge {
 
       this.resolveAskConfirmation = resolve;
 
+      const normalizedPresentation = normalizeToolApprovalPresentation({
+        toolName: request.toolName,
+        source: request.source,
+        title: request.title,
+        subtitle: request.subtitle,
+        message: request.message,
+        actions: request.actions,
+        primaryScope: request.primaryScope,
+        allowAutoConfirm: request.allowAutoConfirm,
+        approveCombination: request.approveCombination,
+        args: request.toolInput,
+      });
+
       void this.ctx.runtimeInteractionHost.presentConfirmation(this.resolveInteractionSessionResource(), {
         askId,
         partId: confirmationPartId,
         toolName: request.toolName,
-        title: request.title || '确认操作',
-        subtitle: request.subtitle,
-        message: request.message,
+        title: normalizedPresentation.title,
+        subtitle: normalizedPresentation.subtitle,
+        message: normalizedPresentation.message,
         args: request.toolInput,
-        actions: normalizeToolApprovalPresentation({
-          toolName: request.toolName,
-          source: request.source,
-          title: request.title,
-          subtitle: request.subtitle,
-          message: request.message,
-          actions: request.actions,
-          primaryScope: request.primaryScope,
-          allowAutoConfirm: request.allowAutoConfirm,
-          approveCombination: request.approveCombination,
-          args: request.toolInput,
-        }).actions,
-        primaryScope: request.primaryScope || 'once',
+        actions: normalizedPresentation.actions,
+        primaryScope: normalizedPresentation.primaryScope,
       }).then((result) => {
         this.ctx.lexStream.ui.resolveConfirmation(confirmationPartId, askId, !!result.approved, result.scope);
         const resolveRef = this.resolveAskConfirmation;

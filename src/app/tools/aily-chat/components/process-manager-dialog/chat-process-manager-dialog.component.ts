@@ -7,6 +7,7 @@ import {
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { NZ_MODAL_DATA, NzModalRef } from 'ng-zorro-antd/modal';
 import { NzPopconfirmModule } from 'ng-zorro-antd/popconfirm';
 
@@ -33,7 +34,7 @@ interface ChatProcessManagerDialogData {
 @Component({
   selector: 'app-chat-process-manager-dialog',
   standalone: true,
-  imports: [CommonModule, FormsModule, NzPopconfirmModule, BaseDialogComponent, ChatProcessDetailPanelComponent],
+  imports: [CommonModule, FormsModule, TranslateModule, NzPopconfirmModule, BaseDialogComponent, ChatProcessDetailPanelComponent],
   templateUrl: './chat-process-manager-dialog.component.html',
   styleUrl: './chat-process-manager-dialog.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -45,6 +46,7 @@ export class ChatProcessManagerDialogComponent {
   private readonly data = inject<ChatProcessManagerDialogData>(NZ_MODAL_DATA);
   private readonly runtimeInteractionHost = inject(ChatRuntimeInteractionHostService);
   private readonly chatHistoryService = inject(ChatHistoryService);
+  private readonly translate = inject(TranslateService);
 
   readonly sessionId = typeof this.data.sessionId === 'string' ? this.data.sessionId.trim() : '';
 
@@ -168,11 +170,11 @@ export class ChatProcessManagerDialogComponent {
   formatElapsed(process: ChatRuntimeHostSessionProcessSummary): string {
     const totalSeconds = Math.max(0, Math.floor(process.elapsedMs / 1000));
     if (totalSeconds < 60) {
-      return `${totalSeconds}s`;
+      return this.translate.instant('AILY_CHAT.PROCESS_DURATION_SECONDS', { count: totalSeconds });
     }
     const minutes = Math.floor(totalSeconds / 60);
     const seconds = totalSeconds % 60;
-    return `${minutes}m ${seconds}s`;
+    return this.translate.instant('AILY_CHAT.PROCESS_DURATION_MINUTES_SECONDS', { minutes, seconds });
   }
 
   summarizeStatus(process: ChatRuntimeHostSessionProcessSummary): string {
@@ -180,43 +182,28 @@ export class ChatProcessManagerDialogComponent {
       ? process.status.trim()
       : 'unknown';
     if (process.running) {
-      return process.background ? '后台运行' : '执行中';
+      return this.translate.instant(
+        process.background
+          ? 'AILY_CHAT.PROCESS_STATUS_BACKGROUND'
+          : 'AILY_CHAT.PROCESS_STATUS_RUNNING',
+      );
     }
     if (rawStatus === 'completed') {
-      return '已完成';
+      return this.translate.instant('AILY_CHAT.PROCESS_STATUS_COMPLETED');
     }
     if (rawStatus === 'failed') {
-      return '失败';
+      return this.translate.instant('AILY_CHAT.PROCESS_STATUS_FAILED');
     }
     if (rawStatus === 'timeout') {
-      return '失败 · 超时';
+      return `${this.translate.instant('AILY_CHAT.PROCESS_STATUS_FAILED')} · ${this.translate.instant('AILY_CHAT.PROCESS_REASON_TIMEOUT')}`;
     }
     if (rawStatus === 'killed') {
-      return '已终止 · 手动停止';
+      return `${this.translate.instant('AILY_CHAT.PROCESS_STATUS_KILLED')} · ${this.translate.instant('AILY_CHAT.PROCESS_REASON_KILLED')}`;
     }
     if (rawStatus === 'cancelled') {
-      return '已取消 · 用户取消';
+      return `${this.translate.instant('AILY_CHAT.PROCESS_STATUS_CANCELLED')} · ${this.translate.instant('AILY_CHAT.PROCESS_REASON_CANCELLED')}`;
     }
-    return '失败';
-  }
-
-  private describeStatusReason(status: string): string {
-    switch (status) {
-      case 'running':
-        return '运行中';
-      case 'completed':
-        return '正常结束';
-      case 'failed':
-        return '执行失败';
-      case 'timeout':
-        return '超时';
-      case 'killed':
-        return '手动停止';
-      case 'cancelled':
-        return '用户取消';
-      default:
-        return '未知状态';
-    }
+    return this.translate.instant('AILY_CHAT.PROCESS_STATUS_FAILED');
   }
 
   resolveStatusTone(process: ChatRuntimeHostSessionProcessSummary): 'info' | 'success' | 'error' | 'neutral' {

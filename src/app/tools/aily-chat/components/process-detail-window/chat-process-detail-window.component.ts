@@ -7,6 +7,7 @@ import {
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute } from '@angular/router';
+import { TranslateModule, TranslateService } from '@ngx-translate/core';
 
 import { SubWindowComponent } from '../../../../components/sub-window/sub-window.component';
 import { ChatProcessDetailPanelComponent } from '../process-detail-panel/chat-process-detail-panel.component';
@@ -43,7 +44,7 @@ interface ProcessWindowProcessSummary {
 @Component({
   selector: 'app-chat-process-detail-window',
   standalone: true,
-  imports: [CommonModule, SubWindowComponent, ChatProcessDetailPanelComponent],
+  imports: [CommonModule, TranslateModule, SubWindowComponent, ChatProcessDetailPanelComponent],
   templateUrl: './chat-process-detail-window.component.html',
   styleUrl: './chat-process-detail-window.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -56,7 +57,7 @@ export class ChatProcessDetailWindowComponent implements OnInit, OnDestroy {
   command = '';
   summary: ProcessWindowProcessSummary | null = null;
   output = '';
-  windowTitle = '终端执行详情';
+  windowTitle = '';
 
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private initDataCleanup: (() => void) | null = null;
@@ -65,9 +66,11 @@ export class ChatProcessDetailWindowComponent implements OnInit, OnDestroy {
     private readonly route: ActivatedRoute,
     private readonly cdr: ChangeDetectorRef,
     private readonly chatHistoryService: ChatHistoryService,
+    private readonly translate: TranslateService,
   ) {}
 
   ngOnInit(): void {
+    this.windowTitle = this.translate.instant('AILY_CHAT.PROCESS_WINDOW_TITLE') || 'Terminal Process Detail';
     this.route.paramMap.subscribe((params) => {
       this.sessionId = decodeURIComponent(params.get('sessionId') || '');
       this.processId = decodeURIComponent(params.get('processId') || '');
@@ -99,11 +102,11 @@ export class ChatProcessDetailWindowComponent implements OnInit, OnDestroy {
   formatElapsedMs(value: number | undefined): string {
     const totalSeconds = Math.max(0, Math.floor((value ?? 0) / 1000));
     if (totalSeconds < 60) {
-      return `${totalSeconds}s`;
+      return this.translate.instant('AILY_CHAT.PROCESS_DURATION_SECONDS', { count: totalSeconds });
     }
     const minutes = Math.floor(totalSeconds / 60);
     const seconds = totalSeconds % 60;
-    return `${minutes}m ${seconds}s`;
+    return this.translate.instant('AILY_CHAT.PROCESS_DURATION_MINUTES_SECONDS', { minutes, seconds });
   }
 
   openOutputFile(): void {
@@ -122,24 +125,24 @@ export class ChatProcessDetailWindowComponent implements OnInit, OnDestroy {
       ? summary.status.trim()
       : 'unknown';
     if (summary.running === true) {
-      return '执行中';
+      return this.translate.instant('AILY_CHAT.PROCESS_STATUS_RUNNING');
     }
     if (rawStatus === 'completed') {
-      return '已完成';
+      return this.translate.instant('AILY_CHAT.PROCESS_STATUS_COMPLETED');
     }
     if (rawStatus === 'failed') {
-      return '失败';
+      return this.translate.instant('AILY_CHAT.PROCESS_STATUS_FAILED');
     }
     if (rawStatus === 'timeout') {
-      return '失败 · 超时';
+      return `${this.translate.instant('AILY_CHAT.PROCESS_STATUS_FAILED')} · ${this.translate.instant('AILY_CHAT.PROCESS_REASON_TIMEOUT')}`;
     }
     if (rawStatus === 'killed') {
-      return '已终止 · 手动停止';
+      return `${this.translate.instant('AILY_CHAT.PROCESS_STATUS_KILLED')} · ${this.translate.instant('AILY_CHAT.PROCESS_REASON_KILLED')}`;
     }
     if (rawStatus === 'cancelled') {
-      return '已取消 · 用户取消';
+      return `${this.translate.instant('AILY_CHAT.PROCESS_STATUS_CANCELLED')} · ${this.translate.instant('AILY_CHAT.PROCESS_REASON_CANCELLED')}`;
     }
-    return '失败';
+    return this.translate.instant('AILY_CHAT.PROCESS_STATUS_FAILED');
   }
 
   private startPolling(): void {
@@ -182,7 +185,7 @@ export class ChatProcessDetailWindowComponent implements OnInit, OnDestroy {
       this.outputSessionId = summary.outputSessionId || this.outputSessionId;
       this.outputFilePath = summary.outputFilePath || this.outputFilePath;
       this.command = summary.command || this.command;
-      this.windowTitle = `终端执行详情 · ${this.command || this.processId}`;
+      this.windowTitle = `${this.translate.instant('AILY_CHAT.PROCESS_WINDOW_TITLE') || 'Terminal Process Detail'} · ${this.command || this.processId}`;
     }
 
     this.output = this.readOutput();
