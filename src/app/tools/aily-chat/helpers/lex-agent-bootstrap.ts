@@ -1382,6 +1382,7 @@ function createBlocklyWebFetchBridgeExtension(): {
   fetchPage(options: {
     url: string;
     signal?: AbortSignal;
+    waitMs?: number;
   }): Promise<{ text: string; status: number; contentType?: string }>;
 } | null {
   const webviewBridge = (window as any)?.electronAPI?.webviewBridge;
@@ -1394,6 +1395,7 @@ function createBlocklyWebFetchBridgeExtension(): {
       const fallback = await webviewBridge.fetchPage({
         url: options.url,
         timeoutMs: 20000,
+        waitAfterLoadMs: options.waitMs,
       });
 
       if (!fallback?.ok) {
