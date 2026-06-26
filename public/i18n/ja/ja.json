@@ -457,6 +457,7 @@
         "FEEDBACK_TYPE": "フィードバックタイプ",
         "TYPE_BUG": "バグ報告",
         "TYPE_BUILD_UPLOAD": "ビルド/アップロード問題",
+        "TYPE_LIBRARY": "ライブラリの問題",
         "TYPE_OTHER": "その他の問題",
         "TYPE_FEATURE": "機能提案",
         "TITLE_LABEL": "タイトル",

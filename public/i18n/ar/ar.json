@@ -457,6 +457,7 @@
         "FEEDBACK_TYPE": "نوع الملاحظات",
         "TYPE_BUG": "تقرير خطأ",
         "TYPE_BUILD_UPLOAD": "مشكلة بناء/رفع",
+        "TYPE_LIBRARY": "مشكلة مكتبة",
         "TYPE_OTHER": "مشكلة أخرى",
         "TYPE_FEATURE": "اقتراح ميزة",
         "TITLE_LABEL": "العنوان",

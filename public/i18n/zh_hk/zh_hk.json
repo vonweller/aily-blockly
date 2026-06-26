@@ -457,6 +457,7 @@
         "FEEDBACK_TYPE": "反饋類型",
         "TYPE_BUG": "Bug反饋",
         "TYPE_BUILD_UPLOAD": "編譯/上傳問題",
+        "TYPE_LIBRARY": "庫問題",
         "TYPE_OTHER": "其他問題",
         "TYPE_FEATURE": "功能建議",
         "TITLE_LABEL": "標題",

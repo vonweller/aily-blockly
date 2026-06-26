@@ -457,6 +457,7 @@
         "FEEDBACK_TYPE": "Type de retour",
         "TYPE_BUG": "Rapport de bug",
         "TYPE_BUILD_UPLOAD": "Problème de compilation/téléchargement",
+        "TYPE_LIBRARY": "Problème de bibliothèque",
         "TYPE_OTHER": "Autre problème",
         "TYPE_FEATURE": "Suggestion de fonctionnalité",
         "TITLE_LABEL": "Titre",

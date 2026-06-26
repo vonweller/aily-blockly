@@ -59,6 +59,7 @@ export class FeedbackDialogComponent implements OnDestroy {
     return [
       { label: this.translate.instant('FEEDBACK_DIALOG.TYPE_BUG'), value: 'bug' },
       { label: this.translate.instant('FEEDBACK_DIALOG.TYPE_BUILD_UPLOAD'), value: 'build&upload' },
+      { label: this.translate.instant('FEEDBACK_DIALOG.TYPE_LIBRARY'), value: 'library' },
       { label: this.translate.instant('FEEDBACK_DIALOG.TYPE_OTHER'), value: 'other' },
       { label: this.translate.instant('FEEDBACK_DIALOG.TYPE_FEATURE'), value: 'feature' },
     ];

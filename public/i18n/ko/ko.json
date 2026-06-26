@@ -445,6 +445,7 @@
         "FEEDBACK_TYPE": "피드백 유형",
         "TYPE_BUG": "버그 리포트",
         "TYPE_BUILD_UPLOAD": "빌드/업로드 문제",
+        "TYPE_LIBRARY": "라이브러리 문제",
         "TYPE_OTHER": "기타 문제",
         "TYPE_FEATURE": "기능 제안",
         "TITLE_LABEL": "제목",

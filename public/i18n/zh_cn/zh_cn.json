@@ -503,6 +503,7 @@
         "FEEDBACK_TYPE": "反馈类型",
         "TYPE_BUG": "Bug反馈",
         "TYPE_BUILD_UPLOAD": "编译/上传问题",
+        "TYPE_LIBRARY": "库问题",
         "TYPE_OTHER": "其他问题",
         "TYPE_FEATURE": "功能建议",
         "TITLE_LABEL": "标题",
