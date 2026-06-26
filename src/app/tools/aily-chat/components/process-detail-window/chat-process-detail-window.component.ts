@@ -10,6 +10,7 @@ import { ActivatedRoute } from '@angular/router';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 
 import { SubWindowComponent } from '../../../../components/sub-window/sub-window.component';
+import { ToolI18nService } from '../../../../services/tool-i18n.service';
 import { ChatProcessDetailPanelComponent } from '../process-detail-panel/chat-process-detail-panel.component';
 import { AilyHost } from '../../core/host';
 import { readChatProcessOutputFile } from '../../helpers/chat-process-window';
@@ -67,9 +68,11 @@ export class ChatProcessDetailWindowComponent implements OnInit, OnDestroy {
     private readonly cdr: ChangeDetectorRef,
     private readonly chatHistoryService: ChatHistoryService,
     private readonly translate: TranslateService,
+    private readonly toolI18n: ToolI18nService,
   ) {}
 
   ngOnInit(): void {
+    void this.initializeTranslations();
     this.windowTitle = this.translate.instant('AILY_CHAT.PROCESS_WINDOW_TITLE') || 'Terminal Process Detail';
     this.route.paramMap.subscribe((params) => {
       this.sessionId = decodeURIComponent(params.get('sessionId') || '');
@@ -149,6 +152,14 @@ export class ChatProcessDetailWindowComponent implements OnInit, OnDestroy {
     this.pollTimer = setInterval(() => {
       this.refresh();
     }, 1000);
+  }
+
+  private async initializeTranslations(): Promise<void> {
+    await this.toolI18n.load('aily-chat');
+    this.windowTitle = this.summary
+      ? `${this.translate.instant('AILY_CHAT.PROCESS_WINDOW_TITLE') || 'Terminal Process Detail'} · ${this.command || this.processId}`
+      : this.translate.instant('AILY_CHAT.PROCESS_WINDOW_TITLE') || 'Terminal Process Detail';
+    this.cdr.markForCheck();
   }
 
   private applyInitData(data: ProcessWindowInitData | null | undefined): void {
