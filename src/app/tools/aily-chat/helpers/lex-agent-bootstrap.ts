@@ -121,6 +121,7 @@ export interface LexRuntimeApiConfig {
 
 const DEFAULT_INTERACTION_HARD_ROUND_CAP = 200;
 const FAST_SUMMARIZER_PRESET_ID = 'auto-fast';
+const DEFAULT_EXTERNAL_COMMAND_TIMEOUT_MS = 90_000;
 const PROJECT_CHAT_DIR = '.chat_history';
 const GLOBAL_CHAT_DATA_DIR = 'chat_history';
 const PROCESS_RECORDS_DIR = 'process';
@@ -3506,7 +3507,7 @@ function createExternalTerminal(host: any, prjPath: () => string, runtimeSession
       attachRawTerminalSession(session);
     }
 
-    const timeout = opts?.timeout ?? 30_000;
+    const timeout = opts?.timeout ?? DEFAULT_EXTERNAL_COMMAND_TIMEOUT_MS;
     session.timer = setTimeout(async () => {
       if (!session.running) {
         return;

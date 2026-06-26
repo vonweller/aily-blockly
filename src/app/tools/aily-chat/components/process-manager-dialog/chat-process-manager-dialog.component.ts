@@ -53,6 +53,7 @@ export class ChatProcessManagerDialogComponent {
   processes: readonly ChatRuntimeHostSessionProcessSummary[] = [];
   selectedProcessOutput = '';
   selectedProcessStatusLabel = '';
+  private refreshTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor() {
     this.refreshProcesses();
@@ -61,7 +62,14 @@ export class ChatProcessManagerDialogComponent {
         this.refreshProcesses();
       }
     });
-    this.destroyRef.onDestroy(() => subscription.dispose());
+    this.startPolling();
+    this.destroyRef.onDestroy(() => {
+      subscription.dispose();
+      if (this.refreshTimer) {
+        clearInterval(this.refreshTimer);
+        this.refreshTimer = null;
+      }
+    });
   }
 
   closeDialog(): void {
@@ -167,16 +175,50 @@ export class ChatProcessManagerDialogComponent {
   }
 
   summarizeStatus(process: ChatRuntimeHostSessionProcessSummary): string {
+    const rawStatus = typeof process.status === 'string' && process.status.trim()
+      ? process.status.trim()
+      : 'unknown';
     if (process.removed === true) {
-      return '已归档';
+      return `已归档 · ${this.describeStatusReason(rawStatus)}`;
     }
     if (process.running) {
       return process.background ? '后台运行' : '执行中';
     }
-    if (typeof process.exitCode === 'number' && process.exitCode !== 0) {
-      return `失败 · ${process.exitCode}`;
+    if (rawStatus === 'completed') {
+      return '已完成';
     }
-    return process.status === 'completed' ? '已完成' : process.status;
+    if (rawStatus === 'failed') {
+      return '失败';
+    }
+    if (rawStatus === 'timeout') {
+      return '失败 · 超时';
+    }
+    if (rawStatus === 'killed') {
+      return '已终止 · 手动停止';
+    }
+    if (rawStatus === 'cancelled') {
+      return '已取消 · 用户取消';
+    }
+    return '失败';
+  }
+
+  private describeStatusReason(status: string): string {
+    switch (status) {
+      case 'running':
+        return '运行中';
+      case 'completed':
+        return '正常结束';
+      case 'failed':
+        return '执行失败';
+      case 'timeout':
+        return '超时';
+      case 'killed':
+        return '手动停止';
+      case 'cancelled':
+        return '用户取消';
+      default:
+        return '未知状态';
+    }
   }
 
   resolveStatusTone(process: ChatRuntimeHostSessionProcessSummary): 'info' | 'success' | 'error' | 'neutral' {
@@ -218,9 +260,9 @@ export class ChatProcessManagerDialogComponent {
     }
 
     const snapshot = await getBlocklyCommandSessionStatus(process.processId);
-    this.selectedProcessOutput = snapshot?.stdout
-      ?? readChatProcessOutputFile(process.outputFilePath)
-      ?? '';
+    this.selectedProcessOutput = readChatProcessOutputFile(process.outputFilePath)
+      || snapshot?.stdout
+      || '';
     this.selectedProcessStatusLabel = snapshot?.status
       ? this.summarizeStatus({
           ...process,
@@ -231,6 +273,12 @@ export class ChatProcessManagerDialogComponent {
         })
       : this.summarizeStatus(process);
     this.cdr.markForCheck();
+  }
+
+  private startPolling(): void {
+    this.refreshTimer = setInterval(() => {
+      this.refreshProcesses();
+    }, 1000);
   }
 
   private mergeProcessSummaries(

@@ -10,6 +10,7 @@ import { ActivatedRoute } from '@angular/router';
 
 import { SubWindowComponent } from '../../../../components/sub-window/sub-window.component';
 import { AilyHost } from '../../core/host';
+import { readChatProcessOutputFile } from '../../helpers/chat-process-window';
 import { listPersistedBlocklyCommandSessionSnapshots } from '../../helpers/lex-agent-bootstrap';
 import { ChatHistoryService } from '../../services/chat-history.service';
 
@@ -116,16 +117,47 @@ export class ChatProcessDetailWindowComponent implements OnInit, OnDestroy {
     if (!summary) {
       return '-';
     }
+    const rawStatus = typeof summary.status === 'string' && summary.status.trim()
+      ? summary.status.trim()
+      : 'unknown';
     if (summary.running === true) {
       return '执行中';
     }
-    if (typeof summary.exitCode === 'number' && summary.exitCode !== 0) {
-      return `失败 · ${summary.exitCode}`;
-    }
-    if (summary.status === 'completed') {
+    if (rawStatus === 'completed') {
       return '已完成';
     }
-    return summary.status || '-';
+    if (rawStatus === 'failed') {
+      return '失败';
+    }
+    if (rawStatus === 'timeout') {
+      return '失败 · 超时';
+    }
+    if (rawStatus === 'killed') {
+      return '已终止 · 手动停止';
+    }
+    if (rawStatus === 'cancelled') {
+      return '已取消 · 用户取消';
+    }
+    return '失败';
+  }
+
+  private describeStatusReason(status: string): string {
+    switch (status) {
+      case 'running':
+        return '运行中';
+      case 'completed':
+        return '正常结束';
+      case 'failed':
+        return '执行失败';
+      case 'timeout':
+        return '超时';
+      case 'killed':
+        return '手动停止';
+      case 'cancelled':
+        return '用户取消';
+      default:
+        return '未知状态';
+    }
   }
 
   private startPolling(): void {
@@ -201,18 +233,6 @@ export class ChatProcessDetailWindowComponent implements OnInit, OnDestroy {
   }
 
   private readOutput(): string {
-    const outputFilePath = typeof this.outputFilePath === 'string' ? this.outputFilePath.trim() : '';
-    if (!outputFilePath) {
-      return '';
-    }
-    try {
-      const host = AilyHost.get();
-      if (!host.fs?.existsSync?.(outputFilePath)) {
-        return '';
-      }
-      return String(host.fs.readFileSync(outputFilePath, 'utf-8') ?? '');
-    } catch {
-      return '';
-    }
+    return readChatProcessOutputFile(this.outputFilePath);
   }
 }
