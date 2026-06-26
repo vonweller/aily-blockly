@@ -11,6 +11,10 @@ import {
   normalizeChatSessionTitleText,
   type ChatSessionTitleCandidate,
 } from '../core/chat-session-title';
+import type {
+  ChatRuntimeHostResourceOperationRequest,
+  ChatRuntimeHostResourceOperationResult,
+} from '../core/chat-runtime-host-contract';
 
 type ChatTitleCoordinatorContext = Pick<ISessionAccess, 'sessionId' | 'sessionTitle' | 'chatService' | 'chatHistoryService'>
   & Pick<IChatCoordination, 'session' | 'lexStream'>
@@ -18,6 +22,9 @@ type ChatTitleCoordinatorContext = Pick<ISessionAccess, 'sessionId' | 'sessionTi
   & {
     readonly readCurrentViewSessionResource?: () => string | null | undefined;
     readonly updateSessionModelTitle?: (sessionId: string, title: Partial<ChatSessionTitleCandidate>) => void;
+    readonly requestHostResourceOperation?: (
+      request: ChatRuntimeHostResourceOperationRequest,
+    ) => Promise<ChatRuntimeHostResourceOperationResult>;
   };
 
 function isMeaningfulTitle(value: unknown): value is string {
@@ -270,7 +277,7 @@ export class ChatTitleCoordinator {
           text: title,
           source: 'generated',
         } as const;
-        this.ctx.chatHistoryService.updateTitle(sessionId, title, { source: 'generated' });
+        await this.persistGeneratedTitleThroughHost(sessionId, title);
         this.ctx.updateSessionModelTitle?.(sessionId, titleCandidate);
         this.syncManagedSessionTitle?.(sessionId, titleCandidate);
         this.sealedSessionTitles.add(sessionId);
@@ -312,6 +319,38 @@ export class ChatTitleCoordinator {
 
     this.generationQueueBySession.set(sessionId, next);
     return next;
+  }
+
+  private async persistGeneratedTitleThroughHost(sessionId: string, title: string): Promise<void> {
+    const normalizedSessionId = normalizeSessionId(sessionId);
+    const normalizedTitle = normalizeChatSessionTitleText(title);
+    if (!normalizedSessionId || !normalizedTitle) {
+      return;
+    }
+    if (typeof this.ctx.requestHostResourceOperation !== 'function') {
+      throw new Error('[ChatTitleCoordinator] host resource operation bridge is required for generated title persistence.');
+    }
+
+    await this.ctx.requestHostResourceOperation({
+      sessionId: normalizedSessionId,
+      kind: 'history-persistence',
+      label: 'Persisting generated chat session title',
+      resource: {
+        title: normalizedTitle,
+        titleSource: 'generated',
+      },
+      payload: {
+        adapter: 'chatHistory',
+        record: {
+          sessionId: normalizedSessionId,
+          metadata: {
+            sessionId: normalizedSessionId,
+            title: normalizedTitle,
+            titleSource: 'generated',
+          },
+        },
+      },
+    });
   }
 
   cancelPendingForSession(sessionId: string | null | undefined): void {

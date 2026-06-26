@@ -1,5 +1,6 @@
 import type { AgentHandle } from 'aily-lex/browser';
 import { setActiveBlocklySlashCommandSession } from '../core/blockly-slash-command-provider';
+import { extractChatAgentRuntimeModeFromConfigKey } from '../core/chat-agent-runtime-mode';
 import { isAilyCategoryDebugEnabled } from '../core/chat-debug-flags';
 
 type AilyLexModule = import('./lex-agent-bootstrap').AilyLexModule;
@@ -49,6 +50,7 @@ export class LexAgentLifecycleBridge {
       createAgent: (
         lex: AilyLexModule,
         sessionId: string,
+        configKey: string | null,
       ) => LexAgentCreationResult;
       loadModule: () => Promise<AilyLexModule>;
       onAgentReady?: (
@@ -200,11 +202,11 @@ export class LexAgentLifecycleBridge {
       console.info('[LexStream][debug] ensureAgent start', {
         targetSessionId,
         requestedConfigKey: normalizedConfigKey,
-        requestedRuntimeMode: extractRuntimeModeFromConfigKey(normalizedConfigKey),
+        requestedRuntimeMode: extractChatAgentRuntimeModeFromConfigKey(normalizedConfigKey) ?? null,
         activeSessionId: this._activeSessionId,
         hasExistingEntry: !!existingEntry,
         existingConfigKey: existingEntry?.configKey ?? null,
-        existingRuntimeMode: extractRuntimeModeFromConfigKey(existingEntry?.configKey ?? null),
+        existingRuntimeMode: extractChatAgentRuntimeModeFromConfigKey(existingEntry?.configKey ?? null) ?? null,
       });
     }
 
@@ -247,8 +249,8 @@ export class LexAgentLifecycleBridge {
           targetSessionId,
           previousConfigKey: existingEntry.configKey,
           nextConfigKey: normalizedConfigKey,
-          previousRuntimeMode: extractRuntimeModeFromConfigKey(existingEntry.configKey),
-          nextRuntimeMode: extractRuntimeModeFromConfigKey(normalizedConfigKey),
+          previousRuntimeMode: extractChatAgentRuntimeModeFromConfigKey(existingEntry.configKey) ?? null,
+          nextRuntimeMode: extractChatAgentRuntimeModeFromConfigKey(normalizedConfigKey) ?? null,
           hasSnapshotToRestore: !!snapshotToRestore,
         });
       }
@@ -257,7 +259,7 @@ export class LexAgentLifecycleBridge {
       this.disposeSessionEntry(existingEntry);
     }
 
-    const created = this.deps.createAgent(lex, targetSessionId);
+    const created = this.deps.createAgent(lex, targetSessionId, normalizedConfigKey);
     const nextEntry = this.createSessionEntry(targetSessionId, created, normalizedConfigKey);
     this._sessionEntries.set(targetSessionId, nextEntry);
     if (shouldActivate) {
@@ -278,7 +280,7 @@ export class LexAgentLifecycleBridge {
       console.info('[LexStream][debug] ensureAgent ready', {
         targetSessionId,
         configKey: normalizedConfigKey,
-        runtimeMode: extractRuntimeModeFromConfigKey(normalizedConfigKey),
+        runtimeMode: extractChatAgentRuntimeModeFromConfigKey(normalizedConfigKey) ?? null,
         restoredSnapshot: !!snapshotToRestore,
         durationMs: Date.now() - startedAt,
       });
@@ -422,13 +424,4 @@ export class LexAgentLifecycleBridge {
 
 function normalizeLexSessionId(sessionId: string | null | undefined): string {
   return typeof sessionId === 'string' ? sessionId.trim() : '';
-}
-
-function extractRuntimeModeFromConfigKey(configKey: string | null | undefined): string | null {
-  if (!configKey) {
-    return null;
-  }
-
-  const match = configKey.match(/(?:^|::)agent-runtime:([^:]+)/);
-  return match?.[1] ?? null;
 }

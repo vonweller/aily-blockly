@@ -781,6 +781,7 @@ function buildTerminalToolbarActions(part: TerminalPart): readonly ActivityToolb
   if (part.isRunning && part.processId) {
     const sessionData = {
       processId: part.processId,
+      command: part.command,
       ...(part.outputSessionId ? { outputSessionId: part.outputSessionId } : {}),
       ...(part.outputFilePath ? { outputFilePath: part.outputFilePath } : {}),
     };
@@ -799,6 +800,21 @@ function buildTerminalToolbarActions(part: TerminalPart): readonly ActivityToolb
       label: '中断',
       tooltip: '中断正在运行的命令进程',
       data: sessionData,
+    });
+  }
+
+  if (part.processId) {
+    actions.push({
+      id: 'open-process-window',
+      iconClass: 'fa-light fa-square-terminal',
+      label: '打开终端详情',
+      tooltip: '在独立窗口中查看终端执行详情',
+      data: {
+        processId: part.processId,
+        command: part.command,
+        ...(part.outputSessionId ? { outputSessionId: part.outputSessionId } : {}),
+        ...(part.outputFilePath ? { outputFilePath: part.outputFilePath } : {}),
+      },
     });
   }
 

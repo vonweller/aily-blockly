@@ -35,6 +35,10 @@ export class ProjectRelatedFileStorage {
   ) {}
 
   list(scope: RelatedContentScope, projectPath: string, sessionId?: string): ProjectRelatedFileEntry[] {
+    if (scope === 'session' && !this.normalizeSessionId(sessionId)) {
+      return this.listAllSessionEntries(projectPath);
+    }
+
     const rootDir = this.resolveRootDir(scope, projectPath, sessionId);
     const metadataEntries = this.readMetadata(scope, projectPath, sessionId);
     const metadataByRelativePath = new Map(
@@ -355,12 +359,61 @@ export class ProjectRelatedFileStorage {
       return '';
     }
 
+    const normalizedSessionId = this.normalizeSessionId(sessionId);
+    const scopeLabel = scope === 'session'
+      ? (normalizedSessionId ? 'session' : 'sessions')
+      : scope;
+    const hasLinkEntries = entries.some((entry) => entry.type === 'link');
     const lines = [
-      `Reference related content when it may help with the current ${scope}.`,
-      ...entries.map((entry) => `- ${entry.relativePath}`),
+      `Reference related content when it may help with the current ${scopeLabel}.`,
+      `The following related-files entries are attached reference materials for the current ${scopeLabel}.`,
+      'Treat related-files as the project\'s attached reference context.',
+      'Requests to read, inspect, summarize, or compare attached references or their links refer to these entries.',
+      ...(hasLinkEntries
+        ? ['For link entries, fetch the URL when their contents are needed.']
+        : []),
+      ...entries.map((entry) => this.formatPromptEntry(entry)),
     ];
 
     return lines.join('\n');
+  }
+
+  private listAllSessionEntries(projectPath: string): ProjectRelatedFileEntry[] {
+    const sessionContentsRootDir = this.resolveSessionContentsRootDir(projectPath);
+    if (!sessionContentsRootDir || !this.host.fs.existsSync(sessionContentsRootDir)) {
+      return [];
+    }
+
+    const entriesByKey = new Map<string, { entry: ProjectRelatedFileEntry; addedAt: number }>();
+    for (const dirEntry of readDirEntries(this.host.fs, sessionContentsRootDir)) {
+      if (!dirEntry.isDirectory() || dirEntry.name.startsWith('.')) {
+        continue;
+      }
+
+      const nestedSessionId = this.normalizeSessionId(dirEntry.name);
+      if (!nestedSessionId) {
+        continue;
+      }
+
+      const metadataByRelativePath = this.readMetadataByRelativePath('session', projectPath, nestedSessionId);
+      for (const entry of this.list('session', projectPath, nestedSessionId)) {
+        const addedAt = metadataByRelativePath.get(entry.relativePath)?.addedAt ?? 0;
+        const dedupeKey = `${entry.type}:${entry.relativePath}:${entry.absolutePath}`;
+        const existing = entriesByKey.get(dedupeKey);
+        if (!existing || addedAt > existing.addedAt) {
+          entriesByKey.set(dedupeKey, { entry, addedAt });
+        }
+      }
+    }
+
+    return [...entriesByKey.values()]
+      .sort((left, right) => {
+        if (right.addedAt !== left.addedAt) {
+          return right.addedAt - left.addedAt;
+        }
+        return left.entry.name.localeCompare(right.entry.name);
+      })
+      .map(({ entry }) => entry);
   }
 
   private resolveRootDir(
@@ -374,6 +427,13 @@ export class ProjectRelatedFileStorage {
         normalizedProjectPath,
         this.resolveRelativeRootDirName(scope, sessionId),
       )
+      : undefined;
+  }
+
+  private resolveSessionContentsRootDir(projectPath: string): string | undefined {
+    const normalizedProjectPath = typeof projectPath === 'string' ? projectPath.trim() : '';
+    return normalizedProjectPath
+      ? this.host.path.join(normalizedProjectPath, '.chat_history', 'memory-tool', 'contents')
       : undefined;
   }
 
@@ -540,12 +600,18 @@ export class ProjectRelatedFileStorage {
   ): string {
     return scope === 'project'
       ? 'files'
-      : this.host.path.join('.chat_history', 'memory-tool', 'contents', sessionId || 'default');
+      : this.host.path.join('.chat_history', 'memory-tool', 'contents', this.normalizeSessionId(sessionId) || 'default');
   }
 
   private normalizePath(path: string): string {
     return typeof path === 'string'
       ? path.trim().replace(/\\/g, '/').toLowerCase()
+      : '';
+  }
+
+  private normalizeSessionId(sessionId?: string): string {
+    return typeof sessionId === 'string'
+      ? sessionId.trim()
       : '';
   }
 
@@ -569,6 +635,17 @@ export class ProjectRelatedFileStorage {
       return `${parsed.hostname}${path}`;
     } catch {
       return url;
+    }
+  }
+
+  private formatPromptEntry(entry: ProjectRelatedFileEntry): string {
+    switch (entry.type) {
+      case 'folder':
+        return `- Folder: ${entry.relativePath}`;
+      case 'link':
+        return `- Link: ${entry.name} -> ${entry.absolutePath}`;
+      default:
+        return `- File: ${entry.relativePath}`;
     }
   }
 }

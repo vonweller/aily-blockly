@@ -304,6 +304,7 @@ class ChatRuntimeHostProcessService {
       executionContext: {
         selectedMode: runningState.selectedMode ?? null,
         providerOptions: runningState.providerOptions ?? null,
+        currentModel: runningState.currentModel ?? null,
         transcriptRevision: Number(runningState.transcriptRevision) || 0,
       },
     };

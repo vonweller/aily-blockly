@@ -152,7 +152,7 @@
       </div>
     }
 
-    @if (effectiveDoing) {
+    @if (effectiveDoing && role !== 'user') {
       <div class="loader"></div>
     }
     @if (shouldRenderFooter) {

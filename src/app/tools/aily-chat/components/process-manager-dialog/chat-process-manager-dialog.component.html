@@ -1,0 +1,134 @@
+<app-base-dialog
+  title="进程管理"
+  [showFooter]="false"
+  (closeDialog)="closeDialog()"
+>
+  <div class="process-manager">
+    <div class="process-toolbar">
+      <button
+        type="button"
+        class="process-chip"
+        [class.active]="selectedFilter === 'all'"
+        (click)="updateFilter('all')"
+      >
+        全部
+      </button>
+
+      <select
+        class="process-filter"
+        [ngModel]="selectedFilter"
+        (ngModelChange)="updateFilter($event)"
+      >
+        <option value="all">全部状态</option>
+        <option value="running">执行中</option>
+        <option value="background">后台运行</option>
+        <option value="completed">已完成</option>
+        <option value="failed">失败 / 已停止</option>
+      </select>
+    </div>
+
+    <div class="process-body">
+      <section class="process-list">
+        @if (filteredProcesses.length > 0) {
+          @for (process of filteredProcesses; track trackByProcessId($index, process)) {
+            <div
+              class="process-row"
+              [class.active]="selectedProcess?.processId === process.processId"
+              (click)="selectProcess(process.processId)"
+              (keydown.enter)="selectProcess(process.processId)"
+              (keydown.space)="selectProcess(process.processId); $event.preventDefault()"
+              tabindex="0"
+              role="button"
+            >
+              <div class="process-row-main">
+                <div class="process-row-command">{{ process.command }}</div>
+                <div class="process-row-meta">
+                  <span>{{ summarizeStatus(process) }}</span>
+                  <span>{{ formatElapsed(process) }}</span>
+                  @if (process.outputFilePath) {
+                    <span class="process-row-badge">log</span>
+                  }
+                </div>
+              </div>
+
+              <div class="process-row-actions">
+                <button
+                  type="button"
+                  class="process-icon-btn"
+                  title="打开终端详情"
+                  aria-label="打开终端详情"
+                  (click)="openProcessWindow(process); $event.stopPropagation()"
+                >
+                  <i class="fa-light fa-square-terminal"></i>
+                </button>
+                @if (process.running) {
+                  <button
+                    type="button"
+                    class="process-icon-btn process-icon-btn-danger"
+                    title="停止进程"
+                    aria-label="停止进程"
+                    (click)="stopProcess(process); $event.stopPropagation()"
+                  >
+                    <i class="fa-light fa-stop"></i>
+                  </button>
+                }
+              </div>
+            </div>
+          }
+        } @else {
+          <div class="process-empty">当前 session 还没有匹配的进程。</div>
+        }
+      </section>
+
+      <section class="process-detail">
+        @if (selectedProcess; as process) {
+          <div class="process-detail-header">
+            <div class="process-detail-command">{{ process.command }}</div>
+            <div class="process-detail-actions">
+              <button
+                type="button"
+                class="process-detail-open-btn"
+                (click)="openProcessWindow(process)"
+              >
+                <i class="fa-light fa-square-terminal"></i>
+                <span>独立窗口</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="process-detail-meta">
+            <div class="process-detail-meta-row">
+              <span class="label">状态</span>
+              <span class="value">{{ selectedProcessStatusLabel }}</span>
+            </div>
+            <div class="process-detail-meta-row">
+              <span class="label">执行时长</span>
+              <span class="value">{{ formatElapsed(process) }}</span>
+            </div>
+            <div class="process-detail-meta-row">
+              <span class="label">工作目录</span>
+              <span class="value">{{ process.cwd }}</span>
+            </div>
+            <div class="process-detail-meta-row">
+              <span class="label">输出大小</span>
+              <span class="value">{{ process.bytesTotal }} bytes</span>
+            </div>
+            @if (process.exitCode != null) {
+              <div class="process-detail-meta-row">
+                <span class="label">退出码</span>
+                <span class="value">{{ process.exitCode }}</span>
+              </div>
+            }
+          </div>
+
+          <div class="process-detail-output">
+            <div class="process-detail-output-title">command 预览</div>
+            <pre><code [textContent]="selectedProcessOutput || '暂无输出'"></code></pre>
+          </div>
+        } @else {
+          <div class="process-empty process-empty-detail">选择左侧进程查看详情。</div>
+        }
+      </section>
+    </div>
+  </div>
+</app-base-dialog>

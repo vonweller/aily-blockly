@@ -61,7 +61,9 @@ import { exposeAilyChatE2eHarness, type AilyChatE2eRenderingDiagnostics } from '
 import { importDebugSnapshotFromDialog } from './helpers/chat-debug-import.helper';
 import { ChatMemoryShellCoordinator } from './helpers/chat-memory-shell-coordinator';
 import { runChatTodoFocusAction } from './helpers/chat-todo-focus-action';
+import { ChatProcessManagerDialogComponent } from './components/process-manager-dialog/chat-process-manager-dialog.component';
 import { isSessionLifecycleSupersededError, readSessionLifecycleRestoreErrorDetails } from './helpers/session-lifecycle.helper';
+import { openChatProcessWindow } from './helpers/chat-process-window';
 import type { ChatTaskActionDetail } from './helpers/chat-task-action-coordinator';
 import { ProjectRelatedFileStorage } from './components/memory/project-related-file-storage';
 
@@ -111,6 +113,7 @@ import type {
   ChatPaneSurface,
   ChatPaneSessionListSurfaceModel,
 } from './services/chat-view.service';
+import type { ChatRuntimeHostSessionProcessSummary } from './core/chat-runtime-host-contract';
 
 // 共享类型从 core/chat-types.ts 导入并重新导出（保持向后兼容）
 import { Tool, ResourceItem, ChatMessage, ToolCallState, ToolCallInfo } from './core/chat-types';
@@ -241,6 +244,7 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
   public dialogVirtualBottomSpacerHeight = 0;
   private readonly debugBrowserChangeSubscription: Subscription;
   private readonly sessionViewModelChangeSubscription: Subscription;
+  private readonly runtimeProcessSnapshotSubscription: { dispose(): void };
   private runtimeInteractionRevealEffect: { destroy(): void } | null = null;
   private runtimeInteractionRevealTimer: ReturnType<typeof setTimeout> | null = null;
   private lastRuntimeInteractionRevealKey = '';
@@ -313,6 +317,15 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
     });
     this.debugBrowserChangeSubscription = this.debugBrowser.onDidChange.subscribe(() => {
       this.cdr.markForCheck();
+    });
+    this.runtimeProcessSnapshotSubscription = this.runtimeInteractionHost.onSnapshot((snapshot) => {
+      if (!snapshot?.sessionId) {
+        return;
+      }
+      const currentSessionId = this.getCurrentSessionId();
+      if (!currentSessionId || snapshot.sessionId === currentSessionId) {
+        this.cdr.markForCheck();
+      }
     });
     this.sessionViewModelChangeSubscription = this.viewState.sessionViewModelChanged$.subscribe(() => {
       this.syncSessionListDisplayState();
@@ -933,6 +946,7 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
   ngOnDestroy() {
     this.debugBrowserChangeSubscription.unsubscribe();
     this.sessionViewModelChangeSubscription.unsubscribe();
+    this.runtimeProcessSnapshotSubscription.dispose();
     this.disconnectDialogContentObserver();
     this.disconnectSessionViewportObserver();
     this.cancelDialogVirtualRafs();
@@ -942,6 +956,64 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
     this.cancelRuntimeInteractionReveal();
     this.scrollManager.setRevealHostDelegate?.(null);
     this.lifecycleCoordinator.detachView();
+  }
+
+  shouldShowBackgroundProcessButton(): boolean {
+    return this.getBackgroundRunningProcessCount() > 0;
+  }
+
+  getBackgroundRunningProcessCount(): number {
+    return this.readCurrentSessionProcesses()
+      .filter(process => process.running === true && process.background === true)
+      .length;
+  }
+
+  openProcessManagerDialog(): void {
+    const sessionId = this.getCurrentSessionId();
+    if (!sessionId) {
+      return;
+    }
+
+    this.modal.create({
+      nzTitle: null,
+      nzFooter: null,
+      nzClosable: false,
+      nzBodyStyle: { padding: '0' },
+      nzWidth: 1100,
+      nzContent: ChatProcessManagerDialogComponent,
+      nzData: { sessionId },
+    });
+  }
+
+  openProcessWindowForCurrentSession(processId: string, outputSessionId?: string, outputFilePath?: string, command?: string): void {
+    const sessionId = this.getCurrentSessionId();
+    if (!sessionId || !processId) {
+      return;
+    }
+    openChatProcessWindow({
+      sessionId,
+      processId,
+      outputSessionId,
+      outputFilePath,
+      command,
+    });
+  }
+
+  private getCurrentSessionId(): string {
+    const viewModelSessionId = typeof this.vm.sessionId === 'string' ? this.vm.sessionId.trim() : '';
+    if (viewModelSessionId) {
+      return viewModelSessionId;
+    }
+    return this.resolvePermissionTargetSessionId();
+  }
+
+  private readCurrentSessionProcesses(): readonly ChatRuntimeHostSessionProcessSummary[] {
+    const sessionId = this.getCurrentSessionId();
+    if (!sessionId) {
+      return [];
+    }
+    const snapshot = this.runtimeInteractionHost.readSnapshot(sessionId);
+    return Array.isArray(snapshot.processes) ? snapshot.processes : [];
   }
 
   returnStandaloneSurfaceToMain(): void {

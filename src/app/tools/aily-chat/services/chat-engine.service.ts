@@ -24,7 +24,7 @@ import { AilyChatLanguageModelsService } from './aily-chat-language-models.servi
 import { ChatHistoryService } from './chat-history.service';
 import { MAIN_AGENT_TYPE } from '../core/agent-identifiers';
 import {
-  createChatAgentRuntimeModeConfigKey,
+  createChatAgentRuntimeConfigKey,
   normalizeChatAgentRuntimeMode,
   normalizeChatAgentRuntimeModeSource,
   type ChatAgentRuntimeMode,
@@ -60,6 +60,7 @@ import type {
   ChatRuntimeHostSubmitRequest,
   ChatRuntimeHostViewRequest,
   ChatRuntimeHostViewId,
+  ChatRuntimeHostModelSelectionSnapshot,
 } from '../core/chat-runtime-host-contract';
 import { createElectronChatRuntimeHostTransport } from '../core/electron-chat-runtime-host-transport';
 import { AuthQuotaStateService, readAuthQuotaStateSnapshot, type AuthQuotaInfo } from './auth-quota-state.service';
@@ -85,7 +86,7 @@ import {
 import { ChatSessionEntryStateService } from './chat-session-entry-state.service';
 import { ConfigService } from '../../../services/config.service';
 import { UiService } from '../../../services/ui.service';
-import { formatCompactBillingLabel, isDefaultAutoPresetSelected } from '../helpers/model-billing-label';
+import { isDefaultAutoPresetSelected } from '../helpers/model-billing-label';
 import { buildTodoListSemanticDataFromTodos } from './todoUpdate.service';
 import { setTodos, type TodoItem as BlocklyTodoItem } from '../utils/todoStorage';
 import {
@@ -139,7 +140,6 @@ import { MenuManagerService } from './menu-manager.service';
 import { ChatMessage, ToolCallState, ResourceItem } from '../core/chat-types';
 import { AilyHost } from '../core/host';
 import { mkdir as mkdirAsync, writeFile as writeFileAsync } from '../core/async-fs';
-import { registerAskUserCallback, unregisterAskUserCallback } from '../core/ask-user';
 import type { MetricsSnapshot, TurnRequest, TurnResponseStatus, TurnResponseTurn } from 'aily-lex/browser';
 
 import { ChatTitleCoordinator } from '../helpers/chat-title-coordinator';
@@ -429,12 +429,6 @@ const BACKGROUND_SESSION_TRACE_GLOBAL_KEYS = [
   '__AILY_CHAT_TRACE_BACKGROUND_SESSION__',
   'AILY_CHAT_TRACE_BACKGROUND_SESSION',
 ] as const;
-
-function createAgentProviderOptionsKeyWithRuntime(providerOptionsKey: string, runtimeMode: unknown): string {
-  return providerOptionsKey.includes('::agent-runtime:')
-    ? providerOptionsKey
-    : `${providerOptionsKey}::${createChatAgentRuntimeModeConfigKey(normalizeChatAgentRuntimeMode(runtimeMode, 'unbound'))}`;
-}
 
 function parseBackgroundSessionTraceFlag(value: unknown): boolean {
   if (value === true || value === 1) {
@@ -1291,9 +1285,9 @@ export class ChatEngineService implements IChatContext {
 
       return {
         runtimeOwnerSessionId,
-        providerOptionsKey: createAgentProviderOptionsKeyWithRuntime(createHostSessionProviderOptionsKey(
+        providerOptionsKey: createChatAgentRuntimeConfigKey(createHostSessionProviderOptionsKey(
           providerOptions,
-        ), this.currentAgentRuntimeMode ?? this.chatService?.currentAgentRuntimeMode),
+        ), this.currentAgentRuntimeMode ?? this.chatService?.currentAgentRuntimeMode, this.resolveVisibleCurrentModelSnapshot(runtimeOwnerSessionId)),
         selectedMode,
         currentMode: selectedMode.modeId,
         currentResolvedMode: this.resolveVisibleResolvedModeSnapshot(runtimeOwnerSessionId),
@@ -1838,6 +1832,14 @@ export class ChatEngineService implements IChatContext {
     this.markVisibleSessionProjectionOwner(this.resolveCurrentViewSessionResource());
   }
 
+  markHistoryDirty(sessionId: string): void {
+    const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!targetSessionId) {
+      return;
+    }
+    this.chatHistoryService.markDirty(targetSessionId);
+  }
+
   private setCurrentViewVisibleProjectionList(list: ChatMessage[]): void {
     this.markCurrentViewVisibleProjectionOwner();
     this.list = list;
@@ -1950,7 +1952,7 @@ export class ChatEngineService implements IChatContext {
     const currentViewSessionResource = this.resolveCurrentViewSessionResource();
     this.replaceSharedHostProjectionState(nextState, { sessionId: currentViewSessionResource || null });
     if (currentViewSessionResource) {
-      this.chatHistoryService.markDirty(currentViewSessionResource);
+      this.markHistoryDirty(currentViewSessionResource);
     }
     this.triggerSyncDetectChanges();
   }
@@ -2180,7 +2182,7 @@ export class ChatEngineService implements IChatContext {
   }
 
   private getCurrentModelChipBaseLabel(): string {
-    return this.currentModelName ?? '';
+    return this.getActiveDisplayModel()?.name ?? this.currentModelName ?? '';
   }
 
   private getNavigationConfigurationSummary(model: { presetId?: string; model?: string } | null | undefined): string | undefined {
@@ -2210,36 +2212,33 @@ export class ChatEngineService implements IChatContext {
   }
 
   get currentModelTooltip(): string {
-    return this.ailyChatConfigService.buildModelTooltip(this.getSelectedDisplayModel(), {
+    return this.ailyChatConfigService.buildModelTooltip(this.getActiveDisplayModel(), {
       maxContextTokens: this.contextBudgetSnapshot?.maxContextTokens,
     });
   }
 
   get currentModelBillingLabel(): string | undefined {
-    const resolvedBillingLabel = this.chatService.resolvedActiveModelBillingLabel;
-    if (resolvedBillingLabel) {
-      return isDefaultAutoPresetSelected(this.chatService.currentModel)
-        ? formatCompactBillingLabel(resolvedBillingLabel)
-        : resolvedBillingLabel;
-    }
-
-    return this.ailyChatConfigService.getModelBillingLabel(this.getSelectedDisplayModel());
+    return this.chatService.resolvedActiveModelBillingLabel
+      ?? this.ailyChatConfigService.getModelBillingLabel(this.getActiveDisplayModel());
   }
 
   private getSelectedDisplayModel(): ModelConfig | null {
-    const activeDisplayModel = this.chatService.getActiveDisplayModel() ?? null;
-    if (!activeDisplayModel) {
+    const selectedModel = this.chatService.currentModel ?? null;
+    if (!selectedModel) {
       return null;
     }
 
-    if (!isDefaultAutoPresetSelected(this.chatService.currentModel)) {
-      return activeDisplayModel;
+    if (typeof selectedModel.presetId === 'string' && selectedModel.presetId.trim()) {
+      return this.ailyChatConfigService.resolvePresetDisplayModel(selectedModel.presetId.trim())
+        ?? selectedModel;
     }
 
-    return {
-      ...activeDisplayModel,
-      presetId: this.ailyChatConfigService.getDefaultModelPresetId(),
-    };
+    return selectedModel;
+  }
+
+  private getActiveDisplayModel(): ModelConfig | null {
+    return this.chatService.getActiveDisplayModel?.()
+      ?? this.getSelectedDisplayModel();
   }
 
   syncRegisteredAgentNames(agentNames: readonly string[]): void {
@@ -2416,8 +2415,8 @@ export class ChatEngineService implements IChatContext {
       invalidateHostRequestGraph: () => this.invalidateHostRequestGraph(),
       triggerSyncDetectChanges: () => this.triggerSyncDetectChanges(),
       markCurrentViewVisibleProjectionOwner: () => thisEngine.markCurrentViewVisibleProjectionOwner(),
+      markHistoryDirty: (sessionId) => thisEngine.markHistoryDirty(sessionId),
       get sessionId() { return thisEngine.sessionId; },
-      get chatHistoryService() { return thisEngine.chatHistoryService; },
       get currentModelName() { return thisEngine.currentModelName; },
       get currentMessageSource() { return thisEngine.currentMessageSource; },
       get ngZone() { return thisEngine.ngZone; },
@@ -2643,6 +2642,7 @@ export class ChatEngineService implements IChatContext {
       get viewAdapter() { return thisEngine.viewAdapter; },
       get scrollManager() { return thisEngine.scrollManager; },
       markCurrentViewVisibleProjectionOwner: () => thisEngine.markCurrentViewVisibleProjectionOwner(),
+      markHistoryDirty: (sessionId) => thisEngine.markHistoryDirty(sessionId),
       get chatSessionItemsService() { return thisEngine.chatSessionItemsService; },
       readSessionTurnResponses: (sessionId) => {
         const readSessionTurnResponses = (
@@ -2730,7 +2730,6 @@ export class ChatEngineService implements IChatContext {
       get prjRootPath() { return thisEngine.prjRootPath; },
       get contextBudgetService() { return thisEngine.contextBudgetService; },
       get repetitionDetectionService() { return thisEngine.repetitionDetectionService; },
-      get editCheckpointService() { return thisEngine.editCheckpointService; },
       get mcpService() { return thisEngine.mcpService; },
       get ailyChatConfigService() { return thisEngine.ailyChatConfigService; },
       getDevelopmentModePreferenceRuntimeMode: () => thisEngine.configService?.getPreferredChatAgentRuntimeMode?.(),
@@ -2772,7 +2771,6 @@ export class ChatEngineService implements IChatContext {
       get conversationMessages() { return thisEngine.conversationMessages; },
       get chatService() { return thisEngine.chatService; },
       get contextBudgetService() { return thisEngine.createRuntimeScopedContextBudgetService(); },
-      get editCheckpointService() { return thisEngine.editCheckpointService; },
       get ailyChatConfigService() { return thisEngine.ailyChatConfigService; },
       get runtimeInteractionHost() { return thisEngine.runtimeInteractionHost; },
       get lexStream() { return thisEngine.lexStream; },
@@ -3218,6 +3216,7 @@ export class ChatEngineService implements IChatContext {
       get session() { return thisEngine.session; },
       get lexStream() { return thisEngine.lexStream; },
       readCurrentViewSessionResource: () => thisEngine.resolveCurrentViewSessionResource(),
+      requestHostResourceOperation: (request) => thisEngine.runtimeHostForView().requestResourceOperation(request),
       updateSessionModelTitle: (sessionId, title) => thisEngine.chatSessionModelStore.updateMetadata(sessionId, {
         title,
       }),
@@ -3246,8 +3245,8 @@ export class ChatEngineService implements IChatContext {
       get session() { return thisEngine.session; },
       applyPendingSwitch: (sessionId) => this.applyPendingSwitch(sessionId),
       get contextBudgetService() { return thisEngine.contextBudgetService; },
-      get editCheckpointService() { return thisEngine.editCheckpointService; },
       get conversationMessages() { return thisEngine.conversationMessages; },
+      get sessionId() { return thisEngine.sessionId; },
       get viewAdapter() { return thisEngine.viewAdapter; },
       dismissPendingInteractions: (sessionId) => {
         const targetSessionId = typeof sessionId === 'string' && sessionId.trim().length > 0
@@ -3327,7 +3326,6 @@ export class ChatEngineService implements IChatContext {
       get contextBudgetService() { return thisEngine.contextBudgetService; },
       get languageModelsService() { return thisEngine.languageModelsService; },
       get message() { return thisEngine.message; },
-      get lexStream() { return thisEngine.lexStream; },
     };
   }
 
@@ -3400,7 +3398,7 @@ export class ChatEngineService implements IChatContext {
       () => {
         const currentViewSessionResource = this.resolveCurrentViewSessionResource();
         if (currentViewSessionResource) {
-          this.chatHistoryService.markDirty(currentViewSessionResource);
+          this.markHistoryDirty(currentViewSessionResource);
         }
       },
       this.ngZone,
@@ -3501,8 +3499,9 @@ export class ChatEngineService implements IChatContext {
     this.isCancelled = true;
 
     if (options.clearEditSummary === true) {
-      this.editCheckpointService.clear();
-      this.editCheckpointService.dismissSummary();
+      void this.requestHostEditTrackingClearSessionState(this.sessionId).catch((error: unknown) => {
+        console.warn('[AilyChat][RuntimeHost] clear edit tracking session state failed:', error);
+      });
     }
 
     if (this.messageSubscription) {
@@ -3698,6 +3697,40 @@ export class ChatEngineService implements IChatContext {
     }
 
     return normalizeChatSelectedMode(undefined);
+  }
+
+  private resolveVisibleCurrentModelSnapshot(sessionId?: string | null): ChatRuntimeHostModelSelectionSnapshot | null {
+    const targetSessionId = this.resolveRuntimeSessionIdForOwner(sessionId);
+    const currentServiceSessionId = typeof this.chatService?.currentSessionId === 'string'
+      ? this.chatService.currentSessionId.trim()
+      : '';
+    const resolveCurrentViewSessionResource = (this as unknown as {
+      resolveCurrentViewSessionResource?: () => string;
+    }).resolveCurrentViewSessionResource;
+    const currentViewSessionResource = typeof resolveCurrentViewSessionResource === 'function'
+      ? resolveCurrentViewSessionResource.call(this)
+      : currentServiceSessionId;
+    const currentViewSessionId = typeof currentViewSessionResource === 'string'
+      ? currentViewSessionResource.trim()
+      : '';
+    const isCurrentVisibleRequest = !targetSessionId
+      || (!!currentServiceSessionId && targetSessionId === currentServiceSessionId)
+      || (!!currentViewSessionId && targetSessionId === currentViewSessionId);
+    if (isCurrentVisibleRequest) {
+      const currentModel = this.chatService.currentModel;
+      return currentModel
+        ? { ...(currentModel as unknown as Record<string, unknown>) } as ChatRuntimeHostModelSelectionSnapshot
+        : null;
+    }
+
+    const runtimeCurrentModel = targetSessionId
+      ? this.chatSessionRuntimeStore?.read?.(targetSessionId)?.currentModel
+      : undefined;
+    if (runtimeCurrentModel && typeof runtimeCurrentModel === 'object') {
+      return { ...(runtimeCurrentModel as Record<string, unknown>) } as ChatRuntimeHostModelSelectionSnapshot;
+    }
+
+    return null;
   }
 
   private resolveVisibleResolvedModeSnapshot(sessionId?: string | null): ChatResolvedMode {
@@ -4342,9 +4375,10 @@ export class ChatEngineService implements IChatContext {
 
     await this.runWithRuntimeSessionOwner(runtimeOwnerSessionId, async () => {
       if (providerOptionsKey) {
-        const agentProviderOptionsKey = createAgentProviderOptionsKeyWithRuntime(
+        const agentProviderOptionsKey = createChatAgentRuntimeConfigKey(
           providerOptionsKey,
           this.currentAgentRuntimeMode ?? this.chatService?.currentAgentRuntimeMode,
+          this.resolveVisibleCurrentModelSnapshot(runtimeOwnerSessionId),
         );
         if (this.lexStream.agent.isConfiguredFor?.(runtimeOwnerSessionId, agentProviderOptionsKey)) {
           await this.lexStream.agent.ensureAgent(runtimeOwnerSessionId, agentProviderOptionsKey);
@@ -4683,10 +4717,7 @@ export class ChatEngineService implements IChatContext {
       ?? committedBranch.turnResponses;
     replaceCheckpointTimelineState.call(model, committedBranch.checkpointTimelineState);
 
-    const rebuildFromTurnResponses = this.editCheckpointService?.rebuildFromTurnResponses;
-    if (typeof rebuildFromTurnResponses === 'function') {
-      await rebuildFromTurnResponses.call(this.editCheckpointService, turnResponses);
-    }
+    await this.requestHostEditTrackingRestore(targetSessionId, turnResponses);
 
     this.lexStream?.hydrateTurnResponses?.(targetSessionId, turnResponses, {
       visibility: 'visibleAttach',
@@ -4741,6 +4772,47 @@ export class ChatEngineService implements IChatContext {
     }
 
     throw new Error('[AilyChat][RuntimeHost] Visible chat views require Electron runtime host transport.');
+  }
+
+  private async requestHostEditTrackingRestore(
+    sessionId: string,
+    turnResponses: readonly TurnResponseTurn[],
+  ): Promise<void> {
+    const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!targetSessionId) {
+      throw new Error('[AilyChat][RuntimeHost] edit tracking restore requires a host session id.');
+    }
+    await this.runtimeHostForView().requestResourceOperation({
+      sessionId: targetSessionId,
+      kind: 'edit-tracking',
+      label: 'Restoring edit tracking from checkpoint branch',
+      detail: 'Host edit tracking resource is rebuilding checkpoint state from committed turn responses.',
+      payload: {
+        adapter: 'editTracking',
+        action: 'restoreFromTurnResponses',
+        workspaceRoot: this.getCurrentProjectPath(),
+        turnResponses,
+        autoSaveEdits: this.ailyChatConfigService.autoSaveEdits === true,
+      },
+    });
+  }
+
+  private async requestHostEditTrackingClearSessionState(sessionId: string | null | undefined): Promise<void> {
+    const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!targetSessionId) {
+      throw new Error('[AilyChat][RuntimeHost] clear edit tracking state requires a host session id.');
+    }
+    await this.runtimeHostForView().requestResourceOperation({
+      sessionId: targetSessionId,
+      kind: 'edit-tracking',
+      label: 'Clearing edit tracking session state',
+      detail: 'Host edit tracking resource is clearing stale visible session edit state.',
+      payload: {
+        adapter: 'editTracking',
+        action: 'clearSessionState',
+        dismissSummary: true,
+      },
+    });
   }
 
   private setupRuntimeHostEventSubscription(): void {
@@ -5033,6 +5105,7 @@ export class ChatEngineService implements IChatContext {
     const visibleCurrentSession = options?.visibleProjection === true
       && this.ensureRuntimeEventSessionViewAttached(sessionId);
     this.traceRuntimeHostTranscriptProjection(sessionId, turnResponses, committedTurnResponses, visibleCurrentSession);
+    this.syncResolvedActiveModelFromCommittedTranscript(sessionId, committedTurnResponses);
 
     if (visibleCurrentSession) {
       this.lexStream.hydrateTurnResponses?.(sessionId, committedTurnResponses, {
@@ -5043,6 +5116,26 @@ export class ChatEngineService implements IChatContext {
       this.visibleProjectionSessionId = sessionId;
       this.triggerSyncDetectChanges();
     }
+  }
+
+  private syncResolvedActiveModelFromCommittedTranscript(
+    sessionId: string,
+    committedTurnResponses: readonly TurnResponseTurn[] | null,
+  ): void {
+    if (!committedTurnResponses || !this.shouldProjectResolvedActiveModelToVisibleOwner(sessionId)) {
+      return;
+    }
+
+    const syncResolvedActiveModelAfterSuccessfulTurn = this.chatService.syncResolvedActiveModelAfterSuccessfulTurn;
+    if (typeof syncResolvedActiveModelAfterSuccessfulTurn !== 'function') {
+      return;
+    }
+
+    void syncResolvedActiveModelAfterSuccessfulTurn.call(
+      this.chatService,
+      sessionId,
+      committedTurnResponses,
+    );
   }
 
   private applyRuntimeHostSessionStateEvent(
@@ -5072,6 +5165,7 @@ export class ChatEngineService implements IChatContext {
       stopSession,
       selectedMode: state.selectedMode ?? undefined,
       providerOptions: state.providerOptions ?? undefined,
+      currentModel: state.currentModel ?? undefined,
     };
     this.chatRuntimeViewMirrorProjection.projectRuntimeState({
       sessionId,
@@ -5890,9 +5984,6 @@ export class ChatEngineService implements IChatContext {
       console.warn('[ChatEngine] Failed to attach current session view on init:', error);
     });
 
-    // 注册 ask_user 回调：在聊天界面显示全部问题并等待用户回答
-    registerAskUserCallback((questions, context) => this.interaction.handleAskUser(questions, context));
-
   }
 
   bindChatTextareaRef(chatTextareaRef: ElementRef | null): void {
@@ -5951,7 +6042,6 @@ export class ChatEngineService implements IChatContext {
     this.chatHistoryService.setLiveSessionProvider(null);
     this.chatHistoryService.setAutoSaveSessionActiveProvider(null);
 
-    unregisterAskUserCallback();
     this.interaction.destroy();
 
     this.cleanupSubscriptions();
@@ -6266,9 +6356,10 @@ Do not create non-existent boards and libraries.
       targetSessionId,
       resolvedProviderOptions,
     ) ?? resolvedProviderOptions;
-    const providerOptionsKey = createAgentProviderOptionsKeyWithRuntime(
+    const providerOptionsKey = createChatAgentRuntimeConfigKey(
       createHostSessionProviderOptionsKey(normalizedProviderOptions),
       this.currentAgentRuntimeMode ?? this.chatService?.currentAgentRuntimeMode,
+      this.resolveVisibleCurrentModelSnapshot(targetSessionId),
     );
     if (this.lexStream.agent.isConfiguredFor?.(targetSessionId, providerOptionsKey)) {
       return;
@@ -6288,9 +6379,10 @@ Do not create non-existent boards and libraries.
       targetSessionId,
       resolvedProviderOptions,
     ) ?? resolvedProviderOptions;
-    const providerOptionsKey = createAgentProviderOptionsKeyWithRuntime(
+    const providerOptionsKey = createChatAgentRuntimeConfigKey(
       createHostSessionProviderOptionsKey(normalizedProviderOptions),
       this.currentAgentRuntimeMode ?? this.chatService?.currentAgentRuntimeMode,
+      this.resolveVisibleCurrentModelSnapshot(targetSessionId),
     );
     if (this.lexStream.agent.isConfiguredFor?.(targetSessionId, providerOptionsKey)) {
       await this.lexStream.agent.ensureAgent(targetSessionId, providerOptionsKey);
@@ -6358,7 +6450,6 @@ Do not create non-existent boards and libraries.
         throw new Error('executePreparedUserSend requires the target session to be attached before submit.');
       }
 
-      const activeResponseHandle = (readPreparedPendingFollowupRequestId(prepared) ?? targetSessionId) || null;
       const existingTurnResponses = this.readSessionTurnResponses(targetSessionId);
       this.markVisibleSessionProjectionOwner(targetSessionId);
       this.lexStream.hydrateTurnResponses?.(targetSessionId, existingTurnResponses, {
@@ -6402,14 +6493,22 @@ Do not create non-existent boards and libraries.
           displayTextLength: (prepared.displayText || prepared.text).trim().length,
         });
       }
+      const currentModelSnapshot = this.resolveVisibleCurrentModelSnapshot(targetSessionId);
+      const currentServiceSessionId = typeof this.chatService?.currentSessionId === 'string'
+        ? this.chatService.currentSessionId.trim()
+        : '';
+      console.info(
+        `[AilyChat][HostSubmitModel] session=${targetSessionId || ''} currentSession=${currentServiceSessionId} model=${currentModelSnapshot?.model ?? ''} preset=${currentModelSnapshot?.presetId ?? ''} name=${currentModelSnapshot?.name ?? ''}`,
+      );
       await this.runtimeHostForView().submitTurn({
         sessionId: targetSessionId,
         requestText: prepared.llmText,
         displayText: prepared.displayText,
         selectedMode: this.resolveVisibleSelectedModeSnapshot(targetSessionId),
         providerOptions: this.resolveVisibleSessionProviderOptionsSnapshot(targetSessionId),
+        currentModel: currentModelSnapshot,
         metadata: this.withHostRuntimeSessionInventoryMetadata(targetSessionId, prepared.requestMetadata ?? null),
-        activeResponseHandle,
+        activeResponseHandle: null,
       });
       if (isSendDebugTraceEnabled()) {
         console.info('[AilyChat][SendDebug] after turn.run', {
@@ -6656,14 +6755,22 @@ Do not create non-existent boards and libraries.
     updateAilyChatAgentLoopPendingCount(1);
     try {
       const runtimeHost = this.runtimeHostForView();
+      const currentModelSnapshot = this.resolveVisibleCurrentModelSnapshot(runtimeSessionId);
+      const currentServiceSessionId = typeof this.chatService?.currentSessionId === 'string'
+        ? this.chatService.currentSessionId.trim()
+        : '';
+      console.info(
+        `[AilyChat][HostSubmitModel] session=${runtimeSessionId || ''} currentSession=${currentServiceSessionId} model=${currentModelSnapshot?.model ?? ''} preset=${currentModelSnapshot?.presetId ?? ''} name=${currentModelSnapshot?.name ?? ''}`,
+      );
       await runtimeHost.submitTurn({
         sessionId: runtimeSessionId,
         requestText: content,
         displayText: content,
         selectedMode: this.resolveVisibleSelectedModeSnapshot(runtimeSessionId),
         providerOptions: this.resolveVisibleSessionProviderOptionsSnapshot(runtimeSessionId),
+        currentModel: currentModelSnapshot,
         metadata: this.withHostRuntimeSessionInventoryMetadata(runtimeSessionId, appliedRequestMetadata),
-        activeResponseHandle: readRequestMetadataRequestId(appliedRequestMetadata as Record<string, unknown>),
+        activeResponseHandle: null,
       });
     } finally {
       updateAilyChatAgentLoopPendingCount(-1);

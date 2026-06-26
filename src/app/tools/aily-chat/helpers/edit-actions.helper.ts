@@ -172,9 +172,7 @@ export class EditActionsHelper {
       get sessionId() {
         return ctx.sessionId;
       },
-      get chatHistoryService() {
-        return ctx.chatHistoryService;
-      },
+      markHistoryDirty: (sessionId) => ctx.markHistoryDirty(sessionId),
       get currentModelName() {
         return ctx.currentModelName;
       },

@@ -1,0 +1,203 @@
+import {
+  ChangeDetectionStrategy,
+  ChangeDetectorRef,
+  Component,
+  DestroyRef,
+  inject,
+} from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { FormsModule } from '@angular/forms';
+import { NZ_MODAL_DATA, NzModalRef } from 'ng-zorro-antd/modal';
+
+import { BaseDialogComponent } from '../../../../components/base-dialog/base-dialog.component';
+import type { ChatRuntimeHostSessionProcessSummary } from '../../core/chat-runtime-host-contract';
+import {
+  getBlocklyCommandSessionStatus,
+  subscribeBlocklyCommandSessionUpdates,
+} from '../../helpers/lex-agent-bootstrap';
+import { openChatProcessWindow, readChatProcessOutputFile } from '../../helpers/chat-process-window';
+import { ChatRuntimeInteractionHostService } from '../../services/chat-runtime-interaction-host.service';
+
+type ProcessFilter = 'all' | 'running' | 'background' | 'completed' | 'failed';
+
+interface ChatProcessManagerDialogData {
+  readonly sessionId: string;
+}
+
+@Component({
+  selector: 'app-chat-process-manager-dialog',
+  standalone: true,
+  imports: [CommonModule, FormsModule, BaseDialogComponent],
+  templateUrl: './chat-process-manager-dialog.component.html',
+  styleUrl: './chat-process-manager-dialog.component.scss',
+  changeDetection: ChangeDetectionStrategy.OnPush,
+})
+export class ChatProcessManagerDialogComponent {
+  private readonly cdr = inject(ChangeDetectorRef);
+  private readonly destroyRef = inject(DestroyRef);
+  private readonly modalRef = inject(NzModalRef);
+  private readonly data = inject<ChatProcessManagerDialogData>(NZ_MODAL_DATA);
+  private readonly runtimeInteractionHost = inject(ChatRuntimeInteractionHostService);
+
+  readonly sessionId = typeof this.data.sessionId === 'string' ? this.data.sessionId.trim() : '';
+
+  selectedFilter: ProcessFilter = 'all';
+  selectedProcessId = '';
+
+  processes: readonly ChatRuntimeHostSessionProcessSummary[] = [];
+  selectedProcessOutput = '';
+  selectedProcessStatusLabel = '';
+
+  constructor() {
+    this.refreshProcesses();
+    const subscription = subscribeBlocklyCommandSessionUpdates((sessionId) => {
+      if (sessionId === this.sessionId) {
+        this.refreshProcesses();
+      }
+    });
+    this.destroyRef.onDestroy(() => subscription.dispose());
+  }
+
+  closeDialog(): void {
+    this.modalRef.close(true);
+  }
+
+  updateFilter(value: string): void {
+    const nextFilter = this.normalizeFilter(value);
+    if (this.selectedFilter === nextFilter) {
+      return;
+    }
+    this.selectedFilter = nextFilter;
+    if (!this.filteredProcesses.some(process => process.processId === this.selectedProcessId)) {
+      this.selectedProcessId = this.filteredProcesses[0]?.processId ?? '';
+    }
+    void this.refreshSelectedProcessDetail();
+  }
+
+  selectProcess(processId: string): void {
+    if (!processId || this.selectedProcessId === processId) {
+      return;
+    }
+    this.selectedProcessId = processId;
+    void this.refreshSelectedProcessDetail();
+  }
+
+  openProcessWindow(process: ChatRuntimeHostSessionProcessSummary): void {
+    openChatProcessWindow({
+      sessionId: process.sessionId,
+      processId: process.processId,
+      outputSessionId: process.outputSessionId,
+      outputFilePath: process.outputFilePath,
+      command: process.command,
+    });
+  }
+
+  async stopProcess(process: ChatRuntimeHostSessionProcessSummary): Promise<void> {
+    if (!process.running) {
+      return;
+    }
+    await this.runtimeInteractionHost.requestCommandSessionAction(this.sessionId, {
+      actionId: 'stop',
+      processId: process.processId,
+      outputSessionId: process.outputSessionId,
+      outputFilePath: process.outputFilePath,
+    });
+    this.refreshProcesses();
+  }
+
+  trackByProcessId(_: number, process: ChatRuntimeHostSessionProcessSummary): string {
+    return process.processId;
+  }
+
+  get filteredProcesses(): readonly ChatRuntimeHostSessionProcessSummary[] {
+    switch (this.selectedFilter) {
+      case 'running':
+        return this.processes.filter(process => process.running);
+      case 'background':
+        return this.processes.filter(process => process.running && process.background === true);
+      case 'completed':
+        return this.processes.filter(process => !process.running && process.status === 'completed');
+      case 'failed':
+        return this.processes.filter(process =>
+          !process.running && process.status !== 'completed',
+        );
+      case 'all':
+      default:
+        return this.processes;
+    }
+  }
+
+  get selectedProcess(): ChatRuntimeHostSessionProcessSummary | null {
+    const selected = this.processes.find(process => process.processId === this.selectedProcessId);
+    return selected ?? this.filteredProcesses[0] ?? null;
+  }
+
+  formatElapsed(process: ChatRuntimeHostSessionProcessSummary): string {
+    const totalSeconds = Math.max(0, Math.floor(process.elapsedMs / 1000));
+    if (totalSeconds < 60) {
+      return `${totalSeconds}s`;
+    }
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}m ${seconds}s`;
+  }
+
+  summarizeStatus(process: ChatRuntimeHostSessionProcessSummary): string {
+    if (process.running) {
+      return process.background ? '后台运行' : '执行中';
+    }
+    if (typeof process.exitCode === 'number' && process.exitCode !== 0) {
+      return `失败 · ${process.exitCode}`;
+    }
+    return process.status === 'completed' ? '已完成' : process.status;
+  }
+
+  private refreshProcesses(): void {
+    const snapshot = this.runtimeInteractionHost.readSnapshot(this.sessionId);
+    const nextProcesses = Array.isArray(snapshot.processes)
+      ? [...snapshot.processes].sort((left, right) => right.startedAt - left.startedAt)
+      : [];
+    this.processes = nextProcesses;
+    if (!this.selectedProcessId || !nextProcesses.some(process => process.processId === this.selectedProcessId)) {
+      this.selectedProcessId = this.filteredProcesses[0]?.processId ?? nextProcesses[0]?.processId ?? '';
+    }
+    void this.refreshSelectedProcessDetail();
+  }
+
+  private async refreshSelectedProcessDetail(): Promise<void> {
+    const process = this.selectedProcess;
+    if (!process) {
+      this.selectedProcessOutput = '';
+      this.selectedProcessStatusLabel = '';
+      this.cdr.markForCheck();
+      return;
+    }
+
+    const snapshot = await getBlocklyCommandSessionStatus(process.processId);
+    this.selectedProcessOutput = snapshot?.stdout
+      ?? readChatProcessOutputFile(process.outputFilePath)
+      ?? '';
+    this.selectedProcessStatusLabel = snapshot?.status
+      ? this.summarizeStatus({
+          ...process,
+          running: snapshot.running === true,
+          status: snapshot.status,
+          exitCode: typeof snapshot.exitCode === 'number' ? snapshot.exitCode : process.exitCode,
+          elapsedMs: Math.max(0, (snapshot.completedAt ?? Date.now()) - snapshot.startedAt),
+        })
+      : this.summarizeStatus(process);
+    this.cdr.markForCheck();
+  }
+
+  private normalizeFilter(value: string): ProcessFilter {
+    switch (value) {
+      case 'running':
+      case 'background':
+      case 'completed':
+      case 'failed':
+        return value;
+      default:
+        return 'all';
+    }
+  }
+}

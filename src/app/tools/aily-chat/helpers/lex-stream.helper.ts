@@ -43,6 +43,7 @@ import {
   type ChatRuntimeTurnResponseSyncOptions,
 } from '../core/chat-runtime-projection-policy';
 import { buildTurnResponsesFromSessionSnapshot } from '../core/turn-response-builder';
+import { extractChatAgentRuntimeModeFromConfigKey } from '../core/chat-agent-runtime-mode';
 
 type LexOwnerRenderBridge = Parameters<LexTurnExecutionBridge['setRenderEventBridge']>[0] & {
   readonly turnResponses: readonly TurnResponseTurn[];
@@ -76,7 +77,7 @@ type AilyLexModule = import('./lex-agent-bootstrap').AilyLexModule;
 export type LexOwnerContext = BootstrapLexAgentContext
   & Pick<IChatCoordination, 'lexStream' | 'syncCustomAgentProviderSource' | 'syncCustomAgentProviderModes' | 'syncRegisteredAgentNames'>
   & Pick<IChatServiceAccess, 'runtimeInteractionHost'>
-  & Pick<ISessionAccess, 'sessionTitle' | 'chatService'>
+  & Pick<ISessionAccess, 'sessionTitle'>
   & {
     buildExecutionSaveTarget?(sessionId: string | null | undefined): HostSessionSaveTarget | null;
     resolveActiveRuntimeSessionId?(): string | null | undefined;
@@ -299,10 +300,11 @@ export class LexOwnerFacade {
     const agentLifecycleBridge = new LexAgentLifecycleBridge({
       getSessionId: () => this.ctx.resolveActiveRuntimeSessionId?.() ?? this.ctx.sessionId,
       loadModule: () => import('aily-lex/browser'),
-      createAgent: (lex, sessionId) => bootstrapBlocklyLexAgent({
+      createAgent: (lex, sessionId, configKey) => bootstrapBlocklyLexAgent({
         ctx: this.ctx,
         lex,
         sessionId,
+        runtimeMode: extractChatAgentRuntimeModeFromConfigKey(configKey),
         metrics: this._resolveCompactionMetricsService(lex, sessionId),
         askHandler: (askContext) => askConfirmationBridge.handleAskConfirmation(askContext),
       }),
@@ -320,15 +322,7 @@ export class LexOwnerFacade {
           );
         }
 
-        try {
-          const fileHistory = agentLifecycleBridge.getHandle()?.getFileHistory()
-            ?? agent.getFileHistory();
-          this.ctx.editCheckpointService.setFileHistory(fileHistory);
-        } catch {
-          // ignore if agent not ready
-        }
-
-        this.ctx.editCheckpointService.setTimelineContext(
+        this.ctx.editTracking.setTimelineContext(
           this.ctx.resolveActiveRuntimeSessionId?.() ?? this.ctx.sessionId ?? null,
           this.ctx.prjPath || this.ctx.prjRootPath || null,
         );
@@ -431,34 +425,7 @@ export class LexOwnerFacade {
           return runtimeScopedTarget;
         }
 
-        const chatService = this.ctx.chatService;
-        if (!chatService) {
-          return null;
-        }
-
-        const sessionTitleCandidate = typeof chatService.readCurrentSessionTitleCandidate === 'function'
-          ? chatService.readCurrentSessionTitleCandidate()
-          : {
-            text: this.ctx.sessionTitle || '',
-            source: chatService.currentSessionTitleSource,
-            revision: chatService.currentSessionTitleRevision,
-          };
-
-        return {
-          sessionId: targetSessionId,
-          sessionTitleCandidate,
-          sessionType: chatService.currentSessionType,
-          providerOptions: {
-            folderPath: chatService.currentSessionPath || null,
-            permissionMode: chatService.currentSessionPermissionMode,
-            ...(chatService.currentSessionPermissionLevel
-              ? { permissionLevel: chatService.currentSessionPermissionLevel }
-              : {}),
-          },
-          selectedMode: chatService.selectedMode,
-          resolvedMode: chatService.currentResolvedMode,
-          model: this.ctx.currentModel ? { ...this.ctx.currentModel } : null,
-        };
+        return null;
       },
       (sessionId) => agentLifecycleBridge.saveSession(sessionId),
       (sessionId) => {

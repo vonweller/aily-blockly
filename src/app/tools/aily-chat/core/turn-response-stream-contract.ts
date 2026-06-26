@@ -10,6 +10,7 @@ import {
 } from './agent-identifiers';
 import {
   cloneTurnResponseModelRouting,
+  getTurnResponseResolvedModelBillingLabel,
   getTurnResponseResolvedPresetId,
 } from '../helpers/turn-response-response-model';
 import {
@@ -214,9 +215,7 @@ export function buildTurnResponseAssistantEntryProjection(
   const responseModelName = typeof turn.responseModel?.modelName === 'string' && turn.responseModel.modelName.trim()
     ? turn.responseModel.modelName.trim()
     : undefined;
-  const responseModelBillingLabel = typeof turn.responseModel?.modelBillingLabel === 'string' && turn.responseModel.modelBillingLabel.trim()
-    ? turn.responseModel.modelBillingLabel.trim()
-    : undefined;
+  const responseModelBillingLabel = getTurnResponseResolvedModelBillingLabel(turn);
   const responseModelSelectedPresetId = getTurnResponseResolvedPresetId(turn);
   const continuationResolvedModelName = getContinuationResolvedModelName(turn.response.continuation);
   const continuationModelBillingLabel = getContinuationModelBillingLabel(turn.response.continuation);
@@ -376,6 +375,7 @@ export function buildTurnResponseTurn(
       || projection.followups !== undefined
       || modelName !== undefined
       || modelBillingLabel !== undefined
+      || modelRouting !== undefined
       || quotaSnapshot !== undefined
       || requestUsage !== undefined)
       ? {

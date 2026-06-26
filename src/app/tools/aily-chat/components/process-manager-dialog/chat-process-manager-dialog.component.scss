@@ -1,0 +1,240 @@
+.process-manager {
+  min-width: 960px;
+  max-width: min(96vw, 1120px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.process-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.process-chip,
+.process-filter,
+.process-row,
+.process-icon-btn,
+.process-detail-open-btn {
+  border: none;
+  background: var(--aily-bg-primary, #fff);
+  color: var(--aily-text-primary, #1f1f1f);
+}
+
+.process-chip {
+  min-width: 72px;
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+
+  &.active {
+    background: var(--aily-chat-viewer-blockly-chip-bg, rgba(0, 120, 212, 0.12));
+    color: var(--aily-chat-viewer-blockly-chip-fg, #005fb8);
+  }
+}
+
+.process-filter {
+  height: 32px;
+  min-width: 132px;
+  padding: 0 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  outline: none;
+}
+
+.process-body {
+  min-height: 560px;
+  display: grid;
+  grid-template-columns: minmax(360px, 440px) minmax(0, 1fr);
+  gap: 14px;
+}
+
+.process-list,
+.process-detail {
+  min-height: 0;
+  border-radius: 18px;
+  background: var(--aily-bg-primary, #fff);
+}
+
+.process-list {
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 560px;
+  overflow: auto;
+}
+
+.process-row {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+
+  &:hover,
+  &.active {
+    background: var(--aily-highlight-bg, rgba(127, 127, 127, 0.12));
+  }
+}
+
+.process-row-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.process-row-command {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.process-row-meta {
+  margin-top: 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: var(--aily-text-tertiary, #8c8c8c);
+  font-size: 12px;
+}
+
+.process-row-badge {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(0, 120, 212, 0.1);
+  color: #005fb8;
+}
+
+.process-row-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.process-icon-btn,
+.process-detail-open-btn {
+  height: 32px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+
+  &:hover {
+    background: var(--aily-highlight-bg, rgba(127, 127, 127, 0.12));
+  }
+}
+
+.process-icon-btn {
+  width: 32px;
+}
+
+.process-icon-btn-danger:hover {
+  color: #d4380d;
+}
+
+.process-detail {
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.process-detail-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.process-detail-command {
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.process-detail-open-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  white-space: nowrap;
+}
+
+.process-detail-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 14px;
+}
+
+.process-detail-meta-row {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+
+  .label {
+    color: var(--aily-text-tertiary, #8c8c8c);
+    font-size: 12px;
+  }
+
+  .value {
+    word-break: break-word;
+    font-size: 13px;
+    font-weight: 600;
+  }
+}
+
+.process-detail-output {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1 1 auto;
+
+  .process-detail-output-title {
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  pre {
+    flex: 1 1 auto;
+    min-height: 280px;
+    margin: 0;
+    padding: 14px;
+    border-radius: 16px;
+    overflow: auto;
+    background: var(--aily-chat-viewer-code-bg, #181818);
+    color: var(--aily-chat-viewer-code-fg, #d4d4d4);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+}
+
+.process-empty {
+  min-height: 180px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 14px;
+  color: var(--aily-text-tertiary, #8c8c8c);
+  text-align: center;
+  padding: 24px;
+  background: var(--aily-bg-primary, #fff);
+}
+
+.process-empty-detail {
+  flex: 1 1 auto;
+}

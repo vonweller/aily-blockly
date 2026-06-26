@@ -15,6 +15,11 @@ type LexUiEventContext = ConstructorParameters<typeof LexAgentEventBridge>[0]
   & {
     readonly sessionId: string;
     readCurrentViewSessionResource?(): string | null;
+    emitExecutionRenderEvent?(
+      sessionId: string | null | undefined,
+      event: RenderEvent,
+      request?: null,
+    ): void;
   };
 
 type LexUiEventLifecycleAccess = {
@@ -128,7 +133,7 @@ export class LexUiEventBridge {
   presentQuestion(questions: QuestionItem[], scope?: ChatPartScope): string {
     const requestId = `question-${Date.now()}`;
     const partId = buildQuestionPartId(questions, requestId);
-    if (this.renderEventBridge?.processInteractionEvent({
+    const event = {
       type: 'question_request',
       requestId,
       questions: questions.map(question => ({
@@ -142,7 +147,12 @@ export class LexUiEventBridge {
       subAgentInvocationId: scope?.subAgentInvocationId,
       parentToolCallId: scope?.parentToolCallId,
       sequence: scope?.sequence,
-    })) {
+    } as const;
+    if (this.renderEventBridge?.processInteractionEvent(event)) {
+      return partId;
+    }
+
+    if (this.emitHostInteractionRenderEvent(event)) {
       return partId;
     }
 
@@ -158,7 +168,7 @@ export class LexUiEventBridge {
   }
 
   presentToolCallApproval(request: ToolApprovalRequest): string {
-    const mirrored = this.renderEventBridge?.processInteractionEvent({
+    const event = {
       type: 'approval_request',
       toolCallId: request.toolCallId,
       toolName: request.toolName,
@@ -170,12 +180,17 @@ export class LexUiEventBridge {
       primaryScope: request.primaryScope,
       source: request.source,
       timestamp: Date.now(),
-    } as any) ?? false;
-    if (!this.canWriteCurrentView()) {
+    } as const;
+    const mirrored = this.renderEventBridge?.processInteractionEvent(event as any) ?? false;
+    if (mirrored) {
       return request.toolCallId;
     }
 
-    if (mirrored) {
+    if (this.emitHostInteractionRenderEvent(event)) {
+      return request.toolCallId;
+    }
+
+    if (!this.canWriteCurrentView()) {
       return request.toolCallId;
     }
 
@@ -187,18 +202,23 @@ export class LexUiEventBridge {
     approved: boolean,
     scope?: ConfirmationPart['scope'],
   ): void {
-    const mirrored = this.renderEventBridge?.processInteractionEvent({
+    const event = {
       type: 'approval_resolve',
       toolCallId,
       result: approved ? 'approved' : 'rejected',
       scope,
       timestamp: Date.now(),
-    } as any) ?? false;
-    if (!this.canWriteCurrentView()) {
+    } as const;
+    const mirrored = this.renderEventBridge?.processInteractionEvent(event as any) ?? false;
+    if (mirrored) {
       return;
     }
 
-    if (mirrored) {
+    if (this.emitHostInteractionRenderEvent(event)) {
+      return;
+    }
+
+    if (!this.canWriteCurrentView()) {
       return;
     }
 
@@ -274,5 +294,19 @@ export class LexUiEventBridge {
       ? this.ctx.sessionId.trim()
       : '';
     return !!targetSessionId && targetSessionId === normalizedViewResource;
+  }
+
+  private emitHostInteractionRenderEvent(event: LexUiInteractionRenderEvent): boolean {
+    if (typeof this.ctx.emitExecutionRenderEvent !== 'function') {
+      return false;
+    }
+
+    const sessionId = typeof this.ctx.sessionId === 'string' ? this.ctx.sessionId.trim() : '';
+    if (!sessionId) {
+      return false;
+    }
+
+    this.ctx.emitExecutionRenderEvent(sessionId, event, null);
+    return true;
   }
 }
