@@ -192,23 +192,27 @@
     &.acc-chip--after-expanded-context {
       margin-left: 5px;
     }
+
+    &.acc-chip--after-process {
+      margin-left: 1px;
+    }
   }
 }
 
 :host .acc-process-badge {
   position: absolute;
-  top: -4px;
-  right: -5px;
-  min-width: 15px;
-  height: 15px;
-  padding: 0 4px;
+  top: -3px;
+  right: -4px;
+  min-width: 12px;
+  height: 12px;
+  padding: 0 3px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border-radius: 999px;
   background: #d4380d;
   color: #fff;
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
   line-height: 1;
   box-shadow: 0 0 0 2px var(--aily-bg-primary, #fff);
@@ -262,6 +266,11 @@
   width: 28px !important;
   padding: 1px 0 0 !important;
   gap: 0;
+}
+
+:host.acc-host--edit .acc-chip.acc-chip--after-expanded-context.acc-chip--after-process,
+:host.acc-host--composer .acc-chip.acc-chip--after-expanded-context.acc-chip--after-process {
+  margin-left: 1px;
 }
 
 :host.acc-host--edit .acc-chip.acc-chip--after-expanded-context > span,

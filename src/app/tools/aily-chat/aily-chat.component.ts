@@ -64,6 +64,7 @@ import { runChatTodoFocusAction } from './helpers/chat-todo-focus-action';
 import { ChatProcessManagerDialogComponent } from './components/process-manager-dialog/chat-process-manager-dialog.component';
 import { isSessionLifecycleSupersededError, readSessionLifecycleRestoreErrorDetails } from './helpers/session-lifecycle.helper';
 import { openChatProcessWindow } from './helpers/chat-process-window';
+import { listPersistedBlocklyCommandSessionSnapshots } from './helpers/lex-agent-bootstrap';
 import type { ChatTaskActionDetail } from './helpers/chat-task-action-coordinator';
 import { ProjectRelatedFileStorage } from './components/memory/project-related-file-storage';
 
@@ -959,12 +960,12 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
   }
 
   shouldShowProcessEntryButton(): boolean {
-    return this.readCurrentSessionProcesses().length > 0;
+    return this.readCurrentSessionProcesses().some(process => process.removed !== true);
   }
 
   getRunningProcessCount(): number {
     return this.readCurrentSessionProcesses()
-      .filter(process => process.running === true)
+      .filter(process => process.removed !== true && process.running === true)
       .length;
   }
 
@@ -978,6 +979,7 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
       nzTitle: null,
       nzFooter: null,
       nzClosable: false,
+      nzCentered: true,
       nzBodyStyle: { padding: '0' },
       nzWidth: 1100,
       nzContent: ChatProcessManagerDialogComponent,
@@ -1013,7 +1015,31 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
       return [];
     }
     const snapshot = this.runtimeInteractionHost.readSnapshot(sessionId);
-    return Array.isArray(snapshot.processes) ? snapshot.processes : [];
+    const liveProcesses = Array.isArray(snapshot.processes) ? snapshot.processes : [];
+    const projectPathHint = this.chatHistoryService.findEntry(sessionId)?.projectPath ?? null;
+    const persistedProcesses = listPersistedBlocklyCommandSessionSnapshots(sessionId, projectPathHint);
+    return this.mergeProcessSummaries(liveProcesses, persistedProcesses);
+  }
+
+  private mergeProcessSummaries(
+    liveProcesses: readonly ChatRuntimeHostSessionProcessSummary[],
+    persistedProcesses: readonly ChatRuntimeHostSessionProcessSummary[],
+  ): readonly ChatRuntimeHostSessionProcessSummary[] {
+    const merged = new Map<string, ChatRuntimeHostSessionProcessSummary>();
+    for (const process of persistedProcesses) {
+      merged.set(process.processId, process);
+    }
+    for (const process of liveProcesses) {
+      const existing = merged.get(process.processId);
+      merged.set(process.processId, existing
+        ? {
+            ...existing,
+            ...process,
+            outputFilePath: process.outputFilePath ?? existing.outputFilePath,
+          }
+        : process);
+    }
+    return [...merged.values()].sort((left, right) => right.startedAt - left.startedAt);
   }
 
   returnStandaloneSurfaceToMain(): void {

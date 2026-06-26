@@ -21,6 +21,8 @@
 }
 
 .process-detail-window-title {
+  flex: 1 1 auto;
+  min-width: 0;
   font-size: 18px;
   font-weight: 700;
   line-height: 1.4;
@@ -28,6 +30,7 @@
 }
 
 .process-detail-window-open-btn {
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -38,11 +41,12 @@
   background: var(--aily-bg-primary, #fff);
   color: inherit;
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .process-detail-window-meta {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
 }
 

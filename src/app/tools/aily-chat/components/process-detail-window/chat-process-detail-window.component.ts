@@ -10,6 +10,8 @@ import { ActivatedRoute } from '@angular/router';
 
 import { SubWindowComponent } from '../../../../components/sub-window/sub-window.component';
 import { AilyHost } from '../../core/host';
+import { listPersistedBlocklyCommandSessionSnapshots } from '../../helpers/lex-agent-bootstrap';
+import { ChatHistoryService } from '../../services/chat-history.service';
 
 interface ProcessWindowInitData {
   readonly sessionId?: string;
@@ -60,6 +62,7 @@ export class ChatProcessDetailWindowComponent implements OnInit, OnDestroy {
   constructor(
     private readonly route: ActivatedRoute,
     private readonly cdr: ChangeDetectorRef,
+    private readonly chatHistoryService: ChatHistoryService,
   ) {}
 
   ngOnInit(): void {
@@ -106,6 +109,23 @@ export class ChatProcessDetailWindowComponent implements OnInit, OnDestroy {
       return;
     }
     AilyHost.get().shell?.openByExplorer?.(this.outputFilePath);
+  }
+
+  get displayStatus(): string {
+    const summary = this.summary;
+    if (!summary) {
+      return '-';
+    }
+    if (summary.running === true) {
+      return '执行中';
+    }
+    if (typeof summary.exitCode === 'number' && summary.exitCode !== 0) {
+      return `失败 · ${summary.exitCode}`;
+    }
+    if (summary.status === 'completed') {
+      return '已完成';
+    }
+    return summary.status || '-';
   }
 
   private startPolling(): void {
@@ -161,10 +181,22 @@ export class ChatProcessDetailWindowComponent implements OnInit, OnDestroy {
       const snapshot = await electronApi?.chatRuntimeHost?.call?.('readInteractionSnapshot', [this.sessionId]) as {
         processes?: readonly ProcessWindowProcessSummary[];
       } | null;
-      const process = snapshot?.processes?.find(item => item.processId === this.processId) ?? null;
-      return process;
+      const liveProcess = snapshot?.processes?.find(item => item.processId === this.processId) ?? null;
+      const projectPathHint = this.chatHistoryService.findEntry(this.sessionId)?.projectPath ?? null;
+      const persistedProcess = listPersistedBlocklyCommandSessionSnapshots(this.sessionId, projectPathHint)
+        .find(item => item.processId === this.processId) ?? null;
+      if (liveProcess && persistedProcess) {
+        return {
+          ...persistedProcess,
+          ...liveProcess,
+          outputFilePath: liveProcess.outputFilePath ?? persistedProcess.outputFilePath,
+        };
+      }
+      return liveProcess ?? persistedProcess;
     } catch {
-      return null;
+      const projectPathHint = this.chatHistoryService.findEntry(this.sessionId)?.projectPath ?? null;
+      return listPersistedBlocklyCommandSessionSnapshots(this.sessionId, projectPathHint)
+        .find(item => item.processId === this.processId) ?? null;
     }
   }
 

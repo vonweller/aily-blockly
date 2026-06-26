@@ -13,15 +13,11 @@
     <div class="process-detail-window-meta">
       <div class="meta-card">
         <span class="label">状态</span>
-        <span class="value">{{ summary?.status || 'unknown' }}</span>
+        <span class="value">{{ displayStatus }}</span>
       </div>
       <div class="meta-card">
         <span class="label">执行时长</span>
-        <span class="value">{{ formatElapsedMs(summary?.elapsedMs) }}</span>
-      </div>
-      <div class="meta-card">
-        <span class="label">工作目录</span>
-        <span class="value">{{ summary?.cwd || '-' }}</span>
+        <span class="value">{{ summary ? formatElapsedMs(summary?.elapsedMs) : '-' }}</span>
       </div>
       <div class="meta-card">
         <span class="label">退出码</span>

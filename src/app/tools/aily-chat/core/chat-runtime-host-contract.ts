@@ -123,6 +123,8 @@ export interface ChatRuntimeHostSessionProcessSummary {
   readonly bytesTotal: number;
   readonly background?: boolean;
   readonly outputFilePath?: string;
+  readonly removed?: boolean;
+  readonly removedAt?: number;
 }
 
 export type ChatRuntimeHostInteractionRequestKind =

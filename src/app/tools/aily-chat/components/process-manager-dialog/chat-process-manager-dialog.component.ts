@@ -8,17 +8,22 @@ import {
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { NZ_MODAL_DATA, NzModalRef } from 'ng-zorro-antd/modal';
+import { NzPopconfirmModule } from 'ng-zorro-antd/popconfirm';
 
 import { BaseDialogComponent } from '../../../../components/base-dialog/base-dialog.component';
 import type { ChatRuntimeHostSessionProcessSummary } from '../../core/chat-runtime-host-contract';
 import {
+  deleteBlocklyCommandSession,
   getBlocklyCommandSessionStatus,
+  listPersistedBlocklyCommandSessionSnapshots,
+  purgeBlocklyCommandSession,
   subscribeBlocklyCommandSessionUpdates,
 } from '../../helpers/lex-agent-bootstrap';
 import { openChatProcessWindow, readChatProcessOutputFile } from '../../helpers/chat-process-window';
+import { ChatHistoryService } from '../../services/chat-history.service';
 import { ChatRuntimeInteractionHostService } from '../../services/chat-runtime-interaction-host.service';
 
-type ProcessFilter = 'all' | 'running' | 'background' | 'completed' | 'failed';
+type ProcessFilter = 'all' | 'running' | 'background' | 'completed' | 'failed' | 'removed';
 
 interface ChatProcessManagerDialogData {
   readonly sessionId: string;
@@ -27,7 +32,7 @@ interface ChatProcessManagerDialogData {
 @Component({
   selector: 'app-chat-process-manager-dialog',
   standalone: true,
-  imports: [CommonModule, FormsModule, BaseDialogComponent],
+  imports: [CommonModule, FormsModule, NzPopconfirmModule, BaseDialogComponent],
   templateUrl: './chat-process-manager-dialog.component.html',
   styleUrl: './chat-process-manager-dialog.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -38,6 +43,7 @@ export class ChatProcessManagerDialogComponent {
   private readonly modalRef = inject(NzModalRef);
   private readonly data = inject<ChatProcessManagerDialogData>(NZ_MODAL_DATA);
   private readonly runtimeInteractionHost = inject(ChatRuntimeInteractionHostService);
+  private readonly chatHistoryService = inject(ChatHistoryService);
 
   readonly sessionId = typeof this.data.sessionId === 'string' ? this.data.sessionId.trim() : '';
 
@@ -105,6 +111,22 @@ export class ChatProcessManagerDialogComponent {
     this.refreshProcesses();
   }
 
+  deleteProcess(process: ChatRuntimeHostSessionProcessSummary): void {
+    deleteBlocklyCommandSession(process.processId, this.sessionId);
+    if (this.selectedProcessId === process.processId) {
+      this.selectedProcessId = '';
+    }
+    this.refreshProcesses();
+  }
+
+  hardDeleteProcess(process: ChatRuntimeHostSessionProcessSummary): void {
+    purgeBlocklyCommandSession(process.processId, this.sessionId);
+    if (this.selectedProcessId === process.processId) {
+      this.selectedProcessId = '';
+    }
+    this.refreshProcesses();
+  }
+
   trackByProcessId(_: number, process: ChatRuntimeHostSessionProcessSummary): string {
     return process.processId;
   }
@@ -112,18 +134,20 @@ export class ChatProcessManagerDialogComponent {
   get filteredProcesses(): readonly ChatRuntimeHostSessionProcessSummary[] {
     switch (this.selectedFilter) {
       case 'running':
-        return this.processes.filter(process => process.running);
+        return this.processes.filter(process => process.removed !== true && process.running);
       case 'background':
-        return this.processes.filter(process => process.running && process.background === true);
+        return this.processes.filter(process => process.removed !== true && process.running && process.background === true);
       case 'completed':
-        return this.processes.filter(process => !process.running && process.status === 'completed');
+        return this.processes.filter(process => process.removed !== true && !process.running && process.status === 'completed');
       case 'failed':
         return this.processes.filter(process =>
-          !process.running && process.status !== 'completed',
+          process.removed !== true && !process.running && process.status !== 'completed',
         );
+      case 'removed':
+        return this.processes.filter(process => process.removed === true);
       case 'all':
       default:
-        return this.processes;
+        return this.processes.filter(process => process.removed !== true);
     }
   }
 
@@ -143,6 +167,9 @@ export class ChatProcessManagerDialogComponent {
   }
 
   summarizeStatus(process: ChatRuntimeHostSessionProcessSummary): string {
+    if (process.removed === true) {
+      return '已归档';
+    }
     if (process.running) {
       return process.background ? '后台运行' : '执行中';
     }
@@ -152,11 +179,28 @@ export class ChatProcessManagerDialogComponent {
     return process.status === 'completed' ? '已完成' : process.status;
   }
 
+  resolveStatusTone(process: ChatRuntimeHostSessionProcessSummary): 'info' | 'success' | 'error' | 'neutral' {
+    if (process.removed === true) {
+      return 'neutral';
+    }
+    if (process.running) {
+      return process.background ? 'neutral' : 'info';
+    }
+    if (typeof process.exitCode === 'number' && process.exitCode !== 0) {
+      return 'error';
+    }
+    if (process.status === 'completed') {
+      return 'success';
+    }
+    return 'neutral';
+  }
+
   private refreshProcesses(): void {
     const snapshot = this.runtimeInteractionHost.readSnapshot(this.sessionId);
-    const nextProcesses = Array.isArray(snapshot.processes)
-      ? [...snapshot.processes].sort((left, right) => right.startedAt - left.startedAt)
-      : [];
+    const liveProcesses = Array.isArray(snapshot.processes) ? snapshot.processes : [];
+    const projectPathHint = this.chatHistoryService.findEntry(this.sessionId)?.projectPath ?? null;
+    const persistedProcesses = listPersistedBlocklyCommandSessionSnapshots(this.sessionId, projectPathHint);
+    const nextProcesses = this.mergeProcessSummaries(liveProcesses, persistedProcesses);
     this.processes = nextProcesses;
     if (!this.selectedProcessId || !nextProcesses.some(process => process.processId === this.selectedProcessId)) {
       this.selectedProcessId = this.filteredProcesses[0]?.processId ?? nextProcesses[0]?.processId ?? '';
@@ -189,12 +233,34 @@ export class ChatProcessManagerDialogComponent {
     this.cdr.markForCheck();
   }
 
+  private mergeProcessSummaries(
+    liveProcesses: readonly ChatRuntimeHostSessionProcessSummary[],
+    persistedProcesses: readonly ChatRuntimeHostSessionProcessSummary[],
+  ): readonly ChatRuntimeHostSessionProcessSummary[] {
+    const merged = new Map<string, ChatRuntimeHostSessionProcessSummary>();
+    for (const process of persistedProcesses) {
+      merged.set(process.processId, process);
+    }
+    for (const process of liveProcesses) {
+      const existing = merged.get(process.processId);
+      merged.set(process.processId, existing
+        ? {
+            ...existing,
+            ...process,
+            outputFilePath: process.outputFilePath ?? existing.outputFilePath,
+          }
+        : process);
+    }
+    return [...merged.values()].sort((left, right) => right.startedAt - left.startedAt);
+  }
+
   private normalizeFilter(value: string): ProcessFilter {
     switch (value) {
       case 'running':
       case 'background':
       case 'completed':
       case 'failed':
+      case 'removed':
         return value;
       default:
         return 'all';

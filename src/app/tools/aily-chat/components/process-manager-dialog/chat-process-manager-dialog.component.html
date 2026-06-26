@@ -5,14 +5,24 @@
 >
   <div class="process-manager">
     <div class="process-toolbar">
+      <div class="process-toolbar-left">
+        <button
+          type="button"
+          class="process-chip"
+          [class.active]="selectedFilter === 'all'"
+          (click)="updateFilter('all')"
+        >
+          全部
+        </button>
       <button
         type="button"
         class="process-chip"
-        [class.active]="selectedFilter === 'all'"
-        (click)="updateFilter('all')"
+        [class.active]="selectedFilter === 'removed'"
+        (click)="updateFilter('removed')"
       >
-        全部
+        已归档
       </button>
+      </div>
 
       <select
         class="process-filter"
@@ -20,6 +30,7 @@
         (ngModelChange)="updateFilter($event)"
       >
         <option value="all">全部状态</option>
+        <option value="removed">已归档</option>
         <option value="running">执行中</option>
         <option value="background">后台运行</option>
         <option value="completed">已完成</option>
@@ -43,34 +54,48 @@
               <div class="process-row-main">
                 <div class="process-row-command">{{ process.command }}</div>
                 <div class="process-row-meta">
-                  <span>{{ summarizeStatus(process) }}</span>
+                  <span class="process-status-badge" [attr.data-tone]="resolveStatusTone(process)">{{ summarizeStatus(process) }}</span>
                   <span>{{ formatElapsed(process) }}</span>
-                  @if (process.outputFilePath) {
-                    <span class="process-row-badge">log</span>
-                  }
                 </div>
               </div>
 
               <div class="process-row-actions">
-                <button
-                  type="button"
-                  class="process-icon-btn"
-                  title="打开终端详情"
-                  aria-label="打开终端详情"
-                  (click)="openProcessWindow(process); $event.stopPropagation()"
-                >
-                  <i class="fa-light fa-square-terminal"></i>
-                </button>
                 @if (process.running) {
                   <button
                     type="button"
                     class="process-icon-btn process-icon-btn-danger"
-                    title="停止进程"
-                    aria-label="停止进程"
+                    title="取消进程"
+                    aria-label="取消进程"
                     (click)="stopProcess(process); $event.stopPropagation()"
                   >
-                    <i class="fa-light fa-stop"></i>
+                    <i class="fa-light fa-ban"></i>
                   </button>
+                } @else {
+                  @if (process.removed === true) {
+                    <button
+                      type="button"
+                      class="process-icon-btn"
+                      title="彻底删除"
+                      aria-label="彻底删除"
+                      nz-popconfirm
+                      nzPopconfirmPlacement="left"
+                      [nzPopconfirmTitle]="'彻底删除后将移除该进程的记录和输出文件，无法恢复。'"
+                      (nzOnConfirm)="hardDeleteProcess(process)"
+                      (click)="$event.stopPropagation()"
+                    >
+                      <i class="fa-light fa-trash-xmark"></i>
+                    </button>
+                  } @else {
+                    <button
+                      type="button"
+                      class="process-icon-btn"
+                      title="移除记录"
+                      aria-label="移除记录"
+                      (click)="deleteProcess(process); $event.stopPropagation()"
+                    >
+                      <i class="fa-light fa-box-archive"></i>
+                    </button>
+                  }
                 }
               </div>
             </div>
@@ -104,10 +129,6 @@
             <div class="process-detail-meta-row">
               <span class="label">执行时长</span>
               <span class="value">{{ formatElapsed(process) }}</span>
-            </div>
-            <div class="process-detail-meta-row">
-              <span class="label">工作目录</span>
-              <span class="value">{{ process.cwd }}</span>
             </div>
             <div class="process-detail-meta-row">
               <span class="label">输出大小</span>

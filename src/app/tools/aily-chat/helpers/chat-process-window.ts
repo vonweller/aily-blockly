@@ -29,8 +29,8 @@ export function openChatProcessWindow(payload: ChatProcessWindowPayload): void {
       processId: normalizedProcessId,
     }),
     title: `终端执行详情 · ${titleSuffix}`,
-    width: 980,
-    height: 720,
+    width: 736,
+    height: 540,
     data: {
       sessionId: normalizedSessionId,
       processId: normalizedProcessId,
