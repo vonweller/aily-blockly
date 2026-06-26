@@ -108,6 +108,7 @@
       <section class="process-detail">
         @if (selectedProcess; as process) {
           <app-chat-process-detail-panel
+            class="process-detail-panel-embedded"
             [title]="process.command"
             [actionVisible]="true"
             actionLabel="AILY_CHAT.PROCESS_ACTION_OPEN_WINDOW"

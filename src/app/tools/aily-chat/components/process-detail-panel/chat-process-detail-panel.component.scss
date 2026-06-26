@@ -76,6 +76,12 @@
   }
 }
 
+:host(.process-detail-panel-embedded) {
+  .meta-card {
+    border: 1px solid var(--aily-chat-viewer-border, var(--aily-border-secondary, rgba(127, 127, 127, 0.3)));
+  }
+}
+
 .process-detail-panel-output {
   min-height: 0;
   display: flex;
