@@ -161,7 +161,7 @@ export class ChatProcessManagerDialogComponent {
   }
 
   get selectedProcess(): ChatRuntimeHostSessionProcessSummary | null {
-    const selected = this.processes.find(process => process.processId === this.selectedProcessId);
+    const selected = this.filteredProcesses.find(process => process.processId === this.selectedProcessId);
     return selected ?? this.filteredProcesses[0] ?? null;
   }
 
@@ -239,8 +239,9 @@ export class ChatProcessManagerDialogComponent {
     const persistedProcesses = listPersistedBlocklyCommandSessionSnapshots(this.sessionId, projectPathHint);
     const nextProcesses = this.mergeProcessSummaries(liveProcesses, persistedProcesses);
     this.processes = nextProcesses;
-    if (!this.selectedProcessId || !nextProcesses.some(process => process.processId === this.selectedProcessId)) {
-      this.selectedProcessId = this.filteredProcesses[0]?.processId ?? nextProcesses[0]?.processId ?? '';
+    const nextFilteredProcesses = this.filteredProcesses;
+    if (!this.selectedProcessId || !nextFilteredProcesses.some(process => process.processId === this.selectedProcessId)) {
+      this.selectedProcessId = nextFilteredProcesses[0]?.processId ?? '';
     }
     void this.refreshSelectedProcessDetail();
   }
