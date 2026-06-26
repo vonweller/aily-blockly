@@ -107,45 +107,19 @@
 
       <section class="process-detail">
         @if (selectedProcess; as process) {
-          <div class="process-detail-header">
-            <div class="process-detail-command">{{ process.command }}</div>
-            <div class="process-detail-actions">
-              <button
-                type="button"
-                class="process-detail-open-btn"
-                (click)="openProcessWindow(process)"
-              >
-                <i class="fa-light fa-square-terminal"></i>
-                <span>独立窗口</span>
-              </button>
-            </div>
-          </div>
-
-          <div class="process-detail-meta">
-            <div class="process-detail-meta-row">
-              <span class="label">状态</span>
-              <span class="value">{{ selectedProcessStatusLabel }}</span>
-            </div>
-            <div class="process-detail-meta-row">
-              <span class="label">执行时长</span>
-              <span class="value">{{ formatElapsed(process) }}</span>
-            </div>
-            <div class="process-detail-meta-row">
-              <span class="label">输出大小</span>
-              <span class="value">{{ process.bytesTotal }} bytes</span>
-            </div>
-            @if (process.exitCode != null) {
-              <div class="process-detail-meta-row">
-                <span class="label">退出码</span>
-                <span class="value">{{ process.exitCode }}</span>
-              </div>
-            }
-          </div>
-
-          <div class="process-detail-output">
-            <div class="process-detail-output-title">command 预览</div>
-            <pre><code [textContent]="selectedProcessOutput || '暂无输出'"></code></pre>
-          </div>
+          <app-chat-process-detail-panel
+            [title]="process.command"
+            [actionVisible]="true"
+            actionLabel="独立窗口"
+            actionIconClass="fa-light fa-square-terminal"
+            [statusText]="selectedProcessStatusLabel"
+            [elapsedText]="formatElapsed(process)"
+            [exitCode]="process.exitCode ?? null"
+            outputTitle="command 预览"
+            [output]="selectedProcessOutput"
+            emptyOutputText="暂无输出"
+            (actionClick)="openProcessWindow(process)"
+          />
         } @else {
           <div class="process-empty process-empty-detail">选择左侧进程查看详情。</div>
         }

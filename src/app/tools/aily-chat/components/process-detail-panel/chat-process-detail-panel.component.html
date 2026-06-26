@@ -1,0 +1,35 @@
+<div class="process-detail-panel">
+  <div class="process-detail-panel-head">
+    <div class="process-detail-panel-title">{{ title || '终端命令' }}</div>
+    @if (actionVisible) {
+      <button
+        type="button"
+        class="process-detail-panel-action-btn"
+        (click)="onActionClick()"
+      >
+        <i [class]="actionIconClass"></i>
+        <span>{{ actionLabel }}</span>
+      </button>
+    }
+  </div>
+
+  <div class="process-detail-panel-meta">
+    <div class="meta-card">
+      <span class="label">状态</span>
+      <span class="value">{{ statusText || '-' }}</span>
+    </div>
+    <div class="meta-card">
+      <span class="label">执行时长</span>
+      <span class="value">{{ elapsedText || '-' }}</span>
+    </div>
+    <div class="meta-card">
+      <span class="label">退出码</span>
+      <span class="value">{{ exitCode ?? '-' }}</span>
+    </div>
+  </div>
+
+  <div class="process-detail-panel-output">
+    <div class="process-detail-panel-output-title">{{ outputTitle }}</div>
+    <pre #outputPreview><code [textContent]="output || emptyOutputText"></code></pre>
+  </div>
+</div>

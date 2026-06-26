@@ -820,6 +820,12 @@ export class HostSessionItemController {
       ...(this.ctx.chatService.currentSessionPermissionLevel
         ? { permissionLevel: this.ctx.chatService.currentSessionPermissionLevel }
         : {}),
+      ...(this.ctx.chatService.currentSessionApprovalsReviewer
+        ? { approvalsReviewer: this.ctx.chatService.currentSessionApprovalsReviewer }
+        : {}),
+      ...(this.ctx.chatService.currentSessionApprovalPolicy
+        ? { approvalPolicy: this.ctx.chatService.currentSessionApprovalPolicy }
+        : {}),
     });
     const sessionProjectPath = resolveHostSessionProjectPathHint(
       {
@@ -906,6 +912,12 @@ export class HostSessionItemController {
         ...(this.ctx.chatService.currentSessionPermissionLevel
           ? { permissionLevel: this.ctx.chatService.currentSessionPermissionLevel }
           : {}),
+        ...(this.ctx.chatService.currentSessionApprovalsReviewer
+          ? { approvalsReviewer: this.ctx.chatService.currentSessionApprovalsReviewer }
+          : {}),
+        ...(this.ctx.chatService.currentSessionApprovalPolicy
+          ? { approvalPolicy: this.ctx.chatService.currentSessionApprovalPolicy }
+          : {}),
       };
     }
 
@@ -915,6 +927,8 @@ export class HostSessionItemController {
         folderPath: managedItem.projectPath ?? null,
         permissionMode: this.ctx.chatService.currentSessionPermissionMode,
         permissionLevel: managedItem.requestRouting?.permissionLevel,
+        approvalsReviewer: managedItem.requestRouting?.approvalsReviewer,
+        approvalPolicy: managedItem.requestRouting?.approvalPolicy,
       });
     }
 
@@ -1121,10 +1135,14 @@ export class HostSessionItemController {
         folderPath: canonicalEntry.projectPath ?? null,
         permissionMode: this.ctx.chatService.currentSessionPermissionMode,
         permissionLevel: canonicalEntry.requestRouting?.permissionLevel,
+        approvalsReviewer: canonicalEntry.requestRouting?.approvalsReviewer,
+        approvalPolicy: canonicalEntry.requestRouting?.approvalPolicy,
       }, {
         folderPath: canonicalEntry.projectPath ?? null,
         permissionMode: this.ctx.chatService.currentSessionPermissionMode,
         permissionLevel: canonicalEntry.requestRouting?.permissionLevel,
+        approvalsReviewer: canonicalEntry.requestRouting?.approvalsReviewer,
+        approvalPolicy: canonicalEntry.requestRouting?.approvalPolicy,
       });
       const selectedMode = normalizeChatSelectedMode({
         modeId: normalizeChatSurfaceModeId(canonicalEntry.mode, DEFAULT_CHAT_SELECTED_MODE.modeId),
@@ -1551,15 +1569,21 @@ export class HostSessionItemController {
           folderPath: item.projectPath ?? null,
           permissionMode: this.ctx.chatService.currentSessionPermissionMode,
           permissionLevel: item.requestRouting?.permissionLevel,
+          approvalsReviewer: item.requestRouting?.approvalsReviewer,
+          approvalPolicy: item.requestRouting?.approvalPolicy,
         })
       : normalizeHostSessionProviderOptions({
           folderPath: item.projectPath ?? null,
           permissionMode: this.ctx.chatService.currentSessionPermissionMode,
           permissionLevel: item.requestRouting?.permissionLevel,
+          approvalsReviewer: item.requestRouting?.approvalsReviewer,
+          approvalPolicy: item.requestRouting?.approvalPolicy,
         }, {
           folderPath: item.projectPath ?? null,
           permissionMode: this.ctx.chatService.currentSessionPermissionMode,
           permissionLevel: item.requestRouting?.permissionLevel,
+          approvalsReviewer: item.requestRouting?.approvalsReviewer,
+          approvalPolicy: item.requestRouting?.approvalPolicy,
         });
     const workingDirectoryPath = this.readNonEmptyString(
       providerOptions.folderPath ?? item.projectPath,

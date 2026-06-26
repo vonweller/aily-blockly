@@ -11,6 +11,7 @@ import { NZ_MODAL_DATA, NzModalRef } from 'ng-zorro-antd/modal';
 import { NzPopconfirmModule } from 'ng-zorro-antd/popconfirm';
 
 import { BaseDialogComponent } from '../../../../components/base-dialog/base-dialog.component';
+import { ChatProcessDetailPanelComponent } from '../process-detail-panel/chat-process-detail-panel.component';
 import type { ChatRuntimeHostSessionProcessSummary } from '../../core/chat-runtime-host-contract';
 import {
   deleteBlocklyCommandSession,
@@ -32,7 +33,7 @@ interface ChatProcessManagerDialogData {
 @Component({
   selector: 'app-chat-process-manager-dialog',
   standalone: true,
-  imports: [CommonModule, FormsModule, NzPopconfirmModule, BaseDialogComponent],
+  imports: [CommonModule, FormsModule, NzPopconfirmModule, BaseDialogComponent, ChatProcessDetailPanelComponent],
   templateUrl: './chat-process-manager-dialog.component.html',
   styleUrl: './chat-process-manager-dialog.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -178,9 +179,6 @@ export class ChatProcessManagerDialogComponent {
     const rawStatus = typeof process.status === 'string' && process.status.trim()
       ? process.status.trim()
       : 'unknown';
-    if (process.removed === true) {
-      return `已归档 · ${this.describeStatusReason(rawStatus)}`;
-    }
     if (process.running) {
       return process.background ? '后台运行' : '执行中';
     }
@@ -222,9 +220,6 @@ export class ChatProcessManagerDialogComponent {
   }
 
   resolveStatusTone(process: ChatRuntimeHostSessionProcessSummary): 'info' | 'success' | 'error' | 'neutral' {
-    if (process.removed === true) {
-      return 'neutral';
-    }
     if (process.running) {
       return process.background ? 'neutral' : 'info';
     }

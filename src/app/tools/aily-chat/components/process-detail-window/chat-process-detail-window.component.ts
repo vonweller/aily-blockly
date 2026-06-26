@@ -9,6 +9,7 @@ import { CommonModule } from '@angular/common';
 import { ActivatedRoute } from '@angular/router';
 
 import { SubWindowComponent } from '../../../../components/sub-window/sub-window.component';
+import { ChatProcessDetailPanelComponent } from '../process-detail-panel/chat-process-detail-panel.component';
 import { AilyHost } from '../../core/host';
 import { readChatProcessOutputFile } from '../../helpers/chat-process-window';
 import { listPersistedBlocklyCommandSessionSnapshots } from '../../helpers/lex-agent-bootstrap';
@@ -42,7 +43,7 @@ interface ProcessWindowProcessSummary {
 @Component({
   selector: 'app-chat-process-detail-window',
   standalone: true,
-  imports: [CommonModule, SubWindowComponent],
+  imports: [CommonModule, SubWindowComponent, ChatProcessDetailPanelComponent],
   templateUrl: './chat-process-detail-window.component.html',
   styleUrl: './chat-process-detail-window.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -139,25 +140,6 @@ export class ChatProcessDetailWindowComponent implements OnInit, OnDestroy {
       return '已取消 · 用户取消';
     }
     return '失败';
-  }
-
-  private describeStatusReason(status: string): string {
-    switch (status) {
-      case 'running':
-        return '运行中';
-      case 'completed':
-        return '正常结束';
-      case 'failed':
-        return '执行失败';
-      case 'timeout':
-        return '超时';
-      case 'killed':
-        return '手动停止';
-      case 'cancelled':
-        return '用户取消';
-      default:
-        return '未知状态';
-    }
   }
 
   private startPolling(): void {

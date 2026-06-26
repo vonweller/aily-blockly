@@ -2471,6 +2471,12 @@ export class SessionLifecycleHelper {
       ...(this.ctx.chatService.currentSessionPermissionLevel
         ? { permissionLevel: this.ctx.chatService.currentSessionPermissionLevel }
         : {}),
+      ...(this.ctx.chatService.currentSessionApprovalsReviewer
+        ? { approvalsReviewer: this.ctx.chatService.currentSessionApprovalsReviewer }
+        : {}),
+      ...(this.ctx.chatService.currentSessionApprovalPolicy
+        ? { approvalPolicy: this.ctx.chatService.currentSessionApprovalPolicy }
+        : {}),
     };
   }
 
@@ -2480,6 +2486,12 @@ export class SessionLifecycleHelper {
       permissionMode: this.ctx.chatService.currentSessionPermissionMode,
       ...(this.ctx.chatService.currentSessionPermissionLevel
         ? { permissionLevel: this.ctx.chatService.currentSessionPermissionLevel }
+        : {}),
+      ...(this.ctx.chatService.currentSessionApprovalsReviewer
+        ? { approvalsReviewer: this.ctx.chatService.currentSessionApprovalsReviewer }
+        : {}),
+      ...(this.ctx.chatService.currentSessionApprovalPolicy
+        ? { approvalPolicy: this.ctx.chatService.currentSessionApprovalPolicy }
         : {}),
     };
   }
