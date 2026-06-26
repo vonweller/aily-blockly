@@ -1169,7 +1169,7 @@ function buildActivityToolSummaryCandidate(part: ToolCallPart | ConfirmationPart
   if (part.type === 'terminal') {
     return {
       toolName: 'run_in_terminal',
-      label: 'AILY_CHAT.PROCESS_TOOL_RUN_COMMAND',
+      label: normalizeThinkingHeaderText(chatI18n('AILY_CHAT.PROCESS_TOOL_RUN_COMMAND')),
       subtitle: normalizeThinkingHeaderText(part.command),
       rawText: normalizeThinkingHeaderText(part.command),
       args: { command: part.command },
@@ -1283,7 +1283,15 @@ function normalizeThinkingHeaderText(value: string | undefined): string | undefi
   }
 
   const singleLine = value.replace(/\s+/g, ' ').trim();
-  return singleLine || undefined;
+  if (!singleLine) {
+    return undefined;
+  }
+
+  return isChatI18nDisplayKey(singleLine) ? chatI18n(singleLine) : singleLine;
+}
+
+function isChatI18nDisplayKey(value: string): boolean {
+  return /^[A-Z][A-Z0-9]*(?:\.[A-Z0-9_]+)+$/.test(value);
 }
 
 function extractReadTarget(summary: ActivityToolSummaryCandidate): string | undefined {
