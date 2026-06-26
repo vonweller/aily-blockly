@@ -2,8 +2,7 @@ import { inject, Injectable } from '@angular/core';
 import type { LexOwnerFacade } from '../helpers/lex-stream.helper';
 
 import {
-  createChatAgentRuntimeModeConfigKey,
-  normalizeChatAgentRuntimeMode,
+  createChatAgentRuntimeConfigKey,
 } from '../core/chat-agent-runtime-mode';
 import { normalizeChatSelectedMode } from '../core/chat-mode';
 import type { ChatRuntimeHostSubmitRequest } from '../core/chat-runtime-host-contract';
@@ -25,12 +24,6 @@ import {
   type ChatRuntimeOwnerTurnStartupEditLifecyclePort,
 } from './chat-runtime-owner-ports';
 import { projectRuntimeStateToRuntimeController } from '../helpers/chat-runtime-owner-projection';
-
-function createAgentProviderOptionsKeyWithRuntime(providerOptionsKey: string, runtimeMode: unknown): string {
-  return providerOptionsKey.includes('::agent-runtime:')
-    ? providerOptionsKey
-    : `${providerOptionsKey}::${createChatAgentRuntimeModeConfigKey(normalizeChatAgentRuntimeMode(runtimeMode, 'unbound'))}`;
-}
 
 @Injectable()
 export class ChatRuntimeOwnerSubmittedTurnLifecycleService implements ChatRuntimeOwnerSubmittedTurnLifecyclePort {
@@ -103,9 +96,10 @@ export class ChatRuntimeOwnerSubmittedTurnLifecycleService implements ChatRuntim
       sessionId,
       this.ownerSessionContext.resolveRuntimeSessionProviderOptions(sessionId),
     );
-    const providerOptionsKey = createAgentProviderOptionsKeyWithRuntime(
+    const providerOptionsKey = createChatAgentRuntimeConfigKey(
       createHostSessionProviderOptionsKey(providerOptions),
       this.ownerSessionContext.currentAgentRuntimeMode,
+      this.ownerSessionContext.currentModel,
     );
     if (owner.agent.isConfiguredFor?.(sessionId, providerOptionsKey)) {
       await owner.agent.ensureAgent(sessionId, providerOptionsKey);
@@ -123,9 +117,11 @@ export class ChatRuntimeOwnerSubmittedTurnLifecycleService implements ChatRuntim
       patch: {
         providerOptions,
         selectedMode: normalizeChatSelectedMode(this.ownerSessionContext.resolveRuntimeSelectedMode(sessionId)),
+        currentModel: this.ownerSessionContext.currentModel,
         debugSummary: {
           providerOptionsPresent: true,
           selectedModePresent: true,
+          currentModelPresent: !!this.ownerSessionContext.currentModel,
         },
       },
     });

@@ -5,13 +5,14 @@ import type {
   IChatViewAccess,
   ISessionAccess,
 } from '../core/chat-context';
+import { createElectronChatRuntimeHostTransport } from '../core/electron-chat-runtime-host-transport';
 
 type ChatStopCoordinatorContext = Pick<
   IAgentLifecycle,
   'isCancelled' | 'messageSubscription' | 'pendingUserInput' | 'activeToolExecutions' | 'currentStatelessMode' | 'isWaiting' | 'isCompleted'
 > & Pick<IChatCoordination, 'lexStream' | 'session' | 'applyPendingSwitch'>
-  & Pick<IChatServiceAccess, 'contextBudgetService' | 'editCheckpointService'>
-  & Pick<ISessionAccess, 'conversationMessages'>
+  & Pick<IChatServiceAccess, 'contextBudgetService'>
+  & Pick<ISessionAccess, 'conversationMessages' | 'sessionId'>
   & Pick<IChatViewAccess, 'viewAdapter'>
   & {
     dismissPendingInteractions?(sessionId?: string | null): void;
@@ -126,7 +127,7 @@ export class ChatStopCoordinator {
       );
     }
 
-    await this.ctx.editCheckpointService.commitCurrentTurn();
+    await this.commitCurrentTurnCheckpoint(sessionId ?? this.ctx.sessionId);
     this.ctx.viewAdapter.markLastMessageDone();
     this.ctx.isWaiting = false;
     this.ctx.isCompleted = true;
@@ -137,5 +138,26 @@ export class ChatStopCoordinator {
     if (options.applyPendingSwitch !== false) {
       await this.ctx.applyPendingSwitch(sessionId);
     }
+  }
+
+  private async commitCurrentTurnCheckpoint(sessionId: string | null | undefined): Promise<void> {
+    const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!targetSessionId) {
+      throw new Error('[AilyChat][RuntimeHost] checkpoint commit requires a host session id.');
+    }
+    const runtimeHost = createElectronChatRuntimeHostTransport();
+    if (!runtimeHost) {
+      throw new Error('[AilyChat][RuntimeHost] checkpoint commit requires the host transport.');
+    }
+    await runtimeHost.requestResourceOperation({
+      sessionId: targetSessionId,
+      kind: 'checkpoint-commit',
+      label: 'Committing workspace checkpoint',
+      detail: 'Host workspace checkpoint resource is committing a stopped turn.',
+      payload: {
+        adapter: 'editCheckpoint',
+        action: 'commitCurrentTurn',
+      },
+    });
   }
 }

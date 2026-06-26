@@ -1,7 +1,7 @@
 import type { LexOwnerContext } from '../helpers/lex-stream.helper';
 import type {
   ChatRuntimeOwnerContextBudgetPort,
-  ChatRuntimeOwnerEditCheckpointPort,
+  ChatRuntimeOwnerEditTrackingPort,
 } from './chat-runtime-owner-context-capabilities';
 
 export interface ChatRuntimeOwnerContextAdapter {
@@ -21,7 +21,7 @@ export interface ChatRuntimeOwnerContextCoreServices {
   readonly ailyChatConfigService: any;
   readonly mcpService: any;
   readonly runtimeInteractionHost: any;
-  readonly editCheckpointService: ChatRuntimeOwnerEditCheckpointPort;
+  readonly editTracking: ChatRuntimeOwnerEditTrackingPort;
   readonly ownerScheduler: any;
   readonly viewRequests: any;
   readonly list: any;
@@ -131,7 +131,7 @@ export function createChatRuntimeOwnerContext(
     get runtimeInteractionHost() { return services.runtimeInteractionHost; },
     handleToolApproval: request => services.handleToolApproval(request),
     get lexStream() { return adapter.lexStream; },
-    get editCheckpointService() { return services.editCheckpointService; },
+    get editTracking() { return services.editTracking; },
     get ownerScheduler() { return services.ownerScheduler; },
     get viewRequests() { return services.viewRequests; },
     get list() { return services.list; },

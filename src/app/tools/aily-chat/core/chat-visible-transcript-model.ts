@@ -3,6 +3,7 @@ import type { TurnResponsePart, TurnResponseStatus, TurnResponseTurn } from 'ail
 import type { ChatPart } from './chat-parts';
 import { turnResponsePartToChatParts } from './turn-response-part-mapper';
 import {
+  buildTurnResponseAssistantMessageProjection,
   getTurnResponseAssistantText,
   getTurnResponseDisplayContent,
 } from './turn-response-stream-contract';
@@ -137,7 +138,7 @@ export class ChatVisibleTranscriptModel {
       kind: 'request',
       role: 'user',
       turnId: turn.turnId,
-      status: 'completed',
+      status: turn.response.status,
       contentPreview: getTurnResponseDisplayContent(turn.request),
       parts: [],
       turnResponse: turn,
@@ -268,14 +269,21 @@ export class ChatVisibleTranscriptModel {
       return cached.dialogItem;
     }
 
+    const assistantProjection = item.kind === 'response' && item.turnResponse
+      ? buildTurnResponseAssistantMessageProjection(item.turnResponse, {
+        ...(item.contentPreview ? { content: item.contentPreview } : {}),
+      })
+      : null;
+
     const dialogItem = Object.freeze({
       id: item.id,
       turnId: item.turnId,
       responseId: item.kind === 'response' ? item.turnId : undefined,
       role: item.role,
       content: item.contentPreview,
-      doing: item.kind === 'response' && item.status === 'streaming',
-      turnModelName: '',
+      doing: item.status === 'streaming',
+      turnModelName: assistantProjection?.modelName ?? '',
+      turnModelBillingLabel: assistantProjection?.modelBillingLabel,
       turnContext: item.turnContext,
       parts: item.parts,
       turnResponse: item.turnResponse,
@@ -365,6 +373,13 @@ function createItemSignature(item: Omit<ChatVisibleTranscriptItem, 'revision'>):
     contentPreview: item.contentPreview,
     turnResponseStatus: item.turnResponse?.response.status,
     turnResponseUpdatedAt: item.turnResponse?.updatedAt,
+    responseModel: item.turnResponse?.responseModel
+      ? {
+        modelName: item.turnResponse.responseModel.modelName,
+        modelBillingLabel: item.turnResponse.responseModel.modelBillingLabel,
+        modelRouting: item.turnResponse.responseModel.modelRouting,
+      }
+      : undefined,
     parts: item.parts.map(part => ({
       key: getChatPartStableKey(part),
       value: part,

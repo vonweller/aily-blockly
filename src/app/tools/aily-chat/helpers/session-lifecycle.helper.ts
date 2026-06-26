@@ -88,6 +88,7 @@ import type { ChatSessionItemsService } from '../services/chat-session-items.ser
 import { ChatSessionEntryCoordinator } from './chat-session-entry-coordinator';
 import { ChatPerformanceTracer } from '../services/chat-perf-tracer';
 import { createRequiredSessionResourceModel } from './required-session-resource-model';
+import type { ChatRuntimeHostEditTrackingPayload } from '../core/chat-runtime-host-contract';
 
 type LexInteractionAction = NonNullable<import('aily-lex/browser').TurnRequest['metadata']>['interactionAction'];
 
@@ -120,13 +121,12 @@ type SessionLifecycleContext = ChatViewWriteBridgeContext
     | 'hasInitializedForThisLogin'
     | 'legacyActivatedDeferredTools'
   >
-  & Pick<ISessionAccess, 'sessionTitle' | 'sessionAllowedPaths' | 'conversationMessages' | 'chatService'>
+  & Pick<ISessionAccess, 'sessionTitle' | 'sessionAllowedPaths' | 'conversationMessages' | 'chatService' | 'chatHistoryService'>
   & Pick<IProjectContext, 'currentMode' | 'currentAgentRuntimeMode' | 'currentAgentRuntimeModeSource' | 'currentModel' | 'prjPath' | 'prjRootPath' | 'isLoggedIn'>
   & Pick<
     IChatServiceAccess,
     | 'contextBudgetService'
     | 'repetitionDetectionService'
-    | 'editCheckpointService'
     | 'mcpService'
     | 'ailyChatConfigService'
     | 'runtimeInteractionHost'
@@ -510,17 +510,49 @@ export class SessionLifecycleHelper {
       ...(retainedTurnResponses.length > 0 ? { turnResponses: retainedTurnResponses } : {}),
     };
 
-    this.ctx.chatHistoryService.saveHostRecord({
+    const persistedForkedRecord: LiveHostSessionRecord = {
       sessionId: forkedSessionId,
       metadata: forkedMetadata,
       turnResponses: retainedTurnResponses,
-    });
+    };
+    try {
+      await this.persistForkedSessionRecordThroughHost(persistedForkedRecord);
+    } catch (error) {
+      console.warn('[SessionLifecycle][Fork] host persistence failed; aborting fork without renderer-local history fallback', error);
+      this.ctx.message.warning('Failed to persist the forked session. Please try again.');
+      return false;
+    }
 
     await this.switchToSession(forkedSessionId, forkedRecord);
     this.ctx.scrollManager.setScrollLock(true);
     this.ctx.scrollManager.scrollToBottom();
 
     return true;
+  }
+
+  private async persistForkedSessionRecordThroughHost(record: LiveHostSessionRecord): Promise<void> {
+    const sessionId = typeof record.sessionId === 'string' ? record.sessionId.trim() : '';
+    if (!sessionId) {
+      throw new Error('[SessionLifecycle][Fork] host persistence requires a forked session id.');
+    }
+    if (typeof this.ctx.requestHostResourceOperation !== 'function') {
+      throw new Error('[SessionLifecycle][Fork] host resource operation bridge is unavailable.');
+    }
+
+    await this.ctx.requestHostResourceOperation({
+      sessionId,
+      kind: 'save-current-session',
+      label: 'Saving forked chat session',
+      resource: {
+        targetSessionId: sessionId,
+        sessionType: record.metadata?.sessionType ?? DEFAULT_CHAT_SESSION_TYPE,
+        projectPath: record.metadata?.projectPath ?? null,
+      },
+      payload: {
+        adapter: 'chatHistory',
+        record,
+      },
+    });
   }
 
   private async tryCreateProtocolFork(input: {
@@ -602,13 +634,33 @@ export class SessionLifecycleHelper {
       return input.sourceRetainedTurnResponses;
     }
 
-    const forkedTurnResponses = await this.ctx.editCheckpointService.forkRequestCheckpointMetadata?.({
-      sourceSessionResource: input.sourceSessionId,
-      targetSessionResource: input.forkedSessionId,
-      retainedTurnResponses: input.sourceRetainedTurnResponses,
-    });
+    const forkedTurnResponses = await this.forkRequestCheckpointMetadata(input);
     return forkedTurnResponses && forkedTurnResponses.length === input.sourceRetainedTurnResponses.length
       ? forkedTurnResponses
+      : null;
+  }
+
+  private async forkRequestCheckpointMetadata(input: {
+    sourceSessionId: string;
+    forkedSessionId: string;
+    sourceRetainedTurnResponses: readonly TurnResponseTurn[];
+  }): Promise<readonly TurnResponseTurn[] | null> {
+    const result = await this.requestHostEditTrackingOperation({
+      sessionId: input.forkedSessionId,
+      label: 'Forking checkpoint metadata',
+      detail: 'Host edit tracking resource is forking request checkpoint metadata.',
+      payload: {
+        adapter: 'editTracking',
+        action: 'forkRequestCheckpointMetadata',
+        sourceSessionResource: input.sourceSessionId,
+        targetSessionResource: input.forkedSessionId,
+        retainedTurnResponses: input.sourceRetainedTurnResponses,
+      },
+    });
+    const forkedTurnResponses = (result.result as { forkedTurnResponses?: unknown } | null | undefined)
+      ?.forkedTurnResponses;
+    return Array.isArray(forkedTurnResponses)
+      ? forkedTurnResponses as TurnResponseTurn[]
       : null;
   }
 
@@ -1297,10 +1349,44 @@ export class SessionLifecycleHelper {
         this.ctx.message.warning('会话历史加载失败，已继续打开当前会话');
       }
     } else {
-      this.ctx.editCheckpointService?.clear();
-      this.ctx.editCheckpointService?.dismissSummary();
+      await this.clearHostEditTrackingSessionState(sessionId);
     }
     this.ctx.chatHistoryService.clearRecordedRestoreFailure?.(sessionId);
+  }
+
+  private async clearHostEditTrackingSessionState(sessionId: string | null | undefined): Promise<void> {
+    await this.requestHostEditTrackingOperation({
+      sessionId,
+      label: 'Clearing edit tracking session state',
+      detail: 'Host edit tracking resource is clearing stale session edit state.',
+      payload: {
+        adapter: 'editTracking',
+        action: 'clearSessionState',
+        dismissSummary: true,
+      },
+    });
+  }
+
+  private async requestHostEditTrackingOperation(input: {
+    readonly sessionId: string | null | undefined;
+    readonly label: string;
+    readonly detail: string;
+    readonly payload: ChatRuntimeHostEditTrackingPayload;
+  }): Promise<Awaited<ReturnType<NonNullable<SessionLifecycleContext['requestHostResourceOperation']>>>> {
+    const targetSessionId = typeof input.sessionId === 'string' ? input.sessionId.trim() : '';
+    if (!targetSessionId) {
+      throw new Error('[AilyChat][RuntimeHost] edit tracking session operation requires a host session id.');
+    }
+    if (typeof this.ctx.requestHostResourceOperation !== 'function') {
+      throw new Error('[AilyChat][RuntimeHost] edit tracking session operation requires the host resource operation bridge.');
+    }
+    return this.ctx.requestHostResourceOperation({
+      sessionId: targetSessionId,
+      kind: 'edit-tracking',
+      label: input.label,
+      detail: input.detail,
+      payload: input.payload,
+    });
   }
 
   private createSessionId(): string {

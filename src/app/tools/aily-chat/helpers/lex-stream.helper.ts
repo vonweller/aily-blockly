@@ -43,6 +43,7 @@ import {
   type ChatRuntimeTurnResponseSyncOptions,
 } from '../core/chat-runtime-projection-policy';
 import { buildTurnResponsesFromSessionSnapshot } from '../core/turn-response-builder';
+import { extractChatAgentRuntimeModeFromConfigKey } from '../core/chat-agent-runtime-mode';
 
 type LexOwnerRenderBridge = Parameters<LexTurnExecutionBridge['setRenderEventBridge']>[0] & {
   readonly turnResponses: readonly TurnResponseTurn[];
@@ -299,10 +300,11 @@ export class LexOwnerFacade {
     const agentLifecycleBridge = new LexAgentLifecycleBridge({
       getSessionId: () => this.ctx.resolveActiveRuntimeSessionId?.() ?? this.ctx.sessionId,
       loadModule: () => import('aily-lex/browser'),
-      createAgent: (lex, sessionId) => bootstrapBlocklyLexAgent({
+      createAgent: (lex, sessionId, configKey) => bootstrapBlocklyLexAgent({
         ctx: this.ctx,
         lex,
         sessionId,
+        runtimeMode: extractChatAgentRuntimeModeFromConfigKey(configKey),
         metrics: this._resolveCompactionMetricsService(lex, sessionId),
         askHandler: (askContext) => askConfirmationBridge.handleAskConfirmation(askContext),
       }),
@@ -320,15 +322,7 @@ export class LexOwnerFacade {
           );
         }
 
-        try {
-          const fileHistory = agentLifecycleBridge.getHandle()?.getFileHistory()
-            ?? agent.getFileHistory();
-          this.ctx.editCheckpointService.setFileHistory(fileHistory);
-        } catch {
-          // ignore if agent not ready
-        }
-
-        this.ctx.editCheckpointService.setTimelineContext(
+        this.ctx.editTracking.setTimelineContext(
           this.ctx.resolveActiveRuntimeSessionId?.() ?? this.ctx.sessionId ?? null,
           this.ctx.prjPath || this.ctx.prjRootPath || null,
         );

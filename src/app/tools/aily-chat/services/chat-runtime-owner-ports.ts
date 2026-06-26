@@ -53,13 +53,13 @@ import type {
 import type { ChatRuntimeOwnerContextAdapter } from './chat-runtime-owner-context.service';
 import type {
   ChatRuntimeOwnerContextBudgetPort,
-  ChatRuntimeOwnerEditCheckpointPort,
+  ChatRuntimeOwnerEditTrackingPort,
 } from './chat-runtime-owner-context-capabilities';
 import type { ChatSessionTurnOwnerPolicyOptions } from './chat-session-model-store.service';
 
 export type {
   ChatRuntimeOwnerContextBudgetPort,
-  ChatRuntimeOwnerEditCheckpointPort,
+  ChatRuntimeOwnerEditTrackingPort,
 } from './chat-runtime-owner-context-capabilities';
 
 export interface ChatRuntimeOwnerContextMaterializerPort {
@@ -420,8 +420,8 @@ export const CHAT_RUNTIME_OWNER_SCHEDULER = new InjectionToken<ChatRuntimeOwnerS
   'AILY_CHAT_RUNTIME_OWNER_SCHEDULER',
 );
 
-export const CHAT_RUNTIME_OWNER_EDIT_CHECKPOINT = new InjectionToken<ChatRuntimeOwnerEditCheckpointPort>(
-  'AILY_CHAT_RUNTIME_OWNER_EDIT_CHECKPOINT',
+export const CHAT_RUNTIME_OWNER_EDIT_TRACKING = new InjectionToken<ChatRuntimeOwnerEditTrackingPort>(
+  'AILY_CHAT_RUNTIME_OWNER_EDIT_TRACKING',
 );
 
 export const CHAT_RUNTIME_OWNER_CONTEXT_BUDGET = new InjectionToken<ChatRuntimeOwnerContextBudgetPort>(

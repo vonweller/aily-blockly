@@ -10,8 +10,22 @@ type LexTurnStartupContext = Pick<
 > & Pick<IChatViewAccess, 'list' | 'scrollManager'>
   & Pick<ISessionAccess, 'sessionId'>
   & Pick<IProjectContext, 'currentModel' | 'prjPath' | 'prjRootPath'>
-  & Pick<IChatServiceAccess, 'repetitionDetectionService' | 'editCheckpointService' | 'ailyChatConfigService' | 'contextBudgetService'>
+  & Pick<IChatServiceAccess, 'repetitionDetectionService' | 'ailyChatConfigService' | 'contextBudgetService'>
   & {
+    readonly editTracking: {
+      autoSaveEdits: boolean;
+      setTimelineContext(sessionId: string | null | undefined, workspaceRoot: string | null | undefined): void;
+      startTurn(
+        turnIndex: number,
+        turnStartListIndex: number | null,
+        responseStartListIndex: number | null,
+        turnId?: string,
+        requestContent?: string,
+        displayContent?: string,
+        checkpointId?: string,
+        requestMetadata?: unknown,
+      ): void;
+    };
     readonly turnStartupEditLifecycle: {
       ensureAbsExport(sessionId: string | null | undefined): void;
       saveCheckpointToDisk(sessionId: string | null | undefined): void;
@@ -135,12 +149,12 @@ export class LexTurnStartupBridge {
     }
 
     this.ctx.turnStartupEditLifecycle.ensureAbsExport(resourceSessionId);
-    this.ctx.editCheckpointService.autoSaveEdits = this.ctx.ailyChatConfigService.autoSaveEdits;
+    this.ctx.editTracking.autoSaveEdits = this.ctx.ailyChatConfigService.autoSaveEdits;
     this.ctx.turnStartupEditLifecycle.saveCheckpointToDisk(resourceSessionId);
 
     const conversationMessages = this.getConversationMessages();
     const workspaceRoot = this.ctx.prjPath || this.ctx.prjRootPath || null;
-    this.ctx.editCheckpointService.setTimelineContext(
+    this.ctx.editTracking.setTimelineContext(
       this.ctx.sessionId || null,
       workspaceRoot,
     );
@@ -150,7 +164,7 @@ export class LexTurnStartupBridge {
       const turnStartListIndex = responseStartListIndex > 0
         ? responseStartListIndex - 1
         : responseStartListIndex;
-      this.ctx.editCheckpointService.startTurn(
+      this.ctx.editTracking.startTurn(
         0,
         turnStartListIndex,
         responseStartListIndex,

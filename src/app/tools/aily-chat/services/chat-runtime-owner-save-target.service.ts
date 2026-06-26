@@ -22,6 +22,7 @@ import {
   type ChatRuntimeOwnerRuntimeControllerPort,
   type ChatRuntimeOwnerSaveTargetPort,
 } from './chat-runtime-owner-ports';
+import type { ChatRuntimeHostModelSelectionSnapshot } from '../core/chat-runtime-host-contract';
 
 @Injectable()
 export class ChatRuntimeOwnerSaveTargetService implements ChatRuntimeOwnerSaveTargetPort {
@@ -54,7 +55,7 @@ export class ChatRuntimeOwnerSaveTargetService implements ChatRuntimeOwnerSaveTa
       providerOptions,
       selectedMode,
       resolvedMode,
-      model: null,
+      model: this.resolveRuntimeCurrentModel(targetSessionId),
     };
   }
 
@@ -78,6 +79,13 @@ export class ChatRuntimeOwnerSaveTargetService implements ChatRuntimeOwnerSaveTa
     return normalizeChatSelectedMode(hostInventoryItem?.selectedMode ?? {
       modeId: hostInventoryItem?.mode,
     });
+  }
+
+  private resolveRuntimeCurrentModel(sessionId: string): ChatRuntimeHostModelSelectionSnapshot | null {
+    const runtimeCurrentModel = this.runtimeController.readRuntimeState(sessionId)?.currentModel;
+    return runtimeCurrentModel && typeof runtimeCurrentModel === 'object'
+      ? { ...(runtimeCurrentModel as Record<string, unknown>) } as ChatRuntimeHostModelSelectionSnapshot
+      : null;
   }
 
   private normalizeSessionId(sessionId: unknown): string {
