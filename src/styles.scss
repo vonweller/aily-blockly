@@ -108,6 +108,27 @@ nz-modal-container {
   overflow: hidden !important;
 }
 
+.feedback-modal-wrap {
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  text-align: initial;
+
+  &::before {
+    display: none !important;
+  }
+
+  .ant-modal {
+    top: auto;
+    display: block;
+    max-height: calc(100vh - 48px);
+    margin: 0;
+    padding-bottom: 0;
+    vertical-align: initial;
+  }
+}
+
 .cdk-overlay-container {
   z-index: 10000 !important;
 }

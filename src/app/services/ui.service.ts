@@ -346,6 +346,8 @@ export class UiService {
       nzTitle: null,
       nzFooter: null,
       nzClosable: false,
+      nzCentered: true,
+      nzWrapClassName: 'feedback-modal-wrap',
       nzBodyStyle: {
         padding: '0',
       },

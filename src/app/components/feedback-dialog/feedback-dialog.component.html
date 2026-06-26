@@ -1,5 +1,5 @@
 <app-base-dialog [title]="'FEEDBACK_DIALOG.TITLE' | translate" [buttons]="buttons" [showCloseButton]="true" [showFooter]="true"
-    [loading]="isSubmitting" (closeDialog)="onCloseDialog()" (buttonClick)="onButtonClick($event)">
+    [loading]="isSubmitting" customClass="dialog-scrollable" (closeDialog)="onCloseDialog()" (buttonClick)="onButtonClick($event)">
 
     <div class="feedback-form">
         <div class="form-item">
