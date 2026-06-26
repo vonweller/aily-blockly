@@ -341,7 +341,7 @@ export class UiService {
   }
 
 
-  openFeedback() {
+  openFeedback(data?: any) {
     const modalRef = this.modal.create({
       nzTitle: null,
       nzFooter: null,
@@ -353,6 +353,7 @@ export class UiService {
       },
       nzContent: FeedbackDialogComponent,
       nzWidth: '520px',
+      nzData: data,
     });
 
     // 处理反馈结果
