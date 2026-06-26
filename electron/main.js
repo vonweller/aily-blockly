@@ -299,6 +299,12 @@ const args = process.argv.slice(1);
 const serve = args.some((val) => val === "--serve");
 process.env.DEV = serve;
 
+// Angular dev server 会把依赖预构建到 .angular/cache 下；重启后路径可能变化。
+// 开发态若继续复用 Electron 的 HTTP cache，容易命中已失效的旧 chunk URL
+if (serve) {
+  app.commandLine.appendSwitch('disable-http-cache');
+}
+
 // 注册协议处理
 if (process.defaultApp) {
   if (process.argv.length >= 2) {
@@ -1747,7 +1753,7 @@ function loadEnv() {
   // 读取用户配置文件
   try {
     userConf = JSON.parse(fs.readFileSync(userConfigPath));
-    
+
     // TODO: 下一版删除，统一修正 regions.cn 下所有地址为标准地址
     let needSave = false;
     if (userConf.regions && userConf.regions.cn) {
@@ -1765,7 +1771,7 @@ function loadEnv() {
         }
       }
     }
-    
+
     // 合并配置文件
     Object.assign(conf, userConf);
 
@@ -1804,7 +1810,7 @@ function loadEnv() {
     : (conf.region || officialRegion);
   const regionConfig = conf.regions && conf.regions[currentRegion] ? conf.regions[currentRegion] : conf.regions[officialRegion];
   const zipUrlState = getZipUrlState(conf);
-  
+
   // 当前区域
   process.env.AILY_REGION = currentRegion;
   process.env.AILY_BUILD_FLAVOR = buildFlavor;
