@@ -36,7 +36,6 @@ const TODO_TOOL_NAMES = new Set([
 ]);
 
 const SEARCH_SUMMARY_TOOL_NAMES = new Set([
-  'fetch_webpage',
   'file_search',
   'grep_search',
   'semantic_search',

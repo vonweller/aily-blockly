@@ -326,10 +326,8 @@ function buildTerminalOutputSummary(args: any): ToolInvocationDisplaySummary {
 
 function buildFetchSummary(args: any): ToolInvocationDisplaySummary {
   const url = firstUrl(args);
-  const query = asString(args?.query);
   return {
     label: `Fetched ${formatUrlDisplay(url)}`,
-    subtitle: query ? `for ${truncateDisplayText(query, 56)}` : undefined,
   };
 }
 
