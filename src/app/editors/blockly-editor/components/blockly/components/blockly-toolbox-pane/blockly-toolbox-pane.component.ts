@@ -14,6 +14,7 @@ import { ElectronService } from '../../../../../../services/electron.service';
 import { ProjectService } from '../../../../../../services/project.service';
 import { CmdService } from '../../../../../../services/cmd.service';
 import { WorkflowService } from '../../../../../../services/workflow.service';
+import { UiService } from '../../../../../../services/ui.service';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import Sortable, { SortableEvent } from 'sortablejs';
 
@@ -23,6 +24,7 @@ interface ToolboxContextMenuAction {
   icon: string;
   handler: (item: BlocklyToolboxFacadeItem) => void | Promise<void>;
   disabled?: (item: BlocklyToolboxFacadeItem) => boolean;
+  visible?: (item: BlocklyToolboxFacadeItem) => boolean;
 }
 
 @Component({
@@ -55,6 +57,15 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
       icon: 'fa-light fa-browser',
       handler: (item) => this.openLibraryPath(item),
       disabled: (item) => !item.libraryPath,
+    },
+    // 反馈非本地库问题
+    {
+      name: 'MENU.FEEDBACK_LIBRARY_ISSUE',
+      action: 'feedback-library-issue',
+      icon: 'fa-light fa-message-exclamation',
+      handler: (item) => this.openLibraryFeedback(item),
+      disabled: (item) => !item.libraryName,
+      visible: (item) => !item.isLocalLibrary,
     },
     // 移除该库
     {
@@ -97,6 +108,7 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
     private projectService: ProjectService,
     private cmdService: CmdService,
     private workflowService: WorkflowService,
+    private uiService: UiService,
     private message: NzMessageService,
     private translate: TranslateService,
     private elementRef: ElementRef<HTMLElement>,
@@ -176,12 +188,14 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
     event.stopPropagation();
 
     this.contextMenuTarget = item;
-    this.contextMenuItems = this.toolboxContextMenuActions.map(action => ({
-      name: action.name,
-      action: action.action,
-      icon: action.icon,
-      disabled: action.disabled?.(item) || false,
-    }));
+    this.contextMenuItems = this.toolboxContextMenuActions
+      .filter(action => action.visible?.(item) ?? true)
+      .map(action => ({
+        name: action.name,
+        action: action.action,
+        icon: action.icon,
+        disabled: action.disabled?.(item) || false,
+      }));
     this.contextMenuPosition = { x: event.clientX, y: event.clientY };
     this.showContextMenu = true;
   }
@@ -414,6 +428,18 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
     }
 
     this.electronService.openByExplorer(item.libraryPath);
+  }
+
+  private openLibraryFeedback(item: BlocklyToolboxFacadeItem) {
+    const libraryName = item.libraryName || '';
+
+    this.uiService.openFeedback({
+      feedbackType: 'library',
+      feedbackLibraryName: libraryName,
+      feedbackContent: this.translate.instant('FEEDBACK_DIALOG.LIBRARY_ISSUE_CONTENT', {
+        name: libraryName,
+      }),
+    });
   }
 
   private async removeLibrary(item: BlocklyToolboxFacadeItem) {
