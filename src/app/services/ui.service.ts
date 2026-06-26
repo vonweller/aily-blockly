@@ -341,16 +341,19 @@ export class UiService {
   }
 
 
-  openFeedback() {
+  openFeedback(data?: any) {
     const modalRef = this.modal.create({
       nzTitle: null,
       nzFooter: null,
       nzClosable: false,
+      nzCentered: true,
+      nzWrapClassName: 'feedback-modal-wrap',
       nzBodyStyle: {
         padding: '0',
       },
       nzContent: FeedbackDialogComponent,
       nzWidth: '520px',
+      nzData: data,
     });
 
     // 处理反馈结果
