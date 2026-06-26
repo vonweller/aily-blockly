@@ -81,6 +81,7 @@ export class BlocklyEditorComponent implements OnInit, AfterViewInit, OnDestroy 
   } | null = null;
   private boardDependencyReloadInProgress = false;
   private boardConfigUpdatedSubscription: Subscription | null = null;
+  private runtimeCdcEnabled: boolean | undefined;
 
   devmode;
 
@@ -256,6 +257,7 @@ export class BlocklyEditorComponent implements OnInit, AfterViewInit, OnDestroy 
     this.projectService.currentBoardConfig = boardJson;
     this.blocklyService.boardConfig = boardJson;
     window['boardConfig'] = boardJson;
+    this.runtimeCdcEnabled = !!boardJson?._cdcEnabled;
     // 4. 加载blockly library
     this.uiService.updateFooterState({
       state: 'doing',
@@ -426,6 +428,12 @@ export class BlocklyEditorComponent implements OnInit, AfterViewInit, OnDestroy 
   }
 
   private applyRuntimeBoardConfig(boardConfig: any): void {
+    const cdcEnabled = !!boardConfig?._cdcEnabled;
+    const shouldRestoreSerialFields = this.runtimeCdcEnabled === true && !cdcEnabled;
+    const serialFieldSnapshots = shouldRestoreSerialFields && Array.isArray(boardConfig?.cdcSerialPort)
+      ? this.blocklyService.snapshotSerialFieldValues()
+      : null;
+
     this.blocklyService.boardConfig = boardConfig;
     window['boardConfig'] = boardConfig;
     this.blocklyService.refreshBoardDependentBlockDefinitions();
@@ -434,6 +442,12 @@ export class BlocklyEditorComponent implements OnInit, AfterViewInit, OnDestroy 
     if (typeof updateSerialCustomPorts === 'function') {
       updateSerialCustomPorts();
     }
+
+    if (serialFieldSnapshots && Array.isArray(boardConfig?.cdcSerialPort)) {
+      this.blocklyService.applySerialPortFieldsAfterCdcDisabled(boardConfig.cdcSerialPort, serialFieldSnapshots);
+    }
+
+    this.runtimeCdcEnabled = cdcEnabled;
   }
 
   private clearProjectLoadedCodeRefreshTimer(): void {
