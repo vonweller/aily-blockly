@@ -40,10 +40,14 @@ import {
 
 import type { HostSessionRecord } from '../services/chat-history.service';
 import type { ChatSessionRuntimeState } from '../services/chat-session-runtime-store.service';
+import type { RequestCheckpointMetadata } from '../services/edit-checkpoint.service';
 import type { AskUserAnswer, AskUserQuestion } from '../core/ask-user';
 import type { ConfirmationPart, QuestionPart } from '../core/chat-parts';
-import { createElectronChatRuntimeHostTransport } from '../core/electron-chat-runtime-host-transport';
 import type { RuntimePlanReviewAction, RuntimePlanReviewDecision } from '../services/chat-runtime-interaction-host.service';
+import type {
+  ChatRuntimeHostResourceOperationRequest,
+  ChatRuntimeHostResourceOperationResult,
+} from '../core/chat-runtime-host-contract';
 import {
   createSessionCheckpointTimelineState,
   type SessionCheckpointTimelineState,
@@ -243,6 +247,9 @@ type HostSessionRestoreContext = Pick<IChatViewAccess, 'scrollManager' | 'invali
       state: HostTurnResponseState | null,
       options: { readonly sessionId: string | null; readonly attachedView?: boolean },
     ): void;
+    requestHostResourceOperation?(
+      request: ChatRuntimeHostResourceOperationRequest,
+    ): Promise<ChatRuntimeHostResourceOperationResult>;
   };
 
 export interface RuntimeRestoreHostRecordRequest {
@@ -260,7 +267,6 @@ export interface RuntimeRestoreHostRecordRequest {
 
 export type HostSessionRestoreFailureKind =
   | 'host-record-session-mismatch'
-  | 'restore-plan-resolution-failed'
   | 'restore-plan-apply-failed';
 
 export interface HostSessionRestoreFailureDetails {
@@ -309,7 +315,8 @@ function buildSessionCheckpointTimelineStateFromHostRecord(
     return null;
   }
 
-  if (!hasCompleteCheckpointMetadataForTimelineTurns(sidecar.turnResponses, targetResource)) {
+  const checkpointMetadataMaps = buildCheckpointMetadataMapsFromSidecar(sidecar.checkpoints, targetResource);
+  if (!checkpointMetadataMaps && !hasCompleteCheckpointMetadataForTimelineTurns(sidecar.turnResponses, targetResource)) {
     console.warn('[HostSessionRestore] dropped checkpoint timeline sidecar with incomplete checkpoint metadata', {
       sessionResource: targetResource,
     });
@@ -320,7 +327,69 @@ function buildSessionCheckpointTimelineStateFromHostRecord(
     sessionResource: targetResource,
     turnResponses: sidecar.turnResponses as unknown as readonly TurnResponseTurn[],
     currentCheckpointIndex: sidecar.currentCheckpointIndex,
+    currentTurnResponseCount: sidecar.currentTurnResponseCount,
+    ...(checkpointMetadataMaps ? {
+      metadataByCheckpointId: checkpointMetadataMaps.metadataByCheckpointId,
+      metadataByRequestId: checkpointMetadataMaps.metadataByRequestId,
+      metadataByTurnId: checkpointMetadataMaps.metadataByTurnId,
+    } : {}),
   });
+}
+
+function buildCheckpointMetadataMapsFromSidecar(
+  checkpoints: unknown,
+  targetSessionResource: string,
+): {
+  readonly metadataByCheckpointId: ReadonlyMap<string, RequestCheckpointMetadata>;
+  readonly metadataByRequestId: ReadonlyMap<string, RequestCheckpointMetadata>;
+  readonly metadataByTurnId: ReadonlyMap<string, RequestCheckpointMetadata>;
+} | null {
+  if (!Array.isArray(checkpoints) || checkpoints.length === 0) {
+    return null;
+  }
+
+  const metadataByCheckpointId = new Map<string, RequestCheckpointMetadata>();
+  const metadataByRequestId = new Map<string, RequestCheckpointMetadata>();
+  const metadataByTurnId = new Map<string, RequestCheckpointMetadata>();
+  for (const checkpoint of checkpoints) {
+    if (!checkpoint || typeof checkpoint !== 'object') {
+      return null;
+    }
+    const metadata = (checkpoint as { metadata?: unknown }).metadata;
+    if (!isCompleteCheckpointMetadata(metadata, targetSessionResource)) {
+      return null;
+    }
+    metadataByCheckpointId.set(metadata.checkpointId, metadata);
+    metadataByRequestId.set(metadata.requestId, metadata);
+    if (metadata.turnId) {
+      metadataByTurnId.set(metadata.turnId, metadata);
+    }
+  }
+
+  return {
+    metadataByCheckpointId,
+    metadataByRequestId,
+    metadataByTurnId,
+  };
+}
+
+function isCompleteCheckpointMetadata(
+  metadata: unknown,
+  targetSessionResource: string,
+): metadata is RequestCheckpointMetadata {
+  if (!metadata || typeof metadata !== 'object') {
+    return false;
+  }
+  const record = metadata as Record<string, unknown>;
+  return record['source'] === 'request-metadata'
+    && readStringProperty(record, 'checkpointId').length > 0
+    && readStringProperty(record, 'requestId').length > 0
+    && readStringProperty(record, 'sessionResource') === targetSessionResource
+    && readStringProperty(record, 'checkpointNamespace') === `refs/sessions/${targetSessionResource}`
+    && readStringProperty(record, 'checkpointRef').length > 0
+    && typeof record['turnIndex'] === 'number'
+    && Number.isFinite(record['turnIndex'])
+    && hasCompleteAdditionalCheckpointRefs(record);
 }
 
 function hasCompleteCheckpointMetadataForTimelineTurns(
@@ -430,28 +499,22 @@ export class HostSessionRestoreBridge {
     const sanitizedHostRecord = sanitizeHostRecordForRestore(hostRecord);
     this.assertHostRecordMatchesTargetSession(sanitizedHostRecord, targetSessionId);
 
-    let restorePlan: ResolvedLexSessionRestorePlan | null = null;
-    try {
-      restorePlan = await this.ctx.lexStream.session.resolveRestorePlan(
-        targetSessionId,
-        sanitizedHostRecord.turnResponses,
-        sanitizedHostRecord,
-      );
-    } catch (error) {
-      if (!isCurrent()) {
-        return;
-      }
-      throw this.createRestoreFailure(
-        'restore-plan-resolution-failed',
-        targetSessionId,
-        null,
-        error,
-      );
-    }
+    const restorePlan: ResolvedLexSessionRestorePlan = {
+      snapshot: null,
+      turnResponses: [...(sanitizedHostRecord.turnResponses ?? [])],
+      diagnostics: {
+        sessionId: targetSessionId,
+        storedSnapshotState: 'missing',
+      },
+    };
 
     try {
-      const initialTurnResponses = [...(restorePlan?.turnResponses ?? sanitizedHostRecord.turnResponses ?? [])];
-      const hostResponseState = this.resolveRuntimeHostProjectionState(targetSessionId, initialTurnResponses)
+      const persistedTurnResponses = [...(restorePlan.turnResponses ?? sanitizedHostRecord.turnResponses ?? [])];
+      const runtimeHostResponseState = this.resolveRuntimeHostProjectionState(targetSessionId, persistedTurnResponses);
+      const initialTurnResponses = runtimeHostResponseState?.turnResponses
+        ? [...runtimeHostResponseState.turnResponses]
+        : persistedTurnResponses;
+      const hostResponseState = runtimeHostResponseState
         ?? buildHostProjectionStateFromPersistedRecord({
           turnResponses: initialTurnResponses,
         });
@@ -569,9 +632,7 @@ export class HostSessionRestoreBridge {
     const runtimeTurnResponses = Array.isArray(runtimeState.turnResponses)
       ? runtimeState.turnResponses
       : [];
-    const runtimeMatchesDurableRecord = durableTurnResponses.length === 0
-      || turnResponseIdsExactlyMatch(runtimeTurnResponses, durableTurnResponses);
-    const fallbackTurnResponses = runtimeTurnResponses.length > 0 && runtimeMatchesDurableRecord
+    const fallbackTurnResponses = runtimeTurnResponses.length > 0
       ? runtimeTurnResponses
       : durableTurnResponses;
     const runtimeAuxiliary = cloneHostSessionRuntimeAuxiliary({
@@ -856,11 +917,11 @@ export class HostSessionRestoreBridge {
     workspaceRoot: string | null,
     turnResponses: readonly TurnResponseTurn[],
   ): Promise<void> {
-    const runtimeHost = createElectronChatRuntimeHostTransport();
-    if (!runtimeHost) {
-      throw new Error('[AilyChat][Restore] Runtime host transport is required to restore edit tracking state.');
+    const requestHostResourceOperation = this.ctx.requestHostResourceOperation;
+    if (typeof requestHostResourceOperation !== 'function') {
+      throw new Error('[AilyChat][Restore] Runtime host resource operation bridge is required to restore edit tracking state.');
     }
-    await runtimeHost.requestResourceOperation({
+    await requestHostResourceOperation({
       sessionId,
       kind: 'edit-tracking',
       label: 'Restoring edit tracking timeline',
@@ -1039,25 +1100,6 @@ function areHostProjectionTurnResponsesEquivalent(
   }
 
   return true;
-}
-
-function turnResponseIdsExactlyMatch(
-  left: readonly TurnResponseTurn[] | null | undefined,
-  right: readonly TurnResponseTurn[] | null | undefined,
-): boolean {
-  if (!Array.isArray(left)
-    || !Array.isArray(right)
-    || left.length === 0
-    || right.length === 0
-    || left.length !== right.length) {
-    return false;
-  }
-
-  return left.every((leftTurn, index) => {
-    const leftTurnId = typeof leftTurn?.turnId === 'string' ? leftTurn.turnId.trim() : '';
-    const rightTurnId = typeof right[index]?.turnId === 'string' ? right[index].turnId.trim() : '';
-    return !!leftTurnId && leftTurnId === rightTurnId;
-  });
 }
 
 function formatHostSessionRestoreFailureDetails(details: HostSessionRestoreFailureDetails): string {

@@ -58,6 +58,7 @@ import type {
   ChatRuntimeHostSessionStatus,
   ChatRuntimeHostSubmitReadiness,
   ChatRuntimeHostSubmitRequest,
+  ChatRuntimeHostProtocolTruncation,
   ChatRuntimeHostViewRequest,
   ChatRuntimeHostViewId,
   ChatRuntimeHostModelSelectionSnapshot,
@@ -112,7 +113,7 @@ import {
 } from '../core/chat-runtime-projection-policy';
 
 import { AbsAutoSyncService } from './abs-auto-sync.service';
-import type { EditsSummary } from './edit-checkpoint.service';
+import type { EditsSummary, RequestCheckpointMetadata } from './edit-checkpoint.service';
 import { EditCheckpointService } from './edit-checkpoint.service';
 import { AiCoderDiffBridgeService } from '../../../services/ai-coder-diff-bridge.service';
 import { GitWorkspaceCheckpointProviderService } from './git-workspace-checkpoint-provider.service';
@@ -369,7 +370,10 @@ import {
 } from '../helpers/checkpoint-restore-visibility';
 import {
   canRedoSessionCheckpointTimeline,
+  createSessionCheckpointTimelineState,
+  getSessionCheckpointHiddenTurnResponses,
   getSessionCheckpointVisibleTurnResponses,
+  type SessionCheckpointTimelineState,
 } from '../helpers/session-checkpoint-timeline-model';
 import { commitSessionCheckpointForwardBranch } from '../helpers/session-checkpoint-branch-commit';
 import {
@@ -1115,6 +1119,7 @@ export class ChatEngineService implements IChatContext {
   /** Part 存储 facade：实际读写按当前 ChatViewModel.sessionResource 路由到 ChatSessionModel.partStore。 */
   readonly partStore: ChatPartStore = this.createSessionRoutedPartStore();
   private readonly liveHostRequestGraphCache = new LiveHostRequestGraphCache();
+  private readonly pendingProtocolTruncations = new Map<string, ChatRuntimeHostProtocolTruncation>();
   private readonly hostItemLifecyclePerfSnapshotHandle = ChatPerformanceTracer.registerExternalSnapshotProvider(
     'hostItemLifecycle',
     (): HostItemLifecycleSnapshot => this.liveHostRequestGraphCache.getItemLifecycleSnapshot(),
@@ -1167,6 +1172,7 @@ export class ChatEngineService implements IChatContext {
         ? this.chatSessionModelStore.get(normalizedSessionResource)?.getCheckpointTimelineState() ?? null
         : null;
     },
+    readSessionTurnResponses: (sessionResource) => this.readSessionTurnResponses(sessionResource),
     getWorkspaceCheckpointPresentationMode: () => this.workspaceCheckpointPresentationMode,
     ensureWorkspaceCheckpointPresentationMode: () => (
       this.workspaceCheckpointProvider.ensurePresentationMode?.() ?? this.workspaceCheckpointPresentationMode
@@ -1175,8 +1181,25 @@ export class ChatEngineService implements IChatContext {
       this.workspaceCheckpointProvider.getAvailabilityDetail?.() ?? { mode: this.workspaceCheckpointPresentationMode }
     ),
     getRequestCheckpointMetadataByCheckpointId: (checkpointId) => (
-      this.editCheckpointService.getRequestCheckpointMetadataByCheckpointId?.(checkpointId) ?? null
+      this.readCurrentSessionCheckpointMetadataByCheckpointId(checkpointId)
+        ?? this.editCheckpointService.getRequestCheckpointMetadataByCheckpointId?.(checkpointId)
+        ?? null
     ),
+    getSettledRequestCheckpointMetadataByCheckpointId: async (checkpointId) => {
+      const currentSessionResource = this.resolveCurrentViewSessionResource();
+      const currentMetadata = this.readCurrentSessionCheckpointMetadataByCheckpointId(checkpointId)
+        ?? this.editCheckpointService.getRequestCheckpointMetadataByCheckpointId?.(checkpointId)
+        ?? null;
+      if (!this.hasCompleteRequestCheckpointMetadata(currentMetadata) && currentSessionResource) {
+        await this.hydrateBoundaryCheckpointState(currentSessionResource);
+      }
+      const timelineMetadata = this.readCurrentSessionCheckpointMetadataByCheckpointId(checkpointId);
+      const settledMetadata = await this.editCheckpointService.getSettledRequestCheckpointMetadataByCheckpointId?.(checkpointId);
+      return timelineMetadata
+        ?? settledMetadata
+        ?? this.editCheckpointService.getRequestCheckpointMetadataByCheckpointId?.(checkpointId)
+        ?? null;
+    },
     logBoundaryDiagnostic: (message) => {
       AilyHost.get().log?.warn?.(`[AilyChat][GitCheckpoint] boundary ${message}`);
     },
@@ -1219,6 +1242,56 @@ export class ChatEngineService implements IChatContext {
     },
   });
   readonly interaction = new UserInteractionHelper(this.userInteractionContext);
+
+  private hasCompleteRequestCheckpointMetadata(metadata: unknown): boolean {
+    const record = metadata && typeof metadata === 'object'
+      ? metadata as Record<string, unknown>
+      : null;
+    return typeof record?.['checkpointNamespace'] === 'string'
+      && record['checkpointNamespace'].trim().length > 0
+      && typeof record?.['checkpointRef'] === 'string'
+      && record['checkpointRef'].trim().length > 0;
+  }
+
+  private readCurrentSessionCheckpointMetadataByCheckpointId(
+    checkpointId: string | null | undefined,
+  ): RequestCheckpointMetadata | null {
+    const normalizedCheckpointId = typeof checkpointId === 'string' ? checkpointId.trim() : '';
+    if (!normalizedCheckpointId) {
+      return null;
+    }
+    const currentSessionResource = this.resolveCurrentViewSessionResource();
+    const timelineState = currentSessionResource
+      ? this.chatSessionModelStore.get(currentSessionResource)?.getCheckpointTimelineState() ?? null
+      : null;
+    const checkpoint = timelineState?.checkpoints.find(entry => entry.checkpointId === normalizedCheckpointId);
+    return checkpoint?.metadata ? { ...checkpoint.metadata } : null;
+  }
+
+  private async hydrateBoundaryCheckpointState(sessionResource: string): Promise<void> {
+    const normalizedSessionResource = typeof sessionResource === 'string' ? sessionResource.trim() : '';
+    if (!normalizedSessionResource) {
+      return;
+    }
+
+    const turnResponses = this.readSessionTurnResponses(normalizedSessionResource);
+    if (turnResponses.length === 0) {
+      return;
+    }
+
+    await this.editCheckpointService.settleRequestCheckpointMetadataForTurnResponses({
+      sessionResource: normalizedSessionResource,
+      workspaceRoot: this.resolveCheckpointWorkspaceRoot(),
+      turnResponses,
+    });
+  }
+
+  private resolveCheckpointWorkspaceRoot(): string | null {
+    return this.getCurrentProjectPath()
+      || AilyHost.get().project?.currentProjectPath
+      || AilyHost.get().project?.projectRootPath
+      || null;
+  }
 
   private promptGitRepositoryInitialization(): void {
     const workspaceRoot = AilyHost.get().project?.currentProjectPath
@@ -1399,6 +1472,7 @@ export class ChatEngineService implements IChatContext {
     turnCount: number;
     lastTurnId: string;
     lastUpdatedAt: number;
+    requestIdentitySignature: string;
     items: ChatVisibleTranscriptDialogItem[];
   } | null = null;
   /** 只读视图：从 lex TurnManager 派生的消息数组（lex 为唯一 source of truth） */
@@ -1418,13 +1492,15 @@ export class ChatEngineService implements IChatContext {
     const lastTurn = turnResponses[turnResponses.length - 1];
     const lastTurnId = lastTurn?.turnId ?? '';
     const lastUpdatedAt = lastTurn?.updatedAt ?? lastTurn?.response?.updatedAt ?? -1;
+    const requestIdentitySignature = this.buildVisibleTranscriptRequestIdentitySignature(turnResponses);
     if (this.dialogItemsCache
       && this.dialogItemsCache.sessionResource === model.sessionResource
       && this.dialogItemsCache.projectionSource === projectionSource
       && this.dialogItemsCache.turnResponses === turnResponses
       && this.dialogItemsCache.turnCount === turnResponses.length
       && this.dialogItemsCache.lastTurnId === lastTurnId
-      && this.dialogItemsCache.lastUpdatedAt === lastUpdatedAt) {
+      && this.dialogItemsCache.lastUpdatedAt === lastUpdatedAt
+      && this.dialogItemsCache.requestIdentitySignature === requestIdentitySignature) {
       return this.dialogItemsCache.items;
     }
 
@@ -1444,9 +1520,52 @@ export class ChatEngineService implements IChatContext {
       turnCount: turnResponses.length,
       lastTurnId,
       lastUpdatedAt,
+      requestIdentitySignature,
       items,
     };
     return items;
+  }
+
+  private buildVisibleTranscriptRequestIdentitySignature(turnResponses: readonly TurnResponseTurn[]): string {
+    return turnResponses
+      .map(turn => {
+        const metadata = turn.request?.metadata;
+        const record = metadata && typeof metadata === 'object' && !Array.isArray(metadata)
+          ? metadata as Record<string, unknown>
+          : null;
+        return [
+          turn.turnId,
+          this.normalizeVisibleTranscriptSignatureValue(record?.['requestId']),
+          this.normalizeVisibleTranscriptSignatureValue(record?.['checkpointId']),
+          this.normalizeVisibleTranscriptSignatureValue(record?.['checkpointRef']),
+          this.normalizeVisibleTranscriptSignatureValue(record?.['startCheckpointRef']),
+          this.normalizeVisibleTranscriptSignatureValue(record?.['checkpointNamespace']),
+          this.normalizeVisibleTranscriptSignatureValue(record?.['checkpointTurnIndex']),
+          this.normalizeVisibleTranscriptSignatureValue(record?.['checkpointRefs']),
+          this.normalizeVisibleTranscriptSignatureValue(record?.['startCheckpointRefs']),
+        ].join('\u001f');
+      })
+      .join('\u001e');
+  }
+
+  private normalizeVisibleTranscriptSignatureValue(value: unknown): string {
+    if (typeof value === 'string') {
+      return value.trim();
+    }
+    if (typeof value === 'number' || typeof value === 'boolean') {
+      return String(value);
+    }
+    if (!value || typeof value !== 'object') {
+      return '';
+    }
+    return JSON.stringify(
+      Object.keys(value as Record<string, unknown>)
+        .sort()
+        .reduce<Record<string, unknown>>((record, key) => {
+          record[key] = (value as Record<string, unknown>)[key];
+          return record;
+        }, {}),
+    );
   }
 
   get checkpointRestoreSurface(): CheckpointRestoreSurface | null {
@@ -2461,7 +2580,7 @@ export class ChatEngineService implements IChatContext {
         };
         await thisEngine.executePreparedUserSend(sessionId, prepared, {
           clearInput: false,
-          activatePreparedUserTurn: true,
+          resetPreparedUserTurnState: true,
         });
       },
       cancelCurrentRequestForSession: (sessionResource, source) => thisEngine.cancelCurrentRequestForSession(sessionResource, source),
@@ -2764,6 +2883,7 @@ export class ChatEngineService implements IChatContext {
       get ailyChatConfigService() { return thisEngine.ailyChatConfigService; },
       get runtimeInteractionHost() { return thisEngine.runtimeInteractionHost; },
       get lexStream() { return thisEngine.lexStream; },
+      requestHostResourceOperation: (request) => thisEngine.runtimeHostForView().requestResourceOperation(request),
       projectRestoredHostProjection: (sessionId, turnResponses, hostProjectionState, options) => {
         thisEngine.projectRestoredHostProjection(sessionId, turnResponses, hostProjectionState, options);
       },
@@ -2903,6 +3023,40 @@ export class ChatEngineService implements IChatContext {
       turnResponses,
       ownerPolicy,
     );
+  }
+
+  private mergeSessionModelTurnResponses(
+    sessionId: string | null | undefined,
+    turnResponses: readonly TurnResponseTurn[] | null | undefined,
+    ownerPolicy?: ChatSessionTurnOwnerPolicyOptions,
+  ): readonly TurnResponseTurn[] | null {
+    const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!targetSessionId || !Array.isArray(turnResponses)) {
+      return null;
+    }
+
+    const model = this.chatSessionModelStore.get(targetSessionId);
+    if (!model) {
+      return null;
+    }
+
+    if (turnResponses.length === 0) {
+      return model.turnResponses;
+    }
+
+    let committedTurnResponses: readonly TurnResponseTurn[] | null = model.turnResponses;
+    for (const turnResponse of turnResponses) {
+      committedTurnResponses = this.appendSessionModelTurnResponse(
+        targetSessionId,
+        turnResponse,
+        ownerPolicy,
+      );
+      if (committedTurnResponses === null) {
+        return null;
+      }
+    }
+
+    return committedTurnResponses ?? model.turnResponses;
   }
 
   private appendSessionModelTurnResponse(
@@ -3489,9 +3643,12 @@ export class ChatEngineService implements IChatContext {
     this.isCancelled = true;
 
     if (options.clearEditSummary === true) {
-      void this.requestHostEditTrackingClearSessionState(this.sessionId).catch((error: unknown) => {
-        console.warn('[AilyChat][RuntimeHost] clear edit tracking session state failed:', error);
-      });
+      const clearSessionId = typeof this.sessionId === 'string' ? this.sessionId.trim() : '';
+      if (clearSessionId) {
+        void this.requestHostEditTrackingClearSessionState(clearSessionId).catch((error: unknown) => {
+          console.warn('[AilyChat][RuntimeHost] clear edit tracking session state failed:', error);
+        });
+      }
     }
 
     if (this.messageSubscription) {
@@ -4380,7 +4537,7 @@ export class ChatEngineService implements IChatContext {
       }
       await this.executePreparedUserSend(runtimeOwnerSessionId, prepared, {
         clearInput: false,
-        activatePreparedUserTurn: true,
+        resetPreparedUserTurnState: true,
       });
     });
   }
@@ -4695,6 +4852,14 @@ export class ChatEngineService implements IChatContext {
       : null;
     const committedBranch = commitSessionCheckpointForwardBranch(checkpointTimelineState);
     if (!model || !committedBranch || typeof replaceCheckpointTimelineState !== 'function') {
+      console.info('[AilyChat][CheckpointRestoreTrace]', {
+        phase: 'commit-forward-branch-skip',
+        sessionId: targetSessionId,
+        hasModel: !!model,
+        hasCommittedBranch: !!committedBranch,
+        hasReplaceCheckpointTimelineState: typeof replaceCheckpointTimelineState === 'function',
+        timeline: this.summarizeCheckpointTimelineForTrace(checkpointTimelineState),
+      });
       return false;
     }
 
@@ -4706,6 +4871,24 @@ export class ChatEngineService implements IChatContext {
     const turnResponses = replaceSessionModelTurnResponses.call(this, targetSessionId, committedBranch.turnResponses)
       ?? committedBranch.turnResponses;
     replaceCheckpointTimelineState.call(model, committedBranch.checkpointTimelineState);
+    const protocolTruncation = this.buildProtocolTruncationForCommittedCheckpointBranch(
+      turnResponses,
+      committedBranch.discardedTurnResponses,
+    );
+    if (protocolTruncation) {
+      this.pendingProtocolTruncations.set(targetSessionId, protocolTruncation);
+    } else {
+      this.pendingProtocolTruncations.delete(targetSessionId);
+    }
+    console.info('[AilyChat][CheckpointRestoreTrace]', {
+      phase: 'commit-forward-branch',
+      sessionId: targetSessionId,
+      beforeTimeline: this.summarizeCheckpointTimelineForTrace(checkpointTimelineState),
+      afterTimeline: this.summarizeCheckpointTimelineForTrace(committedBranch.checkpointTimelineState),
+      retainedTurnIds: this.summarizeTurnResponseIdsForTrace(turnResponses),
+      discardedTurnIds: this.summarizeTurnResponseIdsForTrace(committedBranch.discardedTurnResponses),
+      protocolTruncation,
+    });
 
     await this.requestHostEditTrackingRestore(targetSessionId, turnResponses);
 
@@ -4738,6 +4921,78 @@ export class ChatEngineService implements IChatContext {
 
     this.triggerSyncDetectChanges?.();
     return true;
+  }
+
+  private buildProtocolTruncationForCommittedCheckpointBranch(
+    retainedTurnResponses: readonly TurnResponseTurn[],
+    discardedTurnResponses: readonly TurnResponseTurn[],
+  ): ChatRuntimeHostProtocolTruncation | null {
+    const retainedTurnIds = retainedTurnResponses
+      .map(turn => typeof turn.turnId === 'string' ? turn.turnId.trim() : '')
+      .filter((turnId): turnId is string => turnId.length > 0);
+    const discardedTurnIds = discardedTurnResponses
+      .map(turn => typeof turn.turnId === 'string' ? turn.turnId.trim() : '')
+      .filter((turnId): turnId is string => turnId.length > 0);
+    const [firstDiscardedTurnId] = discardedTurnIds;
+    if (firstDiscardedTurnId) {
+      return {
+        kind: 'removeFrom',
+        turnId: firstDiscardedTurnId,
+        retainedTurnIds,
+        discardedTurnIds,
+      };
+    }
+
+    if (retainedTurnIds.length > 0) {
+      console.warn('[AilyChat][CheckpointRestore] Cannot build protocol truncation: discarded branch has no turn id.', {
+        retainedTurnIds,
+        discardedCount: discardedTurnResponses.length,
+      });
+      return null;
+    }
+
+    return {
+      kind: 'clear',
+      retainedTurnIds,
+      discardedTurnIds,
+    };
+  }
+
+  private peekPendingProtocolTruncation(sessionId: string | null | undefined): ChatRuntimeHostProtocolTruncation | null {
+    const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    return targetSessionId ? this.pendingProtocolTruncations.get(targetSessionId) ?? null : null;
+  }
+
+  private summarizeTurnResponseIdsForTrace(turnResponses: readonly TurnResponseTurn[] | null | undefined): string[] {
+    return (turnResponses ?? []).map(turn => {
+      const turnId = typeof turn.turnId === 'string' ? turn.turnId.trim() : '';
+      return turnId || '<missing-turn-id>';
+    });
+  }
+
+  private summarizeCheckpointTimelineForTrace(state: SessionCheckpointTimelineState | null | undefined): Record<string, unknown> | null {
+    if (!state) {
+      return null;
+    }
+    return {
+      sessionResource: state.sessionResource,
+      currentCheckpointIndex: state.currentCheckpointIndex,
+      currentTurnResponseCount: state.currentTurnResponseCount,
+      checkpoints: state.checkpoints.map(checkpoint => ({
+        checkpointId: checkpoint.checkpointId,
+        requestId: checkpoint.requestId,
+        turnId: checkpoint.turnId ?? null,
+        turnIndex: checkpoint.turnIndex,
+      })),
+      turnIds: this.summarizeTurnResponseIdsForTrace(state.turnResponses),
+    };
+  }
+
+  private clearPendingProtocolTruncation(sessionId: string | null | undefined): void {
+    const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (targetSessionId) {
+      this.pendingProtocolTruncations.delete(targetSessionId);
+    }
   }
 
   private hasRestoredCheckpointForwardBranch(sessionId?: string | null): boolean {
@@ -4860,6 +5115,8 @@ export class ChatEngineService implements IChatContext {
       case 'transcript':
         this.applyRuntimeHostTranscriptEvent(targetSessionId, event.transcript.turnResponses, {
           visibleProjection: this.shouldProjectRuntimeHostTranscriptEvent(targetSessionId),
+          // Runtime-host live transcript events are progress deltas over the service-owned model.
+          authoritativeSnapshot: false,
         });
         return;
       case 'session-state':
@@ -5080,17 +5337,25 @@ export class ChatEngineService implements IChatContext {
     turnResponses: readonly TurnResponseTurn[],
     options?: {
       readonly visibleProjection?: boolean;
+      readonly authoritativeSnapshot?: boolean;
     },
   ): void {
     this.dialogItemsCache = null;
-    const replaceSessionModelTurnResponses = (
-      (this as unknown as { replaceSessionModelTurnResponses?: ChatEngineService['replaceSessionModelTurnResponses'] })
-        .replaceSessionModelTurnResponses
-      ?? ChatEngineService.prototype['replaceSessionModelTurnResponses']
-    );
-    const committedTurnResponses = replaceSessionModelTurnResponses.call(this, sessionId, turnResponses, {
+    const commitSessionModelTurnResponses = options?.authoritativeSnapshot === false
+      ? (
+        (this as unknown as { mergeSessionModelTurnResponses?: ChatEngineService['mergeSessionModelTurnResponses'] })
+          .mergeSessionModelTurnResponses
+        ?? ChatEngineService.prototype['mergeSessionModelTurnResponses']
+      )
+      : (
+        (this as unknown as { replaceSessionModelTurnResponses?: ChatEngineService['replaceSessionModelTurnResponses'] })
+          .replaceSessionModelTurnResponses
+        ?? ChatEngineService.prototype['replaceSessionModelTurnResponses']
+      );
+    const committedTurnResponses = commitSessionModelTurnResponses.call(this, sessionId, turnResponses, {
       source: 'runtime-host-transcript',
     }) ?? turnResponses;
+    this.refreshSessionCheckpointTimelineFromRuntimeTranscript(sessionId, committedTurnResponses);
 
     const visibleCurrentSession = options?.visibleProjection === true
       && this.ensureRuntimeEventSessionViewAttached(sessionId);
@@ -5106,6 +5371,214 @@ export class ChatEngineService implements IChatContext {
       this.visibleProjectionSessionId = sessionId;
       this.triggerSyncDetectChanges();
     }
+  }
+
+  private refreshSessionCheckpointTimelineFromRuntimeTranscript(
+    sessionId: string,
+    turnResponses: readonly TurnResponseTurn[] | null,
+  ): void {
+    const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!targetSessionId || !turnResponses || turnResponses.length === 0) {
+      return;
+    }
+    const model = this.chatSessionModelStore?.get?.(targetSessionId);
+    if (!model) {
+      return;
+    }
+    const getCheckpointTimelineState = (model as unknown as {
+      getCheckpointTimelineState?: ChatSessionModel['getCheckpointTimelineState'];
+    }).getCheckpointTimelineState;
+    const replaceCheckpointTimelineState = (model as unknown as {
+      replaceCheckpointTimelineState?: ChatSessionModel['replaceCheckpointTimelineState'];
+    }).replaceCheckpointTimelineState;
+    if (typeof replaceCheckpointTimelineState !== 'function') {
+      return;
+    }
+    const previousTimeline = typeof getCheckpointTimelineState === 'function'
+      ? getCheckpointTimelineState.call(model)
+      : null;
+    if (canRedoSessionCheckpointTimeline(previousTimeline)
+      && this.isRuntimeTranscriptStaleCheckpointReplay(previousTimeline, turnResponses)) {
+      return;
+    }
+    replaceCheckpointTimelineState.call(
+      model,
+      this.createRuntimeTranscriptCheckpointTimelineState(
+        targetSessionId,
+        turnResponses,
+        previousTimeline,
+      ),
+    );
+  }
+
+  private createRuntimeTranscriptCheckpointTimelineState(
+    sessionId: string,
+    turnResponses: readonly TurnResponseTurn[],
+    previousTimeline: SessionCheckpointTimelineState | null,
+  ): SessionCheckpointTimelineState {
+    const metadataByCheckpointId = new Map<string, RequestCheckpointMetadata>();
+    const metadataByRequestId = new Map<string, RequestCheckpointMetadata>();
+    const metadataByTurnId = new Map<string, RequestCheckpointMetadata>();
+
+    previousTimeline?.checkpoints.forEach(checkpoint => {
+      this.rememberRuntimeTranscriptCheckpointMetadata(checkpoint.metadata, {
+        metadataByCheckpointId,
+        metadataByRequestId,
+        metadataByTurnId,
+      });
+      this.rememberRuntimeTranscriptCheckpointMetadata(
+        this.editCheckpointService.getRequestCheckpointMetadataByCheckpointId?.(checkpoint.checkpointId),
+        { metadataByCheckpointId, metadataByRequestId, metadataByTurnId },
+      );
+      this.rememberRuntimeTranscriptCheckpointMetadata(
+        this.editCheckpointService.getRequestCheckpointMetadataByRequestId?.(checkpoint.requestId),
+        { metadataByCheckpointId, metadataByRequestId, metadataByTurnId },
+      );
+    });
+
+    turnResponses.forEach((turn, index) => {
+      const inlineMetadata = this.readRuntimeTranscriptCheckpointMetadataFromTurn(sessionId, turn, index);
+      this.rememberRuntimeTranscriptCheckpointMetadata(inlineMetadata, {
+        metadataByCheckpointId,
+        metadataByRequestId,
+        metadataByTurnId,
+      });
+      this.rememberRuntimeTranscriptCheckpointMetadata(
+        this.editCheckpointService.getRequestCheckpointMetadataByCheckpointId?.(inlineMetadata?.checkpointId),
+        { metadataByCheckpointId, metadataByRequestId, metadataByTurnId },
+      );
+      this.rememberRuntimeTranscriptCheckpointMetadata(
+        this.editCheckpointService.getRequestCheckpointMetadataByRequestId?.(inlineMetadata?.requestId),
+        { metadataByCheckpointId, metadataByRequestId, metadataByTurnId },
+      );
+    });
+
+    return createSessionCheckpointTimelineState({
+      sessionResource: sessionId,
+      turnResponses,
+      metadataByCheckpointId,
+      metadataByRequestId,
+      metadataByTurnId,
+    });
+  }
+
+  private rememberRuntimeTranscriptCheckpointMetadata(
+    metadata: RequestCheckpointMetadata | null | undefined,
+    maps: {
+      readonly metadataByCheckpointId: Map<string, RequestCheckpointMetadata>;
+      readonly metadataByRequestId: Map<string, RequestCheckpointMetadata>;
+      readonly metadataByTurnId: Map<string, RequestCheckpointMetadata>;
+    },
+  ): void {
+    if (!metadata) {
+      return;
+    }
+    const checkpointId = this.normalizeRuntimeTranscriptMetadataString(metadata.checkpointId);
+    const requestId = this.normalizeRuntimeTranscriptMetadataString(metadata.requestId);
+    const turnId = this.normalizeRuntimeTranscriptMetadataString(metadata.turnId);
+    if (checkpointId) {
+      maps.metadataByCheckpointId.set(checkpointId, metadata);
+    }
+    if (requestId) {
+      maps.metadataByRequestId.set(requestId, metadata);
+    }
+    if (turnId) {
+      maps.metadataByTurnId.set(turnId, metadata);
+    }
+  }
+
+  private readRuntimeTranscriptCheckpointMetadataFromTurn(
+    sessionId: string,
+    turn: TurnResponseTurn,
+    turnIndex: number,
+  ): RequestCheckpointMetadata | null {
+    const metadata = turn.request?.metadata;
+    const record = metadata && typeof metadata === 'object' && !Array.isArray(metadata)
+      ? metadata as Record<string, unknown>
+      : null;
+    if (!record) {
+      return null;
+    }
+
+    const checkpointId = this.normalizeRuntimeTranscriptMetadataString(record['checkpointId']);
+    if (!checkpointId) {
+      return null;
+    }
+    const requestId = this.normalizeRuntimeTranscriptMetadataString(record['requestId'])
+      || this.normalizeRuntimeTranscriptMetadataString(turn.turnId)
+      || checkpointId;
+    const checkpointNamespace = this.normalizeRuntimeTranscriptMetadataString(record['checkpointNamespace'])
+      || `refs/sessions/${sessionId}`;
+    const checkpointTurnIndex = this.normalizeRuntimeTranscriptMetadataIndex(record['checkpointTurnIndex'])
+      ?? turnIndex + 1;
+    const checkpointRef = this.normalizeRuntimeTranscriptMetadataString(record['checkpointRef']);
+    const startCheckpointRef = this.normalizeRuntimeTranscriptMetadataString(record['startCheckpointRef']);
+    const additionalCheckpointRefs = this.readRuntimeTranscriptMetadataStringRecord(record['checkpointRefs']);
+    const additionalStartCheckpointRefs = this.readRuntimeTranscriptMetadataStringRecord(record['startCheckpointRefs']);
+
+    return {
+      source: 'request-metadata',
+      checkpointId,
+      sessionResource: sessionId,
+      requestId,
+      ...(turn.turnId ? { turnId: turn.turnId } : {}),
+      checkpointNamespace,
+      turnIndex: checkpointTurnIndex,
+      ...(startCheckpointRef ? { startCheckpointRef } : {}),
+      ...(checkpointRef ? { checkpointRef } : {}),
+      ...(additionalStartCheckpointRefs ? { additionalStartCheckpointRefs } : {}),
+      ...(additionalCheckpointRefs ? { additionalCheckpointRefs } : {}),
+    };
+  }
+
+  private normalizeRuntimeTranscriptMetadataString(value: unknown): string {
+    return typeof value === 'string' ? value.trim() : '';
+  }
+
+  private normalizeRuntimeTranscriptMetadataIndex(value: unknown): number | null {
+    return typeof value === 'number' && Number.isFinite(value)
+      ? Math.max(0, Math.trunc(value))
+      : null;
+  }
+
+  private readRuntimeTranscriptMetadataStringRecord(value: unknown): Record<string, string> | undefined {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return undefined;
+    }
+    const entries = Object.entries(value as Record<string, unknown>)
+      .map(([key, item]) => [key, this.normalizeRuntimeTranscriptMetadataString(item)] as const)
+      .filter((entry): entry is readonly [string, string] => entry[1].length > 0);
+    return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+  }
+
+  private isRuntimeTranscriptStaleCheckpointReplay(
+    timeline: SessionCheckpointTimelineState | null,
+    turnResponses: readonly TurnResponseTurn[],
+  ): boolean {
+    if (!timeline) {
+      return false;
+    }
+    const incomingTurnIds = new Set(
+      turnResponses
+        .map(turn => typeof turn.turnId === 'string' ? turn.turnId.trim() : '')
+        .filter((turnId): turnId is string => turnId.length > 0),
+    );
+    const timelineTurnIds = new Set(
+      timeline.turnResponses
+        .map(turn => typeof turn.turnId === 'string' ? turn.turnId.trim() : '')
+        .filter((turnId): turnId is string => turnId.length > 0),
+    );
+    const hiddenTurnIds = getSessionCheckpointHiddenTurnResponses(timeline)
+      .map(turn => typeof turn.turnId === 'string' ? turn.turnId.trim() : '')
+      .filter((turnId): turnId is string => turnId.length > 0);
+    if (hiddenTurnIds.length === 0) {
+      return false;
+    }
+    const incomingHasNewBranchTurn = Array.from(incomingTurnIds).some(turnId => !timelineTurnIds.has(turnId));
+    if (incomingHasNewBranchTurn) {
+      return false;
+    }
+    return hiddenTurnIds.every(turnId => incomingTurnIds.has(turnId));
   }
 
   private syncResolvedActiveModelFromCommittedTranscript(
@@ -5445,6 +5918,7 @@ export class ChatEngineService implements IChatContext {
     if (transcript?.turnResponses?.length) {
       this.applyRuntimeHostTranscriptEvent(sessionId, transcript.turnResponses, {
         visibleProjection: true,
+        authoritativeSnapshot: true,
       });
     }
 
@@ -6392,10 +6866,7 @@ Do not create non-existent boards and libraries.
     }
   }
 
-  private activatePreparedUserTurn(
-    runtimeSessionId: string | null | undefined,
-    prepared: PreparedPendingFollowupRequest,
-  ): void {
+  private resetPreparedUserTurnState(): void {
     if (this.isCompleted) {
       this.isCancelled = false;
       this.isCompleted = false;
@@ -6406,15 +6877,6 @@ Do not create non-existent boards and libraries.
       this.pendingUserInput = false;
       this.activeToolExecutions = 0;
     }
-
-    const targetSessionId = typeof runtimeSessionId === 'string' && runtimeSessionId.trim().length > 0
-      ? runtimeSessionId.trim()
-      : '';
-    if (!this.shouldProjectRuntimeViewStateToVisibleOwner(targetSessionId)) {
-      return;
-    }
-
-    this.msg.appendMessage('user', prepared.displayText);
   }
 
   private async executePreparedUserSend(
@@ -6422,7 +6884,7 @@ Do not create non-existent boards and libraries.
     prepared: PreparedPendingFollowupRequest,
     options?: {
       clearInput?: boolean;
-      activatePreparedUserTurn?: boolean;
+      resetPreparedUserTurnState?: boolean;
     },
   ): Promise<void> {
     const clearInput = options?.clearInput !== false;
@@ -6440,14 +6902,16 @@ Do not create non-existent boards and libraries.
         throw new Error('executePreparedUserSend requires the target session to be attached before submit.');
       }
 
+      await this.commitRestoredCheckpointForwardBranchBeforeUserTurn(targetSessionId);
+
       const existingTurnResponses = this.readSessionTurnResponses(targetSessionId);
       this.markVisibleSessionProjectionOwner(targetSessionId);
       this.lexStream.hydrateTurnResponses?.(targetSessionId, existingTurnResponses, {
         visibility: 'visibleAttach',
       });
 
-      if (options?.activatePreparedUserTurn) {
-        this.activatePreparedUserTurn(targetSessionId, prepared);
+      if (options?.resetPreparedUserTurnState) {
+        this.resetPreparedUserTurnState();
       }
 
       if (isRequestStateTraceEnabled()) {
@@ -6490,6 +6954,7 @@ Do not create non-existent boards and libraries.
       console.info(
         `[AilyChat][HostSubmitModel] session=${targetSessionId || ''} currentSession=${currentServiceSessionId} model=${currentModelSnapshot?.model ?? ''} preset=${currentModelSnapshot?.presetId ?? ''} name=${currentModelSnapshot?.name ?? ''}`,
       );
+      const protocolTruncation = this.peekPendingProtocolTruncation(targetSessionId);
       await this.runtimeHostForView().submitTurn({
         sessionId: targetSessionId,
         requestText: prepared.llmText,
@@ -6499,7 +6964,11 @@ Do not create non-existent boards and libraries.
         currentModel: currentModelSnapshot,
         metadata: this.withHostRuntimeSessionInventoryMetadata(targetSessionId, prepared.requestMetadata ?? null),
         activeResponseHandle: null,
+        ...(protocolTruncation ? { protocolTruncation } : {}),
       });
+      if (protocolTruncation) {
+        this.clearPendingProtocolTruncation(targetSessionId);
+      }
       if (isSendDebugTraceEnabled()) {
         console.info('[AilyChat][SendDebug] after turn.run', {
           runtimeSessionId: runtimeSessionId || null,
@@ -6532,17 +7001,40 @@ Do not create non-existent boards and libraries.
     }
     if (runtimeSessionId) {
       const readiness = await this.readRuntimeHostSubmitReadiness(runtimeSessionId);
+      if (isRequestStateTraceEnabled()) {
+        console.info(
+          '[AilyChat][SendGateScalar]',
+          [
+            `sessionId=${runtimeSessionId}`,
+            `canSubmit=${String(readiness.canSubmit)}`,
+            `requestInProgress=${String(readiness.requestInProgress)}`,
+            `sender=${sender}`,
+            `textLength=${String(typeof content === 'string' ? content.trim().length : 0)}`,
+          ].join(' '),
+        );
+      }
       traceBackgroundSessionExecution('send-gate-check', {
         runtimeSessionId,
         canStartRequest: readiness.canSubmit,
       });
       if (!readiness.canSubmit) {
-        this.queueFollowupMessage(content, runtimeSessionId, { kind: 'queued' });
-        traceBackgroundSessionExecution('send-gated-before-run', {
-          runtimeSessionId,
-          activeRequestInProgress: readiness.requestInProgress,
-        });
-        return;
+        if (!readiness.requestInProgress) {
+          console.warn('[AilyChat][Send] Host submit readiness rejected an idle session; continuing as a normal send so the host runtime remains the request owner.', {
+            runtimeSessionId,
+            readiness,
+          });
+          traceBackgroundSessionExecution('send-readiness-idle-continue', {
+            runtimeSessionId,
+            activeRequestInProgress: readiness.requestInProgress,
+          });
+        } else {
+          this.queueFollowupMessage(content, runtimeSessionId, { kind: 'queued' });
+          traceBackgroundSessionExecution('send-gated-before-run', {
+            runtimeSessionId,
+            activeRequestInProgress: readiness.requestInProgress,
+          });
+          return;
+        }
       }
     }
 
@@ -6565,12 +7057,36 @@ Do not create non-existent boards and libraries.
 
       const prepared = this.sendCoordinator.prepareSend(sender, effectiveContent, {
         sessionId: runtimeSessionId,
-        projectUserMessage: this.shouldProjectRuntimeViewStateToVisibleOwner(runtimeSessionId),
       });
       if (!prepared) return;
 
+      if (isRequestStateTraceEnabled()) {
+        console.info(
+          '[AilyChat][SendExecuteScalar]',
+          [
+            'phase=prepared',
+            `sessionId=${runtimeSessionId || '<none>'}`,
+            `sender=${sender}`,
+            `requestId=${readPreparedPendingFollowupRequestId(prepared) ?? '<none>'}`,
+            `hasInteractionAction=${String(!!prepared.requestMetadata?.['interactionAction'])}`,
+            `displayTextLength=${String((prepared.displayText || prepared.text).trim().length)}`,
+            `requestTextLength=${String(prepared.text.trim().length)}`,
+          ].join(' '),
+        );
+      }
+
       const implicitContinueResult = this.trySubmitImplicitContinueInteraction(sender, content, clear, runtimeSessionId, prepared);
       if (implicitContinueResult !== false && await implicitContinueResult) {
+        if (isRequestStateTraceEnabled()) {
+          console.info(
+            '[AilyChat][SendExecuteScalar]',
+            [
+              'phase=implicit-continue-consumed',
+              `sessionId=${runtimeSessionId || '<none>'}`,
+              `sender=${sender}`,
+            ].join(' '),
+          );
+        }
         return;
       }
 
@@ -6581,6 +7097,17 @@ Do not create non-existent boards and libraries.
       await this.executePreparedUserSend(runtimeSessionId, prepared, {
         clearInput: clear,
       });
+      if (isRequestStateTraceEnabled()) {
+        console.info(
+          '[AilyChat][SendExecuteScalar]',
+          [
+            'phase=submit-dispatched',
+            `sessionId=${runtimeSessionId || '<none>'}`,
+            `sender=${sender}`,
+            `requestId=${readPreparedPendingFollowupRequestId(prepared) ?? '<none>'}`,
+          ].join(' '),
+        );
+      }
     };
 
     if (runtimeSessionId) {

@@ -162,6 +162,14 @@ export class LexTurnSessionBridge implements ITurnDataSource {
     return turns[turns.length - 1]?.id;
   }
 
+  getCurrentTurnIndex(): number | undefined {
+    const agent = this.getAgent();
+    if (!agent) return undefined;
+    const turns = agent.turnManager.turns.get();
+    const index = turns[turns.length - 1]?.index;
+    return typeof index === 'number' && Number.isFinite(index) ? index : undefined;
+  }
+
   findTurnIdByRoundId(roundId: string): string | undefined {
     const agent = this.getAgent();
     if (!agent) return undefined;

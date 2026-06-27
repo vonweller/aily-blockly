@@ -3511,7 +3511,7 @@ function buildCanonicalDialogRequestSignature(
     requestDisabled === true ? 'disabled' : 'enabled',
     request?.content ?? '',
     request?.displayContent ?? '',
-    turn?.createdAt ?? '',
+    getRequestMetadataSignature(request?.metadata),
     buildRoundsProjectionSignature(turn?.rounds),
     entry.user?.displayContent ?? '',
     entry.user?.requestContent ?? '',
@@ -3525,12 +3525,14 @@ function buildCanonicalDialogResponseSignature(
 ): string {
   const turn = entry.turnResponse;
   const response = turn?.response;
+  const request = turn?.request;
   const parts = response?.parts ?? [];
   const lastPart = parts.length > 0 ? parts[parts.length - 1] : null;
 
   return [
     entry.turnId,
     requestDisabled === true ? 'disabled' : 'enabled',
+    getRequestMetadataSignature(request?.metadata),
     turn?.updatedAt ?? '',
     response?.id ?? '',
     response?.participant ?? '',
@@ -3547,6 +3549,43 @@ function buildCanonicalDialogResponseSignature(
     entry.assistant?.modelBillingLabel ?? '',
     entry.runtimeState?.responseSidecar?.vote ?? '',
   ].join('\u0000');
+}
+
+function getRequestMetadataSignature(metadata: TurnResponseTurn['request']['metadata'] | undefined): string {
+  if (!metadata || typeof metadata !== 'object') {
+    return '';
+  }
+  const record = metadata as Record<string, unknown>;
+  return [
+    normalizeMetadataSignatureValue(record['checkpointId']),
+    normalizeMetadataSignatureValue(record['requestId']),
+    normalizeMetadataSignatureValue(record['checkpointRef']),
+    normalizeMetadataSignatureValue(record['startCheckpointRef']),
+    normalizeMetadataSignatureValue(record['checkpointNamespace']),
+    normalizeMetadataSignatureValue(record['checkpointTurnIndex']),
+    getMetadataRecordSignature(record['checkpointRefs']),
+    getMetadataRecordSignature(record['startCheckpointRefs']),
+  ].join('\u001f');
+}
+
+function getMetadataRecordSignature(value: unknown): string {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return '';
+  }
+  return Object.entries(value as Record<string, unknown>)
+    .map(([key, item]) => `${key}:${normalizeMetadataSignatureValue(item)}`)
+    .sort()
+    .join('\u001e');
+}
+
+function normalizeMetadataSignatureValue(value: unknown): string {
+  if (typeof value === 'string') {
+    return value.trim();
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+  return '';
 }
 
 function buildRoundsProjectionSignature(rounds: TurnResponseTurn['rounds'] | undefined): string {

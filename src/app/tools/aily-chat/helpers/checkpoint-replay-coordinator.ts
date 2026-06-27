@@ -221,6 +221,36 @@ class CheckpointPreparedFailureSignal extends Error {
   }
 }
 
+function normalizeString(value: string | null | undefined): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function summarizeTurnResponseIds(turnResponses: readonly TurnResponseTurn[] | null | undefined): string[] {
+  return (turnResponses ?? []).map(turn => normalizeString(turn.turnId) || '<missing-turn-id>');
+}
+
+function summarizeTurnResponseCheckpointIds(turnResponses: readonly TurnResponseTurn[] | null | undefined): string[] {
+  return (turnResponses ?? []).map(turn => normalizeString(turn.request?.metadata?.checkpointId) || '<missing-checkpoint-id>');
+}
+
+function summarizeCheckpointTimeline(state: SessionCheckpointTimelineState | null | undefined): Record<string, unknown> | null {
+  if (!state) {
+    return null;
+  }
+  return {
+    sessionResource: state.sessionResource,
+    currentCheckpointIndex: state.currentCheckpointIndex,
+    currentTurnResponseCount: state.currentTurnResponseCount,
+    checkpoints: state.checkpoints.map(checkpoint => ({
+      checkpointId: checkpoint.checkpointId,
+      requestId: checkpoint.requestId,
+      turnId: checkpoint.turnId ?? null,
+      turnIndex: checkpoint.turnIndex,
+    })),
+    turnIds: summarizeTurnResponseIds(state.turnResponses),
+    checkpointIds: summarizeTurnResponseCheckpointIds(state.turnResponses),
+  };
+}
 type CheckpointTransitionCommitSuccess = { ok: true };
 type CheckpointRestoreCommitTransitionResult =
   | CheckpointTransitionCommitSuccess
@@ -319,7 +349,7 @@ type CheckpointRedoReplayExecutionState = {
   artifact: CheckpointReplayArtifact;
   restoreAttempted: boolean;
   restoreCompleted: boolean;
-  restoredLexSession: boolean | void | undefined;
+  restoredSessionModel: boolean | void | undefined;
   deferredCommitFailureResult?: CheckpointRedoChatReplayResult;
 } & CheckpointRedoLocalRollbackState;
 
@@ -329,7 +359,7 @@ interface CheckpointReplayArtifact {
   applyPreparedSessionSave: () => void;
   applyPreparedReplayRestore: () => Promise<boolean | void | undefined>;
   rollbackPreparedLocalStateOnFailure: (state: CheckpointRedoLocalRollbackState) => string[];
-  applyPreparedReplayLexRollback: () => Promise<CheckpointRedoReplayLifecycleRollbackResult>;
+  applyPreparedReplayModelRollback: () => Promise<CheckpointRedoReplayLifecycleRollbackResult>;
   applyPreparedLocalCommit: (state: CheckpointRedoLocalRollbackState) => Promise<void> | void;
   preparedSequentialExecution: CheckpointPreparedSequentialExecution<
     CheckpointRedoReplayExecutionState,
@@ -616,14 +646,24 @@ export class CheckpointReplayCoordinator {
     const sessionId = restoreTarget.sessionResource;
     const saveTarget = this.resolveCheckpointSaveTarget(sessionId);
     const liveTurnResponses = [...this.readSessionModelTurnResponses(sessionId)];
-
-    let truncateIndex = -1;
-    if (options.turnId) {
-      truncateIndex = liveTurnResponses.findIndex(turn => turn.turnId === options.turnId);
-    }
+    const restoreBoundary = this.resolveCheckpointRestoreTruncationBoundary({
+      checkpointId,
+      sessionId,
+      liveTurnResponses,
+      restoreTargetTurnId: restoreTarget.turnId,
+      restoreTargetRequestId: restoreTarget.requestId,
+      requestedTurnId: options.turnId,
+      requestedListIndex: options.listIndex,
+    });
+    const truncateIndex = restoreBoundary.truncateIndex;
+    const restoreTurnId = restoreBoundary.turnId;
+    const restoreListIndex = restoreBoundary.listIndex;
+    const retainedTurnResponses = liveTurnResponses.slice(0, truncateIndex);
+    const discardedTurnResponses = liveTurnResponses.slice(truncateIndex);
+    const checkpointTimelineState = this.ctx.readSessionCheckpointTimelineState?.(sessionId) ?? null;
 
     const shouldCaptureRestoreBeforeHostRecord = options.captureRedoTurns !== false;
-    const restoreBeforeTurnResponses = shouldCaptureRestoreBeforeHostRecord && options.turnId && truncateIndex >= 0
+    const restoreBeforeTurnResponses = shouldCaptureRestoreBeforeHostRecord
       ? [...liveTurnResponses]
       : null;
     const restoreBeforeHostRecord = restoreBeforeTurnResponses
@@ -633,9 +673,24 @@ export class CheckpointReplayCoordinator {
         target: saveTarget,
       }) ?? null
       : null;
-    const persistedVisibleTurnResponses = options.turnId && truncateIndex >= 0
-      ? liveTurnResponses.slice(0, truncateIndex)
-      : liveTurnResponses;
+    const persistedVisibleTurnResponses = retainedTurnResponses;
+    console.info('[AilyChat][CheckpointRestoreTrace]', {
+      phase: 'prepare-commit',
+      sessionId,
+      checkpointId,
+      restoreTargetTurnId: restoreTarget.turnId ?? null,
+      restoreTargetRequestId: restoreTarget.requestId,
+      requestedTurnId: options.turnId ?? null,
+      requestedListIndex: typeof options.listIndex === 'number' ? options.listIndex : null,
+      resolvedTurnId: restoreTurnId ?? null,
+      resolvedListIndex: typeof restoreListIndex === 'number' ? restoreListIndex : null,
+      truncateIndex,
+      liveTurnIds: summarizeTurnResponseIds(liveTurnResponses),
+      liveCheckpointIds: summarizeTurnResponseCheckpointIds(liveTurnResponses),
+      retainedTurnIds: summarizeTurnResponseIds(retainedTurnResponses),
+      discardedTurnIds: summarizeTurnResponseIds(discardedTurnResponses),
+      timeline: summarizeCheckpointTimeline(checkpointTimelineState),
+    });
     const persistedVisibleProjectionState = buildHostProjectionStateFromPersistedRecord({
       turnResponses: persistedVisibleTurnResponses,
     });
@@ -654,8 +709,8 @@ export class CheckpointReplayCoordinator {
       checkpointId,
       restoreBeforeHostRecord,
       hostProjectionState: persistedVisibleProjectionState,
-      turnId: options.turnId,
-      listIndex: options.listIndex,
+      turnId: restoreTurnId,
+      listIndex: restoreListIndex,
       truncateIndex,
       truncateLiveTurnResponses: options.truncateLiveTurnResponses !== false,
       liveTurnResponses,
@@ -668,8 +723,8 @@ export class CheckpointReplayCoordinator {
 
     const artifact = {
       checkpointId,
-      turnId: options.turnId,
-      listIndex: options.listIndex,
+      turnId: restoreTurnId,
+      listIndex: restoreListIndex,
       truncateIndex,
       captureRedoTurns: shouldCaptureRestoreBeforeHostRecord,
       truncateLiveTurnResponses: options.truncateLiveTurnResponses !== false,
@@ -711,6 +766,7 @@ export class CheckpointReplayCoordinator {
     const restoreTurnNativeHistoryList = this.viewWriteBridge.restoreTurnNativeHistoryList.bind(this.viewWriteBridge);
     const restoreRebuildState = this.ctx.editCheckpointService.restoreRebuildState?.bind(this.ctx.editCheckpointService);
     const restorePublishedSummary = this.ctx.editCheckpointService.restorePublishedSummary?.bind(this.ctx.editCheckpointService);
+    const replaceSessionModelTurnResponses = this.ctx.replaceSessionModelTurnResponses?.bind(this.ctx);
 
     const historyRollbackStep: CheckpointRedoLocalRollbackStep = {
       failureMessage: '恢复先前 host projection 失败',
@@ -743,29 +799,59 @@ export class CheckpointReplayCoordinator {
       applyPreparedLocalCommit: async state => {
         state.appliedRollbackSteps = [];
 
-        hydrateTurnResponses?.(params.sessionId, params.turnResponses, { visibility: 'visibleAttach' });
+        const committedTurnResponses = replaceSessionModelTurnResponses?.(
+          params.sessionId,
+          params.turnResponses,
+          { source: 'checkpoint-redo-commit' },
+        );
+        if (committedTurnResponses === null) {
+          throw new Error(`Checkpoint redo rejected turn owner mismatch for ${params.sessionId}`);
+        }
+        const visibleTurnResponses = Array.isArray(committedTurnResponses)
+          ? committedTurnResponses
+          : params.turnResponses;
+        const visibleProjectionState = visibleTurnResponses === params.visibleProjectionState.turnResponses
+          ? params.visibleProjectionState
+          : buildHostProjectionStateFromPersistedRecord({ turnResponses: visibleTurnResponses });
+
+        hydrateTurnResponses?.(params.sessionId, visibleTurnResponses, { visibility: 'visibleAttach' });
         params.applyPreparedRebuildState();
 
         state.appliedRollbackSteps.push(historyRollbackStep);
-        if (params.visibleProjectionState.turnResponses.length === 0) {
-          restoreLegacyHistoryList(params.visibleProjectionState.chatList);
+        if (visibleProjectionState.turnResponses.length === 0) {
+          restoreLegacyHistoryList(visibleProjectionState.chatList);
         } else {
-          const turnIds = new Set(params.visibleProjectionState.turnResponses.map(turn => turn.turnId));
+          const turnIds = new Set(visibleProjectionState.turnResponses.map(turn => turn.turnId));
           restoreTurnNativeHistoryList(
-            buildTurnNativeRestoreChatList(params.visibleProjectionState.chatList, turnIds),
+            buildTurnNativeRestoreChatList(visibleProjectionState.chatList, turnIds),
             turnIds,
           );
-          projectTurnResponsesToHistory(this.ctx, params.visibleProjectionState.turnResponses);
+          projectTurnResponsesToHistory(this.ctx, visibleProjectionState.turnResponses);
         }
 
         state.appliedRollbackSteps.push(projectionRollbackStep);
-        replaceSharedHostProjectionState?.(params.visibleProjectionState, {
+        replaceSharedHostProjectionState?.(visibleProjectionState, {
           sessionId: params.sessionId,
           attachedView: true,
         });
       },
       rollbackPreparedLocalStateOnFailure: state => {
         const rollbackErrors: string[] = [];
+
+        try {
+          replaceSessionModelTurnResponses?.(
+            params.sessionId,
+            params.previousHostResponseState.turnResponses,
+            { source: 'checkpoint-redo-rollback' },
+          );
+          hydrateTurnResponses?.(params.sessionId, params.previousHostResponseState.turnResponses, { visibility: 'visibleAttach' });
+        } catch (rollbackError: any) {
+          rollbackErrors.push(
+            rollbackError?.message
+              ? `恢复 session model 失败: ${rollbackError.message}`
+              : '恢复 session model 失败',
+          );
+        }
 
         if (params.rebuildState) {
           try {
@@ -809,26 +895,31 @@ export class CheckpointReplayCoordinator {
   private createPreparedCheckpointRedoReplayActions(params: {
     sessionId: string;
     turnResponses: readonly TurnResponseTurn[];
-    previousLexTurnResponses: TurnResponseTurn[];
+    previousSessionModelTurnResponses: TurnResponseTurn[];
   }): {
     applyPreparedReplayRestore: () => Promise<boolean | void | undefined>;
-    applyPreparedReplayLexRollback: () => Promise<CheckpointRedoReplayLifecycleRollbackResult>;
+    applyPreparedReplayModelRollback: () => Promise<CheckpointRedoReplayLifecycleRollbackResult>;
   } {
-    const restoreLexSession = this.ctx.lexStream.session.restore?.bind(this.ctx.lexStream.session);
     const hydrateTurnResponses = this.ctx.lexStream.hydrateTurnResponses?.bind(this.ctx.lexStream);
+    const replaceSessionModelTurnResponses = this.ctx.replaceSessionModelTurnResponses?.bind(this.ctx);
 
     return {
-      applyPreparedReplayRestore: async () => restoreLexSession?.(
-          params.sessionId,
-          params.turnResponses,
-        ),
-      applyPreparedReplayLexRollback: async () => {
+      applyPreparedReplayRestore: async () => true,
+      applyPreparedReplayModelRollback: async () => {
         try {
-          await restoreLexSession?.(
+          const committedTurnResponses = replaceSessionModelTurnResponses?.(
             params.sessionId,
-            params.previousLexTurnResponses,
+            params.previousSessionModelTurnResponses,
+            { source: 'checkpoint-redo-rollback' },
           );
-          hydrateTurnResponses?.(params.sessionId, params.previousLexTurnResponses, { visibility: 'visibleAttach' });
+          if (committedTurnResponses === null) {
+            throw new Error(`Checkpoint redo rollback rejected turn owner mismatch for ${params.sessionId}`);
+          }
+          hydrateTurnResponses?.(
+            params.sessionId,
+            Array.isArray(committedTurnResponses) ? committedTurnResponses : params.previousSessionModelTurnResponses,
+            { visibility: 'visibleAttach' },
+          );
           return {
             rollbackErrors: [],
             rolledBackOnError: true,
@@ -837,8 +928,8 @@ export class CheckpointReplayCoordinator {
           return {
             rollbackErrors: [
               restoreError instanceof Error && restoreError.message
-                ? `恢复先前 lex session 失败: ${restoreError.message}`
-                : '恢复先前 lex session 失败',
+                ? `恢复先前 session model 失败: ${restoreError.message}`
+                : '恢复先前 session model 失败',
             ],
             rolledBackOnError: false,
           };
@@ -863,13 +954,13 @@ export class CheckpointReplayCoordinator {
       );
     }
 
-    const lexRollbackResult = await state.artifact.applyPreparedReplayLexRollback();
-    rollbackErrors.push(...lexRollbackResult.rollbackErrors);
+    const modelRollbackResult = await state.artifact.applyPreparedReplayModelRollback();
+    rollbackErrors.push(...modelRollbackResult.rollbackErrors);
 
     return this.buildReplayFailureResult(
       error,
       rollbackErrors,
-      rollbackErrors.length === 0 && lexRollbackResult.rolledBackOnError,
+      rollbackErrors.length === 0 && modelRollbackResult.rolledBackOnError,
     );
   }
 
@@ -927,19 +1018,12 @@ export class CheckpointReplayCoordinator {
     const restoreLegacyHistoryList = this.viewWriteBridge.restoreLegacyHistoryList.bind(this.viewWriteBridge);
     const restoreTurnNativeHistoryList = this.viewWriteBridge.restoreTurnNativeHistoryList.bind(this.viewWriteBridge);
     const hydrateTurnResponses = this.ctx.lexStream.hydrateTurnResponses?.bind(this.ctx.lexStream);
-    const lexSession = this.ctx.lexStream.session;
     const restoreTransactionContext: SessionModelBoundaryTransactionContext = {
       ...this.ctx,
       lexStream: {
         ...this.ctx.lexStream,
         hydrateTurnResponses,
-        session: lexSession
-          ? {
-            ...lexSession,
-            resolveRestorePlan: lexSession.resolveRestorePlan?.bind(lexSession),
-            restoreResolvedSnapshot: lexSession.restoreResolvedSnapshot?.bind(lexSession),
-          }
-          : lexSession,
+        session: undefined,
       },
       projectRestoredHostProjection: this.ctx.projectRestoredHostProjection,
       replaceSessionModelTurnResponses: this.ctx.replaceSessionModelTurnResponses,
@@ -954,22 +1038,18 @@ export class CheckpointReplayCoordinator {
       const previousHostProjectionState = buildHostProjectionStateFromPersistedRecord({
         turnResponses: params.liveTurnResponses,
       });
-      const resolveRestorePlan = lexSession?.resolveRestorePlan?.bind(lexSession);
-      const restoreResolvedSnapshot = lexSession?.restoreResolvedSnapshot?.bind(lexSession);
-      let previousLexRestorePlan: Awaited<ReturnType<NonNullable<typeof resolveRestorePlan>>> | null = null;
-
-      if (resolveRestorePlan) {
-        try {
-          previousLexRestorePlan = await resolveRestorePlan(
-            params.sessionId,
-            params.liveTurnResponses,
-            params.restoreBeforeHostRecord as HostSessionRecord | null,
-          );
-        } catch {
-          previousLexRestorePlan = null;
-        }
-      }
-
+      console.info('[AilyChat][CheckpointRestoreTrace]', {
+        phase: 'apply-local-commit',
+        sessionId: params.sessionId,
+        checkpointId: params.checkpointId,
+        turnId: params.turnId ?? null,
+        listIndex: typeof params.listIndex === 'number' ? params.listIndex : null,
+        truncateIndex: params.truncateIndex,
+        liveTurnIds: summarizeTurnResponseIds(params.liveTurnResponses),
+        retainedTurnIds: summarizeTurnResponseIds(params.persistedVisibleTurnResponses),
+        discardedTurnIds: summarizeTurnResponseIds(params.liveTurnResponses.slice(params.truncateIndex)),
+        previousTimeline: summarizeCheckpointTimeline(previousCheckpointTimelineState),
+      });
       try {
         truncateStateFromCheckpoint?.(params.checkpointId);
         this.replaceSessionCheckpointTimelineStateFromRestore({
@@ -995,7 +1075,7 @@ export class CheckpointReplayCoordinator {
           hostRecord: params.persistedVisibleHostRecord as HostSessionRecord | null,
           attachedView: true,
           hydrateVisibleTurnResponses: params.truncateLiveTurnResponses && params.truncateIndex >= 0,
-          requireLexSnapshotRestore: true,
+          requireLexSnapshotRestore: false,
           acceptRestorePlanTurnResponses: false,
         });
 
@@ -1024,18 +1104,12 @@ export class CheckpointReplayCoordinator {
         );
 
         try {
-          if (previousLexRestorePlan?.snapshot && restoreResolvedSnapshot) {
-            const restored = restoreResolvedSnapshot(previousLexRestorePlan.snapshot, params.sessionId);
-            if (!restored) {
-              rollbackErrors.push('恢复 lex snapshot 失败');
-            }
-          }
           hydrateTurnResponses?.(params.sessionId, params.liveTurnResponses, { visibility: 'visibleAttach' });
         } catch (rollbackError: any) {
           rollbackErrors.push(
             rollbackError?.message
-              ? `恢复 lex/runtime turnResponses 失败: ${rollbackError.message}`
-              : '恢复 lex/runtime turnResponses 失败',
+              ? `恢复 runtime turnResponses 失败: ${rollbackError.message}`
+              : '恢复 runtime turnResponses 失败',
           );
         }
 
@@ -2028,9 +2102,9 @@ export class CheckpointReplayCoordinator {
     });
     const rebuildState = this.ctx.editCheckpointService.captureRebuildState?.();
     const previousPublishedSummary = this.ctx.editCheckpointService.capturePublishedSummary?.() ?? null;
-    const previousLexTurnResponses = [...this.readSessionModelTurnResponses(sessionId)];
+    const previousSessionModelTurnResponses = [...this.readSessionModelTurnResponses(sessionId)];
     const previousHostResponseState = buildHostProjectionStateFromPersistedRecord({
-      turnResponses: previousLexTurnResponses,
+      turnResponses: previousSessionModelTurnResponses,
     });
     const stagedRebuildState = this.ctx.editCheckpointService.buildRebuildStateFromTurnResponses
       ? await this.ctx.editCheckpointService.buildRebuildStateFromTurnResponses(hostResponseState.turnResponses)
@@ -2080,10 +2154,10 @@ export class CheckpointReplayCoordinator {
       applyPreparedRebuildState,
     });
 
-    const { applyPreparedReplayRestore, applyPreparedReplayLexRollback } = this.createPreparedCheckpointRedoReplayActions({
+    const { applyPreparedReplayRestore, applyPreparedReplayModelRollback } = this.createPreparedCheckpointRedoReplayActions({
       sessionId,
       turnResponses,
-      previousLexTurnResponses,
+      previousSessionModelTurnResponses,
     });
 
     let checkpointTimelineCommitted = false;
@@ -2119,7 +2193,7 @@ export class CheckpointReplayCoordinator {
         rollbackErrors.push(...rollbackPreparedCheckpointTimelineCommit());
         return rollbackErrors;
       },
-      applyPreparedReplayLexRollback,
+      applyPreparedReplayModelRollback,
       applyPreparedLocalCommit,
       preparedSequentialExecution: undefined as unknown as CheckpointPreparedSequentialExecution<
         CheckpointRedoReplayExecutionState,
@@ -2288,7 +2362,7 @@ export class CheckpointReplayCoordinator {
       artifact,
       restoreAttempted: false,
       restoreCompleted: false,
-      restoredLexSession: undefined,
+      restoredSessionModel: undefined,
       appliedRollbackSteps: [],
     };
 
@@ -2296,10 +2370,10 @@ export class CheckpointReplayCoordinator {
 
     try {
       state.restoreAttempted = true;
-      state.restoredLexSession = await artifact.applyPreparedReplayRestore();
+      state.restoredSessionModel = await artifact.applyPreparedReplayRestore();
 
-      if (state.restoredLexSession === false) {
-        throw new Error('lex session restore returned false');
+      if (state.restoredSessionModel === false) {
+        throw new Error('session model restore returned false');
       }
 
       state.restoreCompleted = true;
@@ -2308,8 +2382,8 @@ export class CheckpointReplayCoordinator {
       return this.handleCheckpointRedoReplayIOFailure(state, error);
     }
 
-    if (!state.restoredLexSession) {
-      console.warn('[redoEdits] lex session restore returned false while replaying checkpoint chat');
+    if (!state.restoredSessionModel) {
+      console.warn('[redoEdits] session model restore returned false while replaying checkpoint chat');
     }
 
     return { ok: true };
@@ -2534,7 +2608,7 @@ export class CheckpointReplayCoordinator {
 
   private resolveCheckpointRestoreTarget(
     checkpointId: string,
-    requestedTurnId?: string,
+    _requestedTurnId?: string,
   ): CheckpointRestoreTarget {
     const normalizedCheckpointId = typeof checkpointId === 'string' ? checkpointId.trim() : '';
     if (!normalizedCheckpointId) {
@@ -2555,17 +2629,95 @@ export class CheckpointReplayCoordinator {
       throw new Error(`检查点还原 sessionResource 不匹配: ${normalizedCheckpointId}`);
     }
 
-    const normalizedRequestedTurnId = typeof requestedTurnId === 'string' ? requestedTurnId.trim() : '';
-    if (normalizedRequestedTurnId && metadata.turnId && normalizedRequestedTurnId !== metadata.turnId) {
-      throw new Error(`检查点还原 turnId 不匹配: ${normalizedCheckpointId}`);
-    }
-
     return {
       checkpointId: metadata.checkpointId,
       sessionResource: metadata.sessionResource,
       requestId: metadata.requestId,
       ...(metadata.turnId ? { turnId: metadata.turnId } : {}),
       metadata,
+    };
+  }
+
+  private resolveCheckpointRestoreTruncationBoundary(params: {
+    checkpointId: string;
+    sessionId: string;
+    liveTurnResponses: readonly TurnResponseTurn[];
+    restoreTargetTurnId?: string;
+    restoreTargetRequestId?: string;
+    requestedTurnId?: string;
+    requestedListIndex?: number;
+  }): {
+    truncateIndex: number;
+    turnId?: string;
+    listIndex?: number;
+  } {
+    const checkpointId = normalizeString(params.checkpointId);
+    const restoreTargetTurnId = normalizeString(params.restoreTargetTurnId);
+    const restoreTargetRequestId = normalizeString(params.restoreTargetRequestId);
+    const requestedTurnId = normalizeString(params.requestedTurnId);
+    const timelineState = this.ctx.readSessionCheckpointTimelineState?.(params.sessionId) ?? null;
+    const timelineCheckpoint = timelineState?.checkpoints.find(checkpoint => checkpoint.checkpointId === checkpointId);
+    const timelineTurnId = normalizeString(timelineCheckpoint?.turnId);
+
+    const findTurnIndexById = (turnId: string): number => {
+      if (!turnId) {
+        return -1;
+      }
+      return params.liveTurnResponses.findIndex(turn => normalizeString(turn.turnId) === turnId);
+    };
+
+    let truncateIndex = checkpointId
+      ? params.liveTurnResponses.findIndex(turn => normalizeString(turn.request?.metadata?.checkpointId) === checkpointId)
+      : -1;
+    if (truncateIndex < 0) {
+      truncateIndex = findTurnIndexById(restoreTargetTurnId);
+    }
+    if (truncateIndex < 0) {
+      truncateIndex = findTurnIndexById(restoreTargetRequestId);
+    }
+    if (truncateIndex < 0) {
+      truncateIndex = findTurnIndexById(timelineTurnId);
+    }
+    if (
+      truncateIndex < 0
+      && typeof timelineCheckpoint?.turnIndex === 'number'
+      && Number.isFinite(timelineCheckpoint.turnIndex)
+    ) {
+      const timelineIndex = Math.trunc(timelineCheckpoint.turnIndex);
+      const timelineTurn = params.liveTurnResponses[timelineIndex];
+      if (timelineTurn && (!checkpointId || normalizeString(timelineTurn.request?.metadata?.checkpointId) === checkpointId)) {
+        truncateIndex = timelineIndex;
+      }
+    }
+    if (truncateIndex < 0) {
+      throw new Error(`checkpoint restore cannot resolve turn response boundary: ${checkpointId}`);
+    }
+
+    const turnId = normalizeString(params.liveTurnResponses[truncateIndex]?.turnId)
+      || restoreTargetTurnId
+      || restoreTargetRequestId
+      || timelineTurnId
+      || undefined;
+    if (requestedTurnId && turnId && requestedTurnId !== turnId) {
+      console.warn('[AilyChat][CheckpointRestoreTrace]', {
+        phase: 'stale-ui-target',
+        checkpointId,
+        requestedTurnId,
+        resolvedTurnId: turnId,
+        restoreTargetTurnId: restoreTargetTurnId || null,
+        restoreTargetRequestId: restoreTargetRequestId || null,
+        timelineTurnId: timelineTurnId || null,
+        liveTurnIds: summarizeTurnResponseIds(params.liveTurnResponses),
+      });
+    }
+    const listIndex = turnId && requestedTurnId === turnId && typeof params.requestedListIndex === 'number'
+      ? params.requestedListIndex
+      : undefined;
+
+    return {
+      truncateIndex,
+      ...(turnId ? { turnId } : {}),
+      ...(typeof listIndex === 'number' ? { listIndex } : {}),
     };
   }
 
@@ -2731,7 +2883,7 @@ export class CheckpointReplayCoordinator {
         artifact,
         restoreAttempted: false,
         restoreCompleted: false,
-        restoredLexSession: undefined,
+        restoredSessionModel: undefined,
         appliedRollbackSteps: [],
       },
       steps: [
@@ -2748,13 +2900,13 @@ export class CheckpointReplayCoordinator {
           },
         },
         {
-          label: 'restoreLexSession',
+          label: 'restoreSessionModel',
           run: async state => {
             state.restoreAttempted = true;
-            state.restoredLexSession = await state.artifact.applyPreparedReplayRestore();
+            state.restoredSessionModel = await state.artifact.applyPreparedReplayRestore();
 
-            if (state.restoredLexSession === false) {
-              throw new Error('lex session restore returned false');
+            if (state.restoredSessionModel === false) {
+              throw new Error('session model restore returned false');
             }
 
             state.restoreCompleted = true;
@@ -2769,8 +2921,8 @@ export class CheckpointReplayCoordinator {
           currentState.deferredCommitFailureResult = result;
         },
         afterApply: currentState => {
-          if (!currentState.restoredLexSession) {
-            console.warn('[redoEdits] lex session restore returned false while replaying checkpoint chat');
+          if (!currentState.restoredSessionModel) {
+            console.warn('[redoEdits] session model restore returned false while replaying checkpoint chat');
           }
         },
       }),

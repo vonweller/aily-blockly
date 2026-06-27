@@ -67,7 +67,6 @@ type ChatSendCoordinatorContext = Pick<
     readonly selectedMode?: ChatSelectedMode;
     readonly currentResolvedMode?: ChatResolvedMode;
   }
-  & Pick<IChatCoordination, 'msg'>
   & Partial<Pick<IChatCoordination, 'lexStream'>>;
 
 /**
@@ -411,7 +410,7 @@ export class ChatSendCoordinator {
   prepareSend(
     sender: string,
     content: string,
-    options: { readonly sessionId?: string | null; readonly projectUserMessage?: boolean } = {},
+    options: { readonly sessionId?: string | null } = {},
   ): PreparedUserSend | null {
     if (this.ctx.isCancelled && sender === 'tool') {
       return null;
@@ -450,10 +449,6 @@ export class ChatSendCoordinator {
     }
 
     this.ctx.pendingEditFeedback = null;
-    if (options.projectUserMessage !== false) {
-      this.ctx.msg.appendMessage('user', prepared.displayText);
-    }
-
     return {
       ...prepared,
     };

@@ -2,6 +2,7 @@ import type { SessionSnapshot, TurnRequest } from 'aily-lex/browser';
 
 interface TurnControlLike {
   getCurrentTurnId(): string | undefined;
+  getCurrentTurnIndex?(): number | undefined;
   findTurnIdByRoundId(roundId: string): string | undefined;
   getRequestContent(turnId: string): string | undefined;
   getLastRoundId(turnId: string): string | undefined;
@@ -21,6 +22,10 @@ export class LexTurnControlBridge {
 
   currentId(): string | undefined {
     return this.turnControl.getCurrentTurnId();
+  }
+
+  currentIndex(): number | undefined {
+    return this.turnControl.getCurrentTurnIndex?.();
   }
 
   turnIdByRound(roundId: string): string | undefined {

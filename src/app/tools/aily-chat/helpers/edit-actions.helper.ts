@@ -295,6 +295,20 @@ export class EditActionsHelper {
       truncateLiveTurnResponses = true,
     } = options;
     const truncatedTurnId = turnId ?? snapshot.turnId;
+    const liveTurnResponses = this.readCurrentSessionTurnResponses();
+    console.info('[AilyChat][CheckpointRestoreTrace]', {
+      phase: 'ui-restore-submit',
+      sessionId: this.resolveCurrentSessionResource(),
+      checkpointId: snapshot.checkpointId,
+      snapshotTurnId: snapshot.turnId ?? null,
+      optionTurnId: turnId ?? null,
+      truncatedTurnId: truncatedTurnId ?? null,
+      listIndex: typeof listIndex === 'number' ? listIndex : null,
+      captureRedoTurns,
+      truncateLiveTurnResponses,
+      liveTurnIds: liveTurnResponses.map(turn => turn.turnId ?? null),
+      liveCheckpointIds: liveTurnResponses.map(turn => turn.request?.metadata?.checkpointId ?? null),
+    });
     const restoreResult = await this.checkpointReplayCoordinator.restoreCheckpoint(snapshot.checkpointId, {
       turnId: truncatedTurnId,
       listIndex,
@@ -498,6 +512,14 @@ export class EditActionsHelper {
       return resolved;
     }
 
+    const sessionResource = this.resolveCurrentSessionResource();
+    this.ctx.editCheckpointService.setTimelineContext?.(
+      sessionResource || null,
+      this.ctx.getCurrentProjectPath?.()
+        || AilyHost.get().project.currentProjectPath
+        || AilyHost.get().project.projectRootPath
+        || null,
+    );
     await this.ctx.editCheckpointService.rebuildFromTurnResponses(liveTurnResponses);
     resolved = this.resolveTurnTarget(target);
     return resolved;

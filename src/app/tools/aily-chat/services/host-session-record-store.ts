@@ -42,6 +42,7 @@ import {
 
 import type {
   HostSessionRecord,
+  HostSessionCheckpointTimelineEntrySidecar,
   HostSessionRuntimeAuxiliary,
   HostSessionSidecar,
   PersistedHostResponseData,
@@ -709,32 +710,47 @@ export class HostSessionRecordStore {
     const compatMessages = Array.isArray(sidecar?.response?.compatMessages)
       ? [...sidecar.response.compatMessages]
       : undefined;
-    const checkpointMarker = sidecar?.checkpointMarker;
-    const checkpointMarkerSessionResource = typeof checkpointMarker?.sessionResource === 'string'
-      ? checkpointMarker.sessionResource.trim()
-      : '';
-    const normalizedCheckpointMarker = checkpointMarkerSessionResource
-      && typeof checkpointMarker?.currentCheckpointIndex === 'number'
-      && Number.isFinite(checkpointMarker.currentCheckpointIndex)
-      ? {
-          sessionResource: checkpointMarkerSessionResource,
-          currentCheckpointIndex: Math.trunc(checkpointMarker.currentCheckpointIndex),
-        }
-      : undefined;
-
     const checkpointTimeline = sidecar?.checkpointRedoBranch ?? sidecar?.checkpointTimeline;
     const checkpointTimelineSessionResource = typeof checkpointTimeline?.sessionResource === 'string'
       ? checkpointTimeline.sessionResource.trim()
       : '';
     const checkpointTimelineTurnResponses = this.normalizeTurnResponses(checkpointTimeline?.turnResponses);
+    const checkpointTimelineEntries = this.normalizeCheckpointTimelineEntries(checkpointTimeline?.checkpoints);
     const normalizedCheckpointTimeline = checkpointTimelineSessionResource
       && checkpointTimelineTurnResponses?.length
       && typeof checkpointTimeline?.currentCheckpointIndex === 'number'
       && Number.isFinite(checkpointTimeline.currentCheckpointIndex)
       ? {
           sessionResource: checkpointTimelineSessionResource,
-          currentCheckpointIndex: Math.trunc(checkpointTimeline.currentCheckpointIndex),
+          currentCheckpointIndex: this.normalizeCheckpointIndex(
+            checkpointTimeline.currentCheckpointIndex,
+            checkpointTimelineEntries?.length ?? checkpointTimelineTurnResponses.length,
+          ),
+          ...(typeof checkpointTimeline.currentTurnResponseCount === 'number' && Number.isFinite(checkpointTimeline.currentTurnResponseCount)
+            ? { currentTurnResponseCount: this.normalizeTurnResponseCount(checkpointTimeline.currentTurnResponseCount, checkpointTimelineTurnResponses.length) }
+            : {}),
+          ...(checkpointTimelineEntries?.length ? { checkpoints: checkpointTimelineEntries } : {}),
           turnResponses: checkpointTimelineTurnResponses,
+        }
+      : undefined;
+
+    const checkpointMarker = sidecar?.checkpointMarker;
+    const checkpointMarkerSessionResource = typeof checkpointMarker?.sessionResource === 'string'
+      ? checkpointMarker.sessionResource.trim()
+      : '';
+    const markerCheckpointCount = normalizedCheckpointTimeline?.checkpoints?.length
+      ?? normalizedCheckpointTimeline?.turnResponses.length
+      ?? 0;
+    const markerTurnResponseCount = normalizedCheckpointTimeline?.turnResponses.length ?? 0;
+    const normalizedCheckpointMarker = checkpointMarkerSessionResource
+      && typeof checkpointMarker?.currentCheckpointIndex === 'number'
+      && Number.isFinite(checkpointMarker.currentCheckpointIndex)
+      ? {
+          sessionResource: checkpointMarkerSessionResource,
+          currentCheckpointIndex: this.normalizeCheckpointIndex(checkpointMarker.currentCheckpointIndex, markerCheckpointCount),
+          ...(typeof checkpointMarker.currentTurnResponseCount === 'number' && Number.isFinite(checkpointMarker.currentTurnResponseCount)
+            ? { currentTurnResponseCount: this.normalizeTurnResponseCount(checkpointMarker.currentTurnResponseCount, markerTurnResponseCount) }
+            : {}),
         }
       : undefined;
 
@@ -753,6 +769,50 @@ export class HostSessionRecordStore {
       ...(normalizedCheckpointMarker ? { checkpointMarker: normalizedCheckpointMarker } : {}),
       ...(normalizedCheckpointTimeline ? { checkpointRedoBranch: normalizedCheckpointTimeline } : {}),
     };
+  }
+
+  private normalizeCheckpointTimelineEntries(value: unknown): HostSessionCheckpointTimelineEntrySidecar[] | undefined {
+    if (!Array.isArray(value)) {
+      return undefined;
+    }
+
+    const entries = value
+      .map((entry): HostSessionCheckpointTimelineEntrySidecar | null => {
+        if (!isRecord(entry)) {
+          return null;
+        }
+        const checkpointId = typeof entry['checkpointId'] === 'string' ? entry['checkpointId'].trim() : '';
+        const requestId = typeof entry['requestId'] === 'string' ? entry['requestId'].trim() : '';
+        const turnId = typeof entry['turnId'] === 'string' ? entry['turnId'].trim() : '';
+        const turnIndex = typeof entry['turnIndex'] === 'number' && Number.isFinite(entry['turnIndex'])
+          ? Math.max(0, Math.trunc(entry['turnIndex']))
+          : -1;
+        if (!checkpointId || !requestId || turnIndex < 0) {
+          return null;
+        }
+        return {
+          checkpointId,
+          requestId,
+          ...(turnId ? { turnId } : {}),
+          turnIndex,
+          ...(isRecord(entry['metadata'])
+            ? { metadata: clonePersistedValue(entry['metadata']) as unknown as HostSessionCheckpointTimelineEntrySidecar['metadata'] }
+            : {}),
+        };
+      })
+      .filter((entry): entry is HostSessionCheckpointTimelineEntrySidecar => !!entry);
+    return entries.length > 0 ? entries : undefined;
+  }
+
+  private normalizeCheckpointIndex(value: number, checkpointCount: number): number {
+    if (checkpointCount <= 0) {
+      return -1;
+    }
+    return Math.max(-1, Math.min(Math.trunc(value), checkpointCount - 1));
+  }
+
+  private normalizeTurnResponseCount(value: number, turnResponseCount: number): number {
+    return Math.max(0, Math.min(Math.trunc(value), turnResponseCount));
   }
 
   private normalizeMetadata(raw: any, sessionId: string, projectPath: string | null): SessionMetadata {

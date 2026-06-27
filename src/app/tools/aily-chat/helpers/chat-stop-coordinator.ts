@@ -99,9 +99,6 @@ export class ChatStopCoordinator {
     this.ctx.currentStatelessMode = false;
     this.ctx.dismissPendingInteractions?.(sessionId);
 
-    const turnDraft = this.ctx.lexStream.turn.draft();
-    const turnControl = this.ctx.lexStream.turns;
-    const hasContent = turnDraft.partCount > 0;
     console.info(REQUEST_STATE_TRACE_PREFIX, {
       phase: 'stop',
       action: 'stop',
@@ -110,15 +107,8 @@ export class ChatStopCoordinator {
       state: 'running',
       pendingUserInput: pendingUserInputBeforeStop,
       activeToolExecutions: activeToolExecutionsBeforeStop,
-      hasContent,
-      partCount: turnDraft.partCount,
+      owner: 'runtime-host',
     });
-    if (hasContent) {
-      turnControl.complete(turnDraft.assistantText || '');
-      this.ctx.lexStream.finalizeCurrentTurnResponse('cancelled');
-    } else {
-      turnControl.discardIncomplete();
-    }
 
     if (this.shouldRefreshLocalEstimate()) {
       this.ctx.contextBudgetService.refreshLocalEstimate(

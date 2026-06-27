@@ -18,6 +18,7 @@ import type {
   ChatRuntimeHostSessionId,
   ChatRuntimeHostSessionState,
   ChatRuntimeHostSubmitRequest,
+  ChatRuntimeHostProtocolTruncation,
   ChatRuntimeHostTranscriptSnapshot,
   ChatRuntimeHostNotificationSeverity,
   ChatRuntimeHostTodoItem,
@@ -68,6 +69,7 @@ export class ChatRuntimeOwnerService implements ChatRuntimeExecutionWorker, Chat
   ) => void>();
   private readonly pendingLiveTranscriptSessionIds = new Set<ChatRuntimeHostSessionId>();
   private readonly transcriptRevisions = new Map<ChatRuntimeHostSessionId, number>();
+  private readonly submittedTurnIdAliases = new Map<ChatRuntimeHostSessionId, Map<string, string>>();
   private viewRequestSeed = 0;
   private liveTranscriptFlushScheduled = false;
 
@@ -113,6 +115,7 @@ export class ChatRuntimeOwnerService implements ChatRuntimeExecutionWorker, Chat
       currentModel: request.currentModel !== undefined
         ? request.currentModel
         : command.executionContext?.currentModel ?? null,
+      protocolTruncation: request.protocolTruncation ?? command.executionContext?.protocolTruncation ?? null,
     });
     this.projectSubmittedTurnExecutionContext(normalizedRequest);
     return this.startSubmittedTurn(normalizedRequest);
@@ -120,39 +123,49 @@ export class ChatRuntimeOwnerService implements ChatRuntimeExecutionWorker, Chat
 
   private async startSubmittedTurn(normalizedRequest: ChatRuntimeHostSubmitRequest): Promise<ChatRuntimeHostSessionState> {
     const displayText = normalizedRequest.displayText ?? normalizedRequest.requestText;
-    const activeResponseHandle = normalizedRequest.activeResponseHandle ?? normalizedRequest.sessionId;
     const releaseOwnerScope = this.runtimeOwnerState.beginRuntimeSessionOwnerScope(normalizedRequest.sessionId);
     let backgroundStarted = false;
     let requestStateStarted = false;
+    let activeResponseHandle: string | null = null;
     try {
       const owner = this.readOwner();
       await this.prepareSubmittedTurn(normalizedRequest, owner);
-      this.beginSubmittedRequestState(normalizedRequest.sessionId, activeResponseHandle);
-      requestStateStarted = true;
+      this.applySubmittedTurnProtocolTruncation(
+        normalizedRequest.sessionId,
+        normalizedRequest.protocolTruncation ?? null,
+        owner,
+      );
       const beginResult = owner.turn.begin(normalizedRequest.requestText, displayText, normalizedRequest.metadata ?? undefined);
       const seededTurn = this.buildSubmittedSeededTurn(owner, normalizedRequest, displayText, beginResult);
-      const committedTurnResponses = this.commitSubmittedSeededTurn(normalizedRequest.sessionId, seededTurn);
+      activeResponseHandle = seededTurn.turnId;
+      const canonicalRequest: ChatRuntimeHostSubmitRequest = {
+        ...normalizedRequest,
+        activeResponseHandle,
+      };
+      this.beginSubmittedRequestState(canonicalRequest.sessionId, activeResponseHandle);
+      requestStateStarted = true;
+      const committedTurnResponses = this.commitSubmittedSeededTurn(canonicalRequest.sessionId, seededTurn);
       this.requireContext().syncExecutionRuntimeTurnResponses(
-        normalizedRequest.sessionId,
+        canonicalRequest.sessionId,
         committedTurnResponses,
         terminalTranscriptProjection('handoff'),
       );
-      this.emitSessionState(normalizedRequest.sessionId, 'runtime-status');
-      this.emitTranscript(normalizedRequest.sessionId);
+      this.emitSessionState(canonicalRequest.sessionId, 'runtime-status');
+      this.emitTranscript(canonicalRequest.sessionId);
 
       backgroundStarted = true;
       this.runSubmittedTurnInBackground({
         owner,
-        request: normalizedRequest,
+        request: canonicalRequest,
         displayText,
         activeResponseHandle,
         releaseOwnerScope,
       });
-      return this.buildSessionState(normalizedRequest.sessionId);
+      return this.buildSessionState(canonicalRequest.sessionId);
     } catch (error) {
       this.emitRuntimeError(normalizedRequest.sessionId, error);
       this.emitSessionState(normalizedRequest.sessionId, 'runtime-status');
-      if (requestStateStarted) {
+      if (requestStateStarted && activeResponseHandle) {
         this.completeSubmittedRequestState(normalizedRequest.sessionId, activeResponseHandle);
       }
       throw error;
@@ -219,6 +232,57 @@ export class ChatRuntimeOwnerService implements ChatRuntimeExecutionWorker, Chat
       });
   }
 
+  private applySubmittedTurnProtocolTruncation(
+    sessionId: ChatRuntimeHostSessionId,
+    truncation: ChatRuntimeHostProtocolTruncation | null | undefined,
+    owner: LexOwnerFacade,
+  ): void {
+    if (!truncation) {
+      return;
+    }
+
+    const retainedTurnResponses = this.resolveProtocolTruncationRetainedTurnResponses(
+      sessionId,
+      truncation,
+      owner,
+    );
+
+    if (truncation.kind === 'clear') {
+      owner.turns.clear();
+      owner.hydrateTurnResponses(sessionId, retainedTurnResponses, { visibility: 'visibleAttach' });
+      return;
+    }
+
+    const turnId = typeof truncation.turnId === 'string' ? truncation.turnId.trim() : '';
+    if (!turnId) {
+      throw new Error('[AilyChat][RuntimeOwner] protocol truncation removeFrom requires a turn id.');
+    }
+    owner.turns.removeFrom(turnId);
+    owner.hydrateTurnResponses(sessionId, retainedTurnResponses, { visibility: 'visibleAttach' });
+  }
+
+  private resolveProtocolTruncationRetainedTurnResponses(
+    sessionId: ChatRuntimeHostSessionId,
+    truncation: ChatRuntimeHostProtocolTruncation,
+    owner: LexOwnerFacade,
+  ): readonly TurnResponseTurn[] {
+    const retainedTurnIds = Array.isArray(truncation.retainedTurnIds)
+      ? truncation.retainedTurnIds
+        .map(turnId => typeof turnId === 'string' ? turnId.trim() : '')
+        .filter(Boolean)
+      : [];
+    if (retainedTurnIds.length === 0) {
+      return [];
+    }
+
+    const retainedTurnIdSet = new Set(retainedTurnIds);
+    const currentTurnResponses = owner.getTurnResponses(sessionId);
+    return currentTurnResponses.filter(turn => {
+      const turnId = typeof turn?.turnId === 'string' ? turn.turnId.trim() : '';
+      return retainedTurnIdSet.has(turnId);
+    });
+  }
+
   private async completeSubmittedTurnEffects(sessionId: ChatRuntimeHostSessionId): Promise<void> {
     try {
       await this.submittedTurnLifecycle.completeSubmittedTurn(sessionId);
@@ -246,9 +310,58 @@ export class ChatRuntimeOwnerService implements ChatRuntimeExecutionWorker, Chat
     this.emitServiceOwnedResponseModelProgress(sessionId, turnResponses);
   }
 
+  private publishStoppedSessionModelTranscript(
+    sessionId: ChatRuntimeHostSessionId,
+    turnId: string | null | undefined,
+  ): void {
+    const context = this.requireContext();
+    const turnResponses = this.readStoppedServiceOwnedTurnResponses(sessionId, turnId);
+    if (!Array.isArray(turnResponses) || turnResponses.length === 0) {
+      this.logTerminalTranscriptModel(sessionId, 'missing-stopped-service-model', []);
+      return;
+    }
+
+    this.logTerminalTranscriptModel(sessionId, 'stopped-service-owned-response-model', turnResponses);
+    context.syncExecutionRuntimeTurnResponses?.(
+      sessionId,
+      turnResponses,
+      terminalTranscriptProjection('execution'),
+    );
+    this.emitServiceOwnedResponseModelProgress(sessionId, turnResponses);
+  }
+
   private readAuthoritativeServiceOwnedTurnResponses(sessionId: ChatRuntimeHostSessionId): readonly TurnResponseTurn[] | null {
     const turnResponses = this.readServiceOwnedTurnResponses(sessionId);
     return hasAuthoritativeResponseModel(turnResponses) ? turnResponses : null;
+  }
+
+  private readStoppedServiceOwnedTurnResponses(
+    sessionId: ChatRuntimeHostSessionId,
+    turnId: string | null | undefined,
+  ): readonly TurnResponseTurn[] | null {
+    const canonicalTurnResponses = this.readCanonicalSessionModelTurnResponses(sessionId);
+    const ownerTurnResponses = this.readServiceOwnedTurnResponses(sessionId);
+    if (Array.isArray(canonicalTurnResponses) && canonicalTurnResponses.length > 0) {
+      if (!Array.isArray(ownerTurnResponses) || ownerTurnResponses.length === 0) {
+        return terminalizeStoppedCanonicalTurnResponses(canonicalTurnResponses, turnId);
+      }
+      const branchState = compareTerminalOwnerBranchToCanonical(
+        canonicalTurnResponses,
+        ownerTurnResponses,
+      );
+      if (branchState !== 'compatible') {
+        this.logTerminalTranscriptModel(sessionId, `stale-${branchState}-owner-model`, ownerTurnResponses);
+        return terminalizeStoppedCanonicalTurnResponses(canonicalTurnResponses, turnId);
+      }
+      return terminalizeStoppedCanonicalTurnResponses(
+        hasAuthoritativeResponseModel(ownerTurnResponses) ? ownerTurnResponses : canonicalTurnResponses,
+        turnId,
+      );
+    }
+
+    return Array.isArray(ownerTurnResponses) && ownerTurnResponses.length > 0
+      ? terminalizeStoppedCanonicalTurnResponses(ownerTurnResponses, turnId)
+      : null;
   }
 
   private readServiceOwnedTurnResponses(sessionId: ChatRuntimeHostSessionId): readonly TurnResponseTurn[] | null {
@@ -260,7 +373,52 @@ export class ChatRuntimeOwnerService implements ChatRuntimeExecutionWorker, Chat
     if (!Array.isArray(turnResponses) || turnResponses.length === 0) {
       return null;
     }
-    return turnResponses;
+    return this.normalizeServiceOwnedTurnResponses(sessionId, turnResponses);
+  }
+
+  private normalizeServiceOwnedTurnResponses(
+    sessionId: ChatRuntimeHostSessionId,
+    turnResponses: readonly TurnResponseTurn[],
+  ): readonly TurnResponseTurn[] {
+    const aliases = this.submittedTurnIdAliases.get(sessionId);
+    if (!aliases || aliases.size === 0) {
+      return turnResponses;
+    }
+
+    let changed = false;
+    const normalizedTurnResponses = turnResponses.map(turn => {
+      const sourceTurnId = this.normalizeSubmittedTurnId(turn?.turnId);
+      const targetTurnId = sourceTurnId ? aliases.get(sourceTurnId) : undefined;
+      if (!targetTurnId || targetTurnId === sourceTurnId) {
+        return turn;
+      }
+
+      changed = true;
+      return this.retargetTurnResponseTurn(turn, targetTurnId);
+    });
+
+    return changed ? normalizedTurnResponses : turnResponses;
+  }
+
+  private retargetTurnResponseTurn(turn: TurnResponseTurn, turnId: string): TurnResponseTurn {
+    return {
+      ...turn,
+      turnId,
+      response: {
+        ...turn.response,
+        id: turnId,
+      },
+    };
+  }
+
+  private readCanonicalSessionModelTurnResponses(sessionId: ChatRuntimeHostSessionId): readonly TurnResponseTurn[] | null {
+    const context = this.requireContext();
+    const turnResponses = typeof context.readSessionTurnResponses === 'function'
+      ? context.readSessionTurnResponses(sessionId)
+      : null;
+    return Array.isArray(turnResponses) && turnResponses.length > 0
+      ? turnResponses
+      : null;
   }
 
   private logTerminalTranscriptModel(
@@ -339,7 +497,14 @@ export class ChatRuntimeOwnerService implements ChatRuntimeExecutionWorker, Chat
     displayText: string,
     beginResult: unknown,
   ): TurnResponseTurn {
-    const turnId = this.resolveSubmittedTurnId(owner, normalizedRequest.sessionId, beginResult);
+    const ownerTurnId = this.resolveOwnerSubmittedTurnId(owner, beginResult);
+    const turnId = this.resolveSubmittedTurnId(
+      owner,
+      normalizedRequest.sessionId,
+      beginResult,
+      normalizedRequest.activeResponseHandle,
+    );
+    this.registerSubmittedTurnIdAlias(normalizedRequest.sessionId, ownerTurnId, turnId);
     const currentRequestMetadata = typeof owner.turns?.currentRequestMetadata === 'function'
       ? owner.turns.currentRequestMetadata()
       : undefined;
@@ -380,6 +545,20 @@ export class ChatRuntimeOwnerService implements ChatRuntimeExecutionWorker, Chat
     owner: LexOwnerFacade,
     sessionId: ChatRuntimeHostSessionId,
     beginResult: unknown,
+    preferredTurnId?: unknown,
+  ): string {
+    const preferred = this.normalizeSubmittedTurnId(preferredTurnId);
+    if (preferred) {
+      return preferred;
+    }
+
+    return this.resolveOwnerSubmittedTurnId(owner, beginResult)
+      || this.throwMissingSubmittedTurnId(sessionId);
+  }
+
+  private resolveOwnerSubmittedTurnId(
+    owner: LexOwnerFacade,
+    beginResult: unknown,
   ): string {
     const beginTurnId = this.normalizeSubmittedTurnId(beginResult);
     if (beginTurnId) {
@@ -393,7 +572,35 @@ export class ChatRuntimeOwnerService implements ChatRuntimeExecutionWorker, Chat
       return currentTurnId;
     }
 
+    return '';
+  }
+
+  private throwMissingSubmittedTurnId(sessionId: ChatRuntimeHostSessionId): never {
     throw new Error(`[AilyChat][RuntimeOwner] Runtime submit for ${sessionId} did not create a canonical turn id.`);
+  }
+
+  private registerSubmittedTurnIdAlias(
+    sessionId: ChatRuntimeHostSessionId,
+    sourceTurnId: string,
+    targetTurnId: string,
+  ): void {
+    if (!sourceTurnId || !targetTurnId || sourceTurnId === targetTurnId) {
+      return;
+    }
+
+    let aliases = this.submittedTurnIdAliases.get(sessionId);
+    if (!aliases) {
+      aliases = new Map<string, string>();
+      this.submittedTurnIdAliases.set(sessionId, aliases);
+    }
+    aliases.set(sourceTurnId, targetTurnId);
+  }
+
+  private resolveSubmittedTurnIdAlias(
+    sessionId: ChatRuntimeHostSessionId,
+    turnId: string,
+  ): string {
+    return this.submittedTurnIdAliases.get(sessionId)?.get(turnId) ?? turnId;
   }
 
   private normalizeSubmittedTurnId(value: unknown): string {
@@ -429,6 +636,11 @@ export class ChatRuntimeOwnerService implements ChatRuntimeExecutionWorker, Chat
       enumerable: true,
       value: this.createHostViewRequestDispatcher(),
     });
+    Object.defineProperty(ownerContext, 'suppressVisibleTurnStartupProjection', {
+      configurable: true,
+      enumerable: true,
+      value: true,
+    });
     ownerContext.syncExecutionRuntimeTurnResponses = (
       sessionId: string | null | undefined,
       turnResponses: readonly TurnResponseTurn[] | null | undefined,
@@ -438,8 +650,15 @@ export class ChatRuntimeOwnerService implements ChatRuntimeExecutionWorker, Chat
       this.scheduleLiveTranscriptEvent(sessionId);
     };
     ownerContext.syncExecutionRuntimeState = (saveTarget): void => {
-      context.syncExecutionRuntimeState(saveTarget);
       const sessionId = typeof saveTarget?.sessionId === 'string' ? saveTarget.sessionId.trim() : '';
+      if (sessionId && Array.isArray(saveTarget?.turnResponses)) {
+        context.syncExecutionRuntimeTurnResponses(
+          sessionId,
+          saveTarget.turnResponses,
+          terminalTranscriptProjection('execution'),
+        );
+      }
+      context.syncExecutionRuntimeState(saveTarget);
       if (sessionId && Array.isArray(saveTarget?.turnResponses)) {
         this.scheduleLiveTranscriptEvent(sessionId);
       }
@@ -449,7 +668,28 @@ export class ChatRuntimeOwnerService implements ChatRuntimeExecutionWorker, Chat
       if (!normalizedSessionId) {
         return [];
       }
-      return this.readServiceOwnedTurnResponses(normalizedSessionId) ?? [];
+      const ownerTurnResponses = this.readServiceOwnedTurnResponses(normalizedSessionId);
+      const canonicalTurnResponses = typeof context.readSessionTurnResponses === 'function'
+        ? context.readSessionTurnResponses(normalizedSessionId)
+        : null;
+      if (Array.isArray(canonicalTurnResponses) && canonicalTurnResponses.length > 0) {
+        if (!Array.isArray(ownerTurnResponses) || ownerTurnResponses.length === 0) {
+          return canonicalTurnResponses;
+        }
+        const branchState = compareTerminalOwnerBranchToCanonical(canonicalTurnResponses, ownerTurnResponses);
+        if (branchState !== 'compatible') {
+          return branchState === 'shorter'
+            ? canonicalTurnResponses
+            : ownerTurnResponses;
+        }
+        return hasAuthoritativeResponseModel(ownerTurnResponses)
+          ? ownerTurnResponses
+          : canonicalTurnResponses;
+      }
+      if (Array.isArray(canonicalTurnResponses)) {
+        return canonicalTurnResponses;
+      }
+      return ownerTurnResponses ?? [];
     };
     ownerContext.emitExecutionRenderEvent = (sessionId, renderEvent, request): void => {
       this.emitRenderEventProgress(sessionId, renderEvent, request as ChatRuntimeHostSubmitRequest | null | undefined);
@@ -561,8 +801,46 @@ export class ChatRuntimeOwnerService implements ChatRuntimeExecutionWorker, Chat
 
   async stopTurn(command: ChatRuntimeExecutionWorkerStopTurnCommand): Promise<void> {
     const normalizedSessionId = this.normalizeSessionId(command?.sessionId);
+    const owner = this.readOwner();
+    try {
+      owner.agent.stop(normalizedSessionId);
+    } finally {
+      this.terminalizeStoppedOwnerTurn(owner, command?.turnId);
+      this.publishStoppedSessionModelTranscript(normalizedSessionId, command?.turnId);
+    }
     this.runtimeController.stopSession(normalizedSessionId);
+    this.emitTranscript(normalizedSessionId);
     this.emitSessionState(normalizedSessionId, 'runtime-status');
+  }
+
+  private terminalizeStoppedOwnerTurn(owner: LexOwnerFacade, commandTurnId: string | null | undefined): void {
+    const currentTurnId = typeof owner.turns.currentId === 'function'
+      ? owner.turns.currentId()
+      : null;
+    if (!currentTurnId) {
+      return;
+    }
+
+    const normalizedCommandTurnId = typeof commandTurnId === 'string' ? commandTurnId.trim() : '';
+    if (normalizedCommandTurnId && normalizedCommandTurnId !== currentTurnId) {
+      console.warn('[AilyChat][RuntimeOwner] stopTurn target differs from active owner turn', {
+        targetTurnId: normalizedCommandTurnId,
+        activeTurnId: currentTurnId,
+      });
+    }
+
+    try {
+      owner.turns.fail();
+      return;
+    } catch (error) {
+      console.warn('[AilyChat][RuntimeOwner] stopTurn failed to mark active turn as failed; discarding incomplete turn', error);
+    }
+
+    try {
+      owner.turns.discardIncomplete();
+    } catch (error) {
+      console.warn('[AilyChat][RuntimeOwner] stopTurn failed to discard active turn', error);
+    }
   }
 
   async disposeSessionResources(
@@ -576,6 +854,7 @@ export class ChatRuntimeOwnerService implements ChatRuntimeExecutionWorker, Chat
     this.runtimeController.disposeSession(normalizedSessionId);
     this.emitSessionState(normalizedSessionId, 'session-state');
     this.transcriptRevisions.delete(normalizedSessionId);
+    this.submittedTurnIdAliases.delete(normalizedSessionId);
   }
 
   async resolveInteraction(
@@ -698,18 +977,41 @@ export class ChatRuntimeOwnerService implements ChatRuntimeExecutionWorker, Chat
     if (!normalizedSessionId) {
       return;
     }
+    const requestTurnId = this.normalizeSubmittedTurnId(request?.activeResponseHandle);
+    const eventTurnId = this.normalizeSubmittedTurnId((renderEvent as { readonly turnId?: unknown }).turnId);
+    const turnId = requestTurnId
+      || (eventTurnId ? this.resolveSubmittedTurnIdAlias(normalizedSessionId, eventTurnId) : '');
+    if (requestTurnId && eventTurnId) {
+      this.registerSubmittedTurnIdAlias(normalizedSessionId, eventTurnId, requestTurnId);
+    }
+    const normalizedRenderEvent = this.retargetRenderEventTurnId(renderEvent, turnId);
     const event: ChatRuntimeExecutionWorkerRenderEventProgress = {
       kind: 'render-event',
       sessionId: normalizedSessionId,
-      turnId: this.normalizeSubmittedTurnId((renderEvent as { readonly turnId?: unknown }).turnId)
-        || this.normalizeSubmittedTurnId(request?.activeResponseHandle),
+      turnId,
       request: request ?? undefined,
       revision: this.readTranscriptRevision(normalizedSessionId),
-      renderEvent,
+      renderEvent: normalizedRenderEvent,
     };
     for (const listener of [...this.eventListeners]) {
       listener(event);
     }
+  }
+
+  private retargetRenderEventTurnId(renderEvent: RenderEvent, turnId: string): RenderEvent {
+    if (!turnId || !renderEvent || typeof renderEvent !== 'object') {
+      return renderEvent;
+    }
+
+    const currentTurnId = this.normalizeSubmittedTurnId((renderEvent as { readonly turnId?: unknown }).turnId);
+    if (!currentTurnId || currentTurnId === turnId) {
+      return renderEvent;
+    }
+
+    return {
+      ...renderEvent,
+      turnId,
+    } as RenderEvent;
   }
 
   private emitRuntimeError(sessionId: ChatRuntimeHostSessionId, error: unknown): void {
@@ -882,4 +1184,99 @@ function selectLatestAuthoritativeResponseTurn(
     }
   }
   return null;
+}
+
+function terminalizeStoppedCanonicalTurnResponses(
+  turnResponses: readonly TurnResponseTurn[],
+  turnId: string | null | undefined,
+): readonly TurnResponseTurn[] {
+  if (!Array.isArray(turnResponses) || turnResponses.length === 0) {
+    return [];
+  }
+
+  const normalizedTurnId = normalizeTurnIdentityString(turnId);
+  const targetIndex = normalizedTurnId
+    ? turnResponses.findIndex(turn => normalizeTurnIdentityString(turn?.turnId) === normalizedTurnId)
+    : findLatestNonTerminalTurnIndex(turnResponses);
+  if (targetIndex < 0) {
+    return turnResponses;
+  }
+
+  return turnResponses.map((turn, index) => {
+    if (index !== targetIndex) {
+      return turn;
+    }
+    const response = turn.response ?? {};
+    if (response.status === 'cancelled') {
+      return turn;
+    }
+    const updatedAt = Date.now();
+    return {
+      ...turn,
+      response: {
+        ...response,
+        status: 'cancelled',
+        terminationReason: response.terminationReason ?? 'cancelled_by_user',
+        updatedAt,
+      },
+      updatedAt,
+    } as TurnResponseTurn;
+  });
+}
+
+function findLatestNonTerminalTurnIndex(turnResponses: readonly TurnResponseTurn[]): number {
+  for (let index = turnResponses.length - 1; index >= 0; index -= 1) {
+    const status = turnResponses[index]?.response?.status;
+    if (status !== 'completed' && status !== 'cancelled' && status !== 'error') {
+      return index;
+    }
+  }
+  return turnResponses.length - 1;
+}
+
+type TerminalOwnerBranchComparison = 'compatible' | 'shorter' | 'diverged';
+
+function compareTerminalOwnerBranchToCanonical(
+  canonicalTurnResponses: readonly TurnResponseTurn[],
+  ownerTurnResponses: readonly TurnResponseTurn[],
+): TerminalOwnerBranchComparison {
+  if (ownerTurnResponses.length < canonicalTurnResponses.length) {
+    return 'shorter';
+  }
+
+  for (let index = 0; index < canonicalTurnResponses.length; index += 1) {
+    if (!isSameCanonicalTurnIdentity(canonicalTurnResponses[index], ownerTurnResponses[index])) {
+      return 'diverged';
+    }
+  }
+
+  return 'compatible';
+}
+
+function isSameCanonicalTurnIdentity(
+  left: TurnResponseTurn | null | undefined,
+  right: TurnResponseTurn | null | undefined,
+): boolean {
+  const leftTurnId = normalizeTurnIdentityString(left?.turnId);
+  const rightTurnId = normalizeTurnIdentityString(right?.turnId);
+  if (leftTurnId || rightTurnId) {
+    return !!leftTurnId && leftTurnId === rightTurnId;
+  }
+
+  const leftRequestId = readTurnRequestIdentity(left);
+  const rightRequestId = readTurnRequestIdentity(right);
+  return !!leftRequestId && leftRequestId === rightRequestId;
+}
+
+function readTurnRequestIdentity(turn: TurnResponseTurn | null | undefined): string {
+  const metadata = turn?.request?.metadata;
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+    return '';
+  }
+  const requestId = (metadata as Record<string, unknown>)['requestId'];
+  return normalizeTurnIdentityString(requestId);
+}
+
+function normalizeTurnIdentityString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
 }

@@ -660,6 +660,42 @@ export class EditCheckpointService {
     return this.cloneRequestCheckpointMetadata(this.requestCheckpointMetadataByRequestId.get(normalizedRequestId)) ?? null;
   }
 
+  async getSettledRequestCheckpointMetadataByCheckpointId(checkpointId: string | null | undefined): Promise<RequestCheckpointMetadata | null> {
+    const normalizedCheckpointId = typeof checkpointId === 'string' ? checkpointId.trim() : '';
+    if (!normalizedCheckpointId) {
+      return null;
+    }
+
+    await this.waitForCheckpointMetadataSettled();
+    const current = this.getRequestCheckpointMetadataByCheckpointId(normalizedCheckpointId);
+    if (this.hasCompleteRequestCheckpointMetadata(current)) {
+      return current;
+    }
+
+    await this.refreshRequestCheckpointMetadataFromProvider(normalizedCheckpointId);
+    return this.getRequestCheckpointMetadataByCheckpointId(normalizedCheckpointId);
+  }
+
+  async getSettledRequestCheckpointMetadataByRequestId(requestId: string | null | undefined): Promise<RequestCheckpointMetadata | null> {
+    const normalizedRequestId = typeof requestId === 'string' ? requestId.trim() : '';
+    if (!normalizedRequestId) {
+      return null;
+    }
+
+    await this.waitForCheckpointMetadataSettled();
+    const current = this.getRequestCheckpointMetadataByRequestId(normalizedRequestId);
+    if (this.hasCompleteRequestCheckpointMetadata(current)) {
+      return current;
+    }
+
+    if (current?.checkpointId) {
+      await this.refreshRequestCheckpointMetadataFromProvider(current.checkpointId);
+      return this.getRequestCheckpointMetadataByRequestId(normalizedRequestId);
+    }
+
+    return current;
+  }
+
   async forkRequestCheckpointMetadata(input: {
     sourceSessionResource: string;
     targetSessionResource: string;
@@ -873,8 +909,25 @@ export class EditCheckpointService {
   async rebuildFromTurnResponses(
     turnResponses: readonly Pick<TurnResponseTurn, 'turnId' | 'request' | 'rounds' | 'createdAt' | 'updatedAt' | 'response'>[],
   ): Promise<boolean> {
+    return await this.applyCheckpointStateFromTurnResponses(turnResponses);
+  }
+
+  async settleRequestCheckpointMetadataForTurnResponses(input: {
+    readonly sessionResource: string | null | undefined;
+    readonly workspaceRoot: string | null | undefined;
+    readonly turnResponses: readonly Pick<TurnResponseTurn, 'turnId' | 'request' | 'rounds' | 'createdAt' | 'updatedAt' | 'response'>[];
+  }): Promise<boolean> {
+    this.setTimelineContext(input.sessionResource, input.workspaceRoot);
+    return await this.applyCheckpointStateFromTurnResponses(input.turnResponses);
+  }
+
+  private async applyCheckpointStateFromTurnResponses(
+    turnResponses: readonly Pick<TurnResponseTurn, 'turnId' | 'request' | 'rounds' | 'createdAt' | 'updatedAt' | 'response'>[],
+  ): Promise<boolean> {
     const snapshot = await this.buildRebuildStateFromTurnResponses(turnResponses);
     this.applyRebuildState(snapshot);
+    this.rebindRequestCheckpointMetadataTargets(turnResponses);
+    await this.reconcileIncompleteCheckpointMetadataFromProvider();
     return snapshot.timeline.length > 0;
   }
 
@@ -1273,6 +1326,28 @@ export class EditCheckpointService {
     }
   }
 
+  private rebindRequestCheckpointMetadataTargets(
+    turnResponses: readonly Pick<TurnResponseTurn, 'request'>[],
+  ): void {
+    for (const turn of turnResponses) {
+      const requestMetadata = turn.request?.metadata;
+      if (!requestMetadata || typeof requestMetadata !== 'object') {
+        continue;
+      }
+      const checkpointId = typeof (requestMetadata as Record<string, unknown>)['checkpointId'] === 'string'
+        ? ((requestMetadata as Record<string, unknown>)['checkpointId'] as string).trim()
+        : '';
+      if (!checkpointId) {
+        continue;
+      }
+      this.requestMetadataTargetsByCheckpointId.set(checkpointId, requestMetadata);
+      const checkpointMetadata = this.requestCheckpointMetadataByCheckpointId.get(checkpointId);
+      if (checkpointMetadata) {
+        this.writeRequestCheckpointMetadata(requestMetadata, checkpointMetadata);
+      }
+    }
+  }
+
   private writeRequestCheckpointMetadata(
     requestMetadata: TurnRequest['metadata'],
     checkpointMetadata: RequestCheckpointMetadata,
@@ -1346,21 +1421,13 @@ export class EditCheckpointService {
     }
 
     const provider = this.getWorkspaceCheckpointProvider();
-    if (provider.getPresentationMode?.() === 'timeline') {
+    return this.enqueueCheckpointMetadataWrite(async () => {
       const existingRequestMetadata = this.requestMetadataTargetsByCheckpointId.get(snapshot.checkpointId);
       const existingRefs = this.readCheckpointRefsFromRequestMetadata(existingRequestMetadata);
       if (existingRefs.checkpointRef) {
-        return this.waitForCheckpointMetadataSettled();
+        return;
       }
 
-      const metadata = provider.createCheckpoint(this.toWorkspaceCheckpointDescriptor(snapshot)) as WorkspaceCheckpointRefMetadata | null | void;
-      if (metadata) {
-        this.applyWorkspaceCheckpointRefMetadata(snapshot, metadata);
-      }
-      return this.waitForCheckpointMetadataSettled();
-    }
-
-    return this.enqueueCheckpointMetadataWrite(async () => {
       const metadata = await Promise.resolve(provider.createCheckpoint(
         this.toWorkspaceCheckpointDescriptor(snapshot),
       ));
@@ -1368,6 +1435,50 @@ export class EditCheckpointService {
         this.applyWorkspaceCheckpointRefMetadata(snapshot, metadata);
       }
     }, 'create checkpoint');
+  }
+
+  private hasCompleteRequestCheckpointMetadata(
+    metadata: RequestCheckpointMetadata | null | undefined,
+  ): boolean {
+    return !!metadata?.checkpointNamespace?.trim() && !!metadata?.checkpointRef?.trim();
+  }
+
+  private async refreshRequestCheckpointMetadataFromProvider(checkpointId: string): Promise<void> {
+    const snapshot = this.findSnapshotByCheckpointId(checkpointId);
+    if (!snapshot) {
+      return;
+    }
+
+    const provider = this.getWorkspaceCheckpointProvider();
+    if (typeof provider.getCheckpointMetadata !== 'function') {
+      return;
+    }
+
+    const metadata = await Promise.resolve(provider.getCheckpointMetadata(checkpointId));
+    if (metadata) {
+      this.applyWorkspaceCheckpointRefMetadata(snapshot, metadata);
+    }
+  }
+
+  private async reconcileIncompleteCheckpointMetadataFromProvider(): Promise<void> {
+    const checkpointIds = [...this.timeline, ...this.truncatedRequestBoundaries]
+      .map(snapshot => snapshot.checkpointId?.trim())
+      .filter((checkpointId): checkpointId is string => !!checkpointId);
+
+    for (const checkpointId of checkpointIds) {
+      const metadata = this.getRequestCheckpointMetadataByCheckpointId(checkpointId);
+      if (this.hasCompleteRequestCheckpointMetadata(metadata)) {
+        continue;
+      }
+
+      await this.refreshRequestCheckpointMetadataFromProvider(checkpointId);
+    }
+  }
+
+  private findSnapshotByCheckpointId(checkpointId: string): TurnSnapshot | null {
+    return this.timeline.find(snapshot => snapshot.checkpointId === checkpointId)
+      ?? this.truncatedRequestBoundaries.find(snapshot => snapshot.checkpointId === checkpointId)
+      ?? null;
   }
 
   private enqueueCheckpointMetadataWrite(

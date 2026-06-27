@@ -38,6 +38,7 @@ import type {
   HostRequestModel,
   HostResponseProjection,
 } from '../helpers/host-turn-response-state';
+import type { RequestCheckpointMetadata } from './edit-checkpoint.service';
 import type { LexOwnerContext, LexOwnerFacade } from '../helpers/lex-stream.helper';
 import type { UserInteractionToolApprovalPolicy } from '../helpers/user-interaction.helper';
 import type { ChatSessionLexPostTurnResources } from './chat-session-lex-post-turn-resource-factory.service';
@@ -260,13 +261,22 @@ export type ChatRuntimeOwnerSchedulerPort = ChatRuntimeOwnerScheduler;
 export interface ChatRuntimeOwnerTurnStartupEditLifecyclePort {
   ensureAbsExport(sessionId: string | null | undefined): void;
   saveCheckpointToDisk(sessionId: string | null | undefined): void;
+  commitCurrentTurn(sessionId: string | null | undefined): Promise<void>;
   waitForCheckpointMetadataSettled(sessionId: string | null | undefined): Promise<void>;
+  readFinalizedCheckpointMetadata(
+    sessionId: string | null | undefined,
+    input: { readonly checkpointId?: string; readonly requestId?: string },
+  ): Promise<RequestCheckpointMetadata | null>;
 }
 
 export interface ChatRuntimeOwnerWorkspaceEditLifecycleResourcePort {
   ensureSessionStartAbsExport(sessionId: string | null | undefined, projectPath: string | null | undefined): void;
   commitCurrentTurn(sessionId: string | null | undefined): Promise<void>;
   waitForCheckpointMetadataSettled(sessionId: string | null | undefined): Promise<void>;
+  readFinalizedCheckpointMetadata(
+    sessionId: string | null | undefined,
+    input: { readonly checkpointId?: string; readonly requestId?: string },
+  ): Promise<RequestCheckpointMetadata | null>;
 }
 
 export interface ChatRuntimeOwnerRerunGateState {

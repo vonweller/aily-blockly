@@ -33,6 +33,21 @@ function normalizeOptionalString(value) {
     : '';
 }
 
+function normalizeProtocolTruncation(value) {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  const kind = normalizeOptionalString(value.kind);
+  if (kind !== 'removeFrom') {
+    return null;
+  }
+  const turnId = normalizeTurnId(value.turnId);
+  if (!turnId) {
+    return null;
+  }
+  return { kind, turnId };
+}
+
 function buildSubmittedTurnSeed({ turnId, request, timestamp }) {
   const requestContent = normalizeOptionalString(request && request.requestText);
   const displayContent = normalizeOptionalString(request && request.displayText);
@@ -1397,23 +1412,53 @@ class ChatRuntimeHostTranscriptBuilder {
     return clonePayload(nextTranscript);
   }
 
-  seedSubmittedTurn({ sessionId, turnId, request, revision, timestamp }) {
+  seedSubmittedTurn({ sessionId, turnId, request, revision, timestamp, protocolTruncation }) {
     const normalizedSessionId = normalizeSessionId(sessionId);
     const normalizedTurnId = normalizeTurnId(turnId);
     if (!normalizedSessionId || !normalizedTurnId) {
       return null;
+    }
+    const currentTranscript = this.buildTranscriptSnapshot(normalizedSessionId);
+    const turnResponses = Array.isArray(currentTranscript && currentTranscript.turnResponses)
+      ? clonePayload(currentTranscript.turnResponses)
+      : [];
+    const normalizedTruncation = normalizeProtocolTruncation(protocolTruncation);
+    if (normalizedTruncation) {
+      const removeFromIndex = turnResponses.findIndex(existingTurn =>
+        normalizeTurnId(existingTurn && existingTurn.turnId) === normalizedTruncation.turnId);
+      if (removeFromIndex >= 0) {
+        const removedTurns = turnResponses.splice(removeFromIndex);
+        for (const removedTurn of removedTurns) {
+          const removedTurnId = normalizeTurnId(removedTurn && removedTurn.turnId);
+          if (removedTurnId) {
+            this.renderEventStates.delete(renderEventStateKey(normalizedSessionId, removedTurnId));
+          }
+        }
+      }
     }
     const turn = buildSubmittedTurnSeed({
       turnId: normalizedTurnId,
       request,
       timestamp: typeof timestamp === 'number' && Number.isFinite(timestamp) ? timestamp : Date.now(),
     });
-    return this.acceptTurnSnapshot({
+
+    const existingIndex = turnResponses.findIndex(existingTurn =>
+      normalizeTurnId(existingTurn && existingTurn.turnId) === normalizedTurnId);
+    if (existingIndex >= 0) {
+      turnResponses[existingIndex] = turn;
+    } else {
+      turnResponses.push(turn);
+    }
+
+    const currentRevision = normalizeRevision(currentTranscript && currentTranscript.revision);
+    const incomingRevision = normalizeRevision(revision);
+    const nextTranscript = {
       sessionId: normalizedSessionId,
-      turnId: normalizedTurnId,
-      revision,
-      turn,
-    });
+      turnResponses,
+      revision: Math.max(currentRevision + 1, incomingRevision),
+    };
+    this.transcripts.set(normalizedSessionId, clonePayload(nextTranscript));
+    return clonePayload(nextTranscript);
   }
 
   markTurnFailed({ sessionId, turnId, revision, error }) {
@@ -1451,6 +1496,50 @@ class ChatRuntimeHostTranscriptBuilder {
         updatedAt: timestamp,
       },
       updatedAt: timestamp,
+    };
+    turnResponses[existingIndex] = nextTurn;
+
+    const currentRevision = normalizeRevision(currentTranscript && currentTranscript.revision);
+    const incomingRevision = normalizeRevision(revision);
+    const nextRevision = Math.max(currentRevision + 1, incomingRevision);
+    const nextTranscript = {
+      sessionId: normalizedSessionId,
+      turnResponses,
+      revision: nextRevision,
+    };
+    this.transcripts.set(normalizedSessionId, clonePayload(nextTranscript));
+    return clonePayload(nextTranscript);
+  }
+
+  cancelTurn({ sessionId, turnId, revision, timestamp }) {
+    const normalizedSessionId = normalizeSessionId(sessionId);
+    const normalizedTurnId = normalizeTurnId(turnId);
+    if (!normalizedSessionId || !normalizedTurnId) {
+      return null;
+    }
+    const currentTranscript = this.buildTranscriptSnapshot(normalizedSessionId);
+    const turnResponses = Array.isArray(currentTranscript && currentTranscript.turnResponses)
+      ? clonePayload(currentTranscript.turnResponses)
+      : [];
+    const existingIndex = turnResponses.findIndex(existingTurn =>
+      normalizeTurnId(existingTurn && existingTurn.turnId) === normalizedTurnId);
+    if (existingIndex < 0) {
+      return null;
+    }
+    const nextTimestamp = normalizeTimestamp(timestamp);
+    const existingTurn = turnResponses[existingIndex];
+    const existingResponse = existingTurn.response && typeof existingTurn.response === 'object'
+      ? existingTurn.response
+      : {};
+    const nextTurn = {
+      ...existingTurn,
+      response: {
+        ...existingResponse,
+        status: 'cancelled',
+        terminationReason: 'cancelled',
+        updatedAt: nextTimestamp,
+      },
+      updatedAt: nextTimestamp,
     };
     turnResponses[existingIndex] = nextTurn;
 

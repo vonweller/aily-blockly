@@ -281,7 +281,7 @@ export class ChatVisibleTranscriptModel {
       responseId: item.kind === 'response' ? item.turnId : undefined,
       role: item.role,
       content: item.contentPreview,
-      doing: item.status === 'streaming',
+      doing: item.kind === 'response' && item.status === 'streaming',
       turnModelName: assistantProjection?.modelName ?? '',
       turnModelBillingLabel: assistantProjection?.modelBillingLabel,
       turnContext: item.turnContext,
@@ -373,6 +373,7 @@ function createItemSignature(item: Omit<ChatVisibleTranscriptItem, 'revision'>):
     contentPreview: item.contentPreview,
     turnResponseStatus: item.turnResponse?.response.status,
     turnResponseUpdatedAt: item.turnResponse?.updatedAt,
+    requestMetadata: item.turnResponse?.request?.metadata,
     responseModel: item.turnResponse?.responseModel
       ? {
         modelName: item.turnResponse.responseModel.modelName,

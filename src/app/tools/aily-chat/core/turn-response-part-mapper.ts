@@ -435,12 +435,34 @@ function cloneQuestionAnswers(
   }
 
   return Object.fromEntries(
-    Object.entries(answers).map(([key, answer]) => [key, {
-      selected: [...answer.selected],
-      freeText: answer.freeText,
-      skipped: answer.skipped,
-    }]),
+    Object.entries(answers)
+      .map(([key, answer]) => {
+        const normalized = normalizeQuestionAnswer(answer);
+        return normalized ? [key, normalized] as const : null;
+      })
+      .filter((entry): entry is readonly [string, MutableQuestionAnswers[string]] => !!entry),
   );
+}
+
+function normalizeQuestionAnswer(answer: unknown): MutableQuestionAnswers[string] | null {
+  if (typeof answer === 'string') {
+    return {
+      selected: [answer],
+      freeText: null,
+      skipped: false,
+    };
+  }
+  if (!answer || typeof answer !== 'object' || Array.isArray(answer)) {
+    return null;
+  }
+  const candidate = answer as { selected?: unknown; freeText?: unknown; skipped?: unknown };
+  return {
+    selected: Array.isArray(candidate.selected)
+      ? candidate.selected.filter((item): item is string => typeof item === 'string')
+      : [],
+    freeText: typeof candidate.freeText === 'string' ? candidate.freeText : null,
+    skipped: !!candidate.skipped,
+  };
 }
 
 function extractAskUserQuestionAnswers(part: TurnResponsePart): MutableQuestionAnswers | undefined {
@@ -468,18 +490,11 @@ function normalizeQuestionAnswers(answers: unknown): MutableQuestionAnswers | un
 
   const normalized: NonNullable<MutableQuestionAnswers> = {};
   for (const [question, answer] of Object.entries(answers)) {
-    if (!answer || typeof answer !== 'object' || Array.isArray(answer)) {
+    const normalizedAnswer = normalizeQuestionAnswer(answer);
+    if (!normalizedAnswer) {
       continue;
     }
-
-    const candidate = answer as { selected?: unknown; freeText?: unknown; skipped?: unknown };
-    normalized[question] = {
-      selected: Array.isArray(candidate.selected)
-        ? candidate.selected.filter((item): item is string => typeof item === 'string')
-        : [],
-      freeText: typeof candidate.freeText === 'string' ? candidate.freeText : null,
-      skipped: !!candidate.skipped,
-    };
+    normalized[question] = normalizedAnswer;
   }
 
   return Object.keys(normalized).length > 0 ? normalized : undefined;

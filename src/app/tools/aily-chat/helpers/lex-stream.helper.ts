@@ -63,7 +63,7 @@ type LexOwnerUiAccess = Pick<LexUiEventBridge, 'presentQuestion' | 'updateQuesti
 type LexOwnerTurnAccess = Pick<LexTurnRuntimeBridge, 'begin' | 'run' | 'draft' | 'ensureMessage' | 'appendError'>;
 type LexOwnerTurnControlAccess = Pick<
   LexTurnControlBridge,
-  'currentId' | 'turnIdByRound' | 'requestContent' | 'lastRoundId' | 'currentRequestMetadata' | 'complete' | 'discardIncomplete' | 'removeFrom' | 'restartFrom' | 'clear'
+  'currentId' | 'currentIndex' | 'turnIdByRound' | 'requestContent' | 'lastRoundId' | 'currentRequestMetadata' | 'complete' | 'fail' | 'discardIncomplete' | 'removeFrom' | 'restartFrom' | 'clear'
 >;
 type LexOwnerRuntimeAccess = Pick<LexRuntimeConfigBridge, 'tools' | 'llmConfig'>;
 type LexOwnerSessionAccess = Pick<LexSessionFacade, 'save' | 'snapshot' | 'forkSnapshot' | 'resolveRestorePlan' | 'restoreResolvedSnapshot' | 'restore'>;
@@ -87,6 +87,7 @@ export type LexOwnerContext = BootstrapLexAgentContext
       options: ChatRuntimeTurnResponseSyncOptions,
     ): void;
     readSessionTurnResponses?(sessionId: string | null | undefined): readonly TurnResponseTurn[];
+    suppressVisibleTurnStartupProjection?: boolean;
     emitExecutionRenderEvent?(
       sessionId: string | null | undefined,
       event: RenderEvent,
@@ -398,6 +399,7 @@ export class LexOwnerFacade {
       (turnId) => uiEventBridge.ensureResponseItem(turnId),
       () => turnBridge.messages(),
       () => runtimeConfigBridge.tools(),
+      () => turnControlBridge.currentIndex(),
     );
     const turnExecutionBridge = new LexTurnExecutionBridge(
       this.ctx,

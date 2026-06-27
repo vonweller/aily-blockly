@@ -32,6 +32,7 @@ type LexTurnStartupContext = Pick<
     };
     resolveActiveRuntimeSessionId?(): string | null | undefined;
     readCurrentViewSessionResource?(): string | null;
+    suppressVisibleTurnStartupProjection?: boolean;
   };
 
 /**
@@ -48,10 +49,15 @@ export class LexTurnStartupBridge {
     private readonly ensureResponseItem: (turnId?: string) => void,
     private readonly getConversationMessages: () => any[],
     private readonly getCurrentTools: () => any[],
+    private readonly getCurrentTurnIndex: () => number | undefined,
   ) {}
 
   private createCheckpointId(): string {
     return `cp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  private normalizeCheckpointId(value: unknown): string {
+    return typeof value === 'string' ? value.trim() : '';
   }
 
   private shouldRefreshLocalEstimate(): boolean {
@@ -102,17 +108,36 @@ export class LexTurnStartupBridge {
     };
   }
 
+  private buildFreshTurnMetadata(requestMetadata?: TurnRequest['metadata']): TurnRequest['metadata'] {
+    const metadata: Record<string, unknown> = {
+      ...this.buildTurnModelDisplayMetadata(),
+      ...(requestMetadata ?? {}),
+    };
+    delete metadata['checkpointNamespace'];
+    delete metadata['checkpointTurnIndex'];
+    delete metadata['startCheckpointRef'];
+    delete metadata['checkpointRef'];
+    delete metadata['checkpointRefs'];
+    delete metadata['additionalStartCheckpointRefs'];
+    delete metadata['additionalCheckpointRefs'];
+    metadata['checkpointId'] = this.normalizeCheckpointId(metadata['checkpointId']) || this.createCheckpointId();
+    return metadata as TurnRequest['metadata'];
+  }
+
+  private resolveCurrentTurnIndex(): number {
+    const index = this.getCurrentTurnIndex();
+    return typeof index === 'number' && Number.isFinite(index) && index >= 0 ? index : 0;
+  }
+
   beginMainAgentTurn(
     userMessage: string,
     displayContent?: string,
     requestMetadata?: TurnRequest['metadata'],
   ): string | undefined {
-    const nextRequestMetadata: TurnRequest['metadata'] = {
-      checkpointId: this.createCheckpointId(),
-      ...this.buildTurnModelDisplayMetadata(),
-      ...(requestMetadata ?? {}),
-    };
+    const nextRequestMetadata = this.buildFreshTurnMetadata(requestMetadata);
     const turnId = this.startTurn(userMessage, displayContent, nextRequestMetadata);
+    const turnIndex = this.resolveCurrentTurnIndex();
+    (nextRequestMetadata as Record<string, unknown>)['checkpointTurnIndex'] = turnIndex + 1;
     const activeRuntimeSessionId = typeof this.ctx.resolveActiveRuntimeSessionId === 'function'
       ? this.ctx.resolveActiveRuntimeSessionId()?.trim()
       : '';
@@ -128,8 +153,10 @@ export class LexTurnStartupBridge {
     const isDetachedRuntimeOwner = !!activeRuntimeSessionId
       && !!visibleSessionId
       && activeRuntimeSessionId !== visibleSessionId;
+    const shouldProjectVisibleStartup = !isDetachedRuntimeOwner
+      && this.ctx.suppressVisibleTurnStartupProjection !== true;
 
-    if (turnId && !isDetachedRuntimeOwner) {
+    if (turnId && shouldProjectVisibleStartup) {
       this.attachTurnIdToLatestUserMessage(turnId);
     }
 
@@ -140,11 +167,11 @@ export class LexTurnStartupBridge {
     this.ctx.toolCallingIteration = 0;
     this.ctx.repetitionDetectionService.resetStreamTokens();
 
-    if (turnId && !isDetachedRuntimeOwner) {
+    if (turnId && shouldProjectVisibleStartup) {
       this.seedPendingTurn(turnId, userMessage, displayContent, nextRequestMetadata);
     }
 
-    if (!isDetachedRuntimeOwner) {
+    if (shouldProjectVisibleStartup) {
       this.ensureResponseItem(turnId);
     }
 
@@ -155,26 +182,28 @@ export class LexTurnStartupBridge {
     const conversationMessages = this.getConversationMessages();
     const workspaceRoot = this.ctx.prjPath || this.ctx.prjRootPath || null;
     this.ctx.editTracking.setTimelineContext(
-      this.ctx.sessionId || null,
+      resourceSessionId || null,
       workspaceRoot,
     );
 
-    if (!isDetachedRuntimeOwner) {
-      const responseStartListIndex = this.ctx.list.length - 1;
-      const turnStartListIndex = responseStartListIndex > 0
+    const responseStartListIndex = shouldProjectVisibleStartup
+      ? this.ctx.list.length - 1
+      : null;
+    const turnStartListIndex = responseStartListIndex !== null
+      ? responseStartListIndex > 0
         ? responseStartListIndex - 1
-        : responseStartListIndex;
-      this.ctx.editTracking.startTurn(
-        0,
-        turnStartListIndex,
-        responseStartListIndex,
-        turnId,
-        userMessage,
-        displayContent,
-        nextRequestMetadata.checkpointId,
-        nextRequestMetadata,
-      );
-    }
+        : responseStartListIndex
+      : null;
+    this.ctx.editTracking.startTurn(
+      turnIndex,
+      turnStartListIndex,
+      responseStartListIndex,
+      turnId,
+      userMessage,
+      displayContent,
+      nextRequestMetadata.checkpointId,
+      nextRequestMetadata,
+    );
     if (this.shouldRefreshLocalEstimate()) {
       if (this.shouldKeepEmptyBudgetSnapshot(conversationMessages)) {
         this.ctx.contextBudgetService.reset();
@@ -185,7 +214,7 @@ export class LexTurnStartupBridge {
         );
       }
     }
-    if (!isDetachedRuntimeOwner) {
+    if (shouldProjectVisibleStartup) {
       this.ctx.scrollManager.setScrollLock(true);
     }
 

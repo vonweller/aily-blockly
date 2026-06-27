@@ -19,11 +19,6 @@ export interface SessionModelBoundaryTurnOwnerPolicyOptions {
 export interface SessionModelBoundaryTransactionContext {
   readonly lexStream: {
     readonly session?: {
-      resolveRestorePlan?(
-        sessionId: string,
-        turnResponses?: readonly TurnResponseTurn[],
-        hostRecord?: HostSessionRecord | null,
-      ): Promise<LexRestorePlan> | LexRestorePlan;
       restoreResolvedSnapshot?(snapshot: unknown, sessionId?: string | null): boolean;
     };
     hydrateTurnResponses?(
@@ -82,11 +77,10 @@ export async function restoreSessionBoundaryTransaction(
   let turnResponses = [...input.turnResponses];
   let restoredLexSnapshot = false;
   const acceptRestorePlanTurnResponses = input.acceptRestorePlanTurnResponses !== false;
-  const resolveRestorePlan = ctx.lexStream.session?.resolveRestorePlan?.bind(ctx.lexStream.session);
   const restoreResolvedSnapshot = ctx.lexStream.session?.restoreResolvedSnapshot?.bind(ctx.lexStream.session);
 
-  if ((input.restorePlan || resolveRestorePlan) && restoreResolvedSnapshot) {
-    const restorePlan = input.restorePlan ?? await resolveRestorePlan?.(sessionId, turnResponses, input.hostRecord ?? null) ?? null;
+  if (input.restorePlan && restoreResolvedSnapshot) {
+    const restorePlan = input.restorePlan;
     if (!restorePlan) {
       if (input.requireLexSnapshotRestore) {
         throw new Error(`Session boundary transaction failed to resolve lex restore plan for ${sessionId}`);

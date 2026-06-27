@@ -296,16 +296,17 @@ class ChatRuntimeHostProcessService {
     const request = args && args[0];
     const runningState = this.hostSessionStore.beginSubmittedTurn(request);
     this.broadcastSessionState('runtime-status', runningState);
-    this.replayTranscriptForAttachedSession(runningState.sessionId);
+    const submittedRequest = this.hostSessionStore.readActiveSubmittedRequest(runningState.sessionId) || request;
     const startTurnCommand = {
       sessionId: runningState.sessionId,
       turnId: runningState.activeTurnId,
-      request,
+      request: submittedRequest,
       executionContext: {
         selectedMode: runningState.selectedMode ?? null,
         providerOptions: runningState.providerOptions ?? null,
         currentModel: runningState.currentModel ?? null,
         transcriptRevision: Number(runningState.transcriptRevision) || 0,
+        protocolTruncation: submittedRequest && submittedRequest.protocolTruncation ? submittedRequest.protocolTruncation : null,
       },
     };
     if (!this.dispatchExecutionWorkerCommandIfAvailable('startTurn', [startTurnCommand], runningState.sessionId, {
@@ -317,12 +318,26 @@ class ChatRuntimeHostProcessService {
       error.retryable = true;
       this.failSubmittedTurnWithError(runningState.sessionId, error);
     }
+    this.replayTranscriptForAttachedSession(runningState.sessionId);
     return this.hostSessionStore.buildSessionState(runningState.sessionId);
   }
 
   handleStopTurn(args) {
     const sessionId = normalizeSessionId(args && args[0]);
     const previousState = this.hostSessionStore.buildSessionState(sessionId);
+    const stoppedTranscript = this.hostSessionStore.cancelRunningTurn(
+      sessionId,
+      previousState && previousState.activeTurnId,
+      previousState && previousState.transcriptRevision,
+    );
+    if (stoppedTranscript) {
+      this.broadcastHostEvent({
+        kind: 'transcript',
+        sessionId: stoppedTranscript.sessionId,
+        revision: Number(stoppedTranscript.revision) || 0,
+        transcript: stoppedTranscript,
+      });
+    }
     const stoppedState = this.hostSessionStore.stopSession(sessionId);
     if (stoppedState) {
       this.broadcastSessionState('runtime-status', stoppedState);
