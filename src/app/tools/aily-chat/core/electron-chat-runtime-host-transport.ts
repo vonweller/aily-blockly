@@ -175,7 +175,7 @@ async function dispatchResourceOperationCommand(
       throw new Error('[AilyChat][RuntimeHost] Runtime resource operation command requires a request.');
     }
     const result = await handler(request);
-    api.sendResourceOperationResponse({ requestId, ok: true, result });
+    api.sendResourceOperationResponse(createIpcSafePayload({ requestId, ok: true, result }));
   } catch (error) {
     if (!requestId && typeof payload.requestId === 'string') {
       requestId = payload.requestId;
@@ -188,11 +188,11 @@ async function dispatchResourceOperationCommand(
     if (typeof maybeError?.retryable === 'boolean') {
       errorPayload.retryable = maybeError.retryable;
     }
-    api.sendResourceOperationResponse({
+    api.sendResourceOperationResponse(createIpcSafePayload({
       requestId,
       ok: false,
       error: errorPayload,
-    });
+    }));
   }
 }
 
@@ -295,7 +295,7 @@ export async function registerElectronChatRuntimeExecutionWorker(
   const executionWorkerEvents = executionWorker.onEvent(event => {
     const workerEvent = createExecutionWorkerEvent(event, registrationState);
     if (workerEvent) {
-      api.emitExecutionWorkerEvent(workerEvent);
+      api.emitExecutionWorkerEvent(createIpcSafePayload(workerEvent));
     }
   });
   const unsubscribeCommands = api.onExecutionWorkerCommand(payload => {
@@ -330,7 +330,7 @@ async function dispatchExecutionWorkerCommand(
     const args = Array.isArray(payload.args) ? payload.args : [];
     trackExecutionWorkerCommand(method, args, registrationState);
     const result = await callExecutionWorkerMethod(executionWorker, method, args);
-    api.sendExecutionWorkerResponse({ requestId, ok: true, result });
+    api.sendExecutionWorkerResponse(createIpcSafePayload({ requestId, ok: true, result }));
   } catch (error) {
     console.error('[AilyChat][RuntimeHost] Execution worker command failed:', {
       requestId,
@@ -344,11 +344,11 @@ async function dispatchExecutionWorkerCommand(
     if (!requestId) {
       return;
     }
-    api.sendExecutionWorkerResponse({
+    api.sendExecutionWorkerResponse(createIpcSafePayload({
       requestId,
       ok: false,
       error: createErrorPayload(error),
-    });
+    }));
   }
 }
 
@@ -590,4 +590,41 @@ function callExecutionWorkerMethod(
         args[0] as ChatRuntimeExecutionWorkerResolveInteractionCommand,
       );
   }
+}
+
+function createIpcSafePayload<T>(payload: T): T {
+  return JSON.parse(JSON.stringify(payload, createIpcSafeJsonReplacer())) as T;
+}
+
+function createIpcSafeJsonReplacer(): (key: string, value: unknown) => unknown {
+  const seen = new WeakSet<object>();
+  return (_key: string, value: unknown): unknown => {
+    if (typeof value === 'bigint') {
+      return value.toString();
+    }
+    if (typeof value === 'function' || typeof value === 'symbol') {
+      return undefined;
+    }
+    if (!value || typeof value !== 'object') {
+      return value;
+    }
+    if (value instanceof Error) {
+      return {
+        name: value.name,
+        message: value.message,
+        stack: value.stack,
+      };
+    }
+    if (seen.has(value)) {
+      return '[Circular]';
+    }
+    seen.add(value);
+    if (value instanceof Map) {
+      return Array.from(value.entries());
+    }
+    if (value instanceof Set) {
+      return Array.from(value.values());
+    }
+    return value;
+  };
 }

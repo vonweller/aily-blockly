@@ -1120,6 +1120,8 @@ export class ChatEngineService implements IChatContext {
   readonly partStore: ChatPartStore = this.createSessionRoutedPartStore();
   private readonly liveHostRequestGraphCache = new LiveHostRequestGraphCache();
   private readonly pendingProtocolTruncations = new Map<string, ChatRuntimeHostProtocolTruncation>();
+  private readonly hostSubmitAdmissionSessionIds = new Set<string>();
+  private readonly pendingFollowupFlushAfterSettleSessionIds = new Set<string>();
   private readonly hostItemLifecyclePerfSnapshotHandle = ChatPerformanceTracer.registerExternalSnapshotProvider(
     'hostItemLifecycle',
     (): HostItemLifecycleSnapshot => this.liveHostRequestGraphCache.getItemLifecycleSnapshot(),
@@ -4310,10 +4312,84 @@ export class ChatEngineService implements IChatContext {
     }
 
     if (requestInProgress) {
-      return this.requestStopRuntimeTurn(targetSessionId);
+      const schedulePendingFollowupFlushAfterSettle = (
+        (this as unknown as { schedulePendingFollowupFlushAfterSettle?: ChatEngineService['schedulePendingFollowupFlushAfterSettle'] })
+          .schedulePendingFollowupFlushAfterSettle
+        ?? ChatEngineService.prototype['schedulePendingFollowupFlushAfterSettle']
+      );
+      const clearPendingFollowupFlushAfterSettle = (
+        (this as unknown as { clearPendingFollowupFlushAfterSettle?: ChatEngineService['clearPendingFollowupFlushAfterSettle'] })
+          .clearPendingFollowupFlushAfterSettle
+        ?? ChatEngineService.prototype['clearPendingFollowupFlushAfterSettle']
+      );
+      schedulePendingFollowupFlushAfterSettle.call(this, targetSessionId);
+      const stopped = this.requestStopRuntimeTurn(targetSessionId);
+      if (!stopped) {
+        clearPendingFollowupFlushAfterSettle.call(this, targetSessionId);
+      }
+      return stopped;
     }
 
     return this.processPendingFollowupRequests(targetSessionId);
+  }
+
+  private schedulePendingFollowupFlushAfterSettle(sessionId: string | null | undefined): void {
+    const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!targetSessionId) {
+      return;
+    }
+
+    const flushAfterSettleSessionIds = (this as unknown as {
+      pendingFollowupFlushAfterSettleSessionIds?: Set<string>;
+    }).pendingFollowupFlushAfterSettleSessionIds;
+    if (flushAfterSettleSessionIds) {
+      flushAfterSettleSessionIds.add(targetSessionId);
+    }
+  }
+
+  private clearPendingFollowupFlushAfterSettle(sessionId: string | null | undefined): void {
+    const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!targetSessionId) {
+      return;
+    }
+
+    (this as unknown as {
+      pendingFollowupFlushAfterSettleSessionIds?: Set<string>;
+    }).pendingFollowupFlushAfterSettleSessionIds?.delete(targetSessionId);
+  }
+
+  private maybeFlushPendingFollowupAfterSettle(
+    sessionId: string,
+    state: ChatRuntimeHostSessionState,
+  ): void {
+    const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!targetSessionId || state.requestInProgress === true) {
+      return;
+    }
+
+    const flushAfterSettleSessionIds = (this as unknown as {
+      pendingFollowupFlushAfterSettleSessionIds?: Set<string>;
+    }).pendingFollowupFlushAfterSettleSessionIds;
+    if (!flushAfterSettleSessionIds?.delete(targetSessionId)) {
+      return;
+    }
+
+    if (this.getPendingFollowupRequests(targetSessionId).length === 0) {
+      return;
+    }
+
+    if (isRequestStateTraceEnabled()) {
+      console.info('[AilyChat][RequestStateTrace]', {
+        phase: 'runNext',
+        action: 'flush-after-settle',
+        sessionId: targetSessionId,
+        state: state.status ?? 'idle',
+      });
+    }
+
+    queueMicrotask(() => {
+      void this.processPendingFollowupRequests(targetSessionId);
+    });
   }
 
   queueFollowupMessage(
@@ -4516,25 +4592,8 @@ export class ChatEngineService implements IChatContext {
     const runtimeOwnerSessionId = typeof prepared.runtimeOwnerSessionId === 'string' && prepared.runtimeOwnerSessionId.trim().length > 0
       ? prepared.runtimeOwnerSessionId.trim()
       : normalizedSessionId;
-    const providerOptionsKey = typeof prepared.providerOptionsKey === 'string' && prepared.providerOptionsKey.trim().length > 0
-      ? prepared.providerOptionsKey.trim()
-      : null;
 
     await this.runWithRuntimeSessionOwner(runtimeOwnerSessionId, async () => {
-      if (providerOptionsKey) {
-        const agentProviderOptionsKey = createChatAgentRuntimeConfigKey(
-          providerOptionsKey,
-          this.currentAgentRuntimeMode ?? this.chatService?.currentAgentRuntimeMode,
-          this.resolveVisibleCurrentModelSnapshot(runtimeOwnerSessionId),
-        );
-        if (this.lexStream.agent.isConfiguredFor?.(runtimeOwnerSessionId, agentProviderOptionsKey)) {
-          await this.lexStream.agent.ensureAgent(runtimeOwnerSessionId, agentProviderOptionsKey);
-        } else {
-          await this.lexStream.agent.ensureAgent(runtimeOwnerSessionId, agentProviderOptionsKey);
-        }
-      } else {
-        await this.ensureRuntimeAgentForSession(runtimeOwnerSessionId);
-      }
       await this.executePreparedUserSend(runtimeOwnerSessionId, prepared, {
         clearInput: false,
         resetPreparedUserTurnState: true,
@@ -5605,6 +5664,7 @@ export class ChatEngineService implements IChatContext {
     sessionId: string,
     state: ChatRuntimeHostSessionState,
   ): void {
+    this.hostSubmitAdmissionSessionIds.delete(sessionId);
     this.rememberRuntimeHostSessionState(state);
     const attachedView = Array.isArray(state.attachedViewIds)
       ? state.attachedViewIds.includes(this.runtimeViewId)
@@ -5637,6 +5697,12 @@ export class ChatEngineService implements IChatContext {
     });
 
     this.traceRuntimeHostStateProjection(sessionId, state, visibleCurrentSession);
+    const maybeFlushPendingFollowupAfterSettle = (
+      (this as unknown as { maybeFlushPendingFollowupAfterSettle?: ChatEngineService['maybeFlushPendingFollowupAfterSettle'] })
+        .maybeFlushPendingFollowupAfterSettle
+      ?? ChatEngineService.prototype['maybeFlushPendingFollowupAfterSettle']
+    );
+    maybeFlushPendingFollowupAfterSettle.call(this, sessionId, state);
 
     if (this.isRuntimeHostTerminalStatus(state.status)) {
       const readSessionTurnResponses = (
@@ -5815,6 +5881,7 @@ export class ChatEngineService implements IChatContext {
     sessionId: string,
     _error: { readonly code?: string; readonly message: string; readonly retryable?: boolean },
   ): void {
+    this.hostSubmitAdmissionSessionIds.delete(sessionId);
     this.chatRuntimeViewMirrorProjection.projectRuntimeState({
       sessionId,
       patch: {
@@ -5825,6 +5892,139 @@ export class ChatEngineService implements IChatContext {
         stopSession: null,
       },
       options: { reason: 'state', highFrequency: false },
+    });
+    this.triggerSyncDetectChanges();
+  }
+
+  private projectSubmittedTurnRunningState(
+    sessionId: string,
+    activeResponseHandle: unknown | null,
+  ): void {
+    const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!targetSessionId) {
+      return;
+    }
+
+    const readRuntimeHostSessionState = (
+      (this as unknown as { readRuntimeHostSessionState?: ChatEngineService['readRuntimeHostSessionState'] })
+        .readRuntimeHostSessionState
+      ?? ChatEngineService.prototype['readRuntimeHostSessionState']
+    );
+    const readSessionTurnResponses = (
+      (this as unknown as { readSessionTurnResponses?: ChatEngineService['readSessionTurnResponses'] })
+        .readSessionTurnResponses
+      ?? ChatEngineService.prototype['readSessionTurnResponses']
+    );
+    const previousState = readRuntimeHostSessionState.call(this, targetSessionId);
+    if (previousState?.requestInProgress === true) {
+      return;
+    }
+
+    const activeTurnId = typeof activeResponseHandle === 'string' && activeResponseHandle.trim().length > 0
+      ? activeResponseHandle.trim()
+      : previousState?.activeTurnId ?? null;
+    const attachedViewIds = previousState?.attachedViewIds?.length
+      ? previousState.attachedViewIds
+      : [this.runtimeViewId];
+    const resolveSelectedMode = (
+      (this as unknown as { resolveVisibleSelectedModeSnapshot?: ChatEngineService['resolveVisibleSelectedModeSnapshot'] })
+        .resolveVisibleSelectedModeSnapshot
+    );
+    const resolveProviderOptions = (
+      (this as unknown as { resolveVisibleSessionProviderOptionsSnapshot?: ChatEngineService['resolveVisibleSessionProviderOptionsSnapshot'] })
+        .resolveVisibleSessionProviderOptionsSnapshot
+    );
+    const resolveCurrentModel = (
+      (this as unknown as { resolveVisibleCurrentModelSnapshot?: ChatEngineService['resolveVisibleCurrentModelSnapshot'] })
+        .resolveVisibleCurrentModelSnapshot
+    );
+    const runningState: ChatRuntimeHostSessionState = {
+      ...(previousState ?? {
+        transcriptRevision: readSessionTurnResponses.call(this, targetSessionId).length,
+      }),
+      sessionId: targetSessionId,
+      status: 'running',
+      requestInProgress: true,
+      attachedViewIds,
+      activeTurnId,
+      transcriptRevision: previousState?.transcriptRevision
+        ?? readSessionTurnResponses.call(this, targetSessionId).length,
+      selectedMode: previousState?.selectedMode
+        ?? resolveSelectedMode?.call(this, targetSessionId)
+        ?? this.chatService?.selectedMode
+        ?? null,
+      providerOptions: previousState?.providerOptions
+        ?? resolveProviderOptions?.call(this, targetSessionId)
+        ?? null,
+      currentModel: previousState?.currentModel
+        ?? resolveCurrentModel?.call(this, targetSessionId)
+        ?? null,
+    };
+    (this as unknown as { hostSubmitAdmissionSessionIds?: Set<string> })
+      .hostSubmitAdmissionSessionIds
+      ?.add(targetSessionId);
+    this.rememberRuntimeHostSessionState(runningState);
+    this.chatRuntimeViewMirrorProjection.projectRuntimeState({
+      sessionId: targetSessionId,
+      patch: {
+        status: 'in_progress',
+        requestInProgress: true,
+        attachedView: attachedViewIds.includes(this.runtimeViewId),
+        supportsInterruption: true,
+        activeResponseHandle: activeTurnId ?? targetSessionId,
+        stopSession: () => this.dispatchRuntimeHostCommand('stop runtime turn', (host) => host.stopTurn(targetSessionId)),
+        selectedMode: runningState.selectedMode ?? undefined,
+        providerOptions: runningState.providerOptions ?? undefined,
+        currentModel: runningState.currentModel ?? undefined,
+      },
+      options: { reason: 'status', highFrequency: false },
+    });
+    this.triggerSyncDetectChanges();
+  }
+
+  private clearSubmittedTurnRunningState(sessionId: string): void {
+    const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    const admissionSessionIds = (this as unknown as { hostSubmitAdmissionSessionIds?: Set<string> })
+      .hostSubmitAdmissionSessionIds;
+    if (!targetSessionId || (admissionSessionIds && !admissionSessionIds.delete(targetSessionId))) {
+      return;
+    }
+
+    const readRuntimeHostSessionState = (
+      (this as unknown as { readRuntimeHostSessionState?: ChatEngineService['readRuntimeHostSessionState'] })
+        .readRuntimeHostSessionState
+      ?? ChatEngineService.prototype['readRuntimeHostSessionState']
+    );
+    const readSessionTurnResponses = (
+      (this as unknown as { readSessionTurnResponses?: ChatEngineService['readSessionTurnResponses'] })
+        .readSessionTurnResponses
+      ?? ChatEngineService.prototype['readSessionTurnResponses']
+    );
+    const previousState = readRuntimeHostSessionState.call(this, targetSessionId);
+    const idleState: ChatRuntimeHostSessionState = {
+      ...(previousState ?? {
+        transcriptRevision: readSessionTurnResponses.call(this, targetSessionId).length,
+        attachedViewIds: [this.runtimeViewId],
+      }),
+      sessionId: targetSessionId,
+      status: 'idle',
+      requestInProgress: false,
+      activeTurnId: null,
+      attachedViewIds: previousState?.attachedViewIds ?? [this.runtimeViewId],
+      transcriptRevision: previousState?.transcriptRevision
+        ?? readSessionTurnResponses.call(this, targetSessionId).length,
+    };
+    this.rememberRuntimeHostSessionState(idleState);
+    this.chatRuntimeViewMirrorProjection.projectRuntimeState({
+      sessionId: targetSessionId,
+      patch: {
+        status: null,
+        requestInProgress: false,
+        supportsInterruption: false,
+        activeResponseHandle: null,
+        stopSession: null,
+      },
+      options: { reason: 'status', highFrequency: false },
     });
     this.triggerSyncDetectChanges();
   }
@@ -6955,17 +7155,23 @@ Do not create non-existent boards and libraries.
         `[AilyChat][HostSubmitModel] session=${targetSessionId || ''} currentSession=${currentServiceSessionId} model=${currentModelSnapshot?.model ?? ''} preset=${currentModelSnapshot?.presetId ?? ''} name=${currentModelSnapshot?.name ?? ''}`,
       );
       const protocolTruncation = this.peekPendingProtocolTruncation(targetSessionId);
-      await this.runtimeHostForView().submitTurn({
-        sessionId: targetSessionId,
-        requestText: prepared.llmText,
-        displayText: prepared.displayText,
-        selectedMode: this.resolveVisibleSelectedModeSnapshot(targetSessionId),
-        providerOptions: this.resolveVisibleSessionProviderOptionsSnapshot(targetSessionId),
-        currentModel: currentModelSnapshot,
-        metadata: this.withHostRuntimeSessionInventoryMetadata(targetSessionId, prepared.requestMetadata ?? null),
-        activeResponseHandle: null,
-        ...(protocolTruncation ? { protocolTruncation } : {}),
-      });
+      this.projectSubmittedTurnRunningState(targetSessionId, null);
+      try {
+        await this.runtimeHostForView().submitTurn({
+          sessionId: targetSessionId,
+          requestText: prepared.llmText,
+          displayText: prepared.displayText,
+          selectedMode: this.resolveVisibleSelectedModeSnapshot(targetSessionId),
+          providerOptions: this.resolveVisibleSessionProviderOptionsSnapshot(targetSessionId),
+          currentModel: currentModelSnapshot,
+          metadata: this.withHostRuntimeSessionInventoryMetadata(targetSessionId, prepared.requestMetadata ?? null),
+          activeResponseHandle: null,
+          ...(protocolTruncation ? { protocolTruncation } : {}),
+        });
+      } catch (error) {
+        this.clearSubmittedTurnRunningState(targetSessionId);
+        throw error;
+      }
       if (protocolTruncation) {
         this.clearPendingProtocolTruncation(targetSessionId);
       }
@@ -7000,6 +7206,14 @@ Do not create non-existent boards and libraries.
       return;
     }
     if (runtimeSessionId) {
+      if (sender === 'user' && this.readVisibleSessionRequestInProgress(runtimeSessionId)) {
+        this.queueFollowupMessage(content, runtimeSessionId, { kind: 'queued' });
+        traceBackgroundSessionExecution('send-gated-by-runtime-model-before-readiness', {
+          runtimeSessionId,
+          activeRequestInProgress: true,
+        });
+        return;
+      }
       const readiness = await this.readRuntimeHostSubmitReadiness(runtimeSessionId);
       if (isRequestStateTraceEnabled()) {
         console.info(
@@ -7094,9 +7308,21 @@ Do not create non-existent boards and libraries.
         this.configService?.scheduleHardwareIndexRefreshForAI?.('chat-send-latest');
       }
 
-      await this.executePreparedUserSend(runtimeSessionId, prepared, {
-        clearInput: clear,
-      });
+      let admissionProjected = false;
+      try {
+        if (runtimeSessionId && sender === 'user') {
+          this.projectSubmittedTurnRunningState(runtimeSessionId, null);
+          admissionProjected = true;
+        }
+        await this.executePreparedUserSend(runtimeSessionId, prepared, {
+          clearInput: clear,
+        });
+        admissionProjected = false;
+      } finally {
+        if (admissionProjected && runtimeSessionId) {
+          this.clearSubmittedTurnRunningState(runtimeSessionId);
+        }
+      }
       if (isRequestStateTraceEnabled()) {
         console.info(
           '[AilyChat][SendExecuteScalar]',

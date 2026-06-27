@@ -67,6 +67,23 @@ function normalizeResourceRequestPhase(phase) {
     : '';
 }
 
+function normalizeTodoStatus(status) {
+  switch (status) {
+    case 'completed':
+      return 'completed';
+    case 'in-progress':
+    case 'doing':
+    case 'active':
+    case 'running':
+      return 'in-progress';
+    case 'not-started':
+    case 'pending':
+    case 'todo':
+    default:
+      return 'not-started';
+  }
+}
+
 function normalizeOptionalString(value) {
   return typeof value === 'string' && value.trim().length > 0
     ? value.trim()
@@ -578,14 +595,17 @@ class ChatRuntimeHostSessionStore {
 
   cacheExecutionWorkerRenderEvent(payload) {
     const sessionId = normalizeSessionId(payload && payload.sessionId);
+    const renderEvent = payload && payload.renderEvent && typeof payload.renderEvent === 'object'
+      ? payload.renderEvent
+      : null;
     const transcript = this.transcriptBuilder.acceptRenderEvent({
       sessionId,
       turnId: payload && payload.turnId,
       revision: payload && payload.revision,
       request: (payload && payload.request) || this.readActiveSubmittedRequest(sessionId),
-      event: this.retargetExecutionWorkerRenderEvent(payload && payload.renderEvent, payload && payload.turnId),
+      event: this.retargetExecutionWorkerRenderEvent(renderEvent, payload && payload.turnId),
     });
-    return transcript
+    const transcriptEvent = transcript
       ? {
           kind: 'transcript',
           sessionId: transcript.sessionId,
@@ -593,6 +613,132 @@ class ChatRuntimeHostSessionStore {
           transcript,
         }
       : null;
+    const interactionEvents = this.cacheInteractionFromRenderEvent({
+      sessionId,
+      revision: Number(payload && payload.revision) || Number(transcript && transcript.revision) || 0,
+      renderEvent,
+    });
+    const todoViewRequestEvents = this.cacheTodoViewRequestFromRenderEvent({
+      sessionId,
+      revision: Number(payload && payload.revision) || Number(transcript && transcript.revision) || 0,
+      renderEvent,
+    });
+    if (interactionEvents.length > 0 || todoViewRequestEvents.length > 0) {
+      return [
+        transcriptEvent,
+        ...interactionEvents,
+        ...todoViewRequestEvents,
+      ].filter(Boolean);
+    }
+    return transcriptEvent;
+  }
+
+  cacheTodoViewRequestFromRenderEvent({ sessionId, revision, renderEvent }) {
+    if (!sessionId || !renderEvent || typeof renderEvent !== 'object') {
+      return [];
+    }
+    if (renderEvent.type !== 'todo_update') {
+      return [];
+    }
+    const items = Array.isArray(renderEvent.items)
+      ? renderEvent.items
+      : [];
+    const normalizedItems = items.map((item, index) => {
+      const record = item && typeof item === 'object' ? item : {};
+      const rawId = record.id;
+      const numericId = typeof rawId === 'number' && Number.isFinite(rawId)
+        ? rawId
+        : typeof rawId === 'string' && rawId.trim().length > 0 && Number.isFinite(Number(rawId.trim()))
+          ? Number(rawId.trim())
+          : index + 1;
+      const title = typeof record.activeForm === 'string' && record.activeForm.trim().length > 0
+        ? record.activeForm.trim()
+        : typeof record.title === 'string' && record.title.trim().length > 0
+          ? record.title.trim()
+          : typeof record.content === 'string' && record.content.trim().length > 0
+            ? record.content.trim()
+            : `Todo ${numericId}`;
+      return {
+        id: numericId,
+        content: title,
+        status: normalizeTodoStatus(record.status),
+        priority: 'medium',
+        updatedAt: Date.now(),
+      };
+    });
+    const event = this.cacheViewRequestEvent({
+      kind: 'view-request',
+      sessionId,
+      revision,
+      request: {
+        id: `todo-state:${sessionId}`,
+        sessionId,
+        kind: 'todo-state',
+        todoState: {
+          items: normalizedItems,
+        },
+      },
+    });
+    return event ? [event] : [];
+  }
+
+  cacheInteractionFromRenderEvent({ sessionId, revision, renderEvent }) {
+    if (!sessionId || !renderEvent || typeof renderEvent !== 'object') {
+      return [];
+    }
+    if (renderEvent.type !== 'question_request') {
+      return [];
+    }
+    const requestId = normalizeInteractionId(renderEvent.requestId);
+    if (!requestId) {
+      return [];
+    }
+    const current = this.buildInteractionSnapshot(sessionId);
+    if (!current) {
+      return [];
+    }
+    const partId = `question:${requestId}`;
+    const questions = Array.isArray(renderEvent.questions)
+      ? renderEvent.questions.map(question => {
+          const item = question && typeof question === 'object' ? question : {};
+          return {
+            question: typeof item.question === 'string' ? item.question : '',
+            options: Array.isArray(item.options)
+              ? item.options.map(option => {
+                  const optionItem = option && typeof option === 'object' ? option : {};
+                  return {
+                    label: typeof optionItem.label === 'string' ? optionItem.label : '',
+                    ...(typeof optionItem.description === 'string' ? { description: optionItem.description } : {}),
+                    ...(typeof optionItem.recommended === 'boolean' ? { recommended: optionItem.recommended } : {}),
+                  };
+                })
+              : undefined,
+            allow_freeform: item.allow_freeform === true || item.allowFreeform === true,
+            multi_select: item.multi_select === true || item.multiSelect === true,
+          };
+        })
+      : [];
+    const next = this.nextInteractionResult(current, {
+      question: {
+        sessionId,
+        partId,
+        data: {
+          partId,
+          isHistory: false,
+          questions,
+        },
+      },
+    });
+    const state = this.cacheInteraction(next.snapshot);
+    return [
+      {
+        kind: 'interaction',
+        sessionId,
+        revision: Number(next.snapshot.revision) || Number(revision) || 0,
+        interaction: clonePayload(next.snapshot),
+      },
+      state ? this.buildSessionStateEvent('runtime-status', sessionId) : null,
+    ].filter(Boolean);
   }
 
   cacheInteraction(interaction) {
@@ -1287,7 +1433,8 @@ class ChatRuntimeHostSessionStore {
     switch (method) {
       case 'readSubmitReadiness': {
         const state = this.buildSessionState(sessionId);
-        return state && state.requestInProgress === true
+        const activeSubmittedRequestInProgress = this.activeSubmittedRequests.has(sessionId);
+        return (state && state.requestInProgress === true) || activeSubmittedRequestInProgress
           ? {
               sessionId,
               canSubmit: false,
@@ -1377,6 +1524,14 @@ class ChatRuntimeHostSessionStore {
       throw new Error('[AilyChat][RuntimeHost] submitTurn requires a session id.');
     }
     const previousState = this.buildSessionState(sessionId);
+    if ((previousState && previousState.requestInProgress === true)
+      || this.activeSubmittedRequests.has(sessionId)) {
+      const error = new Error('[AilyChat][RuntimeHost] Cannot submit a new turn while the service-owned request model is still running.');
+      error.code = 'request_in_progress';
+      error.retryable = true;
+      error.sessionId = sessionId;
+      throw error;
+    }
     const activeTurnId = this.normalizeActiveTurnId(request && request.activeResponseHandle)
       || this.createSubmittedTurnId(sessionId);
     const submittedRequest = this.buildSubmittedRequestWithStableId(request, activeTurnId);

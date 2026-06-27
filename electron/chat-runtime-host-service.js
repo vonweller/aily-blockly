@@ -276,8 +276,10 @@ class ChatRuntimeHostProcessService {
 
   handleAttachView(event, args) {
     const state = this.hostSessionStore.attachView(args && args[0], args && args[1], event && event.sender, args && args[2]);
-    this.broadcastSessionState('session-state', state);
-    this.replayTranscriptForAttachedSession(state && state.sessionId);
+    // attachView is a request/response command for the attaching renderer. The
+    // renderer reads the authoritative transcript snapshot after the command
+    // returns, so echoing session-state/transcript here creates a second empty
+    // model pass during entry -> session transitions.
     this.replayPendingInteractionForAttachedSession(state && state.sessionId);
     this.replayViewRequestsForAttachedSession(state && state.sessionId);
     this.replayResourceRequestsForAttachedSession(state && state.sessionId);
