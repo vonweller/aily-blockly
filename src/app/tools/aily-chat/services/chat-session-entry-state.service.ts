@@ -49,7 +49,11 @@ export class ChatSessionEntryStateService {
 
   readSessionEntryTarget(projectPathHint?: string | null): PersistedChatSessionEntryTarget | null {
     const scope = this.loadScope(projectPathHint ?? null);
-    return scope.target ? this.cloneTarget(scope.target) : null;
+    const target = scope.target ? this.cloneTarget(scope.target) : null;
+    if (!projectPathHint && this.targetHasProjectScope(target)) {
+      return null;
+    }
+    return target;
   }
 
   setSessionEntryTarget(
@@ -108,6 +112,15 @@ export class ChatSessionEntryStateService {
     }
 
     return target.sessionId === sessionId;
+  }
+
+  private targetHasProjectScope(target: PersistedChatSessionEntryTarget | null): boolean {
+    if (!target) {
+      return false;
+    }
+
+    return this.normalizePath(target.projectPath) !== null
+      || this.normalizePath(target.providerOptions?.folderPath) !== null;
   }
 
   private loadScope(projectPath: string | null): LoadedChatSessionEntryStateScope {

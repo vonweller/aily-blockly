@@ -21,7 +21,10 @@
 import type { IPromptProfile, IPromptSection } from 'aily-lex/types/prompt';
 import { PromptLayer } from 'aily-lex/types/prompt';
 import { AilyHost } from './host';
-import { getBlocklyContextSnapshotService } from './blockly-context-snapshot-service';
+import {
+  getBlocklyContextSnapshotService,
+  type BlocklyContextSnapshotService,
+} from './blockly-context-snapshot-service';
 import {
   appendStandardPromptEnv,
   collectRuntimePromptFileContext,
@@ -108,6 +111,37 @@ Tool usage efficiency:
 // Hardware Safety — blockly-specific safety rules
 // ---------------------------------------------------------------------------
 
+const BLOCKLY_PROJECT_WORKFLOW_SECTION: IPromptSection = {
+  id: 'blockly-project-workflow',
+  layer: PromptLayer.HostDomain,
+  priority: 90,
+  cacheable: true,
+  tag: 'projectWorkflow',
+  getContent: () => BLOCKLY_PROJECT_WORKFLOW_PROMPT,
+};
+
+const BLOCKLY_PROJECT_WORKFLOW_PROMPT = `Project planning and creation workflow:
+- If the environment says "No project is currently open.", treat that as the authoritative state. Do not infer an active project, board, or installed libraries from arbitrary directories or search results.
+- For a new Blockly hardware project request, first gather the needed board/library options, then present a concise project plan covering board choice, required libraries, wiring/pins, and the files or workspace changes you intend to make.
+- Ask the user to confirm the plan with ask_user before creating a project, installing libraries, or making workspace edits.
+- After the user confirms creation, create or open the project, then continue using the new project path from the refreshed environment/context.`;
+
+const BLOCKLY_ABS_EDITING_WORKFLOW_SECTION: IPromptSection = {
+  id: 'blockly-abs-editing-workflow',
+  layer: PromptLayer.HostDomain,
+  priority: 85,
+  cacheable: true,
+  tag: 'absEditingWorkflow',
+  getContent: () => BLOCKLY_ABS_EDITING_WORKFLOW_PROMPT,
+};
+
+const BLOCKLY_ABS_EDITING_WORKFLOW_PROMPT = `Blockly ABS editing workflow:
+- In Blockly mode, implement visual-program changes by editing ABS/project artifacts, not generated C++ output, unless the user explicitly asks for raw code.
+- Before modifying Blockly code, ensure a project is open. If no project is open, follow the project planning and creation workflow first.
+- For program edits, use the host-owned sync path: syncAbs action="export", read/edit {projectPath}/project.abs, then syncAbs action="import" to apply changes back to the visual workspace.
+- For non-trivial ABS syntax, block argument order, statement inputs, or library block usage, load or consult the abs-syntax-reference skill instead of guessing.
+- After edits, run the available lint/build checks when relevant and fix errors with the smallest ABS change that preserves the user's intended behavior.`;
+
 const BLOCKLY_HARDWARE_SAFETY_PROMPT = `When working with hardware:
 - Always confirm before flashing firmware to a connected board.
 - Warn users about potential pin conflicts (e.g., using a pin for both I2C and GPIO).
@@ -118,24 +152,15 @@ const BLOCKLY_HARDWARE_SAFETY_SECTION = createHardwareSafetySection('blockly-har
 const BLOCKLY_SKILL_COMMAND_SECTION = createSkillCommandSection('blockly-skill-command');
 const BLOCKLY_SKILLS_LISTING_SECTION = createSkillsListingSection('blockly-skills-listing');
 
-// ---------------------------------------------------------------------------
-// Profile
-// ---------------------------------------------------------------------------
+export interface BlocklyPromptContextProviderOptions {
+  readonly getHost?: () => ReturnType<typeof AilyHost.get>;
+  readonly contextSnapshotService?: BlocklyContextSnapshotService;
+}
 
-export const BLOCKLY_PROMPT_PROFILE: IPromptProfile = {
-  hostId: 'blockly',
-  requiredContext: BLOCKLY_MAIN_AGENT_REQUIRED_CONTEXT,
-  sections: [
-    BLOCKLY_IDENTITY_SECTION,
-    BLOCKLY_DOMAIN_SECTION,
-    BLOCKLY_HARDWARE_SAFETY_SECTION,
-    BLOCKLY_SKILL_COMMAND_SECTION,
-    BLOCKLY_SKILLS_LISTING_SECTION,
-  ],
-  cacheBreakpoint: PromptLayer.HostDomain,
-  getContext: async () => {
-    const host = AilyHost.get();
-    const contextSnapshotService = getBlocklyContextSnapshotService();
+function createBlocklyPromptContextProvider(options: BlocklyPromptContextProviderOptions = {}): NonNullable<IPromptProfile['getContext']> {
+  return async () => {
+    const host = options.getHost?.() ?? AilyHost.get();
+    const contextSnapshotService = options.contextSnapshotService ?? getBlocklyContextSnapshotService();
     const envExtra = [...await contextSnapshotService.getSummary({
       scopes: BLOCKLY_MAIN_AGENT_REQUIRED_CONTEXT.scopes,
       reason: 'main-agent-prompt',
@@ -159,5 +184,34 @@ export const BLOCKLY_PROMPT_PROFILE: IPromptProfile = {
       activeFilePath: fileContext.activeFilePath,
       filePaths: fileContext.filePaths,
     };
-  },
+  };
+}
+
+export function createScopedBlocklyPromptProfile(
+  options: BlocklyPromptContextProviderOptions = {},
+): IPromptProfile {
+  return {
+    ...BLOCKLY_PROMPT_PROFILE,
+    getContext: createBlocklyPromptContextProvider(options),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Profile
+// ---------------------------------------------------------------------------
+
+export const BLOCKLY_PROMPT_PROFILE: IPromptProfile = {
+  hostId: 'blockly',
+  requiredContext: BLOCKLY_MAIN_AGENT_REQUIRED_CONTEXT,
+  sections: [
+    BLOCKLY_IDENTITY_SECTION,
+    BLOCKLY_DOMAIN_SECTION,
+    BLOCKLY_PROJECT_WORKFLOW_SECTION,
+    BLOCKLY_ABS_EDITING_WORKFLOW_SECTION,
+    BLOCKLY_HARDWARE_SAFETY_SECTION,
+    BLOCKLY_SKILL_COMMAND_SECTION,
+    BLOCKLY_SKILLS_LISTING_SECTION,
+  ],
+  cacheBreakpoint: PromptLayer.HostDomain,
+  getContext: createBlocklyPromptContextProvider(),
 };

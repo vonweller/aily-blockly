@@ -44,6 +44,7 @@ export interface ElectronAdapterDeps {
   cmdService?: any;
   crossPlatformCmdService?: any;
   absAutoSyncService?: any;
+  arduinoLintService?: any;
   electronService?: any;
   uiService?: any;
   onboardingService?: any;
@@ -77,9 +78,25 @@ export function createElectronHostAdapter(deps: ElectronAdapterDeps): IAilyHostA
     ? value.trim()
     : '';
 
+  const normalizeComparablePath = (value: unknown): string => normalizeStringValue(value)
+    .replace(/\\/g, '/')
+    .replace(/\/+$/, '')
+    .toLowerCase();
+
+  const resolveActiveProjectPath = (rawProjectService: any): string => {
+    const currentProjectPath = normalizeStringValue(rawProjectService?.currentProjectPath);
+    const projectRootPath = normalizeStringValue(rawProjectService?.projectRootPath);
+    if (!currentProjectPath) {
+      return '';
+    }
+    if (projectRootPath && normalizeComparablePath(currentProjectPath) === normalizeComparablePath(projectRootPath)) {
+      return '';
+    }
+    return currentProjectPath;
+  };
+
   const resolveProjectPath = (rawProjectService: any): string =>
-    normalizeStringValue(rawProjectService?.currentProjectPath)
-    || normalizeStringValue(rawProjectService?.projectRootPath);
+    resolveActiveProjectPath(rawProjectService);
 
   const resolveProjectRootPath = (rawProjectService: any): string =>
     normalizeStringValue(rawProjectService?.projectRootPath)
@@ -103,16 +120,24 @@ export function createElectronHostAdapter(deps: ElectronAdapterDeps): IAilyHostA
       : undefined;
   };
 
-  const resolveProjectBoard = (rawProjectService: any): string | undefined =>
-    resolveProjectBoardFromPackageData(rawProjectService?.currentPackageData)
-    || normalizeStringValue(rawProjectService?.currentBoardConfig?.name)
-    || normalizeStringValue(rawProjectService?.currentBoard)
-    || undefined;
+  const resolveProjectBoard = (rawProjectService: any): string | undefined => {
+    if (!resolveActiveProjectPath(rawProjectService)) {
+      return undefined;
+    }
+    return resolveProjectBoardFromPackageData(rawProjectService?.currentPackageData)
+      || normalizeStringValue(rawProjectService?.currentBoardConfig?.name)
+      || normalizeStringValue(rawProjectService?.currentBoard)
+      || undefined;
+  };
 
-  const resolveProjectName = (rawProjectService: any): string | undefined =>
-    normalizeStringValue(rawProjectService?.currentPackageData?.name)
-    || normalizeStringValue(rawProjectService?.projectName)
-    || undefined;
+  const resolveProjectName = (rawProjectService: any): string | undefined => {
+    if (!resolveActiveProjectPath(rawProjectService)) {
+      return undefined;
+    }
+    return normalizeStringValue(rawProjectService?.currentPackageData?.name)
+      || normalizeStringValue(rawProjectService?.projectName)
+      || undefined;
+  };
 
   const readHostConfigApiEndpoint = (): string | null => {
     if (cachedHostConfigApiEndpoint !== undefined) {
@@ -315,13 +340,20 @@ export function createElectronHostAdapter(deps: ElectronAdapterDeps): IAilyHostA
       }
       if (prop === 'getProjectInfo') {
         return async () => {
+          const activeProjectPath = resolveProjectPath(rawProjectService);
           if (typeof rawProjectService.getProjectInfo === 'function') {
             const info = await rawProjectService.getProjectInfo();
             if (info && typeof info === 'object') {
               const infoRecord = info as Record<string, unknown>;
+              if (!activeProjectPath && infoRecord['projectOpened'] !== true) {
+                return {
+                  ...infoRecord,
+                  projectOpened: false,
+                };
+              }
               return {
                 ...infoRecord,
-                path: normalizeStringValue(infoRecord['path']) || resolveProjectPath(rawProjectService),
+                path: normalizeStringValue(infoRecord['path']) || activeProjectPath,
                 board: infoRecord['board'] ?? resolveProjectBoard(rawProjectService),
                 name: infoRecord['name'] ?? resolveProjectName(rawProjectService),
               };
@@ -329,7 +361,8 @@ export function createElectronHostAdapter(deps: ElectronAdapterDeps): IAilyHostA
             return info;
           }
           return {
-            path: resolveProjectPath(rawProjectService),
+            projectOpened: Boolean(activeProjectPath),
+            path: activeProjectPath,
             rootPath: resolveProjectRootPath(rawProjectService),
             board: resolveProjectBoard(rawProjectService),
             name: resolveProjectName(rawProjectService),
@@ -553,6 +586,7 @@ export function createElectronHostAdapter(deps: ElectronAdapterDeps): IAilyHostA
     get notice() { return getDep('noticeService'); },
     get electron() { return getDep('electronService'); },
     get absSync() { return getDep('absAutoSyncService'); },
+    get arduinoLint() { return getDep('arduinoLintService'); },
     get ui() { return getDep('uiService'); },
     get onboarding() { return getDep('onboardingService'); },
   };
