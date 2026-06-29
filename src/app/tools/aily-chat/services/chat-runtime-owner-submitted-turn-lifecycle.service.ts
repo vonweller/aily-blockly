@@ -60,16 +60,30 @@ export class ChatRuntimeOwnerSubmittedTurnLifecycleService implements ChatRuntim
       throw new Error('prepareSubmittedTurn requires a sessionResource owner.');
     }
 
-    this.hydrateExistingTurnResponses(targetSessionId, owner);
-    await this.ensureBlankSessionRuntimeProviderOptions(targetSessionId, owner);
+    const startedAt = Date.now();
+    const hydrateStartedAt = Date.now();
+    const hydratedTurnCount = this.hydrateExistingTurnResponses(targetSessionId, owner, request.activeResponseHandle);
+    const hydrateMs = Date.now() - hydrateStartedAt;
+
+    const ensureAgentStartedAt = Date.now();
     await this.ensureRuntimeAgentForSession(targetSessionId, owner, request);
+    const ensureAgentMs = Date.now() - ensureAgentStartedAt;
 
     const displayText = request.displayText ?? request.requestText;
+    const titleDispatchStartedAt = Date.now();
     this.submittedTurnTitle.prepareSubmittedTurnTitle({
       sessionId: targetSessionId,
       requestText: request.requestText,
       displayText,
       owner,
+    });
+    this.logSubmittedTurnStartupLatency({
+      sessionId: targetSessionId,
+      hydratedTurnCount,
+      hydrateMs,
+      ensureAgentMs,
+      titleDispatchMs: Date.now() - titleDispatchStartedAt,
+      elapsedMs: Date.now() - startedAt,
     });
   }
 
@@ -219,13 +233,6 @@ export class ChatRuntimeOwnerSubmittedTurnLifecycleService implements ChatRuntim
     return JSON.parse(JSON.stringify(value)) as T;
   }
 
-  private async ensureBlankSessionRuntimeProviderOptions(sessionId: string, owner: LexOwnerFacade): Promise<void> {
-    if (this.ownerSessionModel.readTurnResponses(sessionId).length > 0) {
-      return;
-    }
-    await this.ensureRuntimeAgentForSession(sessionId, owner);
-  }
-
   private async ensureRuntimeAgentForSession(
     sessionId: string,
     owner: LexOwnerFacade,
@@ -287,11 +294,34 @@ export class ChatRuntimeOwnerSubmittedTurnLifecycleService implements ChatRuntim
       : this.ownerSessionContext.currentAgentRuntimeModeSource;
   }
 
-  private hydrateExistingTurnResponses(sessionId: string, owner: LexOwnerFacade): void {
+  private hydrateExistingTurnResponses(
+    sessionId: string,
+    owner: LexOwnerFacade,
+    activeResponseHandle?: unknown,
+  ): number {
+    const activeTurnId = this.normalizeSessionId(activeResponseHandle);
     const turnResponses = this.ownerSessionModel.readTurnResponses(sessionId);
-    owner.hydrateTurnResponses?.(sessionId, turnResponses, {
+    const historyTurnResponses = activeTurnId
+      ? turnResponses.filter(turn => turn?.turnId !== activeTurnId)
+      : turnResponses;
+    owner.hydrateTurnResponses?.(sessionId, historyTurnResponses, {
       visibility: 'detached',
     });
+    return historyTurnResponses.length;
+  }
+
+  private logSubmittedTurnStartupLatency(input: {
+    readonly sessionId: string;
+    readonly hydratedTurnCount: number;
+    readonly hydrateMs: number;
+    readonly ensureAgentMs: number;
+    readonly titleDispatchMs: number;
+    readonly elapsedMs: number;
+  }): void {
+    if (input.elapsedMs < 50 && input.ensureAgentMs < 50) {
+      return;
+    }
+    console.info('[AilyChat][SubmittedTurnStartupLatency]', input);
   }
 
   private normalizeSessionId(sessionId: unknown): string {

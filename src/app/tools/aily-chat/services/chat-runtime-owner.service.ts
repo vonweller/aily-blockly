@@ -139,14 +139,7 @@ export class ChatRuntimeOwnerService implements ChatRuntimeOwnerExecutor, ChatRu
     let activeResponseHandle: string | null = null;
     try {
       const owner = this.readOwner();
-      await this.prepareSubmittedTurn(normalizedRequest, owner);
-      this.applySubmittedTurnProtocolTruncation(
-        normalizedRequest.sessionId,
-        normalizedRequest.protocolTruncation ?? null,
-        owner,
-      );
-      const beginResult = owner.turn.begin(normalizedRequest.requestText, displayText, normalizedRequest.metadata ?? undefined);
-      const seededTurn = this.buildSubmittedSeededTurn(owner, normalizedRequest, displayText, beginResult);
+      const seededTurn = this.buildSubmittedCanonicalSeededTurn(normalizedRequest, displayText);
       activeResponseHandle = seededTurn.turnId;
       const canonicalRequest: ChatRuntimeHostSubmitRequest = {
         ...normalizedRequest,
@@ -164,13 +157,13 @@ export class ChatRuntimeOwnerService implements ChatRuntimeOwnerExecutor, ChatRu
       this.emitTranscript(canonicalRequest.sessionId);
 
       backgroundStarted = true;
-      this.runSubmittedTurnInBackground({
+      this.scheduleSubmittedTurnBackground(() => this.runSubmittedTurnInBackground({
         owner,
         request: canonicalRequest,
         displayText,
         activeResponseHandle,
         releaseOwnerScope,
-      });
+      }));
       return this.buildSessionState(canonicalRequest.sessionId);
     } catch (error) {
       this.emitRuntimeError(normalizedRequest.sessionId, error);
@@ -186,6 +179,26 @@ export class ChatRuntimeOwnerService implements ChatRuntimeOwnerExecutor, ChatRu
     }
   }
 
+  private scheduleSubmittedTurnBackground(callback: () => void): void {
+    const scheduleAfterFrame = typeof globalThis.requestAnimationFrame === 'function'
+      ? globalThis.requestAnimationFrame.bind(globalThis)
+      : null;
+    const scheduleTimer = typeof globalThis.setTimeout === 'function'
+      ? globalThis.setTimeout.bind(globalThis)
+      : null;
+    if (scheduleAfterFrame && scheduleTimer) {
+      scheduleAfterFrame(() => {
+        scheduleTimer(callback, 0);
+      });
+      return;
+    }
+    if (scheduleTimer) {
+      scheduleTimer(callback, 0);
+      return;
+    }
+    callback();
+  }
+
   private runSubmittedTurnInBackground(options: {
     readonly owner: LexOwnerFacade;
     readonly request: ChatRuntimeHostSubmitRequest;
@@ -196,6 +209,31 @@ export class ChatRuntimeOwnerService implements ChatRuntimeOwnerExecutor, ChatRu
     void (async () => {
       let completedSuccessfully = false;
       try {
+        await this.prepareSubmittedTurn(options.request, options.owner);
+        this.applySubmittedTurnProtocolTruncation(
+          options.request.sessionId,
+          options.request.protocolTruncation ?? null,
+          options.owner,
+        );
+        const beginResult = options.owner.turn.begin(
+          options.request.requestText,
+          options.displayText,
+          options.request.metadata ?? undefined,
+        );
+        const seededTurn = this.buildSubmittedSeededTurn(
+          options.owner,
+          options.request,
+          options.displayText,
+          beginResult,
+        );
+        const committedTurnResponses = this.commitSubmittedSeededTurn(options.request.sessionId, seededTurn);
+        this.requireContext().syncExecutionRuntimeTurnResponses(
+          options.request.sessionId,
+          committedTurnResponses,
+          terminalTranscriptProjection('handoff'),
+        );
+        this.emitTranscript(options.request.sessionId);
+        this.emitSessionState(options.request.sessionId, 'runtime-status');
         this.scheduleSubmittedTurnStartupResourceSettle(options.request.sessionId);
         await options.owner.turn.run(options.request.requestText, options.displayText);
         completedSuccessfully = true;
@@ -538,6 +576,26 @@ export class ChatRuntimeOwnerService implements ChatRuntimeOwnerExecutor, ChatRu
       requestContent: normalizedRequest.requestText,
       displayContent: displayText,
       metadata: (currentRequestMetadata ?? normalizedRequest.metadata) as TurnResponseTurn['request']['metadata'],
+      participant,
+    });
+  }
+
+  private buildSubmittedCanonicalSeededTurn(
+    normalizedRequest: ChatRuntimeHostSubmitRequest,
+    displayText: string,
+  ): TurnResponseTurn {
+    const turnId = this.normalizeSubmittedTurnId(normalizedRequest.activeResponseHandle)
+      || this.throwMissingSubmittedTurnId(normalizedRequest.sessionId);
+    const context = this.requireContext();
+    const participant = typeof context.currentMessageSource === 'string'
+      ? context.currentMessageSource
+      : undefined;
+
+    return buildSeededTurnResponseTurn({
+      turnId,
+      requestContent: normalizedRequest.requestText,
+      displayContent: displayText,
+      metadata: normalizedRequest.metadata as TurnResponseTurn['request']['metadata'],
       participant,
     });
   }
