@@ -1,0 +1,140 @@
+export type ProjectLogLevel = 'INFO' | 'DEBUG' | 'ERROR';
+
+export function appendProjectLog(
+  projectPath: string | undefined,
+  source: string,
+  level: ProjectLogLevel,
+  message: string,
+  at = new Date(),
+): string | null {
+  const normalizedProjectPath = typeof projectPath === 'string' ? projectPath.trim() : '';
+  const normalizedMessage = normalizeLogMessage(message);
+  if (!normalizedProjectPath || !normalizedMessage || !(window as any)?.path || !(window as any)?.fs) {
+    return null;
+  }
+
+  const pathApi = (window as any).path;
+  const fsApi = (window as any).fs;
+  const sourceId = normalizeLogSource(source);
+  const daySegment = formatDateSegment(at);
+  const minuteSegment = formatMinuteSegment(at);
+  const dirPath = pathApi.join(normalizedProjectPath, '.log', sourceId, daySegment);
+  const filePath = pathApi.join(dirPath, `${minuteSegment}.log`);
+
+  if (!fsApi.existsSync(dirPath)) {
+    fsApi.mkdirSync(dirPath, { recursive: true });
+  }
+
+  const lines = normalizedMessage
+    .split(/\r?\n/)
+    .map((line: string) => line.trimEnd())
+    .filter((line: string) => line.length > 0)
+    .map((line: string) => `[${formatTimestamp(at)}] [${level}] [${sourceId}] ${line}`);
+  if (lines.length === 0) {
+    return filePath;
+  }
+
+  fsApi.appendFileSync(filePath, `${lines.join('\n')}\n`);
+  return filePath;
+}
+
+export function resolveProcessLogStoragePaths(
+  projectPath: string | undefined,
+  processId: string,
+  at = new Date(),
+): { outputFilePath: string; metadataFilePath: string } | null {
+  const normalizedProjectPath = typeof projectPath === 'string' ? projectPath.trim() : '';
+  if (!normalizedProjectPath || !(window as any)?.path || !(window as any)?.fs) {
+    return null;
+  }
+
+  const pathApi = (window as any).path;
+  const fsApi = (window as any).fs;
+  const dirPath = pathApi.join(
+    normalizedProjectPath,
+    '.log',
+    resolveProjectLogId(normalizedProjectPath),
+    formatDateSegment(at),
+  );
+  if (!fsApi.existsSync(dirPath)) {
+    fsApi.mkdirSync(dirPath, { recursive: true });
+  }
+
+  const fileBaseName = `${formatMinuteSegment(at)}-${sanitizeProcessFileName(processId)}`;
+  return {
+    outputFilePath: pathApi.join(dirPath, `${fileBaseName}.log`),
+    metadataFilePath: pathApi.join(dirPath, `${fileBaseName}.json`),
+  };
+}
+
+export function resolveProcessLogProjectDir(projectPath: string | undefined): string | null {
+  const normalizedProjectPath = typeof projectPath === 'string' ? projectPath.trim() : '';
+  if (!normalizedProjectPath || !(window as any)?.path) {
+    return null;
+  }
+
+  const pathApi = (window as any).path;
+  return pathApi.join(
+    normalizedProjectPath,
+    '.log',
+    resolveProjectLogId(normalizedProjectPath),
+  );
+}
+
+function normalizeLogMessage(message: string): string {
+  return typeof message === 'string' ? message.trim() : '';
+}
+
+function normalizeLogSource(source: string): string {
+  const trimmed = typeof source === 'string' ? source.trim() : '';
+  return trimmed.replace(/[^a-zA-Z0-9._-]/g, '-') || 'app';
+}
+
+function sanitizeProcessFileName(processId: string): string {
+  const trimmed = typeof processId === 'string' ? processId.trim() : '';
+  return trimmed.replace(/[^a-zA-Z0-9._-]/g, '_') || 'process';
+}
+
+function resolveProjectLogId(projectPath: string): string {
+  const pathApi = (window as any).path;
+  const fsApi = (window as any).fs;
+  const packageJsonPath = pathApi.join(projectPath, 'package.json');
+  if (fsApi.existsSync(packageJsonPath)) {
+    try {
+      const packageJson = JSON.parse(fsApi.readFileSync(packageJsonPath, 'utf-8'));
+      const cloudId = typeof packageJson?.cloudId === 'string' ? packageJson.cloudId.trim() : '';
+      if (cloudId) {
+        return sanitizeProjectLogId(cloudId);
+      }
+    } catch {
+      // Fall through to basename.
+    }
+  }
+
+  return sanitizeProjectLogId(pathApi.basename(projectPath));
+}
+
+function sanitizeProjectLogId(value: string): string {
+  const trimmed = typeof value === 'string' ? value.trim() : '';
+  return trimmed.replace(/[\\/:*?"<>|]/g, '_') || 'default-project';
+}
+
+function formatDateSegment(value: Date): string {
+  return `${value.getFullYear()}${pad2(value.getMonth() + 1)}${pad2(value.getDate())}`;
+}
+
+function formatMinuteSegment(value: Date): string {
+  return `${pad2(value.getHours())}-${pad2(value.getMinutes())}`;
+}
+
+function formatTimestamp(value: Date): string {
+  return `${value.getFullYear()}-${pad2(value.getMonth() + 1)}-${pad2(value.getDate())} ${pad2(value.getHours())}:${pad2(value.getMinutes())}:${pad2(value.getSeconds())}.${pad3(value.getMilliseconds())}`;
+}
+
+function pad2(value: number): string {
+  return String(value).padStart(2, '0');
+}
+
+function pad3(value: number): string {
+  return String(value).padStart(3, '0');
+}

@@ -98,6 +98,7 @@ import {
   type ResolvedLexSessionRestorePlan,
 } from './host-session-restore-resolver';
 import type { HostSessionSaveTarget } from './host-session-save-bridge';
+import { resolveProcessLogProjectDir, resolveProcessLogStoragePaths } from '../../../utils/project-log.utils';
 
 function isLexBootstrapTraceEnabled(): boolean {
   return isAilyCategoryDebugEnabled('aily.chat.traceLexBootstrap', [
@@ -129,9 +130,6 @@ export interface LexRuntimeApiConfig {
 const DEFAULT_INTERACTION_HARD_ROUND_CAP = 200;
 const FAST_SUMMARIZER_PRESET_ID = 'auto-fast';
 const DEFAULT_EXTERNAL_COMMAND_TIMEOUT_MS = 30_000;
-const PROJECT_CHAT_DIR = '.chat_history';
-const GLOBAL_CHAT_DATA_DIR = 'chat_history';
-const PROCESS_RECORDS_DIR = 'process';
 
 type BlocklyExternalTerminal = NonNullable<IExternalHostAPI['terminal']>;
 
@@ -579,7 +577,7 @@ function resolveDeferredGroupsForRuntime(runtimeMode: ChatAgentRuntimeMode) {
 const LEX_CORE_SAFE_TOOLS = new Set([
   'read_file', 'write_file', 'edit_file', 'multi_edit_file',
   'delete_file', 'list_dir', 'create_directory',
-  'grep_search', 'glob_search',
+  'grep_search', 'glob_search', 'assets_tool',
   'command_exec', 'command_write_stdin', 'command_status', 'command_resize', 'command_stop',
   'command_read', 'command_tail', 'command_search',
   'run_terminal', 'get_terminal_output', 'send_to_terminal', 'kill_terminal', 'agent',
@@ -589,7 +587,7 @@ const LEX_CORE_SAFE_TOOLS = new Set([
   'memory', 'resolve_memory_file_uri',
   'get_context',
   'ask_user',
-  'get_errors',
+  'get_errors', 'log_tool',
   'web_search',
   'tool_search',
   'load_skill',
@@ -2026,6 +2024,7 @@ export function bootstrapBlocklyLexAgent(
   };
 
   const runtimeExtensions: Record<string, unknown> = {
+    syncFs: AilyHost.get().fs,
     environment: createEnvironmentProviderFromContext(
       contextSnapshotService,
       subagentRequiredContext,
@@ -3480,10 +3479,6 @@ function attachBlocklyCommandSession(session: ExternalTerminalSession): void {
   }
 }
 
-function sanitizeBlocklyCommandSessionFileName(processId: string): string {
-  return processId.replace(/[^a-zA-Z0-9._-]/g, '_');
-}
-
 function resolveBlocklyCommandSessionProcessDirCandidates(
   host: any,
   sessionId: string,
@@ -3492,21 +3487,35 @@ function resolveBlocklyCommandSessionProcessDirCandidates(
   const candidates = new Set<string>();
   const normalizedProjectPath = typeof projectPathHint === 'string' ? projectPathHint.trim() : '';
   if (normalizedProjectPath) {
-    candidates.add(host.path.join(normalizedProjectPath, PROJECT_CHAT_DIR, sessionId, PROCESS_RECORDS_DIR));
+    collectProjectProcessDayDirs(host, normalizedProjectPath, candidates);
   }
   const currentProjectPath = host.project?.currentProjectPath || host.project?.projectRootPath || '';
   if (currentProjectPath) {
-    candidates.add(host.path.join(currentProjectPath, PROJECT_CHAT_DIR, sessionId, PROCESS_RECORDS_DIR));
-  }
-  const userHome = host.path?.getUserHome?.();
-  if (userHome) {
-    candidates.add(host.path.join(userHome, '.aily', GLOBAL_CHAT_DATA_DIR, sessionId, PROCESS_RECORDS_DIR));
-  }
-  const appDataPath = host.path?.getAppDataPath?.();
-  if (appDataPath) {
-    candidates.add(host.path.join(appDataPath, GLOBAL_CHAT_DATA_DIR, sessionId, PROCESS_RECORDS_DIR));
+    collectProjectProcessDayDirs(host, currentProjectPath, candidates);
   }
   return [...candidates];
+}
+
+function collectProjectProcessDayDirs(
+  host: any,
+  projectPath: string,
+  candidates: Set<string>,
+): void {
+  const processRootDir = resolveProcessLogProjectDir(projectPath);
+  if (!processRootDir || !host.fs?.existsSync?.(processRootDir)) {
+    return;
+  }
+
+  for (const entryName of readBlocklyCommandSessionProcessDirEntries(host, processRootDir)) {
+    const absolutePath = host.path.join(processRootDir, entryName);
+    try {
+      if (host.fs.statSync(absolutePath).isDirectory()) {
+        candidates.add(absolutePath);
+      }
+    } catch {
+      // Ignore unreadable day directories.
+    }
+  }
 }
 
 function readBlocklyCommandSessionProcessDirEntries(host: any, dirPath: string): string[] {
@@ -3541,11 +3550,16 @@ function readPersistedBlocklyCommandSessionRecord(
 
 function createBlocklyCommandSessionSummaryFromPersistedRecord(
   record: PersistedBlocklyCommandSessionRecord,
-  fallbackSessionId: string,
+  requestedSessionId: string,
 ): BlocklyCommandSessionSummary | null {
   const processId = typeof record.processId === 'string' ? record.processId.trim() : '';
   const outputSessionId = typeof record.outputSessionId === 'string' ? record.outputSessionId.trim() : processId;
   if (!processId || !outputSessionId) {
+    return null;
+  }
+
+  const recordSessionId = typeof record.sessionId === 'string' ? record.sessionId.trim() : '';
+  if (!recordSessionId || recordSessionId !== requestedSessionId) {
     return null;
   }
 
@@ -3567,9 +3581,7 @@ function createBlocklyCommandSessionSummaryFromPersistedRecord(
   const bytesTotal = typeof record.bytesTotal === 'number' && Number.isFinite(record.bytesTotal)
     ? record.bytesTotal
     : 0;
-  const sessionId = typeof record.sessionId === 'string' && record.sessionId.trim()
-    ? record.sessionId.trim()
-    : fallbackSessionId;
+  const sessionId = recordSessionId;
   const outputFilePath = typeof record.outputFilePath === 'string' && record.outputFilePath.trim()
     ? record.outputFilePath.trim()
     : undefined;
@@ -3642,20 +3654,11 @@ function resolveBlocklyCommandSessionStoragePaths(
   }
 
   const projectPath = cwd || host.project?.currentProjectPath || host.project?.projectRootPath || '';
-  const appDataPath = host.path?.getAppDataPath?.();
-  if (!projectPath && !appDataPath) {
+  if (!projectPath) {
     return null;
   }
-  const rootDir = projectPath
-    ? host.path.join(projectPath, PROJECT_CHAT_DIR, normalizedSessionId)
-    : host.path.join(appDataPath, GLOBAL_CHAT_DATA_DIR, normalizedSessionId);
-  const processDir = host.path.join(rootDir, PROCESS_RECORDS_DIR);
-  host.fs.mkdirSync(processDir, { recursive: true });
-  const safeName = sanitizeBlocklyCommandSessionFileName(processId);
-  return {
-    outputFilePath: host.path.join(processDir, `${safeName}.log`),
-    metadataFilePath: host.path.join(processDir, `${safeName}.json`),
-  };
+
+  return resolveProcessLogStoragePaths(projectPath, processId);
 }
 
 function persistBlocklyCommandSessionRecord(session: ExternalTerminalSession): void {

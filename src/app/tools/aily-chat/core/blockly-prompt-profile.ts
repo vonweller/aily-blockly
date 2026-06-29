@@ -164,17 +164,6 @@ export const BLOCKLY_PROMPT_PROFILE: IPromptProfile = {
       envExtra.push(projectRelatedContentPrompt);
     }
 
-    const sessionRelatedContentPrompt = workspaceEnvironment.currentSessionId
-      ? buildProjectRelatedFilesPromptText(
-        'session',
-        promptProjectPath,
-        workspaceEnvironment.currentSessionId,
-      )
-      : '';
-    if (sessionRelatedContentPrompt) {
-      envExtra.push(sessionRelatedContentPrompt);
-    }
-
     return {
       platform: platformType,
       sessionDate: new Date().toLocaleDateString(),

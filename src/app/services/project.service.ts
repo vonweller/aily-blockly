@@ -479,6 +479,7 @@ export class ProjectService {
 
     // 更新当前项目路径和包数据
     this.currentProjectPath = projectPath;
+    void window['ipcRenderer']?.invoke?.('logger-set-project-path', projectPath).catch(() => undefined);
     this.projectActivationSubject.next({
       path: projectPath,
       previousPath: previousProjectPath,
@@ -613,6 +614,7 @@ export class ProjectService {
       }
     }
     this.currentProjectPath = '';
+    void window['ipcRenderer']?.invoke?.('logger-set-project-path', '').catch(() => undefined);
     this.currentPackageData = {
       name: 'aily blockly',
     };

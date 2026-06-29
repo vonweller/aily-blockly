@@ -21,6 +21,7 @@ import { AppDataResourceLockService } from '../../../services/appdata-resource-l
 import { NpmService } from '../../../services/npm.service';
 import { debounceTime } from 'rxjs/operators';
 import { ChatPerformanceTracer } from '../../../tools/aily-chat/services/chat-perf-tracer';
+import { appendProjectLog, type ProjectLogLevel } from '../../../utils/project-log.utils';
 
 const AILY_CHAT_LEX_COMPLETION_PENDING_COUNT_KEY = '__AILY_CHAT_LEX_COMPLETION_PENDING_COUNT__';
 const AILY_CHAT_AGENT_LOOP_PENDING_COUNT_KEY = '__AILY_CHAT_AGENT_LOOP_PENDING_COUNT__';
@@ -87,6 +88,10 @@ export class _BuilderService {
 
   private buildNoticeTitle(boardName: string): string {
     return this.t('RUNNING_TITLE', { board: boardName });
+  }
+
+  private appendCompileLog(message: string, level: ProjectLogLevel = 'INFO'): void {
+    appendProjectLog(this.projectService.currentProjectPath, 'compile', level, message);
   }
 
   private messageWithDuration(message: string, seconds: string): string {
@@ -535,6 +540,7 @@ export class _BuilderService {
               } else {
                 // 非错误信息正常发送到日志
                 this.logService.update({ "detail": output.data, "state": "doing" });
+                this.appendCompileLog(output.data, 'DEBUG');
               }
             }
             if (output.type === 'error') {
@@ -584,6 +590,7 @@ export class _BuilderService {
               // 清理 ANSI 颜色代码并一次性发送所有错误
               const cleanFullError = this.preprocessFullError.replace(/\[\d+(;\d+)*m/g, '');
               this.logService.update({ "detail": cleanFullError, "state": "error" });
+              this.appendCompileLog(cleanFullError, 'ERROR');
             } else {
               console.log('后台预处理完成');
               // this.logService.update({ "detail": '后台预处理完成', "state": "done" });
@@ -887,6 +894,7 @@ export class _BuilderService {
             } else {
               // 非错误信息正常发送到日志
               this.logService.update({ "detail": output.data, "state": "doing" });
+              this.appendCompileLog(output.data, 'DEBUG');
             }
           }
           if (output.type === 'error') {
@@ -937,9 +945,11 @@ export class _BuilderService {
             // 清理 ANSI 颜色代码并一次性发送所有错误
             const cleanFullError = this.preprocessFullError.replace(/\[\d+(;\d+)*m/g, '');
             this.logService.update({ "detail": cleanFullError, "state": "error" });
+            this.appendCompileLog(cleanFullError, 'ERROR');
           } else {
             console.log('同步预处理完成');
             this.logService.update({ "detail": '同步预处理完成', "state": "done" });
+            this.appendCompileLog('同步预处理完成', 'INFO');
           }
           // 清理引用
           if (this.preprocessProcess === subscription) {
@@ -1368,6 +1378,7 @@ export class _BuilderService {
                       outputComplete = true;
                       this.buildCompleted = true;
                       this.logService.update({ "detail": trimmedLine, "state": "done" });
+                      this.appendCompileLog(trimmedLine, 'INFO');
                     } else if (
                       // 检测更多编译成功标志
                       // Arduino/ESP32: "Sketch uses xxx bytes"
@@ -1385,6 +1396,7 @@ export class _BuilderService {
                       outputComplete = true;
                       this.buildCompleted = true;
                       this.logService.update({ "detail": trimmedLine, "state": "done" });
+                      this.appendCompileLog(trimmedLine, 'INFO');
                     } else {
                       if (!outputComplete) {
                         if (output.type == 'stderr') {
@@ -1397,6 +1409,7 @@ export class _BuilderService {
                           }
                         } else {
                           this.logService.update({ "detail": trimmedLine, "state": "doing" });
+                          this.appendCompileLog(trimmedLine, 'DEBUG');
                         }
                       }
                     }
@@ -1474,6 +1487,7 @@ export class _BuilderService {
                 lastStdErr = lastStdErr.replace(/\[\d+(;\d+)*m/g, '');
                 this.handleCompileError(lastStdErr || this.t('INCOMPLETE'), false, fullStdErr || lastStdErr || this.t('INCOMPLETE'));
                 this.logService.update({ detail: fullStdErr, state: 'error' });
+                this.appendCompileLog(fullStdErr || lastStdErr || this.t('INCOMPLETE'), 'ERROR');
                 this.passed = false;
                 
                 // 记录编译失败状态（不阻塞）
