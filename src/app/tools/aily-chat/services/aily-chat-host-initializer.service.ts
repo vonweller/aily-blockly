@@ -16,6 +16,7 @@ import { UiService } from '../../../services/ui.service';
 import { createElectronHostAdapter } from '../adapters/electron-host-adapter';
 import { AilyHost } from '../core/host';
 import { AbsAutoSyncService } from './abs-auto-sync.service';
+import { ArduinoLintService } from './arduino-lint.service';
 
 @Injectable({ providedIn: 'root' })
 export class AilyChatHostInitializerService {
@@ -39,6 +40,7 @@ export class AilyChatHostInitializerService {
       get cmdService() { return injector.get(CmdService); },
       get crossPlatformCmdService() { return injector.get(CrossPlatformCmdService); },
       get absAutoSyncService() { return injector.get(AbsAutoSyncService); },
+      get arduinoLintService() { return injector.get(ArduinoLintService); },
       get electronService() { return injector.get(ElectronService); },
       get uiService() { return injector.get(UiService); },
       get onboardingService() { return injector.get(OnboardingService); },

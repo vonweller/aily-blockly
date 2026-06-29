@@ -19,6 +19,33 @@ type RuntimeScopedToolContribution = IToolContribution & {
 
 type ExternalProjectServiceView = NonNullable<IExternalHostAPI['project']> & Record<string, unknown>;
 
+interface AskUserExtension {
+  ask(options: {
+    question: string;
+    options?: { label: string; description?: string; recommended?: boolean }[];
+    multiSelect: boolean;
+    allowFreeform?: boolean;
+    signal?: AbortSignal;
+    toolCallId?: string;
+    trace?: unknown;
+  }): Promise<{ answer: string; cancelled: boolean }>;
+}
+
+function readActiveProjectPath(project: NonNullable<IExternalHostAPI['project']>): string {
+  const getProjectPath = project.getProjectPath;
+  if (typeof getProjectPath === 'function') {
+    const projectPath = String(getProjectPath.call(project) ?? '').trim();
+    if (projectPath) {
+      return projectPath;
+    }
+  }
+
+  const projectRecord = project as Record<string, unknown>;
+  return typeof projectRecord['currentProjectPath'] === 'string'
+    ? projectRecord['currentProjectPath'].trim()
+    : '';
+}
+
 function readExternalProjectPath(project: ExternalProjectServiceView | undefined): string {
   const currentProjectPath = typeof project?.['currentProjectPath'] === 'string' ? project['currentProjectPath'].trim() : '';
   if (currentProjectPath) {
@@ -89,7 +116,8 @@ function makeProjectContribution(createDeferred: DeferredFactory): RuntimeScoped
 - "get_board_config": Get board compile/upload configuration
 - "set_board_config": Modify board compile/upload configuration
 
-Note: Basic project info (path, board, libraries) is already in the environment section. No need to call this tool for read-only info.`,
+Project creation mutates the workspace and may require host-side user confirmation before execution.
+Basic project info (path, board, libraries) is already in the environment section. Do not call this tool for read-only info.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -255,6 +283,34 @@ export function createBlocklyProjectDiscoveryHandlers(): Record<string, InvokeHa
           if (typeof hostAPI.project.createProject !== 'function') {
             return error('Project creation is not available in the current host context.');
           }
+          if (!readActiveProjectPath(hostAPI.project)) {
+            const askUser = invocationContext?.host?.getExtension<AskUserExtension>('askUser');
+            if (!askUser?.ask) {
+              return error('Project creation requires user confirmation, but user interaction is not available.');
+            }
+            const confirmation = await askUser.ask({
+              question: `Create project "${name}" for board "${board}" now?`,
+              options: [
+                {
+                  label: 'Create project',
+                  description: 'Create the Blockly project and switch this chat to the new project workspace.',
+                  recommended: true,
+                },
+                {
+                  label: 'Cancel',
+                  description: 'Do not create a project yet.',
+                },
+              ],
+              multiSelect: false,
+              allowFreeform: false,
+              signal: invocationContext?.signal,
+              toolCallId: invocationContext?.toolCallId,
+              trace: invocationContext?.trace,
+            });
+            if (confirmation.cancelled || confirmation.answer !== 'Create project') {
+              return text('Project creation cancelled by user.');
+            }
+          }
           const result = await hostAPI.project.createProject(name, board, typeof input['path'] === 'string' ? input['path'] : undefined);
           contextSnapshotService.invalidate([
             'workspaceIdentity',
@@ -377,7 +433,9 @@ export function createBlocklyProjectDiscoveryHandlers(): Record<string, InvokeHa
 
     buildProject: async (_input, hostAPI) => {
       if (!hostAPI.builder?.build) return error('Build system is not available.');
-      const result = await hostAPI.builder.build();
+      const projectPath = readActiveProjectPath(hostAPI.project);
+      if (!projectPath) return error('No active project is available for build.');
+      const result = await (hostAPI.builder.build as unknown as (projectPath: string) => Promise<unknown>)(projectPath);
       return text(formatExternalResult(result));
     },
 

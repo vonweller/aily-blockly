@@ -282,11 +282,9 @@ export function createBlocklyWorkspaceHandlers(
 
     lint: async (_input, hostAPI, invocationContext) => {
       try {
-        const globalScope = typeof window !== 'undefined'
-          ? (window as any)
-          : (globalThis as typeof globalThis & Record<string, unknown>);
-        const arduinoLintService = globalScope['arduinoLintService'];
-        if (!arduinoLintService) return error('Arduino lint service is not available.');
+        const lintGeneratedCode = (hostAPI.blockly as { lintGeneratedCode?: (code: string, options?: Record<string, unknown>) => Promise<any> } | undefined)
+          ?.lintGeneratedCode;
+        if (typeof lintGeneratedCode !== 'function') return error('Arduino lint service is not available.');
 
         const host = AilyHost.get();
         const hostExecutionBoundary = invocationContext?.host?.getExtension<HostExecutionBoundary>('hostExecutionBoundary');
@@ -325,7 +323,7 @@ export function createBlocklyWorkspaceHandlers(
 
             await reportProgress({ summary: 'Running lint', progress: 0.7 });
             const startTime = Date.now();
-            const result = await arduinoLintService.checkSyntax(generatedCode, {
+            const result = await lintGeneratedCode(generatedCode, {
               mode: 'ast-grep',
               format: 'json',
             });

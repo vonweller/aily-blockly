@@ -121,6 +121,8 @@ export class ChatRuntimeOwnerContextService implements ChatRuntimeOwnerContextMa
         get currentAgentRuntimeModeSource() { return service.ownerSessionContext.currentAgentRuntimeModeSource; },
         selectAgentRuntimeMode: (mode, source, reason, sessionId) =>
           service.ownerSessionContext.selectAgentRuntimeMode(mode, source, reason, sessionId),
+        updateRuntimeProjectPath: (projectPath, sessionId) =>
+          service.ownerSessionContext.updateRuntimeProjectPath(projectPath, sessionId),
         get sessionTitle() { return service.ownerSessionContext.sessionTitle; },
         currentSessionPath: sessionId => service.ownerSessionContext.currentSessionPath(sessionId),
         currentSessionPermissionMode: sessionId => service.ownerSessionContext.currentSessionPermissionMode(sessionId),

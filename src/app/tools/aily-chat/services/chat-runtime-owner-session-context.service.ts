@@ -98,6 +98,50 @@ export class ChatRuntimeOwnerSessionContextService implements ChatRuntimeOwnerSe
     this.syncSessionEntryTargetRuntimeMode(sessionId, normalizedMode, normalizedSource);
   }
 
+  updateRuntimeProjectPath(
+    projectPath: string | null | undefined,
+    sessionId?: string | null,
+  ): void {
+    const normalizedProjectPath = this.normalizeProjectPath(projectPath);
+    const targetSessionId = this.normalizeSessionId(sessionId) || this.resolveCurrentRuntimeSessionId();
+    if (!targetSessionId || !normalizedProjectPath) {
+      return;
+    }
+
+    const existingProviderOptions = this.resolveRuntimeSessionProviderOptions(targetSessionId);
+    const providerOptions = normalizeHostSessionProviderOptions({
+      ...existingProviderOptions,
+      folderPath: normalizedProjectPath,
+    });
+    const selectedMode = this.resolveRuntimeSelectedMode(targetSessionId);
+    const runtimeMode = this.currentAgentRuntimeMode;
+    const runtimeModeSource = this.currentAgentRuntimeModeSource;
+    this.runtimeController.projectRuntimeState(targetSessionId, {
+      providerOptions,
+      selectedMode,
+      debugSummary: {
+        providerOptionsPresent: true,
+        selectedModePresent: true,
+      },
+    });
+    this.chatSessionEntryStateService.setSessionEntryTarget({
+      sessionId: targetSessionId,
+      projectPath: normalizedProjectPath,
+      providerOptions,
+      inputState: buildHostSessionCurrentPickerInputState(selectedMode, providerOptions),
+      mode: selectedMode.modeId,
+      agentRuntimeMode: runtimeMode,
+      agentRuntimeModeSource: runtimeModeSource,
+      requestRouting: buildHostSessionCurrentPickerRoutingSummary(
+        selectedMode,
+        undefined,
+        providerOptions.permissionLevel,
+        providerOptions.approvalsReviewer,
+        providerOptions.approvalPolicy,
+      ),
+    }, normalizedProjectPath);
+  }
+
   resolveRuntimeSessionProviderOptions(sessionId?: string | null): HostSessionProviderOptions {
     const targetSessionId = this.normalizeSessionId(sessionId);
     const runtimeProviderOptions = targetSessionId
@@ -190,6 +234,12 @@ export class ChatRuntimeOwnerSessionContextService implements ChatRuntimeOwnerSe
 
   private normalizeSessionId(sessionId: unknown): string {
     return typeof sessionId === 'string' ? sessionId.trim() : '';
+  }
+
+  private normalizeProjectPath(projectPath: unknown): string {
+    return typeof projectPath === 'string' && projectPath.trim().length > 0
+      ? projectPath.trim()
+      : '';
   }
 
   private resolveCurrentRuntimeSessionId(): string {

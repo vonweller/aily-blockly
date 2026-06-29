@@ -106,21 +106,22 @@ function isTerminalPayloadRecord(value: unknown): value is Record<string, unknow
   }
 
   const record = value as Record<string, unknown>;
-  const terminalFields = [
-    'command',
-    'output',
-    'stdout',
-    'stderr',
-    'exit_code',
-    'exitCode',
-    'terminalId',
-    'processId',
-    'outputSessionId',
-    'outputFilePath',
-    'bytesTotal',
-    'lastOutputAt',
-  ];
-  return terminalFields.some(field => Object.prototype.hasOwnProperty.call(record, field));
+  const hasCommand = hasOwn(record, 'command') && asString(record['command']) !== undefined;
+  const hasTerminalIdentity = hasOwn(record, 'terminalId')
+    || hasOwn(record, 'processId')
+    || hasOwn(record, 'outputSessionId')
+    || hasOwn(record, 'outputFilePath');
+  const hasTerminalStream = hasOwn(record, 'stdout') || hasOwn(record, 'stderr');
+  const hasTerminalOutputMetadata = hasOwn(record, 'bytesTotal') || hasOwn(record, 'lastOutputAt');
+
+  return hasCommand
+    || hasTerminalIdentity
+    || hasTerminalStream
+    || (hasTerminalOutputMetadata && (hasCommand || hasTerminalIdentity || hasTerminalStream));
+}
+
+function hasOwn(record: Record<string, unknown>, field: string): boolean {
+  return Object.prototype.hasOwnProperty.call(record, field);
 }
 
 function cleanTerminalStream(value: string, emptyMarker: string): string {

@@ -222,6 +222,10 @@ export interface ChatRuntimeOwnerSessionContextPort {
     reason?: string | null,
     sessionId?: string | null,
   ): void;
+  updateRuntimeProjectPath(
+    projectPath: string | null | undefined,
+    sessionId?: string | null,
+  ): void;
   resolveRuntimeSessionProviderOptions(sessionId?: string | null): HostSessionProviderOptions;
   resolveRuntimeSelectedMode(sessionId?: string | null): ChatSelectedMode;
   resolveRuntimeCapabilities(sessionId?: string | null): ChatSessionRuntimeCapabilities;

@@ -39,6 +39,7 @@ export interface ChatRuntimeOwnerContextCoreServices {
   readonly activeToolExecutions: any;
   readonly currentStatelessMode: any;
   selectAgentRuntimeMode(mode: any, source: any, reason: any, sessionId: string): any;
+  updateRuntimeProjectPath(projectPath: any, sessionId: string): any;
   currentSessionPath(sessionId: any): any;
   currentSessionPermissionMode(sessionId: any): any;
   currentSessionApprovalsReviewer(sessionId: any): any;
@@ -116,6 +117,8 @@ export function createChatRuntimeOwnerContext(
     get currentAgentRuntimeModeSource() { return services.currentAgentRuntimeModeSource; },
     selectAgentRuntimeMode: (mode, source, reason) =>
       services.selectAgentRuntimeMode(mode, source, reason, resolveDefaultRuntimeSessionId()),
+    updateRuntimeProjectPath: projectPath =>
+      services.updateRuntimeProjectPath(projectPath, resolveDefaultRuntimeSessionId()),
     get sessionId() { return adapter.sessionId; },
     get sessionTitle() { return services.sessionTitle; },
     get currentSessionPath() { return services.currentSessionPath(adapter.sessionId); },

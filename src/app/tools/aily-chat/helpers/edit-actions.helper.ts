@@ -107,6 +107,10 @@ type EditActionsContext = ChatViewWriteBridgeContext
         readonly requestMetadata?: TurnRequest['metadata'];
       },
     ): Promise<void> | void;
+    prepareProtocolTruncationForResend?(
+      sessionId: string,
+      turnId: string,
+    ): Promise<boolean> | boolean;
     cancelCurrentRequestForSession?(
       sessionResource: string,
       source: 'regenerate',
@@ -551,6 +555,19 @@ export class EditActionsHelper {
     }
 
     return this.readCurrentSessionTurnResponses().find(turn => turn.turnId === normalizedTurnId);
+  }
+
+  private getLatestRegenerableTurnContext(): DialogTurnContext | null {
+    const turns = this.readCurrentSessionTurnResponses();
+    for (let index = turns.length - 1; index >= 0; index -= 1) {
+      const turn = turns[index];
+      const content = typeof turn?.request?.content === 'string' ? turn.request.content.trim() : '';
+      if (!content) {
+        continue;
+      }
+      return buildDialogTurnContext({ turnResponse: turn });
+    }
+    return null;
   }
 
   private getSessionTurnRequestContent(turnId: string | null | undefined): string | undefined {
@@ -1004,11 +1021,36 @@ export class EditActionsHelper {
 
     if (!snapshot) {
       const sessionResource = this.resolveCurrentSessionResource();
-      if (!sessionResource) {
-        this.ctx.message.warning('会话不存在，请开始新对话');
+      const resendTarget = canonicalTarget
+        ?? (resolvedTarget?.turnId
+          ? this.toCanonicalTurnContext({
+              turnId: resolvedTarget.turnId,
+              requestContent: resolvedTarget.requestContent,
+              displayContent: resolvedTarget.displayContent,
+              lastRoundId: resolvedTarget.lastRoundId,
+              turnResponse: this.findSessionTurnResponse(resolvedTarget.turnId) ?? null,
+            })
+          : null)
+        ?? this.getLatestRegenerableTurnContext();
+      const requestContent = resendTarget?.requestContent
+        ?? resendTarget?.request?.content
+        ?? '';
+      if (!sessionResource || !resendTarget?.turnId || !requestContent.trim()) {
+        this.ctx.message.warning('Unable to retry because no previous request can be resolved.');
         return;
       }
-      await this.ctx.send('user', '请重试上次的操作。', false, sessionResource);
+      const prepared = await Promise.resolve(
+        this.ctx.prepareProtocolTruncationForResend?.(sessionResource, resendTarget.turnId) ?? false,
+      );
+      if (!prepared) {
+        this.ctx.message.warning('Unable to retry the previous request because the session history boundary could not be prepared.');
+        return;
+      }
+      await this.ctx.submitRegeneratedUserTurn?.(sessionResource, {
+        requestText: requestContent,
+        ...(resendTarget.displayContent ? { displayText: resendTarget.displayContent } : {}),
+        ...(resendTarget.request?.metadata ? { requestMetadata: resendTarget.request.metadata } : {}),
+      });
       return;
     }
 

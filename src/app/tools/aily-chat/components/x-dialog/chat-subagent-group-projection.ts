@@ -3,10 +3,15 @@ import { isProgressMessageDisplayPart, type RenderableChatPart } from './chat-re
 import {
   buildActivityGroupIdentity,
   buildChatPartIdentity,
-  isGroupableActivityPart,
   isSubagentToolCall,
 } from './chat-activity-group-projection';
 import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
+import {
+  isInternalDiscoveryToolName,
+  isTerminalSessionToolName,
+  isTodoToolName,
+  normalizeReadSideToolName,
+} from '../../core/tool-name-normalizer';
 
 export interface PartRenderItem {
   kind: 'part';
@@ -18,6 +23,7 @@ export interface ActivityGroupRenderItem {
   kind: 'group';
   id: string;
   parts: readonly ChatPart[];
+  revision: string;
   live: boolean;
 }
 
@@ -66,6 +72,7 @@ function buildBaseRenderItems(parts: readonly RenderableChatPart[]): ChatRenderI
         kind: 'group',
         id: buildActivityGroupIdentity(buffer, Math.max(0, bufferStartIndex)),
         parts: buffer,
+        revision: buildActivityGroupRevision(buffer),
         live: false,
       });
     }
@@ -93,6 +100,7 @@ function buildBaseRenderItems(parts: readonly RenderableChatPart[]): ChatRenderI
           kind: 'group',
           id: buildActivityGroupIdentity(subagentGroup.parts, index),
           parts: subagentGroup.parts,
+          revision: buildActivityGroupRevision(subagentGroup.parts),
           live: false,
         });
         index = subagentGroup.endIndex;
@@ -103,13 +111,24 @@ function buildBaseRenderItems(parts: readonly RenderableChatPart[]): ChatRenderI
       continue;
     }
 
-    if (isGroupableActivityPart(part)) {
+    if (isRuntimeToolCallPart(part)) {
+      if (hasActiveThinkingGroup(buffer) && shouldPinToolCallToThinking(part)) {
+        buffer.push(part as ChatPart);
+        continue;
+      }
+      flushBuffer();
+      items.push({ kind: 'part', id: buildChatPartIdentity(part, index), part });
+      continue;
+    }
+
+    if (isThinkingPart(part)) {
       if (buffer.length === 0) {
         bufferStartIndex = index;
       }
-      buffer.push(part);
+      buffer.push(part as ChatPart);
       continue;
     }
+
     flushBuffer();
     items.push({ kind: 'part', id: buildChatPartIdentity(part, index), part });
   }
@@ -194,7 +213,174 @@ function isIgnorablePart(part: RenderableChatPart): boolean {
     return part.content.trim().length === 0;
   }
 
+  const runtimeToolPart = toRuntimeToolCallPart(part);
+  if (runtimeToolPart.type === 'tool_call' && isInternalDiscoveryToolName(runtimeToolPart.toolName)) {
+    return true;
+  }
+
   return part.type === 'markdown' && part.content.trim().length === 0;
+}
+
+function isRuntimeToolCallPart(part: RenderableChatPart): boolean {
+  return toRuntimeToolCallPart(part).type === 'tool_call';
+}
+
+function isThinkingPart(part: RenderableChatPart): boolean {
+  return (part as { readonly type?: string }).type === 'thinking';
+}
+
+function hasActiveThinkingGroup(parts: readonly ChatPart[]): boolean {
+  return parts.some(part => part.type === 'thinking');
+}
+
+function shouldPinToolCallToThinking(part: RenderableChatPart): boolean {
+  const toolPart = toRuntimeToolCallPart(part);
+  if (toolPart.type !== 'tool_call') {
+    return false;
+  }
+
+  if (toolPart.state === 'pending_approval') {
+    return false;
+  }
+
+  if (isSubagentToolCall(part as ChatPart)
+    || isInternalDiscoveryToolName(toolPart.toolName)
+    || isTerminalSessionToolName(toolPart.toolName)
+    || isTodoToolName(toolPart.toolName)
+    || isAskQuestionsToolName(toolPart.toolName)
+    || hasTerminalSpecificData(toolPart)) {
+    return false;
+  }
+
+  return true;
+}
+
+function toRuntimeToolCallPart(part: RenderableChatPart): {
+  readonly type?: string;
+  readonly toolName?: string;
+  readonly state?: string;
+  readonly metadata?: Record<string, unknown>;
+} {
+  return part as {
+    readonly type?: string;
+    readonly toolName?: string;
+    readonly state?: string;
+    readonly metadata?: Record<string, unknown>;
+  };
+}
+
+function isAskQuestionsToolName(toolName: string | undefined): boolean {
+  const normalized = normalizeReadSideToolName(toolName);
+  return normalized === 'ask_questions'
+    || normalized === 'ask_user'
+    || normalized === 'askQuestions'
+    || normalized === 'copilot_askQuestions'
+    || normalized === 'vscode_askQuestions';
+}
+
+function hasTerminalSpecificData(part: { readonly metadata?: Record<string, unknown> }): boolean {
+  const toolSpecificData = part.metadata?.['toolSpecificData'];
+  return !!toolSpecificData
+    && typeof toolSpecificData === 'object'
+    && (toolSpecificData as Record<string, unknown>)['kind'] === 'terminal';
+}
+
+function buildActivityGroupRevision(parts: readonly ChatPart[]): string {
+  return parts.map((part, index) => buildActivityPartRevision(part, index)).join('|');
+}
+
+function buildActivityPartRevision(part: ChatPart, index: number): string {
+  const base = `${index}:${buildChatPartIdentity(part, index)}:${part.type}`;
+  switch (part.type) {
+    case 'thinking':
+      return [
+        base,
+        part.partId ?? '',
+        part.contentRef ?? '',
+        part.contentLength ?? part.content.length,
+        part.isComplete ? 'complete' : 'running',
+      ].join(':');
+    case 'tool_call':
+      return [
+        base,
+        part.partId ?? '',
+        part.toolCallId,
+        part.toolName,
+        part.state,
+        fingerprintText(part.text),
+        fingerprintJson(part.args),
+        fingerprintJson(part.metadata),
+        part.sourceAgentRole ?? '',
+        part.subAgentInvocationId ?? '',
+        part.parentToolCallId ?? '',
+      ].join(':');
+    case 'confirmation':
+      return [
+        base,
+        part.partId ?? '',
+        part.askId,
+        part.resolved ? 'resolved' : 'pending',
+        part.result ?? '',
+        part.scope ?? '',
+        fingerprintText(part.message),
+        fingerprintJson(part.metadata),
+      ].join(':');
+    case 'terminal':
+      return [
+        base,
+        part.partId ?? '',
+        part.processId ?? '',
+        part.outputSessionId ?? '',
+        part.terminalId ?? '',
+        part.toolCallId ?? '',
+        part.isRunning ? 'running' : 'settled',
+        part.status ?? '',
+        part.exitCode ?? '',
+        part.cwd ?? '',
+        fingerprintText(part.command),
+        fingerprintText(part.output),
+        fingerprintText(part.stderr),
+      ].join(':');
+    case 'state':
+      return [
+        base,
+        part.stateId,
+        part.kind,
+        part.state,
+        fingerprintText(part.text),
+        fingerprintJson(part.metadata),
+      ].join(':');
+    case 'markdown':
+      return [
+        base,
+        part.partId ?? '',
+        part.contentRef ?? '',
+        part.contentLength ?? part.content.length,
+      ].join(':');
+    default:
+      return base;
+  }
+}
+
+function fingerprintJson(value: unknown): string {
+  if (value == null) {
+    return '';
+  }
+  try {
+    return fingerprintText(JSON.stringify(value));
+  } catch {
+    return fingerprintText(String(value));
+  }
+}
+
+function fingerprintText(value: unknown): string {
+  if (typeof value !== 'string') {
+    return value == null ? '' : String(value);
+  }
+  if (value.length <= 120) {
+    return value;
+  }
+  return `${value.length}:${value.slice(0, 60)}:${value.slice(-60)}`;
 }
 
 function countLegacySubagentChildren(parts: readonly RenderableChatPart[]): number {

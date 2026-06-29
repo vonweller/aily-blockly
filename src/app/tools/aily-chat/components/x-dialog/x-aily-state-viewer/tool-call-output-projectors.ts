@@ -1,4 +1,5 @@
 import type { ToolResultContentPart } from '../../../core/tool-result-content';
+import { normalizeReadSideToolName } from '../../../core/tool-name-normalizer';
 import type { StateDetailRow, StateTone } from './activity-detail-items';
 
 export interface RegisteredToolCallOutputRowsInput {
@@ -11,10 +12,11 @@ type ToolCallOutputRowProjector = (input: RegisteredToolCallOutputRowsInput) => 
 
 const TOOL_CALL_OUTPUT_ROW_PROJECTORS: Record<string, ToolCallOutputRowProjector> = {
   get_board_parameters: ({ entry, index }) => buildBoardParametersOutputRows(entry, index),
+  buildProject: ({ entry, index }) => buildProjectOutputRows(entry, index),
 };
 
 export function projectRegisteredToolCallOutputRows(input: RegisteredToolCallOutputRowsInput): StateDetailRow[] {
-  const toolName = input.toolName?.trim();
+  const toolName = normalizeReadSideToolName(input.toolName);
   if (!toolName) {
     return [];
   }
@@ -86,6 +88,69 @@ function buildBoardParametersOutputRows(
   }];
 }
 
+function buildProjectOutputRows(
+  entry: Record<string, unknown>,
+  index: number,
+): StateDetailRow[] {
+  const rawText = getEntryResultText(entry);
+  if (!rawText.trim()) {
+    return [];
+  }
+
+  const parsed = parseJsonRecord(rawText);
+  const success = asBoolean(parsed?.['success']);
+  const output = asString(parsed?.['output']) || asString(parsed?.['message']) || rawText;
+  const durationMs = asNumber(parsed?.['duration']) ?? asNumber(parsed?.['durationMs']);
+  const recordId = asString(entry['recordId']) || `tool-row-${index}`;
+  const phase = asString(entry['phase']);
+  const timestamp = asNumber(entry['timestamp']);
+  const title = success === false
+    ? 'Build failed'
+    : success === true
+      ? 'Build completed'
+      : 'Build result';
+
+  return [{
+    id: `${recordId}:build-project`,
+    title,
+    subtitle: [
+      durationMs !== undefined ? formatDuration(durationMs) : undefined,
+      formatClock(timestamp),
+      recordId,
+    ].filter(Boolean).join(' - ') || undefined,
+    note: output,
+    trailing: phase ? formatNarrativePhase(phase) : undefined,
+    tone: success === false ? 'error' : success === true ? 'success' : toneFromNarrativePhase(phase),
+  }];
+}
+
+function getEntryResultText(entry: Record<string, unknown>): string {
+  const resultText = asString(entry['resultText']);
+  if (resultText) {
+    return resultText;
+  }
+
+  const resultContent = asToolResultContentArray(entry['resultContent']);
+  return resultContent.length === 1
+    ? getToolResultContentText(resultContent[0]) || ''
+    : '';
+}
+
+function parseJsonRecord(text: string): Record<string, unknown> | null {
+  try {
+    const value = JSON.parse(text);
+    return value && typeof value === 'object' && !Array.isArray(value)
+      ? value as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function asBoolean(value: unknown): boolean | undefined {
+  return typeof value === 'boolean' ? value : undefined;
+}
+
 function asString(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
@@ -128,6 +193,11 @@ function formatClock(timestamp: number | undefined): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+function formatDuration(value: number): string {
+  const seconds = value > 100 ? value / 1000 : value;
+  return `${seconds.toFixed(seconds >= 10 ? 0 : 2)}s`;
 }
 
 function formatNarrativePhase(phase: string | undefined): string | undefined {

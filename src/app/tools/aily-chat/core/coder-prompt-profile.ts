@@ -22,7 +22,10 @@ import type { IPromptProfile, IPromptSection } from 'aily-lex/types/prompt';
 import { PromptLayer } from 'aily-lex/types/prompt';
 import { AilyHost } from './host';
 import { readChatRuntimeWorkspaceEnvironment } from './chat-runtime-workspace-environment';
-import { getBlocklyContextSnapshotService } from './blockly-context-snapshot-service';
+import {
+  getBlocklyContextSnapshotService,
+  type BlocklyContextSnapshotService,
+} from './blockly-context-snapshot-service';
 import {
   appendStandardPromptEnv,
   collectRuntimePromptFileContext,
@@ -120,26 +123,17 @@ const CODER_HARDWARE_SAFETY_SECTION = createHardwareSafetySection('coder-hardwar
 const CODER_SKILL_COMMAND_SECTION = createSkillCommandSection('coder-skill-command');
 const CODER_SKILLS_LISTING_SECTION = createSkillsListingSection('coder-skills-listing');
 
-// ---------------------------------------------------------------------------
-// Profile
-// ---------------------------------------------------------------------------
+export interface CoderPromptContextProviderOptions {
+  readonly getHost?: () => ReturnType<typeof AilyHost.get>;
+  readonly contextSnapshotService?: BlocklyContextSnapshotService;
+}
 
-export const CODER_PROMPT_PROFILE: IPromptProfile = {
-  hostId: 'coder',
-  requiredContext: CODER_MAIN_AGENT_REQUIRED_CONTEXT,
-  sections: [
-    CODER_IDENTITY_SECTION,
-    CODER_DOMAIN_SECTION,
-    CODER_HARDWARE_SAFETY_SECTION,
-    CODER_SKILL_COMMAND_SECTION,
-    CODER_SKILLS_LISTING_SECTION,
-  ],
-  cacheBreakpoint: PromptLayer.HostDomain,
-  getContext: async () => {
-    const host = AilyHost.get();
+function createCoderPromptContextProvider(options: CoderPromptContextProviderOptions = {}): NonNullable<IPromptProfile['getContext']> {
+  return async () => {
+    const host = options.getHost?.() ?? AilyHost.get();
     const workspaceEnvironment = readChatRuntimeWorkspaceEnvironment();
     const promptProjectPath = workspaceEnvironment.projectPath;
-    const contextSnapshotService = getBlocklyContextSnapshotService();
+    const contextSnapshotService = options.contextSnapshotService ?? getBlocklyContextSnapshotService();
     const envExtra = [...await contextSnapshotService.getSummary({
       scopes: CODER_MAIN_AGENT_REQUIRED_CONTEXT.scopes,
       reason: 'coder-main-agent-prompt',
@@ -173,5 +167,32 @@ export const CODER_PROMPT_PROFILE: IPromptProfile = {
       activeFilePath: fileContext.activeFilePath,
       filePaths: fileContext.filePaths,
     };
-  },
+  };
+}
+
+export function createScopedCoderPromptProfile(
+  options: CoderPromptContextProviderOptions = {},
+): IPromptProfile {
+  return {
+    ...CODER_PROMPT_PROFILE,
+    getContext: createCoderPromptContextProvider(options),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Profile
+// ---------------------------------------------------------------------------
+
+export const CODER_PROMPT_PROFILE: IPromptProfile = {
+  hostId: 'coder',
+  requiredContext: CODER_MAIN_AGENT_REQUIRED_CONTEXT,
+  sections: [
+    CODER_IDENTITY_SECTION,
+    CODER_DOMAIN_SECTION,
+    CODER_HARDWARE_SAFETY_SECTION,
+    CODER_SKILL_COMMAND_SECTION,
+    CODER_SKILLS_LISTING_SECTION,
+  ],
+  cacheBreakpoint: PromptLayer.HostDomain,
+  getContext: createCoderPromptContextProvider(),
 };

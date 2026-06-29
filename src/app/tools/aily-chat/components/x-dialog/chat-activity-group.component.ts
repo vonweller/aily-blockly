@@ -400,6 +400,7 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked, 
   private detailViewportTimerId: ReturnType<typeof setTimeout> | null = null;
   private lastProjectionKey = '';
   private lastDetailProjectionKey = '';
+  private userRequestedDetailProjection = false;
   showDetailViewportTopFade = false;
   showDetailViewportBottomFade = false;
 
@@ -437,6 +438,7 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked, 
 
   toggle(): void {
     this.expanded = !this.expanded;
+    this.userRequestedDetailProjection = this.expanded;
     if (this.expanded && this.groupState === 'doing') {
       this.detailViewportAutoScrollEnabled = true;
       this.lastViewportScrollHeight = 0;
@@ -641,6 +643,9 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked, 
     }
 
     this.expanded = shouldAutoExpand;
+    if (!shouldAutoExpand) {
+      this.userRequestedDetailProjection = false;
+    }
     this.lastAutoExpanded = shouldAutoExpand;
     this.detailViewportAutoScrollEnabled = shouldAutoExpand;
     this.lastViewportScrollHeight = 0;
@@ -662,7 +667,11 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked, 
   }
 
   private shouldProjectDetails(): boolean {
-    return this.expanded && (this.detailProjectionEnabled || this.hasActivePendingInlineApproval());
+    return this.expanded && (
+      this.userRequestedDetailProjection
+      || this.detailProjectionEnabled
+      || this.hasActivePendingInlineApproval()
+    );
   }
 
   private detailProjectionSkipReason(): 'collapsed' | 'offscreen' {

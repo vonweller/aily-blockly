@@ -71,6 +71,39 @@ function asString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
 }
 
+function normalizeProjectPath(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0
+    ? value.trim().replace(/\\/g, '/').replace(/\/+$/, '')
+    : undefined;
+}
+
+function isSameProjectPath(left: unknown, right: unknown): boolean {
+  const normalizedLeft = normalizeProjectPath(left);
+  const normalizedRight = normalizeProjectPath(right);
+  if (!normalizedLeft || !normalizedRight) {
+    return normalizedLeft === normalizedRight;
+  }
+  return normalizedLeft.toLowerCase() === normalizedRight.toLowerCase();
+}
+
+function resolveActiveProjectPath(project: any, projectInfo: BlocklyProjectInfo | null): string | undefined {
+  if (projectInfo?.projectOpened === false) {
+    return undefined;
+  }
+
+  const projectInfoPath = normalizeProjectPath(projectInfo?.projectPath);
+  if (projectInfo?.projectOpened === true && projectInfoPath) {
+    return projectInfoPath;
+  }
+
+  const currentProjectPath = normalizeProjectPath(project?.currentProjectPath);
+  const projectRootPath = normalizeProjectPath(project?.projectRootPath);
+  if (!currentProjectPath || isSameProjectPath(currentProjectPath, projectRootPath)) {
+    return undefined;
+  }
+  return currentProjectPath;
+}
+
 function joinHostPath(host: any, ...parts: string[]): string {
   const pathApi = host?.path ?? (typeof window !== 'undefined' ? (window as any).path : undefined);
   if (pathApi && typeof pathApi.join === 'function') {
@@ -205,14 +238,21 @@ export async function buildBlocklyContextSnapshot(
 ): Promise<BlocklyContextSnapshot> {
   const project = host.project as any;
   const projectInfo = await resolveBlocklyProjectInfo(host);
-  const projectPath = projectInfo?.projectPath || project?.currentProjectPath || project?.projectRootPath;
+  const projectPath = resolveActiveProjectPath(project, projectInfo);
+  const projectOpened = Boolean(projectPath);
   const packageJson = await resolveProjectPackageJson(host, projectPath, project);
   const packageBoard = resolvePackageBoardInfo(packageJson);
   const packageLibraries = resolvePackageLibraries(host, projectPath, packageJson);
-  const projectName = asString(packageJson?.['name']) || projectInfo?.projectName || project?.projectName;
-  const currentBoard = packageBoard?.name || projectInfo?.board?.name || project?.currentBoard;
+  const projectName = projectOpened
+    ? asString(packageJson?.['name']) || projectInfo?.projectName || project?.projectName
+    : undefined;
+  const currentBoard = projectOpened
+    ? packageBoard?.name || projectInfo?.board?.name || project?.currentBoard
+    : undefined;
   const platformType = host.platform?.type || ((host.platform as any)?.isWindows ? 'win32' : undefined);
-  const libraries = packageLibraries.length > 0 ? packageLibraries : projectInfo?.libraries ?? [];
+  const libraries = projectOpened
+    ? packageLibraries.length > 0 ? packageLibraries : projectInfo?.libraries ?? []
+    : [];
 
   return {
     meta: {
@@ -229,7 +269,7 @@ export async function buildBlocklyContextSnapshot(
       },
     } : {}),
     projectInfo: {
-      projectOpened: projectInfo?.projectOpened ?? Boolean(projectPath),
+      projectOpened,
       ...(projectPath ? { projectPath } : {}),
       ...(projectName ? { projectName } : {}),
     },
@@ -259,6 +299,8 @@ export function summarizeBlocklyContextSnapshot(
 
   if (snapshot.projectInfo?.projectPath) {
     lines.push(`Project path: ${snapshot.projectInfo.projectPath}`);
+  } else if (snapshot.projectInfo?.projectOpened === false) {
+    lines.push('No project is currently open.');
   }
   if (snapshot.projectInfo?.projectName) {
     lines.push(`Project: ${snapshot.projectInfo.projectName}`);

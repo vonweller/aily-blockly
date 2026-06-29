@@ -45,6 +45,12 @@ export interface LintOptions {
   mode?: LintMode;           // 检测模式，默认 'auto'
   format?: LintFormat;       // 输出格式，默认 'json'
   timeout?: number;          // 超时时间，默认 10000ms
+  projectContext?: {
+    projectPath?: string;
+    packageJson?: any;
+    boardJson?: any;
+    boardPackageJson?: any;
+  };
 }
 
 /**
@@ -84,6 +90,7 @@ export class ArduinoLintService {
   
   // 当前项目路径 - 像 BuilderService 一样在方法开始时赋值，确保路径一致性
   private currentProjectPath = "";
+  private currentProjectContext: NonNullable<LintOptions['projectContext']> | null = null;
   
   // 库缓存机制 - 避免重复处理
   private libraryCache = new Map<string, {
@@ -150,7 +157,8 @@ export class ArduinoLintService {
       this.lintInProgress = true;
       
       // 像 BuilderService 一样，在方法开始时统一赋值项目路径
-      this.currentProjectPath = this.projectService.currentProjectPath;
+      this.currentProjectContext = options.projectContext ?? null;
+      this.currentProjectPath = this.resolveCurrentProjectPath(options.projectContext);
 
       if (isArduinoLintTraceEnabled()) {
         console.info('[ArduinoLintService] checkSyntax start', {
@@ -206,7 +214,41 @@ export class ArduinoLintService {
       };
     } finally {
       this.lintInProgress = false;
+      this.currentProjectContext = null;
     }
+  }
+
+  private resolveCurrentProjectPath(projectContext?: LintOptions['projectContext']): string {
+    const scopedPath = typeof projectContext?.projectPath === 'string'
+      ? projectContext.projectPath.trim()
+      : '';
+    if (scopedPath) {
+      return scopedPath;
+    }
+    return typeof this.projectService?.currentProjectPath === 'string'
+      ? this.projectService.currentProjectPath.trim()
+      : '';
+  }
+
+  private async getProjectPackageJson(): Promise<any> {
+    if (this.currentProjectContext?.packageJson && typeof this.currentProjectContext.packageJson === 'object') {
+      return this.currentProjectContext.packageJson;
+    }
+    return await this.projectService.getPackageJson();
+  }
+
+  private async getProjectBoardJson(): Promise<any> {
+    if (this.currentProjectContext?.boardJson && typeof this.currentProjectContext.boardJson === 'object') {
+      return this.currentProjectContext.boardJson;
+    }
+    return await this.projectService.getBoardJson();
+  }
+
+  private async getProjectBoardPackageJson(): Promise<any> {
+    if (this.currentProjectContext?.boardPackageJson && typeof this.currentProjectContext.boardPackageJson === 'object') {
+      return this.currentProjectContext.boardPackageJson;
+    }
+    return await this.projectService.getBoardPackageJson();
   }
 
   /**
@@ -378,8 +420,8 @@ export class ArduinoLintService {
     format: LintFormat
   ): Promise<string> {
     // 获取项目配置
-    const packageJson = await this.projectService.getPackageJson();
-    const boardJson = await this.projectService.getBoardJson();
+    const packageJson = await this.getProjectPackageJson();
+    const boardJson = await this.getProjectBoardJson();
 
     if (!boardJson) {
       throw new Error('未找到板子信息(board.json)');
@@ -418,7 +460,7 @@ export class ArduinoLintService {
     }
 
     // 获取工具版本信息
-    const boardDependencies = (await this.projectService.getBoardPackageJson()).boardDependencies || {};
+    const boardDependencies = (await this.getProjectBoardPackageJson())?.boardDependencies || {};
     const toolVersions: string[] = [];
     let sdk = '';
 
@@ -784,8 +826,8 @@ export class ArduinoLintService {
    */
   private async prepareProjectLibraries(librariesPath: string): Promise<void> {
     try {
-      const packageJson = await this.projectService.getPackageJson();
-      const dependencies = packageJson.dependencies || {};
+      const packageJson = await this.getProjectPackageJson();
+      const dependencies = packageJson?.dependencies || {};
 
       const libsList: string[] = [];
       Object.entries(dependencies).forEach(([key, version]) => {

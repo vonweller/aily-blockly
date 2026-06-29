@@ -16,8 +16,16 @@ import {
 } from '../core/chat-mode';
 import type { ProviderContextManagementSupport } from '../services/aily-chat-config.service';
 import { MAIN_AGENT_TYPE, SCHEMATIC_AGENT_TYPE, normalizeAgentIdentifier } from '../core/agent-identifiers';
-import { BLOCKLY_MAIN_AGENT_REQUIRED_CONTEXT, BLOCKLY_PROMPT_PROFILE } from '../core/blockly-prompt-profile';
-import { CODER_MAIN_AGENT_REQUIRED_CONTEXT, CODER_PROMPT_PROFILE } from '../core/coder-prompt-profile';
+import {
+  BLOCKLY_MAIN_AGENT_REQUIRED_CONTEXT,
+  BLOCKLY_PROMPT_PROFILE,
+  createScopedBlocklyPromptProfile,
+} from '../core/blockly-prompt-profile';
+import {
+  CODER_MAIN_AGENT_REQUIRED_CONTEXT,
+  CODER_PROMPT_PROFILE,
+  createScopedCoderPromptProfile,
+} from '../core/coder-prompt-profile';
 import { UNBOUND_ROUTER_PROMPT_PROFILE, UNBOUND_ROUTER_REQUIRED_CONTEXT } from '../core/unbound-router-prompt-profile';
 import {
   normalizeChatAgentRuntimeMode,
@@ -26,7 +34,11 @@ import {
 } from '../core/chat-agent-runtime-mode';
 import type { ChatRuntimeOwnerScheduler } from '../core/chat-runtime-owner-scheduler';
 import { normalizeGovernanceToolName, toRuntimeGovernanceToolName } from '../core/tool-name-normalizer';
-import { getBlocklyContextSnapshotService } from '../core/blockly-context-snapshot-service';
+import {
+  createBlocklyContextSnapshotService,
+  getBlocklyContextSnapshotService,
+  type BlocklyContextSnapshotService,
+} from '../core/blockly-context-snapshot-service';
 import { BLOCKLY_LEX_DEFERRED_GROUPS, createBlocklyToolProvider } from '../core/blockly-contributed-tools';
 import { createBlocklyAgentProvider } from '../core/blockly-agent-provider';
 import { createBlocklyAgentFileProvider } from '../core/blockly-agent-file-provider';
@@ -515,6 +527,10 @@ export type BootstrapLexAgentContext = Pick<IProjectContext, 'prjPath' | 'prjRoo
       source: ChatAgentRuntimeModeSource,
       reason?: string,
     ): void | Promise<void>;
+    updateRuntimeProjectPath?(
+      projectPath: string,
+      result?: unknown,
+    ): void | Promise<void>;
   };
 
 export interface BlocklyCompatibilityHostBinding {
@@ -543,6 +559,47 @@ export function resolveRuntimePromptProfile(runtimeMode: ChatAgentRuntimeMode) {
       return CODER_PROMPT_PROFILE;
     case 'blockly':
       return BLOCKLY_PROMPT_PROFILE;
+    case 'unbound':
+    default:
+      return UNBOUND_ROUTER_PROMPT_PROFILE;
+  }
+}
+
+function createRuntimePromptHost(hostAPI: IExternalHostAPI): ReturnType<typeof AilyHost.get> {
+  const host = AilyHost.get();
+  return {
+    ...host,
+    // VS Code's chat model/tool context is owned by the active request model.
+    // Keep global editor/fs/path services, but bind project/domain state to the
+    // request-scoped hostAPI so prompt context and tool execution agree.
+    project: hostAPI.project ?? host.project,
+    blockly: hostAPI.blockly ?? (host as any).blockly,
+    connectionGraph: hostAPI.connectionGraph ?? host.connectionGraph,
+    schematic: (hostAPI as any).schematic ?? (host as any).schematic,
+    boardSearch: hostAPI.boardSearch ?? (host as any).boardSearch,
+    terminal: hostAPI.terminal ?? host.terminal,
+    auth: hostAPI.auth ?? host.auth,
+    config: host.config ?? hostAPI.config,
+    platform: host.platform ?? hostAPI.platform,
+  } as ReturnType<typeof AilyHost.get>;
+}
+
+function createRuntimeScopedPromptProfile(
+  runtimeMode: ChatAgentRuntimeMode,
+  contextSnapshotService: BlocklyContextSnapshotService,
+  getPromptHost: () => ReturnType<typeof AilyHost.get>,
+) {
+  switch (runtimeMode) {
+    case 'coder':
+      return createScopedCoderPromptProfile({
+        getHost: getPromptHost,
+        contextSnapshotService,
+      });
+    case 'blockly':
+      return createScopedBlocklyPromptProfile({
+        getHost: getPromptHost,
+        contextSnapshotService,
+      });
     case 'unbound':
     default:
       return UNBOUND_ROUTER_PROMPT_PROFILE;
@@ -1076,6 +1133,7 @@ function positionToOffset(lineStarts: readonly number[], contentLength: number, 
 
 interface BlocklyExternalHostApiOptions {
   readonly cwd?: string;
+  readonly onProjectCreated?: (projectPath: string, result: unknown) => void | Promise<void>;
   readonly createSyncAbsInvocationContext?: () => SyncAbsInvocationContext | undefined;
   readonly sessionId?: string;
 }
@@ -1109,17 +1167,29 @@ export function buildExternalHostAPI(
   const host = AilyHost.get();
   const contextSnapshotService = getBlocklyContextSnapshotService();
   const createSyncAbsInvocationContext = options.createSyncAbsInvocationContext;
+  let createdProjectPath = '';
   (window as { path?: typeof host.path }).path = host.path;
   const runtimeCwd = () => typeof options.cwd === 'string' && options.cwd.trim().length > 0
-    ? options.cwd.trim()
-    : '';
-  const workerProjectPath = () => typeof host.project?.currentProjectPath === 'string'
-    ? host.project.currentProjectPath.trim()
-    : '';
+    ? (createdProjectPath || options.cwd.trim())
+    : createdProjectPath;
   const workerProjectRootPath = () => typeof host.project?.projectRootPath === 'string'
     ? host.project.projectRootPath.trim()
     : '';
-  const prjPath = () => workerProjectPath() || runtimeCwd() || workerProjectRootPath();
+  const normalizeComparablePath = (value: string) => value.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  const workerProjectPath = () => {
+    const currentProjectPath = typeof host.project?.currentProjectPath === 'string'
+      ? host.project.currentProjectPath.trim()
+      : '';
+    const projectRootPath = workerProjectRootPath();
+    if (!currentProjectPath) {
+      return '';
+    }
+    if (projectRootPath && normalizeComparablePath(currentProjectPath) === normalizeComparablePath(projectRootPath)) {
+      return '';
+    }
+    return currentProjectPath;
+  };
+  const prjPath = () => workerProjectPath() || runtimeCwd();
   const shouldUseRuntimeProjectFiles = () => !!runtimeCwd() && !workerProjectPath();
   const joinProjectPath = (...segments: string[]) => host.path?.join
     ? host.path.join(...segments)
@@ -1336,7 +1406,7 @@ export function buildExternalHostAPI(
       return prjPath();
     },
     get projectRootPath() {
-      return host.project?.projectRootPath || prjPath();
+      return host.project?.projectRootPath || '';
     },
     get currentBoard() {
       return host.project?.currentBoard;
@@ -1349,6 +1419,12 @@ export function buildExternalHostAPI(
         const info = await host.project.getProjectInfo();
         if (info && typeof info === 'object') {
           const infoRecord = info as Record<string, unknown>;
+          if (!prjPath() && infoRecord['projectOpened'] !== true) {
+            return {
+              ...infoRecord,
+              projectOpened: false,
+            };
+          }
           return {
             ...infoRecord,
             path: typeof infoRecord['path'] === 'string' && infoRecord['path'].trim().length > 0
@@ -1365,11 +1441,14 @@ export function buildExternalHostAPI(
         const legacyResult = await getProjectInfoTool(projectProvider as any, { include_readme: true });
         if (!legacyResult.is_error) {
           const legacyInfo = JSON.parse(legacyResult.content);
-          if (!legacyInfo?.projectOpened && runtimeCwd()) {
+          if (legacyInfo?.projectOpened && shouldUseRuntimeProjectFiles()) {
             return {
-              name: host.project.projectName,
-              path: prjPath(),
-              board: host.project.currentBoard,
+              ...legacyInfo,
+              path: typeof legacyInfo['path'] === 'string' && legacyInfo['path'].trim()
+                ? legacyInfo['path']
+                : legacyInfo['projectPath'] ?? prjPath(),
+              name: host.project.projectName ?? legacyInfo['name'] ?? legacyInfo['projectName'],
+              board: legacyInfo['board'] ?? host.project.currentBoard,
             };
           }
           return legacyInfo;
@@ -1378,7 +1457,13 @@ export function buildExternalHostAPI(
         // Fall back to the minimal project shape below when legacy discovery is unavailable.
       }
 
+      if (!prjPath()) {
+        return {
+          projectOpened: false,
+        };
+      }
       return {
+        projectOpened: true,
         name: host.project.projectName,
         path: prjPath(),
         board: host.project.currentBoard,
@@ -1390,6 +1475,18 @@ export function buildExternalHostAPI(
       ? async (name: string, board: string, path?: string) => {
           const createProject = host.project.createProject ?? createProjectFromLegacyProjectService!;
           const result = await createProject(name, board, path ?? prjPath());
+          const resultRecord = result && typeof result === 'object'
+            ? result as Record<string, unknown>
+            : null;
+          const projectPath = typeof resultRecord?.['projectPath'] === 'string'
+            ? resultRecord['projectPath'].trim()
+            : typeof resultRecord?.['path'] === 'string'
+              ? resultRecord['path'].trim()
+              : '';
+          if (projectPath) {
+            createdProjectPath = projectPath;
+            await options.onProjectCreated?.(projectPath, result);
+          }
           contextSnapshotService.invalidate([
             'workspaceIdentity',
             'projectInfo',
@@ -1532,7 +1629,26 @@ export function buildExternalHostAPI(
             : String((category as { name?: unknown; id?: unknown })?.name ?? (category as { id?: unknown })?.id ?? ''));
         },
       } : undefined,
-    blockly: hasBlocklyWorkspace || hasLibraryAnalysis ? {
+    blockly: hasBlocklyWorkspace || hasLibraryAnalysis ? ({
+      lintGeneratedCode: typeof (host as any).arduinoLint?.checkSyntax === 'function'
+        ? async (code: string, options?: Record<string, unknown>) => {
+            const projectPath = prjPath();
+            const [packageJson, boardJson, boardPackageJson] = await Promise.all([
+              projectProvider.getPackageJson?.(),
+              projectProvider.getBoardJson?.(),
+              projectProvider.getBoardPackageJson?.(),
+            ]);
+            return (host as any).arduinoLint.checkSyntax(code, {
+              ...options,
+              projectContext: {
+                projectPath,
+                packageJson,
+                boardJson,
+                boardPackageJson,
+              },
+            });
+          }
+        : undefined,
       exportAbs: async () => {
         const result = await syncAbsFileHandler(
           { operation: 'export' },
@@ -1602,7 +1718,7 @@ export function buildExternalHostAPI(
         }
         return result.content;
       },
-    } : undefined,
+    } as any) : undefined,
     connectionGraph: host.connectionGraph,
     config: host.config,
       auth: host.auth ? {
@@ -1634,11 +1750,13 @@ export function createBlocklyStandardHostBinding(
       source: ChatAgentRuntimeModeSource,
       reason?: string,
     ) => void | Promise<void>;
+    readonly onProjectCreated?: (projectPath: string, result: unknown) => void | Promise<void>;
     readonly createSyncAbsInvocationContext?: () => SyncAbsInvocationContext | undefined;
   } = {},
 ): BlocklyStandardHostBinding {
   const hostAPI = buildExternalHostAPI({
     cwd,
+    onProjectCreated: options.onProjectCreated,
     createSyncAbsInvocationContext: options.createSyncAbsInvocationContext,
     sessionId: options.sessionId,
   });
@@ -1924,7 +2042,7 @@ export function bootstrapBlocklyLexAgent(
     options.runtimeMode ?? ctx.currentAgentRuntimeMode,
     cwd ? 'coder' : 'unbound',
   );
-  const promptProfile = resolveRuntimePromptProfile(agentRuntimeMode);
+  const basePromptProfile = resolveRuntimePromptProfile(agentRuntimeMode);
   const requiredContext = resolveRuntimeRequiredContext(agentRuntimeMode);
   const subagentRequiredContext = createSubagentRequiredContext(requiredContext);
   const runtimeSessionId = (sessionId || ctx.sessionId || '').trim();
@@ -1945,19 +2063,26 @@ export function bootstrapBlocklyLexAgent(
       ? <T>(operation: () => Promise<T> | T): Promise<T> | T => ctx.ownerScheduler!.runOutsideOwner(operation)
       : undefined,
   });
+  let runtimeWorkspacePath = cwd || '';
   const { hostAPI, toolProvider, adapter } = createBlocklyStandardHostBinding(cwd, {
     runtimeMode: agentRuntimeMode,
     sessionId: runtimeSessionId,
     onRuntimeModeSelected: ctx.selectAgentRuntimeMode,
+    onProjectCreated: async (projectPath, result) => {
+      runtimeWorkspacePath = projectPath;
+      await ctx.updateRuntimeProjectPath?.(projectPath, result);
+    },
     createSyncAbsInvocationContext,
   });
   attachBlocklyCompatibilityExtensions(adapter);
-  const contextSnapshotService = getBlocklyContextSnapshotService();
+  const getPromptHost = () => createRuntimePromptHost(hostAPI);
+  const contextSnapshotService = createBlocklyContextSnapshotService(getPromptHost);
+  const promptProfile = createRuntimeScopedPromptProfile(agentRuntimeMode, contextSnapshotService, getPromptHost);
   const sessionStorage = createLexSessionStorage(lex, adapter.fs);
   if (isLexBootstrapTraceEnabled()) {
     console.info('[LexBootstrap] agent runtime mode', {
       runtimeMode: agentRuntimeMode,
-      promptHostId: promptProfile.hostId,
+      promptHostId: basePromptProfile.hostId,
       cwd: cwd || null,
     });
   }
@@ -2060,6 +2185,9 @@ export function bootstrapBlocklyLexAgent(
     },
     diagnostics: {
       getErrors: async (filePaths?: string[]) => collectDiagnostics(filePaths),
+    },
+    runtimeWorkspaceContext: {
+      getCwd: () => runtimeWorkspacePath || cwd || undefined,
     },
     memoryStorage: createBlocklyMemoryStorageExtension(cwd),
     memoryFeatureConfig: createBlocklyMemoryFeatureConfigExtension(ctx.ailyChatConfigService),
