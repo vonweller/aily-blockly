@@ -4,6 +4,8 @@ import type { LexOwnerFacade } from '../helpers/lex-stream.helper';
 
 import {
   createChatAgentRuntimeConfigKey,
+  normalizeChatAgentRuntimeMode,
+  normalizeChatAgentRuntimeModeSource,
 } from '../core/chat-agent-runtime-mode';
 import { normalizeChatSelectedMode } from '../core/chat-mode';
 import type { ChatRuntimeHostSubmitRequest } from '../core/chat-runtime-host-contract';
@@ -60,7 +62,7 @@ export class ChatRuntimeOwnerSubmittedTurnLifecycleService implements ChatRuntim
 
     this.hydrateExistingTurnResponses(targetSessionId, owner);
     await this.ensureBlankSessionRuntimeProviderOptions(targetSessionId, owner);
-    await this.ensureRuntimeAgentForSession(targetSessionId, owner);
+    await this.ensureRuntimeAgentForSession(targetSessionId, owner, request);
 
     const displayText = request.displayText ?? request.requestText;
     this.submittedTurnTitle.prepareSubmittedTurnTitle({
@@ -224,14 +226,20 @@ export class ChatRuntimeOwnerSubmittedTurnLifecycleService implements ChatRuntim
     await this.ensureRuntimeAgentForSession(sessionId, owner);
   }
 
-  private async ensureRuntimeAgentForSession(sessionId: string, owner: LexOwnerFacade): Promise<void> {
+  private async ensureRuntimeAgentForSession(
+    sessionId: string,
+    owner: LexOwnerFacade,
+    request?: ChatRuntimeHostSubmitRequest | null,
+  ): Promise<void> {
     const providerOptions = this.rememberRuntimeSessionProviderOptions(
       sessionId,
       this.ownerSessionContext.resolveRuntimeSessionProviderOptions(sessionId),
+      request,
     );
+    const agentRuntimeMode = this.resolveRequestAgentRuntimeMode(request);
     const providerOptionsKey = createChatAgentRuntimeConfigKey(
       createHostSessionProviderOptionsKey(providerOptions),
-      this.ownerSessionContext.currentAgentRuntimeMode,
+      agentRuntimeMode,
       this.ownerSessionContext.currentModel,
     );
     if (owner.agent.isConfiguredFor?.(sessionId, providerOptionsKey)) {
@@ -244,14 +252,17 @@ export class ChatRuntimeOwnerSubmittedTurnLifecycleService implements ChatRuntim
   private rememberRuntimeSessionProviderOptions(
     sessionId: string,
     providerOptions: HostSessionProviderOptions,
+    request?: ChatRuntimeHostSubmitRequest | null,
   ): HostSessionProviderOptions {
+    const agentRuntimeMode = this.resolveRequestAgentRuntimeMode(request);
+    const agentRuntimeModeSource = this.resolveRequestAgentRuntimeModeSource(request);
     projectRuntimeStateToRuntimeController(this.runtimeController, {
       sessionId,
       patch: {
         providerOptions,
         selectedMode: normalizeChatSelectedMode(this.ownerSessionContext.resolveRuntimeSelectedMode(sessionId)),
-        agentRuntimeMode: this.ownerSessionContext.currentAgentRuntimeMode,
-        agentRuntimeModeSource: this.ownerSessionContext.currentAgentRuntimeModeSource,
+        agentRuntimeMode,
+        agentRuntimeModeSource,
         currentModel: this.ownerSessionContext.currentModel,
         debugSummary: {
           providerOptionsPresent: true,
@@ -262,6 +273,18 @@ export class ChatRuntimeOwnerSubmittedTurnLifecycleService implements ChatRuntim
       },
     });
     return providerOptions;
+  }
+
+  private resolveRequestAgentRuntimeMode(request?: ChatRuntimeHostSubmitRequest | null) {
+    return request?.agentRuntimeMode
+      ? normalizeChatAgentRuntimeMode(request.agentRuntimeMode, this.ownerSessionContext.currentAgentRuntimeMode)
+      : this.ownerSessionContext.currentAgentRuntimeMode;
+  }
+
+  private resolveRequestAgentRuntimeModeSource(request?: ChatRuntimeHostSubmitRequest | null) {
+    return request?.agentRuntimeModeSource
+      ? normalizeChatAgentRuntimeModeSource(request.agentRuntimeModeSource, this.ownerSessionContext.currentAgentRuntimeModeSource)
+      : this.ownerSessionContext.currentAgentRuntimeModeSource;
   }
 
   private hydrateExistingTurnResponses(sessionId: string, owner: LexOwnerFacade): void {

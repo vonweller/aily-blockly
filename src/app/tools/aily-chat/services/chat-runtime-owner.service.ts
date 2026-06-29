@@ -3,6 +3,10 @@ import { DestroyRef, Injectable, inject } from '@angular/core';
 import { LexOwnerFacade, type LexOwnerContext } from '../helpers/lex-stream.helper';
 import { terminalTranscriptProjection } from '../core/chat-runtime-projection-policy';
 import { buildSeededTurnResponseTurn } from '../core/turn-response-stream-contract';
+import {
+  normalizeChatAgentRuntimeMode,
+  normalizeChatAgentRuntimeModeSource,
+} from '../core/chat-agent-runtime-mode';
 import { normalizeChatSelectedMode } from '../core/chat-mode';
 import type {
   ChatRuntimeExecutionWorker,
@@ -115,6 +119,12 @@ export class ChatRuntimeOwnerService implements ChatRuntimeExecutionWorker, Chat
       currentModel: request.currentModel !== undefined
         ? request.currentModel
         : command.executionContext?.currentModel ?? null,
+      agentRuntimeMode: request.agentRuntimeMode !== undefined
+        ? request.agentRuntimeMode
+        : command.executionContext?.agentRuntimeMode ?? null,
+      agentRuntimeModeSource: request.agentRuntimeModeSource !== undefined
+        ? request.agentRuntimeModeSource
+        : command.executionContext?.agentRuntimeModeSource ?? null,
       protocolTruncation: request.protocolTruncation ?? command.executionContext?.protocolTruncation ?? null,
     });
     this.projectSubmittedTurnExecutionContext(normalizedRequest);
@@ -1117,7 +1127,9 @@ export class ChatRuntimeOwnerService implements ChatRuntimeExecutionWorker, Chat
     const hasProviderOptions = request.providerOptions !== undefined;
     const hasSelectedMode = request.selectedMode !== undefined;
     const hasCurrentModel = request.currentModel !== undefined;
-    if (!hasProviderOptions && !hasSelectedMode && !hasCurrentModel) {
+    const hasAgentRuntimeMode = request.agentRuntimeMode !== undefined;
+    const hasAgentRuntimeModeSource = request.agentRuntimeModeSource !== undefined;
+    if (!hasProviderOptions && !hasSelectedMode && !hasCurrentModel && !hasAgentRuntimeMode && !hasAgentRuntimeModeSource) {
       return;
     }
 
@@ -1131,9 +1143,17 @@ export class ChatRuntimeOwnerService implements ChatRuntimeExecutionWorker, Chat
       ...(hasCurrentModel
         ? { currentModel: request.currentModel ?? null }
         : {}),
+      ...(hasAgentRuntimeMode
+        ? { agentRuntimeMode: request.agentRuntimeMode ? normalizeChatAgentRuntimeMode(request.agentRuntimeMode) : null }
+        : {}),
+      ...(hasAgentRuntimeModeSource
+        ? { agentRuntimeModeSource: request.agentRuntimeModeSource ? normalizeChatAgentRuntimeModeSource(request.agentRuntimeModeSource) : null }
+        : {}),
       debugSummary: {
         ...(hasProviderOptions ? { providerOptionsPresent: !!request.providerOptions } : {}),
         ...(hasSelectedMode ? { selectedModePresent: !!request.selectedMode } : {}),
+        ...(hasAgentRuntimeMode ? { agentRuntimeModePresent: !!request.agentRuntimeMode } : {}),
+        ...(hasCurrentModel ? { currentModelPresent: !!request.currentModel } : {}),
       },
     }, {
       reason: 'state',

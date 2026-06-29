@@ -307,6 +307,12 @@ class ChatRuntimeHostProcessService {
       executionContext: {
         selectedMode: runningState.selectedMode ?? null,
         providerOptions: runningState.providerOptions ?? null,
+        agentRuntimeMode: submittedRequest && submittedRequest.agentRuntimeMode !== undefined
+          ? submittedRequest.agentRuntimeMode ?? null
+          : null,
+        agentRuntimeModeSource: submittedRequest && submittedRequest.agentRuntimeModeSource !== undefined
+          ? submittedRequest.agentRuntimeModeSource ?? null
+          : null,
         currentModel: runningState.currentModel ?? null,
         transcriptRevision: Number(runningState.transcriptRevision) || 0,
         protocolTruncation: submittedRequest && submittedRequest.protocolTruncation ? submittedRequest.protocolTruncation : null,
