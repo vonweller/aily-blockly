@@ -18,6 +18,7 @@ import {
   deleteBlocklyCommandSession,
   getBlocklyCommandSessionStatus,
   listPersistedBlocklyCommandSessionSnapshots,
+  listPersistedBlocklyProjectCommandSessionSnapshots,
   purgeBlocklyCommandSession,
   subscribeBlocklyCommandSessionUpdates,
 } from '../../helpers/lex-agent-bootstrap';
@@ -28,7 +29,8 @@ import { ChatRuntimeInteractionHostService } from '../../services/chat-runtime-i
 type ProcessFilter = 'all' | 'running' | 'background' | 'completed' | 'failed' | 'removed';
 
 interface ChatProcessManagerDialogData {
-  readonly sessionId: string;
+  readonly sessionId?: string;
+  readonly projectPath?: string;
 }
 
 @Component({
@@ -49,6 +51,7 @@ export class ChatProcessManagerDialogComponent {
   private readonly translate = inject(TranslateService);
 
   readonly sessionId = typeof this.data.sessionId === 'string' ? this.data.sessionId.trim() : '';
+  readonly projectPath = typeof this.data.projectPath === 'string' ? this.data.projectPath.trim() : '';
 
   selectedFilter: ProcessFilter = 'all';
   selectedProcessId = '';
@@ -61,7 +64,7 @@ export class ChatProcessManagerDialogComponent {
   constructor() {
     this.refreshProcesses();
     const subscription = subscribeBlocklyCommandSessionUpdates((sessionId) => {
-      if (sessionId === this.sessionId) {
+      if (!this.sessionId || sessionId === this.sessionId) {
         this.refreshProcesses();
       }
     });
@@ -113,7 +116,7 @@ export class ChatProcessManagerDialogComponent {
     if (!process.running) {
       return;
     }
-    await this.runtimeInteractionHost.requestCommandSessionAction(this.sessionId, {
+    await this.runtimeInteractionHost.requestCommandSessionAction(process.sessionId || this.sessionId, {
       actionId: 'stop',
       processId: process.processId,
       outputSessionId: process.outputSessionId,
@@ -123,7 +126,7 @@ export class ChatProcessManagerDialogComponent {
   }
 
   deleteProcess(process: ChatRuntimeHostSessionProcessSummary): void {
-    deleteBlocklyCommandSession(process.processId, this.sessionId);
+    deleteBlocklyCommandSession(process.processId, process.sessionId || this.sessionId);
     if (this.selectedProcessId === process.processId) {
       this.selectedProcessId = '';
     }
@@ -131,7 +134,7 @@ export class ChatProcessManagerDialogComponent {
   }
 
   hardDeleteProcess(process: ChatRuntimeHostSessionProcessSummary): void {
-    purgeBlocklyCommandSession(process.processId, this.sessionId);
+    purgeBlocklyCommandSession(process.processId, process.sessionId || this.sessionId);
     if (this.selectedProcessId === process.processId) {
       this.selectedProcessId = '';
     }
@@ -220,16 +223,21 @@ export class ChatProcessManagerDialogComponent {
   }
 
   private refreshProcesses(): void {
-    const snapshot = this.runtimeInteractionHost.readSnapshot(this.sessionId);
-    const liveProcesses = Array.isArray(snapshot.processes) ? snapshot.processes : [];
-    const projectPathHint = this.chatHistoryService.findEntry(this.sessionId)?.projectPath ?? null;
-    const persistedProcesses = listPersistedBlocklyCommandSessionSnapshots(this.sessionId, projectPathHint);
+    const snapshot = this.sessionId
+      ? this.runtimeInteractionHost.readSnapshot(this.sessionId)
+      : null;
+    const liveProcesses = Array.isArray(snapshot?.processes) ? snapshot.processes : [];
+    const projectPathHint = this.projectPath || this.chatHistoryService.findEntry(this.sessionId)?.projectPath || null;
+    const persistedProcesses = this.sessionId
+      ? listPersistedBlocklyCommandSessionSnapshots(this.sessionId, projectPathHint)
+      : listPersistedBlocklyProjectCommandSessionSnapshots(projectPathHint);
     const nextProcesses = this.mergeProcessSummaries(liveProcesses, persistedProcesses);
     this.processes = nextProcesses;
     const nextFilteredProcesses = this.filteredProcesses;
     if (!this.selectedProcessId || !nextFilteredProcesses.some(process => process.processId === this.selectedProcessId)) {
       this.selectedProcessId = nextFilteredProcesses[0]?.processId ?? '';
     }
+    this.cdr.markForCheck();
     void this.refreshSelectedProcessDetail();
   }
 

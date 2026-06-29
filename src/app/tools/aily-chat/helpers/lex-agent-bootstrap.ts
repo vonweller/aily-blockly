@@ -161,6 +161,12 @@ interface PersistedBlocklyCommandSessionRecord {
   readonly removedAt?: number | null;
 }
 
+interface PersistedBlocklyCommandSessionIndexRecord {
+  readonly version?: number;
+  readonly processIds?: readonly string[];
+  readonly updatedAt?: number;
+}
+
 function normalizeBlocklyCommandSessionStatus(
   status: string | undefined,
   running: boolean,
@@ -274,28 +280,37 @@ export function listPersistedBlocklyCommandSessionSnapshots(
     return [];
   }
 
+  const linkedProcessIds = readPersistedBlocklyCommandSessionIndexProcessIds(
+    AilyHost.get(),
+    normalizedSessionId,
+    projectPathHint,
+  );
+  if (linkedProcessIds.length > 0) {
+    const projectSummaries = listPersistedBlocklyProjectCommandSessionSnapshots(projectPathHint);
+    const summaryMap = new Map(projectSummaries.map(summary => [summary.processId, summary] as const));
+    return linkedProcessIds
+      .map(processId => summaryMap.get(processId))
+      .filter((summary): summary is BlocklyCommandSessionSummary => !!summary)
+      .sort((left, right) => right.startedAt - left.startedAt);
+  }
+
+  return [];
+}
+
+export function listPersistedBlocklyProjectCommandSessionSnapshots(
+  projectPathHint?: string | null,
+): BlocklyCommandSessionSummary[] {
   const host = AilyHost.get();
-  const processDirCandidates = resolveBlocklyCommandSessionProcessDirCandidates(host, normalizedSessionId, projectPathHint);
+  const metadataFileCandidates = resolveBlocklyProjectProcessMetadataFileCandidates(host, projectPathHint);
   const summaries = new Map<string, BlocklyCommandSessionSummary>();
 
-  for (const processDir of processDirCandidates) {
-    if (!host.fs?.existsSync?.(processDir)) {
+  for (const filePath of metadataFileCandidates) {
+    const record = readPersistedBlocklyCommandSessionRecord(host, filePath);
+    const summary = record ? createBlocklyCommandSessionSummaryFromPersistedRecord(record) : null;
+    if (!summary) {
       continue;
     }
-
-    const entries = readBlocklyCommandSessionProcessDirEntries(host, processDir);
-    for (const entryName of entries) {
-      if (!entryName.endsWith('.json')) {
-        continue;
-      }
-      const filePath = host.path.join(processDir, entryName);
-      const record = readPersistedBlocklyCommandSessionRecord(host, filePath);
-      const summary = record ? createBlocklyCommandSessionSummaryFromPersistedRecord(record, normalizedSessionId) : null;
-      if (!summary) {
-        continue;
-      }
-      summaries.set(summary.processId, summary);
-    }
+    summaries.set(summary.processId, summary);
   }
 
   return [...summaries.values()].sort((left, right) => right.startedAt - left.startedAt);
@@ -460,6 +475,10 @@ export function purgeBlocklyCommandSession(
     } catch {
       // best-effort
     }
+  }
+
+  if (targetSessionId) {
+    removePersistedBlocklyCommandSessionIndexProcessId(targetSessionId, normalizedProcessId, runtimeSession?.cwd);
   }
 
   return deletedAny || !!runtimeSession || !!persisted;
@@ -3479,24 +3498,23 @@ function attachBlocklyCommandSession(session: ExternalTerminalSession): void {
   }
 }
 
-function resolveBlocklyCommandSessionProcessDirCandidates(
+function resolveBlocklyProjectProcessMetadataFileCandidates(
   host: any,
-  sessionId: string,
   projectPathHint?: string | null,
 ): string[] {
   const candidates = new Set<string>();
   const normalizedProjectPath = typeof projectPathHint === 'string' ? projectPathHint.trim() : '';
   if (normalizedProjectPath) {
-    collectProjectProcessDayDirs(host, normalizedProjectPath, candidates);
+    collectProjectProcessMetadataFiles(host, normalizedProjectPath, candidates);
   }
   const currentProjectPath = host.project?.currentProjectPath || host.project?.projectRootPath || '';
   if (currentProjectPath) {
-    collectProjectProcessDayDirs(host, currentProjectPath, candidates);
+    collectProjectProcessMetadataFiles(host, currentProjectPath, candidates);
   }
   return [...candidates];
 }
 
-function collectProjectProcessDayDirs(
+function collectProjectProcessMetadataFiles(
   host: any,
   projectPath: string,
   candidates: Set<string>,
@@ -3506,29 +3524,167 @@ function collectProjectProcessDayDirs(
     return;
   }
 
-  for (const entryName of readBlocklyCommandSessionProcessDirEntries(host, processRootDir)) {
-    const absolutePath = host.path.join(processRootDir, entryName);
-    try {
-      if (host.fs.statSync(absolutePath).isDirectory()) {
-        candidates.add(absolutePath);
+  for (const subappEntry of readBlocklyCommandSessionDirEntries(host, processRootDir)) {
+    if (!subappEntry.isDirectory()) {
+      continue;
+    }
+    const subappDirPath = host.path.join(processRootDir, subappEntry.name);
+    for (const dayEntry of readBlocklyCommandSessionDirEntries(host, subappDirPath)) {
+      if (!dayEntry.isDirectory()) {
+        continue;
       }
-    } catch {
-      // Ignore unreadable day directories.
+      const dayDirPath = host.path.join(subappDirPath, dayEntry.name);
+      for (const minuteEntry of readBlocklyCommandSessionDirEntries(host, dayDirPath)) {
+        if (!minuteEntry.isDirectory()) {
+          continue;
+        }
+        const minuteDirPath = host.path.join(dayDirPath, minuteEntry.name);
+        for (const fileEntry of readBlocklyCommandSessionDirEntries(host, minuteDirPath)) {
+          if (fileEntry.isFile() && fileEntry.name.endsWith('.json')) {
+            candidates.add(host.path.join(minuteDirPath, fileEntry.name));
+          }
+        }
+      }
     }
   }
 }
 
-function readBlocklyCommandSessionProcessDirEntries(host: any, dirPath: string): string[] {
+function readBlocklyCommandSessionDirEntries(
+  host: any,
+  dirPath: string,
+): Array<{ name: string; isFile(): boolean; isDirectory(): boolean }> {
   try {
     if (typeof host.fs?.readDirSync === 'function') {
       return host.fs.readDirSync(dirPath)
-        .filter((entry: { name?: string; isFile?: () => boolean }) => typeof entry?.isFile === 'function' ? entry.isFile() : true)
-        .map((entry: { name?: string }) => String(entry?.name || ''))
-        .filter(Boolean);
+        .map((entry: { name?: string; isFile?: () => boolean; isDirectory?: () => boolean }) => ({
+          name: String(entry?.name || ''),
+          isFile: () => typeof entry?.isFile === 'function' ? entry.isFile() : true,
+          isDirectory: () => typeof entry?.isDirectory === 'function' ? entry.isDirectory() : false,
+        }))
+        .filter((entry: { name: string }) => !!entry.name);
     }
-    return host.fs?.readdirSync?.(dirPath) ?? [];
+    return (host.fs?.readdirSync?.(dirPath) ?? [])
+      .map((name: string) => ({
+        name: String(name || ''),
+        isFile: () => {
+          try {
+            return host.fs.statSync(host.path.join(dirPath, name)).isFile();
+          } catch {
+            return false;
+          }
+        },
+        isDirectory: () => {
+          try {
+            return host.fs.statSync(host.path.join(dirPath, name)).isDirectory();
+          } catch {
+            return false;
+          }
+        },
+      }))
+      .filter((entry: { name: string }) => !!entry.name);
   } catch {
     return [];
+  }
+}
+
+function resolveBlocklyCommandSessionIndexFilePath(
+  host: any,
+  sessionId: string,
+  projectPathHint?: string | null,
+): string | null {
+  const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+  if (!normalizedSessionId || !host.path?.join || !host.path?.getUserHome) {
+    return null;
+  }
+
+  const normalizedProjectPath = typeof projectPathHint === 'string' ? projectPathHint.trim() : '';
+  const currentProjectPath = host.project?.currentProjectPath || host.project?.projectRootPath || '';
+  const baseDir = normalizedProjectPath
+    ? host.path.join(normalizedProjectPath, '.chat_history')
+    : currentProjectPath
+      ? host.path.join(currentProjectPath, '.chat_history')
+      : host.path.join(host.path.getUserHome(), '.aily', 'chat_history');
+
+  return host.path.join(baseDir, encodeURIComponent(normalizedSessionId), 'process.json');
+}
+
+function readPersistedBlocklyCommandSessionIndexProcessIds(
+  host: any,
+  sessionId: string,
+  projectPathHint?: string | null,
+): string[] {
+  const filePath = resolveBlocklyCommandSessionIndexFilePath(host, sessionId, projectPathHint);
+  if (!filePath || !host.fs?.existsSync?.(filePath)) {
+    return [];
+  }
+
+  try {
+    const raw = host.fs.readFileSync(filePath, 'utf-8');
+    if (!raw) {
+      return [];
+    }
+    const parsed = JSON.parse(String(raw)) as PersistedBlocklyCommandSessionIndexRecord;
+    return Array.isArray(parsed?.processIds)
+      ? parsed.processIds
+        .map(processId => typeof processId === 'string' ? processId.trim() : '')
+        .filter(Boolean)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function persistBlocklyCommandSessionIndexRecord(
+  session: Pick<ExternalTerminalSession, 'sessionId' | 'id' | 'cwd'>,
+): void {
+  const host = AilyHost.get();
+  const filePath = resolveBlocklyCommandSessionIndexFilePath(host, session.sessionId, session.cwd);
+  if (!filePath) {
+    return;
+  }
+
+  const processIds = new Set(readPersistedBlocklyCommandSessionIndexProcessIds(host, session.sessionId, session.cwd));
+  processIds.add(session.id);
+
+  try {
+    host.fs.mkdirSync(host.path.dirname(filePath), { recursive: true });
+    host.fs.writeFileSync(filePath, JSON.stringify({
+      version: 1,
+      processIds: [...processIds],
+      updatedAt: Date.now(),
+    }, null, 2), 'utf-8');
+  } catch {
+    // best-effort
+  }
+}
+
+function removePersistedBlocklyCommandSessionIndexProcessId(
+  sessionId: string,
+  processId: string,
+  projectPathHint?: string | null,
+): void {
+  const host = AilyHost.get();
+  const filePath = resolveBlocklyCommandSessionIndexFilePath(host, sessionId, projectPathHint);
+  if (!filePath || !host.fs?.existsSync?.(filePath)) {
+    return;
+  }
+
+  const nextProcessIds = readPersistedBlocklyCommandSessionIndexProcessIds(host, sessionId, projectPathHint)
+    .filter(candidate => candidate !== processId);
+
+  try {
+    if (nextProcessIds.length === 0) {
+      host.fs.unlinkSync(filePath);
+      return;
+    }
+
+    host.fs.writeFileSync(filePath, JSON.stringify({
+      version: 1,
+      processIds: nextProcessIds,
+      updatedAt: Date.now(),
+    }, null, 2), 'utf-8');
+  } catch {
+    // best-effort
   }
 }
 
@@ -3550,7 +3706,7 @@ function readPersistedBlocklyCommandSessionRecord(
 
 function createBlocklyCommandSessionSummaryFromPersistedRecord(
   record: PersistedBlocklyCommandSessionRecord,
-  requestedSessionId: string,
+  requestedSessionId?: string,
 ): BlocklyCommandSessionSummary | null {
   const processId = typeof record.processId === 'string' ? record.processId.trim() : '';
   const outputSessionId = typeof record.outputSessionId === 'string' ? record.outputSessionId.trim() : processId;
@@ -3559,7 +3715,10 @@ function createBlocklyCommandSessionSummaryFromPersistedRecord(
   }
 
   const recordSessionId = typeof record.sessionId === 'string' ? record.sessionId.trim() : '';
-  if (!recordSessionId || recordSessionId !== requestedSessionId) {
+  if (!recordSessionId) {
+    return null;
+  }
+  if (requestedSessionId && recordSessionId !== requestedSessionId) {
     return null;
   }
 
@@ -3695,6 +3854,8 @@ function persistBlocklyCommandSessionRecord(session: ExternalTerminalSession): v
   } catch {
     // Keep runtime flow resilient if persistence fails.
   }
+
+  persistBlocklyCommandSessionIndexRecord(session);
 }
 
 function persistBlocklyCommandSessionOutput(

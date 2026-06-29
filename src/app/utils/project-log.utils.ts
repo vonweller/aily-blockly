@@ -1,4 +1,5 @@
 export type ProjectLogLevel = 'INFO' | 'DEBUG' | 'ERROR';
+const DEFAULT_PROCESS_LOG_SUBAPP = 'default';
 
 export function appendProjectLog(
   projectPath: string | undefined,
@@ -46,6 +47,7 @@ export function resolveProcessLogStoragePaths(
   projectPath: string | undefined,
   processId: string,
   at = new Date(),
+  subapp = DEFAULT_PROCESS_LOG_SUBAPP,
 ): { outputFilePath: string; metadataFilePath: string } | null {
   const normalizedProjectPath = typeof projectPath === 'string' ? projectPath.trim() : '';
   if (!normalizedProjectPath || !(window as any)?.path || !(window as any)?.fs) {
@@ -61,13 +63,15 @@ export function resolveProcessLogStoragePaths(
   const dirPath = pathApi.join(
     appDataLogRoot,
     resolveProjectLogId(normalizedProjectPath),
+    normalizeLogSource(subapp),
     formatDateSegment(at),
+    formatMinuteSegment(at),
   );
   if (!fsApi.existsSync(dirPath)) {
     fsApi.mkdirSync(dirPath, { recursive: true });
   }
 
-  const fileBaseName = `${formatMinuteSegment(at)}-${sanitizeProcessFileName(processId)}`;
+  const fileBaseName = sanitizeProcessFileName(processId);
   return {
     outputFilePath: pathApi.join(dirPath, `${fileBaseName}.log`),
     metadataFilePath: pathApi.join(dirPath, `${fileBaseName}.json`),

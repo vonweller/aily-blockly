@@ -14,7 +14,10 @@ import { ToolI18nService } from '../../../../services/tool-i18n.service';
 import { ChatProcessDetailPanelComponent } from '../process-detail-panel/chat-process-detail-panel.component';
 import { AilyHost } from '../../core/host';
 import { readChatProcessOutputFile } from '../../helpers/chat-process-window';
-import { listPersistedBlocklyCommandSessionSnapshots } from '../../helpers/lex-agent-bootstrap';
+import {
+  getBlocklyCommandSessionStatus,
+  listPersistedBlocklyCommandSessionSnapshots,
+} from '../../helpers/lex-agent-bootstrap';
 import { ChatHistoryService } from '../../services/chat-history.service';
 
 interface ProcessWindowInitData {
@@ -190,12 +193,16 @@ export class ChatProcessDetailWindowComponent implements OnInit, OnDestroy {
       return;
     }
 
-    const summary = await this.readSummaryFromHost();
-    if (summary) {
-      this.summary = summary;
-      this.outputSessionId = summary.outputSessionId || this.outputSessionId;
-      this.outputFilePath = summary.outputFilePath || this.outputFilePath;
-      this.command = summary.command || this.command;
+    const [summary, liveStatus] = await Promise.all([
+      this.readSummaryFromHost(),
+      getBlocklyCommandSessionStatus(this.processId).catch(() => null),
+    ]);
+    const mergedSummary = this.mergeSummaryWithLiveStatus(summary, liveStatus);
+    if (mergedSummary) {
+      this.summary = mergedSummary;
+      this.outputSessionId = mergedSummary.outputSessionId || this.outputSessionId;
+      this.outputFilePath = mergedSummary.outputFilePath || this.outputFilePath;
+      this.command = mergedSummary.command || this.command;
       this.windowTitle = `${this.translate.instant('AILY_CHAT.PROCESS_WINDOW_TITLE') || 'Terminal Process Detail'} · ${this.command || this.processId}`;
     }
 
@@ -230,5 +237,35 @@ export class ChatProcessDetailWindowComponent implements OnInit, OnDestroy {
 
   private readOutput(): string {
     return readChatProcessOutputFile(this.outputFilePath);
+  }
+
+  private mergeSummaryWithLiveStatus(
+    summary: ProcessWindowProcessSummary | null,
+    liveStatus: Awaited<ReturnType<typeof getBlocklyCommandSessionStatus>>,
+  ): ProcessWindowProcessSummary | null {
+    if (!summary && !liveStatus) {
+      return null;
+    }
+
+    const startedAt = liveStatus?.startedAt ?? summary?.startedAt;
+    const completedAt = liveStatus?.completedAt ?? summary?.completedAt;
+    const elapsedMs = typeof startedAt === 'number' && Number.isFinite(startedAt)
+      ? Math.max(0, (completedAt ?? Date.now()) - startedAt)
+      : summary?.elapsedMs;
+
+    return {
+      ...(summary ?? { processId: this.processId }),
+      ...(liveStatus ?? {}),
+      processId: this.processId,
+      outputSessionId: liveStatus?.outputSessionId ?? summary?.outputSessionId ?? this.outputSessionId,
+      outputFilePath: liveStatus?.outputFilePath ?? summary?.outputFilePath ?? this.outputFilePath,
+      command: liveStatus?.command ?? summary?.command ?? this.command,
+      startedAt,
+      completedAt,
+      elapsedMs,
+      exitCode: typeof liveStatus?.exitCode === 'number'
+        ? liveStatus.exitCode
+        : summary?.exitCode,
+    };
   }
 }
