@@ -471,6 +471,8 @@ export class SerialMonitorComponent {
   portList: PortItem[] = []
   boardKeywords = []; // 这个用来高亮显示正确开发板，如['arduino uno']，则端口菜单中如有包含'arduino uno'的串口则高亮显示
   position = { x: 0, y: 0 }; // 右键菜单位置
+  private portListGeneration = 0;
+
   openPortList(el) {
     // console.log(el.srcElement);
     // 获取元素左下角位置
@@ -482,12 +484,34 @@ export class SerialMonitorComponent {
       let boardname = this.currentBoard.replace(' 2560', ' ').replace(' R3', '');
       this.boardKeywords = [boardname];
     }
-    this.getDevicePortList();
+    if (this.portList.length === 0) {
+      this.portList = [
+        {
+          name: 'Loading...',
+          text: '',
+          type: 'serial',
+          icon: 'fa-light fa-spinner',
+          disabled: true,
+        }
+      ];
+    }
     this.showPortList = true;
+    this.getDevicePortList();
   }
 
   async getDevicePortList() {
-    let ports = await this.serialService.getSerialPorts();
+    const generation = ++this.portListGeneration;
+    let ports: PortItem[] = [];
+    try {
+      ports = await this.serialService.getSerialPorts();
+    } catch (error) {
+      console.warn('获取串口列表失败:', error);
+    }
+
+    if (generation !== this.portListGeneration) {
+      return;
+    }
+
     if (ports && ports.length > 0) {
       this.portList = ports;
     } else {
@@ -501,6 +525,7 @@ export class SerialMonitorComponent {
         }
       ]
     }
+    this.cd.detectChanges();
   }
 
   closePortList() {
@@ -812,24 +837,37 @@ export class SerialMonitorComponent {
     this.cd.detectChanges();
   }
 
-  contextMenuClick(menuItem: any) {
-    if (!this.contextMenuItem) return;
+  async contextMenuClick(menuItem: any) {
+    const contextMenuItem = this.contextMenuItem;
+    if (!contextMenuItem) return;
     switch (menuItem.data.action) {
       case 'copy':
-        navigator.clipboard.writeText(this.contextMenuItem.data).then(() => {
+        try {
+          await this.electronService.clipboardWriteText(this.getDataItemCopyText(contextMenuItem));
           this.message.info('已复制到剪贴板');
-        });
+        } catch (error) {
+          console.error('Copy serial data failed:', error);
+          this.message.error('复制失败');
+        }
         break;
       case 'hex':
-        this.contextMenuItem.showHex = !this.contextMenuItem.showHex;
+        contextMenuItem.showHex = !contextMenuItem.showHex;
         break;
       case 'highlight':
-        this.contextMenuItem.highlight = !this.contextMenuItem.highlight;
+        contextMenuItem.highlight = !contextMenuItem.highlight;
         break;
     }
     this.showContextMenu = false;
     this.contextMenuItem = null;
     this.cd.detectChanges();
+  }
+
+  private getDataItemCopyText(item: dataItem): string {
+    if (Buffer.isBuffer(item.data)) {
+      return item.data.toString();
+    }
+
+    return item.data == null ? '' : String(item.data);
   }
 
   showChartBox = false;

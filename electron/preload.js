@@ -199,6 +199,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     maximize: () => ipcRenderer.send("window-maximize"),
     isMaximized: () => ipcRenderer.sendSync("window-is-maximized"),
     unmaximize: () => ipcRenderer.send("window-unmaximize"),
+    setSize: (data) => ipcRenderer.invoke("window-set-size", data),
     close: () => ipcRenderer.send("window-close"),
     // 子窗口收回到主窗口事件
     goMain: (data) => ipcRenderer.send("window-go-main", data),

@@ -1,7 +1,7 @@
 import { Injectable } from '@angular/core';
 import { BehaviorSubject, Subject, debounceTime, filter, firstValueFrom, map, switchMap, take, timer } from 'rxjs';
 import * as Blockly from 'blockly';
-import { processI18n, processJsonVar, processStaticFilePath, processToolboxI18n } from '../components/blockly/abf';
+import { processI18n, processJsonVar, processStaticFilePath, processToolboxI18n, resolveSerialPortValueAfterCdcDisabled } from '../components/blockly/abf';
 import { TranslateService } from '@ngx-translate/core';
 import { javascriptGenerator } from 'blockly/javascript';
 import { ElectronService } from '../../../services/electron.service';
@@ -1195,6 +1195,61 @@ export class BlocklyService {
     if (typeof syncFn === 'function') {
       syncFn(workspace);
     }
+  }
+
+  snapshotSerialFieldValues(): Map<string, string> {
+    const snapshots = new Map<string, string>();
+    const workspace = this._workspace;
+    if (!workspace) {
+      return snapshots;
+    }
+
+    workspace.getAllBlocks(false).forEach((block) => {
+      const field = block.getField?.('SERIAL');
+      if (field) {
+        snapshots.set(block.id, String(field.getValue() ?? ''));
+      }
+    });
+    return snapshots;
+  }
+
+  applySerialPortFieldsAfterCdcDisabled(
+    cdcSerialPort: Array<[string, string]>,
+    snapshots: Map<string, string>,
+  ): void {
+    const workspace = this._workspace;
+    if (!workspace || snapshots.size === 0) {
+      return;
+    }
+
+    const apply = () => {
+      snapshots.forEach((snapshotValue, blockId) => {
+        const block = workspace.getBlockById(blockId);
+        if (!block) {
+          return;
+        }
+
+        const field = block.getField?.('SERIAL');
+        if (!field) {
+          return;
+        }
+
+        const targetValue = resolveSerialPortValueAfterCdcDisabled(snapshotValue, cdcSerialPort);
+        if (!targetValue) {
+          return;
+        }
+
+        try {
+          field.setValue(targetValue);
+          block.render();
+        } catch {
+          // ignore invalid dropdown value
+        }
+      });
+    };
+
+    apply();
+    setTimeout(apply, 150);
   }
 
   refreshBoardDependentBlockDefinitions(): void {
