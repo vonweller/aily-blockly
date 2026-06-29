@@ -318,6 +318,22 @@ export class SessionLifecycleHelper {
     })();
   }
 
+  private initializeMcpInBackground(debugSource: string): void {
+    if (this.ctx.mcpInitialized) {
+      return;
+    }
+
+    this.ctx.mcpInitialized = true;
+    void (async () => {
+      try {
+        await this.ctx.mcpService.init();
+        this.warmupHardwareIndexForAI(debugSource);
+      } catch (err) {
+        console.warn('[AilyChat] MCP 初始化失败:', err);
+      }
+    })();
+  }
+
   private get hostSessionItemController(): HostSessionItemController {
     const sessionItemsService = this.ctx.chatSessionItemsService;
     if (sessionItemsService?.sessionItemController) {
@@ -1138,11 +1154,7 @@ export class SessionLifecycleHelper {
       priority: 'after-paint',
     });
 
-    if (!this.ctx.mcpInitialized) {
-      this.ctx.mcpInitialized = true;
-      await this.ctx.mcpService.init();
-      this.warmupHardwareIndexForAI('startSession');
-    }
+    this.initializeMcpInBackground('startSession');
 
     if (!this.isVisibleSessionStartupOwner(pendingSessionId)) {
       return pendingSessionId;
@@ -2420,11 +2432,7 @@ export class SessionLifecycleHelper {
       console.warn('[AilyChat] Skills 初始化失败:', err);
     });
 
-    if (!this.ctx.mcpInitialized) {
-      this.ctx.mcpInitialized = true;
-      await this.ctx.mcpService.init();
-      this.warmupHardwareIndexForAI(`startSessionWithId:${sessionId}`);
-    }
+    this.initializeMcpInBackground(`startSessionWithId:${sessionId}`);
 
     if (activationRequestId !== undefined) {
       this.throwIfSessionActivationSuperseded(activationRequestId);

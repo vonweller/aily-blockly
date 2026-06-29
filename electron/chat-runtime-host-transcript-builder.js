@@ -33,6 +33,21 @@ function normalizeOptionalString(value) {
     : '';
 }
 
+function normalizeProtocolTruncation(value) {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  const kind = normalizeOptionalString(value.kind);
+  if (kind !== 'removeFrom') {
+    return null;
+  }
+  const turnId = normalizeTurnId(value.turnId);
+  if (!turnId) {
+    return null;
+  }
+  return { kind, turnId };
+}
+
 function buildSubmittedTurnSeed({ turnId, request, timestamp }) {
   const requestContent = normalizeOptionalString(request && request.requestText);
   const displayContent = normalizeOptionalString(request && request.displayText);
@@ -93,6 +108,70 @@ function buildErrorPart(error) {
     message: normalized.message,
     ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
   };
+}
+
+function isTerminalRunningStatus(value) {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return normalized === 'running'
+    || normalized === 'pending'
+    || normalized === 'starting'
+    || normalized === 'doing'
+    || normalized === 'in_progress';
+}
+
+function isOpenToolCallState(value) {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return !normalized
+    || normalized === 'pending'
+    || normalized === 'running'
+    || normalized === 'doing'
+    || normalized === 'reviewing'
+    || normalized === 'in_progress';
+}
+
+function cancelOpenResponsePart(part, timestamp) {
+  if (!part || typeof part !== 'object') {
+    return part;
+  }
+  switch (part.type) {
+    case 'tool_call':
+      if (!isOpenToolCallState(part.state || part.status)) {
+        return part;
+      }
+      return {
+        ...part,
+        state: 'cancelled',
+        status: part.status ? 'cancelled' : part.status,
+        updatedAt: timestamp,
+        metadata: {
+          ...(part.metadata && typeof part.metadata === 'object' ? part.metadata : {}),
+          phase: 'cancelled',
+        },
+      };
+    case 'terminal':
+      if (part.isRunning !== true && !isTerminalRunningStatus(part.status)) {
+        return part;
+      }
+      return {
+        ...part,
+        status: 'cancelled',
+        isRunning: false,
+        updatedAt: timestamp,
+      };
+    case 'subagent':
+    case 'subagent_tool_call':
+      if (!isOpenToolCallState(part.state || part.status)) {
+        return part;
+      }
+      return {
+        ...part,
+        state: 'cancelled',
+        status: 'cancelled',
+        updatedAt: timestamp,
+      };
+    default:
+      return part;
+  }
 }
 
 function renderEventStateKey(sessionId, turnId) {
@@ -608,6 +687,9 @@ function parseTerminalPayload(text) {
     if (!readRecord(data)) {
       return null;
     }
+    if (!isTerminalPayloadRecord(data)) {
+      return null;
+    }
     const status = asString(data.status);
     return {
       command: asString(data.command) || '',
@@ -672,6 +754,26 @@ function parseTerminalPayload(text) {
       lastOutputAt: headers.get('lastoutputat'),
     };
   }
+}
+
+function isTerminalPayloadRecord(value) {
+  if (!readRecord(value)) {
+    return false;
+  }
+  return [
+    'command',
+    'output',
+    'stdout',
+    'stderr',
+    'exit_code',
+    'exitCode',
+    'terminalId',
+    'processId',
+    'outputSessionId',
+    'outputFilePath',
+    'bytesTotal',
+    'lastOutputAt',
+  ].some(field => Object.prototype.hasOwnProperty.call(value, field));
 }
 
 function extractTerminalPartFromToolEnd(event) {
@@ -1397,23 +1499,53 @@ class ChatRuntimeHostTranscriptBuilder {
     return clonePayload(nextTranscript);
   }
 
-  seedSubmittedTurn({ sessionId, turnId, request, revision, timestamp }) {
+  seedSubmittedTurn({ sessionId, turnId, request, revision, timestamp, protocolTruncation }) {
     const normalizedSessionId = normalizeSessionId(sessionId);
     const normalizedTurnId = normalizeTurnId(turnId);
     if (!normalizedSessionId || !normalizedTurnId) {
       return null;
+    }
+    const currentTranscript = this.buildTranscriptSnapshot(normalizedSessionId);
+    const turnResponses = Array.isArray(currentTranscript && currentTranscript.turnResponses)
+      ? clonePayload(currentTranscript.turnResponses)
+      : [];
+    const normalizedTruncation = normalizeProtocolTruncation(protocolTruncation);
+    if (normalizedTruncation) {
+      const removeFromIndex = turnResponses.findIndex(existingTurn =>
+        normalizeTurnId(existingTurn && existingTurn.turnId) === normalizedTruncation.turnId);
+      if (removeFromIndex >= 0) {
+        const removedTurns = turnResponses.splice(removeFromIndex);
+        for (const removedTurn of removedTurns) {
+          const removedTurnId = normalizeTurnId(removedTurn && removedTurn.turnId);
+          if (removedTurnId) {
+            this.renderEventStates.delete(renderEventStateKey(normalizedSessionId, removedTurnId));
+          }
+        }
+      }
     }
     const turn = buildSubmittedTurnSeed({
       turnId: normalizedTurnId,
       request,
       timestamp: typeof timestamp === 'number' && Number.isFinite(timestamp) ? timestamp : Date.now(),
     });
-    return this.acceptTurnSnapshot({
+
+    const existingIndex = turnResponses.findIndex(existingTurn =>
+      normalizeTurnId(existingTurn && existingTurn.turnId) === normalizedTurnId);
+    if (existingIndex >= 0) {
+      turnResponses[existingIndex] = turn;
+    } else {
+      turnResponses.push(turn);
+    }
+
+    const currentRevision = normalizeRevision(currentTranscript && currentTranscript.revision);
+    const incomingRevision = normalizeRevision(revision);
+    const nextTranscript = {
       sessionId: normalizedSessionId,
-      turnId: normalizedTurnId,
-      revision,
-      turn,
-    });
+      turnResponses,
+      revision: Math.max(currentRevision + 1, incomingRevision),
+    };
+    this.transcripts.set(normalizedSessionId, clonePayload(nextTranscript));
+    return clonePayload(nextTranscript);
   }
 
   markTurnFailed({ sessionId, turnId, revision, error }) {
@@ -1451,6 +1583,55 @@ class ChatRuntimeHostTranscriptBuilder {
         updatedAt: timestamp,
       },
       updatedAt: timestamp,
+    };
+    turnResponses[existingIndex] = nextTurn;
+
+    const currentRevision = normalizeRevision(currentTranscript && currentTranscript.revision);
+    const incomingRevision = normalizeRevision(revision);
+    const nextRevision = Math.max(currentRevision + 1, incomingRevision);
+    const nextTranscript = {
+      sessionId: normalizedSessionId,
+      turnResponses,
+      revision: nextRevision,
+    };
+    this.transcripts.set(normalizedSessionId, clonePayload(nextTranscript));
+    return clonePayload(nextTranscript);
+  }
+
+  cancelTurn({ sessionId, turnId, revision, timestamp }) {
+    const normalizedSessionId = normalizeSessionId(sessionId);
+    const normalizedTurnId = normalizeTurnId(turnId);
+    if (!normalizedSessionId || !normalizedTurnId) {
+      return null;
+    }
+    const currentTranscript = this.buildTranscriptSnapshot(normalizedSessionId);
+    const turnResponses = Array.isArray(currentTranscript && currentTranscript.turnResponses)
+      ? clonePayload(currentTranscript.turnResponses)
+      : [];
+    const existingIndex = turnResponses.findIndex(existingTurn =>
+      normalizeTurnId(existingTurn && existingTurn.turnId) === normalizedTurnId);
+    if (existingIndex < 0) {
+      return null;
+    }
+    const nextTimestamp = normalizeTimestamp(timestamp);
+    const existingTurn = turnResponses[existingIndex];
+    const existingResponse = existingTurn.response && typeof existingTurn.response === 'object'
+      ? existingTurn.response
+      : {};
+    const existingParts = Array.isArray(existingResponse.parts)
+      ? existingResponse.parts
+      : [];
+    const nextParts = existingParts.map(part => cancelOpenResponsePart(part, nextTimestamp));
+    const nextTurn = {
+      ...existingTurn,
+      response: {
+        ...existingResponse,
+        status: 'cancelled',
+        terminationReason: 'cancelled',
+        parts: nextParts,
+        updatedAt: nextTimestamp,
+      },
+      updatedAt: nextTimestamp,
     };
     turnResponses[existingIndex] = nextTurn;
 

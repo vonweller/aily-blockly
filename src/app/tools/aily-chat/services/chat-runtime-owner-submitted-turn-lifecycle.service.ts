@@ -1,4 +1,5 @@
 import { inject, Injectable } from '@angular/core';
+import type { TurnResponseTurn } from 'aily-lex/browser';
 import type { LexOwnerFacade } from '../helpers/lex-stream.helper';
 
 import {
@@ -10,6 +11,9 @@ import {
   createHostSessionProviderOptionsKey,
   type HostSessionProviderOptions,
 } from '../helpers/host-session-input-state';
+import { createSessionCheckpointTimelineState } from '../helpers/session-checkpoint-timeline-model';
+import { ChatSessionModelStoreService } from './chat-session-model-store.service';
+import type { RequestCheckpointMetadata } from './edit-checkpoint.service';
 import {
   CHAT_RUNTIME_OWNER_RUNTIME_CONTROLLER,
   CHAT_RUNTIME_OWNER_SESSION_MODEL,
@@ -28,6 +32,7 @@ import { projectRuntimeStateToRuntimeController } from '../helpers/chat-runtime-
 @Injectable()
 export class ChatRuntimeOwnerSubmittedTurnLifecycleService implements ChatRuntimeOwnerSubmittedTurnLifecyclePort {
   private readonly runtimeController = inject<ChatRuntimeOwnerRuntimeControllerPort>(CHAT_RUNTIME_OWNER_RUNTIME_CONTROLLER);
+  private readonly chatSessionModelStore = inject(ChatSessionModelStoreService);
   private readonly ownerSessionContext = inject<ChatRuntimeOwnerSessionContextPort>(CHAT_RUNTIME_OWNER_SESSION_CONTEXT);
   private readonly ownerSessionModel = inject<ChatRuntimeOwnerSessionModelPort>(CHAT_RUNTIME_OWNER_SESSION_MODEL);
   private readonly submittedTurnTitle = inject<ChatRuntimeOwnerSubmittedTurnTitlePort>(
@@ -82,6 +87,134 @@ export class ChatRuntimeOwnerSubmittedTurnLifecycleService implements ChatRuntim
     }
 
     await this.runtimeController.awaitRequestCompletion(targetSessionId);
+    await this.turnStartupEditLifecycle.commitCurrentTurn(targetSessionId);
+    await this.turnStartupEditLifecycle.waitForCheckpointMetadataSettled(targetSessionId);
+    await this.rebuildCheckpointTimelineFromServiceModel(targetSessionId);
+  }
+
+  private async rebuildCheckpointTimelineFromServiceModel(sessionId: string): Promise<void> {
+    const turnResponses = this.ownerSessionModel.readTurnResponses(sessionId);
+    const model = this.chatSessionModelStore.get(sessionId);
+    if (!model || !Array.isArray(turnResponses) || turnResponses.length === 0) {
+      return;
+    }
+
+    const hydratedTurnResponses = this.cloneTurnResponses(turnResponses);
+    const metadataByCheckpointId = new Map<string, RequestCheckpointMetadata>();
+    const metadataByRequestId = new Map<string, RequestCheckpointMetadata>();
+    const metadataByTurnId = new Map<string, RequestCheckpointMetadata>();
+    await Promise.all(hydratedTurnResponses.map(async turn => {
+      const lookup = this.buildCheckpointMetadataLookup(turn);
+      if (!lookup.checkpointId && !lookup.requestId) {
+        return;
+      }
+      const metadata = await this.turnStartupEditLifecycle.readFinalizedCheckpointMetadata(sessionId, lookup);
+      if (!metadata) {
+        return;
+      }
+      this.writeCheckpointMetadataToTurnResponse(turn, metadata);
+      this.indexCheckpointMetadata(metadata, metadataByCheckpointId, metadataByRequestId, metadataByTurnId);
+    }));
+    this.ownerSessionModel.replaceTurnResponses(sessionId, hydratedTurnResponses, { source: 'checkpoint-metadata-settle' });
+
+    const checkpointTimelineState = createSessionCheckpointTimelineState({
+      sessionResource: sessionId,
+      turnResponses: hydratedTurnResponses,
+      metadataByCheckpointId,
+      metadataByRequestId,
+      metadataByTurnId,
+    });
+    model.replaceCheckpointTimelineState(checkpointTimelineState);
+  }
+
+  private buildCheckpointMetadataLookup(turn: unknown): {
+    readonly checkpointId?: string;
+    readonly requestId?: string;
+  } {
+    const turnRecord = this.readRecord(turn);
+    const request = this.readRecord(turnRecord?.['request']);
+    const metadata = this.readRecord(request?.['metadata']);
+    const checkpointId = this.normalizeSessionId(metadata?.['checkpointId']);
+    const requestId = this.normalizeSessionId(metadata?.['requestId'])
+      || this.normalizeSessionId(turnRecord?.['turnId']);
+    return {
+      ...(checkpointId ? { checkpointId } : {}),
+      ...(requestId ? { requestId } : {}),
+    };
+  }
+
+  private indexCheckpointMetadata(
+    metadata: RequestCheckpointMetadata,
+    metadataByCheckpointId: Map<string, RequestCheckpointMetadata>,
+    metadataByRequestId: Map<string, RequestCheckpointMetadata>,
+    metadataByTurnId: Map<string, RequestCheckpointMetadata>,
+  ): void {
+    const checkpointId = this.normalizeSessionId(metadata.checkpointId);
+    if (checkpointId) {
+      metadataByCheckpointId.set(checkpointId, metadata);
+    }
+    const requestId = this.normalizeSessionId(metadata.requestId);
+    if (requestId) {
+      metadataByRequestId.set(requestId, metadata);
+    }
+    const turnId = this.normalizeSessionId(metadata.turnId);
+    if (turnId) {
+      metadataByTurnId.set(turnId, metadata);
+    }
+  }
+
+  private readRecord(value: unknown): Record<string, unknown> | null {
+    return value && typeof value === 'object' && !Array.isArray(value)
+      ? value as Record<string, unknown>
+      : null;
+  }
+
+  private cloneTurnResponses(turnResponses: readonly TurnResponseTurn[]): TurnResponseTurn[] {
+    if (typeof globalThis.structuredClone === 'function') {
+      return globalThis.structuredClone(turnResponses) as TurnResponseTurn[];
+    }
+    return JSON.parse(JSON.stringify(turnResponses)) as TurnResponseTurn[];
+  }
+
+  private writeCheckpointMetadataToTurnResponse(turn: TurnResponseTurn, metadata: RequestCheckpointMetadata): void {
+    const turnRecord = turn as unknown as Record<string, unknown>;
+    const request = this.readRecord(turnRecord['request']) ?? {};
+    const requestMetadata = this.readRecord(request['metadata']) ?? {};
+    const nextMetadata: Record<string, unknown> = {
+      ...requestMetadata,
+      checkpointId: metadata.checkpointId,
+      checkpointNamespace: metadata.checkpointNamespace,
+      checkpointTurnIndex: metadata.turnIndex,
+      requestId: this.normalizeSessionId(metadata.requestId)
+        || this.normalizeSessionId(requestMetadata['requestId'])
+        || this.normalizeSessionId(turn.turnId),
+    };
+    if (metadata.turnId) {
+      nextMetadata['checkpointTurnId'] = metadata.turnId;
+    }
+    if (metadata.startCheckpointRef) {
+      nextMetadata['startCheckpointRef'] = metadata.startCheckpointRef;
+    }
+    if (metadata.checkpointRef) {
+      nextMetadata['checkpointRef'] = metadata.checkpointRef;
+    }
+    if (metadata.additionalStartCheckpointRefs) {
+      nextMetadata['additionalStartCheckpointRefs'] = this.cloneJson(metadata.additionalStartCheckpointRefs);
+    }
+    if (metadata.additionalCheckpointRefs) {
+      nextMetadata['additionalCheckpointRefs'] = this.cloneJson(metadata.additionalCheckpointRefs);
+    }
+    turnRecord['request'] = {
+      ...request,
+      metadata: nextMetadata,
+    };
+  }
+
+  private cloneJson<T>(value: T): T {
+    if (typeof globalThis.structuredClone === 'function') {
+      return globalThis.structuredClone(value) as T;
+    }
+    return JSON.parse(JSON.stringify(value)) as T;
   }
 
   private async ensureBlankSessionRuntimeProviderOptions(sessionId: string, owner: LexOwnerFacade): Promise<void> {
@@ -117,10 +250,13 @@ export class ChatRuntimeOwnerSubmittedTurnLifecycleService implements ChatRuntim
       patch: {
         providerOptions,
         selectedMode: normalizeChatSelectedMode(this.ownerSessionContext.resolveRuntimeSelectedMode(sessionId)),
+        agentRuntimeMode: this.ownerSessionContext.currentAgentRuntimeMode,
+        agentRuntimeModeSource: this.ownerSessionContext.currentAgentRuntimeModeSource,
         currentModel: this.ownerSessionContext.currentModel,
         debugSummary: {
           providerOptionsPresent: true,
           selectedModePresent: true,
+          agentRuntimeModePresent: true,
           currentModelPresent: !!this.ownerSessionContext.currentModel,
         },
       },

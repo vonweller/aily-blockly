@@ -44,7 +44,21 @@ export interface ChatRuntimeHostSubmitRequest {
   readonly currentModel?: ChatRuntimeHostModelSelectionSnapshot | null;
   readonly metadata?: Readonly<Record<string, unknown>> | null;
   readonly activeResponseHandle?: unknown | null;
+  readonly protocolTruncation?: ChatRuntimeHostProtocolTruncation | null;
 }
+
+export type ChatRuntimeHostProtocolTruncation =
+  | {
+      readonly kind: 'clear';
+      readonly retainedTurnIds?: readonly string[];
+      readonly discardedTurnIds?: readonly string[];
+    }
+  | {
+      readonly kind: 'removeFrom';
+      readonly turnId: string;
+      readonly retainedTurnIds?: readonly string[];
+      readonly discardedTurnIds?: readonly string[];
+    };
 
 export interface ChatRuntimeHostTranscriptSnapshot {
   readonly sessionId: ChatRuntimeHostSessionId;
@@ -310,8 +324,17 @@ export interface ChatRuntimeHostEditTrackingPublishSummaryPayload {
 export interface ChatRuntimeHostEditTrackingFinalizeCurrentTurnPayload {
   readonly adapter: 'editTracking';
   readonly action: 'finalizeCurrentTurn';
+  readonly checkpointId?: string;
+  readonly requestId?: string;
   readonly autoSaveEdits?: boolean;
   readonly requestDiffPreview?: boolean;
+}
+
+export interface ChatRuntimeHostEditTrackingReadFinalizedCheckpointMetadataPayload {
+  readonly adapter: 'editTracking';
+  readonly action: 'readFinalizedCheckpointMetadata';
+  readonly checkpointId?: string;
+  readonly requestId?: string;
 }
 
 export interface ChatRuntimeHostEditTrackingRestorePayload {
@@ -344,6 +367,7 @@ export type ChatRuntimeHostEditTrackingPayload =
   | ChatRuntimeHostEditTrackingRecordEditPayload
   | ChatRuntimeHostEditTrackingPublishSummaryPayload
   | ChatRuntimeHostEditTrackingFinalizeCurrentTurnPayload
+  | ChatRuntimeHostEditTrackingReadFinalizedCheckpointMetadataPayload
   | ChatRuntimeHostEditTrackingRestorePayload
   | ChatRuntimeHostEditTrackingForkRequestMetadataPayload
   | ChatRuntimeHostEditTrackingClearSessionStatePayload;
@@ -431,6 +455,7 @@ export interface ChatRuntimeExecutionWorkerStartTurnExecutionContext {
   readonly providerOptions?: HostSessionProviderOptions | null;
   readonly currentModel?: ChatRuntimeHostModelSelectionSnapshot | null;
   readonly transcriptRevision?: number;
+  readonly protocolTruncation?: ChatRuntimeHostProtocolTruncation | null;
 }
 
 export interface ChatRuntimeExecutionWorkerStartTurnCommand {

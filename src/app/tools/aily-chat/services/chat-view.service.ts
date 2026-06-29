@@ -488,7 +488,7 @@ export class ChatViewService {
     }
 
     if (!hasConversationContent && !hasActiveCurrentSessionRequest) {
-      if (hasCurrentSessionIdentity) {
+      if (hasCurrentSessionIdentity && !this.isEmptyFreshSessionStartupShell) {
         return 'blank-session';
       }
       return 'entry';
@@ -969,6 +969,33 @@ export class ChatViewService {
     return this.currentViewSessionResource.length > 0
       || this.liveCurrentSessionResource.length > 0
       || this.chatService.hasBlankSessionShell === true;
+  }
+
+  private get isEmptyFreshSessionStartupShell(): boolean {
+    return this.currentViewSessionResource.length > 0
+      && this.chatService.hasBlankSessionShell !== true
+      && this.currentModelHasNoConversationContent
+      && !this.hasMeaningfulCurrentSessionTitle;
+  }
+
+  private get currentModelHasNoConversationContent(): boolean {
+    const model = this.currentViewModel?.model;
+    if (!model) {
+      return true;
+    }
+
+    const projection = model.hostProjectionState;
+    return !this.hasArrayContent(projection?.turnResponses)
+      && !this.hasArrayContent(projection?.chatList)
+      && !this.hasArrayContent(projection?.dialogItems)
+      && !this.hasArrayContent((projection as { readonly entries?: readonly unknown[] } | null)?.entries)
+      && (!Array.isArray(model.turnResponses) || model.turnResponses.length === 0);
+  }
+
+  private get hasMeaningfulCurrentSessionTitle(): boolean {
+    const sessionId = this.currentViewSessionResource || this.liveCurrentSessionResource;
+    return isMeaningfulSessionTitle(this.chatService.currentSessionTitle, sessionId)
+      || isMeaningfulSessionTitle(this.currentSessionViewItem?.title ?? '', sessionId);
   }
 
   private get hasActiveCurrentSessionRequest(): boolean {

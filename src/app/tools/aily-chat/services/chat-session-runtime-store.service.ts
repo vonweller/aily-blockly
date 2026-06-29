@@ -2,6 +2,10 @@ import { Injectable } from '@angular/core';
 import { Subject } from 'rxjs';
 
 import type { SessionSnapshot, TurnResponseTurn } from 'aily-lex/browser';
+import type {
+  ChatAgentRuntimeMode,
+  ChatAgentRuntimeModeSource,
+} from '../core/chat-agent-runtime-mode';
 import {
   DEFAULT_CHAT_SESSION_TYPE,
   LOCAL_CHAT_SESSION_TYPE,
@@ -86,6 +90,7 @@ export interface ChatSessionRuntimeDebugSummary {
   readonly inputNoticeOverlayPresent?: boolean;
   readonly providerOptionsPresent?: boolean;
   readonly selectedModePresent?: boolean;
+  readonly agentRuntimeModePresent?: boolean;
   readonly currentModelPresent?: boolean;
   readonly lastExplicitInterruptAt?: number;
   readonly lastExplicitDisposeAt?: number;
@@ -142,6 +147,8 @@ export interface ChatSessionRuntimeState {
   readonly viewOverlay?: ChatSessionRuntimeViewOverlay;
   readonly providerOptions?: HostSessionProviderOptions;
   readonly selectedMode?: ChatSelectedMode;
+  readonly agentRuntimeMode?: ChatAgentRuntimeMode;
+  readonly agentRuntimeModeSource?: ChatAgentRuntimeModeSource;
   readonly currentModel?: ChatRuntimeHostModelSelectionSnapshot | null;
 }
 
@@ -253,6 +260,8 @@ export type ChatSessionRuntimeStatePatch = Omit<
   | 'viewOverlay'
   | 'providerOptions'
   | 'selectedMode'
+  | 'agentRuntimeMode'
+  | 'agentRuntimeModeSource'
   | 'currentModel'
 > & {
   readonly turnResponses?: readonly TurnResponseTurn[] | null | undefined;
@@ -272,6 +281,8 @@ export type ChatSessionRuntimeStatePatch = Omit<
   readonly viewOverlay?: ChatSessionRuntimeViewOverlay | null | undefined;
   readonly providerOptions?: HostSessionProviderOptions | null | undefined;
   readonly selectedMode?: ChatSelectedMode | null | undefined;
+  readonly agentRuntimeMode?: ChatAgentRuntimeMode | null | undefined;
+  readonly agentRuntimeModeSource?: ChatAgentRuntimeModeSource | null | undefined;
   readonly currentModel?: ChatRuntimeHostModelSelectionSnapshot | null | undefined;
 };
 
@@ -392,6 +403,12 @@ export class ChatSessionRuntimeStoreService {
     const nextSelectedMode = state.selectedMode !== undefined
       ? state.selectedMode ?? undefined
       : previousState?.selectedMode;
+    const nextAgentRuntimeMode = state.agentRuntimeMode !== undefined
+      ? state.agentRuntimeMode ?? undefined
+      : previousState?.agentRuntimeMode;
+    const nextAgentRuntimeModeSource = state.agentRuntimeModeSource !== undefined
+      ? state.agentRuntimeModeSource ?? undefined
+      : previousState?.agentRuntimeModeSource;
     const nextCurrentModel = state.currentModel !== undefined
       ? state.currentModel ? this.cloneCurrentModel(state.currentModel) : undefined
       : previousState?.currentModel ? this.cloneCurrentModel(previousState.currentModel) : undefined;
@@ -411,6 +428,7 @@ export class ChatSessionRuntimeStoreService {
         || !!nextViewOverlay
         || !!nextProviderOptions
         || !!nextSelectedMode
+        || !!nextAgentRuntimeMode
         || !!nextCurrentModel,
       quotaOverlayPresent: !!nextQuotaOverlay,
       requestQuotaNotice: !!nextQuotaOverlay?.requestInputNotice,
@@ -419,6 +437,7 @@ export class ChatSessionRuntimeStoreService {
       inputNoticeOverlayPresent: !!nextViewOverlay?.chatInputNotice,
       providerOptionsPresent: !!nextProviderOptions,
       selectedModePresent: !!nextSelectedMode,
+      agentRuntimeModePresent: !!nextAgentRuntimeMode,
       currentModelPresent: !!nextCurrentModel,
     });
     const nextState: ChatSessionRuntimeState = {
@@ -447,6 +466,8 @@ export class ChatSessionRuntimeStoreService {
       ...(nextViewOverlay ? { viewOverlay: this.cloneViewOverlay(nextViewOverlay) } : {}),
       ...(nextProviderOptions ? { providerOptions: this.cloneProviderOptions(nextProviderOptions) } : {}),
       ...(nextSelectedMode ? { selectedMode: this.cloneSelectedMode(nextSelectedMode) } : {}),
+      ...(nextAgentRuntimeMode ? { agentRuntimeMode: nextAgentRuntimeMode } : {}),
+      ...(nextAgentRuntimeModeSource ? { agentRuntimeModeSource: nextAgentRuntimeModeSource } : {}),
       ...(nextCurrentModel ? { currentModel: this.cloneCurrentModel(nextCurrentModel) } : {}),
       ...(typeof state.stopSession === 'function'
         ? { stopSession: state.stopSession }
@@ -478,6 +499,7 @@ export class ChatSessionRuntimeStoreService {
       && !nextState.viewOverlay
       && !nextState.providerOptions
       && !nextState.selectedMode
+      && !nextState.agentRuntimeMode
       && !nextState.currentModel) {
       this.clearSession(normalizedSessionId, {
         reason: options?.reason ?? 'clear',
@@ -1016,6 +1038,7 @@ export class ChatSessionRuntimeStoreService {
       readonly inputNoticeOverlayPresent: boolean;
       readonly providerOptionsPresent: boolean;
       readonly selectedModePresent: boolean;
+      readonly agentRuntimeModePresent: boolean;
       readonly currentModelPresent: boolean;
     },
   ): ChatSessionRuntimeDebugSummary {
@@ -1034,6 +1057,8 @@ export class ChatSessionRuntimeStoreService {
       inputNoticeOverlayPresent: liveState.inputNoticeOverlayPresent,
       providerOptionsPresent: liveState.providerOptionsPresent,
       selectedModePresent: liveState.selectedModePresent,
+      agentRuntimeModePresent: liveState.agentRuntimeModePresent,
+      currentModelPresent: liveState.currentModelPresent,
     };
   }
 

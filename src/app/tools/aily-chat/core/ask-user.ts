@@ -11,10 +11,15 @@ export interface AskUserOption {
 
 /** Question definition shown by the chat runtime interaction host. */
 export interface AskUserQuestion {
+  header?: string;
+  id?: string;
   question: string;
   options?: AskUserOption[];
   allow_freeform?: boolean;
   multi_select?: boolean;
+  allowFreeform?: boolean;
+  allowFreeformInput?: boolean;
+  multiSelect?: boolean;
 }
 
 /** Tool input shape. */

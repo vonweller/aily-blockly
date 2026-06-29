@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, ChangeDetectorRef, Component, ElementRef, EventEmitter, HostListener, Input, Output, ViewChild, inject } from '@angular/core';
+import { ChangeDetectionStrategy, ChangeDetectorRef, Component, ElementRef, EventEmitter, HostListener, Input, Output, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { TranslateService } from '@ngx-translate/core';
 
@@ -20,6 +20,7 @@ export interface ChatConfirmationActionOption {
     <div class="cca-actions">
       <div class="cca-split-btn">
         <button
+          type="button"
           class="cca-btn-primary"
           [class.cca-btn-primary-standalone]="!hasMoreActions"
           [title]="effectivePrimaryTooltip"
@@ -27,14 +28,15 @@ export interface ChatConfirmationActionOption {
           (click)="approve.emit(primaryValue)"
         >{{ effectivePrimaryLabel }}</button>
         @if (hasMoreActions) {
-          <button class="cca-btn-caret" #caretBtn [title]="effectiveMoreActionsTooltip" (click)="toggleDropdown($event)">
+          <button type="button" class="cca-btn-caret" #caretBtn [title]="effectiveMoreActionsTooltip" (click)="toggleDropdown($event)">
             <i class="fa-solid fa-chevron-down"></i>
           </button>
         }
         @if (dropdownOpen && hasMoreActions) {
-          <div class="cca-dropdown" [style.top.px]="dropdownTop" [style.left.px]="dropdownLeft">
+          <div class="cca-dropdown" role="menu">
             @for (option of options; track option.value) {
               <button
+                type="button"
                 class="cca-dropdown-item"
                 [class.cca-dropdown-item-secondary]="option.isSecondary"
                 [disabled]="!!option.disabled"
@@ -45,7 +47,7 @@ export interface ChatConfirmationActionOption {
           </div>
         }
       </div>
-      <button class="cca-btn-reject" [title]="effectiveRejectTooltip" (click)="reject.emit()">{{ effectiveRejectLabel }}</button>
+      <button type="button" class="cca-btn-reject" [title]="effectiveRejectTooltip" (click)="reject.emit()">{{ effectiveRejectLabel }}</button>
     </div>
   `,
   styles: [`
@@ -112,13 +114,16 @@ export interface ChatConfirmationActionOption {
       cursor: not-allowed;
     }
     .cca-dropdown {
-      position: fixed;
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0;
       background: #252526;
       border: 1px solid rgba(255,255,255,0.1);
       border-radius: 5px;
       box-shadow: 0 4px 12px rgba(0,0,0,0.4);
       z-index: 9999;
       min-width: 220px;
+      max-width: min(320px, calc(100vw - 24px));
       padding: 4px;
       overflow: hidden;
     }
@@ -181,11 +186,7 @@ export class ChatConfirmationActionsComponent {
   @Output() action = new EventEmitter<string>();
   @Output() reject = new EventEmitter<void>();
 
-  @ViewChild('caretBtn', { static: false }) caretBtn?: ElementRef<HTMLButtonElement>;
-
   dropdownOpen = false;
-  dropdownTop = 0;
-  dropdownLeft = 0;
 
   constructor(private cdr: ChangeDetectorRef, private elRef: ElementRef) {}
 
@@ -225,13 +226,9 @@ export class ChatConfirmationActionsComponent {
   }
 
   toggleDropdown(event: MouseEvent): void {
+    event.preventDefault();
     event.stopPropagation();
     this.dropdownOpen = !this.dropdownOpen;
-    if (this.dropdownOpen && this.caretBtn) {
-      const rect = this.caretBtn.nativeElement.getBoundingClientRect();
-      this.dropdownTop = rect.bottom + 4;
-      this.dropdownLeft = rect.left;
-    }
     this.cdr.markForCheck();
   }
 

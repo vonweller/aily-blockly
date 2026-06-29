@@ -109,6 +109,7 @@ export const AILY_CHAT_SHARED_PROVIDERS: Provider[] = [
   ChatSessionActionsService,
   MenuManagerService,
   ChatSessionsControlService,
+  ChatRuntimeHostResourceOperationHandlerService,
   ChatSetupSuggestionService,
   ChatViewService,
   EditCheckpointService,
@@ -119,7 +120,6 @@ export const AILY_CHAT_SHARED_PROVIDERS: Provider[] = [
 // Visible Chat is a view/controller adapter and is route-scoped, not a root runtime owner.
 export const AILY_CHAT_VIEW_PROVIDERS: Provider[] = [
   ChatEngineService,
-  ChatRuntimeHostResourceOperationHandlerService,
 ];
 
 // Runtime owner providers are installed only by the host-created hidden execution-worker route.

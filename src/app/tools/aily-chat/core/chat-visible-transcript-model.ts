@@ -1,7 +1,10 @@
 import type { TurnResponsePart, TurnResponseStatus, TurnResponseTurn } from 'aily-lex/browser';
 
 import type { ChatPart } from './chat-parts';
-import { turnResponsePartToChatParts } from './turn-response-part-mapper';
+import {
+  hydrateQuestionAnswersFromAskUserToolMetadata,
+  turnResponsePartToChatParts,
+} from './turn-response-part-mapper';
 import {
   buildTurnResponseAssistantMessageProjection,
   getTurnResponseAssistantText,
@@ -165,7 +168,7 @@ export class ChatVisibleTranscriptModel {
       turnId: turn.turnId,
       status: turn.response.status,
       contentPreview: getTurnResponseAssistantText(turn),
-      parts: turn.response.parts.flatMap(part => turnResponsePartToChatParts(part)),
+      parts: turnResponsePartsToChatParts(turn.response.parts),
       turnResponse: turn,
       turnContext: buildDialogTurnContext({ turnResponse: turn }),
     });
@@ -182,7 +185,7 @@ export class ChatVisibleTranscriptModel {
       throw new Error(`Cannot upsert response part before response item exists: ${turnId}`);
     }
 
-    const nextParts = mergeChatParts(existing.parts, turnResponsePartToChatParts(part));
+    const nextParts = mergeChatParts(existing.parts, turnResponsePartsToChatParts([part]));
     return this.upsertItem({
       id: existing.id,
       kind: 'response',
@@ -281,7 +284,7 @@ export class ChatVisibleTranscriptModel {
       responseId: item.kind === 'response' ? item.turnId : undefined,
       role: item.role,
       content: item.contentPreview,
-      doing: item.status === 'streaming',
+      doing: item.kind === 'response' && item.status === 'streaming',
       turnModelName: assistantProjection?.modelName ?? '',
       turnModelBillingLabel: assistantProjection?.modelBillingLabel,
       turnContext: item.turnContext,
@@ -345,6 +348,11 @@ function mergeChatParts(existing: readonly ChatPart[], incoming: readonly ChatPa
   return merged;
 }
 
+function turnResponsePartsToChatParts(parts: readonly TurnResponsePart[]): readonly ChatPart[] {
+  return hydrateQuestionAnswersFromAskUserToolMetadata(parts)
+    .flatMap(part => turnResponsePartToChatParts(part));
+}
+
 function getChatPartStableKey(part: ChatPart): string | undefined {
   switch (part.type) {
     case 'markdown':
@@ -373,6 +381,7 @@ function createItemSignature(item: Omit<ChatVisibleTranscriptItem, 'revision'>):
     contentPreview: item.contentPreview,
     turnResponseStatus: item.turnResponse?.response.status,
     turnResponseUpdatedAt: item.turnResponse?.updatedAt,
+    requestMetadata: item.turnResponse?.request?.metadata,
     responseModel: item.turnResponse?.responseModel
       ? {
         modelName: item.turnResponse.responseModel.modelName,

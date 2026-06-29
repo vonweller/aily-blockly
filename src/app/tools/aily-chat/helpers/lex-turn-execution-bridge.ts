@@ -55,7 +55,7 @@ type RenderEventSink = {
 };
 
 type TurnUiEventSink = {
-  ensureResponseItem(): void;
+  ensureResponseItem(turnId?: string): void;
   resetTurnState(): void;
   getCurrentTurnDraft(): LexTurnDraft;
   finalizeTurn(saveTarget?: HostSessionSaveTarget | null): Promise<void>;
@@ -282,7 +282,7 @@ export class LexTurnExecutionBridge {
 
     try {
       return Promise.resolve(this.ctx.ownerScheduler.runOutsideOwner(async () => {
-        await this.preparePartsRendering();
+        await this.preparePartsRendering(this.resolveExecutionResponseTurnId(executionState));
 
         try {
           await ChatPerformanceTracer.runWithSurface(
@@ -336,7 +336,7 @@ export class LexTurnExecutionBridge {
 
     try {
       return Promise.resolve(this.ctx.ownerScheduler.runOutsideOwner(async () => {
-        await this.preparePartsRendering();
+        await yieldOutsideOwner(this.ctx, 'prepare');
 
         try {
           await ChatPerformanceTracer.runWithSurface(
@@ -465,7 +465,7 @@ export class LexTurnExecutionBridge {
     }
 
     if (state.detachedRenderEventBridge?.turnResponses) {
-      return selectAuthoritativeExecutionTurnResponses(canonicalTurnResponses, state.detachedRenderEventBridge.turnResponses);
+      return selectAuthoritativeExecutionTurnResponses(state.detachedRenderEventBridge.turnResponses, canonicalTurnResponses);
     }
 
     return canonicalTurnResponses;
@@ -866,11 +866,50 @@ export class LexTurnExecutionBridge {
     this.ctx.toolCallingIteration = 0;
   }
 
-  private async preparePartsRendering(): Promise<void> {
-    this.uiEventBridge.ensureResponseItem();
+  private async preparePartsRendering(turnId?: string): Promise<void> {
+    this.uiEventBridge.ensureResponseItem(turnId);
 
     // 等待同步 detectChanges 之后再进入 for-await，确保 Parts 组件已挂载。
     await yieldOutsideOwner(this.ctx, 'prepare');
+  }
+
+  private resolveExecutionResponseTurnId(state: LexTurnExecutionRunState): string | undefined {
+    if (state.activeTurnId) {
+      return state.activeTurnId;
+    }
+
+    const turnResponses = this.readExecutionTurnResponses?.(state.sessionId);
+    if (!Array.isArray(turnResponses) || turnResponses.length === 0) {
+      return undefined;
+    }
+
+    const requestMetadata = state.requestMetadata && typeof state.requestMetadata === 'object'
+      ? state.requestMetadata as Record<string, unknown>
+      : null;
+    const requestId = typeof requestMetadata?.['requestId'] === 'string'
+      ? requestMetadata['requestId'].trim()
+      : '';
+    const checkpointId = typeof requestMetadata?.['checkpointId'] === 'string'
+      ? requestMetadata['checkpointId'].trim()
+      : '';
+
+    for (let index = turnResponses.length - 1; index >= 0; index--) {
+      const turn = turnResponses[index];
+      const metadata = turn?.request?.metadata && typeof turn.request.metadata === 'object'
+        ? turn.request.metadata as Record<string, unknown>
+        : null;
+      const turnRequestId = typeof metadata?.['requestId'] === 'string'
+        ? metadata['requestId'].trim()
+        : '';
+      const turnCheckpointId = typeof metadata?.['checkpointId'] === 'string'
+        ? metadata['checkpointId'].trim()
+        : '';
+      if ((requestId && turnRequestId === requestId) || (checkpointId && turnCheckpointId === checkpointId)) {
+        return turn.turnId;
+      }
+    }
+
+    return turnResponses[turnResponses.length - 1]?.turnId;
   }
 
   private async consumeAgentEvents(
@@ -953,10 +992,9 @@ export class LexTurnExecutionBridge {
 
     const startedAt = performance.now();
     const canonicalTurnResponses = this.readExecutionTurnResponses?.(executionSessionId);
-    const turnResponses = selectAuthoritativeExecutionTurnResponses(
-      canonicalTurnResponses,
-      renderEventSink?.turnResponses,
-    );
+    const turnResponses = renderEventSink && renderEventSink === state.detachedRenderEventBridge
+      ? selectAuthoritativeExecutionTurnResponses(renderEventSink.turnResponses, canonicalTurnResponses)
+      : selectAuthoritativeExecutionTurnResponses(canonicalTurnResponses, renderEventSink?.turnResponses);
     this.syncExecutionRuntimeTurnResponses?.(
       executionSessionId,
       turnResponses,

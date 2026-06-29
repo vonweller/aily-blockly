@@ -60,14 +60,29 @@ export class ChatSubmitShellCoordinator {
     state: 'idle' | 'running',
     extra?: Record<string, unknown>,
   ): void {
-    console.info(REQUEST_STATE_TRACE_PREFIX, {
+    const sessionId = this.deps.getSessionId() || null;
+    const payload = {
       phase: 'submit-dispatch',
       action,
-      sessionId: this.deps.getSessionId() || null,
+      sessionId,
       requestId: null,
       state,
       ...(extra ?? {}),
-    });
+    };
+    console.info(REQUEST_STATE_TRACE_PREFIX, payload);
+    console.info(
+      '[AilyChat][RequestStateTraceScalar]',
+      [
+        'phase=submit-dispatch',
+        `action=${action}`,
+        `sessionId=${String(payload.sessionId ?? '<none>')}`,
+        `state=${state}`,
+        `queueKind=${String(payload['queueKind'] ?? '<none>')}`,
+        `hasPendingRequests=${String(payload['hasPendingRequests'] ?? '<none>')}`,
+        `pendingCount=${String(payload['pendingCount'] ?? '<none>')}`,
+        `textLength=${String(payload['textLength'] ?? '<none>')}`,
+      ].join(' '),
+    );
   }
 
   async sendOrQueueDraft(options?: SubmitInputOptionsLike): Promise<boolean> {
@@ -106,10 +121,6 @@ export class ChatSubmitShellCoordinator {
 
     if (this.deps.isWaiting(targetSessionId)) {
       return this.queuePreparedInput(text, targetSessionId, options?.queueKind ?? 'queued', 'running');
-    }
-
-    if (options?.queueKind) {
-      return this.queuePreparedInput(text, targetSessionId, options.queueKind, 'idle');
     }
 
     if (this.deps.hasPendingRequests?.(targetSessionId)) {

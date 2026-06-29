@@ -97,6 +97,7 @@ import {
   type LexSessionStoredSnapshotState,
   type ResolvedLexSessionRestorePlan,
 } from './host-session-restore-resolver';
+import type { HostSessionSaveTarget } from './host-session-save-bridge';
 
 function isLexBootstrapTraceEnabled(): boolean {
   return isAilyCategoryDebugEnabled('aily.chat.traceLexBootstrap', [
@@ -496,6 +497,7 @@ export type BootstrapLexAgentContext = Pick<IProjectContext, 'prjPath' | 'prjRoo
     readonly currentSessionApprovalsReviewer?: 'user' | 'auto_review';
     readonly currentSessionApprovalPolicy?: 'on_request' | 'never';
     readonly ownerScheduler?: Pick<ChatRuntimeOwnerScheduler, 'runOutsideOwner'>;
+    buildExecutionSaveTarget?(sessionId: string | null | undefined): HostSessionSaveTarget | null;
     getOrCreateLexPostTurnResources?(
       sessionId: string | null | undefined,
       cwd: string | null | undefined,
@@ -941,6 +943,37 @@ function syncPersistedActiveSkills(
   return missingSkills;
 }
 
+let runtimeOwnerSkillRegistrySignature = '';
+
+function ensureRuntimeOwnerSkillRegistryInitialized(
+  projectRoot: string,
+  configService: Pick<AgentToolConfigAccessor, 'userSkillFolders' | 'projectSkillFolders'> | undefined,
+): void {
+  const normalizedProjectRoot = normalizeRuntimePath(projectRoot);
+  const userSkillFolders = configService?.userSkillFolders ?? [];
+  const projectSkillFolders = configService?.projectSkillFolders ?? [];
+  const signature = JSON.stringify({
+    projectRoot: normalizedProjectRoot,
+    userSkillFolders,
+    projectSkillFolders,
+  });
+  if (runtimeOwnerSkillRegistrySignature === signature && BlocklySkillRegistry.isInitialized) {
+    return;
+  }
+
+  runtimeOwnerSkillRegistrySignature = signature;
+  void BlocklySkillRegistry.initialize(normalizedProjectRoot || undefined, {
+    debugSource: 'bootstrapBlocklyLexAgent',
+    userSkillFolders,
+    projectSkillFolders,
+  }).catch(err => {
+    if (runtimeOwnerSkillRegistrySignature === signature) {
+      runtimeOwnerSkillRegistrySignature = '';
+    }
+    console.warn('[LexBootstrap] runtime owner skill discovery failed', err);
+  });
+}
+
 function resolvePlatformType(type?: string, isWindows?: boolean, isMacOS?: boolean): 'win32' | 'darwin' | 'linux' {
   if (type === 'win32' || type === 'darwin' || type === 'linux') {
     return type;
@@ -1042,21 +1075,22 @@ function positionToOffset(lineStarts: readonly number[], contentLength: number, 
 }
 
 interface BlocklyExternalHostApiOptions {
+  readonly cwd?: string;
   readonly createSyncAbsInvocationContext?: () => SyncAbsInvocationContext | undefined;
   readonly sessionId?: string;
 }
 
 const BLOCKLY_WORKSPACE_OVERVIEW_CODE_PREVIEW_LIMIT = 4096;
 
-function createBoundedGeneratedCodeOverview(host: ReturnType<typeof AilyHost.get>): {
+function createBoundedGeneratedCodeOverview(host: ReturnType<typeof AilyHost.get>, projectPath?: string): {
   generatedCode?: string;
   generatedCodePath?: string;
   generatedCodeLength: number;
   generatedCodeTruncated: boolean;
 } {
   const generatedCode = host.editor?.getGeneratedCode?.() || '';
-  const generatedCodePath = host.project?.currentProjectPath && host.path
-    ? host.path.join(host.project.currentProjectPath, '.temp', 'sketch', 'sketch.ino')
+  const generatedCodePath = projectPath && host.path
+    ? host.path.join(projectPath, '.temp', 'sketch', 'sketch.ino')
     : undefined;
   const generatedCodeTruncated = generatedCode.length > BLOCKLY_WORKSPACE_OVERVIEW_CODE_PREVIEW_LIMIT;
   return {
@@ -1076,7 +1110,217 @@ export function buildExternalHostAPI(
   const contextSnapshotService = getBlocklyContextSnapshotService();
   const createSyncAbsInvocationContext = options.createSyncAbsInvocationContext;
   (window as { path?: typeof host.path }).path = host.path;
-  const prjPath = () => host.project?.currentProjectPath || host.project?.projectRootPath || '';
+  const runtimeCwd = () => typeof options.cwd === 'string' && options.cwd.trim().length > 0
+    ? options.cwd.trim()
+    : '';
+  const workerProjectPath = () => typeof host.project?.currentProjectPath === 'string'
+    ? host.project.currentProjectPath.trim()
+    : '';
+  const workerProjectRootPath = () => typeof host.project?.projectRootPath === 'string'
+    ? host.project.projectRootPath.trim()
+    : '';
+  const prjPath = () => workerProjectPath() || runtimeCwd() || workerProjectRootPath();
+  const shouldUseRuntimeProjectFiles = () => !!runtimeCwd() && !workerProjectPath();
+  const joinProjectPath = (...segments: string[]) => host.path?.join
+    ? host.path.join(...segments)
+    : segments.filter(Boolean).join('/');
+  const readJsonFile = <T = any>(filePath: string): T => JSON.parse(host.fs.readFileSync(filePath, 'utf8'));
+  const readRuntimeProjectPackageJson = async () => {
+    const projectPath = prjPath();
+    if (!projectPath) {
+      throw new Error('[AilyChat][ProjectProvider] Cannot read package.json without a host workspace path.');
+    }
+    const packageJsonPath = joinProjectPath(projectPath, 'package.json');
+    if (!host.fs.existsSync(packageJsonPath)) {
+      throw new Error(`[AilyChat][ProjectProvider] package.json not found in host workspace: ${packageJsonPath}`);
+    }
+    return readJsonFile(packageJsonPath);
+  };
+  const resolveBoardModuleFromPackageJson = (packageJson: any): string | undefined => {
+    const dependencyNames = [
+      ...Object.keys(packageJson?.dependencies || {}),
+      ...Object.keys(packageJson?.boardDependencies || {}),
+      ...Object.keys(packageJson?.devDependencies || {}),
+    ];
+    return dependencyNames.find((dep) => dep.startsWith('@aily-project/board-'))
+      ?? dependencyNames.find((dep) => dep.startsWith('@aily-project/coder-'));
+  };
+  const readRuntimeBoardModule = async () => {
+    const packageJson = await readRuntimeProjectPackageJson();
+    const boardModule = resolveBoardModuleFromPackageJson(packageJson);
+    if (!boardModule) {
+      throw new Error('[AilyChat][ProjectProvider] Cannot resolve board module from host workspace package.json.');
+    }
+    return boardModule;
+  };
+  const readRuntimeBoardJson = async () => {
+    const projectPath = prjPath();
+    const boardModule = await readRuntimeBoardModule();
+    const boardJsonPath = joinProjectPath(projectPath, 'node_modules', boardModule, 'board.json');
+    if (!host.fs.existsSync(boardJsonPath)) {
+      throw new Error(`[AilyChat][ProjectProvider] board.json not found in host workspace: ${boardJsonPath}`);
+    }
+    return readJsonFile(boardJsonPath);
+  };
+  const readRuntimeBoardPackageJson = async () => {
+    const projectPath = prjPath();
+    const boardModule = await readRuntimeBoardModule();
+    const boardPackageJsonPath = joinProjectPath(projectPath, 'node_modules', boardModule, 'package.json');
+    if (!host.fs.existsSync(boardPackageJsonPath)) {
+      throw new Error(`[AilyChat][ProjectProvider] board package.json not found in host workspace: ${boardPackageJsonPath}`);
+    }
+    return readJsonFile(boardPackageJsonPath);
+  };
+  const normalizeProjectCreateBasePath = (path?: string) => {
+    const explicitPath = typeof path === 'string' ? path.trim() : '';
+    if (explicitPath) {
+      return explicitPath;
+    }
+
+    const projectRootPath = workerProjectRootPath();
+    if (projectRootPath) {
+      return projectRootPath;
+    }
+
+    const userDocuments = typeof host.path?.getUserDocuments === 'function'
+      ? host.path.getUserDocuments()
+      : '';
+    if (userDocuments) {
+      return joinProjectPath(userDocuments, 'aily-project');
+    }
+
+    const home = typeof host.platform?.homedir === 'function'
+      ? host.platform.homedir()
+      : host.path?.getUserHome?.() ?? '';
+    return home ? joinProjectPath(home, 'aily-project') : '';
+  };
+  const readBoardCandidates = (board: string) => {
+    const normalizedBoard = board.trim();
+    const candidates = new Set<string>();
+    if (normalizedBoard) {
+      candidates.add(normalizedBoard);
+      if (!normalizedBoard.startsWith('@aily-project/')) {
+        candidates.add(`@aily-project/${normalizedBoard}`);
+        candidates.add(`@aily-project/board-${normalizedBoard.replace(/^board-/, '')}`);
+      }
+    }
+    return [...candidates];
+  };
+  const resolveBoardForProjectCreate = (board: string) => {
+    let parsedBoard: Record<string, unknown> | undefined;
+    try {
+      const parsed = JSON.parse(board);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        parsedBoard = parsed as Record<string, unknown>;
+      }
+    } catch {
+      parsedBoard = undefined;
+    }
+
+    if (parsedBoard) {
+      const parsedName = typeof parsedBoard['name'] === 'string' ? parsedBoard['name'].trim() : '';
+      if (parsedName) {
+        return {
+          ...parsedBoard,
+          name: parsedName,
+          nickname: typeof parsedBoard['nickname'] === 'string' ? parsedBoard['nickname'] : parsedName,
+          version: typeof parsedBoard['version'] === 'string' ? parsedBoard['version'] : 'latest',
+        };
+      }
+    }
+
+    const config = host.config as unknown as Record<string, unknown> | undefined;
+    const validateBoard = config && typeof config['validateBoard'] === 'function'
+      ? config['validateBoard'] as (boardName: string) => { exists?: boolean; board?: unknown }
+      : undefined;
+    for (const candidate of readBoardCandidates(board)) {
+      const validation = validateBoard?.call(config, candidate);
+      if (validation?.exists && validation.board && typeof validation.board === 'object') {
+        return validation.board as Record<string, unknown>;
+      }
+    }
+
+    const boardDict = config?.['boardDict'] && typeof config['boardDict'] === 'object'
+      ? config['boardDict'] as Record<string, unknown>
+      : undefined;
+    for (const candidate of readBoardCandidates(board)) {
+      const dictBoard = boardDict?.[candidate];
+      if (dictBoard && typeof dictBoard === 'object') {
+        return dictBoard as Record<string, unknown>;
+      }
+    }
+
+    const boardList = Array.isArray(config?.['boardList'])
+      ? config?.['boardList'] as Record<string, unknown>[]
+      : typeof config?.['getBoardsList'] === 'function'
+        ? (config['getBoardsList'] as () => unknown[]).call(config).filter(item => item && typeof item === 'object') as Record<string, unknown>[]
+        : [];
+    const normalizedCandidates = readBoardCandidates(board).map(candidate => candidate.toLowerCase());
+    const listBoard = boardList.find(item => {
+      const names = [
+        typeof item['name'] === 'string' ? item['name'] : '',
+        typeof item['nickname'] === 'string' ? item['nickname'] : '',
+        typeof item['displayName'] === 'string' ? item['displayName'] : '',
+      ].map(value => value.trim().toLowerCase()).filter(Boolean);
+      return names.some(name => normalizedCandidates.includes(name));
+    });
+    if (listBoard) {
+      return listBoard;
+    }
+
+    throw new Error(`Board not found for project creation: ${board}`);
+  };
+  const createProjectFromLegacyProjectService = typeof (host.project as any)?.projectNew === 'function'
+    ? async (name: string, board: string, path?: string) => {
+        const basePath = normalizeProjectCreateBasePath(path);
+        if (!basePath) {
+          throw new Error('Project creation requires a target project root path.');
+        }
+        const boardInfo = resolveBoardForProjectCreate(board);
+        const boardName = typeof boardInfo['name'] === 'string' ? boardInfo['name'] : board;
+        const boardNickname = typeof boardInfo['nickname'] === 'string'
+          ? boardInfo['nickname']
+          : typeof boardInfo['displayName'] === 'string'
+            ? boardInfo['displayName']
+            : boardName;
+        const boardVersion = typeof boardInfo['version'] === 'string' && boardInfo['version'].trim()
+          ? boardInfo['version'].trim()
+          : 'latest';
+        const devmode = Array.isArray(boardInfo['mode']) && typeof boardInfo['mode'][0] === 'string'
+          ? boardInfo['mode'][0]
+          : typeof boardInfo['mode'] === 'string'
+            ? boardInfo['mode']
+            : undefined;
+        const result = await (host.project as any).projectNew({
+          name,
+          path: basePath,
+          board: {
+            ...boardInfo,
+            name: boardName,
+            nickname: boardNickname,
+            version: boardVersion,
+          },
+          ...(devmode ? { devmode } : {}),
+        }, {
+          activationReason: 'chat-tool-create',
+        });
+        if (result === false) {
+          throw new Error('Project service returned false while creating project.');
+        }
+        (host.config as any)?.recordBoardUsage?.(boardName);
+        const projectPath = joinProjectPath(basePath, name.replace(/\s/g, '_'));
+        return {
+          projectOpened: true,
+          projectPath,
+          projectName: name,
+          board: {
+            name: boardName,
+            nickname: boardNickname,
+            version: boardVersion,
+          },
+        };
+      }
+    : undefined;
   const hasBuilder = typeof host.builder?.build === 'function';
   const hasBoardSearch = !!(
     host.config?.getHardwareCategories
@@ -1087,6 +1331,141 @@ export function buildExternalHostAPI(
   const hasBlocklyWorkspace = !!(host.absSync || host.editor || prjPath());
   const hasLibraryAnalysis = !!(host.project && host.fs && prjPath());
   const terminal = createExternalTerminal(host, prjPath, options.sessionId);
+  const projectProvider = host.project ? {
+    get currentProjectPath() {
+      return prjPath();
+    },
+    get projectRootPath() {
+      return host.project?.projectRootPath || prjPath();
+    },
+    get currentBoard() {
+      return host.project?.currentBoard;
+    },
+    get projectName() {
+      return host.project?.projectName;
+    },
+    getProjectInfo: async () => {
+      if (typeof host.project.getProjectInfo === 'function' && (!runtimeCwd() || workerProjectPath())) {
+        const info = await host.project.getProjectInfo();
+        if (info && typeof info === 'object') {
+          const infoRecord = info as Record<string, unknown>;
+          return {
+            ...infoRecord,
+            path: typeof infoRecord['path'] === 'string' && infoRecord['path'].trim().length > 0
+              ? infoRecord['path']
+              : prjPath(),
+            board: infoRecord['board'] ?? host.project.currentBoard,
+            name: infoRecord['name'] ?? host.project.projectName,
+          };
+        }
+        return info;
+      }
+
+      try {
+        const legacyResult = await getProjectInfoTool(projectProvider as any, { include_readme: true });
+        if (!legacyResult.is_error) {
+          const legacyInfo = JSON.parse(legacyResult.content);
+          if (!legacyInfo?.projectOpened && runtimeCwd()) {
+            return {
+              name: host.project.projectName,
+              path: prjPath(),
+              board: host.project.currentBoard,
+            };
+          }
+          return legacyInfo;
+        }
+      } catch {
+        // Fall back to the minimal project shape below when legacy discovery is unavailable.
+      }
+
+      return {
+        name: host.project.projectName,
+        path: prjPath(),
+        board: host.project.currentBoard,
+      };
+    },
+    getProjectPath: () => prjPath(),
+    getBoard: () => host.project.currentBoard,
+    createProject: host.project.createProject || createProjectFromLegacyProjectService
+      ? async (name: string, board: string, path?: string) => {
+          const createProject = host.project.createProject ?? createProjectFromLegacyProjectService!;
+          const result = await createProject(name, board, path ?? prjPath());
+          contextSnapshotService.invalidate([
+            'workspaceIdentity',
+            'projectInfo',
+            'boardInfo',
+            'libraryIndex',
+            'libraryReadmeRefs',
+            'workspaceArtifacts',
+            'workspaceState',
+          ], 'project create');
+          return result;
+        }
+      : undefined,
+    reloadProject: host.project.reloadProject
+      ? async () => {
+          const result = await host.project.reloadProject!();
+          contextSnapshotService.invalidate([
+            'projectInfo',
+            'boardInfo',
+            'libraryIndex',
+            'libraryReadmeRefs',
+            'workspaceArtifacts',
+            'workspaceState',
+          ], 'project reload');
+          return result;
+        }
+      : undefined,
+    switchBoard: typeof (host.project as any)?.switchBoard === 'function'
+      ? async (board: string) => {
+          const result = await (host.project as any).switchBoard(board);
+          contextSnapshotService.invalidate([
+            'boardInfo',
+            'libraryIndex',
+            'libraryReadmeRefs',
+            'workspaceArtifacts',
+            'workspaceState',
+          ], 'switch board');
+          return result;
+        }
+      : undefined,
+    getBoardConfig: runtimeCwd() || host.project.getBoardJson
+      ? async () => shouldUseRuntimeProjectFiles() || !host.project.getBoardJson
+          ? readRuntimeBoardJson()
+          : host.project.getBoardJson!()
+      : undefined,
+    getBoardJson: runtimeCwd() || host.project.getBoardJson
+      ? async () => shouldUseRuntimeProjectFiles() || !host.project.getBoardJson
+          ? readRuntimeBoardJson()
+          : host.project.getBoardJson!()
+      : undefined,
+    getBoardModule: runtimeCwd() || host.project.getBoardModule
+      ? async () => shouldUseRuntimeProjectFiles() || !host.project.getBoardModule
+          ? readRuntimeBoardModule()
+          : host.project.getBoardModule!()
+      : undefined,
+    getPackageJson: runtimeCwd() || host.project.getPackageJson
+      ? async () => shouldUseRuntimeProjectFiles() || !host.project.getPackageJson
+          ? readRuntimeProjectPackageJson()
+          : host.project.getPackageJson!()
+      : undefined,
+    getBoardPackageJson: runtimeCwd() || host.project.getBoardPackageJson
+      ? async () => shouldUseRuntimeProjectFiles() || !host.project.getBoardPackageJson
+          ? readRuntimeBoardPackageJson()
+          : host.project.getBoardPackageJson!()
+      : undefined,
+    setBoardConfig: typeof (host.project as any)?.setBoardConfig === 'function'
+      ? async (config: Record<string, unknown>) => {
+          const result = await (host.project as any).setBoardConfig(config);
+          contextSnapshotService.invalidate([
+            'boardInfo',
+            'workspaceArtifacts',
+            'workspaceState',
+          ], 'set board config');
+          return result;
+        }
+      : undefined,
+  } : undefined;
 
   return {
     fs: {
@@ -1115,91 +1494,12 @@ export function buildExternalHostAPI(
     fsp: (window as any)?.electronAPI?.fsp,
     terminal,
     platform: {
-        type: resolvePlatformType(host.platform?.type, host.platform?.isWindows, host.platform?.isMacOS),
+      type: resolvePlatformType(host.platform?.type, host.platform?.isWindows, host.platform?.isMacOS),
       cwd: () => prjPath(),
-        homedir: () => host.platform?.homedir?.() ?? host.path.getUserHome(),
+      homedir: () => host.platform?.homedir?.() ?? host.path.getUserHome(),
       env: (key: string) => host.env?.get?.(key),
     },
-    project: host.project ? {
-        getProjectInfo: async () => {
-          if (typeof host.project.getProjectInfo === 'function') {
-            return host.project.getProjectInfo();
-          }
-
-          try {
-            const legacyResult = await getProjectInfoTool(host.project as any, { include_readme: true });
-            if (!legacyResult.is_error) {
-              return JSON.parse(legacyResult.content);
-            }
-          } catch {
-            // Fall back to the minimal project shape below when legacy discovery is unavailable.
-          }
-
-          return {
-            name: host.project.projectName,
-            path: prjPath(),
-            board: host.project.currentBoard,
-          };
-        },
-      getProjectPath: () => host.project.currentProjectPath,
-      getBoard: () => host.project.currentBoard,
-        createProject: host.project.createProject
-          ? async (name: string, board: string, path?: string) => {
-              const result = await host.project.createProject!(name, board, path ?? prjPath());
-              contextSnapshotService.invalidate([
-                'workspaceIdentity',
-                'projectInfo',
-                'boardInfo',
-                'libraryIndex',
-                'libraryReadmeRefs',
-                'workspaceArtifacts',
-                'workspaceState',
-              ], 'project create');
-              return result;
-            }
-          : undefined,
-        reloadProject: host.project.reloadProject
-          ? async () => {
-              const result = await host.project.reloadProject!();
-              contextSnapshotService.invalidate([
-                'projectInfo',
-                'boardInfo',
-                'libraryIndex',
-                'libraryReadmeRefs',
-                'workspaceArtifacts',
-                'workspaceState',
-              ], 'project reload');
-              return result;
-            }
-          : undefined,
-        switchBoard: typeof (host.project as any)?.switchBoard === 'function'
-          ? async (board: string) => {
-              const result = await (host.project as any).switchBoard(board);
-              contextSnapshotService.invalidate([
-                'boardInfo',
-                'libraryIndex',
-                'libraryReadmeRefs',
-                'workspaceArtifacts',
-                'workspaceState',
-              ], 'switch board');
-              return result;
-            }
-          : undefined,
-        getBoardConfig: host.project.getBoardJson
-          ? async () => host.project.getBoardJson!()
-          : undefined,
-        setBoardConfig: typeof (host.project as any)?.setBoardConfig === 'function'
-          ? async (config: Record<string, unknown>) => {
-              const result = await (host.project as any).setBoardConfig(config);
-              contextSnapshotService.invalidate([
-                'boardInfo',
-                'workspaceArtifacts',
-                'workspaceState',
-              ], 'set board config');
-              return result;
-            }
-          : undefined,
-    } : undefined,
+    project: projectProvider,
       builder: hasBuilder ? {
         build: async () => {
           const result = await host.builder.build(prjPath());
@@ -1231,13 +1531,12 @@ export function buildExternalHostAPI(
             ? category
             : String((category as { name?: unknown; id?: unknown })?.name ?? (category as { id?: unknown })?.id ?? ''));
         },
-        getBoardParameters: async () => ({}),
       } : undefined,
     blockly: hasBlocklyWorkspace || hasLibraryAnalysis ? {
       exportAbs: async () => {
         const result = await syncAbsFileHandler(
           { operation: 'export' },
-          host.project as any,
+          projectProvider as any,
           host.electron as any,
           host.absSync as any,
           createSyncAbsInvocationContext?.(),
@@ -1253,7 +1552,7 @@ export function buildExternalHostAPI(
             operation: 'import',
             pendingAbsContent: typeof content === 'string' ? content : undefined,
           },
-          host.project as any,
+          projectProvider as any,
           host.electron as any,
           host.absSync as any,
           createSyncAbsInvocationContext?.(),
@@ -1266,20 +1565,21 @@ export function buildExternalHostAPI(
       getAbsStatus: async () => {
         const result = await syncAbsFileHandler(
           { operation: 'status' },
-          host.project as any,
+          projectProvider as any,
           host.electron as any,
           host.absSync as any,
           createSyncAbsInvocationContext?.(),
         );
+        const projectPath = prjPath();
         return {
           inSync: !result.is_error,
-          ...(host.project?.currentProjectPath
-            ? { absPath: host.path.join(host.project.currentProjectPath, 'project.abs') }
+          ...(projectPath
+            ? { absPath: host.path.join(projectPath, 'project.abs') }
             : {}),
         };
       },
       getWorkspaceOverview: async () => {
-        const generatedCodeOverview = createBoundedGeneratedCodeOverview(host);
+        const generatedCodeOverview = createBoundedGeneratedCodeOverview(host, prjPath());
         return {
           structure: generatedCodeOverview.generatedCodeLength > 0
             ? 'generated-code-available'
@@ -1291,7 +1591,7 @@ export function buildExternalHostAPI(
       },
       analyzeBlocks: async (libraryId: string) => {
         const result = await analyzeLibraryBlocksTool(
-          host.project as any,
+          projectProvider as any,
           {
             libraryNames: [libraryId],
             mode: 'analysis',
@@ -1338,6 +1638,7 @@ export function createBlocklyStandardHostBinding(
   } = {},
 ): BlocklyStandardHostBinding {
   const hostAPI = buildExternalHostAPI({
+    cwd,
     createSyncAbsInvocationContext: options.createSyncAbsInvocationContext,
     sessionId: options.sessionId,
   });
@@ -1617,12 +1918,8 @@ export function bootstrapBlocklyLexAgent(
   options: BootstrapLexAgentOptions,
 ): BlocklyLexAgentInstance {
   const { ctx, lex, sessionId, askHandler, metrics } = options;
-  const cwd = resolveLexRuntimeCwd(ctx);
-  const runtimeSessionId = (sessionId || ctx.sessionId || '').trim();
-  setChatRuntimeWorkspaceEnvironmentOverride({
-    cwd,
-    sessionId: runtimeSessionId,
-  });
+  const runtimeProviderOptions = resolveLexRuntimeProviderOptions(ctx, sessionId);
+  const cwd = runtimeProviderOptions.cwd;
   const agentRuntimeMode = normalizeChatAgentRuntimeMode(
     options.runtimeMode ?? ctx.currentAgentRuntimeMode,
     cwd ? 'coder' : 'unbound',
@@ -1850,11 +2147,12 @@ export function bootstrapBlocklyLexAgent(
   // prompt/skill assembly, and AgentExecutor/subagent execution.
   const terminalPolicy = ctx.ailyChatConfigService.getLexTerminalPolicy?.();
   const permissionPolicy = ctx.ailyChatConfigService.getLexPermissionPolicy?.(cwd || ctx.prjRootPath || ctx.prjPath || '');
-  const approvalsReviewer = ctx.currentSessionApprovalsReviewer
+  const approvalsReviewer = runtimeProviderOptions.approvalsReviewer
     ?? ctx.ailyChatConfigService.getLexApprovalsReviewer?.();
-  const approvalPolicy = ctx.currentSessionApprovalPolicy
+  const approvalPolicy = runtimeProviderOptions.approvalPolicy
     ?? ctx.ailyChatConfigService.getLexApprovalPolicy?.();
   const agentFolderProjectRoot = cwd || ctx.prjRootPath || ctx.prjPath;
+  ensureRuntimeOwnerSkillRegistryInitialized(agentFolderProjectRoot, ctx.ailyChatConfigService);
   const projectAgentFileProvider = createBlocklyAgentFileProvider({
     source: 'project',
     projectRootPath: agentFolderProjectRoot,
@@ -2011,7 +2309,7 @@ export function bootstrapBlocklyLexAgent(
       args: request.input,
     }),
     permissionPolicy,
-    permissionMode: normalizeChatSessionPermissionMode(ctx.currentSessionPermissionMode),
+    permissionMode: normalizeChatSessionPermissionMode(runtimeProviderOptions.permissionMode),
     terminalPolicy,
     approvalsReviewer,
     approvalPolicy,
@@ -2048,6 +2346,33 @@ export function bootstrapBlocklyLexAgent(
   attachBlocklyPostCreateExtensions(agent, adapter);
 
   return agent;
+}
+
+function normalizeRuntimePath(value: unknown): string {
+  return typeof value === 'string' && value.trim().length > 0
+    ? value.trim()
+    : '';
+}
+
+function resolveLexRuntimeProviderOptions(
+  ctx: Pick<BootstrapLexAgentContext, 'buildExecutionSaveTarget' | 'currentSessionPath' | 'currentSessionPermissionMode' | 'currentSessionApprovalsReviewer' | 'currentSessionApprovalPolicy' | 'prjPath' | 'prjRootPath'>,
+  sessionId?: string | null,
+): {
+  readonly cwd: string;
+  readonly permissionMode?: ChatSessionPermissionMode;
+  readonly approvalsReviewer?: 'user' | 'auto_review';
+  readonly approvalPolicy?: 'on_request' | 'never';
+} {
+  const saveTarget = ctx.buildExecutionSaveTarget?.(sessionId);
+  const providerOptions = saveTarget?.providerOptions;
+  const cwd = normalizeRuntimePath(providerOptions?.folderPath) || resolveLexRuntimeCwd(ctx);
+
+  return {
+    cwd,
+    permissionMode: providerOptions?.permissionMode ?? ctx.currentSessionPermissionMode,
+    approvalsReviewer: providerOptions?.approvalsReviewer ?? ctx.currentSessionApprovalsReviewer,
+    approvalPolicy: providerOptions?.approvalPolicy ?? ctx.currentSessionApprovalPolicy,
+  };
 }
 
 function resolveLexRuntimeCwd(ctx: Pick<BootstrapLexAgentContext, 'currentSessionPath' | 'prjPath' | 'prjRootPath'>): string {

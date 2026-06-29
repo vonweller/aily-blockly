@@ -276,8 +276,10 @@ class ChatRuntimeHostProcessService {
 
   handleAttachView(event, args) {
     const state = this.hostSessionStore.attachView(args && args[0], args && args[1], event && event.sender, args && args[2]);
-    this.broadcastSessionState('session-state', state);
-    this.replayTranscriptForAttachedSession(state && state.sessionId);
+    // attachView is a request/response command for the attaching renderer. The
+    // renderer reads the authoritative transcript snapshot after the command
+    // returns, so echoing session-state/transcript here creates a second empty
+    // model pass during entry -> session transitions.
     this.replayPendingInteractionForAttachedSession(state && state.sessionId);
     this.replayViewRequestsForAttachedSession(state && state.sessionId);
     this.replayResourceRequestsForAttachedSession(state && state.sessionId);
@@ -295,17 +297,19 @@ class ChatRuntimeHostProcessService {
   async handleSubmitTurn(args) {
     const request = args && args[0];
     const runningState = this.hostSessionStore.beginSubmittedTurn(request);
-    this.broadcastSessionState('runtime-status', runningState);
     this.replayTranscriptForAttachedSession(runningState.sessionId);
+    this.broadcastSessionState('runtime-status', runningState);
+    const submittedRequest = this.hostSessionStore.readActiveSubmittedRequest(runningState.sessionId) || request;
     const startTurnCommand = {
       sessionId: runningState.sessionId,
       turnId: runningState.activeTurnId,
-      request,
+      request: submittedRequest,
       executionContext: {
         selectedMode: runningState.selectedMode ?? null,
         providerOptions: runningState.providerOptions ?? null,
         currentModel: runningState.currentModel ?? null,
         transcriptRevision: Number(runningState.transcriptRevision) || 0,
+        protocolTruncation: submittedRequest && submittedRequest.protocolTruncation ? submittedRequest.protocolTruncation : null,
       },
     };
     if (!this.dispatchExecutionWorkerCommandIfAvailable('startTurn', [startTurnCommand], runningState.sessionId, {
@@ -323,6 +327,19 @@ class ChatRuntimeHostProcessService {
   handleStopTurn(args) {
     const sessionId = normalizeSessionId(args && args[0]);
     const previousState = this.hostSessionStore.buildSessionState(sessionId);
+    const stoppedTranscript = this.hostSessionStore.cancelRunningTurn(
+      sessionId,
+      previousState && previousState.activeTurnId,
+      previousState && previousState.transcriptRevision,
+    );
+    if (stoppedTranscript) {
+      this.broadcastHostEvent({
+        kind: 'transcript',
+        sessionId: stoppedTranscript.sessionId,
+        revision: Number(stoppedTranscript.revision) || 0,
+        transcript: stoppedTranscript,
+      });
+    }
     const stoppedState = this.hostSessionStore.stopSession(sessionId);
     if (stoppedState) {
       this.broadcastSessionState('runtime-status', stoppedState);

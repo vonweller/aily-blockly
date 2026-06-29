@@ -12,6 +12,7 @@ import {
   getContinuationStopReasonPresentation,
 } from '../../../core/continuation-stop-reason';
 import type { MetricsSnapshot, TurnResponseTurn } from 'aily-lex/browser';
+import { projectRegisteredToolCallOutputRows } from './tool-call-output-projectors';
 import { chatI18n } from '../../../helpers/chat-i18n';
 
 export type StateTone = 'info' | 'success' | 'warn' | 'error' | 'neutral';
@@ -253,6 +254,19 @@ function buildToolCallOutputRowsWithFallback(input: {
     return metadataRows;
   }
 
+  const fallbackRegisteredRows = projectRegisteredToolCallOutputRows({
+    toolName: input.toolName,
+    entry: {
+      recordId: `${input.baseId}:output:text`,
+      phase: asString(input.metadata['phase']) || toolCallStateToNarrativePhase(input.state),
+      resultText: input.text,
+    },
+    index: 0,
+  });
+  if (fallbackRegisteredRows.length > 0) {
+    return fallbackRegisteredRows;
+  }
+
   const toolSpecificResult = asString(input.toolSpecificData?.['result']);
   if (toolSpecificResult) {
     return [buildFallbackToolCallOutputRow(`${input.baseId}:output:toolSpecificData`, input.toolName, toolSpecificResult, input.state)];
@@ -324,6 +338,22 @@ function asMeaningfulToolCallFallbackText(
   }
 
   return text;
+}
+
+function toolCallStateToNarrativePhase(
+  state: 'doing' | 'done' | 'warn' | 'error' | 'pending_approval' | undefined,
+): string | undefined {
+  switch (state) {
+    case 'done':
+    case 'warn':
+      return 'completed';
+    case 'error':
+      return 'failed';
+    case 'doing':
+      return 'progress';
+    default:
+      return undefined;
+  }
 }
 
 export function buildToolCallSummaryBadges(source: {
@@ -2075,6 +2105,11 @@ function buildToolCallOutputRows(
   index: number,
   toolName: string | undefined,
 ): StateDetailRow[] {
+  const registeredRows = projectRegisteredToolCallOutputRows({ toolName, entry, index });
+  if (registeredRows.length > 0) {
+    return registeredRows;
+  }
+
   if (isChangedFilesToolName(toolName)) {
     const changedFiles = collectChangedFilesEntriesFromToolResultEntry(entry);
     if (changedFiles.length > 0) {

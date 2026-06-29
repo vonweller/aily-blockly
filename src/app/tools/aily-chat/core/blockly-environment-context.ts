@@ -57,6 +57,142 @@ export interface BlocklyContextSummaryOptions {
 const MAX_ENV_LIBRARY_NAMES = 24;
 const MAX_ENV_README_REFS = 16;
 const MAX_ENV_LIBRARIES_WITHOUT_README = 16;
+const AILY_PROJECT_SCOPE = '@aily-project/';
+const AILY_BOARD_DEP_PREFIX = `${AILY_PROJECT_SCOPE}board-`;
+const AILY_LIBRARY_DEP_PREFIX = `${AILY_PROJECT_SCOPE}lib-`;
+
+type JsonRecord = Record<string, unknown>;
+
+function isRecord(value: unknown): value is JsonRecord {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function joinHostPath(host: any, ...parts: string[]): string {
+  const pathApi = host?.path ?? (typeof window !== 'undefined' ? (window as any).path : undefined);
+  if (pathApi && typeof pathApi.join === 'function') {
+    return pathApi.join(...parts);
+  }
+  return parts.join('/').replace(/\/+/g, '/');
+}
+
+function simplifiedAilyProjectPath(packageName: string): string {
+  return `{projectPath}/node_modules/${AILY_PROJECT_SCOPE}${packageName}`;
+}
+
+function getDependencyNames(packageJson: JsonRecord | null): string[] {
+  if (!packageJson) {
+    return [];
+  }
+
+  const dependencyBlocks = [
+    packageJson['dependencies'],
+    packageJson['devDependencies'],
+    packageJson['peerDependencies'],
+  ].filter(isRecord);
+  const names: string[] = [];
+  for (const block of dependencyBlocks) {
+    names.push(...Object.keys(block));
+  }
+  return Array.from(new Set(names));
+}
+
+function readJsonObjectFromText(text: unknown): JsonRecord | null {
+  if (typeof text !== 'string' || text.trim().length === 0) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(text);
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveProjectPackageJson(host: any, projectPath: string | undefined, project: any): Promise<JsonRecord | null> {
+  if (projectPath && host?.fs) {
+    const packageJsonPath = joinHostPath(host, projectPath, 'package.json');
+    try {
+      if (typeof host.fs.existsSync !== 'function' || host.fs.existsSync(packageJsonPath)) {
+        const fileText = host.fs.readFileSync?.(packageJsonPath, 'utf8');
+        const filePackageJson = readJsonObjectFromText(fileText);
+        if (filePackageJson) {
+          return filePackageJson;
+        }
+      }
+    } catch {
+      // Fall through to the host project package cache.
+    }
+  }
+
+  try {
+    if (typeof project?.getPackageJsonSync === 'function') {
+      const cachedPackageJson = project.getPackageJsonSync();
+      if (isRecord(cachedPackageJson)) {
+        return cachedPackageJson;
+      }
+    }
+  } catch {
+    // Fall through to async package cache.
+  }
+
+  try {
+    if (typeof project?.getPackageJson === 'function') {
+      const cachedPackageJson = await project.getPackageJson();
+      if (isRecord(cachedPackageJson)) {
+        return cachedPackageJson;
+      }
+    }
+  } catch {
+    // No package snapshot is available.
+  }
+
+  return null;
+}
+
+function resolvePackageBoardInfo(packageJson: JsonRecord | null): BlocklyProjectInfo['board'] | undefined {
+  if (!packageJson) {
+    return undefined;
+  }
+
+  const boardDependency = getDependencyNames(packageJson).find(name => name.startsWith(AILY_BOARD_DEP_PREFIX));
+  const boardPackageName = boardDependency?.slice(AILY_PROJECT_SCOPE.length);
+  const packageBoardName = asString(packageJson['board']);
+  const boardName = packageBoardName ?? boardPackageName;
+  if (!boardName) {
+    return undefined;
+  }
+
+  return {
+    name: boardName,
+    path: boardPackageName ? simplifiedAilyProjectPath(boardPackageName) : '',
+  };
+}
+
+function resolvePackageLibraries(host: any, projectPath: string | undefined, packageJson: JsonRecord | null): BlocklyProjectLibraryInfo[] {
+  if (!packageJson) {
+    return [];
+  }
+
+  return getDependencyNames(packageJson)
+    .filter(name => name.startsWith(AILY_LIBRARY_DEP_PREFIX))
+    .map((dependencyName): BlocklyProjectLibraryInfo => {
+      const packageName = dependencyName.slice(AILY_PROJECT_SCOPE.length);
+      const simplifiedPath = simplifiedAilyProjectPath(packageName);
+      const readmePath = projectPath
+        ? joinHostPath(host, projectPath, 'node_modules', AILY_PROJECT_SCOPE.slice(0, -1), packageName, 'readme_ai.md')
+        : undefined;
+      const hasReadme = Boolean(readmePath && host?.fs?.existsSync?.(readmePath));
+      return {
+        name: packageName,
+        path: simplifiedPath,
+        ...(hasReadme ? { readmePath: `${simplifiedPath}/readme_ai.md` } : {}),
+      };
+    });
+}
 
 export async function buildBlocklyWorkspaceIdentityLines(host = AilyHost.get()): Promise<string[]> {
   const snapshot = await buildBlocklyContextSnapshot(host);
@@ -70,10 +206,13 @@ export async function buildBlocklyContextSnapshot(
   const project = host.project as any;
   const projectInfo = await resolveBlocklyProjectInfo(host);
   const projectPath = projectInfo?.projectPath || project?.currentProjectPath || project?.projectRootPath;
-  const projectName = projectInfo?.projectName || project?.projectName;
-  const currentBoard = project?.currentBoard || projectInfo?.board?.name;
+  const packageJson = await resolveProjectPackageJson(host, projectPath, project);
+  const packageBoard = resolvePackageBoardInfo(packageJson);
+  const packageLibraries = resolvePackageLibraries(host, projectPath, packageJson);
+  const projectName = asString(packageJson?.['name']) || projectInfo?.projectName || project?.projectName;
+  const currentBoard = packageBoard?.name || projectInfo?.board?.name || project?.currentBoard;
   const platformType = host.platform?.type || ((host.platform as any)?.isWindows ? 'win32' : undefined);
-  const libraries = projectInfo?.libraries ?? [];
+  const libraries = packageLibraries.length > 0 ? packageLibraries : projectInfo?.libraries ?? [];
 
   return {
     meta: {
@@ -102,7 +241,8 @@ export async function buildBlocklyContextSnapshot(
     ...(libraries.length > 0 ? { libraryIndex: libraries } : {}),
     ...(projectPath ? {
       workspaceArtifacts: {
-        mainEntryPath: `${projectPath}/src/main.cpp`,
+        absPath: joinHostPath(host, projectPath, 'project.abs'),
+        generatedCodePath: joinHostPath(host, projectPath, '.temp', 'sketch', 'sketch.ino'),
       },
     } : {}),
   };
@@ -165,8 +305,11 @@ export function summarizeBlocklyContextSnapshot(
     }
   }
 
-  if (snapshot.workspaceArtifacts?.mainEntryPath) {
-    lines.push(`Main source entry: ${snapshot.workspaceArtifacts.mainEntryPath}`);
+  if (snapshot.workspaceArtifacts?.absPath) {
+    lines.push(`ABS source: ${snapshot.workspaceArtifacts.absPath}`);
+  }
+  if (snapshot.workspaceArtifacts?.generatedCodePath) {
+    lines.push(`Generated C++: ${snapshot.workspaceArtifacts.generatedCodePath}`);
   }
 
   return lines;

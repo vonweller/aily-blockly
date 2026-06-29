@@ -75,7 +75,7 @@ export class LexAskConfirmationBridge {
           args: request.toolInput,
         });
 
-        this.ctx.lexStream.ui.presentToolCallApproval(normalizedRequest);
+        this.presentToolApprovalInTranscript(normalizedRequest);
 
         this.resolveAskConfirmation = resolve;
 
@@ -83,7 +83,7 @@ export class LexAskConfirmationBridge {
           this.resolveInteractionSessionResource(),
           normalizedRequest,
         ).then((result) => {
-          this.ctx.lexStream.ui.resolveToolCallApproval(request.toolCallId!, !!result.approved, result.scope);
+          this.resolveToolApprovalInTranscript(request.toolCallId!, !!result.approved, result.scope);
           const resolveRef = this.resolveAskConfirmation;
           this.resolveAskConfirmation = null;
           resolveRef?.(!!result.approved);
@@ -148,5 +148,25 @@ export class LexAskConfirmationBridge {
         resolveRef?.(!!result.approved);
       });
     });
+  }
+
+  private presentToolApprovalInTranscript(request: ReturnType<typeof normalizeToolApprovalRequest>): void {
+    try {
+      this.ctx.lexStream.ui.presentToolCallApproval(request);
+    } catch (err) {
+      console.warn('[AilyChat][Approval] transcript projection failed; runtime host approval remains active.', err);
+    }
+  }
+
+  private resolveToolApprovalInTranscript(
+    toolCallId: string,
+    approved: boolean,
+    scope: ToolApprovalPresentation['primaryScope'] | undefined,
+  ): void {
+    try {
+      this.ctx.lexStream.ui.resolveToolCallApproval(toolCallId, approved, scope);
+    } catch (err) {
+      console.warn('[AilyChat][Approval] transcript resolution failed; runtime host approval was resolved.', err);
+    }
   }
 }

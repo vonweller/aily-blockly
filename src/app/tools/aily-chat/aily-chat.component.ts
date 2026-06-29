@@ -407,7 +407,7 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
       setInputValue: (value) => {
         this.engine.inputValue = value;
       },
-      isWaiting: () => this.vm.isWaiting,
+      isWaiting: () => this.getCurrentSessionActionState().canStop,
       getEditingPendingKind: () => this.getCurrentPendingFollowupEditKind(),
       navigateInputHistory: (direction, currentValue) => this.navigateInputHistory(direction, currentValue),
       submitCurrentInput: (options) => this.submitCurrentDraftAction(options),

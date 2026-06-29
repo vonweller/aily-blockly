@@ -39,7 +39,7 @@ import {
   type ChatSessionScope,
 } from '../core/chat-session-scope';
 import { SkillRegistry as BlocklySkillRegistry } from '../core/skill-registry';
-import { EditCheckpointService } from './edit-checkpoint.service';
+import { EditCheckpointService, type RequestCheckpointMetadata } from './edit-checkpoint.service';
 import { ChatHistoryIndexStore, type ChatHistoryIndexLoadDiagnostics } from './chat-history-index-store';
 import { buildHostSessionDebugEvents, createHostSessionDebugEventId, type HostSessionDebugEvent } from './host-session-debug-events';
 import {
@@ -168,12 +168,23 @@ export interface HostSessionResponseSidecar {
 export interface HostSessionCheckpointTimelineSidecar {
   sessionResource: string;
   currentCheckpointIndex: number;
+  currentTurnResponseCount?: number;
+  checkpoints?: HostSessionCheckpointTimelineEntrySidecar[];
   turnResponses: PersistedHostTurnResponse[];
+}
+
+export interface HostSessionCheckpointTimelineEntrySidecar {
+  checkpointId: string;
+  requestId: string;
+  turnId?: string;
+  turnIndex: number;
+  metadata?: RequestCheckpointMetadata;
 }
 
 export interface HostSessionCheckpointMarkerSidecar {
   sessionResource: string;
   currentCheckpointIndex: number;
+  currentTurnResponseCount?: number;
 }
 
 export interface HostSessionSidecar {
