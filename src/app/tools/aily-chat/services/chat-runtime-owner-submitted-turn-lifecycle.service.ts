@@ -250,10 +250,13 @@ export class ChatRuntimeOwnerSubmittedTurnLifecycleService implements ChatRuntim
       patch: {
         providerOptions,
         selectedMode: normalizeChatSelectedMode(this.ownerSessionContext.resolveRuntimeSelectedMode(sessionId)),
+        agentRuntimeMode: this.ownerSessionContext.currentAgentRuntimeMode,
+        agentRuntimeModeSource: this.ownerSessionContext.currentAgentRuntimeModeSource,
         currentModel: this.ownerSessionContext.currentModel,
         debugSummary: {
           providerOptionsPresent: true,
           selectedModePresent: true,
+          agentRuntimeModePresent: true,
           currentModelPresent: !!this.ownerSessionContext.currentModel,
         },
       },

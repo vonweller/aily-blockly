@@ -686,6 +686,12 @@ class ChatRuntimeHostSessionStore {
     if (!sessionId || !renderEvent || typeof renderEvent !== 'object') {
       return [];
     }
+    if (renderEvent.type === 'approval_request') {
+      return this.cacheApprovalRequestInteractionFromRenderEvent({ sessionId, revision, renderEvent });
+    }
+    if (renderEvent.type === 'approval_resolve') {
+      return this.cacheApprovalResolveInteractionFromRenderEvent({ sessionId, revision, renderEvent });
+    }
     if (renderEvent.type !== 'question_request') {
       return [];
     }
@@ -739,6 +745,115 @@ class ChatRuntimeHostSessionStore {
       },
       state ? this.buildSessionStateEvent('runtime-status', sessionId) : null,
     ].filter(Boolean);
+  }
+
+  cacheApprovalRequestInteractionFromRenderEvent({ sessionId, revision, renderEvent }) {
+    const requestId = this.normalizeApprovalInteractionId(renderEvent);
+    if (!requestId) {
+      return [];
+    }
+    const current = this.buildInteractionSnapshot(sessionId);
+    if (!current) {
+      return [];
+    }
+    const queue = Array.isArray(current.confirmationQueue) ? current.confirmationQueue : [];
+    const actions = Array.isArray(renderEvent.actions)
+      ? renderEvent.actions
+        .filter(action => action && typeof action === 'object')
+        .map(action => clonePayload(action))
+      : [];
+    const toolCallId = normalizeInteractionId(renderEvent.toolCallId);
+    const requestPartId = toolCallId || requestId;
+    const confirmation = {
+      sessionId,
+      id: requestId,
+      kind: toolCallId ? 'approval' : 'confirmation',
+      partId: requestPartId,
+      ...(toolCallId ? { toolCallId } : {}),
+      ...(toolCallId ? {} : { askId: requestId }),
+      toolName: typeof renderEvent.toolName === 'string' ? renderEvent.toolName : undefined,
+      data: {
+        kind: toolCallId ? 'approval' : 'confirmation',
+        partId: requestPartId,
+        ...(toolCallId ? { toolCallId } : { askId: requestId }),
+        toolName: typeof renderEvent.toolName === 'string' ? renderEvent.toolName : undefined,
+        title: typeof renderEvent.title === 'string' && renderEvent.title.trim()
+          ? renderEvent.title
+          : '确认操作',
+        ...(typeof renderEvent.subtitle === 'string' ? { subtitle: renderEvent.subtitle } : {}),
+        message: typeof renderEvent.message === 'string' ? renderEvent.message : '',
+        args: renderEvent.input && typeof renderEvent.input === 'object' && !Array.isArray(renderEvent.input)
+          ? clonePayload(renderEvent.input)
+          : {},
+        actions,
+        primaryScope: typeof renderEvent.primaryScope === 'string' ? renderEvent.primaryScope : 'once',
+        ...(typeof renderEvent.description === 'string' ? { description: renderEvent.description } : {}),
+        ...(renderEvent.approveCombination && typeof renderEvent.approveCombination === 'object'
+          ? { approveCombination: clonePayload(renderEvent.approveCombination) }
+          : {}),
+        ...(typeof renderEvent.allowAutoConfirm === 'boolean'
+          ? { allowAutoConfirm: renderEvent.allowAutoConfirm }
+          : {}),
+      },
+    };
+    const nextQueue = queue.filter(entry => normalizeInteractionId(entry && entry.id) !== requestId).concat(confirmation);
+    const next = this.nextInteractionResult(current, {
+      confirmationQueue: nextQueue,
+      activeConfirmationIndex: nextQueue.length - 1,
+    });
+    const state = this.cacheInteraction(next.snapshot);
+    return [
+      {
+        kind: 'interaction',
+        sessionId,
+        revision: Number(next.snapshot.revision) || Number(revision) || 0,
+        interaction: clonePayload(next.snapshot),
+      },
+      state ? this.buildSessionStateEvent('runtime-status', sessionId) : null,
+    ].filter(Boolean);
+  }
+
+  cacheApprovalResolveInteractionFromRenderEvent({ sessionId, revision, renderEvent }) {
+    const requestId = this.normalizeApprovalInteractionId(renderEvent);
+    if (!requestId) {
+      return [];
+    }
+    const current = this.buildInteractionSnapshot(sessionId);
+    if (!current) {
+      return [];
+    }
+    const queue = Array.isArray(current.confirmationQueue) ? current.confirmationQueue : [];
+    const targetIndex = queue.findIndex(entry => normalizeInteractionId(entry && entry.id) === requestId);
+    if (targetIndex < 0) {
+      return [];
+    }
+    const nextQueue = queue.filter((_, index) => index !== targetIndex);
+    const nextIndex = nextQueue.length === 0
+      ? 0
+      : Math.min(this.normalizeConfirmationIndex(current.activeConfirmationIndex, queue.length), nextQueue.length - 1);
+    const next = this.nextInteractionResult(current, {
+      confirmationQueue: nextQueue,
+      activeConfirmationIndex: nextIndex,
+    });
+    const state = this.cacheInteraction(next.snapshot);
+    return [
+      {
+        kind: 'interaction',
+        sessionId,
+        revision: Number(next.snapshot.revision) || Number(revision) || 0,
+        interaction: clonePayload(next.snapshot),
+      },
+      state ? this.buildSessionStateEvent('runtime-status', sessionId) : null,
+    ].filter(Boolean);
+  }
+
+  normalizeApprovalInteractionId(renderEvent) {
+    const toolCallId = normalizeInteractionId(renderEvent && renderEvent.toolCallId);
+    if (toolCallId) {
+      return toolCallId;
+    }
+    const requestId = normalizeInteractionId(renderEvent && renderEvent.requestId);
+    return requestId ? `confirmation:${requestId}` : '';
   }
 
   cacheInteraction(interaction) {

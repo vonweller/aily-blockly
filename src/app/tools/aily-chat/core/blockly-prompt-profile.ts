@@ -141,6 +141,14 @@ export const BLOCKLY_PROMPT_PROFILE: IPromptProfile = {
       reason: 'main-agent-prompt',
       summaryOptions: BLOCKLY_MAIN_AGENT_SUMMARY_OPTIONS,
     })];
+    console.info('[AilyChat][PromptContext]', {
+      profile: 'blockly',
+      lineCount: envExtra.length,
+      hasBoard: envExtra.some(line => line.startsWith('Current board:')),
+      hasLibraries: envExtra.some(line => line.startsWith('Installed libraries')),
+      projectLine: envExtra.find(line => line.startsWith('Project path:')) ?? null,
+      boardLine: envExtra.find(line => line.startsWith('Current board:')) ?? null,
+    });
     const fileContext = collectRuntimePromptFileContext(host, ['project.abs', '.temp/sketch/sketch.ino']);
     const platformType = appendStandardPromptEnv(envExtra, host, fileContext);
 

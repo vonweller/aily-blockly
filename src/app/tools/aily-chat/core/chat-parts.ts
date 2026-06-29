@@ -114,10 +114,15 @@ export interface QuestionOption {
 
 /** 单个问题定义 */
 export interface QuestionItem {
+  id?: string;
+  header?: string;
   question: string;
   options?: QuestionOption[];
   allow_freeform?: boolean;
   multi_select?: boolean;
+  allowFreeform?: boolean;
+  allowFreeformInput?: boolean;
+  multiSelect?: boolean;
 }
 
 /** 用户提问 Part — 替代 aily-question markdown 代码块 */

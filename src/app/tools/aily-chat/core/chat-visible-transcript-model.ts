@@ -1,7 +1,10 @@
 import type { TurnResponsePart, TurnResponseStatus, TurnResponseTurn } from 'aily-lex/browser';
 
 import type { ChatPart } from './chat-parts';
-import { turnResponsePartToChatParts } from './turn-response-part-mapper';
+import {
+  hydrateQuestionAnswersFromAskUserToolMetadata,
+  turnResponsePartToChatParts,
+} from './turn-response-part-mapper';
 import {
   buildTurnResponseAssistantMessageProjection,
   getTurnResponseAssistantText,
@@ -165,7 +168,7 @@ export class ChatVisibleTranscriptModel {
       turnId: turn.turnId,
       status: turn.response.status,
       contentPreview: getTurnResponseAssistantText(turn),
-      parts: turn.response.parts.flatMap(part => turnResponsePartToChatParts(part)),
+      parts: turnResponsePartsToChatParts(turn.response.parts),
       turnResponse: turn,
       turnContext: buildDialogTurnContext({ turnResponse: turn }),
     });
@@ -182,7 +185,7 @@ export class ChatVisibleTranscriptModel {
       throw new Error(`Cannot upsert response part before response item exists: ${turnId}`);
     }
 
-    const nextParts = mergeChatParts(existing.parts, turnResponsePartToChatParts(part));
+    const nextParts = mergeChatParts(existing.parts, turnResponsePartsToChatParts([part]));
     return this.upsertItem({
       id: existing.id,
       kind: 'response',
@@ -343,6 +346,11 @@ function mergeChatParts(existing: readonly ChatPart[], incoming: readonly ChatPa
     }
   }
   return merged;
+}
+
+function turnResponsePartsToChatParts(parts: readonly TurnResponsePart[]): readonly ChatPart[] {
+  return hydrateQuestionAnswersFromAskUserToolMetadata(parts)
+    .flatMap(part => turnResponsePartToChatParts(part));
 }
 
 function getChatPartStableKey(part: ChatPart): string | undefined {

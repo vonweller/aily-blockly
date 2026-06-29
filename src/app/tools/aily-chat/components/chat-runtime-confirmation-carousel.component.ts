@@ -43,6 +43,8 @@ import { XAilyConfirmationViewerComponent } from './x-dialog/x-aily-confirmation
     :host {
       display: block;
       min-width: 0;
+      position: relative;
+      z-index: 2;
     }
 
     .rtc-shell {
@@ -58,7 +60,7 @@ import { XAilyConfirmationViewerComponent } from './x-dialog/x-aily-confirmation
       background: color-mix(in srgb, var(--aily-bg-elevated, #1f1f1f) 72%, transparent);
       backdrop-filter: blur(6px);
       color: var(--aily-text-tertiary, #cccccc);
-      overflow: hidden;
+      overflow: visible;
     }
 
     .rtc-header {

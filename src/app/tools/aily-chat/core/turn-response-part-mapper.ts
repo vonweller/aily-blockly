@@ -50,37 +50,61 @@ function optionalTurnResponsePartId(part: TurnResponsePart): string | undefined 
 export function hydrateQuestionAnswersFromAskUserToolMetadata(
   parts: readonly TurnResponsePart[],
 ): readonly TurnResponsePart[] {
-  const answerSets = parts
-    .map(extractAskUserQuestionAnswers)
-    .filter((answers): answers is NonNullable<MutableQuestionAnswers> => !!answers);
-  if (answerSets.length === 0) {
+  const askUserPayloads = parts
+    .map((part, index) => {
+      const payload = extractAskUserQuestionPayload(part);
+      return payload ? { ...payload, partIndex: index } : null;
+    })
+    .filter((payload): payload is AskUserQuestionPayload & { partIndex: number } => !!payload);
+  if (askUserPayloads.length === 0) {
     return parts;
   }
 
-  let nextParts: TurnResponsePart[] | null = null;
-  const mutableParts = () => {
-    nextParts ??= parts.map(part => ({ ...part })) as TurnResponsePart[];
-    return nextParts;
-  };
+  const nextParts = parts.map(part => ({ ...part })) as TurnResponsePart[];
+  const matchedPayloadIndexes = new Set<number>();
+  const duplicateQuestionPartIndexes = new Set<number>();
+  let changed = false;
 
-  for (let partIndex = 0; partIndex < parts.length; partIndex++) {
-    const part = parts[partIndex] as Partial<TurnResponseQuestionPart> | undefined;
-    if (part?.type !== 'question' || part.answers) {
+  for (let partIndex = 0; partIndex < nextParts.length; partIndex++) {
+    const part = nextParts[partIndex] as Partial<TurnResponseQuestionPart> | undefined;
+    if (part?.type !== 'question') {
       continue;
     }
 
-    const matchingAnswers = answerSets.find(answers => answersMatchQuestions(answers, part));
-    if (!matchingAnswers) {
+    const matchingPayload = askUserPayloads.find(payload => questionPartMatchesAskUserPayload(part, payload))
+      ?? (askUserPayloads.length === 1 ? askUserPayloads[0] : undefined);
+    if (!matchingPayload) {
       continue;
     }
 
-    mutableParts()[partIndex] = {
-      ...part,
-      answers: cloneQuestionAnswers(matchingAnswers),
-    } as TurnResponsePart;
+    if (matchedPayloadIndexes.has(matchingPayload.partIndex)) {
+      duplicateQuestionPartIndexes.add(partIndex);
+      changed = true;
+      continue;
+    }
+
+    if (!part.answers || !answersMatchQuestions(matchingPayload.answers, part)) {
+      nextParts[partIndex] = mergeQuestionPartWithAskUserPayload(part, matchingPayload);
+      changed = true;
+    }
+    matchedPayloadIndexes.add(matchingPayload.partIndex);
   }
 
-  return nextParts ?? parts;
+  const withSynthesizedQuestions: TurnResponsePart[] = [];
+  for (let partIndex = 0; partIndex < nextParts.length; partIndex++) {
+    if (duplicateQuestionPartIndexes.has(partIndex)) {
+      continue;
+    }
+    withSynthesizedQuestions.push(nextParts[partIndex]);
+    const payload = askUserPayloads.find(item => item.partIndex === partIndex);
+    if (!payload || matchedPayloadIndexes.has(partIndex) || payload.questions.length === 0) {
+      continue;
+    }
+    withSynthesizedQuestions.push(createAnsweredQuestionPartFromAskUserPayload(payload));
+    changed = true;
+  }
+
+  return changed ? withSynthesizedQuestions : parts;
 }
 
 export function chatPartToTurnResponsePart(part: ChatPart): TurnResponsePart {
@@ -151,10 +175,13 @@ export function chatPartToTurnResponsePart(part: ChatPart): TurnResponsePart {
         type: 'question',
         partId: part.partId,
         questions: part.questions.map(question => ({
+          id: question.id,
+          header: question.header,
           question: question.question,
           options: question.options?.map(option => ({ ...option })),
-          allowFreeform: question.allow_freeform,
-          multiSelect: question.multi_select,
+          allowFreeform: question.allowFreeform ?? question.allow_freeform ?? question.allowFreeformInput,
+          allowFreeformInput: question.allowFreeformInput,
+          multiSelect: question.multiSelect ?? question.multi_select,
         })),
         answers: cloneQuestionAnswers(part.answers),
         isHistory: part.isHistory,
@@ -259,12 +286,17 @@ export function turnResponsePartToChatPart(part: TurnResponsePart, existing?: Ch
     case 'info':
       return mkError(part.message, 'info', part.metadata);
     case 'question': {
-      const question = mkQuestion(part.questions.map(item => ({
-        question: item.question,
-        options: item.options?.map(option => ({ ...option })),
-        allow_freeform: item.allowFreeform,
-        multi_select: item.multiSelect,
-      })), part.isHistory, part.partId?.replace(/^question:/, ''), normalizeChatPartScope(part.metadata), part.metadata);
+      const question = mkQuestion(part.questions.map(item => {
+        const questionIdentity = item as typeof item & { id?: string; header?: string };
+        return {
+          id: questionIdentity.id,
+          header: questionIdentity.header,
+          question: item.question,
+          options: item.options?.map(option => ({ ...option })),
+          allow_freeform: item.allowFreeform,
+          multi_select: item.multiSelect,
+        };
+      }), part.isHistory, part.partId?.replace(/^question:/, ''), normalizeChatPartScope(part.metadata), part.metadata);
       question.partId = part.partId ?? question.partId;
       const mergedAnswers = part.answers
         ? cloneQuestionAnswers(part.answers)
@@ -465,8 +497,15 @@ function normalizeQuestionAnswer(answer: unknown): MutableQuestionAnswers[string
   };
 }
 
-function extractAskUserQuestionAnswers(part: TurnResponsePart): MutableQuestionAnswers | undefined {
-  if (part.type !== 'tool_call') {
+type AskUserQuestionPayload = {
+  readonly toolCallId?: string;
+  readonly questions: TurnResponseQuestionPart['questions'];
+  readonly answers: NonNullable<MutableQuestionAnswers>;
+  readonly metadata?: Record<string, unknown>;
+};
+
+function extractAskUserQuestionPayload(part: TurnResponsePart): AskUserQuestionPayload | undefined {
+  if (part.type !== 'tool_call' || part.toolName !== 'ask_questions') {
     return undefined;
   }
 
@@ -475,12 +514,51 @@ function extractAskUserQuestionAnswers(part: TurnResponsePart): MutableQuestionA
     return undefined;
   }
 
-  const payload = (metadata as { askUserQuestionAnswer?: unknown }).askUserQuestionAnswer;
+  const payload = readAskUserQuestionAnswerPayload(metadata as Record<string, unknown>);
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     return undefined;
   }
 
-  return normalizeQuestionAnswers((payload as { answers?: unknown }).answers);
+  const answers = normalizeQuestionAnswers((payload as { answers?: unknown }).answers);
+  if (!answers) {
+    return undefined;
+  }
+
+  return {
+    toolCallId: part.toolCallId,
+    questions: normalizeAskUserQuestionsFromToolPart(part),
+    answers,
+    metadata: {
+      ...(metadata as Record<string, unknown>),
+      askUserQuestionAnswer: payload,
+    },
+  };
+}
+
+function readAskUserQuestionAnswerPayload(metadata: Record<string, unknown>): unknown {
+  const direct = metadata['askUserQuestionAnswer'];
+  if (direct && typeof direct === 'object' && !Array.isArray(direct)) {
+    return direct;
+  }
+
+  const result = metadata['result'];
+  if (!result || typeof result !== 'object' || Array.isArray(result)) {
+    return undefined;
+  }
+  const resultMetadata = (result as Record<string, unknown>)['metadata'];
+  if (!resultMetadata || typeof resultMetadata !== 'object' || Array.isArray(resultMetadata)) {
+    return undefined;
+  }
+  return (resultMetadata as Record<string, unknown>)['askUserQuestionAnswer'];
+}
+
+function normalizeAskUserQuestionsFromToolPart(part: TurnResponsePart): TurnResponseQuestionPart['questions'] {
+  const argsQuestions = normalizeAskUserQuestionsFromArgs((part as { args?: unknown }).args);
+  if (argsQuestions.length > 0) {
+    return argsQuestions;
+  }
+
+  return normalizeAskUserQuestions((part as { questions?: unknown }).questions);
 }
 
 function normalizeQuestionAnswers(answers: unknown): MutableQuestionAnswers | undefined {
@@ -498,6 +576,141 @@ function normalizeQuestionAnswers(answers: unknown): MutableQuestionAnswers | un
   }
 
   return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+function normalizeAskUserQuestionsFromArgs(args: unknown): TurnResponseQuestionPart['questions'] {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) {
+    return [];
+  }
+
+  const record = args as Record<string, unknown>;
+  const listQuestions = normalizeAskUserQuestions(record['questions']);
+  if (listQuestions.length > 0) {
+    return listQuestions;
+  }
+
+  const questionText = typeof record['question'] === 'string' ? record['question'].trim() : '';
+  if (!questionText) {
+    return [];
+  }
+
+  return [{
+    ...(typeof record['header'] === 'string' && record['header'].trim().length > 0 ? { header: record['header'].trim() } : {}),
+    ...(typeof record['id'] === 'string' && record['id'].trim().length > 0 ? { id: record['id'].trim() } : {}),
+    question: questionText,
+    options: normalizeAskUserOptions(record['options']),
+    allowFreeform: !!(record['allowFreeformInput'] ?? record['allowFreeform'] ?? record['allow_freeform']),
+    multiSelect: !!(record['multiSelect'] ?? record['multi_select']),
+  }];
+}
+
+function normalizeAskUserQuestions(questions: unknown): TurnResponseQuestionPart['questions'] {
+  if (!Array.isArray(questions)) {
+    return [];
+  }
+
+  return questions
+    .map(question => {
+      if (!question || typeof question !== 'object' || Array.isArray(question)) {
+        return null;
+      }
+      const record = question as Record<string, unknown>;
+      const questionText = typeof record['question'] === 'string' ? record['question'].trim() : '';
+      if (!questionText) {
+        return null;
+      }
+      const normalizedQuestion: TurnResponseQuestionPart['questions'][number] = {
+        ...(typeof record['header'] === 'string' && record['header'].trim().length > 0 ? { header: record['header'].trim() } : {}),
+        ...(typeof record['id'] === 'string' && record['id'].trim().length > 0 ? { id: record['id'].trim() } : {}),
+        question: questionText,
+        options: normalizeAskUserOptions(record['options']),
+        allowFreeform: !!(record['allowFreeformInput'] ?? record['allowFreeform'] ?? record['allow_freeform']),
+        multiSelect: !!(record['multiSelect'] ?? record['multi_select']),
+      };
+      return normalizedQuestion;
+    })
+    .filter((question): question is TurnResponseQuestionPart['questions'][number] => !!question);
+}
+
+function normalizeAskUserOptions(options: unknown): TurnResponseQuestionPart['questions'][number]['options'] {
+  if (!Array.isArray(options)) {
+    return undefined;
+  }
+
+  const normalized = options
+    .map(option => {
+      if (!option || typeof option !== 'object' || Array.isArray(option)) {
+        return null;
+      }
+      const record = option as Record<string, unknown>;
+      const label = typeof record['label'] === 'string' ? record['label'].trim() : '';
+      if (!label) {
+        return null;
+      }
+      return {
+        label,
+        ...(typeof record['description'] === 'string' ? { description: record['description'] } : {}),
+        ...(typeof record['recommended'] === 'boolean' ? { recommended: record['recommended'] } : {}),
+      };
+    })
+    .filter((option): option is NonNullable<TurnResponseQuestionPart['questions'][number]['options']>[number] => !!option);
+
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function createAnsweredQuestionPartFromAskUserPayload(payload: AskUserQuestionPayload): TurnResponsePart {
+  return {
+    type: 'question',
+    partId: payload.toolCallId ? `question:${payload.toolCallId}` : undefined,
+    questions: payload.questions,
+    answers: cloneQuestionAnswers(payload.answers),
+    isHistory: true,
+    metadata: {
+      askUserQuestionAnswer: payload.metadata?.['askUserQuestionAnswer'],
+      materializedFromAskUserToolCall: true,
+      ...(payload.toolCallId ? { sourceToolCallId: payload.toolCallId } : {}),
+    },
+  } satisfies TurnResponseQuestionPart;
+}
+
+function mergeQuestionPartWithAskUserPayload(
+  part: Partial<TurnResponseQuestionPart>,
+  payload: AskUserQuestionPayload,
+): TurnResponsePart {
+  const existingQuestions = Array.isArray(part.questions) ? part.questions : [];
+  return {
+    ...part,
+    questions: existingQuestions.length > 0 ? existingQuestions : payload.questions,
+    answers: cloneQuestionAnswers(payload.answers),
+    isHistory: true,
+    metadata: {
+      ...(part.metadata && typeof part.metadata === 'object' && !Array.isArray(part.metadata)
+        ? part.metadata
+        : {}),
+      askUserQuestionAnswer: payload.metadata?.['askUserQuestionAnswer'],
+      materializedFromAskUserToolCall: true,
+      ...(payload.toolCallId ? { sourceToolCallId: payload.toolCallId } : {}),
+    },
+  } as TurnResponsePart;
+}
+
+function questionPartMatchesAskUserPayload(
+  part: Partial<TurnResponseQuestionPart>,
+  payload: AskUserQuestionPayload,
+): boolean {
+  const partId = typeof part.partId === 'string' ? part.partId : '';
+  if (payload.toolCallId && partId === `question:${payload.toolCallId}`) {
+    return true;
+  }
+
+  const metadata = part.metadata && typeof part.metadata === 'object' && !Array.isArray(part.metadata)
+    ? part.metadata as Record<string, unknown>
+    : undefined;
+  if (payload.toolCallId && metadata?.['sourceToolCallId'] === payload.toolCallId) {
+    return true;
+  }
+
+  return answersMatchQuestions(payload.answers, part);
 }
 
 function answersMatchQuestions(

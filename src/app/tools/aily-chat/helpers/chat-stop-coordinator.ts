@@ -117,14 +117,19 @@ export class ChatStopCoordinator {
       );
     }
 
-    await this.commitCurrentTurnCheckpoint(sessionId ?? this.ctx.sessionId);
     this.ctx.viewAdapter.markLastMessageDone();
     this.ctx.isWaiting = false;
     this.ctx.isCompleted = true;
     this.ctx.session.saveCurrentSession();
     this.ctx.markExplicitInterrupt?.(sessionId);
 
+    const checkpointPromise = this.commitCurrentTurnCheckpoint(sessionId ?? this.ctx.sessionId)
+      .catch((error) => {
+        console.warn('[AilyChat][RuntimeHost] stopped turn checkpoint commit failed:', error);
+      });
+
     await this.waitForAbortSettle(sessionId);
+    void checkpointPromise;
     if (options.applyPendingSwitch !== false) {
       await this.ctx.applyPendingSwitch(sessionId);
     }

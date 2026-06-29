@@ -1213,7 +1213,12 @@ function readChatPartStableRevision(part: ChatPart): string {
     case 'error':
       return [part.message ?? '', part.severity ?? ''].join(':');
     case 'question':
-      return [part.partId ?? '', part.questions?.length ?? 0, part.answers ? 'answered' : 'open'].join(':');
+      return [
+        part.partId ?? '',
+        stableJson(part.questions ?? []),
+        stableJson(part.answers ?? null),
+        part.isHistory ? 'history' : 'live',
+      ].join(':');
     case 'confirmation':
       return [part.partId ?? '', part.askId ?? '', part.resolved ? 'resolved' : 'pending'].join(':');
     case 'terminal':
@@ -1222,5 +1227,13 @@ function readChatPartStableRevision(part: ChatPart): string {
       return [part.partId ?? '', part.status ?? '', part.text?.length ?? 0].join(':');
     default:
       return '';
+  }
+}
+
+function stableJson(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? '';
+  } catch {
+    return String(value ?? '');
   }
 }

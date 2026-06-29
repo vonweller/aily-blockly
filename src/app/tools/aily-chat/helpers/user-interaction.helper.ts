@@ -386,10 +386,10 @@ export class UserInteractionHelper {
    * 工具审批的 UI 层回调。
    */
   private _handleToolApproval(request: ToolApprovalRequest): Promise<ToolApprovalResult> {
-    this.ctx.lexStream.ui.presentToolCallApproval(request);
     const sessionResource = this.resolveInteractionSessionResource();
+    this.presentToolApprovalInTranscript(request);
     return this.ctx.runtimeInteractionHost.presentToolApproval(sessionResource, request).then((result) => {
-      this.ctx.lexStream.ui.resolveToolCallApproval(request.toolCallId, !!result.approved, result.scope);
+      this.resolveToolApprovalInTranscript(request.toolCallId, !!result.approved, result.scope);
       return {
         approved: !!result.approved,
         reason: result.reason || (result.approved ? undefined : '用户拒绝执行'),
@@ -397,6 +397,26 @@ export class UserInteractionHelper {
         actionId: typeof result.actionId === 'string' ? result.actionId : undefined,
       };
     });
+  }
+
+  private presentToolApprovalInTranscript(request: ToolApprovalRequest): void {
+    try {
+      this.ctx.lexStream.ui.presentToolCallApproval(request);
+    } catch (err) {
+      console.warn('[AilyChat][Approval] transcript projection failed; runtime host approval remains active.', err);
+    }
+  }
+
+  private resolveToolApprovalInTranscript(
+    toolCallId: string,
+    approved: boolean,
+    scope: ToolApprovalScope | undefined,
+  ): void {
+    try {
+      this.ctx.lexStream.ui.resolveToolCallApproval(toolCallId, approved, scope);
+    } catch (err) {
+      console.warn('[AilyChat][Approval] transcript resolution failed; runtime host approval was resolved.', err);
+    }
   }
 
   /**

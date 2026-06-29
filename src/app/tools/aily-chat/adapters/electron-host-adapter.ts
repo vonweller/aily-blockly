@@ -73,6 +73,47 @@ export function createElectronHostAdapter(deps: ElectronAdapterDeps): IAilyHostA
   const getDep = <K extends keyof ElectronAdapterDeps>(key: K): ElectronAdapterDeps[K] => deps[key];
   let cachedHostConfigApiEndpoint: string | null | undefined;
 
+  const normalizeStringValue = (value: unknown): string => typeof value === 'string' && value.trim().length > 0
+    ? value.trim()
+    : '';
+
+  const resolveProjectPath = (rawProjectService: any): string =>
+    normalizeStringValue(rawProjectService?.currentProjectPath)
+    || normalizeStringValue(rawProjectService?.projectRootPath);
+
+  const resolveProjectRootPath = (rawProjectService: any): string =>
+    normalizeStringValue(rawProjectService?.projectRootPath)
+    || resolveProjectPath(rawProjectService);
+
+  const resolveProjectBoardFromPackageData = (packageData: any): string | undefined => {
+    const explicitBoard = normalizeStringValue(packageData?.board);
+    if (explicitBoard) {
+      return explicitBoard;
+    }
+
+    const dependencies = packageData?.dependencies;
+    if (!dependencies || typeof dependencies !== 'object') {
+      return undefined;
+    }
+
+    const boardDependency = Object.keys(dependencies)
+      .find(dependencyName => dependencyName.startsWith('@aily-project/board-'));
+    return boardDependency
+      ? boardDependency.slice('@aily-project/'.length)
+      : undefined;
+  };
+
+  const resolveProjectBoard = (rawProjectService: any): string | undefined =>
+    resolveProjectBoardFromPackageData(rawProjectService?.currentPackageData)
+    || normalizeStringValue(rawProjectService?.currentBoardConfig?.name)
+    || normalizeStringValue(rawProjectService?.currentBoard)
+    || undefined;
+
+  const resolveProjectName = (rawProjectService: any): string | undefined =>
+    normalizeStringValue(rawProjectService?.currentPackageData?.name)
+    || normalizeStringValue(rawProjectService?.projectName)
+    || undefined;
+
   const readHostConfigApiEndpoint = (): string | null => {
     if (cachedHostConfigApiEndpoint !== undefined) {
       return cachedHostConfigApiEndpoint;
@@ -254,11 +295,46 @@ export function createElectronHostAdapter(deps: ElectronAdapterDeps): IAilyHostA
         return undefined;
       }
 
+      if (prop === 'currentProjectPath') {
+        return resolveProjectPath(rawProjectService);
+      }
+      if (prop === 'projectRootPath') {
+        return resolveProjectRootPath(rawProjectService);
+      }
       if (prop === 'currentBoard') {
-        return rawProjectService.currentBoardConfig?.name ?? rawProjectService.currentBoard;
+        return resolveProjectBoard(rawProjectService);
       }
       if (prop === 'projectName') {
-        return rawProjectService.currentPackageData?.name ?? rawProjectService.projectName;
+        return resolveProjectName(rawProjectService);
+      }
+      if (prop === 'getProjectPath') {
+        return () => resolveProjectPath(rawProjectService);
+      }
+      if (prop === 'getBoard') {
+        return () => resolveProjectBoard(rawProjectService);
+      }
+      if (prop === 'getProjectInfo') {
+        return async () => {
+          if (typeof rawProjectService.getProjectInfo === 'function') {
+            const info = await rawProjectService.getProjectInfo();
+            if (info && typeof info === 'object') {
+              const infoRecord = info as Record<string, unknown>;
+              return {
+                ...infoRecord,
+                path: normalizeStringValue(infoRecord['path']) || resolveProjectPath(rawProjectService),
+                board: infoRecord['board'] ?? resolveProjectBoard(rawProjectService),
+                name: infoRecord['name'] ?? resolveProjectName(rawProjectService),
+              };
+            }
+            return info;
+          }
+          return {
+            path: resolveProjectPath(rawProjectService),
+            rootPath: resolveProjectRootPath(rawProjectService),
+            board: resolveProjectBoard(rawProjectService),
+            name: resolveProjectName(rawProjectService),
+          };
+        };
       }
       if (prop === 'getPackageJsonSync') {
         return () => {
@@ -281,7 +357,22 @@ export function createElectronHostAdapter(deps: ElectronAdapterDeps): IAilyHostA
     },
     has(_target, prop: string | symbol) {
       const rawProjectService = getDep('projectService');
-      return !!rawProjectService && prop in rawProjectService;
+      if (!rawProjectService) {
+        return false;
+      }
+      if ([
+        'currentProjectPath',
+        'projectRootPath',
+        'currentBoard',
+        'projectName',
+        'getProjectPath',
+        'getProjectInfo',
+        'getBoard',
+        'getPackageJsonSync',
+      ].includes(String(prop))) {
+        return true;
+      }
+      return prop in rawProjectService;
     },
   });
 

@@ -297,6 +297,7 @@ class ChatRuntimeHostProcessService {
   async handleSubmitTurn(args) {
     const request = args && args[0];
     const runningState = this.hostSessionStore.beginSubmittedTurn(request);
+    this.replayTranscriptForAttachedSession(runningState.sessionId);
     this.broadcastSessionState('runtime-status', runningState);
     const submittedRequest = this.hostSessionStore.readActiveSubmittedRequest(runningState.sessionId) || request;
     const startTurnCommand = {
@@ -320,7 +321,6 @@ class ChatRuntimeHostProcessService {
       error.retryable = true;
       this.failSubmittedTurnWithError(runningState.sessionId, error);
     }
-    this.replayTranscriptForAttachedSession(runningState.sessionId);
     return this.hostSessionStore.buildSessionState(runningState.sessionId);
   }
 

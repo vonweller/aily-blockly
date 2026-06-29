@@ -110,6 +110,70 @@ function buildErrorPart(error) {
   };
 }
 
+function isTerminalRunningStatus(value) {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return normalized === 'running'
+    || normalized === 'pending'
+    || normalized === 'starting'
+    || normalized === 'doing'
+    || normalized === 'in_progress';
+}
+
+function isOpenToolCallState(value) {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return !normalized
+    || normalized === 'pending'
+    || normalized === 'running'
+    || normalized === 'doing'
+    || normalized === 'reviewing'
+    || normalized === 'in_progress';
+}
+
+function cancelOpenResponsePart(part, timestamp) {
+  if (!part || typeof part !== 'object') {
+    return part;
+  }
+  switch (part.type) {
+    case 'tool_call':
+      if (!isOpenToolCallState(part.state || part.status)) {
+        return part;
+      }
+      return {
+        ...part,
+        state: 'cancelled',
+        status: part.status ? 'cancelled' : part.status,
+        updatedAt: timestamp,
+        metadata: {
+          ...(part.metadata && typeof part.metadata === 'object' ? part.metadata : {}),
+          phase: 'cancelled',
+        },
+      };
+    case 'terminal':
+      if (part.isRunning !== true && !isTerminalRunningStatus(part.status)) {
+        return part;
+      }
+      return {
+        ...part,
+        status: 'cancelled',
+        isRunning: false,
+        updatedAt: timestamp,
+      };
+    case 'subagent':
+    case 'subagent_tool_call':
+      if (!isOpenToolCallState(part.state || part.status)) {
+        return part;
+      }
+      return {
+        ...part,
+        state: 'cancelled',
+        status: 'cancelled',
+        updatedAt: timestamp,
+      };
+    default:
+      return part;
+  }
+}
+
 function renderEventStateKey(sessionId, turnId) {
   return `${sessionId}\u0000${turnId}`;
 }
@@ -623,6 +687,9 @@ function parseTerminalPayload(text) {
     if (!readRecord(data)) {
       return null;
     }
+    if (!isTerminalPayloadRecord(data)) {
+      return null;
+    }
     const status = asString(data.status);
     return {
       command: asString(data.command) || '',
@@ -687,6 +754,26 @@ function parseTerminalPayload(text) {
       lastOutputAt: headers.get('lastoutputat'),
     };
   }
+}
+
+function isTerminalPayloadRecord(value) {
+  if (!readRecord(value)) {
+    return false;
+  }
+  return [
+    'command',
+    'output',
+    'stdout',
+    'stderr',
+    'exit_code',
+    'exitCode',
+    'terminalId',
+    'processId',
+    'outputSessionId',
+    'outputFilePath',
+    'bytesTotal',
+    'lastOutputAt',
+  ].some(field => Object.prototype.hasOwnProperty.call(value, field));
 }
 
 function extractTerminalPartFromToolEnd(event) {
@@ -1531,12 +1618,17 @@ class ChatRuntimeHostTranscriptBuilder {
     const existingResponse = existingTurn.response && typeof existingTurn.response === 'object'
       ? existingTurn.response
       : {};
+    const existingParts = Array.isArray(existingResponse.parts)
+      ? existingResponse.parts
+      : [];
+    const nextParts = existingParts.map(part => cancelOpenResponsePart(part, nextTimestamp));
     const nextTurn = {
       ...existingTurn,
       response: {
         ...existingResponse,
         status: 'cancelled',
         terminationReason: 'cancelled',
+        parts: nextParts,
         updatedAt: nextTimestamp,
       },
       updatedAt: nextTimestamp,
