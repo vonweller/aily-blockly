@@ -1,16 +1,16 @@
-﻿import type {
+import type {
   ChatRuntimeHost,
   ChatRuntimeHostAttachViewOptions,
-  ChatRuntimeExecutionWorkerCommandMethod,
-  ChatRuntimeExecutionWorkerDisposeSessionResourcesCommand,
-  ChatRuntimeExecutionWorkerEvent,
-  ChatRuntimeExecutionWorker,
-  ChatRuntimeExecutionWorkerRenderEventProgress,
+  ChatRuntimeOwnerExecutorCommandMethod,
+  ChatRuntimeOwnerExecutorDisposeSessionResourcesCommand,
+  ChatRuntimeOwnerExecutorEvent,
+  ChatRuntimeOwnerExecutor,
+  ChatRuntimeOwnerExecutorRenderEventProgress,
   ChatRuntimeHostEvent,
   ChatRuntimeHostEventSubscription,
-  ChatRuntimeExecutionWorkerResolveInteractionCommand,
-  ChatRuntimeExecutionWorkerStartTurnCommand,
-  ChatRuntimeExecutionWorkerStopTurnCommand,
+  ChatRuntimeOwnerExecutorResolveInteractionCommand,
+  ChatRuntimeOwnerExecutorStartTurnCommand,
+  ChatRuntimeOwnerExecutorStopTurnCommand,
   ChatRuntimeHostInteractionRequest,
   ChatRuntimeHostInteractionSnapshot,
   ChatRuntimeHostResourceOperationRequest,
@@ -47,25 +47,25 @@ type RuntimeHostMethod =
 
 interface ElectronChatRuntimeHostApi {
   call(method: RuntimeHostMethod, args: readonly unknown[]): Promise<unknown>;
-  registerExecutionWorker(executionWorkerId: string): Promise<{ ok?: boolean; executionWorkerId?: string }>;
-  unregisterExecutionWorker(executionWorkerId: string): Promise<{ ok?: boolean }>;
+  registerRuntimeOwner(runtimeOwnerId: string): Promise<{ ok?: boolean; runtimeOwnerId?: string }>;
+  unregisterRuntimeOwner(runtimeOwnerId: string): Promise<{ ok?: boolean }>;
   registerResourceOperationHandler(handlerId: string): Promise<{ ok?: boolean; handlerId?: string }>;
   unregisterResourceOperationHandler(handlerId: string): Promise<{ ok?: boolean }>;
-  onExecutionWorkerCommand(callback: (payload: ElectronExecutionWorkerCommandPayload) => void): () => void;
+  onRuntimeOwnerCommand(callback: (payload: ElectronRuntimeOwnerCommandPayload) => void): () => void;
   onResourceOperationCommand(callback: (payload: ElectronResourceOperationCommandPayload) => void): () => void;
-  sendExecutionWorkerResponse(payload: ElectronExecutionWorkerCommandResponse): void;
+  sendRuntimeOwnerResponse(payload: ElectronRuntimeOwnerCommandResponse): void;
   sendResourceOperationResponse(payload: ElectronResourceOperationCommandResponse): void;
-  emitExecutionWorkerEvent(payload: ChatRuntimeExecutionWorkerEvent): void;
+  emitRuntimeOwnerEvent(payload: ChatRuntimeOwnerExecutorEvent): void;
   onEvent(callback: (event: ChatRuntimeHostEvent) => void): () => void;
 }
 
-interface ElectronExecutionWorkerCommandPayload {
+interface ElectronRuntimeOwnerCommandPayload {
   readonly requestId?: string;
   readonly method?: string;
   readonly args?: readonly unknown[];
 }
 
-interface ElectronExecutionWorkerCommandResponse {
+interface ElectronRuntimeOwnerCommandResponse {
   readonly requestId: string;
   readonly ok: boolean;
   readonly result?: unknown;
@@ -91,12 +91,12 @@ interface ElectronResourceOperationCommandResponse {
   };
 }
 
-interface ExecutionWorkerRegistrationState {
+interface RuntimeOwnerRegistrationState {
   readonly activeTurnIds: Map<ChatRuntimeHostSessionId, string>;
   readonly activeRequestIds: Map<ChatRuntimeHostSessionId, string>;
 }
 
-export interface ElectronChatRuntimeExecutionWorkerRegistration {
+export interface ElectronChatRuntimeOwnerRegistration {
   dispose(): Promise<void>;
 }
 
@@ -113,15 +113,15 @@ function readElectronChatRuntimeHostApi(): ElectronChatRuntimeHostApi | null {
     .electronAPI?.chatRuntimeHost;
   if (!api
     || typeof api.call !== 'function'
-    || typeof api.registerExecutionWorker !== 'function'
-    || typeof api.unregisterExecutionWorker !== 'function'
+    || typeof api.registerRuntimeOwner !== 'function'
+    || typeof api.unregisterRuntimeOwner !== 'function'
     || typeof api.registerResourceOperationHandler !== 'function'
     || typeof api.unregisterResourceOperationHandler !== 'function'
-    || typeof api.onExecutionWorkerCommand !== 'function'
+    || typeof api.onRuntimeOwnerCommand !== 'function'
     || typeof api.onResourceOperationCommand !== 'function'
-    || typeof api.sendExecutionWorkerResponse !== 'function'
+    || typeof api.sendRuntimeOwnerResponse !== 'function'
     || typeof api.sendResourceOperationResponse !== 'function'
-    || typeof api.emitExecutionWorkerEvent !== 'function'
+    || typeof api.emitRuntimeOwnerEvent !== 'function'
     || typeof api.onEvent !== 'function') {
     return null;
   }
@@ -207,12 +207,12 @@ function createErrorPayload(error: unknown): { message: string; code?: string } 
 function normalizeRequestId(requestId: unknown): string {
   const normalized = typeof requestId === 'string' ? requestId.trim() : '';
   if (!normalized) {
-    throw new Error('[AilyChat][RuntimeHost] Missing execution worker command request id.');
+    throw new Error('[AilyChat][RuntimeHost] Missing runtime owner command request id.');
   }
   return normalized;
 }
 
-function normalizeExecutionWorkerMethod(method: unknown): ChatRuntimeExecutionWorkerCommandMethod {
+function normalizeRuntimeOwnerMethod(method: unknown): ChatRuntimeOwnerExecutorCommandMethod {
   switch (method) {
     case 'startTurn':
     case 'stopTurn':
@@ -220,7 +220,7 @@ function normalizeExecutionWorkerMethod(method: unknown): ChatRuntimeExecutionWo
     case 'resolveInteraction':
       return method;
     default:
-      throw new Error(`[AilyChat][RuntimeHost] Unsupported execution worker command method: ${String(method || '<missing>')}`);
+      throw new Error(`[AilyChat][RuntimeHost] Unsupported runtime owner command method: ${String(method || '<missing>')}`);
   }
 }
 
@@ -274,32 +274,32 @@ export function createElectronChatRuntimeHostTransport(): ChatRuntimeHost | null
   };
 }
 
-export async function registerElectronChatRuntimeExecutionWorker(
-  executionWorker: ChatRuntimeExecutionWorker,
-  executionWorkerId = 'aily-chat-host-execution-worker',
-): Promise<ElectronChatRuntimeExecutionWorkerRegistration> {
+export async function registerElectronChatRuntimeOwner(
+  runtimeOwner: ChatRuntimeOwnerExecutor,
+  runtimeOwnerId = 'aily-chat-host-runtime-owner',
+): Promise<ElectronChatRuntimeOwnerRegistration> {
   const api = readElectronChatRuntimeHostApi();
   if (!api) {
     throw new Error('[AilyChat][RuntimeHost] Electron runtime host API is unavailable.');
   }
 
-  const registration = await api.registerExecutionWorker(executionWorkerId);
+  const registration = await api.registerRuntimeOwner(runtimeOwnerId);
   if (!registration?.ok) {
-    throw new Error('[AilyChat][RuntimeHost] Failed to register Electron runtime execution worker.');
+    throw new Error('[AilyChat][RuntimeHost] Failed to register Electron runtime owner.');
   }
 
-  const registrationState: ExecutionWorkerRegistrationState = {
+  const registrationState: RuntimeOwnerRegistrationState = {
     activeTurnIds: new Map(),
     activeRequestIds: new Map(),
   };
-  const executionWorkerEvents = executionWorker.onEvent(event => {
-    const workerEvent = createExecutionWorkerEvent(event, registrationState);
-    if (workerEvent) {
-      api.emitExecutionWorkerEvent(createIpcSafePayload(workerEvent));
+  const runtimeOwnerEvents = runtimeOwner.onEvent(event => {
+    const ownerEvent = createRuntimeOwnerEvent(event, registrationState);
+    if (ownerEvent) {
+      api.emitRuntimeOwnerEvent(createIpcSafePayload(ownerEvent));
     }
   });
-  const unsubscribeCommands = api.onExecutionWorkerCommand(payload => {
-    void dispatchExecutionWorkerCommand(executionWorker, api, payload, registrationState);
+  const unsubscribeCommands = api.onRuntimeOwnerCommand(payload => {
+    void dispatchRuntimeOwnerCommand(runtimeOwner, api, payload, registrationState);
   });
 
   let disposed = false;
@@ -310,29 +310,29 @@ export async function registerElectronChatRuntimeExecutionWorker(
       }
       disposed = true;
       unsubscribeCommands();
-      executionWorkerEvents.dispose();
-      await api.unregisterExecutionWorker(executionWorkerId);
+      runtimeOwnerEvents.dispose();
+      await api.unregisterRuntimeOwner(runtimeOwnerId);
     },
   };
 }
 
-async function dispatchExecutionWorkerCommand(
-  executionWorker: ChatRuntimeExecutionWorker,
+async function dispatchRuntimeOwnerCommand(
+  runtimeOwner: ChatRuntimeOwnerExecutor,
   api: ElectronChatRuntimeHostApi,
-  payload: ElectronExecutionWorkerCommandPayload,
-  registrationState: ExecutionWorkerRegistrationState,
+  payload: ElectronRuntimeOwnerCommandPayload,
+  registrationState: RuntimeOwnerRegistrationState,
 ): Promise<void> {
   let requestId = '';
-  let method: ChatRuntimeExecutionWorkerCommandMethod | '' = '';
+  let method: ChatRuntimeOwnerExecutorCommandMethod | '' = '';
   try {
     requestId = normalizeRequestId(payload.requestId);
-    method = normalizeExecutionWorkerMethod(payload.method);
+    method = normalizeRuntimeOwnerMethod(payload.method);
     const args = Array.isArray(payload.args) ? payload.args : [];
-    trackExecutionWorkerCommand(method, args, registrationState);
-    const result = await callExecutionWorkerMethod(executionWorker, method, args);
-    api.sendExecutionWorkerResponse(createIpcSafePayload({ requestId, ok: true, result }));
+    trackRuntimeOwnerCommand(method, args, registrationState);
+    const result = await callRuntimeOwnerMethod(runtimeOwner, method, args);
+    api.sendRuntimeOwnerResponse(createIpcSafePayload({ requestId, ok: true, result }));
   } catch (error) {
-    console.error('[AilyChat][RuntimeHost] Execution worker command failed:', {
+    console.error('[AilyChat][RuntimeHost] Runtime owner command failed:', {
       requestId,
       method: method || payload.method,
       error: createErrorPayload(error),
@@ -344,7 +344,7 @@ async function dispatchExecutionWorkerCommand(
     if (!requestId) {
       return;
     }
-    api.sendExecutionWorkerResponse(createIpcSafePayload({
+    api.sendRuntimeOwnerResponse(createIpcSafePayload({
       requestId,
       ok: false,
       error: createErrorPayload(error),
@@ -352,14 +352,14 @@ async function dispatchExecutionWorkerCommand(
   }
 }
 
-function trackExecutionWorkerCommand(
-  method: ChatRuntimeExecutionWorkerCommandMethod,
+function trackRuntimeOwnerCommand(
+  method: ChatRuntimeOwnerExecutorCommandMethod,
   args: readonly unknown[],
-  registrationState: ExecutionWorkerRegistrationState,
+  registrationState: RuntimeOwnerRegistrationState,
 ): void {
   switch (method) {
     case 'startTurn': {
-      const command = args[0] as Partial<ChatRuntimeExecutionWorkerStartTurnCommand> | null | undefined;
+      const command = args[0] as Partial<ChatRuntimeOwnerExecutorStartTurnCommand> | null | undefined;
       const sessionId = normalizeNonEmptyString(command?.sessionId ?? command?.request?.sessionId);
       const turnId = normalizeNonEmptyString(command?.turnId ?? command?.request?.activeResponseHandle);
       const requestId = readRequestMetadataRequestId(command?.request);
@@ -374,7 +374,7 @@ function trackExecutionWorkerCommand(
       return;
     }
     case 'disposeSessionResources': {
-      const command = args[0] as Partial<ChatRuntimeExecutionWorkerDisposeSessionResourcesCommand> | null | undefined;
+      const command = args[0] as Partial<ChatRuntimeOwnerExecutorDisposeSessionResourcesCommand> | null | undefined;
       const sessionId = normalizeNonEmptyString(command?.sessionId);
       if (sessionId) {
         registrationState.activeTurnIds.delete(sessionId);
@@ -387,16 +387,16 @@ function trackExecutionWorkerCommand(
   }
 }
 
-function createExecutionWorkerEvent(
-  event: ChatRuntimeHostEvent | ChatRuntimeExecutionWorkerRenderEventProgress | ChatRuntimeExecutionWorkerEvent,
-  registrationState: ExecutionWorkerRegistrationState,
-): ChatRuntimeExecutionWorkerEvent | null {
+function createRuntimeOwnerEvent(
+  event: ChatRuntimeHostEvent | ChatRuntimeOwnerExecutorRenderEventProgress | ChatRuntimeOwnerExecutorEvent,
+  registrationState: RuntimeOwnerRegistrationState,
+): ChatRuntimeOwnerExecutorEvent | null {
   const sessionId = normalizeNonEmptyString(event.sessionId);
   if (!sessionId) {
     return null;
   }
-  if (isExecutionWorkerEvent(event)) {
-    return normalizeExplicitExecutionWorkerEvent(event, sessionId, registrationState);
+  if (isRuntimeOwnerEvent(event)) {
+    return normalizeExplicitRuntimeOwnerEvent(event, sessionId, registrationState);
   }
   const trackedTurnId = registrationState.activeTurnIds.get(sessionId) || '';
   if (event.kind === 'render-event') {
@@ -486,7 +486,7 @@ function createExecutionWorkerEvent(
   }
 }
 
-function isExecutionWorkerEvent(event: unknown): event is ChatRuntimeExecutionWorkerEvent {
+function isRuntimeOwnerEvent(event: unknown): event is ChatRuntimeOwnerExecutorEvent {
   if (!event || typeof event !== 'object') {
     return false;
   }
@@ -497,11 +497,11 @@ function isExecutionWorkerEvent(event: unknown): event is ChatRuntimeExecutionWo
     || kind === 'turnCompleted';
 }
 
-function normalizeExplicitExecutionWorkerEvent(
-  event: ChatRuntimeExecutionWorkerEvent,
+function normalizeExplicitRuntimeOwnerEvent(
+  event: ChatRuntimeOwnerExecutorEvent,
   sessionId: string,
-  registrationState: ExecutionWorkerRegistrationState,
-): ChatRuntimeExecutionWorkerEvent | null {
+  registrationState: RuntimeOwnerRegistrationState,
+): ChatRuntimeOwnerExecutorEvent | null {
   const trackedTurnId = registrationState.activeTurnIds.get(sessionId) || '';
   const turnId = normalizeNonEmptyString((event as { readonly turn?: { readonly turnId?: unknown } }).turn?.turnId)
     || normalizeNonEmptyString(event.turnId)
@@ -519,7 +519,7 @@ function normalizeExplicitExecutionWorkerEvent(
     ...event,
     sessionId,
     turnId,
-  } as ChatRuntimeExecutionWorkerEvent;
+  } as ChatRuntimeOwnerExecutorEvent;
 }
 
 function readEventTurnId(event: ChatRuntimeHostEvent): string {
@@ -542,26 +542,26 @@ function normalizeNonEmptyString(value: unknown): string {
     : '';
 }
 
-function readRequestMetadataRequestId(request: Partial<ChatRuntimeExecutionWorkerStartTurnCommand['request']> | null | undefined): string {
+function readRequestMetadataRequestId(request: Partial<ChatRuntimeOwnerExecutorStartTurnCommand['request']> | null | undefined): string {
   const metadata = request?.metadata;
   return metadata && typeof metadata === 'object'
     ? normalizeNonEmptyString((metadata as { requestId?: unknown }).requestId)
     : '';
 }
 
-function callExecutionWorkerMethod(
-  executionWorker: ChatRuntimeExecutionWorker,
-  method: ChatRuntimeExecutionWorkerCommandMethod,
+function callRuntimeOwnerMethod(
+  runtimeOwner: ChatRuntimeOwnerExecutor,
+  method: ChatRuntimeOwnerExecutorCommandMethod,
   args: readonly unknown[],
 ): Promise<unknown> {
   switch (method) {
     case 'startTurn': {
-      const command = args[0] as Partial<ChatRuntimeExecutionWorkerStartTurnCommand> | null | undefined;
+      const command = args[0] as Partial<ChatRuntimeOwnerExecutorStartTurnCommand> | null | undefined;
       const request = command?.request;
       if (!request || typeof request !== 'object') {
         throw new Error('[AilyChat][RuntimeHost] startTurn requires a submit request.');
       }
-      return executionWorker.startTurn({
+      return runtimeOwner.startTurn({
         sessionId: command?.sessionId || request.sessionId,
         turnId: command?.turnId || request.activeResponseHandle,
         request: {
@@ -570,24 +570,24 @@ function callExecutionWorkerMethod(
           activeResponseHandle: command?.turnId || request.activeResponseHandle,
         },
         executionContext: command?.executionContext,
-      } as ChatRuntimeExecutionWorkerStartTurnCommand);
+      } as ChatRuntimeOwnerExecutorStartTurnCommand);
     }
     case 'stopTurn': {
-      const command = args[0] as Partial<ChatRuntimeExecutionWorkerStopTurnCommand> | null | undefined;
-      return executionWorker.stopTurn({
+      const command = args[0] as Partial<ChatRuntimeOwnerExecutorStopTurnCommand> | null | undefined;
+      return runtimeOwner.stopTurn({
         sessionId: command?.sessionId as ChatRuntimeHostSessionId,
         turnId: command?.turnId,
       });
     }
     case 'disposeSessionResources': {
-      const command = args[0] as Partial<ChatRuntimeExecutionWorkerDisposeSessionResourcesCommand> | null | undefined;
-      return executionWorker.disposeSessionResources({
+      const command = args[0] as Partial<ChatRuntimeOwnerExecutorDisposeSessionResourcesCommand> | null | undefined;
+      return runtimeOwner.disposeSessionResources({
         sessionId: command?.sessionId as ChatRuntimeHostSessionId,
       });
     }
     case 'resolveInteraction':
-      return executionWorker.resolveInteraction(
-        args[0] as ChatRuntimeExecutionWorkerResolveInteractionCommand,
+      return runtimeOwner.resolveInteraction(
+        args[0] as ChatRuntimeOwnerExecutorResolveInteractionCommand,
       );
   }
 }

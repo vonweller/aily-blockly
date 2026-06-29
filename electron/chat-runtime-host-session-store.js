@@ -439,7 +439,7 @@ class ChatRuntimeHostSessionStore {
     return clonePayload(nextState);
   }
 
-  cacheExecutionWorkerReportedSessionState(state) {
+  cacheRuntimeOwnerReportedSessionState(state) {
     const sessionId = normalizeSessionId(state && state.sessionId);
     if (!sessionId || !this.hasHostSession(sessionId)) {
       return null;
@@ -450,34 +450,34 @@ class ChatRuntimeHostSessionStore {
       return null;
     }
 
-    const workerState = clonePayload(state);
-    const workerRequestInProgress = workerState && workerState.requestInProgress === true;
-    const workerTranscriptRevision = Number(workerState && workerState.transcriptRevision) || 0;
+    const ownerState = clonePayload(state);
+    const ownerRequestInProgress = ownerState && ownerState.requestInProgress === true;
+    const ownerTranscriptRevision = Number(ownerState && ownerState.transcriptRevision) || 0;
     const previousTranscriptRevision = Number(previousState && previousState.transcriptRevision) || 0;
-    const transcriptRevision = Math.max(previousTranscriptRevision, workerTranscriptRevision);
+    const transcriptRevision = Math.max(previousTranscriptRevision, ownerTranscriptRevision);
     let nextState;
 
     if (previousState && previousState.requestInProgress === true) {
-      if (workerRequestInProgress) {
+      if (ownerRequestInProgress) {
         const previousActiveTurnId = this.normalizeActiveTurnId(previousState.activeTurnId);
-        const workerActiveTurnId = this.resolveExecutionWorkerVisibleTurnId({
+        const ownerActiveTurnId = this.resolveRuntimeOwnerVisibleTurnId({
           sessionId,
-          turnId: workerState.activeTurnId,
+          turnId: ownerState.activeTurnId,
         });
         let nextTranscriptRevision = transcriptRevision;
-        if (previousActiveTurnId && workerActiveTurnId && previousActiveTurnId !== workerActiveTurnId) {
-          const previousTurnHasProgress = this.hasExecutionWorkerTurnObservableProgress(sessionId, previousActiveTurnId);
+        if (previousActiveTurnId && ownerActiveTurnId && previousActiveTurnId !== ownerActiveTurnId) {
+          const previousTurnHasProgress = this.hasRuntimeOwnerTurnObservableProgress(sessionId, previousActiveTurnId);
           const migratedTranscript = previousTurnHasProgress
-            ? this.seedExecutionWorkerReportedActiveTurn({
+            ? this.seedRuntimeOwnerReportedActiveTurn({
               sessionId,
-              turnId: workerActiveTurnId,
+              turnId: ownerActiveTurnId,
               revision: transcriptRevision,
-              workerState,
+              ownerState,
             })
             : this.transcriptBuilder.replaceTurnId({
               sessionId,
               fromTurnId: previousActiveTurnId,
-              toTurnId: workerActiveTurnId,
+              toTurnId: ownerActiveTurnId,
               revision: transcriptRevision,
             });
           nextTranscriptRevision = Math.max(
@@ -487,43 +487,43 @@ class ChatRuntimeHostSessionStore {
         }
         nextState = {
           ...previousState,
-          activeTurnId: workerActiveTurnId || previousActiveTurnId || previousState.activeTurnId || null,
+          activeTurnId: ownerActiveTurnId || previousActiveTurnId || previousState.activeTurnId || null,
           transcriptRevision: nextTranscriptRevision,
-          selectedMode: workerState.selectedMode !== undefined
-            ? workerState.selectedMode ?? null
+          selectedMode: ownerState.selectedMode !== undefined
+            ? ownerState.selectedMode ?? null
             : previousState.selectedMode ?? null,
-          providerOptions: workerState.providerOptions !== undefined
-            ? workerState.providerOptions ?? null
+          providerOptions: ownerState.providerOptions !== undefined
+            ? ownerState.providerOptions ?? null
             : previousState.providerOptions ?? null,
           attachedViewIds: this.readAttachedViewIds(sessionId),
         };
       } else {
         nextState = {
           ...previousState,
-          status: this.normalizeExecutionWorkerSettledStatus(workerState.status),
+          status: this.normalizeRuntimeOwnerSettledStatus(ownerState.status),
           requestInProgress: false,
-          activeTurnId: this.normalizeActiveTurnId(workerState.activeTurnId) || null,
+          activeTurnId: this.normalizeActiveTurnId(ownerState.activeTurnId) || null,
           transcriptRevision,
-          selectedMode: workerState.selectedMode !== undefined
-            ? workerState.selectedMode ?? null
+          selectedMode: ownerState.selectedMode !== undefined
+            ? ownerState.selectedMode ?? null
             : previousState.selectedMode ?? null,
-          providerOptions: workerState.providerOptions !== undefined
-            ? workerState.providerOptions ?? null
+          providerOptions: ownerState.providerOptions !== undefined
+            ? ownerState.providerOptions ?? null
             : previousState.providerOptions ?? null,
           attachedViewIds: this.readAttachedViewIds(sessionId),
         };
       }
     } else {
-      if (workerRequestInProgress) {
-        const workerActiveTurnId = this.resolveExecutionWorkerVisibleTurnId({
+      if (ownerRequestInProgress) {
+        const ownerActiveTurnId = this.resolveRuntimeOwnerVisibleTurnId({
           sessionId,
-          turnId: workerState.activeTurnId,
+          turnId: ownerState.activeTurnId,
         });
-        const seededTranscript = this.seedExecutionWorkerReportedActiveTurn({
+        const seededTranscript = this.seedRuntimeOwnerReportedActiveTurn({
           sessionId,
-          turnId: workerActiveTurnId,
+          turnId: ownerActiveTurnId,
           revision: transcriptRevision,
-          workerState,
+          ownerState,
         });
         const nextTranscriptRevision = Math.max(
           transcriptRevision,
@@ -534,28 +534,28 @@ class ChatRuntimeHostSessionStore {
           sessionId,
           status: 'running',
           requestInProgress: true,
-          activeTurnId: workerActiveTurnId || null,
+          activeTurnId: ownerActiveTurnId || null,
           transcriptRevision: nextTranscriptRevision,
-          selectedMode: workerState.selectedMode !== undefined
-            ? workerState.selectedMode ?? null
+          selectedMode: ownerState.selectedMode !== undefined
+            ? ownerState.selectedMode ?? null
             : previousState.selectedMode ?? null,
-          providerOptions: workerState.providerOptions !== undefined
-            ? workerState.providerOptions ?? null
+          providerOptions: ownerState.providerOptions !== undefined
+            ? ownerState.providerOptions ?? null
             : previousState.providerOptions ?? null,
           attachedViewIds: this.readAttachedViewIds(sessionId),
         };
       } else {
       nextState = {
         ...previousState,
-        status: this.normalizeIdleExecutionWorkerStatus(previousState && previousState.status, workerState.status),
+        status: this.normalizeIdleRuntimeOwnerStatus(previousState && previousState.status, ownerState.status),
         requestInProgress: false,
         activeTurnId: null,
         transcriptRevision,
-        selectedMode: workerState.selectedMode !== undefined
-          ? workerState.selectedMode ?? null
+        selectedMode: ownerState.selectedMode !== undefined
+          ? ownerState.selectedMode ?? null
           : previousState.selectedMode ?? null,
-        providerOptions: workerState.providerOptions !== undefined
-          ? workerState.providerOptions ?? null
+        providerOptions: ownerState.providerOptions !== undefined
+          ? ownerState.providerOptions ?? null
           : previousState.providerOptions ?? null,
         attachedViewIds: this.readAttachedViewIds(sessionId),
       };
@@ -574,14 +574,14 @@ class ChatRuntimeHostSessionStore {
     return this.transcriptBuilder.acceptTranscriptSnapshot(transcript);
   }
 
-  cacheExecutionWorkerTurnSnapshot(payload) {
+  cacheRuntimeOwnerTurnSnapshot(payload) {
     const sessionId = payload && payload.sessionId;
     const turnId = payload && payload.turnId;
     const transcript = this.transcriptBuilder.acceptTurnSnapshot({
       sessionId,
       turnId,
       revision: payload && payload.revision,
-      turn: this.retargetExecutionWorkerTurnSnapshot(payload && payload.turn, turnId),
+      turn: this.retargetRuntimeOwnerTurnSnapshot(payload && payload.turn, turnId),
     });
     return transcript
       ? {
@@ -593,7 +593,7 @@ class ChatRuntimeHostSessionStore {
       : null;
   }
 
-  cacheExecutionWorkerRenderEvent(payload) {
+  cacheRuntimeOwnerRenderEvent(payload) {
     const sessionId = normalizeSessionId(payload && payload.sessionId);
     const renderEvent = payload && payload.renderEvent && typeof payload.renderEvent === 'object'
       ? payload.renderEvent
@@ -603,7 +603,7 @@ class ChatRuntimeHostSessionStore {
       turnId: payload && payload.turnId,
       revision: payload && payload.revision,
       request: (payload && payload.request) || this.readActiveSubmittedRequest(sessionId),
-      event: this.retargetExecutionWorkerRenderEvent(renderEvent, payload && payload.turnId),
+      event: this.retargetRuntimeOwnerRenderEvent(renderEvent, payload && payload.turnId),
     });
     const transcriptEvent = transcript
       ? {
@@ -1127,60 +1127,60 @@ class ChatRuntimeHostSessionStore {
     }
   }
 
-  cacheExecutionWorkerEvent(payload) {
+  cacheRuntimeOwnerEvent(payload) {
     if (!payload || typeof payload !== 'object') {
       return null;
     }
     switch (payload.kind) {
       case 'turnProgress':
-        return this.cacheExecutionWorkerTurnProgress(payload);
+        return this.cacheRuntimeOwnerTurnProgress(payload);
       case 'turnInteractionRequested':
-        return this.cacheExecutionWorkerTurnInteractionRequested(payload);
+        return this.cacheRuntimeOwnerTurnInteractionRequested(payload);
       case 'turnError':
-        return this.cacheExecutionWorkerTurnError(payload);
+        return this.cacheRuntimeOwnerTurnError(payload);
       case 'turnCompleted':
-        return this.cacheExecutionWorkerTurnCompleted(payload);
+        return this.cacheRuntimeOwnerTurnCompleted(payload);
       default:
         return null;
     }
   }
 
-  cacheExecutionWorkerTurnProgress(payload) {
+  cacheRuntimeOwnerTurnProgress(payload) {
     const sessionId = normalizeSessionId(payload && payload.sessionId);
     const payloadTurnId = this.normalizeActiveTurnId(payload && payload.turnId);
     const turnSnapshotId = this.readCanonicalTurnSnapshotId(payload && payload.turn);
     const renderEventTurnId = this.readCanonicalRenderEventTurnId(payload && payload.renderEvent);
     const turnId = turnSnapshotId || renderEventTurnId || payloadTurnId;
-    const visibleTurnId = this.resolveExecutionWorkerVisibleTurnId({
+    const visibleTurnId = this.resolveRuntimeOwnerVisibleTurnId({
       sessionId,
       turnId,
       request: payload && payload.request,
       turn: payload && payload.turn,
     });
-    if (!this.isCurrentExecutionWorkerTurn(sessionId, payloadTurnId)
-      && !this.isCurrentExecutionWorkerTurn(sessionId, turnId)
-      && !this.isCurrentExecutionWorkerTurn(sessionId, visibleTurnId)) {
-      if (payload && payload.renderEvent && this.acceptExecutionWorkerServiceOwnedResponseProgress({
+    if (!this.isCurrentRuntimeOwnerTurn(sessionId, payloadTurnId)
+      && !this.isCurrentRuntimeOwnerTurn(sessionId, turnId)
+      && !this.isCurrentRuntimeOwnerTurn(sessionId, visibleTurnId)) {
+      if (payload && payload.renderEvent && this.acceptRuntimeOwnerServiceOwnedResponseProgress({
         sessionId,
         turnId: visibleTurnId || renderEventTurnId || turnId,
         request: payload.request,
         revision: payload.revision,
         renderEvent: payload.renderEvent,
       })) {
-        return this.cacheExecutionWorkerRenderEvent({
+        return this.cacheRuntimeOwnerRenderEvent({
           ...payload,
           sessionId,
           turnId: visibleTurnId || renderEventTurnId || turnId,
         });
       }
-      if (payload && payload.turn && this.acceptExecutionWorkerServiceOwnedResponseProgress({
+      if (payload && payload.turn && this.acceptRuntimeOwnerServiceOwnedResponseProgress({
         sessionId,
         turnId: visibleTurnId || turnSnapshotId || turnId,
         request: payload.request,
         revision: payload.revision,
         turn: payload.turn,
       })) {
-        return this.cacheExecutionWorkerTurnSnapshot({
+        return this.cacheRuntimeOwnerTurnSnapshot({
           ...payload,
           sessionId,
           turnId: visibleTurnId || turnSnapshotId || turnId,
@@ -1192,7 +1192,7 @@ class ChatRuntimeHostSessionStore {
         && event.state
         && event.state.requestInProgress === true
         && this.normalizeActiveTurnId(event.state.activeTurnId) === payloadTurnId) {
-        const state = this.cacheExecutionWorkerReportedSessionState({
+        const state = this.cacheRuntimeOwnerReportedSessionState({
           ...event.state,
           sessionId,
           activeTurnId: visibleTurnId || payloadTurnId,
@@ -1206,7 +1206,7 @@ class ChatRuntimeHostSessionStore {
     }
     if (payload.turn) {
       if (turnSnapshotId && turnSnapshotId !== payloadTurnId) {
-        this.acceptExecutionWorkerServiceOwnedResponseProgress({
+        this.acceptRuntimeOwnerServiceOwnedResponseProgress({
           sessionId,
           turnId: visibleTurnId || turnSnapshotId,
           request: payload.request,
@@ -1214,7 +1214,7 @@ class ChatRuntimeHostSessionStore {
           revision: payload.revision,
         });
       }
-      return this.cacheExecutionWorkerTurnSnapshot({
+      return this.cacheRuntimeOwnerTurnSnapshot({
         ...payload,
         sessionId,
         turnId: visibleTurnId || turnSnapshotId || turnId,
@@ -1222,7 +1222,7 @@ class ChatRuntimeHostSessionStore {
     }
     if (payload.renderEvent) {
       if (renderEventTurnId && renderEventTurnId !== payloadTurnId) {
-        this.acceptExecutionWorkerServiceOwnedResponseProgress({
+        this.acceptRuntimeOwnerServiceOwnedResponseProgress({
           sessionId,
           turnId: visibleTurnId || renderEventTurnId,
           request: payload.request,
@@ -1230,7 +1230,7 @@ class ChatRuntimeHostSessionStore {
           renderEvent: payload.renderEvent,
         });
       }
-      return this.cacheExecutionWorkerRenderEvent({
+      return this.cacheRuntimeOwnerRenderEvent({
         ...payload,
         sessionId,
         turnId: visibleTurnId || renderEventTurnId || turnId,
@@ -1246,7 +1246,7 @@ class ChatRuntimeHostSessionStore {
         if (!event.state || event.state.requestInProgress !== true) {
           return null;
         }
-        const state = this.cacheExecutionWorkerReportedSessionState({
+        const state = this.cacheRuntimeOwnerReportedSessionState({
           ...event.state,
           sessionId,
           activeTurnId: visibleTurnId || turnId,
@@ -1361,10 +1361,10 @@ class ChatRuntimeHostSessionStore {
     return clonePayload(normalizedEvent);
   }
 
-  cacheExecutionWorkerTurnInteractionRequested(payload) {
+  cacheRuntimeOwnerTurnInteractionRequested(payload) {
     const sessionId = normalizeSessionId(payload && payload.sessionId);
     const turnId = this.normalizeActiveTurnId(payload && payload.turnId);
-    if (!this.isCurrentExecutionWorkerTurn(sessionId, turnId)) {
+    if (!this.isCurrentRuntimeOwnerTurn(sessionId, turnId)) {
       return null;
     }
     const interaction = payload && payload.interaction && payload.interaction.sessionId === sessionId
@@ -1385,10 +1385,10 @@ class ChatRuntimeHostSessionStore {
     ].filter(Boolean);
   }
 
-  cacheExecutionWorkerTurnError(payload) {
+  cacheRuntimeOwnerTurnError(payload) {
     const sessionId = normalizeSessionId(payload && payload.sessionId);
     const turnId = this.normalizeActiveTurnId(payload && payload.turnId);
-    if (!this.isCurrentExecutionWorkerTurn(sessionId, turnId)) {
+    if (!this.isCurrentRuntimeOwnerTurn(sessionId, turnId)) {
       return null;
     }
     const error = payload && payload.error && typeof payload.error === 'object'
@@ -1406,7 +1406,7 @@ class ChatRuntimeHostSessionStore {
         revision: Number(payload.revision) || Number(failedState.transcriptRevision) || 0,
         error: {
           code: typeof error.code === 'string' ? error.code : undefined,
-          message: typeof error.message === 'string' ? error.message : 'Execution worker turn failed.',
+          message: typeof error.message === 'string' ? error.message : 'Runtime owner turn failed.',
           retryable: typeof error.retryable === 'boolean' ? error.retryable : undefined,
         },
       },
@@ -1423,21 +1423,21 @@ class ChatRuntimeHostSessionStore {
     return events.filter(Boolean);
   }
 
-  cacheExecutionWorkerTurnCompleted(payload) {
+  cacheRuntimeOwnerTurnCompleted(payload) {
     const sessionId = normalizeSessionId(payload && payload.sessionId);
     const payloadTurnId = this.normalizeActiveTurnId(payload && payload.turnId);
     const turnSnapshotId = this.readCanonicalTurnSnapshotId(payload && payload.turn);
     const turnId = turnSnapshotId || payloadTurnId;
-    const visibleTurnId = this.resolveExecutionWorkerVisibleTurnId({
+    const visibleTurnId = this.resolveRuntimeOwnerVisibleTurnId({
       sessionId,
       turnId,
       request: payload && payload.request,
       turn: payload && payload.turn,
     });
-    if (!this.isCurrentExecutionWorkerTurn(sessionId, payloadTurnId)
-      && !this.isCurrentExecutionWorkerTurn(sessionId, turnId)
-      && !this.isCurrentExecutionWorkerTurn(sessionId, visibleTurnId)) {
-      if (!(payload && payload.turn && this.acceptExecutionWorkerServiceOwnedResponseProgress({
+    if (!this.isCurrentRuntimeOwnerTurn(sessionId, payloadTurnId)
+      && !this.isCurrentRuntimeOwnerTurn(sessionId, turnId)
+      && !this.isCurrentRuntimeOwnerTurn(sessionId, visibleTurnId)) {
+      if (!(payload && payload.turn && this.acceptRuntimeOwnerServiceOwnedResponseProgress({
         sessionId,
         turnId: visibleTurnId || turnSnapshotId || turnId,
         request: payload.request,
@@ -1451,12 +1451,12 @@ class ChatRuntimeHostSessionStore {
     const hasInteraction = !!(payload && payload.interaction && payload.interaction.sessionId === sessionId);
     if (!hasFinalTurn
       && !hasInteraction
-      && !this.hasExecutionWorkerTurnObservableProgress(sessionId, visibleTurnId || turnId)) {
+      && !this.hasRuntimeOwnerTurnObservableProgress(sessionId, visibleTurnId || turnId)) {
       return null;
     }
     const events = [];
     if (payload.turn) {
-      const transcriptEvent = this.cacheExecutionWorkerTurnSnapshot({
+      const transcriptEvent = this.cacheRuntimeOwnerTurnSnapshot({
         ...payload,
         sessionId,
         turnId: visibleTurnId || turnSnapshotId || turnId,
@@ -1481,7 +1481,7 @@ class ChatRuntimeHostSessionStore {
       Number(payload.state && payload.state.transcriptRevision) || 0,
       events.reduce((maxRevision, event) => Math.max(maxRevision, Number(event && event.revision) || 0), 0),
     );
-    const workerState = payload.state && typeof payload.state === 'object'
+    const ownerState = payload.state && typeof payload.state === 'object'
       ? {
           ...payload.state,
           sessionId,
@@ -1497,7 +1497,7 @@ class ChatRuntimeHostSessionStore {
           activeTurnId: null,
           transcriptRevision,
         };
-    const state = this.cacheExecutionWorkerReportedSessionState(workerState);
+    const state = this.cacheRuntimeOwnerReportedSessionState(ownerState);
     if (state) {
       events.push(this.buildSessionStateEvent('runtime-status', sessionId));
     }
@@ -1508,13 +1508,13 @@ class ChatRuntimeHostSessionStore {
     switch (method) {
       case 'attachView':
         this.attachView(args && args[0], args && args[1], null, args && args[2]);
-        this.cacheExecutionWorkerReportedSessionState(result);
+        this.cacheRuntimeOwnerReportedSessionState(result);
         return;
       case 'readSessionState':
         this.cacheSessionState(result);
         return;
       case 'submitTurn':
-        this.cacheExecutionWorkerReportedSessionState(result);
+        this.cacheRuntimeOwnerReportedSessionState(result);
         return;
       case 'detachView':
         this.detachView(args && args[0], args && args[1]);
@@ -1591,7 +1591,7 @@ class ChatRuntimeHostSessionStore {
     }
   }
 
-  readExecutionWorkerUnavailableHostCommandResult(method, args) {
+  readRuntimeOwnerUnavailableHostCommandResult(method, args) {
     if (method === 'attachView') {
       return this.attachView(args && args[0], args && args[1], null, args && args[2]);
     }
@@ -1930,9 +1930,9 @@ class ChatRuntimeHostSessionStore {
       : '';
   }
 
-  acceptExecutionWorkerServiceOwnedResponseProgress({ sessionId, turnId, request, revision, renderEvent, turn }) {
+  acceptRuntimeOwnerServiceOwnedResponseProgress({ sessionId, turnId, request, revision, renderEvent, turn }) {
     const normalizedSessionId = normalizeSessionId(sessionId);
-    const visibleTurnId = this.resolveExecutionWorkerVisibleTurnId({
+    const visibleTurnId = this.resolveRuntimeOwnerVisibleTurnId({
       sessionId: normalizedSessionId,
       turnId,
       request,
@@ -1986,7 +1986,7 @@ class ChatRuntimeHostSessionStore {
         : this.transcriptBuilder.seedSubmittedTurn({
           sessionId: normalizedSessionId,
           turnId: visibleTurnId,
-          request: this.buildExecutionWorkerServiceOwnedResponseRequest({
+          request: this.buildRuntimeOwnerServiceOwnedResponseRequest({
             sessionId: normalizedSessionId,
             request: effectiveRequest,
             turn,
@@ -2023,7 +2023,7 @@ class ChatRuntimeHostSessionStore {
     return true;
   }
 
-  buildExecutionWorkerServiceOwnedResponseRequest({ sessionId, request, turn }) {
+  buildRuntimeOwnerServiceOwnedResponseRequest({ sessionId, request, turn }) {
     const sourceRequest = request && typeof request === 'object' ? request : {};
     const turnRequest = turn && turn.request && typeof turn.request === 'object'
       ? turn.request
@@ -2080,35 +2080,35 @@ class ChatRuntimeHostSessionStore {
     return request ? clonePayload(request) : null;
   }
 
-  resolveExecutionWorkerVisibleTurnId({ sessionId, turnId, request, turn }) {
+  resolveRuntimeOwnerVisibleTurnId({ sessionId, turnId, request, turn }) {
     const normalizedSessionId = normalizeSessionId(sessionId);
-    const workerTurnId = this.normalizeActiveTurnId(turnId);
-    if (!normalizedSessionId || !workerTurnId) {
-      return workerTurnId;
+    const ownerTurnId = this.normalizeActiveTurnId(turnId);
+    if (!normalizedSessionId || !ownerTurnId) {
+      return ownerTurnId;
     }
     const state = this.buildSessionState(normalizedSessionId);
     const activeTurnId = this.normalizeActiveTurnId(state && state.activeTurnId);
     if (!activeTurnId || state.requestInProgress !== true) {
-      return workerTurnId;
+      return ownerTurnId;
     }
-    if (activeTurnId === workerTurnId) {
+    if (activeTurnId === ownerTurnId) {
       return activeTurnId;
     }
     const activeRequest = this.activeSubmittedRequests.get(normalizedSessionId);
     if (!activeRequest) {
-      return this.hasExecutionWorkerTurnObservableProgress(normalizedSessionId, workerTurnId)
-        ? workerTurnId
+      return this.hasRuntimeOwnerTurnObservableProgress(normalizedSessionId, ownerTurnId)
+        ? ownerTurnId
         : activeTurnId;
     }
     const activeRequestId = this.readSubmitRequestId(activeRequest);
-    const workerRequestId = this.readSubmitRequestId(request) || this.readTurnRequestId(turn);
-    if (!workerRequestId || !activeRequestId || workerRequestId === activeRequestId) {
+    const ownerRequestId = this.readSubmitRequestId(request) || this.readTurnRequestId(turn);
+    if (!ownerRequestId || !activeRequestId || ownerRequestId === activeRequestId) {
       return activeTurnId;
     }
-    return workerTurnId;
+    return ownerTurnId;
   }
 
-  retargetExecutionWorkerTurnSnapshot(turn, visibleTurnId) {
+  retargetRuntimeOwnerTurnSnapshot(turn, visibleTurnId) {
     const normalizedTurnId = this.normalizeActiveTurnId(visibleTurnId);
     if (!turn || typeof turn !== 'object' || !normalizedTurnId) {
       return turn;
@@ -2124,7 +2124,7 @@ class ChatRuntimeHostSessionStore {
     return nextTurn;
   }
 
-  retargetExecutionWorkerRenderEvent(event, visibleTurnId) {
+  retargetRuntimeOwnerRenderEvent(event, visibleTurnId) {
     const normalizedTurnId = this.normalizeActiveTurnId(visibleTurnId);
     if (!event || typeof event !== 'object' || !normalizedTurnId) {
       return event;
@@ -2193,7 +2193,7 @@ class ChatRuntimeHostSessionStore {
     return null;
   }
 
-  hasExecutionWorkerTurnObservableProgress(sessionId, turnId) {
+  hasRuntimeOwnerTurnObservableProgress(sessionId, turnId) {
     const normalizedSessionId = normalizeSessionId(sessionId);
     const normalizedTurnId = this.normalizeActiveTurnId(turnId);
     if (!normalizedSessionId || !normalizedTurnId) {
@@ -2206,7 +2206,7 @@ class ChatRuntimeHostSessionStore {
     return this.turnHasObservableProgress(turn);
   }
 
-  seedExecutionWorkerReportedActiveTurn({ sessionId, turnId, revision, workerState }) {
+  seedRuntimeOwnerReportedActiveTurn({ sessionId, turnId, revision, ownerState }) {
     const normalizedSessionId = normalizeSessionId(sessionId);
     const normalizedTurnId = this.normalizeActiveTurnId(turnId);
     if (!normalizedSessionId || !normalizedTurnId) {
@@ -2225,10 +2225,10 @@ class ChatRuntimeHostSessionStore {
       turnId: normalizedTurnId,
       request: {
         sessionId: normalizedSessionId,
-        requestText: typeof workerState?.requestText === 'string' ? workerState.requestText : '',
-        displayText: typeof workerState?.displayText === 'string' ? workerState.displayText : undefined,
-        selectedMode: workerState && workerState.selectedMode !== undefined ? workerState.selectedMode : undefined,
-        providerOptions: workerState && workerState.providerOptions !== undefined ? workerState.providerOptions : undefined,
+        requestText: typeof ownerState?.requestText === 'string' ? ownerState.requestText : '',
+        displayText: typeof ownerState?.displayText === 'string' ? ownerState.displayText : undefined,
+        selectedMode: ownerState && ownerState.selectedMode !== undefined ? ownerState.selectedMode : undefined,
+        providerOptions: ownerState && ownerState.providerOptions !== undefined ? ownerState.providerOptions : undefined,
       },
       revision,
       timestamp: Date.now(),
@@ -2266,7 +2266,7 @@ class ChatRuntimeHostSessionStore {
     return false;
   }
 
-  isCurrentExecutionWorkerTurn(sessionId, turnId) {
+  isCurrentRuntimeOwnerTurn(sessionId, turnId) {
     const normalizedSessionId = normalizeSessionId(sessionId);
     const normalizedTurnId = this.normalizeActiveTurnId(turnId);
     if (!normalizedSessionId || !normalizedTurnId) {
@@ -2286,17 +2286,17 @@ class ChatRuntimeHostSessionStore {
       || status === 'cancelled';
   }
 
-  normalizeExecutionWorkerSettledStatus(status) {
+  normalizeRuntimeOwnerSettledStatus(status) {
     return typeof status === 'string' && status.trim().length > 0
       ? status.trim()
       : 'idle';
   }
 
-  normalizeIdleExecutionWorkerStatus(previousStatus, workerStatus) {
+  normalizeIdleRuntimeOwnerStatus(previousStatus, ownerStatus) {
     if (typeof previousStatus === 'string' && previousStatus.trim().length > 0) {
       return previousStatus;
     }
-    return this.normalizeExecutionWorkerSettledStatus(workerStatus);
+    return this.normalizeRuntimeOwnerSettledStatus(ownerStatus);
   }
 
   buildSessionStateEvent(kind, sessionId) {

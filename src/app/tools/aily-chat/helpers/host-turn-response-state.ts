@@ -15,7 +15,7 @@ import type {
   CanonicalRenderItemScope,
   CanonicalRenderLifecycleEvent,
 } from '../core/render-event-item-lifecycle';
-import { collectMainTurnResponseText, turnResponsePartToChatParts } from '../core/turn-response-part-mapper';
+import { collectMainTurnResponseText, isSubagentScopedTurnResponsePart, turnResponsePartToChatParts } from '../core/turn-response-part-mapper';
 import {
   buildDialogTurnContext,
   type DialogTurnContext,
@@ -3959,7 +3959,7 @@ function deriveHostStreamResultText(
   nextParts: readonly TurnResponsePart[],
 ): string {
   let resultText = previousResultText ?? '';
-  if (event.part.type !== 'markdown' || isSubagentScopedHostStreamResponsePart(event.part)) {
+  if (event.part.type !== 'markdown' || isSubagentScopedTurnResponsePart(event.part)) {
     return resultText;
   }
 
@@ -3972,13 +3972,6 @@ function deriveHostStreamResultText(
   }
 
   return collectMainTurnResponseText(nextParts);
-}
-
-function isSubagentScopedHostStreamResponsePart(part: TurnResponsePart): boolean {
-  const metadata = (part as { readonly metadata?: unknown }).metadata;
-  return !!metadata
-    && typeof metadata === 'object'
-    && (metadata as Record<string, unknown>)['sourceAgentRole'] === 'subagent';
 }
 
 function mergeHostStreamResponsePart(

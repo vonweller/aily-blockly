@@ -9,13 +9,13 @@ import {
 } from '../core/chat-agent-runtime-mode';
 import { normalizeChatSelectedMode } from '../core/chat-mode';
 import type {
-  ChatRuntimeExecutionWorker,
-  ChatRuntimeExecutionWorkerDisposeSessionResourcesCommand,
-  ChatRuntimeExecutionWorkerEvent,
-  ChatRuntimeExecutionWorkerResolveInteractionCommand,
-  ChatRuntimeExecutionWorkerRenderEventProgress,
-  ChatRuntimeExecutionWorkerStartTurnCommand,
-  ChatRuntimeExecutionWorkerStopTurnCommand,
+  ChatRuntimeOwnerExecutor,
+  ChatRuntimeOwnerExecutorDisposeSessionResourcesCommand,
+  ChatRuntimeOwnerExecutorEvent,
+  ChatRuntimeOwnerExecutorResolveInteractionCommand,
+  ChatRuntimeOwnerExecutorRenderEventProgress,
+  ChatRuntimeOwnerExecutorStartTurnCommand,
+  ChatRuntimeOwnerExecutorStopTurnCommand,
   ChatRuntimeHostEvent,
   ChatRuntimeHostEventSubscription,
   ChatRuntimeHostInteractionSnapshot,
@@ -54,7 +54,7 @@ import {
  * as the runtime constructor.
  */
 @Injectable()
-export class ChatRuntimeOwnerService implements ChatRuntimeExecutionWorker, ChatRuntimeOwnerContextBinderPort {
+export class ChatRuntimeOwnerService implements ChatRuntimeOwnerExecutor, ChatRuntimeOwnerContextBinderPort {
   private readonly runtimeController = inject<ChatRuntimeOwnerRuntimeControllerPort>(CHAT_RUNTIME_OWNER_RUNTIME_CONTROLLER);
   private readonly runtimeInteractionHost = inject<ChatRuntimeOwnerInteractionHostPort>(
     CHAT_RUNTIME_OWNER_INTERACTION_HOST,
@@ -69,7 +69,7 @@ export class ChatRuntimeOwnerService implements ChatRuntimeExecutionWorker, Chat
   private sourceContext: LexOwnerContext | null = null;
   private owner: LexOwnerFacade | null = null;
   private readonly eventListeners = new Set<(
-    event: ChatRuntimeHostEvent | ChatRuntimeExecutionWorkerRenderEventProgress | ChatRuntimeExecutionWorkerEvent
+    event: ChatRuntimeHostEvent | ChatRuntimeOwnerExecutorRenderEventProgress | ChatRuntimeOwnerExecutorEvent
   ) => void>();
   private readonly pendingLiveTranscriptSessionIds = new Set<ChatRuntimeHostSessionId>();
   private readonly transcriptRevisions = new Map<ChatRuntimeHostSessionId, number>();
@@ -107,7 +107,7 @@ export class ChatRuntimeOwnerService implements ChatRuntimeExecutionWorker, Chat
     return this.owner;
   }
 
-  async startTurn(command: ChatRuntimeExecutionWorkerStartTurnCommand): Promise<ChatRuntimeHostSessionState> {
+  async startTurn(command: ChatRuntimeOwnerExecutorStartTurnCommand): Promise<ChatRuntimeHostSessionState> {
     const request = command?.request;
     if (!request || typeof request !== 'object') {
       throw new Error('[AilyChat][RuntimeOwner] startTurn requires a submit request.');
@@ -267,7 +267,7 @@ export class ChatRuntimeOwnerService implements ChatRuntimeExecutionWorker, Chat
     if (!turnId) {
       throw new Error('[AilyChat][RuntimeOwner] protocol truncation removeFrom requires a turn id.');
     }
-    owner.turns.removeFrom(turnId);
+    owner.turns.removeFrom(this.resolveSubmittedTurnIdOwnerAlias(sessionId, turnId));
     owner.hydrateTurnResponses(sessionId, retainedTurnResponses, { visibility: 'visibleAttach' });
   }
 
@@ -285,11 +285,22 @@ export class ChatRuntimeOwnerService implements ChatRuntimeExecutionWorker, Chat
       return [];
     }
 
-    const retainedTurnIdSet = new Set(retainedTurnIds);
+    const retainedTurnIdSet = new Set<string>();
+    for (const retainedTurnId of retainedTurnIds) {
+      retainedTurnIdSet.add(retainedTurnId);
+      retainedTurnIdSet.add(this.resolveSubmittedTurnIdOwnerAlias(sessionId, retainedTurnId));
+    }
     const currentTurnResponses = owner.getTurnResponses(sessionId);
     return currentTurnResponses.filter(turn => {
       const turnId = typeof turn?.turnId === 'string' ? turn.turnId.trim() : '';
-      return retainedTurnIdSet.has(turnId);
+      return retainedTurnIdSet.has(turnId)
+        || retainedTurnIdSet.has(this.resolveSubmittedTurnIdAlias(sessionId, turnId));
+    }).map(turn => {
+      const turnId = typeof turn?.turnId === 'string' ? turn.turnId.trim() : '';
+      const canonicalTurnId = turnId ? this.resolveSubmittedTurnIdAlias(sessionId, turnId) : '';
+      return canonicalTurnId && canonicalTurnId !== turnId
+        ? this.retargetTurnResponseTurn(turn, canonicalTurnId)
+        : turn;
     });
   }
 
@@ -337,7 +348,6 @@ export class ChatRuntimeOwnerService implements ChatRuntimeExecutionWorker, Chat
       turnResponses,
       terminalTranscriptProjection('execution'),
     );
-    this.emitServiceOwnedResponseModelProgress(sessionId, turnResponses);
   }
 
   private readAuthoritativeServiceOwnedTurnResponses(sessionId: ChatRuntimeHostSessionId): readonly TurnResponseTurn[] | null {
@@ -442,14 +452,14 @@ export class ChatRuntimeOwnerService implements ChatRuntimeExecutionWorker, Chat
       readonly resultText?: unknown;
     } | undefined;
     const resultTextLength = typeof response?.resultText === 'string' ? response.resultText.length : 0;
-    console.info('[AilyChat][RuntimeOwnerTerminalModel]', {
+    console.info('[AilyChat][RuntimeOwnerTerminalModel]', JSON.stringify({
       sessionId,
       source,
       turns: turnResponses.length,
       lastTurnId: lastTurn?.turnId ?? null,
       lastParts: Array.isArray(response?.parts) ? response.parts.length : 0,
       lastTextLength: resultTextLength,
-    });
+    }));
   }
 
   private emitServiceOwnedResponseModelProgress(
@@ -460,7 +470,7 @@ export class ChatRuntimeOwnerService implements ChatRuntimeExecutionWorker, Chat
     if (!turn?.turnId) {
       return;
     }
-    const event: ChatRuntimeExecutionWorkerEvent = {
+    const event: ChatRuntimeOwnerExecutorEvent = {
       kind: 'turnProgress',
       sessionId,
       turnId: turn.turnId,
@@ -611,6 +621,23 @@ export class ChatRuntimeOwnerService implements ChatRuntimeExecutionWorker, Chat
     turnId: string,
   ): string {
     return this.submittedTurnIdAliases.get(sessionId)?.get(turnId) ?? turnId;
+  }
+
+  private resolveSubmittedTurnIdOwnerAlias(
+    sessionId: ChatRuntimeHostSessionId,
+    turnId: string,
+  ): string {
+    const aliases = this.submittedTurnIdAliases.get(sessionId);
+    if (!aliases || aliases.size === 0) {
+      return turnId;
+    }
+
+    for (const [sourceTurnId, targetTurnId] of aliases) {
+      if (targetTurnId === turnId) {
+        return sourceTurnId;
+      }
+    }
+    return turnId;
   }
 
   private normalizeSubmittedTurnId(value: unknown): string {
@@ -809,7 +836,7 @@ export class ChatRuntimeOwnerService implements ChatRuntimeExecutionWorker, Chat
     }
   }
 
-  async stopTurn(command: ChatRuntimeExecutionWorkerStopTurnCommand): Promise<void> {
+  async stopTurn(command: ChatRuntimeOwnerExecutorStopTurnCommand): Promise<void> {
     const normalizedSessionId = this.normalizeSessionId(command?.sessionId);
     const owner = this.readOwner();
     try {
@@ -854,7 +881,7 @@ export class ChatRuntimeOwnerService implements ChatRuntimeExecutionWorker, Chat
   }
 
   async disposeSessionResources(
-    command: ChatRuntimeExecutionWorkerDisposeSessionResourcesCommand,
+    command: ChatRuntimeOwnerExecutorDisposeSessionResourcesCommand,
   ): Promise<void> {
     this.disposeRuntimeSessionResources(command?.sessionId);
   }
@@ -868,7 +895,7 @@ export class ChatRuntimeOwnerService implements ChatRuntimeExecutionWorker, Chat
   }
 
   async resolveInteraction(
-    command: ChatRuntimeExecutionWorkerResolveInteractionCommand,
+    command: ChatRuntimeOwnerExecutorResolveInteractionCommand,
   ): Promise<ChatRuntimeHostInteractionSnapshot | null> {
     const request = command?.request;
     if (!request || typeof request !== 'object') {
@@ -925,7 +952,7 @@ export class ChatRuntimeOwnerService implements ChatRuntimeExecutionWorker, Chat
 
   onEvent(
     listener: (
-      event: ChatRuntimeHostEvent | ChatRuntimeExecutionWorkerRenderEventProgress | ChatRuntimeExecutionWorkerEvent
+      event: ChatRuntimeHostEvent | ChatRuntimeOwnerExecutorRenderEventProgress | ChatRuntimeOwnerExecutorEvent
     ) => void,
   ): ChatRuntimeHostEventSubscription {
     this.eventListeners.add(listener);
@@ -995,7 +1022,7 @@ export class ChatRuntimeOwnerService implements ChatRuntimeExecutionWorker, Chat
       this.registerSubmittedTurnIdAlias(normalizedSessionId, eventTurnId, requestTurnId);
     }
     const normalizedRenderEvent = this.retargetRenderEventTurnId(renderEvent, turnId);
-    const event: ChatRuntimeExecutionWorkerRenderEventProgress = {
+    const event: ChatRuntimeOwnerExecutorRenderEventProgress = {
       kind: 'render-event',
       sessionId: normalizedSessionId,
       turnId,

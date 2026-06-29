@@ -28,7 +28,7 @@ import {
   getTurnResponseParticipant,
   resolveInitialResponseSlashCommand,
 } from '../core/turn-response-stream-contract';
-import { turnResponsePartToChatParts } from '../core/turn-response-part-mapper';
+import { isSubagentScopedTurnResponsePart, turnResponsePartToChatParts } from '../core/turn-response-part-mapper';
 import {
   type HostResponseClearToPreviousToolInvocationReason,
   type IHostStreamListener,
@@ -972,7 +972,7 @@ function deriveLiveHostStreamResultText(
   let resultText = turn.response.resultText ?? '';
   for (const change of partChanges) {
     const currentPart = change.part;
-    if (currentPart?.type !== 'markdown' || isSubagentScopedHostStreamPart(currentPart)) {
+    if (currentPart?.type !== 'markdown' || isSubagentScopedTurnResponsePart(currentPart)) {
       continue;
     }
 
@@ -995,13 +995,6 @@ function deriveLiveHostStreamResultText(
   }
 
   return resultText;
-}
-
-function isSubagentScopedHostStreamPart(part: TurnResponseTurn['response']['parts'][number]): boolean {
-  const metadata = (part as { readonly metadata?: unknown }).metadata;
-  return !!metadata
-    && typeof metadata === 'object'
-    && (metadata as Record<string, unknown>)['sourceAgentRole'] === 'subagent';
 }
 
 function getTurnResponseModelName(turn: TurnResponseTurn | null | undefined): string | undefined {

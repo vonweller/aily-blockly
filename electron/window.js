@@ -4,7 +4,6 @@ const { requestWindowAttention } = require('./window-attention');
 const { killCmdProcess, getActiveCmdProcesses } = require('./cmd');
 const {
     registerChatRuntimeHostIpc,
-    startChatRuntimeExecutionWorkerWindow,
 } = require('./chat-runtime-host');
 const { exec, execSync } = require('child_process');
 const path = require('path');
@@ -14,10 +13,10 @@ const CODE_VIEWER_STATE_CHANNEL = 'blockly-code-viewer-state';
 const CODE_VIEWER_STATE_UPDATE_CHANNEL = 'blockly-code-viewer-state-update';
 const CODE_VIEWER_STATE_GET_CHANNEL = 'blockly-code-viewer-state-get';
 
-/** 后台预缓冲子窗口数量：1 个待用 + 1 个备用 */
+/** 后台预缓冲子窗口数量�? 个待�?+ 1 个备�?*/
 const SUB_WINDOW_POOL_SIZE = 2;
 
-/** 子窗口最小尺寸（4:3，约为原 800×600 的 80%） */
+/** 子窗口最小尺寸（4:3，约为原 800×600 �?80%�?*/
 const SUB_WINDOW_MIN_WIDTH = 640;
 const SUB_WINDOW_MIN_HEIGHT = 480;
 const CHILD_TOOL_RELEASE_GRACE_MS = 15000;
@@ -57,11 +56,11 @@ function applySubWindowMinimumSize(win) {
     try {
         win.setMinimumSize(SUB_WINDOW_MIN_WIDTH, SUB_WINDOW_MIN_HEIGHT);
     } catch (e) {
-        console.warn('[SubWindowPool] 子窗口最小尺寸设置失败:', e.message);
+        console.warn('[SubWindowPool] 子窗口最小尺寸设置失�?', e.message);
     }
 }
 
-/** 首次 before-quit 即置位；池窗口 closed 时 Electron 的 app.isQuitting 在实测中仍为 false */
+/** 首次 before-quit 即置位；池窗�?closed �?Electron �?app.isQuitting 在实测中仍为 false */
 let applicationIsQuitting = false;
 app.once('before-quit', () => {
     applicationIsQuitting = true;
@@ -72,7 +71,7 @@ function isDevServeSubWindow() {
 }
 
 /**
- * 与正式子窗口一致的 webPreferences，用于预热池与即用窗口。
+ * 与正式子窗口一致的 webPreferences，用于预热池与即用窗口�?
  */
 function getSubWindowWebPreferences() {
     return {
@@ -182,8 +181,8 @@ function scheduleReplenishSubWindowPool(loadBasePage) {
 }
 
 /**
- * 创建不可见（opacity 0）、不出现在任务栏的预缓冲子窗口并完成首屏加载。
- * Windows 上不可设 transparent: true，否则会禁用 thickFrame 带来的边缘吸附与标题栏双击最大化。
+ * 创建不可见（opacity 0）、不出现在任务栏的预缓冲子窗口并完成首屏加载�?
+ * Windows 上不可设 transparent: true，否则会禁用 thickFrame 带来的边缘吸附与标题栏双击最大化�?
  */
 function pushPooledSubWindow(loadBasePage) {
     if (applicationIsQuitting) {
@@ -240,7 +239,7 @@ function replenishSubWindowPool(loadBasePage) {
 }
 
 /**
- * 从池中取出窗口后移除池的 closed 监听并触发补位。
+ * 从池中取出窗口后移除池的 closed 监听并触发补位�?
  * @param {import('electron').BrowserWindow} win
  * @param {(wc: import('electron').WebContents) => void} loadBasePage
  */
@@ -254,7 +253,7 @@ function removePoolHandlersFromWin(win, loadBasePage) {
 }
 
 /**
- * 将子窗口居中到「主窗口当前所在显示器」的工作区内（多屏跟随主窗口）。
+ * 将子窗口居中到「主窗口当前所在显示器」的工作区内（多屏跟随主窗口）�?
  * @param {import('electron').BrowserWindow} subWindow
  * @param {import('electron').BrowserWindow | null} mainWin
  * @param {number} width
@@ -275,7 +274,7 @@ function centerSubWindowOnMainDisplay(subWindow, mainWin, width, height) {
         const y = Math.round(wa.y + Math.max(0, (wa.height - h) / 2));
         subWindow.setBounds({ x, y, width: w, height: h });
     } catch (e) {
-        console.warn('[SubWindowPool] 子窗口居中定位失败:', e.message);
+        console.warn('[SubWindowPool] 子窗口居中定位失�?', e.message);
     }
 }
 
@@ -285,13 +284,8 @@ function terminateAilyProcess() {
 
 function registerWindowHandlers(mainWindow) {
     registerChatRuntimeHostIpc(mainWindow);
-    try {
-        startChatRuntimeExecutionWorkerWindow();
-    } catch (e) {
-        console.error('[AilyChat][RuntimeHost] 启动执行 worker 窗口失败:', e);
-    }
 
-    // 添加一个映射来存储已打开的窗口
+    // 添加一个映射来存储已打开的窗�?
     const openWindows = new Map();
     let codeViewerState = {
         code: '',
@@ -374,7 +368,7 @@ function registerWindowHandlers(mainWindow) {
     };
 
     const loadSubWindowBasePage = (webContents) => {
-        /** 池中仅占位，不加载 SPA 根页，避免出现 index / 首页再切目标页的闪屏；正式打开时再 load 路由 */
+        /** 池中仅占位，不加�?SPA 根页，避免出�?index / 首页再切目标页的闪屏；正式打开时再 load 路由 */
         webContents.loadURL('about:blank');
     };
 
@@ -431,7 +425,7 @@ function registerWindowHandlers(mainWindow) {
 
     mainWindow.on('focus', () => {
         try {
-            // 仅清除本功能设置的 Dock 角标，避免覆盖其它模块可能的徽章
+            // 仅清除本功能设置�?Dock 角标，避免覆盖其它模块可能的徽章
             if (process.platform === 'darwin' && app.dock && typeof app.dock.getBadge === 'function') {
                 try {
                     if (app.dock.getBadge() === '!') {
@@ -449,7 +443,7 @@ function registerWindowHandlers(mainWindow) {
     });
 
     mainWindow.on('blur', () => {
-        // 检查窗口是否已销毁以及 webContents 是否有效
+        // 检查窗口是否已销毁以�?webContents 是否有效
         try {
             if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
                 mainWindow.webContents.send('window-blur');
@@ -480,7 +474,7 @@ function registerWindowHandlers(mainWindow) {
         }
     });
 
-    // 为主窗口注册最大化/还原状态监听
+    // 为主窗口注册最大化/还原状态监�?
     mainWindow.on('maximize', () => {
         try {
             if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
@@ -509,12 +503,12 @@ function registerWindowHandlers(mainWindow) {
         const alwaysOnTop = data.alwaysOnTop ? data.alwaysOnTop : false;
         const needInitPayload = !!(data.data || data.url || data.title);
 
-        // 检查是否已存在该URL的窗口
+        // 检查是否已存在该URL的窗�?
         if (openWindows.has(windowUrl)) {
             const existingWindow = openWindows.get(windowUrl);
             // 确保窗口仍然有效
             if (existingWindow && !existingWindow.isDestroyed()) {
-                // 激活已存在的窗口
+                // 激活已存在的窗�?
                 notifySubWindowState(windowUrl, true);
                 focusSubWindow(existingWindow);
                 return;
@@ -556,7 +550,7 @@ function registerWindowHandlers(mainWindow) {
             try {
                 subWindow.setAlwaysOnTop(!!alwaysOnTop);
             } catch (e) {
-                console.warn('[SubWindowPool] 子窗口置顶设置失败:', e.message);
+                console.warn('[SubWindowPool] 子窗口置顶设置失�?', e.message);
             }
         }
 
@@ -587,7 +581,7 @@ function registerWindowHandlers(mainWindow) {
                 subWindow.show();
                 subWindow.focus();
             } catch (e) {
-                console.warn('[SubWindowPool] 显示子窗口失败:', e.message);
+                console.warn('[SubWindowPool] 显示子窗口失�?', e.message);
             }
         };
 
@@ -707,7 +701,7 @@ function registerWindowHandlers(mainWindow) {
 
     ipcMain.on("window-close", (event) => {
         const senderWindow = BrowserWindow.fromWebContents(event.sender);
-        // 检查是否是主窗口，如果是主窗口，关闭整个应用程序
+        // 检查是否是主窗口，如果是主窗口，关闭整个应用程�?
         if (senderWindow === mainWindow) {
             app.quit();
             // Attempt to terminate any residual helper processes on exit.
@@ -717,14 +711,14 @@ function registerWindowHandlers(mainWindow) {
         }
     });
 
-    // Mac 平台下处理系统关闭按钮的关闭检查
+    // Mac 平台下处理系统关闭按钮的关闭检�?
     if (process.platform === 'darwin') {
         mainWindow.on('close', (event) => {
             event.preventDefault();
             mainWindow.webContents.send('window-close-request');
         });
 
-        // 监听渲染进程返回的关闭确认结果
+        // 监听渲染进程返回的关闭确认结�?
         ipcMain.on('window-close-confirmed', (event) => {
             const senderWindow = BrowserWindow.fromWebContents(event.sender);
             if (senderWindow === mainWindow) {
@@ -736,7 +730,7 @@ function registerWindowHandlers(mainWindow) {
         });
     }
 
-    // 修改为同步处理程序
+    // 修改为同步处理程�?
     ipcMain.on("window-is-maximized", (event) => {
         const senderWindow = BrowserWindow.fromWebContents(event.sender);
         const isMaximized = senderWindow ? senderWindow.isMaximized() : false;
@@ -757,7 +751,7 @@ function registerWindowHandlers(mainWindow) {
         return senderWindow.isFullScreen();
     });
 
-    // 检查窗口是否获得焦点（同步）
+    // 检查窗口是否获得焦点（同步�?
     ipcMain.on("window-is-focused", (event) => {
         const senderWindow = BrowserWindow.fromWebContents(event.sender);
         const isFocused = senderWindow ? senderWindow.isFocused() : false;
@@ -765,8 +759,8 @@ function registerWindowHandlers(mainWindow) {
     });
 
     /**
-     * 在应用处于后台时请求用户注意：任务栏闪烁（Windows）、Dock 弹跳与角标（macOS）。
-     * 与系统通知配合，解决「通知一闪而过不易察觉」的问题。
+     * 在应用处于后台时请求用户注意：任务栏闪烁（Windows）、Dock 弹跳与角标（macOS）�?
+     * 与系统通知配合，解决「通知一闪而过不易察觉」的问题�?
      */
     ipcMain.handle('window-request-attention', (event) => {
         const senderWindow = BrowserWindow.fromWebContents(event.sender);
@@ -827,7 +821,7 @@ function registerWindowHandlers(mainWindow) {
                         resolve(response.data || "success");
                     }
                 };
-                // 注册监听器
+                // 注册监听�?
                 ipcMain.on('main-window-response', responseListener);
                 // 发送消息到main窗口，带上messageId
                 mainWindow.webContents.send("window-receive", {
@@ -835,7 +829,7 @@ function registerWindowHandlers(mainWindow) {
                     data: data.data,
                     messageId: messageId
                 });
-                // 自定义超时或默认9秒超时
+                // 自定义超时或默认9秒超�?
                 setTimeout(() => {
                     ipcMain.removeListener('main-window-response', responseListener);
                     resolve("timeout");
@@ -856,14 +850,14 @@ function registerWindowHandlers(mainWindow) {
 
     ipcMain.handle(CODE_VIEWER_STATE_GET_CHANNEL, () => codeViewerState);
 
-    // 用于sub窗口改变main窗口状态显示
+    // 用于sub窗口改变main窗口状态显�?
     ipcMain.on('state-update', (event, data) => {
         console.log('state-update: ', data);
         mainWindow.webContents.send('state-update', data);
     });
 
     // =====================================================
-    // iframe 模块 IPC 通讯（规范：iframe-message-{模块名}，参数 {type, data}）
+    // iframe 模块 IPC 通讯（规范：iframe-message-{模块名}，参�?{type, data}�?
     // =====================================================
 
     const IFRAME_CHANNEL_CONNECTION_GRAPH = 'iframe-message-connection-graph';
@@ -872,7 +866,7 @@ function registerWindowHandlers(mainWindow) {
         const senderWindow = BrowserWindow.fromWebContents(event.sender);
         const isFromMain = senderWindow && senderWindow.id === mainWindow.id;
         if (isFromMain) {
-            // 主窗口 → 子窗口：广播给所有子窗口，由各模块按 type 自行处理（含 get-graph-data）
+            // 主窗�?�?子窗口：广播给所有子窗口，由各模块按 type 自行处理（含 get-graph-data�?
             openWindows.forEach((subWindow) => {
                 try {
                     if (subWindow && !subWindow.isDestroyed() && subWindow.webContents && !subWindow.webContents.isDestroyed()) {
@@ -882,13 +876,13 @@ function registerWindowHandlers(mainWindow) {
                     console.error('[IPC] 转发 iframe-message-connection-graph 失败:', error.message);
                 }
             });
-            // 嵌入模式：主窗口内的 connection-graph（如 blockly-editor 的 graph-editor tab）也会发送 get-graph-data，
-            // 主窗口的 ConnectionGraphService 需要收到请求并响应，故主窗口发出的消息也需回传主窗口
+            // 嵌入模式：主窗口内的 connection-graph（如 blockly-editor �?graph-editor tab）也会发�?get-graph-data�?
+            // 主窗口的 ConnectionGraphService 需要收到请求并响应，故主窗口发出的消息也需回传主窗�?
             if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
                 mainWindow.webContents.send(IFRAME_CHANNEL_CONNECTION_GRAPH, payload);
             }
         } else {
-            // 子窗口 → 主窗口：转发给主窗口（含 get-graph-data）
+            // 子窗�?�?主窗口：转发给主窗口（含 get-graph-data�?
             if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
                 mainWindow.webContents.send(IFRAME_CHANNEL_CONNECTION_GRAPH, payload);
             }

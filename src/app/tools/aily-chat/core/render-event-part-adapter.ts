@@ -22,8 +22,8 @@ import {
   buildConfirmationPartId,
   type ChatPartScope,
   type StatePart,
+  type SubagentToolCallSnapshot,
   mkSubagentTimelineEntry,
-  mkSubagentToolCall,
   mkTerminal,
   mkToolCall,
   mkState,
@@ -60,6 +60,7 @@ export type RenderEventPartStoreAccess = Pick<
   | 'updateToolCallForHandle'
   | 'patchToolCallForHandle'
   | 'upsertStateForHandle'
+  | 'upsertSubagentForHandle'
   | 'updateConfirmationResultForHandle'
   | 'updateSubagentForHandle'
   | 'upsertTerminalForHandle'
@@ -262,7 +263,12 @@ export class RenderEventPartAdapter {
       }
 
       // ---- State ----
-      case 'state_update':
+      case 'state_update': {
+        const subagentSnapshot = subagentStateUpdateToSnapshot(event);
+        if (subagentSnapshot) {
+          this._store.upsertSubagentForHandle(handle, subagentSnapshot);
+          return true;
+        }
         this._upsertState(handle, event.stateId, {
           state: event.state,
           text: event.text,
@@ -271,6 +277,7 @@ export class RenderEventPartAdapter {
           metadata: event.metadata,
         });
         return true;
+      }
 
       case 'background_task_update':
         this._upsertState(handle, event.stateId, {
@@ -377,7 +384,7 @@ export class RenderEventPartAdapter {
       // ---- Sub-agent ----
       case 'subagent_begin': {
         this._rememberToolOrigin(event.toolCallId, handle);
-        this._store.addPartToHandle(handle, subagentBeginToPart(event));
+        this._store.upsertSubagentForHandle(handle, subagentBeginToSnapshot(event));
         return finish(true);
       }
 
@@ -470,7 +477,7 @@ export class RenderEventPartAdapter {
     handle: ChatPartStoreOpaqueHandle,
     event: SubagentActivity,
   ): boolean {
-    const parentHandle = this._findToolCallHandle(event.toolCallId, handle) ?? handle;
+    const parentHandle = this._ensureSubagentParentForActivity(handle, event);
     const scope = subagentActivityScope(event);
     switch (event.activityKind) {
       case 'thinking':
@@ -630,6 +637,20 @@ export class RenderEventPartAdapter {
       (part): part is Extract<ReturnType<RenderEventPartStoreAccess['getPartsForHandle']>[number], { type: 'tool_call' }> =>
         part.type === 'tool_call' && part.toolCallId === toolCallId,
     );
+  }
+
+  private _ensureSubagentParentForActivity(
+    handle: ChatPartStoreOpaqueHandle,
+    event: SubagentActivity,
+  ): ChatPartStoreOpaqueHandle {
+    const existingHandle = this._findToolCallHandle(event.toolCallId, handle);
+    if (existingHandle) {
+      return existingHandle;
+    }
+
+    this._store.upsertSubagentForHandle(handle, subagentActivityParentSnapshot(event));
+    this._rememberToolOrigin(event.toolCallId, handle);
+    return handle;
   }
 
   private _findToolCallHandle(
@@ -1096,6 +1117,52 @@ function extractTerminalPart(toolCallId: string, result: Extract<RenderEvent, { 
 
 function extractToolResultText(result: Extract<RenderEvent, { type: 'tool_call_end' }>['result']): string {
   return collectToolResultText(result);
+}
+
+function subagentStateUpdateToSnapshot(
+  event: Extract<RenderEvent, { type: 'state_update' }>,
+) {
+  if (!event.stateId?.startsWith('subagent:')) {
+    return null;
+  }
+
+  const metadata = event.metadata && typeof event.metadata === 'object' && !Array.isArray(event.metadata)
+    ? event.metadata as Record<string, unknown>
+    : {};
+  const toolCallId = asString(metadata['toolCallId'])
+    || asString(metadata['subAgentInvocationId'])
+    || event.stateId.slice('subagent:'.length);
+  if (!toolCallId) {
+    return null;
+  }
+
+  const agentName = asString(metadata['agentName'])
+    || asString(metadata['name'])
+    || 'Agent';
+  const description = asString(metadata['description'])
+    || event.text
+    || agentName;
+  return {
+    toolCallId,
+    subAgentInvocationId: asString(metadata['subAgentInvocationId']) || toolCallId,
+    agentName,
+    description,
+    state: event.state === 'error' ? 'error' as const : event.state === 'done' ? 'done' as const : 'doing' as const,
+    resultText: asString(metadata['resultText']) || asString(metadata['result']) || '',
+    childItems: [],
+    metadata: {
+      ...metadata,
+      subAgentInvocationId: asString(metadata['subAgentInvocationId']) || toolCallId,
+      toolSpecificData: {
+        ...((metadata['toolSpecificData'] && typeof metadata['toolSpecificData'] === 'object' && !Array.isArray(metadata['toolSpecificData']))
+          ? metadata['toolSpecificData'] as Record<string, unknown>
+          : {}),
+        kind: 'subagent',
+        agentName,
+        description,
+      },
+    },
+  };
 }
 
 function normalizeToolCallProgressUpdate(
@@ -1641,13 +1708,38 @@ function infoNoticeToPart(event: Extract<RenderEvent, { type: 'info_notice' }>) 
   return mkError(event.message, 'info', withChatPartScopeMetadata(undefined, eventScope(event)));
 }
 
-function subagentBeginToPart(event: Extract<RenderEvent, { type: 'subagent_begin' }>) {
-  return mkSubagentToolCall(
-    event.toolCallId,
-    event.agentName,
-    event.description,
-    buildSubagentMetadata(event),
-  );
+function subagentBeginToSnapshot(event: Extract<RenderEvent, { type: 'subagent_begin' }>): SubagentToolCallSnapshot {
+  return {
+    toolCallId: event.toolCallId,
+    subAgentInvocationId: event.subAgentInvocationId || event.toolCallId,
+    agentName: event.agentName,
+    description: event.description,
+    state: 'doing',
+    resultText: '',
+    childItems: [],
+    metadata: buildSubagentMetadata(event),
+  };
+}
+
+function subagentActivityParentSnapshot(event: SubagentActivity): SubagentToolCallSnapshot {
+  const subAgentInvocationId = event.subAgentInvocationId || event.toolCallId;
+  return {
+    toolCallId: event.toolCallId,
+    subAgentInvocationId,
+    agentName: 'Agent',
+    description: 'Subagent',
+    state: 'doing',
+    resultText: '',
+    childItems: [],
+    metadata: buildSubagentMetadata({
+      type: 'subagent_begin',
+      toolCallId: event.toolCallId,
+      subAgentInvocationId,
+      agentName: 'Agent',
+      description: 'Subagent',
+      timestamp: event.timestamp,
+    }),
+  };
 }
 
 function buildSubagentMetadata(

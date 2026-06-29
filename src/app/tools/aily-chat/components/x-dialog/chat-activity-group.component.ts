@@ -27,7 +27,7 @@ import {
 import { CommonModule } from '@angular/common';
 import type { TurnResponseTurn } from 'aily-lex/browser';
 
-import { ChatPart, ConfirmationPart, MarkdownPart, StatePart, TerminalPart, ThinkingPart, ToolCallPart, getSubAgentInvocationId, isSubagentChildPart } from '../../core/chat-parts';
+import { ChatPart, ConfirmationPart, MarkdownPart, StatePart, TerminalPart, ThinkingPart, ToolCallPart, getParentToolCallId, getSubAgentInvocationId, isSubagentChildPart } from '../../core/chat-parts';
 import { ChatRuntimeInteractionHostService } from '../../services/chat-runtime-interaction-host.service';
 import {
   buildConfirmationActivityDisplayItem,
@@ -814,6 +814,10 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked, 
   private _buildItems(part: ChatPart, index: number, groupParts: readonly ChatPart[]): ActivityGroupDisplayItem[] {
     const id = buildChatPartIdentity(part, index);
 
+    if (isSubagentChildPart(part) && hasScopedSubagentParent(groupParts, part)) {
+      return [];
+    }
+
     if (part.type === 'markdown' && isSubagentChildPart(part)) {
       return [buildScopedMarkdownActivityDisplayItem(part as MarkdownPart, { id })];
     }
@@ -839,8 +843,19 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked, 
 
     if (part.type === 'tool_call') {
       if (isSubagentToolCall(part)) {
-        if (hasScopedSubagentChildren(groupParts, part)) {
-          return [];
+        const scopedChildren = collectScopedSubagentChildren(groupParts, part);
+        if (scopedChildren.length > 0) {
+          const nestedItems = scopedChildren.flatMap((child, childIndex) => this._buildScopedSubagentChildItems(child, childIndex));
+          const parentPart = stripLegacySubagentChildItems(part);
+          return buildSubagentActivityItems(parentPart).map((item, itemIndex) => ({
+            ...item,
+            id: itemIndex === 0 ? id : item.id,
+            subagentItems: nestedItems.length > 0 ? [
+              ...(item.subagentItems ?? []),
+              ...nestedItems,
+            ] : item.subagentItems,
+            detailKind: item.detailKind ?? 'subagent',
+          }));
         }
         return [...buildSubagentActivityItems(part)];
       }
@@ -911,13 +926,102 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked, 
       pillTone: 'neutral',
     }];
   }
+
+  private _buildScopedSubagentChildItems(part: ChatPart, index: number): ActivityGroupDisplayItem[] {
+    const id = buildChatPartIdentity(part, index);
+    if (part.type === 'markdown') {
+      return [buildScopedMarkdownActivityDisplayItem(part as MarkdownPart, { id })];
+    }
+    if (part.type === 'thinking') {
+      const tp = part as ThinkingPart;
+      const isSpinning = !tp.isComplete;
+      const thinking = buildThinkingActivityPresentation(tp);
+      return [{
+        id,
+        kind: 'thinking',
+        iconClass: thinking.iconClass,
+        isSpinning,
+        iconColor: thinking.iconColor,
+        kicker: thinking.kicker,
+        label: thinking.label,
+        note: thinking.note,
+        thinking: thinking.thinking,
+        pill: '',
+        pillTone: 'neutral',
+      }];
+    }
+    if (part.type === 'tool_call') {
+      return [buildToolActivityDisplayItem(part as ToolCallPart, { id })];
+    }
+    if (part.type === 'confirmation') {
+      return [buildConfirmationActivityDisplayItem(part as ConfirmationPart, { id })];
+    }
+    if (part.type === 'terminal') {
+      return [buildTerminalActivityDisplayItem(part as TerminalPart, { id })];
+    }
+    if (part.type === 'state') {
+      const sp = part as StatePart;
+      const isSpinning = sp.state === 'doing';
+      const activitySummary = sp.kind === 'todo'
+        ? buildTodoPrimaryActivitySummary(sp)
+        : buildPrimaryActivitySummary(part);
+      const shell = buildStateActivityShellPresentation({
+        state: sp.state,
+        defaultKicker: activitySummary?.kicker,
+      });
+      const detailSections = getPreparedDetailSections(part);
+      return [{
+        id,
+        kind: 'activity',
+        iconClass: shell.iconClass,
+        isSpinning,
+        iconColor: shell.iconColor,
+        kicker: shell.kicker,
+        label: sp.text || '任务',
+        subtitle: activitySummary?.subtitle,
+        pill: shell.pill,
+        pillTone: shell.pillTone,
+        detailSections,
+        detailKind: detailSections?.length ? 'state' : undefined,
+      }];
+    }
+    return [];
+  }
 }
 
-function hasScopedSubagentChildren(parts: readonly ChatPart[], parent: ToolCallPart): boolean {
-  const subAgentInvocationId = getSubAgentInvocationId(parent) || parent.toolCallId;
-  return parts.some((part) => part !== parent
+function collectScopedSubagentChildren(parts: readonly ChatPart[], parent: ToolCallPart): ChatPart[] {
+  const subAgentInvocationId = parent.toolCallId;
+  return parts.filter((part) => part !== parent
     && isSubagentChildPart(part)
-    && getSubAgentInvocationId(part) === subAgentInvocationId);
+    && getScopedSubagentChildId(part) === subAgentInvocationId);
+}
+
+function stripLegacySubagentChildItems(parent: ToolCallPart): ToolCallPart {
+  const toolSpecificData = parent.metadata?.['toolSpecificData'];
+  if (!toolSpecificData || typeof toolSpecificData !== 'object' || !Array.isArray((toolSpecificData as Record<string, unknown>)['childItems'])) {
+    return parent;
+  }
+
+  const { childItems: _childItems, ...nextToolSpecificData } = toolSpecificData as Record<string, unknown>;
+  return {
+    ...parent,
+    metadata: {
+      ...(parent.metadata || {}),
+      toolSpecificData: nextToolSpecificData,
+    },
+  };
+}
+
+function hasScopedSubagentParent(parts: readonly ChatPart[], child: ChatPart): boolean {
+  const childSubAgentInvocationId = getScopedSubagentChildId(child);
+  return !!childSubAgentInvocationId
+    && parts.some((part): part is ToolCallPart => part.type === 'tool_call'
+      && isSubagentToolCall(part)
+      && part.toolCallId === childSubAgentInvocationId);
+}
+
+function getScopedSubagentChildId(part: ChatPart): string | undefined {
+  return getSubAgentInvocationId(part) || getParentToolCallId(part);
 }
 
 function countLegacySubagentChildren(parts: readonly ChatPart[]): number {

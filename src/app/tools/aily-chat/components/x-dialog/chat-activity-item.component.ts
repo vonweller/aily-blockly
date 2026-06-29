@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, ChangeDetectorRef, Component, Input, OnChanges, SimpleChanges, inject } from '@angular/core';
+import { ChangeDetectionStrategy, ChangeDetectorRef, Component, Input, OnChanges, SimpleChanges, forwardRef, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { XMarkdownComponent } from 'ngx-x-markdown';
 import type { ComponentMap } from 'ngx-x-markdown';
@@ -36,7 +36,7 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
 @Component({
   selector: 'aily-chat-activity-item',
   standalone: true,
-  imports: [CommonModule, XMarkdownComponent, XAilyConfirmationViewerComponent, ChatTerminalPartComponent, XAilyThinkViewerComponent],
+  imports: [CommonModule, XMarkdownComponent, XAilyConfirmationViewerComponent, ChatTerminalPartComponent, XAilyThinkViewerComponent, forwardRef(() => ChatActivityItemComponent)],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div
@@ -197,6 +197,32 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
                     </div>
                   }
                 </div>
+              }
+            </div>
+          }
+
+          @if (item.nestedItems?.length) {
+            <div class="cag-item-nested-list">
+              @for (nestedItem of item.nestedItems; track nestedItem.id; let nestedFirst = $first; let nestedLast = $last; let nestedCount = $count) {
+                <aily-chat-activity-item
+                  [item]="nestedItem"
+                  [sessionId]="sessionId"
+                  [first]="nestedFirst"
+                  [last]="nestedLast"
+                  [only]="nestedCount === 1" />
+              }
+            </div>
+          }
+
+          @if (item.subagentItems?.length) {
+            <div class="cag-subagent-owned-list" data-subagent-owned-list="true">
+              @for (subagentItem of item.subagentItems; track subagentItem.id; let subagentFirst = $first; let subagentLast = $last; let subagentCount = $count) {
+                <aily-chat-activity-item
+                  [item]="subagentItem"
+                  [sessionId]="sessionId"
+                  [first]="subagentFirst"
+                  [last]="subagentLast"
+                  [only]="subagentCount === 1" />
               }
             </div>
           }
@@ -1052,6 +1078,51 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
     .cag-item-child-note {
       margin-top: 3px;
       min-width: 0;
+    }
+
+    .cag-item-nested-list {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      margin-top: 5px;
+      margin-left: 8px;
+      min-width: 0;
+    }
+
+    .cag-item-nested-list::before {
+      content: '';
+      position: absolute;
+      left: -8px;
+      top: 2px;
+      bottom: 2px;
+      border-left: 1px solid var(--chat-border-dim, rgba(255,255,255,0.06));
+      pointer-events: none;
+    }
+
+    .cag-subagent-owned-list {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      margin-top: 6px;
+      margin-left: 10px;
+      padding-left: 8px;
+      min-width: 0;
+      border-left: 1px solid color-mix(in srgb, var(--chat-info, #75beff) 36%, transparent);
+    }
+
+    .cag-subagent-owned-list::before {
+      content: 'subagent';
+      align-self: flex-start;
+      margin: 0 0 2px -1px;
+      padding: 1px 5px;
+      border-radius: 4px;
+      font-size: 10px;
+      line-height: 1.2;
+      color: var(--chat-info, #75beff);
+      background: color-mix(in srgb, var(--chat-info, #75beff) 10%, transparent);
+      border: 1px solid color-mix(in srgb, var(--chat-info, #75beff) 18%, transparent);
     }
 
     .cag-item-detail-body {
@@ -2719,6 +2790,12 @@ function countActivityItemMarkdownSurfaces(item: ActivityGroupDisplayItem, detai
     if (child.content) {
       count += 1;
     }
+  }
+  for (const nestedItem of item.nestedItems || []) {
+    count += countActivityItemMarkdownSurfaces(nestedItem, detailExpanded);
+  }
+  for (const subagentItem of item.subagentItems || []) {
+    count += countActivityItemMarkdownSurfaces(subagentItem, detailExpanded);
   }
 
   if (!detailExpanded) {

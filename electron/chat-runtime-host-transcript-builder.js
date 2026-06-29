@@ -87,7 +87,7 @@ function normalizeErrorPayload(error) {
     code: typeof record.code === 'string' && record.code.trim().length > 0 ? record.code.trim() : undefined,
     message: typeof record.message === 'string' && record.message.trim().length > 0
       ? record.message.trim()
-      : String(error || 'Execution worker turn failed.'),
+      : String(error || 'Runtime owner turn failed.'),
     retryable: typeof record.retryable === 'boolean' ? record.retryable : undefined,
   };
 }
@@ -323,15 +323,40 @@ function buildPartMetadata(event, patch) {
   if (typeof event.parentToolCallId === 'string') scope.parentToolCallId = event.parentToolCallId;
   if (Number.isFinite(event.sequence)) scope.sequence = event.sequence;
   return {
+    ...scope,
     ...(Object.keys(scope).length > 0 ? { scope } : {}),
     ...(patch && typeof patch === 'object' ? patch : {}),
   };
 }
 
-function sameScopedPart(part, event) {
-  const scope = part && part.metadata && part.metadata.scope && typeof part.metadata.scope === 'object'
-    ? part.metadata.scope
+function buildPartScopeFields(event) {
+  const scope = {};
+  if (typeof event.sourceAgentRole === 'string') scope.sourceAgentRole = event.sourceAgentRole;
+  if (typeof event.subAgentInvocationId === 'string') scope.subAgentInvocationId = event.subAgentInvocationId;
+  if (typeof event.parentToolCallId === 'string') scope.parentToolCallId = event.parentToolCallId;
+  if (Number.isFinite(event.sequence)) scope.sequence = event.sequence;
+  return scope;
+}
+
+function readPartScope(part) {
+  if (!part || typeof part !== 'object') {
+    return {};
+  }
+  const metadata = part.metadata && typeof part.metadata === 'object'
+    ? part.metadata
     : {};
+  const nestedScope = metadata.scope && typeof metadata.scope === 'object'
+    ? metadata.scope
+    : {};
+  return {
+    sourceAgentRole: part.sourceAgentRole || metadata.sourceAgentRole || nestedScope.sourceAgentRole,
+    subAgentInvocationId: part.subAgentInvocationId || metadata.subAgentInvocationId || nestedScope.subAgentInvocationId,
+    parentToolCallId: part.parentToolCallId || metadata.parentToolCallId || nestedScope.parentToolCallId,
+  };
+}
+
+function sameScopedPart(part, event) {
+  const scope = readPartScope(part);
   return (scope.sourceAgentRole || undefined) === (event.sourceAgentRole || undefined)
     && (scope.subAgentInvocationId || undefined) === (event.subAgentInvocationId || undefined)
     && (scope.parentToolCallId || undefined) === (event.parentToolCallId || undefined);
@@ -355,6 +380,7 @@ function appendTextPart(parts, state, turnId, event, kind, text) {
       type: kind,
       partId: `host-${kind}:${turnId}:${nextParts.length}`,
       content: text,
+      ...buildPartScopeFields(event),
       ...(kind === 'thinking' ? { isComplete: false } : {}),
       metadata: buildPartMetadata(event),
     });
@@ -397,6 +423,7 @@ function upsertToolBegin(parts, state, event) {
     text: `${toolName}...`,
     state: 'doing',
     args: event.input && typeof event.input === 'object' ? clonePayload(event.input) : undefined,
+    ...buildPartScopeFields(event),
     metadata: buildPartMetadata(event, {
       startedAt: event.timestamp,
     }),
@@ -449,6 +476,7 @@ function patchToolEnd(parts, event) {
     toolName,
     text: resultText,
     state: event.state === 'error' || event.isError === true ? 'error' : 'done',
+    ...buildPartScopeFields(event),
     metadata: buildPartMetadata(event, {
       resultText,
       result: clonePayload(event.result),
@@ -512,6 +540,7 @@ function buildTerminalPart(event, terminal, defaultRunning, outputUpdateKind) {
     ...(asNumber(terminal.bytesTotal) !== undefined ? { bytesTotal: asNumber(terminal.bytesTotal) } : {}),
     ...(normalizeOptionalString(terminal.lastOutputAt) ? { lastOutputAt: normalizeOptionalString(terminal.lastOutputAt) } : {}),
     outputUpdateKind,
+    ...buildPartScopeFields(event),
     metadata: buildPartMetadata(event),
   };
 }
@@ -824,6 +853,7 @@ function upsertStatePart(parts, event, options) {
     state,
     kind: options.kind,
     progress: Number.isFinite(options.progress) ? options.progress : undefined,
+    ...buildPartScopeFields(event),
     metadata: buildPartMetadata(event, options.metadata),
   };
   if (index >= 0) {
@@ -861,6 +891,7 @@ function upsertQuestionPart(parts, event) {
     type: 'question',
     partId,
     questions,
+    ...buildPartScopeFields(event),
     metadata: buildPartMetadata(event, {
       requestId,
       requestedAt: event.timestamp,
@@ -911,6 +942,7 @@ function upsertApprovalRequestPart(parts, event) {
     actions,
     primaryScope,
     resolved: false,
+    ...buildPartScopeFields(event),
     metadata: buildPartMetadata(event, {
       requestId: event.requestId,
       toolCallId: event.toolCallId,
@@ -953,38 +985,222 @@ function patchApprovalResolvePart(parts, event) {
   return nextParts;
 }
 
-function upsertSubagentStatePart(parts, event, stateOverride) {
-  const toolCallId = normalizeOptionalString(event.toolCallId);
-  const invocationId = normalizeOptionalString(event.subAgentInvocationId) || toolCallId;
+function readSubagentStateEventPayload(event) {
+  const metadata = event && event.metadata && typeof event.metadata === 'object' && !Array.isArray(event.metadata)
+    ? event.metadata
+    : {};
+  const stateId = normalizeOptionalString(event && event.stateId);
+  const stateToolCallId = stateId && stateId.startsWith('subagent:')
+    ? stateId.slice('subagent:'.length)
+    : '';
+  const toolCallId = normalizeOptionalString(event && event.toolCallId)
+    || normalizeOptionalString(metadata.toolCallId)
+    || stateToolCallId;
+  const invocationId = normalizeOptionalString(event && event.subAgentInvocationId)
+    || normalizeOptionalString(metadata.subAgentInvocationId)
+    || toolCallId;
   if (!toolCallId || !invocationId) {
-    return parts;
+    return null;
   }
-  const agentName = normalizeOptionalString(event.agentName) || 'agent';
-  const isEnd = event.type === 'subagent_end';
-  return upsertStatePart(parts, event, {
-    stateId: `subagent:${invocationId}`,
-    kind: 'agent_team',
-    text: isEnd
-      ? (typeof event.resultText === 'string' && event.resultText ? event.resultText : `${agentName} completed`)
-      : (typeof event.description === 'string' && event.description ? event.description : `${agentName} started`),
-    state: stateOverride || (event.state === 'error' ? 'error' : isEnd ? 'done' : 'doing'),
-    metadata: {
-      toolCallId,
-      subAgentInvocationId: invocationId,
-      agentName,
-      description: event.description,
-      resultText: event.resultText,
-      durationMs: event.durationMs,
-    },
+
+  const resultText = normalizeOptionalString(event && event.resultText)
+    || normalizeOptionalString(metadata.resultText)
+    || (event && event.state === 'done' ? normalizeOptionalString(event.text) : '');
+  const description = normalizeOptionalString(event && event.description)
+    || normalizeOptionalString(metadata.description)
+    || (event && event.state !== 'done' ? normalizeOptionalString(event.text) : '');
+  return {
+    toolCallId,
+    invocationId,
+    agentName: normalizeOptionalString(event && event.agentName)
+      || normalizeOptionalString(metadata.agentName)
+      || 'Agent',
+    description: description || 'Subagent',
+    resultText: resultText || '',
+    durationMs: Number.isFinite(event && event.durationMs)
+      ? event.durationMs
+      : Number.isFinite(metadata.durationMs) ? metadata.durationMs : undefined,
+  };
+}
+
+function subagentEventPayload(event) {
+  if (event && event.type === 'state_update') {
+    return readSubagentStateEventPayload(event);
+  }
+
+  const toolCallId = normalizeOptionalString(event && event.toolCallId);
+  const invocationId = normalizeOptionalString(event && event.subAgentInvocationId) || toolCallId;
+  if (!toolCallId || !invocationId) {
+    return null;
+  }
+  return {
+    toolCallId,
+    invocationId,
+    agentName: normalizeOptionalString(event && event.agentName) || 'Agent',
+    description: normalizeOptionalString(event && event.description) || 'Subagent',
+    resultText: normalizeOptionalString(event && event.resultText) || '',
+    durationMs: Number.isFinite(event && event.durationMs) ? event.durationMs : undefined,
+  };
+}
+
+function subagentStateForEvent(event, stateOverride) {
+  if (stateOverride) {
+    return stateOverride;
+  }
+  if (event && event.state === 'error') {
+    return 'error';
+  }
+  if (event && event.type === 'subagent_end') {
+    return 'done';
+  }
+  if (event && event.type === 'state_update' && (event.state === 'done' || event.state === 'error')) {
+    return event.state;
+  }
+  return 'doing';
+}
+
+function isLegacySubagentStatePart(part, toolCallId, invocationId) {
+  const legacyStateIds = new Set([
+    `subagent:${toolCallId}`,
+    `subagent:${invocationId}`,
+  ]);
+  return !!part
+    && part.type === 'state'
+    && legacyStateIds.has(part.stateId);
+}
+
+function removeLegacySubagentStateParts(parts, toolCallId, invocationId, exceptIndex) {
+  return parts.filter((part, index) => {
+    if (index === exceptIndex) {
+      return true;
+    }
+    return !isLegacySubagentStatePart(part, toolCallId, invocationId);
   });
 }
 
+function buildSubagentToolMetadata(event, payload, state, existingMetadata) {
+  const existing = existingMetadata && typeof existingMetadata === 'object' ? existingMetadata : {};
+  const existingToolSpecificData = existing.toolSpecificData && typeof existing.toolSpecificData === 'object' && !Array.isArray(existing.toolSpecificData)
+    ? existing.toolSpecificData
+    : {};
+  const existingTimeline = Array.isArray(existing.timeline) ? existing.timeline : [];
+  const timestamp = normalizeTimestamp(event && event.timestamp);
+  const phase = state === 'error' ? 'failed' : state === 'done' ? 'completed' : 'started';
+  const summary = state === 'done' || state === 'error'
+    ? payload.resultText || `${payload.agentName} completed`
+    : payload.description || payload.agentName;
+  const timelineEntryId = `${payload.toolCallId}:${phase}`;
+  const timeline = existingTimeline.some(entry => entry && entry.recordId === timelineEntryId)
+    ? existingTimeline
+    : [
+        ...existingTimeline,
+        {
+          recordId: timelineEntryId,
+          phase,
+          summary,
+          timestamp,
+        },
+      ];
+  const existingResult = normalizeOptionalString(existingToolSpecificData.result);
+  return {
+    ...existing,
+    toolName: 'agent',
+    phase,
+    argsSummary: payload.description,
+    recordId: payload.toolCallId,
+    invocationMessage: payload.description || payload.agentName,
+    pastTenseMessage: payload.description ? `Completed Task: "${payload.description}"` : payload.agentName,
+    timeline,
+    ...(Number.isFinite(payload.durationMs) ? { durationMs: payload.durationMs } : {}),
+    toolSpecificData: {
+      ...existingToolSpecificData,
+      kind: 'subagent',
+      agentName: payload.agentName,
+      description: payload.description,
+      result: payload.resultText || existingResult || '',
+    },
+  };
+}
+
+function upsertSubagentToolCallPart(parts, event, stateOverride) {
+  const payload = subagentEventPayload(event);
+  if (!payload) {
+    return parts;
+  }
+  const state = subagentStateForEvent(event, stateOverride);
+  const partId = `tool:${payload.toolCallId}`;
+  const existingIndex = parts.findIndex(part =>
+    part && part.type === 'tool_call' && part.toolCallId === payload.toolCallId);
+  const legacyIndex = existingIndex < 0
+    ? parts.findIndex(part => isLegacySubagentStatePart(part, payload.toolCallId, payload.invocationId))
+    : -1;
+  const existing = existingIndex >= 0 ? parts[existingIndex] : {};
+  const text = state === 'done' || state === 'error'
+    ? payload.resultText || `${payload.agentName} completed`
+    : payload.description || `${payload.agentName} started`;
+  const nextPart = {
+    ...existing,
+    type: 'tool_call',
+    partId,
+    toolCallId: payload.toolCallId,
+    toolName: 'agent',
+    text,
+    state,
+    args: {
+      agentName: payload.agentName,
+      description: payload.description,
+    },
+    metadata: buildSubagentToolMetadata(event, payload, state, existing.metadata),
+  };
+  let nextParts = [...parts];
+  if (existingIndex >= 0) {
+    nextParts[existingIndex] = nextPart;
+    nextParts = removeLegacySubagentStateParts(nextParts, payload.toolCallId, payload.invocationId, existingIndex);
+  } else if (legacyIndex >= 0) {
+    nextParts[legacyIndex] = nextPart;
+    nextParts = removeLegacySubagentStateParts(nextParts, payload.toolCallId, payload.invocationId, legacyIndex);
+  } else {
+    nextParts.push(nextPart);
+  }
+  return nextParts;
+}
+
+function subagentActivityScope(event) {
+  const parentToolCallId = normalizeOptionalString(event.parentToolCallId) || normalizeOptionalString(event.toolCallId);
+  if (!parentToolCallId) {
+    return {};
+  }
+  return {
+    sourceAgentRole: 'subagent',
+    subAgentInvocationId: parentToolCallId,
+    parentToolCallId,
+  };
+}
+
+function withSubagentActivityScope(event) {
+  return {
+    ...event,
+    ...subagentActivityScope(event),
+  };
+}
+
+function isSubagentStateUpdate(event) {
+  return !!event
+    && event.type === 'state_update'
+    && (
+      (typeof event.stateId === 'string' && event.stateId.startsWith('subagent:'))
+      || event.kind === 'agent_team'
+    );
+}
+
 function upsertSubagentActivityPart(parts, state, turnId, event) {
+  parts = upsertSubagentToolCallPart(parts, event, 'doing');
+  const scopedActivityEvent = withSubagentActivityScope(event);
   if (event.activityKind === 'thinking') {
-    return appendTextPart(parts, state, turnId, event, 'thinking', event.content);
+    return appendTextPart(parts, state, turnId, scopedActivityEvent, 'thinking', event.content);
   }
   if (event.activityKind === 'text') {
-    return appendTextPart(parts, state, turnId, event, 'markdown', event.content);
+    return appendTextPart(parts, state, turnId, scopedActivityEvent, 'markdown', event.content);
   }
 
   const childToolCallId = normalizeOptionalString(event.childToolCallId) || normalizeOptionalString(event.toolCallId);
@@ -992,7 +1208,7 @@ function upsertSubagentActivityPart(parts, state, turnId, event) {
     return parts;
   }
   const scopedEvent = {
-    ...event,
+    ...scopedActivityEvent,
     toolCallId: childToolCallId,
     toolName: normalizeOptionalString(event.toolName) || 'tool',
     input: event.argsSummary ? { summary: event.argsSummary } : {},
@@ -1012,6 +1228,137 @@ function upsertSubagentActivityPart(parts, state, turnId, event) {
     return patchToolEnd(parts, scopedEvent);
   }
   return parts;
+}
+
+function isSubagentStateUpdateEvent(event) {
+  return !!event
+    && event.type === 'state_update'
+    && (
+      event.kind === 'agent_team'
+      || (typeof event.stateId === 'string' && event.stateId.startsWith('subagent:'))
+    );
+}
+
+function readSubagentScopeFromEvent(event) {
+  const metadata = event && event.metadata && typeof event.metadata === 'object' && !Array.isArray(event.metadata)
+    ? event.metadata
+    : {};
+  const stateId = normalizeOptionalString(event && event.stateId);
+  const stateToolCallId = stateId && stateId.startsWith('subagent:')
+    ? stateId.slice('subagent:'.length)
+    : '';
+  const toolCallId = normalizeOptionalString(event && event.toolCallId)
+    || normalizeOptionalString(metadata.toolCallId)
+    || stateToolCallId;
+  const subAgentInvocationId = normalizeOptionalString(event && event.subAgentInvocationId)
+    || normalizeOptionalString(metadata.subAgentInvocationId)
+    || toolCallId;
+  if (!toolCallId || !subAgentInvocationId) {
+    return null;
+  }
+  return {
+    toolCallId,
+    subAgentInvocationId,
+    agentName: normalizeOptionalString(event && event.agentName)
+      || normalizeOptionalString(metadata.agentName),
+  };
+}
+
+function isSubagentScopeTerminalEvent(event) {
+  return !!event && (event.state === 'done' || event.state === 'error' || event.type === 'subagent_end');
+}
+
+function isEventScopedToSubagent(event, scope) {
+  return !!event && !!scope && (
+    event.sourceAgentRole === 'subagent'
+    || event.subAgentInvocationId === scope.subAgentInvocationId
+    || event.parentToolCallId === scope.toolCallId
+  );
+}
+
+function withSubagentScope(event, scope) {
+  return {
+    ...event,
+    sourceAgentRole: 'subagent',
+    subAgentInvocationId: event.subAgentInvocationId || scope.subAgentInvocationId,
+    parentToolCallId: event.parentToolCallId || scope.toolCallId,
+  };
+}
+
+function shouldScopeEventToActiveSubagent(event, scope) {
+  if (!event || !scope || isEventScopedToSubagent(event, scope)) {
+    return false;
+  }
+  switch (event.type) {
+    case 'markdown_delta':
+    case 'thinking_delta':
+    case 'thinking_complete':
+    case 'tool_call_begin':
+    case 'tool_call_progress':
+    case 'tool_call_end':
+    case 'question_request':
+    case 'approval_request':
+    case 'approval_resolve':
+    case 'warning_notice':
+    case 'info_notice':
+    case 'error_notice':
+      return event.toolCallId !== scope.toolCallId;
+    default:
+      return false;
+  }
+}
+
+function routeRenderEventForSubagentScope(state, event) {
+  if (!state) {
+    return event;
+  }
+  if (!Array.isArray(state.activeSubagentScopes)) {
+    state.activeSubagentScopes = [];
+  }
+
+  if (event && event.type === 'subagent_begin') {
+    const scope = readSubagentScopeFromEvent(event);
+    if (scope && !state.activeSubagentScopes.some(item => item.toolCallId === scope.toolCallId || item.subAgentInvocationId === scope.subAgentInvocationId)) {
+      state.activeSubagentScopes.push(scope);
+    }
+    return event;
+  }
+
+  if (isSubagentStateUpdateEvent(event)) {
+    const scope = readSubagentScopeFromEvent(event);
+    if (!scope) {
+      return event;
+    }
+    const existingIndex = state.activeSubagentScopes.findIndex(item =>
+      item.toolCallId === scope.toolCallId || item.subAgentInvocationId === scope.subAgentInvocationId);
+    if (isSubagentScopeTerminalEvent(event)) {
+      if (existingIndex >= 0) {
+        state.activeSubagentScopes.splice(existingIndex, 1);
+      }
+    } else if (existingIndex < 0) {
+      state.activeSubagentScopes.push(scope);
+    }
+    return event;
+  }
+
+  const activeScope = state.activeSubagentScopes[state.activeSubagentScopes.length - 1];
+  if (!activeScope) {
+    return event;
+  }
+
+  if (event && event.type === 'subagent_end') {
+    const scope = readSubagentScopeFromEvent(event);
+    const index = state.activeSubagentScopes.findIndex(item =>
+      scope && (item.toolCallId === scope.toolCallId || item.subAgentInvocationId === scope.subAgentInvocationId));
+    if (index >= 0) {
+      state.activeSubagentScopes.splice(index, 1);
+    }
+    return event;
+  }
+
+  return shouldScopeEventToActiveSubagent(event, activeScope)
+    ? withSubagentScope(event, activeScope)
+    : event;
 }
 
 function clearToPreviousToolInvocation(parts) {
@@ -1120,6 +1467,10 @@ function materializeRenderEventTurn(turn, state, event) {
       parts = upsertTerminalPart(parts, event, extractTerminalPartFromToolEnd(event), false, 'snapshot');
       return withResponsePatch(turn, timestamp, { parts, status: 'streaming' });
     case 'state_update':
+      if (isSubagentStateUpdate(event)) {
+        parts = upsertSubagentToolCallPart(parts, event);
+        return withResponsePatch(turn, timestamp, { parts, status: 'streaming' });
+      }
       parts = upsertStatePart(parts, event, {
         stateId: event.stateId,
         kind: event.kind,
@@ -1258,13 +1609,13 @@ function materializeRenderEventTurn(turn, state, event) {
       parts = clearToPreviousToolInvocation(parts);
       return withResponsePatch(turn, timestamp, { parts, status: 'streaming' });
     case 'subagent_begin':
-      parts = upsertSubagentStatePart(parts, event, 'doing');
+      parts = upsertSubagentToolCallPart(parts, event, 'doing');
       return withResponsePatch(turn, timestamp, { parts, status: 'streaming' });
     case 'subagent_activity':
       parts = upsertSubagentActivityPart(parts, state, turn.turnId, event);
       return withResponsePatch(turn, timestamp, { parts, status: 'streaming' });
     case 'subagent_end':
-      parts = upsertSubagentStatePart(parts, event);
+      parts = upsertSubagentToolCallPart(parts, event);
       return withResponsePatch(turn, timestamp, { parts, status: 'streaming' });
     case 'turn_end':
       parts = completeThinkingPart(parts, event);
@@ -1291,6 +1642,65 @@ function materializeRenderEventTurn(turn, state, event) {
     default:
       return null;
   }
+}
+
+function isSubagentParentToolPart(part) {
+  const toolSpecificData = part && part.metadata && typeof part.metadata === 'object'
+    && part.metadata.toolSpecificData && typeof part.metadata.toolSpecificData === 'object'
+    ? part.metadata.toolSpecificData
+    : null;
+  return !!part
+    && part.type === 'tool_call'
+    && toolSpecificData
+    && toolSpecificData.kind === 'subagent';
+}
+
+function isScopedSubagentChildPart(part) {
+  if (!part || typeof part !== 'object' || isSubagentParentToolPart(part)) {
+    return false;
+  }
+  const scope = readPartScope(part);
+  return scope.sourceAgentRole === 'subagent'
+    || typeof scope.parentToolCallId === 'string';
+}
+
+function recordSubagentModelInvariant(sessionId, turnId, turn) {
+  const parts = Array.isArray(turn && turn.response && turn.response.parts)
+    ? turn.response.parts
+    : [];
+  if (parts.length === 0) {
+    return;
+  }
+  const parentIds = new Set(parts
+    .filter(isSubagentParentToolPart)
+    .map(part => normalizeOptionalString(part.toolCallId))
+    .filter(Boolean));
+  const orphanChildren = parts
+    .map((part, index) => ({ part, index, scope: readPartScope(part) }))
+    .filter(({ part, scope }) => {
+      if (!isScopedSubagentChildPart(part)) {
+        return false;
+      }
+      const parentId = normalizeOptionalString(scope.subAgentInvocationId)
+        || normalizeOptionalString(scope.parentToolCallId);
+      return !parentId || !parentIds.has(parentId);
+    });
+  if (orphanChildren.length === 0) {
+    return;
+  }
+  console.warn('[AilyChat][SubagentModelInvariant]', JSON.stringify({
+    sessionId,
+    turnId,
+    parentIds: [...parentIds],
+    orphanChildren: orphanChildren.map(({ part, index, scope }) => ({
+      index,
+      type: part.type,
+      partId: part.partId,
+      toolCallId: part.toolCallId,
+      toolName: part.toolName,
+      scope,
+    })),
+  }));
 }
 
 class ChatRuntimeHostTranscriptBuilder {
@@ -1435,10 +1845,12 @@ class ChatRuntimeHostTranscriptBuilder {
     }
 
     const state = this.readRenderEventState(normalizedSessionId, normalizedTurnId, turnResponses[turnIndex]);
-    const nextTurn = materializeRenderEventTurn(turnResponses[turnIndex], state, event);
+    const routedEvent = routeRenderEventForSubagentScope(state, event);
+    const nextTurn = materializeRenderEventTurn(turnResponses[turnIndex], state, routedEvent);
     if (!nextTurn) {
       return null;
     }
+    recordSubagentModelInvariant(normalizedSessionId, normalizedTurnId, nextTurn);
 
     turnResponses[turnIndex] = nextTurn;
     const nextRevision = Math.max(currentRevision + 1, incomingRevision);
@@ -1461,6 +1873,7 @@ class ChatRuntimeHostTranscriptBuilder {
     const state = {
       activeTextKind: null,
       toolPartIds: new Map(),
+      activeSubagentScopes: [],
     };
     const parts = Array.isArray(turn && turn.response && turn.response.parts)
       ? turn.response.parts

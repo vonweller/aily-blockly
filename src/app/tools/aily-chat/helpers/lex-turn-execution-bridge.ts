@@ -395,15 +395,16 @@ export class LexTurnExecutionBridge {
     const finalizeStartedAt = Date.now();
     const fallbackStatus = this.ctx.isCancelled ? 'cancelled' : 'completed';
     try {
-      if (state.detachedRenderEventBridge?.finalizeCurrentTurn) {
-        const finalized = state.detachedRenderEventBridge.finalizeCurrentTurn(fallbackStatus);
-        traceBackgroundSessionExecution('finalize-detached-turn-fallback', {
+      const finalRenderEventSink = state.detachedRenderEventBridge ?? this._renderEventBridge;
+      if (finalRenderEventSink?.finalizeCurrentTurn) {
+        const finalized = finalRenderEventSink.finalizeCurrentTurn(fallbackStatus);
+        traceBackgroundSessionExecution('finalize-render-turn-fallback', {
           sessionId: state.sessionId,
           finalized,
           fallbackStatus,
+          sink: state.detachedRenderEventBridge ? 'detached' : 'visible',
         });
       }
-      const finalRenderEventSink = state.detachedRenderEventBridge ?? this._renderEventBridge;
       const includePreFinalizedTurnResponses = state.usedRenderEventStream || !!state.detachedRenderEventBridge;
       await this.uiEventBridge.finalizeTurn(this.buildExecutionSaveTarget(state, {
         includeTurnResponses: includePreFinalizedTurnResponses,
@@ -588,6 +589,24 @@ export class LexTurnExecutionBridge {
   ): RenderEvent[] {
     const activeScope = this.getActiveSubagentRenderScope(state);
 
+    if (this.isSubagentStateUpdateRenderEvent(event)) {
+      const stateScope = this.readSubagentStateUpdateScope(event);
+      if (!stateScope) {
+        return [event];
+      }
+      const existingScope = state.activeSubagentRenderScopes.find(candidate =>
+        candidate.toolCallId === stateScope.toolCallId
+        || candidate.subAgentInvocationId === stateScope.subAgentInvocationId,
+      );
+      if (!existingScope && !this.isSubagentStateUpdateTerminal(event)) {
+        state.activeSubagentRenderScopes.push(stateScope);
+      }
+      if (existingScope && this.isSubagentStateUpdateTerminal(event)) {
+        this.popActiveSubagentRenderScope(state, existingScope);
+      }
+      return [event];
+    }
+
     if (event.type === 'subagent_begin') {
       if (activeScope && !this.isEventForActiveSubagentScope(event, activeScope)) {
         return [this.withSubagentScope(activeScope, {
@@ -708,6 +727,48 @@ export class LexTurnExecutionBridge {
       default:
         return [];
     }
+  }
+
+  private isSubagentStateUpdateRenderEvent(event: RenderEvent): boolean {
+    if (event.type !== 'state_update') {
+      return false;
+    }
+    const record = event as RenderEvent & { readonly stateId?: string; readonly kind?: string };
+    return record.kind === 'agent_team'
+      || (typeof record.stateId === 'string' && record.stateId.startsWith('subagent:'));
+  }
+
+  private readSubagentStateUpdateScope(event: RenderEvent): ActiveSubagentRenderScope | null {
+    const record = event as RenderEvent & {
+      readonly stateId?: string;
+      readonly toolCallId?: string;
+      readonly subAgentInvocationId?: string;
+      readonly agentName?: string;
+      readonly metadata?: Record<string, unknown>;
+    };
+    const metadata = record.metadata && typeof record.metadata === 'object' ? record.metadata : {};
+    const stateToolCallId = typeof record.stateId === 'string' && record.stateId.startsWith('subagent:')
+      ? record.stateId.slice('subagent:'.length).trim()
+      : '';
+    const toolCallId = asString(record.toolCallId)
+      || asString(metadata['toolCallId'])
+      || stateToolCallId;
+    const subAgentInvocationId = asString(record.subAgentInvocationId)
+      || asString(metadata['subAgentInvocationId'])
+      || toolCallId;
+    if (!toolCallId || !subAgentInvocationId) {
+      return null;
+    }
+    return {
+      toolCallId,
+      subAgentInvocationId,
+      agentName: asString(record.agentName) || asString(metadata['agentName']),
+    };
+  }
+
+  private isSubagentStateUpdateTerminal(event: RenderEvent): boolean {
+    const record = event as RenderEvent & { readonly state?: string };
+    return record.state === 'done' || record.state === 'error';
   }
 
   private withSubagentScope<T extends RenderEvent>(

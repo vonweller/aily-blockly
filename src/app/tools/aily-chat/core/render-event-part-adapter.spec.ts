@@ -1,6 +1,7 @@
 import { ChatPartStore } from './chat-part-store';
 import { RenderEventPartAdapter } from './render-event-part-adapter';
 import { buildToolActivityDisplayItem } from '../components/x-dialog/chat-activity-group-projection';
+import { buildChatRenderItems } from '../components/x-dialog/chat-subagent-group-projection';
 import type { RenderEvent } from 'aily-lex/browser';
 
 describe('RenderEventPartAdapter', () => {
@@ -1028,6 +1029,41 @@ describe('RenderEventPartAdapter', () => {
     }));
   });
 
+  it('canonicalizes subagent state updates as parent subagent tool calls', () => {
+    processCurrent({
+      type: 'state_update',
+      stateId: 'subagent:sa-state',
+      text: 'Analyzing project',
+      state: 'doing',
+      kind: 'agent_team',
+      metadata: {
+        toolCallId: 'sa-state',
+        subAgentInvocationId: 'sa-state',
+        agentName: 'Explore',
+        description: 'Analyzing project',
+      },
+      timestamp: 1,
+    } as any);
+
+    const parts = store.getPartsForHandle(currentHandle) as any[];
+    expect(parts.length).toBe(1);
+    expect(parts[0]).toEqual(jasmine.objectContaining({
+      type: 'tool_call',
+      toolCallId: 'sa-state',
+      toolName: 'agent',
+      state: 'doing',
+      text: 'Analyzing project',
+    }));
+    expect(parts[0].metadata).toEqual(jasmine.objectContaining({
+      subAgentInvocationId: 'sa-state',
+      toolSpecificData: jasmine.objectContaining({
+        kind: 'subagent',
+        agentName: 'Explore',
+        description: 'Analyzing project',
+      }),
+    }));
+  });
+
   it('maps scoped subagent child stream to first-class scoped parts without mutating childItems', () => {
     processCurrent({
       type: 'subagent_begin',
@@ -1714,6 +1750,118 @@ describe('RenderEventPartAdapter', () => {
         parentToolCallId: 'sa-multi-child',
       }),
     ]);
+  });
+
+  it('projects subagent activity child tools into the parent subagent render group', () => {
+    processCurrent({
+      type: 'subagent_begin',
+      toolCallId: 'sa-render-group',
+      agentName: 'Explore',
+      description: 'Searching codebase',
+      timestamp: 1,
+    });
+
+    processCurrent({
+      type: 'subagent_activity',
+      toolCallId: 'sa-render-group',
+      activityKind: 'tool_started',
+      toolName: 'read_file',
+      childToolCallId: 'child-render-read',
+      content: '',
+      argsSummary: 'src/app/main.ts',
+      timestamp: 2,
+    });
+
+    processCurrent({
+      type: 'subagent_activity',
+      toolCallId: 'sa-render-group',
+      activityKind: 'tool_completed',
+      toolName: 'read_file',
+      childToolCallId: 'child-render-read',
+      content: 'file contents',
+      durationMs: 200,
+      timestamp: 3,
+    });
+
+    processCurrent({
+      type: 'subagent_end',
+      toolCallId: 'sa-render-group',
+      agentName: 'Explore',
+      resultText: 'Found files',
+      state: 'done',
+      durationMs: 300,
+      timestamp: 4,
+    });
+
+    const renderItems = buildChatRenderItems(store.getPartsForHandle(currentHandle), false);
+
+    expect(renderItems.length).toBe(1);
+    expect(renderItems[0].kind).toBe('group');
+    expect(renderItems[0].kind === 'group' ? renderItems[0].parts.map(part => part.type) : []).toEqual([
+      'tool_call',
+      'tool_call',
+    ]);
+    expect(renderItems[0].kind === 'group' ? renderItems[0].parts[0] : null).toEqual(jasmine.objectContaining({
+      type: 'tool_call',
+      toolCallId: 'sa-render-group',
+      toolName: 'agent',
+    }));
+    expect(renderItems[0].kind === 'group' ? renderItems[0].parts[1] : null).toEqual(jasmine.objectContaining({
+      type: 'tool_call',
+      toolCallId: 'child-render-read',
+      sourceAgentRole: 'subagent',
+      subAgentInvocationId: 'sa-render-group',
+      parentToolCallId: 'sa-render-group',
+    }));
+  });
+
+  it('ensures a parent subagent response item before projecting child activity', () => {
+    processCurrent({
+      type: 'subagent_activity',
+      toolCallId: 'sa-child-first',
+      activityKind: 'tool_started',
+      toolName: 'read_file',
+      childToolCallId: 'child-before-parent',
+      content: '',
+      argsSummary: 'src/app/main.ts',
+      timestamp: 1,
+    });
+
+    let parts = store.getPartsForHandle(currentHandle);
+    expect(parts).toEqual([
+      jasmine.objectContaining({
+        type: 'tool_call',
+        toolCallId: 'sa-child-first',
+        toolName: 'agent',
+        state: 'doing',
+        metadata: jasmine.objectContaining({
+          toolSpecificData: jasmine.objectContaining({ kind: 'subagent' }),
+        }),
+      }),
+      jasmine.objectContaining({
+        type: 'tool_call',
+        toolCallId: 'child-before-parent',
+        sourceAgentRole: 'subagent',
+        subAgentInvocationId: 'sa-child-first',
+        parentToolCallId: 'sa-child-first',
+      }),
+    ]);
+
+    processCurrent({
+      type: 'subagent_begin',
+      toolCallId: 'sa-child-first',
+      agentName: 'Explore',
+      description: 'Searching codebase',
+      timestamp: 2,
+    });
+
+    parts = store.getPartsForHandle(currentHandle);
+    expect(parts.filter(part => part.type === 'tool_call' && part.toolCallId === 'sa-child-first').length).toBe(1);
+
+    const renderItems = buildChatRenderItems(parts, true);
+    expect(renderItems.length).toBe(1);
+    expect(renderItems[0].kind).toBe('group');
+    expect(renderItems[0].kind === 'group' ? renderItems[0].parts : []).toEqual(parts);
   });
 
   it('coalesces consecutive subagent thinking and text chunks into single child items', () => {

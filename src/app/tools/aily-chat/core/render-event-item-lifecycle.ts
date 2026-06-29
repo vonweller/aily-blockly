@@ -271,6 +271,27 @@ export class RenderEventItemLifecycleNormalizer {
         return output;
 
       case 'state_update':
+        if (isSubagentStateUpdateEvent(event)) {
+          const id = subagentItemId(
+            subagentToolCallIdFromStateUpdate(event),
+            subagentInvocationIdFromStateUpdate(event),
+          );
+          output.push(...this.completeActiveTextItemsForScope(event, timestamp, event.type));
+          output.push(...this.ensureItem(id, 'subagent', event, timestamp));
+          output.push(this.deltaFor(
+            id,
+            'subagent',
+            timestamp,
+            'update',
+            event.type,
+            event.text,
+            subagentStateUpdatePayload(event),
+          ));
+          if (event.state === 'error' || event.state === 'done') {
+            output.push(this.completeItem(id, 'subagent', timestamp, event.state === 'error' ? 'failed' : 'completed', event.type));
+          }
+          return output;
+        }
         output.push(...this.upsertStateItem(`state:${event.stateId}`, 'state', event, timestamp, event.state === 'error' ? 'failed' : event.state === 'doing' ? undefined : 'completed', event.text, statePayload(event)));
         return output;
 
@@ -329,6 +350,7 @@ export class RenderEventItemLifecycleNormalizer {
       }
 
       case 'subagent_activity': {
+        output.push(...this.ensureSubagentParentForActivity(event, timestamp));
         if (event.activityKind === 'thinking') {
           output.push(...this.completeDifferentTextItem(event, 'thinking', timestamp));
           output.push(...this.ensureTextItem(event, 'thinking', timestamp));
@@ -653,6 +675,20 @@ export class RenderEventItemLifecycleNormalizer {
         summarizeTerminalPayload(payload.terminal),
         payload,
       ),
+    ];
+  }
+
+  private ensureSubagentParentForActivity(
+    event: Extract<RenderEvent, { type: 'subagent_activity' }>,
+    timestamp: number,
+  ): CanonicalRenderLifecycleEvent[] {
+    const id = subagentItemId(event.toolCallId, event.subAgentInvocationId);
+    if (this.startedItems.has(id)) {
+      return [];
+    }
+    return [
+      ...this.ensureItem(id, 'subagent', event, timestamp),
+      this.deltaFor(id, 'subagent', timestamp, 'update', event.type, undefined, subagentActivityParentPayload(event)),
     ];
   }
 
@@ -1039,6 +1075,50 @@ function subagentBeginPayload(event: Extract<RenderEvent, { type: 'subagent_begi
   };
 }
 
+function subagentActivityParentPayload(event: Extract<RenderEvent, { type: 'subagent_activity' }>): CanonicalRenderItemStructuredPayload {
+  const subAgentInvocationId = event.subAgentInvocationId || event.toolCallId;
+  return {
+    type: 'subagent',
+    toolCallId: event.toolCallId,
+    subAgentInvocationId,
+    agentName: 'Agent',
+    description: 'Subagent',
+    state: 'doing',
+    resultText: '',
+    metadata: subagentMetadata({
+      type: 'subagent_begin',
+      toolCallId: event.toolCallId,
+      subAgentInvocationId,
+      agentName: 'Agent',
+      description: 'Subagent',
+      timestamp: event.timestamp,
+    }, 'started'),
+  };
+}
+
+function subagentStateUpdatePayload(event: Extract<RenderEvent, { type: 'state_update' }>): CanonicalRenderItemStructuredPayload {
+  const toolCallId = subagentToolCallIdFromStateUpdate(event);
+  const subAgentInvocationId = subagentInvocationIdFromStateUpdate(event);
+  const agentName = subagentStateUpdateString(event, 'agentName')
+    || subagentStateUpdateString(event, 'name')
+    || 'Agent';
+  const description = subagentStateUpdateString(event, 'description')
+    || event.text
+    || agentName;
+  return {
+    type: 'subagent',
+    toolCallId,
+    subAgentInvocationId,
+    agentName,
+    description,
+    state: event.state === 'error' ? 'error' : event.state === 'done' ? 'done' : 'doing',
+    resultText: subagentStateUpdateString(event, 'resultText')
+      || subagentStateUpdateString(event, 'result')
+      || '',
+    metadata: subagentStateUpdateMetadata(event, agentName, description, subAgentInvocationId),
+  };
+}
+
 function subagentEndPayload(event: Extract<RenderEvent, { type: 'subagent_end' }>): CanonicalRenderItemStructuredPayload {
   const boundedResult = boundedString(event.resultText, SUBAGENT_RESULT_MAX_CHARS);
   const description = event.agentName || 'Agent';
@@ -1059,6 +1139,57 @@ function subagentEndPayload(event: Extract<RenderEvent, { type: 'subagent_end' }
       } : {}),
     },
   };
+}
+
+function isSubagentStateUpdateEvent(event: Extract<RenderEvent, { type: 'state_update' }>): boolean {
+  return typeof event.stateId === 'string' && event.stateId.startsWith('subagent:');
+}
+
+function subagentToolCallIdFromStateUpdate(event: Extract<RenderEvent, { type: 'state_update' }>): string {
+  return subagentStateUpdateString(event, 'toolCallId')
+    || subagentStateUpdateString(event, 'subAgentInvocationId')
+    || event.stateId.slice('subagent:'.length)
+    || event.stateId;
+}
+
+function subagentInvocationIdFromStateUpdate(event: Extract<RenderEvent, { type: 'state_update' }>): string {
+  return subagentStateUpdateString(event, 'subAgentInvocationId')
+    || subagentToolCallIdFromStateUpdate(event);
+}
+
+function subagentStateUpdateString(
+  event: Extract<RenderEvent, { type: 'state_update' }>,
+  key: string,
+): string | undefined {
+  const metadata = event.metadata && typeof event.metadata === 'object' && !Array.isArray(event.metadata)
+    ? event.metadata as Record<string, unknown>
+    : undefined;
+  const value = metadata?.[key];
+  return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
+}
+
+function subagentStateUpdateMetadata(
+  event: Extract<RenderEvent, { type: 'state_update' }>,
+  agentName: string,
+  description: string,
+  subAgentInvocationId: string,
+): Record<string, unknown> | undefined {
+  const metadata = event.metadata && typeof event.metadata === 'object' && !Array.isArray(event.metadata)
+    ? event.metadata as Record<string, unknown>
+    : {};
+  const toolSpecificData = metadata['toolSpecificData'] && typeof metadata['toolSpecificData'] === 'object' && !Array.isArray(metadata['toolSpecificData'])
+    ? metadata['toolSpecificData'] as Record<string, unknown>
+    : {};
+  return boundedRecord({
+    ...metadata,
+    subAgentInvocationId,
+    toolSpecificData: {
+      ...toolSpecificData,
+      kind: 'subagent',
+      agentName,
+      description,
+    },
+  });
 }
 
 function planPayload(
