@@ -1374,6 +1374,7 @@ export class ChatEngineService implements IChatContext {
   private readonly stopCoordinator = new ChatStopCoordinator(this.stopCoordinatorContext);
   private readonly conversationActionCoordinator = new ChatConversationActionCoordinator(this.conversationActionCoordinatorContext, {
     submitText: (text, sessionId) => this.submitUserText(text, { clearInput: false, sessionId }),
+    rerunLastRequest: () => this.sessionBoundary.regenerateTurn(),
   });
   private readonly aiNoticeCoordinator = new ChatAiNoticeCoordinator({
     stop: (sessionId) => this.stop(sessionId),
@@ -2626,6 +2627,8 @@ export class ChatEngineService implements IChatContext {
         );
         return replaceSessionModelTurnResponses.call(thisEngine, sessionId, turnResponses, ownerPolicy);
       },
+      prepareProtocolTruncationForResend: (sessionId, turnId) =>
+        thisEngine.prepareProtocolTruncationForResend(sessionId, turnId),
       submitRegeneratedUserTurn: async (sessionId, request) => {
         const requestText = request.requestText.trim();
         if (!sessionId || !requestText) {
@@ -5077,6 +5080,68 @@ export class ChatEngineService implements IChatContext {
     };
   }
 
+  private prepareProtocolTruncationForResend(
+    sessionId: string | null | undefined,
+    turnId: string | null | undefined,
+  ): boolean {
+    const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    const targetTurnId = typeof turnId === 'string' ? turnId.trim() : '';
+    if (!targetSessionId || !targetTurnId) {
+      return false;
+    }
+
+    const turnResponses = this.readSessionTurnResponses(targetSessionId);
+    const turnIndex = turnResponses.findIndex(turn => {
+      const candidateTurnId = typeof turn.turnId === 'string' ? turn.turnId.trim() : '';
+      return candidateTurnId === targetTurnId;
+    });
+    if (turnIndex < 0) {
+      return false;
+    }
+
+    const retainedTurnResponses = turnResponses.slice(0, turnIndex);
+    const discardedTurnResponses = turnResponses.slice(turnIndex);
+    const retainedTurnIds = retainedTurnResponses
+      .map(turn => typeof turn.turnId === 'string' ? turn.turnId.trim() : '')
+      .filter((candidateTurnId): candidateTurnId is string => candidateTurnId.length > 0);
+    const discardedTurnIds = discardedTurnResponses
+      .map(turn => typeof turn.turnId === 'string' ? turn.turnId.trim() : '')
+      .filter((candidateTurnId): candidateTurnId is string => candidateTurnId.length > 0);
+
+    this.pendingProtocolTruncations.set(targetSessionId, {
+      kind: 'removeFrom',
+      turnId: targetTurnId,
+      retainedTurnIds,
+      discardedTurnIds,
+    });
+
+    const replaceSessionModelTurnResponses = (
+      (this as unknown as { replaceSessionModelTurnResponses?: ChatEngineService['replaceSessionModelTurnResponses'] })
+        .replaceSessionModelTurnResponses
+      ?? ChatEngineService.prototype['replaceSessionModelTurnResponses']
+    );
+    const nextTurnResponses = replaceSessionModelTurnResponses.call(this, targetSessionId, retainedTurnResponses)
+      ?? retainedTurnResponses;
+    this.lexStream?.hydrateTurnResponses?.(targetSessionId, nextTurnResponses, {
+      visibility: 'visibleAttach',
+    });
+
+    const hostProjectionState = buildRuntimeHostProjectionState(nextTurnResponses);
+    if (hostProjectionState) {
+      const currentViewSessionResource = this.resolveCurrentViewSessionResource();
+      this.projectRestoredHostProjection(targetSessionId, nextTurnResponses, hostProjectionState, {
+        attachedView: currentViewSessionResource === targetSessionId,
+      });
+      if (currentViewSessionResource === targetSessionId) {
+        this.visibleProjectionSessionId = targetSessionId;
+        this.liveHostRequestGraphCache?.replaceState?.(hostProjectionState);
+      }
+    }
+
+    this.triggerSyncDetectChanges?.();
+    return true;
+  }
+
   private peekPendingProtocolTruncation(sessionId: string | null | undefined): ChatRuntimeHostProtocolTruncation | null {
     const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
     return targetSessionId ? this.pendingProtocolTruncations.get(targetSessionId) ?? null : null;
@@ -7078,57 +7143,6 @@ Do not create non-existent boards and libraries.
 
   // ==================== 消息发送 ====================
 
-  private async ensureBlankSessionRuntimeProviderOptions(sessionId?: string | null): Promise<void> {
-    const targetSessionId = this.resolveRuntimeSessionIdForOwner(sessionId);
-    if (!targetSessionId) {
-      return;
-    }
-
-    if (this.readSessionTurnResponses(targetSessionId).length > 0) {
-      return;
-    }
-
-    const resolvedProviderOptions = this.resolveRuntimeSessionProviderOptions(targetSessionId);
-    const normalizedProviderOptions = this.rememberRuntimeSessionProviderOptions(
-      targetSessionId,
-      resolvedProviderOptions,
-    ) ?? resolvedProviderOptions;
-    const providerOptionsKey = createChatAgentRuntimeConfigKey(
-      createHostSessionProviderOptionsKey(normalizedProviderOptions),
-      this.currentAgentRuntimeMode ?? this.chatService?.currentAgentRuntimeMode,
-      this.resolveVisibleCurrentModelSnapshot(targetSessionId),
-    );
-    if (this.lexStream.agent.isConfiguredFor?.(targetSessionId, providerOptionsKey)) {
-      return;
-    }
-
-    await this.lexStream.agent.ensureAgent(targetSessionId, providerOptionsKey);
-  }
-
-  private async ensureRuntimeAgentForSession(sessionId: string): Promise<void> {
-    const targetSessionId = this.resolveRuntimeSessionIdForOwner(sessionId);
-    if (!targetSessionId) {
-      return;
-    }
-
-    const resolvedProviderOptions = this.resolveRuntimeSessionProviderOptions(targetSessionId);
-    const normalizedProviderOptions = this.rememberRuntimeSessionProviderOptions(
-      targetSessionId,
-      resolvedProviderOptions,
-    ) ?? resolvedProviderOptions;
-    const providerOptionsKey = createChatAgentRuntimeConfigKey(
-      createHostSessionProviderOptionsKey(normalizedProviderOptions),
-      this.currentAgentRuntimeMode ?? this.chatService?.currentAgentRuntimeMode,
-      this.resolveVisibleCurrentModelSnapshot(targetSessionId),
-    );
-    if (this.lexStream.agent.isConfiguredFor?.(targetSessionId, providerOptionsKey)) {
-      await this.lexStream.agent.ensureAgent(targetSessionId, providerOptionsKey);
-      return;
-    }
-
-    await this.lexStream.agent.ensureAgent(targetSessionId, providerOptionsKey);
-  }
-
   private async runWithRuntimeSessionOwner<T>(sessionId: string, action: () => Promise<T>): Promise<T> {
     const previousOwner = this.runtimeSessionOwnerOverride;
     this.runtimeSessionOwnerOverride = sessionId;
@@ -7592,7 +7606,6 @@ Do not create non-existent boards and libraries.
     }
 
     await this.runWithRuntimeSessionOwner(targetSessionId, async () => {
-      await this.ensureRuntimeAgentForSession(targetSessionId);
       await this.resumeRestoredInteraction(content, interactionAction, requestMetadata, targetSessionId);
     });
   }

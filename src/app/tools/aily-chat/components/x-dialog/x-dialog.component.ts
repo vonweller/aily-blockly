@@ -47,6 +47,7 @@ import {
   getTurnResponseResponseText,
 } from '../../core/turn-response-stream-contract';
 import { buildRenderableProgressParts, type RenderableChatPart } from './chat-render-parts';
+import { isInternalDiscoveryToolName } from '../../core/tool-name-normalizer';
 import type { HostResponseVoteDirection } from '../../helpers/host-turn-response-state';
 import { ChatRuntimeInteractionHostService } from '../../services/chat-runtime-interaction-host.service';
 import type { WorkspaceCheckpointPresentationMode } from '../../services/edit-checkpoint.service';
@@ -281,9 +282,10 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
     this._effectiveProgressMessagesSource = progressMessages;
     this._effectivePartsDoing = doing;
     this._effectivePartsRevisionKey = revisionKey;
+    const visibleItemParts = itemParts.filter(isVisibleResponsePart);
     this._effectivePartsCache = [
-      ...itemParts,
-      ...buildRenderableProgressParts(response, itemParts, doing, this.hasActiveConfirmationCarousel),
+      ...visibleItemParts,
+      ...buildRenderableProgressParts(response, visibleItemParts, doing, this.hasActiveConfirmationCarousel),
     ];
     return this._effectivePartsCache;
   }
@@ -651,7 +653,8 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
       return;
     }
 
-    const hostClipboard = AilyHost.get().clipboard;
+    const host = getOptionalAilyHost();
+    const hostClipboard = host?.clipboard;
     const electronClipboard = (window as any)['electronAPI']?.clipboard ?? (window as any)['clipboard'];
 
     try {
@@ -677,7 +680,7 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
       throw new Error('No clipboard writer available');
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      AilyHost.get().log?.warn?.(`[AilyChat] Copy response failed: ${message}`);
+      host?.log?.warn?.(`[AilyChat] Copy response failed: ${message}`);
     }
   }
 
@@ -1227,6 +1230,27 @@ function readChatPartStableRevision(part: ChatPart): string {
       return [part.partId ?? '', part.status ?? '', part.text?.length ?? 0].join(':');
     default:
       return '';
+  }
+}
+
+function isVisibleResponsePart(part: ChatPart): boolean {
+  if (part.type === 'tool_call' && isInternalDiscoveryToolName(part.toolName)) {
+    return false;
+  }
+
+  if (part.type !== 'markdown' && part.type !== 'thinking') {
+    return true;
+  }
+
+  const content = typeof part.content === 'string' ? part.content : '';
+  return content.trim().length > 0;
+}
+
+function getOptionalAilyHost(): ReturnType<typeof AilyHost.get> | null {
+  try {
+    return AilyHost.get();
+  } catch {
+    return null;
   }
 }
 

@@ -26,6 +26,7 @@ import {
 } from '../../core/tool-invocation-formatter';
 import {
   isEditSummaryToolName,
+  isInternalDiscoveryToolName,
   isSearchSummaryToolName,
   normalizeReadSideToolName,
 } from '../../core/tool-name-normalizer';
@@ -433,14 +434,13 @@ export function buildToolActivityDisplayItem(
   const approval = projectToolCallApprovalDisplayData(part);
   const approvalSummary = approval?.resolved ? buildResolvedApprovalSummary(approval) : undefined;
   const pendingApproval = !!approval && !approval.resolved;
+  const preparedDetailSections = getPreparedDetailSections(part);
   const eagerDetailSections = pendingApproval && approval
     ? buildApprovalDetailSections({
         message: approval.message,
         description: approval.description,
       })
-    : approvalSummary
-      ? getPreparedDetailSections(part)
-      : undefined;
+    : preparedDetailSections;
   const detailSections = eagerDetailSections?.length ? eagerDetailSections : undefined;
   const invocationDetail = detailSections
     ? buildInvocationDetailDisplay({
@@ -448,20 +448,6 @@ export function buildToolActivityDisplayItem(
         postConfirmation: !!approvalSummary,
       })
     : undefined;
-  const loadDetail = pendingApproval || approvalSummary
-    ? undefined
-    : () => {
-        const lazySections = getPreparedDetailSections(part);
-        const lazyDetailSections = lazySections?.length ? lazySections : undefined;
-        const lazyInvocationDetail = lazyDetailSections
-          ? buildInvocationDetailDisplay({ detailSections: lazyDetailSections })
-          : undefined;
-        return {
-          detailSections: lazyDetailSections,
-          invocationDetail: lazyInvocationDetail,
-          detailKind: lazyDetailSections?.length ? 'invocation' as const : undefined,
-        };
-      };
   const shell = buildToolActivityShellPresentation({
     state: part.state,
     approval,
@@ -500,11 +486,11 @@ export function buildToolActivityDisplayItem(
     approval,
     approvalSummary,
     invocationDetail,
-    loadDetail,
+    loadDetail: undefined,
     children: undefined,
     detailSections,
     detailExpanded: false,
-    detailKind: detailSections?.length || loadDetail ? 'invocation' : undefined,
+    detailKind: detailSections?.length ? 'invocation' : undefined,
   };
 }
 
@@ -1086,7 +1072,8 @@ function buildActivityGroupHeader(parts: readonly ChatPart[]): ActivityGroupHead
 function buildThinkingGroupSummaryTitle(parts: readonly ChatPart[]): { title: string; detail?: string } | undefined {
   const toolSummaries = parts
     .filter((part): part is ToolCallPart => part.type === 'tool_call')
-    .map((part) => buildActivityToolSummaryCandidate(part));
+    .map((part) => buildActivityToolSummaryCandidate(part))
+    .filter((summary) => !isInternalDiscoveryToolSummary(summary));
 
   if (toolSummaries.length === 0) {
     return undefined;
@@ -1107,6 +1094,10 @@ function buildThinkingGroupSummaryTitle(parts: readonly ChatPart[]): { title: st
   }
 
   return splitHeaderSummaryTitle(aggregateTitle);
+}
+
+function isInternalDiscoveryToolSummary(summary: ActivityToolSummaryCandidate): boolean {
+  return isInternalDiscoveryToolName(summary.toolName);
 }
 
 function buildToolOnlyGroupHeader(parts: readonly ChatPart[]): ActivityGroupHeaderDisplayData | undefined {

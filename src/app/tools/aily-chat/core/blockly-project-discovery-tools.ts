@@ -433,7 +433,9 @@ export function createBlocklyProjectDiscoveryHandlers(): Record<string, InvokeHa
 
     buildProject: async (_input, hostAPI) => {
       if (!hostAPI.builder?.build) return error('Build system is not available.');
-      const result = await hostAPI.builder.build();
+      const projectPath = readActiveProjectPath(hostAPI.project);
+      if (!projectPath) return error('No active project is available for build.');
+      const result = await (hostAPI.builder.build as unknown as (projectPath: string) => Promise<unknown>)(projectPath);
       return text(formatExternalResult(result));
     },
 

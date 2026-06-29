@@ -460,13 +460,50 @@ export function createElectronHostAdapter(deps: ElectronAdapterDeps): IAilyHostA
   };
 
   // ----- builder -----
-  const builder: IBuildProvider = new Proxy({} as IBuildProvider, {
-    get(_target, prop: string | symbol) {
+  const builder: IBuildProvider = {
+    build: async (projectPath: string) => {
+      if (!projectPath) {
+        return { success: false, output: 'No active project is available for build.' };
+      }
       const builderService = getDep('builderService');
-      const value = builderService?.[prop as keyof typeof builderService];
-      return typeof value === 'function' ? value.bind(builderService) : value;
+      if (!builderService || typeof builderService.build !== 'function') {
+        return { success: false, output: 'Build system is not available.' };
+      }
+
+      try {
+        const result = await builderService.build(projectPath);
+        return {
+          success: result?.state !== 'error' && result?.state !== 'warn',
+          output: result?.text ?? result?.output ?? JSON.stringify(result ?? null),
+        };
+      } catch (error: any) {
+        return {
+          success: false,
+          output: error?.text || error?.message || String(error),
+        };
+      }
     },
-  });
+    upload: async (projectPath: string, port: string) => {
+      const builderService = getDep('builderService');
+      const upload = builderService?.upload;
+      if (typeof upload !== 'function') {
+        return { success: false, output: 'Upload system is not available.' };
+      }
+
+      try {
+        const result = await upload.call(builderService, projectPath, port);
+        return {
+          success: result?.state !== 'error' && result?.state !== 'warn',
+          output: result?.text ?? result?.output ?? JSON.stringify(result ?? null),
+        };
+      } catch (error: any) {
+        return {
+          success: false,
+          output: error?.text || error?.message || String(error),
+        };
+      }
+    },
+  };
 
   // ----- notification -----
   const notification: INotificationProvider = {

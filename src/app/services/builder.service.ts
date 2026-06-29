@@ -59,7 +59,11 @@ export class BuilderService {
   /*
    * 开始编译
    */
-  async build() {
+  async build(projectPath?: string) {
+    if (projectPath) {
+      return this.buildFromProjectPath(projectPath);
+    }
+
     try {
       // Pro / code-editor-pro 路由下 Blockly 未挂载，compile-begin 无监听者会一直等反馈；
       // 含 project.aci 时改为直接走磁盘源码 + 同一套 preprocess/compile 脚本。
@@ -110,6 +114,23 @@ export class BuilderService {
       }
       throw error;
     }
+  }
+
+  private async buildFromProjectPath(projectPath: string) {
+    const compileResult = await this.ailyCodeProCompile.runCompileFromDisk({ projectPath });
+    const buildResult = compileResult.result;
+    if (!compileResult.success || buildResult?.state === 'error') {
+      const error: any = new Error(buildResult?.text || 'Build failed');
+      error.state = buildResult?.state || 'error';
+      error.text = buildResult?.text || 'Build failed';
+      error.fullStdErr = buildResult?.fullStdErr;
+      error.buildResult = buildResult;
+      this.buildFinishedSubject.next({ success: false, result: buildResult, error });
+      throw error;
+    }
+
+    this.buildFinishedSubject.next({ success: true, result: buildResult });
+    return buildResult;
   }
 
   /*

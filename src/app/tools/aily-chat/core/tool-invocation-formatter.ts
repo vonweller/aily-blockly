@@ -91,7 +91,7 @@ export function buildToolInvocationDisplaySummary(input: {
       return { label: 'Created notebook', subtitle: asString(args?.query) };
     case 'create_project':
       return buildCreateProjectSummary(args);
-    case 'build_project':
+    case 'buildProject':
       return buildBuildProjectSummary(args);
     case 'reload_project':
       return buildReloadProjectSummary();

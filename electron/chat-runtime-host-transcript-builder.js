@@ -760,20 +760,22 @@ function isTerminalPayloadRecord(value) {
   if (!readRecord(value)) {
     return false;
   }
-  return [
-    'command',
-    'output',
-    'stdout',
-    'stderr',
-    'exit_code',
-    'exitCode',
-    'terminalId',
-    'processId',
-    'outputSessionId',
-    'outputFilePath',
-    'bytesTotal',
-    'lastOutputAt',
-  ].some(field => Object.prototype.hasOwnProperty.call(value, field));
+  const hasCommand = hasOwn(value, 'command') && asString(value.command) !== undefined;
+  const hasTerminalIdentity = hasOwn(value, 'terminalId')
+    || hasOwn(value, 'processId')
+    || hasOwn(value, 'outputSessionId')
+    || hasOwn(value, 'outputFilePath');
+  const hasTerminalStream = hasOwn(value, 'stdout') || hasOwn(value, 'stderr');
+  const hasTerminalOutputMetadata = hasOwn(value, 'bytesTotal') || hasOwn(value, 'lastOutputAt');
+
+  return hasCommand
+    || hasTerminalIdentity
+    || hasTerminalStream
+    || (hasTerminalOutputMetadata && (hasCommand || hasTerminalIdentity || hasTerminalStream));
+}
+
+function hasOwn(record, field) {
+  return Object.prototype.hasOwnProperty.call(record, field);
 }
 
 function extractTerminalPartFromToolEnd(event) {
@@ -1027,8 +1029,11 @@ function withResponsePatch(turn, timestamp, patch) {
   const existingResponse = turn && turn.response && typeof turn.response === 'object'
     ? turn.response
     : {};
-  const parts = Array.isArray(patch.parts) ? patch.parts : cloneParts(turn);
   const status = patch.status || existingResponse.status || 'streaming';
+  const parts = normalizeResponsePartsForStatus(
+    Array.isArray(patch.parts) ? patch.parts : cloneParts(turn),
+    status,
+  );
   const resultText = patch.resultText !== undefined
     ? patch.resultText
     : collectMarkdownResultText(parts);
@@ -1060,6 +1065,27 @@ function withResponsePatch(turn, timestamp, patch) {
     responseModel: patch.responseModel !== undefined ? patch.responseModel : turn.responseModel,
     updatedAt: timestamp,
   };
+}
+
+function normalizeResponsePartsForStatus(parts, status) {
+  if (status !== 'completed' || !Array.isArray(parts) || parts.length === 0) {
+    return parts;
+  }
+
+  return parts.filter(part => !isEmptyTextResponsePart(part));
+}
+
+function isEmptyTextResponsePart(part) {
+  if (!part || typeof part !== 'object') {
+    return false;
+  }
+
+  if (part.type !== 'markdown' && part.type !== 'thinking') {
+    return false;
+  }
+
+  const content = typeof part.content === 'string' ? part.content : '';
+  return content.trim().length === 0;
 }
 
 function materializeRenderEventTurn(turn, state, event) {

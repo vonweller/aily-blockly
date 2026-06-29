@@ -12,6 +12,7 @@ type ChatConversationActionContext = Pick<IAgentLifecycle, 'isWaiting'>
 
 interface ChatConversationActionCallbacks {
   submitText: (text: string, sessionId: string) => Promise<void> | void;
+  rerunLastRequest: (sessionId: string) => Promise<void> | void;
 }
 
 /**
@@ -53,7 +54,7 @@ export class ChatConversationActionCoordinator {
     }
 
     this.ctx.scrollManager.startNewExchange?.();
-    await this.callbacks.submitText('请重试上次的操作。', sessionId);
+    await this.callbacks.rerunLastRequest(sessionId);
   }
 
   private resolveCurrentSessionId(): string {

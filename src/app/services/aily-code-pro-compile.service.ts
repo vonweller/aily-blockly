@@ -12,14 +12,14 @@ import { ConfigService } from './config.service';
 import { ActionState } from './ui.service';
 import { CompileValidationService } from './compile-validation.service';
 
-/**
- * Code Editor Pro 路由下无 Blockly 宿主，根 BuilderService 发出的 compile-begin 无人处理。
- * 本服务在含 project.aci 的 Aily Code 工程中，从磁盘入口文件读取源码并复用 child/scripts 的预处理与编译链。
- */
+interface DiskCompileOptions {
+  projectPath?: string;
+  code?: string;
+}
+
 @Injectable({ providedIn: 'root' })
 export class AilyCodeProCompileService {
   private cancelled = false;
-  /** 当前 cmd 订阅，便于取消时清理 */
   private activeSub: Subscription | null = null;
   private activeStreamId: string | null = null;
 
@@ -36,9 +36,6 @@ export class AilyCodeProCompileService {
     private compileValidationService: CompileValidationService,
   ) { }
 
-  /**
-   * 用户点击「取消编译」时由 ActionService 转发调用。
-   */
   cancel(): void {
     this.cancelled = true;
     if (this.activeStreamId) {
@@ -51,50 +48,35 @@ export class AilyCodeProCompileService {
     }
   }
 
-  /**
-   * 执行 Aily Code 磁盘编译；返回形态与 Blockly 侧 compile-begin 监听器一致。
-   */
-  async runCompileFromDisk(): Promise<{ success: boolean; result: ActionState & { fullStdErr?: string } }> {
-    const root = this.projectService.currentProjectPath;
+  async runCompileFromDisk(options: DiskCompileOptions = {}): Promise<{ success: boolean; result: ActionState & { fullStdErr?: string } }> {
+    const root = (options.projectPath || this.projectService.currentProjectPath || '').trim();
     const aciPath = this.electronService.pathJoin(root, 'project.aci');
+    const isAilyCodeProject = !!root && window['path'].isExists(aciPath);
 
-    // 非 Aily Code 工程在 Pro 中无法走 Blockly 生成器，明确提示
-    if (!root || !window['path'].isExists(aciPath)) {
-      this.message.warning('当前为 Pro 编辑器：仅支持含 project.aci 的 Aily Code 工程在此编译。');
+    if (!root) {
+      this.message.warning('No project is currently open.');
       return {
         success: false,
-        result: { state: 'warn', text: '请使用 Blockly 工程或先创建 Aily Code 项目' },
+        result: { state: 'warn', text: 'No project is currently open; build cannot start.' },
       };
     }
 
-    let code = '';
-    let entryRel = 'src/main.cpp';
-    try {
-      const aci = JSON.parse(window['fs'].readFileSync(aciPath, 'utf8'));
-      if (aci.entry && typeof aci.entry === 'string') {
-        entryRel = aci.entry.replace(/\\/g, '/');
-      }
-      const segments = entryRel.split('/').filter(Boolean);
-      const srcPath = this.electronService.pathJoin(root, ...segments);
-      if (!window['path'].isExists(srcPath)) {
-        return { success: false, result: { state: 'error', text: `入口文件不存在: ${entryRel}` } };
-      }
-      code = window['fs'].readFileSync(srcPath, 'utf8');
-    } catch (e: any) {
-      return { success: false, result: { state: 'error', text: e?.message || '读取工程配置失败' } };
+    const source = this.readCompileSource(root, aciPath, isAilyCodeProject, options.code);
+    if (source.success === false) {
+      return { success: false, result: { state: 'error', text: source.error } };
     }
 
     if (!this.workflowService.startBuild()) {
       const state = this.workflowService.currentState;
-      let msg = '系统繁忙';
+      let msg = 'System is busy';
       if (state === ProcessState.BUILDING) {
-        msg = '编译正在进行中';
+        msg = 'Build is already running';
       } else if (state === ProcessState.UPLOADING) {
-        msg = '上传正在进行中';
+        msg = 'Upload is already running';
       } else if (state === ProcessState.INSTALLING) {
-        msg = '依赖安装中';
+        msg = 'Dependency installation is already running';
       }
-      this.message.warning(msg + '，请稍后再试');
+      this.message.warning(`${msg}; please try again later.`);
       return { success: false, result: { state: 'warn', text: msg } };
     }
 
@@ -102,8 +84,13 @@ export class AilyCodeProCompileService {
     const started = Date.now();
 
     try {
-      const boardModule = await this.projectService.getBoardModule();
-      const boardName = boardModule.replace('@aily-project/board-', '');
+      const boardModule = await this.resolveBoardModule(root, isAilyCodeProject ? aciPath : undefined);
+      if (!boardModule) {
+        this.workflowService.finishBuild(false, 'Missing board module');
+        return { success: false, result: { state: 'error', text: 'Cannot resolve board module from the active project.' } };
+      }
+
+      const boardName = boardModule.replace('@aily-project/board-', '').replace('@aily-project/coder-', '');
       const ailyBuilderPath = window['path'].getAilyBuilderPath();
       const appDataPath = window['path'].getAppDataPath();
       const ailyChildPath = window['path'].getAilyChildPath();
@@ -112,23 +99,22 @@ export class AilyCodeProCompileService {
 
       if (!ailyBuilderPath || !ailyChildPath) {
         this.workflowService.finishBuild(false, 'Missing builder paths');
-        return { success: false, result: { state: 'error', text: 'aily-builder 路径未就绪' } };
+        return { success: false, result: { state: 'error', text: 'aily-builder path is unavailable.' } };
       }
 
       this.noticeService.update({
-        title: `正在编译 ${boardName}`,
-        text: 'Aily Code 构建',
+        title: `Building ${boardName}`,
+        text: isAilyCodeProject ? 'Aily Code build' : 'Blockly build',
         state: 'doing',
         progress: 0,
         setTimeout: 0,
         stop: () => this.cancel(),
       });
 
-      // 写入 preprocess / compile 共用的配置文件（与 Blockly 侧结构一致）
       const buildConfig = {
         currentProjectPath: root,
         boardModule,
-        code,
+        code: source.code,
         appDataPath,
         za7Path: this.platformService.za7,
         ailyBuilderPath,
@@ -141,7 +127,6 @@ export class AilyCodeProCompileService {
       }
       window['fs'].writeFileSync(configFilePath, JSON.stringify(buildConfig, null, 2));
 
-      // 按需同步预处理（无缓存时才跑）
       if (!window['path'].isExists(preprocessCachePath)) {
         const preprocessScriptPath = this.electronService.pathJoin(ailyChildPath, 'scripts', 'preprocess.js');
         const preprocessCmd = `node "${preprocessScriptPath}" "${configFilePath}"`;
@@ -149,14 +134,15 @@ export class AilyCodeProCompileService {
         if (this.cancelled) {
           this.workflowService.finishBuild(false, 'Cancelled');
           const sec = ((Date.now() - started) / 1000).toFixed(2);
-          return { success: false, result: { state: 'warn', text: `编译已取消 (耗时: ${sec}s)` } };
+          return { success: false, result: { state: 'warn', text: `Build cancelled (${sec}s)` } };
         }
         if (pre.exitCode !== 0) {
+          const detail = pre.stderr + pre.stdout;
           this.workflowService.finishBuild(false, 'Preprocess failed');
-          this.handleFailNotice(pre.stderr + pre.stdout);
+          this.handleFailNotice(detail);
           return {
             success: false,
-            result: { state: 'error', text: `预编译失败 (耗时: ${((Date.now() - started) / 1000).toFixed(2)}s)`, fullStdErr: pre.stderr + pre.stdout },
+            result: { state: 'error', text: `Preprocess failed (${((Date.now() - started) / 1000).toFixed(2)}s)`, fullStdErr: detail },
           };
         }
       }
@@ -168,28 +154,29 @@ export class AilyCodeProCompileService {
 
       if (this.cancelled) {
         this.workflowService.finishBuild(false, 'Cancelled');
-        return { success: false, result: { state: 'warn', text: `编译已取消 (耗时: ${buildDuration}s)` } };
+        return { success: false, result: { state: 'warn', text: `Build cancelled (${buildDuration}s)` } };
       }
 
       if (cmp.exitCode !== 0) {
+        const detail = cmp.stderr + cmp.stdout;
         this.workflowService.finishBuild(false, 'Compile failed');
-        this.handleFailNotice(cmp.stderr + cmp.stdout);
+        this.handleFailNotice(detail);
         return {
           success: false,
-          result: { state: 'error', text: `编译失败 (耗时: ${buildDuration}s)`, fullStdErr: cmp.stderr + cmp.stdout },
+          result: { state: 'error', text: `Build failed (${buildDuration}s)`, fullStdErr: detail },
         };
       }
 
       this.compileValidationService.triggerAfterSuccessfulCompile();
       this.workflowService.finishBuild(true);
       this.noticeService.update({
-        title: '编译完成',
-        text: `编译完成 (耗时: ${buildDuration}s)`,
+        title: 'Build completed',
+        text: `Build completed (${buildDuration}s)`,
         state: 'done',
         setTimeout: 600000,
       });
 
-      return { success: true, result: { state: 'done', text: `编译完成 (耗时: ${buildDuration}s)` } };
+      return { success: true, result: { state: 'done', text: `Build completed (${buildDuration}s)` } };
     } catch (e: any) {
       const msg = e?.message || String(e);
       this.workflowService.finishBuild(false, msg);
@@ -198,19 +185,100 @@ export class AilyCodeProCompileService {
     }
   }
 
+  private readCompileSource(
+    projectPath: string,
+    aciPath: string,
+    isAilyCodeProject: boolean,
+    explicitCode?: string,
+  ): { success: true; code: string } | { success: false; error: string } {
+    if (explicitCode) {
+      return { success: true, code: explicitCode };
+    }
+
+    try {
+      if (isAilyCodeProject) {
+        const aci = JSON.parse(window['fs'].readFileSync(aciPath, 'utf8'));
+        const entryRel = typeof aci.entry === 'string' && aci.entry.trim()
+          ? aci.entry.replace(/\\/g, '/')
+          : 'src/main.cpp';
+        const segments = entryRel.split('/').filter(Boolean);
+        const sourcePath = this.electronService.pathJoin(projectPath, ...segments);
+        if (!window['path'].isExists(sourcePath)) {
+          return { success: false, error: `Entry file does not exist: ${entryRel}` };
+        }
+        return { success: true, code: window['fs'].readFileSync(sourcePath, 'utf8') };
+      }
+
+      const sketchPath = this.electronService.pathJoin(projectPath, '.temp', 'sketch', 'sketch.ino');
+      if (!window['path'].isExists(sketchPath)) {
+        return {
+          success: false,
+          error: 'Missing Blockly generated file .temp/sketch/sketch.ino; sync or generate Blockly code before building.',
+        };
+      }
+      return { success: true, code: window['fs'].readFileSync(sketchPath, 'utf8') };
+    } catch (error: any) {
+      return { success: false, error: error?.message || 'Failed to read project compile source.' };
+    }
+  }
+
+  private async resolveBoardModule(projectPath: string, aciPath?: string): Promise<string | null> {
+    if (!projectPath) {
+      return null;
+    }
+
+    try {
+      const packageJsonPath = this.electronService.pathJoin(projectPath, 'package.json');
+      if (window['path'].isExists(packageJsonPath)) {
+        const packageJson = JSON.parse(window['fs'].readFileSync(packageJsonPath, 'utf8'));
+        const dependencyNames = [
+          ...Object.keys(packageJson.dependencies || {}),
+          ...Object.keys(packageJson.devDependencies || {}),
+          ...Object.keys(packageJson.boardDependencies || {}),
+        ];
+        const boardModule = dependencyNames.find(dep => dep.startsWith('@aily-project/board-'))
+          ?? dependencyNames.find(dep => dep.startsWith('@aily-project/coder-'));
+        if (boardModule) {
+          return boardModule;
+        }
+      }
+    } catch {
+      /* fall through to Aily Code project metadata/current project service */
+    }
+
+    if (aciPath && window['path'].isExists(aciPath)) {
+      try {
+        const aci = JSON.parse(window['fs'].readFileSync(aciPath, 'utf8'));
+        const boardPackage = String(aci?.target?.boardPackage ?? '').trim();
+        if (boardPackage) {
+          return boardPackage;
+        }
+        const board = String(aci?.target?.board ?? '').trim();
+        if (board.startsWith('@aily-project/')) {
+          return board;
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+
+    return projectPath === this.projectService.currentProjectPath
+      ? this.projectService.getBoardModule()
+      : null;
+  }
+
   private handleFailNotice(detail: string): void {
     const clean = (detail || '').replace(/\[\d+(;\d+)*m/g, '').trim().slice(0, 8000);
     this.noticeService.update({
-      title: '编译失败',
-      text: '请查看日志',
+      title: 'Build failed',
+      text: 'See logs for details.',
       state: 'error',
-      detail: clean || '(无日志)',
+      detail: clean || '(no logs)',
       setTimeout: 600000,
       sendToLog: true,
     });
   }
 
-  /** 跑一次子进程直至 Observable complete，汇总退出码与输出 */
   private runOneShotCommand(command: string): Promise<{ exitCode: number; stdout: string; stderr: string; signal: string | null }> {
     return new Promise((resolve, reject) => {
       let stdout = '';
