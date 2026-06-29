@@ -1,5 +1,9 @@
 import type { RenderEvent, TurnResponseTurn } from 'aily-lex/browser';
 
+import type {
+  ChatAgentRuntimeMode,
+  ChatAgentRuntimeModeSource,
+} from './chat-agent-runtime-mode';
 import type { ChatModeId, ChatSelectedMode } from './chat-mode';
 import type { HostSessionProviderOptions } from '../helpers/host-session-input-state';
 
@@ -41,6 +45,8 @@ export interface ChatRuntimeHostSubmitRequest {
   readonly displayText?: string;
   readonly selectedMode?: ChatSelectedMode | null;
   readonly providerOptions?: HostSessionProviderOptions | null;
+  readonly agentRuntimeMode?: ChatAgentRuntimeMode | null;
+  readonly agentRuntimeModeSource?: ChatAgentRuntimeModeSource | null;
   readonly currentModel?: ChatRuntimeHostModelSelectionSnapshot | null;
   readonly metadata?: Readonly<Record<string, unknown>> | null;
   readonly activeResponseHandle?: unknown | null;
@@ -429,6 +435,8 @@ export type ChatRuntimeExecutionWorkerCommandMethod =
 export interface ChatRuntimeExecutionWorkerStartTurnExecutionContext {
   readonly selectedMode?: ChatSelectedMode | null;
   readonly providerOptions?: HostSessionProviderOptions | null;
+  readonly agentRuntimeMode?: ChatAgentRuntimeMode | null;
+  readonly agentRuntimeModeSource?: ChatAgentRuntimeModeSource | null;
   readonly currentModel?: ChatRuntimeHostModelSelectionSnapshot | null;
   readonly transcriptRevision?: number;
   readonly protocolTruncation?: ChatRuntimeHostProtocolTruncation | null;
