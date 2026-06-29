@@ -1927,6 +1927,11 @@ export function bootstrapBlocklyLexAgent(
   const promptProfile = resolveRuntimePromptProfile(agentRuntimeMode);
   const requiredContext = resolveRuntimeRequiredContext(agentRuntimeMode);
   const subagentRequiredContext = createSubagentRequiredContext(requiredContext);
+  const runtimeSessionId = (sessionId || ctx.sessionId || '').trim();
+  setChatRuntimeWorkspaceEnvironmentOverride({
+    cwd,
+    sessionId: runtimeSessionId,
+  });
   const isRuntimeSessionStale = () => {
     const currentSessionId = (ctx.sessionId || '').trim();
     return runtimeSessionId.length > 0
