@@ -9,16 +9,20 @@ export function appendProjectLog(
 ): string | null {
   const normalizedProjectPath = typeof projectPath === 'string' ? projectPath.trim() : '';
   const normalizedMessage = normalizeLogMessage(message);
-  if (!normalizedProjectPath || !normalizedMessage || !(window as any)?.path || !(window as any)?.fs) {
+  if (!normalizedMessage || !(window as any)?.path || !(window as any)?.fs) {
     return null;
   }
 
   const pathApi = (window as any).path;
   const fsApi = (window as any).fs;
+  const appDataLogRoot = resolveAppDataLogRoot(pathApi);
+  if (!appDataLogRoot) {
+    return null;
+  }
   const sourceId = normalizeLogSource(source);
   const daySegment = formatDateSegment(at);
   const minuteSegment = formatMinuteSegment(at);
-  const dirPath = pathApi.join(normalizedProjectPath, '.log', sourceId, daySegment);
+  const dirPath = pathApi.join(appDataLogRoot, sourceId, daySegment);
   const filePath = pathApi.join(dirPath, `${minuteSegment}.log`);
 
   if (!fsApi.existsSync(dirPath)) {
@@ -50,9 +54,12 @@ export function resolveProcessLogStoragePaths(
 
   const pathApi = (window as any).path;
   const fsApi = (window as any).fs;
+  const appDataLogRoot = resolveAppDataLogRoot(pathApi);
+  if (!appDataLogRoot) {
+    return null;
+  }
   const dirPath = pathApi.join(
-    normalizedProjectPath,
-    '.log',
+    appDataLogRoot,
     resolveProjectLogId(normalizedProjectPath),
     formatDateSegment(at),
   );
@@ -74,9 +81,12 @@ export function resolveProcessLogProjectDir(projectPath: string | undefined): st
   }
 
   const pathApi = (window as any).path;
+  const appDataLogRoot = resolveAppDataLogRoot(pathApi);
+  if (!appDataLogRoot) {
+    return null;
+  }
   return pathApi.join(
-    normalizedProjectPath,
-    '.log',
+    appDataLogRoot,
     resolveProjectLogId(normalizedProjectPath),
   );
 }
@@ -112,6 +122,14 @@ function resolveProjectLogId(projectPath: string): string {
   }
 
   return sanitizeProjectLogId(pathApi.basename(projectPath));
+}
+
+function resolveAppDataLogRoot(pathApi: any): string | null {
+  const appDataPath = typeof pathApi.getAppDataPath === 'function' ? pathApi.getAppDataPath() : '';
+  if (!appDataPath) {
+    return null;
+  }
+  return pathApi.join(appDataPath, '.log');
 }
 
 function sanitizeProjectLogId(value: string): string {

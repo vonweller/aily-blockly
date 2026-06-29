@@ -96,7 +96,8 @@ function writeAppConsoleLog(level, args) {
 function writeStructuredProjectLog(source, level, message, projectPath) {
     const normalizedProjectPath = typeof projectPath === 'string' ? projectPath.trim() : '';
     const normalizedMessage = typeof message === 'string' ? message.trim() : '';
-    if (!normalizedProjectPath || !normalizedMessage) {
+    const appDataPath = process.env.AILY_APPDATA_PATH || '';
+    if (!appDataPath || !normalizedMessage) {
         return;
     }
 
@@ -104,7 +105,7 @@ function writeStructuredProjectLog(source, level, message, projectPath) {
     const sourceId = normalizeSourceId(source);
     const daySegment = `${now.getFullYear()}${pad2(now.getMonth() + 1)}${pad2(now.getDate())}`;
     const minuteSegment = `${pad2(now.getHours())}-${pad2(now.getMinutes())}`;
-    const dirPath = path.join(normalizedProjectPath, '.log', sourceId, daySegment);
+    const dirPath = path.join(appDataPath, '.log', sourceId, daySegment);
     const filePath = path.join(dirPath, `${minuteSegment}.log`);
 
     if (!fs.existsSync(dirPath)) {
