@@ -32,9 +32,9 @@ export function appendProjectLog(
 
   const lines = normalizedMessage
     .split(/\r?\n/)
-    .map((line: string) => line.trimEnd())
-    .filter((line: string) => line.length > 0)
-    .map((line: string) => `[${formatTimestamp(at)}] [${level}] [${sourceId}] ${line}`);
+    .map((line: string) => normalizeLogLine(line, level))
+    .filter((line): line is { level: ProjectLogLevel; message: string } => !!line)
+    .map((line) => `[${formatTimestamp(at)}] [${line.level}] [${sourceId}] ${line.message}`);
   if (lines.length === 0) {
     return filePath;
   }
@@ -96,7 +96,7 @@ export function resolveProcessLogProjectDir(projectPath: string | undefined): st
 }
 
 function normalizeLogMessage(message: string): string {
-  return typeof message === 'string' ? message.trim() : '';
+  return typeof message === 'string' ? stripAnsi(message).trim() : '';
 }
 
 function normalizeLogSource(source: string): string {
@@ -151,6 +151,35 @@ function formatMinuteSegment(value: Date): string {
 
 function formatTimestamp(value: Date): string {
   return `${value.getFullYear()}-${pad2(value.getMonth() + 1)}-${pad2(value.getDate())} ${pad2(value.getHours())}:${pad2(value.getMinutes())}:${pad2(value.getSeconds())}.${pad3(value.getMilliseconds())}`;
+}
+
+function normalizeLogLine(
+  line: string,
+  fallbackLevel: ProjectLogLevel,
+): { level: ProjectLogLevel; message: string } | null {
+  const sanitized = stripAnsi(String(line || '')).trim();
+  if (!sanitized) {
+    return null;
+  }
+
+  const nestedPrefix = sanitized.match(/^\[(INFO|DEBUG|ERROR)\]\s*/i);
+  if (!nestedPrefix) {
+    return {
+      level: fallbackLevel,
+      message: sanitized,
+    };
+  }
+
+  const nestedLevel = nestedPrefix[1].toUpperCase() as ProjectLogLevel;
+  const normalizedMessage = sanitized.slice(nestedPrefix[0].length).trim();
+  return {
+    level: nestedLevel,
+    message: normalizedMessage || sanitized,
+  };
+}
+
+function stripAnsi(value: string): string {
+  return value.replace(/\u001b\[[0-9;]*m/g, '');
 }
 
 function pad2(value: number): string {
