@@ -43,6 +43,7 @@
                     (click)="onDevelopmentModePreferenceChange('blockly')">
                     {{ 'PROJECT_NEW.BOARD.MODE_BLOCKLY' | translate }}
                   </button>
+                  @if (coderEnabled) {
                   <button
                     nz-button
                     nzSize="small"
@@ -50,6 +51,7 @@
                     (click)="onDevelopmentModePreferenceChange('coder')">
                     {{ 'PROJECT_NEW.BOARD.MODE_CODER' | translate }}
                   </button>
+                  }
                 </div>
               </div>
             </div>

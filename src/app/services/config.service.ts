@@ -128,7 +128,14 @@ export class ConfigService {
     return 'blockly';
   }
 
+  isCoderEnabled(): boolean {
+    return this.data?.coder?.enabled === true;
+  }
+
   getDevelopmentModePreference(): DevelopmentModePreference {
+    if (!this.isCoderEnabled()) {
+      return 'blockly';
+    }
     return this.normalizeDevelopmentModePreference(this.data?.developmentModePreference);
   }
 
@@ -137,7 +144,9 @@ export class ConfigService {
     source: DevelopmentModePreferenceSource = 'settings',
     options: { save?: boolean } = {},
   ): Promise<DevelopmentModePreference> {
-    const normalized = this.normalizeDevelopmentModePreference(preference);
+    const normalized = this.isCoderEnabled()
+      ? this.normalizeDevelopmentModePreference(preference)
+      : 'blockly';
     this.data.developmentModePreference = normalized;
     this.data.developmentModePreferenceSource = source;
     this.data.developmentModePreferenceUpdatedAt = Date.now();
@@ -162,6 +171,9 @@ export class ConfigService {
   }
 
   shouldPromptDevelopmentModePreference(): boolean {
+    if (!this.isCoderEnabled()) {
+      return false;
+    }
     return !this.data?.developmentModePreferenceSource && !this.data?.developmentModePreferencePromptedAt;
   }
 
@@ -213,7 +225,9 @@ export class ConfigService {
 
     // 合并用户配置和默认配置
     this.data = { ...this.data, ...userConfData };
-    this.data.developmentModePreference = this.normalizeDevelopmentModePreference(this.data.developmentModePreference);
+    this.data.developmentModePreference = this.isCoderEnabled()
+      ? this.normalizeDevelopmentModePreference(this.data.developmentModePreference)
+      : 'blockly';
     this.data.build_flavor = this.normalizeBuildFlavor(this.data.build_flavor);
     this.data.official_region = this.resolveOfficialRegionKey();
 
@@ -1610,6 +1624,11 @@ interface AppConfig {
   blockly: {
     renderer: string; // Blockly渲染器
   }
+
+  /** Coder 模式开关（由 electron/config/config.json 控制） */
+  coder?: {
+    enabled?: boolean;
+  };
 
   /** 串口监视器快速发送列表 */
   quickSendList?: Array<{ name: string, type: "signal" | "text" | "hex", data: string }>;

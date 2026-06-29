@@ -249,6 +249,10 @@ export class SettingsComponent implements OnDestroy {
     return this.configService.getDevelopmentModePreference();
   }
 
+  get coderEnabled() {
+    return this.configService.isCoderEnabled();
+  }
+
   onDevelopmentModePreferenceChange(value: string) {
     void this.configService.setDevelopmentModePreference(value, 'settings');
   }
