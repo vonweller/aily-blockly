@@ -98,7 +98,13 @@ import {
   type ResolvedLexSessionRestorePlan,
 } from './host-session-restore-resolver';
 import type { HostSessionSaveTarget } from './host-session-save-bridge';
-import { resolveProcessLogProjectDir, resolveProcessLogStoragePaths } from '../../../utils/project-log.utils';
+import {
+  DEFAULT_PROCESS_LOG_SUBAPP,
+  normalizeProcessLogSubappName,
+  resolveProcessLogProjectDir,
+  resolveProcessLogStoragePaths,
+  resolveProcessLogSubappNameFromOutputFilePath,
+} from '../../../utils/project-log.utils';
 
 function isLexBootstrapTraceEnabled(): boolean {
   return isAilyCategoryDebugEnabled('aily.chat.traceLexBootstrap', [
@@ -156,6 +162,7 @@ interface PersistedBlocklyCommandSessionRecord {
   readonly completedAt?: number | null;
   readonly bytesTotal?: number;
   readonly background?: boolean;
+  readonly subappName?: string | null;
   readonly outputFilePath?: string | null;
   readonly removed?: boolean;
   readonly removedAt?: number | null;
@@ -3442,6 +3449,9 @@ function createBlocklyCommandSessionSummary(session: ExternalTerminalSession) {
   const outputFilePath = typeof session.outputFilePath === 'string' && session.outputFilePath.trim().length > 0
     ? session.outputFilePath
     : undefined;
+  const subappName = normalizeProcessLogSubappName(
+    session.subappName || resolveProcessLogSubappNameFromOutputFilePath(outputFilePath),
+  );
   const lastTimestamp = completedAt ?? Date.now();
   return {
     processId: session.id,
@@ -3459,6 +3469,7 @@ function createBlocklyCommandSessionSummary(session: ExternalTerminalSession) {
     elapsedMs: Math.max(0, lastTimestamp - session.startedAt),
     bytesTotal: byteLength(session.stdout) + byteLength(session.stderr),
     background: session.background === true,
+    subappName,
     removed: session.removed === true,
     ...(typeof session.removedAt === 'number' ? { removedAt: session.removedAt } : {}),
     ...(outputFilePath ? { outputFilePath } : {}),
@@ -3744,6 +3755,11 @@ function createBlocklyCommandSessionSummaryFromPersistedRecord(
   const outputFilePath = typeof record.outputFilePath === 'string' && record.outputFilePath.trim()
     ? record.outputFilePath.trim()
     : undefined;
+  const subappName = normalizeProcessLogSubappName(
+    typeof record.subappName === 'string' && record.subappName.trim()
+      ? record.subappName.trim()
+      : resolveProcessLogSubappNameFromOutputFilePath(outputFilePath),
+  );
   const removed = record.removed === true;
   const removedAt = typeof record.removedAt === 'number' && Number.isFinite(record.removedAt)
     ? record.removedAt
@@ -3771,6 +3787,7 @@ function createBlocklyCommandSessionSummaryFromPersistedRecord(
     elapsedMs: Math.max(0, lastTimestamp - startedAt),
     bytesTotal,
     background: record.background === true,
+    subappName,
     removed,
     ...(removedAt !== undefined ? { removedAt } : {}),
     ...(outputFilePath ? { outputFilePath } : {}),
@@ -3806,6 +3823,7 @@ function resolveBlocklyCommandSessionStoragePaths(
   cwd: string,
   sessionId: string,
   processId: string,
+  subappName?: string,
 ): { outputFilePath: string; metadataFilePath: string } | null {
   const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
   if (!normalizedSessionId) {
@@ -3817,7 +3835,7 @@ function resolveBlocklyCommandSessionStoragePaths(
     return null;
   }
 
-  return resolveProcessLogStoragePaths(projectPath, processId);
+  return resolveProcessLogStoragePaths(projectPath, processId, undefined, subappName);
 }
 
 function persistBlocklyCommandSessionRecord(session: ExternalTerminalSession): void {
@@ -3843,6 +3861,7 @@ function persistBlocklyCommandSessionRecord(session: ExternalTerminalSession): v
     bytesTotal: byteLength(session.stdout) + byteLength(session.stderr),
     stdoutBytes: byteLength(session.stdout),
     stderrBytes: byteLength(session.stderr),
+    subappName: session.subappName ?? null,
     outputFilePath: session.outputFilePath ?? null,
     background: session.background === true,
     removed: session.removed === true,
@@ -4061,6 +4080,7 @@ function createExternalTerminal(host: any, prjPath: () => string, runtimeSession
     cwd?: string;
     timeout?: number;
     env?: Record<string, string>;
+    subappName?: string;
     tty?: boolean;
     streamStdin?: boolean;
     streamStdoutStderr?: boolean;
@@ -4072,13 +4092,15 @@ function createExternalTerminal(host: any, prjPath: () => string, runtimeSession
     const sessionId = typeof runtimeSessionId === 'string' ? runtimeSessionId.trim() : '';
     let resolveReady!: () => void;
     let resolveFinished!: () => void;
-    const storagePaths = resolveBlocklyCommandSessionStoragePaths(host, cwd, sessionId, id);
+    const subappName = normalizeProcessLogSubappName(opts?.subappName || DEFAULT_PROCESS_LOG_SUBAPP);
+    const storagePaths = resolveBlocklyCommandSessionStoragePaths(host, cwd, sessionId, id, subappName);
     const session: ExternalTerminalSession = {
       id,
       sessionId,
       outputSessionId: id,
       command,
       cwd,
+      subappName,
       stdout: '',
       stderr: '',
       running: true,
@@ -4335,6 +4357,7 @@ interface ExternalTerminalSession {
   outputSessionId: string;
   command: string;
   cwd: string;
+  subappName: string;
   stdout: string;
   stderr: string;
   running: boolean;
@@ -4413,6 +4436,7 @@ async function waitForExternalSession(
     sessionId: session.sessionId,
     command: session.command,
     cwd: session.cwd,
+    subappName: session.subappName,
     stdout: session.stdout,
     stderr: session.stderr,
     running: session.running,

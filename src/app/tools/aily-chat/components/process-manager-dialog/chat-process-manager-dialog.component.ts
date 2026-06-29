@@ -25,6 +25,11 @@ import {
 import { openChatProcessWindow, readChatProcessOutputFile } from '../../helpers/chat-process-window';
 import { ChatHistoryService } from '../../services/chat-history.service';
 import { ChatRuntimeInteractionHostService } from '../../services/chat-runtime-interaction-host.service';
+import {
+  DEFAULT_PROCESS_LOG_SUBAPP,
+  normalizeProcessLogSubappName,
+  resolveProcessLogSubappNameFromOutputFilePath,
+} from '../../../../utils/project-log.utils';
 
 type ProcessFilter = 'all' | 'running' | 'background' | 'completed' | 'failed' | 'removed';
 
@@ -55,6 +60,12 @@ export class ChatProcessManagerDialogComponent {
 
   selectedFilter: ProcessFilter = 'all';
   selectedProcessId = '';
+  showAdvancedFilters = false;
+  subappKeyword = '';
+  startDate = '';
+  endDate = '';
+  startTime = '';
+  endTime = '';
 
   processes: readonly ChatRuntimeHostSessionProcessSummary[] = [];
   selectedProcessOutput = '';
@@ -92,6 +103,51 @@ export class ChatProcessManagerDialogComponent {
       this.selectedProcessId = this.filteredProcesses[0]?.processId ?? '';
     }
     void this.refreshSelectedProcessDetail();
+  }
+
+  updateSubappKeyword(value: string): void {
+    this.subappKeyword = value;
+    this.syncAdvancedFilterVisibility();
+    this.syncSelectedProcessAfterFilterChange();
+  }
+
+  updateStartDate(value: string): void {
+    this.startDate = value;
+    this.syncAdvancedFilterVisibility();
+    this.syncSelectedProcessAfterFilterChange();
+  }
+
+  updateEndDate(value: string): void {
+    this.endDate = value;
+    this.syncAdvancedFilterVisibility();
+    this.syncSelectedProcessAfterFilterChange();
+  }
+
+  updateStartTime(value: string): void {
+    this.startTime = value;
+    this.syncAdvancedFilterVisibility();
+    this.syncSelectedProcessAfterFilterChange();
+  }
+
+  updateEndTime(value: string): void {
+    this.endTime = value;
+    this.syncAdvancedFilterVisibility();
+    this.syncSelectedProcessAfterFilterChange();
+  }
+
+  toggleAdvancedFilters(): void {
+    this.showAdvancedFilters = !this.showAdvancedFilters;
+    this.cdr.markForCheck();
+  }
+
+  resetAdvancedFilters(): void {
+    this.subappKeyword = '';
+    this.startDate = '';
+    this.endDate = '';
+    this.startTime = '';
+    this.endTime = '';
+    this.showAdvancedFilters = false;
+    this.syncSelectedProcessAfterFilterChange();
   }
 
   selectProcess(processId: string): void {
@@ -146,28 +202,67 @@ export class ChatProcessManagerDialogComponent {
   }
 
   get filteredProcesses(): readonly ChatRuntimeHostSessionProcessSummary[] {
-    switch (this.selectedFilter) {
-      case 'running':
-        return this.processes.filter(process => process.removed !== true && process.running);
-      case 'background':
-        return this.processes.filter(process => process.removed !== true && process.running && process.background === true);
-      case 'completed':
-        return this.processes.filter(process => process.removed !== true && !process.running && process.status === 'completed');
-      case 'failed':
-        return this.processes.filter(process =>
-          process.removed !== true && !process.running && process.status !== 'completed',
-        );
-      case 'removed':
-        return this.processes.filter(process => process.removed === true);
-      case 'all':
-      default:
-        return this.processes.filter(process => process.removed !== true);
-    }
+    const processes = this.filterByStatus(this.processes);
+    return processes.filter(process => this.matchesAdvancedFilters(process));
+  }
+
+  get hasAdvancedFilters(): boolean {
+    return !!(
+      this.subappKeyword.trim()
+      || this.startDate
+      || this.endDate
+      || this.startTime
+      || this.endTime
+    );
   }
 
   get selectedProcess(): ChatRuntimeHostSessionProcessSummary | null {
     const selected = this.filteredProcesses.find(process => process.processId === this.selectedProcessId);
     return selected ?? this.filteredProcesses[0] ?? null;
+  }
+
+  resolveSubappName(process: ChatRuntimeHostSessionProcessSummary): string {
+    return normalizeProcessLogSubappName(
+      process.subappName || resolveProcessLogSubappNameFromOutputFilePath(process.outputFilePath) || DEFAULT_PROCESS_LOG_SUBAPP,
+    );
+  }
+
+  formatStartedAt(process: ChatRuntimeHostSessionProcessSummary): string {
+    if (typeof process.startedAt !== 'number' || !Number.isFinite(process.startedAt)) {
+      return '-';
+    }
+    const elapsedMinutes = Math.max(1, Math.floor((Date.now() - process.startedAt) / 60_000));
+    if (elapsedMinutes < 60) {
+      return this.translate.instant('AILY_CHAT.PROCESS_RELATIVE_MINUTES', { count: elapsedMinutes });
+    }
+
+    const elapsedHours = Math.floor(elapsedMinutes / 60);
+    if (elapsedHours < 24) {
+      return this.translate.instant('AILY_CHAT.PROCESS_RELATIVE_HOURS', { count: elapsedHours });
+    }
+
+    const elapsedDays = Math.floor(elapsedHours / 24);
+    return this.translate.instant('AILY_CHAT.PROCESS_RELATIVE_DAYS', { count: elapsedDays });
+  }
+
+  private filterByStatus(processes: readonly ChatRuntimeHostSessionProcessSummary[]): readonly ChatRuntimeHostSessionProcessSummary[] {
+    switch (this.selectedFilter) {
+      case 'running':
+        return processes.filter(process => process.removed !== true && process.running);
+      case 'background':
+        return processes.filter(process => process.removed !== true && process.running && process.background === true);
+      case 'completed':
+        return processes.filter(process => process.removed !== true && !process.running && process.status === 'completed');
+      case 'failed':
+        return processes.filter(process =>
+          process.removed !== true && !process.running && process.status !== 'completed',
+        );
+      case 'removed':
+        return processes.filter(process => process.removed === true);
+      case 'all':
+      default:
+        return processes.filter(process => process.removed !== true);
+    }
   }
 
   formatElapsed(process: ChatRuntimeHostSessionProcessSummary): string {
@@ -278,19 +373,117 @@ export class ChatProcessManagerDialogComponent {
   ): readonly ChatRuntimeHostSessionProcessSummary[] {
     const merged = new Map<string, ChatRuntimeHostSessionProcessSummary>();
     for (const process of persistedProcesses) {
-      merged.set(process.processId, process);
+      merged.set(process.processId, this.decorateProcessSummary(process));
     }
     for (const process of liveProcesses) {
       const existing = merged.get(process.processId);
       merged.set(process.processId, existing
-        ? {
+        ? this.decorateProcessSummary({
             ...existing,
             ...process,
             outputFilePath: process.outputFilePath ?? existing.outputFilePath,
-          }
-        : process);
+          })
+        : this.decorateProcessSummary(process));
     }
     return [...merged.values()].sort((left, right) => right.startedAt - left.startedAt);
+  }
+
+  private decorateProcessSummary(process: ChatRuntimeHostSessionProcessSummary): ChatRuntimeHostSessionProcessSummary {
+    const subappName = this.resolveSubappName(process);
+    return process.subappName === subappName
+      ? process
+      : {
+          ...process,
+          subappName,
+        };
+  }
+
+  private matchesAdvancedFilters(process: ChatRuntimeHostSessionProcessSummary): boolean {
+    const subappKeyword = this.subappKeyword.trim().toLowerCase();
+    if (subappKeyword && !this.resolveSubappName(process).toLowerCase().includes(subappKeyword)) {
+      return false;
+    }
+
+    if (!this.matchesDateRange(process.startedAt)) {
+      return false;
+    }
+
+    return this.matchesTimeRange(process.startedAt);
+  }
+
+  private matchesDateRange(timestamp: number): boolean {
+    if (typeof timestamp !== 'number' || !Number.isFinite(timestamp)) {
+      return false;
+    }
+    const currentDate = this.formatDateKey(timestamp);
+    if (this.startDate && currentDate < this.startDate) {
+      return false;
+    }
+    if (this.endDate && currentDate > this.endDate) {
+      return false;
+    }
+    return true;
+  }
+
+  private matchesTimeRange(timestamp: number): boolean {
+    const startMinutes = this.parseTimeToMinutes(this.startTime);
+    const endMinutes = this.parseTimeToMinutes(this.endTime);
+    if (startMinutes === null && endMinutes === null) {
+      return true;
+    }
+    if (typeof timestamp !== 'number' || !Number.isFinite(timestamp)) {
+      return false;
+    }
+
+    const current = new Date(timestamp);
+    const minutes = current.getHours() * 60 + current.getMinutes();
+
+    if (startMinutes !== null && endMinutes !== null) {
+      return startMinutes <= endMinutes
+        ? minutes >= startMinutes && minutes <= endMinutes
+        : minutes >= startMinutes || minutes <= endMinutes;
+    }
+    if (startMinutes !== null) {
+      return minutes >= startMinutes;
+    }
+    return endMinutes === null ? true : minutes <= endMinutes;
+  }
+
+  private parseTimeToMinutes(value: string): number | null {
+    const normalized = typeof value === 'string' ? value.trim() : '';
+    if (!normalized) {
+      return null;
+    }
+    const match = normalized.match(/^(\d{2}):(\d{2})$/);
+    if (!match) {
+      return null;
+    }
+    const hours = Number(match[1]);
+    const minutes = Number(match[2]);
+    if (!Number.isInteger(hours) || !Number.isInteger(minutes) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+      return null;
+    }
+    return hours * 60 + minutes;
+  }
+
+  private formatDateKey(timestamp: number): string {
+    const date = new Date(timestamp);
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  private syncSelectedProcessAfterFilterChange(): void {
+    if (!this.filteredProcesses.some(process => process.processId === this.selectedProcessId)) {
+      this.selectedProcessId = this.filteredProcesses[0]?.processId ?? '';
+    }
+    this.cdr.markForCheck();
+    void this.refreshSelectedProcessDetail();
+  }
+
+  private syncAdvancedFilterVisibility(): void {
+    this.showAdvancedFilters = this.showAdvancedFilters || this.hasAdvancedFilters;
   }
 
   private normalizeFilter(value: string): ProcessFilter {

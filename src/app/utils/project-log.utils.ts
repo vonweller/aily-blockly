@@ -1,5 +1,5 @@
 export type ProjectLogLevel = 'INFO' | 'DEBUG' | 'ERROR';
-const DEFAULT_PROCESS_LOG_SUBAPP = 'default';
+export const DEFAULT_PROCESS_LOG_SUBAPP = 'default';
 
 export function appendProjectLog(
   projectPath: string | undefined,
@@ -63,7 +63,7 @@ export function resolveProcessLogStoragePaths(
   const dirPath = pathApi.join(
     appDataLogRoot,
     resolveProjectLogId(normalizedProjectPath),
-    normalizeLogSource(subapp),
+    normalizeProcessLogSubappName(subapp),
     formatDateSegment(at),
     formatMinuteSegment(at),
   );
@@ -76,6 +76,32 @@ export function resolveProcessLogStoragePaths(
     outputFilePath: pathApi.join(dirPath, `${fileBaseName}.log`),
     metadataFilePath: pathApi.join(dirPath, `${fileBaseName}.json`),
   };
+}
+
+export function normalizeProcessLogSubappName(subapp: string | undefined): string {
+  const trimmed = typeof subapp === 'string' ? subapp.trim() : '';
+  if (!trimmed) {
+    return DEFAULT_PROCESS_LOG_SUBAPP;
+  }
+  const normalized = trimmed.replace(/[^a-zA-Z0-9._-]/g, '-');
+  return normalized || DEFAULT_PROCESS_LOG_SUBAPP;
+}
+
+export function resolveProcessLogSubappNameFromOutputFilePath(outputFilePath: string | undefined): string {
+  const normalizedPath = typeof outputFilePath === 'string' ? outputFilePath.trim() : '';
+  if (!normalizedPath) {
+    return DEFAULT_PROCESS_LOG_SUBAPP;
+  }
+
+  const segments = normalizedPath
+    .split(/[\\/]+/)
+    .map(segment => segment.trim())
+    .filter(Boolean);
+  if (segments.length < 4) {
+    return DEFAULT_PROCESS_LOG_SUBAPP;
+  }
+
+  return normalizeProcessLogSubappName(segments[segments.length - 4]);
 }
 
 export function resolveProcessLogProjectDir(projectPath: string | undefined): string | null {

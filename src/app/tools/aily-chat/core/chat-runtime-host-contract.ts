@@ -136,6 +136,7 @@ export interface ChatRuntimeHostSessionProcessSummary {
   readonly elapsedMs: number;
   readonly bytesTotal: number;
   readonly background?: boolean;
+  readonly subappName?: string;
   readonly outputFilePath?: string;
   readonly removed?: boolean;
   readonly removedAt?: number;
