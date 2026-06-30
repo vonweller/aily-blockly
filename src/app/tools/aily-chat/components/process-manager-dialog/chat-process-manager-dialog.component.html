@@ -186,6 +186,25 @@
 
       <section class="process-detail">
         @if (selectedProcess; as process) {
+          @if (selectedProcessDetail; as detailProcess) {
+          <app-chat-process-detail-panel
+            class="process-detail-panel-embedded"
+            [title]="detailProcess.command"
+            [actionVisible]="true"
+            actionLabel="AILY_CHAT.PROCESS_ACTION_OPEN_WINDOW"
+            actionIconClass="fa-light fa-square-terminal"
+            [statusText]="selectedProcessStatusLabel"
+            [elapsedText]="formatElapsed(detailProcess)"
+            [running]="detailProcess.running"
+            [startedAt]="detailProcess.startedAt"
+            [completedAt]="detailProcess.completedAt ?? null"
+            [exitCode]="detailProcess.exitCode ?? null"
+            outputTitle="AILY_CHAT.PROCESS_OUTPUT_PREVIEW"
+            [output]="selectedProcessOutput"
+            emptyOutputText="AILY_CHAT.PROCESS_OUTPUT_EMPTY"
+            (actionClick)="openProcessWindow(process)"
+          />
+          } @else {
           <app-chat-process-detail-panel
             class="process-detail-panel-embedded"
             [title]="process.command"
@@ -203,6 +222,7 @@
             emptyOutputText="AILY_CHAT.PROCESS_OUTPUT_EMPTY"
             (actionClick)="openProcessWindow(process)"
           />
+          }
         } @else {
           <div class="process-empty process-empty-detail">{{ 'AILY_CHAT.PROCESS_EMPTY_DETAIL' | translate }}</div>
         }

@@ -13,6 +13,7 @@ import { NzPopconfirmModule } from 'ng-zorro-antd/popconfirm';
 
 import { BaseDialogComponent } from '../../../../components/base-dialog/base-dialog.component';
 import { ChatProcessDetailPanelComponent } from '../process-detail-panel/chat-process-detail-panel.component';
+import { AilyHost } from '../../core/host';
 import type { ChatRuntimeHostSessionProcessSummary } from '../../core/chat-runtime-host-contract';
 import {
   deleteBlocklyCommandSession,
@@ -68,6 +69,7 @@ export class ChatProcessManagerDialogComponent {
   endTime = '';
 
   processes: readonly ChatRuntimeHostSessionProcessSummary[] = [];
+  selectedProcessDetail: ChatRuntimeHostSessionProcessSummary | null = null;
   selectedProcessOutput = '';
   selectedProcessStatusLabel = '';
   private refreshTimer: ReturnType<typeof setInterval> | null = null;
@@ -107,31 +109,26 @@ export class ChatProcessManagerDialogComponent {
 
   updateSubappKeyword(value: string): void {
     this.subappKeyword = value;
-    this.syncAdvancedFilterVisibility();
     this.syncSelectedProcessAfterFilterChange();
   }
 
   updateStartDate(value: string): void {
     this.startDate = value;
-    this.syncAdvancedFilterVisibility();
     this.syncSelectedProcessAfterFilterChange();
   }
 
   updateEndDate(value: string): void {
     this.endDate = value;
-    this.syncAdvancedFilterVisibility();
     this.syncSelectedProcessAfterFilterChange();
   }
 
   updateStartTime(value: string): void {
     this.startTime = value;
-    this.syncAdvancedFilterVisibility();
     this.syncSelectedProcessAfterFilterChange();
   }
 
   updateEndTime(value: string): void {
     this.endTime = value;
-    this.syncAdvancedFilterVisibility();
     this.syncSelectedProcessAfterFilterChange();
   }
 
@@ -146,7 +143,6 @@ export class ChatProcessManagerDialogComponent {
     this.endDate = '';
     this.startTime = '';
     this.endTime = '';
-    this.showAdvancedFilters = false;
     this.syncSelectedProcessAfterFilterChange();
   }
 
@@ -339,6 +335,7 @@ export class ChatProcessManagerDialogComponent {
   private async refreshSelectedProcessDetail(): Promise<void> {
     const process = this.selectedProcess;
     if (!process) {
+      this.selectedProcessDetail = null;
       this.selectedProcessOutput = '';
       this.selectedProcessStatusLabel = '';
       this.cdr.markForCheck();
@@ -346,18 +343,13 @@ export class ChatProcessManagerDialogComponent {
     }
 
     const snapshot = await getBlocklyCommandSessionStatus(process.processId);
-    this.selectedProcessOutput = readChatProcessOutputFile(process.outputFilePath)
+    const persistedFromOutputPath = this.readPersistedSummaryFromOutputFilePath(process.outputFilePath, process.processId);
+    const detailProcess = this.mergeDetailProcess(process, persistedFromOutputPath, snapshot);
+    this.selectedProcessDetail = detailProcess;
+    this.selectedProcessOutput = readChatProcessOutputFile(detailProcess.outputFilePath || process.outputFilePath)
       || snapshot?.stdout
       || '';
-    this.selectedProcessStatusLabel = snapshot?.status
-      ? this.summarizeStatus({
-          ...process,
-          running: snapshot.running === true,
-          status: snapshot.status,
-          exitCode: typeof snapshot.exitCode === 'number' ? snapshot.exitCode : process.exitCode,
-          elapsedMs: Math.max(0, (snapshot.completedAt ?? Date.now()) - snapshot.startedAt),
-        })
-      : this.summarizeStatus(process);
+    this.selectedProcessStatusLabel = this.summarizeStatus(detailProcess);
     this.cdr.markForCheck();
   }
 
@@ -482,10 +474,6 @@ export class ChatProcessManagerDialogComponent {
     void this.refreshSelectedProcessDetail();
   }
 
-  private syncAdvancedFilterVisibility(): void {
-    this.showAdvancedFilters = this.showAdvancedFilters || this.hasAdvancedFilters;
-  }
-
   private normalizeFilter(value: string): ProcessFilter {
     switch (value) {
       case 'running':
@@ -496,6 +484,148 @@ export class ChatProcessManagerDialogComponent {
         return value;
       default:
         return 'all';
+    }
+  }
+
+  private mergeDetailProcess(
+    base: ChatRuntimeHostSessionProcessSummary,
+    persistedFromOutputPath: ChatRuntimeHostSessionProcessSummary | null,
+    snapshot: Awaited<ReturnType<typeof getBlocklyCommandSessionStatus>>,
+  ): ChatRuntimeHostSessionProcessSummary {
+    const mergedBase = {
+      ...base,
+      ...(persistedFromOutputPath ?? {}),
+    };
+    const merged: ChatRuntimeHostSessionProcessSummary = {
+      processId: mergedBase.processId,
+      sessionId: mergedBase.sessionId,
+      outputSessionId: mergedBase.outputSessionId,
+      command: mergedBase.command,
+      cwd: mergedBase.cwd,
+      status: mergedBase.status,
+      running: mergedBase.running,
+      startedAt: mergedBase.startedAt,
+      elapsedMs: mergedBase.elapsedMs,
+      bytesTotal: mergedBase.bytesTotal,
+      ...(mergedBase.exitCode !== undefined ? { exitCode: mergedBase.exitCode } : {}),
+      ...(mergedBase.pid !== undefined ? { pid: mergedBase.pid } : {}),
+      ...(mergedBase.lastOutputAt !== undefined ? { lastOutputAt: mergedBase.lastOutputAt } : {}),
+      ...(mergedBase.completedAt !== undefined ? { completedAt: mergedBase.completedAt } : {}),
+      ...(mergedBase.background !== undefined ? { background: mergedBase.background } : {}),
+      ...(mergedBase.subappName ? { subappName: mergedBase.subappName } : {}),
+      ...(mergedBase.outputFilePath ? { outputFilePath: mergedBase.outputFilePath } : {}),
+      ...(mergedBase.removed !== undefined ? { removed: mergedBase.removed } : {}),
+      ...(mergedBase.removedAt !== undefined ? { removedAt: mergedBase.removedAt } : {}),
+    };
+    if (!snapshot) {
+      return merged;
+    }
+
+    const startedAt = snapshot.startedAt ?? merged.startedAt;
+    const completedAt = snapshot.completedAt ?? merged.completedAt;
+    return {
+      ...merged,
+      ...(snapshot.status ? { status: snapshot.status } : {}),
+      running: snapshot.running === true,
+      ...(typeof snapshot.exitCode === 'number' ? { exitCode: snapshot.exitCode } : {}),
+      ...(typeof snapshot.pid === 'number' ? { pid: snapshot.pid } : {}),
+      ...(typeof startedAt === 'number' ? { startedAt } : {}),
+      ...(typeof snapshot.lastOutputAt === 'number' ? { lastOutputAt: snapshot.lastOutputAt } : {}),
+      ...(typeof completedAt === 'number' ? { completedAt } : {}),
+      ...(typeof snapshot.bytesTotal === 'number' ? { bytesTotal: snapshot.bytesTotal } : {}),
+      ...(typeof startedAt === 'number'
+        ? { elapsedMs: Math.max(0, (completedAt ?? Date.now()) - startedAt) }
+        : {}),
+      ...(snapshot.outputFilePath ? { outputFilePath: snapshot.outputFilePath } : {}),
+      ...(snapshot.outputSessionId ? { outputSessionId: snapshot.outputSessionId } : {}),
+      ...(snapshot.command ? { command: snapshot.command } : {}),
+      ...(snapshot.cwd ? { cwd: snapshot.cwd } : {}),
+    };
+  }
+
+  private readPersistedSummaryFromOutputFilePath(
+    outputFilePath: string | undefined,
+    processId: string,
+  ): ChatRuntimeHostSessionProcessSummary | null {
+    const normalizedOutputFilePath = typeof outputFilePath === 'string' ? outputFilePath.trim() : '';
+    if (!normalizedOutputFilePath) {
+      return null;
+    }
+
+    try {
+      const host = AilyHost.get();
+      const metadataFilePath = normalizedOutputFilePath.replace(/\.log$/i, '.json');
+      if (!host.fs?.existsSync?.(metadataFilePath)) {
+        return null;
+      }
+
+      const raw = host.fs.readFileSync(metadataFilePath, 'utf-8');
+      if (!raw) {
+        return null;
+      }
+
+      const parsed = JSON.parse(String(raw)) as {
+        processId?: string;
+        sessionId?: string | null;
+        outputSessionId?: string | null;
+        command?: string | null;
+        cwd?: string | null;
+        status?: string | null;
+        running?: boolean;
+        exitCode?: number | null;
+        pid?: number | null;
+        startedAt?: number | null;
+        lastOutputAt?: number | null;
+        completedAt?: number | null;
+        bytesTotal?: number | null;
+        outputFilePath?: string | null;
+        background?: boolean;
+        removed?: boolean;
+        removedAt?: number | null;
+      };
+      const resolvedProcessId = typeof parsed.processId === 'string' && parsed.processId.trim()
+        ? parsed.processId.trim()
+        : processId;
+      const startedAt = typeof parsed.startedAt === 'number' && Number.isFinite(parsed.startedAt)
+        ? parsed.startedAt
+        : 0;
+      const lastOutputAt = typeof parsed.lastOutputAt === 'number' && Number.isFinite(parsed.lastOutputAt)
+        ? parsed.lastOutputAt
+        : undefined;
+      const completedAt = typeof parsed.completedAt === 'number' && Number.isFinite(parsed.completedAt)
+        ? parsed.completedAt
+        : undefined;
+      const bytesTotal = typeof parsed.bytesTotal === 'number' && Number.isFinite(parsed.bytesTotal)
+        ? parsed.bytesTotal
+        : 0;
+      const elapsedMs = Math.max(0, (completedAt ?? lastOutputAt ?? Date.now()) - startedAt);
+
+      return {
+        processId: resolvedProcessId,
+        sessionId: typeof parsed.sessionId === 'string' ? parsed.sessionId : this.sessionId,
+        outputSessionId: typeof parsed.outputSessionId === 'string' && parsed.outputSessionId.trim()
+          ? parsed.outputSessionId.trim()
+          : resolvedProcessId,
+        command: typeof parsed.command === 'string' && parsed.command.trim() ? parsed.command.trim() : resolvedProcessId,
+        cwd: typeof parsed.cwd === 'string' ? parsed.cwd : '',
+        status: typeof parsed.status === 'string' ? parsed.status as ChatRuntimeHostSessionProcessSummary['status'] : 'failed',
+        running: parsed.running === true,
+        startedAt,
+        elapsedMs,
+        bytesTotal,
+        ...(typeof parsed.exitCode === 'number' && Number.isFinite(parsed.exitCode) ? { exitCode: parsed.exitCode } : {}),
+        ...(typeof parsed.pid === 'number' && Number.isFinite(parsed.pid) ? { pid: parsed.pid } : {}),
+        ...(typeof lastOutputAt === 'number' ? { lastOutputAt } : {}),
+        ...(typeof completedAt === 'number' ? { completedAt } : {}),
+        ...(parsed.background === true ? { background: true } : {}),
+        ...(parsed.removed === true ? { removed: true } : {}),
+        ...(typeof parsed.removedAt === 'number' && Number.isFinite(parsed.removedAt) ? { removedAt: parsed.removedAt } : {}),
+        outputFilePath: typeof parsed.outputFilePath === 'string' && parsed.outputFilePath.trim()
+          ? parsed.outputFilePath.trim()
+          : normalizedOutputFilePath,
+      };
+    } catch {
+      return null;
     }
   }
 }

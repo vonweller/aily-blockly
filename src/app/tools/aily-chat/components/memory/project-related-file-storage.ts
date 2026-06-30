@@ -222,18 +222,14 @@ export class ProjectRelatedFileStorage {
     projectPath: string,
     sessionId?: string,
   ): string {
-    const entries = this.list(scope, projectPath, sessionId);
-    if (entries.length === 0 || scope !== 'project') {
+    if (scope !== 'project') {
       return '';
     }
 
-    const lines = [
+    return [
       'Project assets are stored under the project asset directory.',
       'Use assets_tool to search and read these project assets when the user refers to attached files, folders, videos, FFS resources, or related URLs.',
-      ...entries.map((entry) => this.formatPromptEntry(entry)),
-    ];
-
-    return lines.join('\n');
+    ].join('\n');
   }
 
   private toAssetEntry(
@@ -497,17 +493,6 @@ export class ProjectRelatedFileStorage {
 
   private normalizeRelativeAssetPath(path: string): string {
     return path.replace(/\\/g, '/').replace(/^\/+/, '').trim();
-  }
-
-  private formatPromptEntry(entry: ProjectRelatedFileEntry): string {
-    switch (entry.type) {
-      case 'folder':
-        return `- Folder: ${entry.relativePath}`;
-      case 'link':
-        return `- URL: ${entry.absolutePath}`;
-      default:
-        return `- File: ${entry.relativePath}`;
-    }
   }
 }
 
