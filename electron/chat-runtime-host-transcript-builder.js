@@ -1383,7 +1383,11 @@ function withResponsePatch(turn, timestamp, patch) {
   );
   const resultText = patch.resultText !== undefined
     ? patch.resultText
-    : collectMarkdownResultText(parts);
+    : status === 'completed'
+      ? collectMarkdownResultText(parts)
+      : typeof existingResponse.resultText === 'string'
+        ? existingResponse.resultText
+        : '';
   return {
     ...turn,
     response: {
@@ -1703,6 +1707,32 @@ function recordSubagentModelInvariant(sessionId, turnId, turn) {
   }));
 }
 
+function shouldRecordSubagentModelInvariant(event) {
+  if (!event || typeof event !== 'object') {
+    return false;
+  }
+  if (event.sourceAgentRole === 'subagent' || event.parentToolCallId || event.subAgentInvocationId) {
+    return event.type !== 'markdown_delta'
+      && event.type !== 'thinking_delta'
+      && event.type !== 'thinking_complete';
+  }
+  switch (event.type) {
+    case 'subagent_begin':
+    case 'subagent_activity':
+    case 'subagent_end':
+    case 'tool_call_begin':
+    case 'tool_call_end':
+    case 'question_request':
+    case 'approval_request':
+    case 'approval_resolve':
+      return true;
+    case 'state_update':
+      return isSubagentStateUpdate(event);
+    default:
+      return false;
+  }
+}
+
 class ChatRuntimeHostTranscriptBuilder {
   constructor() {
     this.transcripts = new Map();
@@ -1850,7 +1880,9 @@ class ChatRuntimeHostTranscriptBuilder {
     if (!nextTurn) {
       return null;
     }
-    recordSubagentModelInvariant(normalizedSessionId, normalizedTurnId, nextTurn);
+    if (shouldRecordSubagentModelInvariant(routedEvent)) {
+      recordSubagentModelInvariant(normalizedSessionId, normalizedTurnId, nextTurn);
+    }
 
     turnResponses[turnIndex] = nextTurn;
     const nextRevision = Math.max(currentRevision + 1, incomingRevision);
