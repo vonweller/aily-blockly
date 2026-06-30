@@ -2,7 +2,7 @@
 import { Injectable, Optional } from '@angular/core';
 import { Subject, Observable, Subscription } from 'rxjs';
 import { distinctUntilChanged } from 'rxjs/operators';
-import type { PermissionPolicy, PermissionRuleInput } from 'aily-lex';
+import type { PermissionPolicy, PermissionRuleInput } from 'aily-lex/agent/common/approvalProtocol';
 import packageJson from '../../../../../package.json';
 import { AilyHost } from '../core/host';
 import { ChatAPI } from '../core/api-endpoints';
