@@ -8251,18 +8251,22 @@ Do not create non-existent boards and libraries.
 
   async switchToModel(model: ModelConfig): Promise<void> {
     await this.switchCoordinator.switchToModel(model);
+    this.triggerSyncDetectChanges();
   }
 
   async switchToMode(mode: string): Promise<void> {
     await this.switchCoordinator.switchToMode(mode);
+    this.triggerSyncDetectChanges();
   }
 
   async switchToCustomAgent(selection: { readonly modeId?: string; readonly customAgentTarget?: string }): Promise<void> {
     await this.switchCoordinator.switchToCustomAgent(selection);
+    this.triggerSyncDetectChanges();
   }
 
   async switchToReasoningEffort(reasoningEffort: NonNullable<ModelConfig['reasoningEffort']>): Promise<void> {
     await this.switchCoordinator.switchToReasoningEffort(reasoningEffort);
+    this.triggerSyncDetectChanges();
   }
 
   async switchToModelConfiguration(
