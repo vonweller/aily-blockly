@@ -136,13 +136,6 @@ function resolveProjectPathForMainProcess() {
     if (Number.isInteger(focusedId) && projectPathByWebContentsId.has(focusedId)) {
         return projectPathByWebContentsId.get(focusedId) || '';
     }
-
-    for (const projectPath of projectPathByWebContentsId.values()) {
-        if (projectPath) {
-            return projectPath;
-        }
-    }
-
     return '';
 }
 

@@ -57,6 +57,8 @@ async function readLinesWithMode(filePath, options = {}) {
   const startLine = Number.isFinite(options?.startLine) ? Math.max(1, Math.floor(options.startLine)) : 1;
   const endLine = Number.isFinite(options?.endLine) ? Math.max(startLine, Math.floor(options.endLine)) : startLine;
   const filterPattern = typeof options?.filterPattern === 'string' && options.filterPattern.trim() ? new RegExp(options.filterPattern) : null;
+  const timestampFromMs = Number.isFinite(options?.timestampFromMs) ? Number(options.timestampFromMs) : null;
+  const timestampToMs = Number.isFinite(options?.timestampToMs) ? Number(options.timestampToMs) : null;
 
   return await new Promise((resolve, reject) => {
     const input = createReadStream(filePath, { encoding: 'utf8' });
@@ -101,6 +103,9 @@ async function readLinesWithMode(filePath, options = {}) {
       if (filterPattern && !filterPattern.test(line)) {
         return;
       }
+      if (!matchesTimestampRange(line, timestampFromMs, timestampToMs)) {
+        return;
+      }
 
       matchedLineNumber += 1;
       if (mode === 'head') {
@@ -136,6 +141,33 @@ async function readLinesWithMode(filePath, options = {}) {
     rl.once('error', fail);
     input.once('error', fail);
   });
+}
+
+function matchesTimestampRange(line, timestampFromMs, timestampToMs) {
+  if (timestampFromMs === null && timestampToMs === null) {
+    return true;
+  }
+
+  const timestampMs = extractLeadingTimestampMs(line);
+  if (timestampMs === null) {
+    return false;
+  }
+  if (timestampFromMs !== null && timestampMs < timestampFromMs) {
+    return false;
+  }
+  if (timestampToMs !== null && timestampMs > timestampToMs) {
+    return false;
+  }
+  return true;
+}
+
+function extractLeadingTimestampMs(line) {
+  const match = String(line || '').match(/^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})\]/);
+  if (!match) {
+    return null;
+  }
+  const parsed = Date.parse(match[1].replace(' ', 'T'));
+  return Number.isNaN(parsed) ? null : parsed;
 }
 
 contextBridge.exposeInMainWorld("electronAPI", {
