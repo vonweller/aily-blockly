@@ -81,7 +81,7 @@ function createHandlers(runtimeMode: ChatAgentRuntimeMode, options?: BlocklyTool
     ...createBlocklyPlaceholderHandlers(),
   };
 
-  if (options?.onRuntimeModeSelected) {
+  if (runtimeMode === 'unbound' && options?.onRuntimeModeSelected) {
     handlers['selectRuntimeMode'] = async (input) => {
       const mode = normalizeChatAgentRuntimeMode(input['mode'], 'unbound');
       if (mode !== 'coder' && mode !== 'blockly') {
@@ -132,9 +132,10 @@ function collectBlocklyContributions(hostAPI: IExternalHostAPI, runtimeMode: Cha
 
 function appendRuntimeModeContribution(
   contributions: IToolContribution[],
+  runtimeMode: ChatAgentRuntimeMode,
   options?: BlocklyToolProviderOptions,
 ): void {
-  if (!options?.onRuntimeModeSelected) {
+  if (runtimeMode !== 'unbound' || !options?.onRuntimeModeSelected) {
     return;
   }
 
@@ -166,7 +167,7 @@ Set confirmed=true when the user made the choice in response to your runtime sel
       required: ['mode'],
     },
     annotations: { readOnly: false },
-    runtimeModes: ['unbound', 'coder', 'blockly'],
+    runtimeModes: ['unbound'],
     agentScope: ['main'],
   });
 }
@@ -183,7 +184,7 @@ Set confirmed=true when the user made the choice in response to your runtime sel
 export function createBlocklyToolProvider(hostAPI: IExternalHostAPI, options?: BlocklyToolProviderOptions): IHostToolProvider {
   const runtimeMode = normalizeChatAgentRuntimeMode(options?.runtimeMode, 'blockly');
   const contributions = collectBlocklyContributions(hostAPI, runtimeMode);
-  appendRuntimeModeContribution(contributions, options);
+  appendRuntimeModeContribution(contributions, runtimeMode, options);
   const handlers = createHandlers(runtimeMode, options);
 
   return {

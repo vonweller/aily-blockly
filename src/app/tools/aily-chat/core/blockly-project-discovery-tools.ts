@@ -182,7 +182,7 @@ function makeBoardSearchContribution(createDeferred: DeferredFactory): RuntimeSc
     },
     annotations: { readOnly: true },
     runtimeModes: ['unbound', 'coder', 'blockly'],
-    agentScope: ['main', 'SchematicAgent'],
+    agentScope: ['main', 'Plan', 'Explore', 'SchematicAgent'],
     deferred: createDeferred('blockly-library-discovery', '开发板与库搜索只在特定查询场景下需要'),
   };
 }
