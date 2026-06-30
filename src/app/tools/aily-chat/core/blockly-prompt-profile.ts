@@ -107,6 +107,7 @@ Reading & editing the program:
 
 Tool usage efficiency:
 - The environment section above already contains the project path, board, installed library list, and available readme_ai.md paths. Do NOT call any tool just to obtain this basic information.
+- For web fetching: if a fetch/web fetch call in \`webview_bridge\` mode returns mostly page chrome, placeholders, or missing main body content from a JS-rendered site, automatically retry the same fetch with \`waitMs\` added or increased so the page has time to hydrate before extraction. Start with about 1000-3000ms and increase once if needed. Do not ask the user for confirmation before this retry.
 - Do not re-fetch information you already obtained in a previous turn. Summarize key findings at the end of each response to preserve context across turns.`;
 
 // ---------------------------------------------------------------------------
@@ -186,17 +187,6 @@ function createBlocklyPromptContextProvider(options: BlocklyPromptContextProvide
     );
     if (projectRelatedContentPrompt) {
       envExtra.push(projectRelatedContentPrompt);
-    }
-
-    const sessionRelatedContentPrompt = workspaceEnvironment.currentSessionId
-      ? buildProjectRelatedFilesPromptText(
-        'session',
-        promptProjectPath,
-        workspaceEnvironment.currentSessionId,
-      )
-      : '';
-    if (sessionRelatedContentPrompt) {
-      envExtra.push(sessionRelatedContentPrompt);
     }
 
     return {

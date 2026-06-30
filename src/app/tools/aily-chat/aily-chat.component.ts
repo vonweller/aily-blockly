@@ -64,11 +64,13 @@ import { runChatTodoFocusAction } from './helpers/chat-todo-focus-action';
 import { ChatProcessManagerDialogComponent } from './components/process-manager-dialog/chat-process-manager-dialog.component';
 import { isSessionLifecycleSupersededError, readSessionLifecycleRestoreErrorDetails } from './helpers/session-lifecycle.helper';
 import { openChatProcessWindow } from './helpers/chat-process-window';
-import { listPersistedBlocklyCommandSessionSnapshots } from './helpers/lex-agent-bootstrap';
+import {
+  listPersistedBlocklyCommandSessionSnapshots,
+  listPersistedBlocklyProjectCommandSessionSnapshots,
+} from './helpers/lex-agent-bootstrap';
 import { setChatTranslateService } from './helpers/chat-i18n';
 import { setToolApprovalTranslateService } from './helpers/tool-approval-ui';
 import type { ChatTaskActionDetail } from './helpers/chat-task-action-coordinator';
-import { ProjectRelatedFileStorage } from './components/memory/project-related-file-storage';
 
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { AuthService } from '../../services/auth.service';
@@ -330,10 +332,7 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
       if (!snapshot?.sessionId) {
         return;
       }
-      const currentSessionId = this.getCurrentSessionId();
-      if (!currentSessionId || snapshot.sessionId === currentSessionId) {
-        this.cdr.markForCheck();
-      }
+      this.cdr.markForCheck();
     });
     this.sessionViewModelChangeSubscription = this.viewState.sessionViewModelChanged$.subscribe(() => {
       this.syncSessionListDisplayState();
@@ -789,13 +788,11 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
   }
 
   async onComposerAddFileRequest(): Promise<void> {
-    const resources = await this.resourceManager.addFileResources();
-    await this.syncSessionRelatedContentFromResources(resources);
+    await this.resourceManager.addFileResources();
   }
 
   async onComposerAddFolderRequest(): Promise<void> {
-    const resource = await this.resourceManager.addFolderResource();
-    await this.syncSessionRelatedContentFromResources(resource ? [resource] : []);
+    await this.resourceManager.addFolderResource();
   }
 
   get sessionPickerSurfaceModel(): ChatPaneSessionPickerSurfaceModel | null {
@@ -808,37 +805,6 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
 
   focusChatInputFromTitleControl(): void {
     this.chatTextarea?.nativeElement?.focus();
-  }
-
-  private async syncSessionRelatedContentFromResources(
-    resources: readonly ResourceItem[],
-  ): Promise<void> {
-    const sessionId = this.vm.sessionId?.trim();
-    const projectPath = this.projectService.currentProjectPath?.trim()
-      || this.projectService.projectRootPath?.trim();
-
-    if (!sessionId || !projectPath) {
-      return;
-    }
-
-    const sourcePaths = resources
-      .filter((item) =>
-        (item.type === 'file' || item.type === 'folder')
-        && typeof item.path === 'string'
-        && item.path.trim().length > 0,
-      )
-      .map((item) => item.path!.trim());
-
-    if (sourcePaths.length === 0) {
-      return;
-    }
-
-    try {
-      const storage = new ProjectRelatedFileStorage(AilyHost.get());
-      storage.importPathReferences('session', projectPath, sourcePaths, sessionId);
-    } catch (error) {
-      console.warn('[AilyChat] 同步会话关联内容失败:', error);
-    }
   }
 
   handleHostHeaderActionRequested(request: ChatHostHeaderActionRequest): void {
@@ -970,18 +936,23 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
   }
 
   shouldShowProcessEntryButton(): boolean {
-    return this.readCurrentSessionProcesses().some(process => process.removed !== true);
+    return this.readVisibleProcessScopeProcesses().some(process => process.removed !== true);
   }
 
   getRunningProcessCount(): number {
-    return this.readCurrentSessionProcesses()
+    return this.readVisibleProcessScopeProcesses()
       .filter(process => process.removed !== true && process.running === true)
       .length;
   }
 
   openProcessManagerDialog(): void {
+    const sessionScoped = this.useSessionScopedProcessUi();
     const sessionId = this.getCurrentSessionId();
-    if (!sessionId) {
+    const projectPath = this.resolveCurrentProjectPathForProcessUi();
+    if (sessionScoped && !sessionId) {
+      return;
+    }
+    if (!sessionScoped && !projectPath) {
       return;
     }
 
@@ -993,7 +964,10 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
       nzBodyStyle: { padding: '0' },
       nzWidth: 1100,
       nzContent: ChatProcessManagerDialogComponent,
-      nzData: { sessionId },
+      nzData: {
+        ...(sessionId ? { sessionId } : {}),
+        ...(projectPath ? { projectPath } : {}),
+      },
     });
   }
 
@@ -1029,6 +1003,43 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
     const projectPathHint = this.chatHistoryService.findEntry(sessionId)?.projectPath ?? null;
     const persistedProcesses = listPersistedBlocklyCommandSessionSnapshots(sessionId, projectPathHint);
     return this.mergeProcessSummaries(liveProcesses, persistedProcesses);
+  }
+
+  private readCurrentProjectProcesses(): readonly ChatRuntimeHostSessionProcessSummary[] {
+    const projectPath = this.resolveCurrentProjectPathForProcessUi();
+    if (!projectPath) {
+      return [];
+    }
+
+    const persistedProcesses = listPersistedBlocklyProjectCommandSessionSnapshots(projectPath);
+    const sessionId = this.getCurrentSessionId();
+    if (!sessionId) {
+      return persistedProcesses;
+    }
+
+    const snapshot = this.runtimeInteractionHost.readSnapshot(sessionId);
+    const liveProcesses = Array.isArray(snapshot.processes) ? snapshot.processes : [];
+    return this.mergeProcessSummaries(liveProcesses, persistedProcesses);
+  }
+
+  private readVisibleProcessScopeProcesses(): readonly ChatRuntimeHostSessionProcessSummary[] {
+    if (this.useSessionScopedProcessUi()) {
+      return this.readCurrentSessionProcesses();
+    }
+    return this.readCurrentProjectProcesses();
+  }
+
+  private useSessionScopedProcessUi(): boolean {
+    return this.paneStageSurfaceModel?.showConversation === true;
+  }
+
+  private resolveCurrentProjectPathForProcessUi(): string {
+    const host = AilyHost.get();
+    return host.project.currentProjectPath
+      || host.project.projectRootPath
+      || this.projectService.currentProjectPath
+      || this.projectService.projectRootPath
+      || '';
   }
 
   private mergeProcessSummaries(
