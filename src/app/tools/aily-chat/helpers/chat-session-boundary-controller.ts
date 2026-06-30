@@ -4,7 +4,6 @@ import {
   type DialogTurnContext,
 } from '../core/user-turn-action-target';
 import type {
-  RequestCheckpointMetadata,
   WorkspaceCheckpointAvailabilityDetail,
   WorkspaceCheckpointPresentationMode,
 } from '../services/edit-checkpoint.service';
@@ -31,7 +30,6 @@ export interface ChatSessionBoundaryUnavailableReason {
     | 'session-unavailable'
     | 'workspace-checkpoint-unavailable'
     | 'checkpoint-unavailable'
-    | 'checkpoint-metadata-incomplete'
     | 'checkpoint-session-mismatch';
   readonly checkpointId?: string;
   readonly workspaceCheckpointDetail?: WorkspaceCheckpointAvailabilityDetail;
@@ -46,8 +44,6 @@ export interface ChatSessionBoundaryControllerContext {
   getWorkspaceCheckpointPresentationMode?(): WorkspaceCheckpointPresentationMode;
   ensureWorkspaceCheckpointPresentationMode?(): Promise<WorkspaceCheckpointPresentationMode> | WorkspaceCheckpointPresentationMode;
   getWorkspaceCheckpointAvailabilityDetail?(): WorkspaceCheckpointAvailabilityDetail | null | undefined;
-  getRequestCheckpointMetadataByCheckpointId?(checkpointId: string): RequestCheckpointMetadata | null | undefined;
-  getSettledRequestCheckpointMetadataByCheckpointId?(checkpointId: string): Promise<RequestCheckpointMetadata | null | undefined> | RequestCheckpointMetadata | null | undefined;
   warnBoundaryActionUnavailable?(reason: ChatSessionBoundaryUnavailableReason): void;
   logBoundaryDiagnostic?(message: string): void;
 }
@@ -125,7 +121,7 @@ export class ChatSessionBoundaryController implements ChatSessionBoundaryActionC
     }
 
     const nextCheckpoint = timelineState!.checkpoints[timelineState!.currentCheckpointIndex + 1];
-    return await this.hasCompleteCheckpointMetadata(
+    return this.hasTimelineCheckpointBoundary(
       'redoCheckpoint',
       sessionResource,
       nextCheckpoint?.checkpointId,
@@ -146,7 +142,7 @@ export class ChatSessionBoundaryController implements ChatSessionBoundaryActionC
     }
 
     const resolved = this.resolveTargetCheckpoint(sessionResource, target);
-    if (!await this.hasCompleteCheckpointMetadata('restoreCheckpoint', sessionResource, resolved?.checkpointId)) {
+    if (!this.hasTimelineCheckpointBoundary('restoreCheckpoint', sessionResource, resolved?.checkpointId)) {
       return null;
     }
 
@@ -175,14 +171,6 @@ export class ChatSessionBoundaryController implements ChatSessionBoundaryActionC
       return { checkpointId: resolved?.checkpointId ?? null, target: resolvedTarget };
     }
 
-    const retainedCheckpointIds = timelineState.checkpoints
-      .filter(checkpoint => checkpoint.turnIndex < targetIndex)
-      .map(checkpoint => checkpoint.checkpointId);
-    for (const checkpointId of retainedCheckpointIds) {
-      if (!await this.hasCompleteCheckpointMetadata('forkSession', sessionResource, checkpointId)) {
-        return null;
-      }
-    }
     return { checkpointId: resolved?.checkpointId ?? null, target: resolvedTarget };
   }
 
@@ -202,30 +190,18 @@ export class ChatSessionBoundaryController implements ChatSessionBoundaryActionC
     });
   }
 
-  private async hasCompleteCheckpointMetadata(
+  private hasTimelineCheckpointBoundary(
     action: ChatSessionBoundaryUnavailableAction,
     sessionResource: string,
     checkpointId: string | null | undefined,
-  ): Promise<boolean> {
+  ): boolean {
     const normalizedCheckpointId = normalizeString(checkpointId);
     if (!normalizedCheckpointId) {
       return this.blockUnavailable({ action, reason: 'checkpoint-unavailable' });
     }
 
-    const metadata = await Promise.resolve(
-      this.ctx.getSettledRequestCheckpointMetadataByCheckpointId?.(normalizedCheckpointId)
-        ?? this.ctx.getRequestCheckpointMetadataByCheckpointId?.(normalizedCheckpointId)
-        ?? null,
-    );
-    if (!metadata) {
-      return this.blockUnavailable({
-        action,
-        reason: 'checkpoint-metadata-incomplete',
-        checkpointId: normalizedCheckpointId,
-      });
-    }
-
-    if (normalizeString(metadata.sessionResource) !== sessionResource) {
+    const timelineState = this.ctx.readSessionCheckpointTimelineState?.(sessionResource) ?? null;
+    if (normalizeString(timelineState?.sessionResource) !== sessionResource) {
       return this.blockUnavailable({
         action,
         reason: 'checkpoint-session-mismatch',
@@ -233,12 +209,8 @@ export class ChatSessionBoundaryController implements ChatSessionBoundaryActionC
       });
     }
 
-    if (!normalizeString(metadata.checkpointRef) || !normalizeString(metadata.checkpointNamespace)) {
-      return this.blockUnavailable({
-        action,
-        reason: 'checkpoint-metadata-incomplete',
-        checkpointId: normalizedCheckpointId,
-      });
+    if (!findTimelineCheckpointByCheckpointId(timelineState, normalizedCheckpointId)) {
+      return this.blockUnavailable({ action, reason: 'checkpoint-unavailable', checkpointId: normalizedCheckpointId });
     }
 
     return true;

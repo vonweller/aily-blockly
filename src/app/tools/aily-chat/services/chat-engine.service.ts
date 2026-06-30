@@ -1181,26 +1181,6 @@ export class ChatEngineService implements IChatContext {
     getWorkspaceCheckpointAvailabilityDetail: () => (
       this.workspaceCheckpointProvider.getAvailabilityDetail?.() ?? { mode: this.workspaceCheckpointPresentationMode }
     ),
-    getRequestCheckpointMetadataByCheckpointId: (checkpointId) => (
-      this.readCurrentSessionCheckpointMetadataByCheckpointId(checkpointId)
-        ?? this.editCheckpointService.getRequestCheckpointMetadataByCheckpointId?.(checkpointId)
-        ?? null
-    ),
-    getSettledRequestCheckpointMetadataByCheckpointId: async (checkpointId) => {
-      const currentSessionResource = this.resolveCurrentViewSessionResource();
-      const currentMetadata = this.readCurrentSessionCheckpointMetadataByCheckpointId(checkpointId)
-        ?? this.editCheckpointService.getRequestCheckpointMetadataByCheckpointId?.(checkpointId)
-        ?? null;
-      if (!this.hasCompleteRequestCheckpointMetadata(currentMetadata) && currentSessionResource) {
-        await this.hydrateBoundaryCheckpointState(currentSessionResource);
-      }
-      const timelineMetadata = this.readCurrentSessionCheckpointMetadataByCheckpointId(checkpointId);
-      const settledMetadata = await this.editCheckpointService.getSettledRequestCheckpointMetadataByCheckpointId?.(checkpointId);
-      return timelineMetadata
-        ?? settledMetadata
-        ?? this.editCheckpointService.getRequestCheckpointMetadataByCheckpointId?.(checkpointId)
-        ?? null;
-    },
     logBoundaryDiagnostic: (message) => {
       AilyHost.get().log?.warn?.(`[AilyChat][GitCheckpoint] boundary ${message}`);
     },
@@ -1227,9 +1207,6 @@ export class ChatEngineService implements IChatContext {
           this.message.warning('当前工作区 checkpoint 尚未就绪，不能安全执行该历史边界操作');
           return;
         }
-        case 'checkpoint-metadata-incomplete':
-          this.message.warning('该请求的 checkpointRef 尚未完整写入，不能执行恢复、重做或分叉');
-          return;
         case 'checkpoint-session-mismatch':
           this.message.warning('该检查点不属于当前会话，已阻止历史边界操作');
           return;
@@ -1243,56 +1220,6 @@ export class ChatEngineService implements IChatContext {
     },
   });
   readonly interaction = new UserInteractionHelper(this.userInteractionContext);
-
-  private hasCompleteRequestCheckpointMetadata(metadata: unknown): boolean {
-    const record = metadata && typeof metadata === 'object'
-      ? metadata as Record<string, unknown>
-      : null;
-    return typeof record?.['checkpointNamespace'] === 'string'
-      && record['checkpointNamespace'].trim().length > 0
-      && typeof record?.['checkpointRef'] === 'string'
-      && record['checkpointRef'].trim().length > 0;
-  }
-
-  private readCurrentSessionCheckpointMetadataByCheckpointId(
-    checkpointId: string | null | undefined,
-  ): RequestCheckpointMetadata | null {
-    const normalizedCheckpointId = typeof checkpointId === 'string' ? checkpointId.trim() : '';
-    if (!normalizedCheckpointId) {
-      return null;
-    }
-    const currentSessionResource = this.resolveCurrentViewSessionResource();
-    const timelineState = currentSessionResource
-      ? this.chatSessionModelStore.get(currentSessionResource)?.getCheckpointTimelineState() ?? null
-      : null;
-    const checkpoint = timelineState?.checkpoints.find(entry => entry.checkpointId === normalizedCheckpointId);
-    return checkpoint?.metadata ? { ...checkpoint.metadata } : null;
-  }
-
-  private async hydrateBoundaryCheckpointState(sessionResource: string): Promise<void> {
-    const normalizedSessionResource = typeof sessionResource === 'string' ? sessionResource.trim() : '';
-    if (!normalizedSessionResource) {
-      return;
-    }
-
-    const turnResponses = this.readSessionTurnResponses(normalizedSessionResource);
-    if (turnResponses.length === 0) {
-      return;
-    }
-
-    await this.editCheckpointService.settleRequestCheckpointMetadataForTurnResponses({
-      sessionResource: normalizedSessionResource,
-      workspaceRoot: this.resolveCheckpointWorkspaceRoot(),
-      turnResponses,
-    });
-  }
-
-  private resolveCheckpointWorkspaceRoot(): string | null {
-    return this.getCurrentProjectPath()
-      || AilyHost.get().project?.currentProjectPath
-      || AilyHost.get().project?.projectRootPath
-      || null;
-  }
 
   private promptGitRepositoryInitialization(): void {
     const workspaceRoot = AilyHost.get().project?.currentProjectPath
@@ -3341,6 +3268,7 @@ export class ChatEngineService implements IChatContext {
       complete: () => ownerOnly('turns.complete'),
       discardIncomplete: () => ownerOnly('turns.discardIncomplete'),
       removeFrom: () => ownerOnly('turns.removeFrom'),
+      removeFromIndex: () => ownerOnly('turns.removeFromIndex'),
       restartFrom: () => ownerOnly('turns.restartFrom'),
       clear: (): void => undefined,
     };
@@ -6987,8 +6915,16 @@ export class ChatEngineService implements IChatContext {
   }
 
   private cleanupViewControllerLifecycle(): void {
-    this.session.saveCurrentSession();
-    this.chatHistoryService.flushAll();
+    const currentSessionId = this.resolveCurrentViewSessionResource();
+    const currentSessionActive = this.readVisibleSessionRequestInProgress(currentSessionId);
+    if (!currentSessionActive) {
+      this.session.saveCurrentSession();
+    }
+    this.chatHistoryService.flushAll({
+      shouldSkipSession: (sessionId, policy) => (
+        policy === 'recovery-snapshot' && this.readVisibleSessionRequestInProgress(sessionId)
+      ),
+    });
     this.chatHistoryService.setLiveSessionProvider(null);
     this.chatHistoryService.setAutoSaveSessionActiveProvider(null);
 

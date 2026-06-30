@@ -12,6 +12,7 @@ interface TurnControlLike {
   failTurn(): void;
   removeIncomplete(): boolean;
   removeFromTurn(turnId: string): void;
+  removeFromIndex?(turnIndex: number): void;
   truncateToTurn(turnId: string): void;
   clearTurns(): void;
   toSnapshot(): SessionSnapshot | null;
@@ -62,6 +63,10 @@ export class LexTurnControlBridge {
 
   removeFrom(turnId: string): void {
     this.turnControl.removeFromTurn(turnId);
+  }
+
+  removeFromIndex(turnIndex: number): void {
+    this.turnControl.removeFromIndex?.(turnIndex);
   }
 
   restartFrom(turnId: string): void {

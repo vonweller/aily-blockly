@@ -305,6 +305,10 @@ export class ChatRuntimeOwnerService implements ChatRuntimeOwnerExecutor, ChatRu
     if (!turnId) {
       throw new Error('[AilyChat][RuntimeOwner] protocol truncation removeFrom requires a turn id.');
     }
+    const retainedTurnCount = Array.isArray(truncation.retainedTurnIds)
+      ? truncation.retainedTurnIds.length
+      : 0;
+    owner.turns.removeFromIndex?.(retainedTurnCount);
     owner.turns.removeFrom(this.resolveSubmittedTurnIdOwnerAlias(sessionId, turnId));
     owner.hydrateTurnResponses(sessionId, retainedTurnResponses, { visibility: 'visibleAttach' });
   }
