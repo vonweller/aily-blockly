@@ -361,6 +361,7 @@ export function isSubagentChildPart(part: ChatPart | null | undefined): boolean 
 
   const scope = chatPartScopeOf(part);
   return scope?.sourceAgentRole === 'subagent'
+    || typeof scope?.subAgentInvocationId === 'string'
     || typeof scope?.parentToolCallId === 'string';
 }
 
