@@ -8,9 +8,6 @@ import { CrossPlatformCmdService } from './cross-platform-cmd.service';
 import { ActionService } from './action.service';
 import { ElectronService } from './electron.service';
 
-import { getDefaultBuildPath, findFile } from '../utils/builder.utils';
-
-
 @Injectable({
   providedIn: 'root'
 })
@@ -117,9 +114,8 @@ export class BuilderService {
     try {
       const tempPath = projectPath + '/.temp';
       const sketchPath = tempPath + '/sketch';
-      const sketchFilePath = await findFile(sketchPath, '*.ino');
+      const buildPath = this.electronService.pathJoin(projectPath, '.build');
       console.log('清除编译缓存:', sketchPath);
-      const buildPath = await getDefaultBuildPath(sketchFilePath);
       console.log('编译缓存路径:', buildPath);
       await this.crossPlatformCmdService.removeItem(buildPath, true, true);
 

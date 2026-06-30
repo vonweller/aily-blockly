@@ -59,6 +59,7 @@ async function main() {
 
     // 1. 路径准备
     const tempPath = path.join(currentProjectPath, '.temp');
+    const buildPath = path.join(currentProjectPath, '.build');
     const sketchPath = path.join(tempPath, 'sketch');
     const sketchFilePath = path.join(sketchPath, 'sketch.ino');
     const librariesPath = path.join(tempPath, 'libraries');
@@ -282,6 +283,7 @@ async function main() {
             '--libraries-path', `"${librariesPath}"`,
             '--sdk-path', `"${fullSdkPath}"`,
             '--tools-path', `"${toolsPath}"`,
+            '--build-path', `"${buildPath}"`,
             '--tool-versions', `"${toolVersions.join(',')}"`,
             '--save-result', `"${preprocessCachePath}"`
         ];

@@ -2139,6 +2139,10 @@ export class ProjectService {
    * @returns 返回构建路径
    */
   async getBuildPath(): Promise<string> {
+    if (this.currentProjectPath) {
+      return window['path'].join(this.currentProjectPath, '.build');
+    }
+
     const sketchPath = window['path'].join(
       this.currentProjectPath,
       '.temp',

@@ -19,6 +19,8 @@ import { NzModalService } from 'ng-zorro-antd/modal';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { ThemeService, ThemeMode } from '../../services/theme.service';
 import { CmdService } from '../../services/cmd.service';
+import { ElectronService } from '../../services/electron.service';
+import { NzToolTipModule } from "ng-zorro-antd/tooltip";
 
 @Component({
   selector: 'app-settings',
@@ -32,7 +34,8 @@ import { CmdService } from '../../services/cmd.service';
     SimplebarAngularModule,
     TranslateModule,
     NzSwitchModule,
-    NzSelectModule
+    NzSelectModule,
+    NzToolTipModule
   ],
   templateUrl: './settings.component.html',
   styleUrl: './settings.component.scss',
@@ -259,7 +262,8 @@ export class SettingsComponent implements OnDestroy {
     private translateService: TranslateService,
     private themeService: ThemeService,
     private message: NzMessageService,
-    private cmdService: CmdService
+    private cmdService: CmdService,
+    private electronService: ElectronService
   ) {
   }
 
@@ -576,5 +580,9 @@ export class SettingsComponent implements OnDestroy {
   onBoardSearchChange() {
     // 搜索逻辑已通过 filteredBoardList getter 实现
     // 这里可以添加额外的处理逻辑，如防抖等
+  }
+
+  openResources() {
+    this.electronService.openByExplorer(window['path'].getAppDataPath());
   }
 }
