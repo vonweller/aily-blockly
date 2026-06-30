@@ -719,7 +719,7 @@ export class ChatSessionsControlService {
     if (selectedSessionId.length > 0 && items.some(item => item.sessionId === selectedSessionId)) {
       return selectedSessionId;
     }
-    return currentItem?.sessionId ?? items[0]?.sessionId ?? '';
+    return '';
   }
 
   private resolveSessionPickerPosition(anchor?: MouseEvent | null): MenuPosition {
