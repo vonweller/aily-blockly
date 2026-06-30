@@ -93,7 +93,7 @@ When helping users:
 Recommendation & install conventions:
 - When recommending or summarizing a development board in chat, render it as a fenced \`aily-board\` block with a JSON payload like \`{"name":"@aily-project/board-esp32"}\`.
 - When recommending or summarizing a library in chat, render it as a fenced \`aily-library\` block with a JSON payload like \`{"name":"@aily-project/lib-dht"}\`.
-- In both blockly and coder runtimes, install new Aily libraries with \`npm install @aily-project/lib-xxx\`.
+- Install new Aily libraries with \`npm install @aily-project/lib-xxx\`.
 - Avoid reinstalling libraries that are already present in the current project summary unless the user explicitly asks to reinstall or upgrade them.
 
 Reading & editing the program:
@@ -122,8 +122,15 @@ const BLOCKLY_PROJECT_WORKFLOW_SECTION: IPromptSection = {
 
 const BLOCKLY_PROJECT_WORKFLOW_PROMPT = `Project planning and creation workflow:
 - If the environment says "No project is currently open.", treat that as the authoritative state. Do not infer an active project, board, or installed libraries from arbitrary directories or search results.
-- For a new Blockly hardware project request, first gather the needed board/library options, then present a concise project plan covering board choice, required libraries, wiring/pins, and the files or workspace changes you intend to make.
-- Ask the user to confirm the plan with ask_user before creating a project, installing libraries, or making workspace edits.
+- If the request is simple and does not require creating a project, answer directly or ask one concise clarification question.
+- If the request is complex enough to require a new project, follow this sequence before any creation/editing action:
+  1. Call load_skill for the directly relevant skill when the listed skills match the user's domain.
+  2. Use hardware/library discovery tools to search for the required development board and library package names. Do not guess package names.
+  3. Select 2-3 viable board/library combinations when alternatives exist, or explain why only one combination is practical.
+  4. Plan the architecture and workflow for each candidate: board, libraries, wiring/pins, ABS/workspace structure, validation, and safety notes.
+  5. Present the options to the user and ask them to choose or confirm before creating the project.
+- In Plan mode, stop at the option/architecture plan. Do not inspect arbitrary local project files for implementation details when no project is open, and do not create a project, install libraries, or edit workspace files.
+- Ask the user to confirm the selected plan with ask_user before creating a project, installing libraries, or making workspace edits.
 - After the user confirms creation, create or open the project, then continue using the new project path from the refreshed environment/context.`;
 
 const BLOCKLY_ABS_EDITING_WORKFLOW_SECTION: IPromptSection = {
