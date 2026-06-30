@@ -106,6 +106,20 @@ import {
   resolveProcessLogSubappNameFromOutputFilePath,
 } from '../../../utils/project-log.utils';
 
+interface BlocklyLineReadOptions {
+  readonly maxLines?: number;
+  readonly startLine?: number;
+  readonly endLine?: number;
+  readonly filterPattern?: string;
+  readonly signal?: AbortSignal;
+}
+
+interface BlocklyLineReadExtension {
+  head(filePath: string, options?: BlocklyLineReadOptions): Promise<string[]>;
+  tail(filePath: string, options?: BlocklyLineReadOptions): Promise<string[]>;
+  sed(filePath: string, options: BlocklyLineReadOptions): Promise<string[]>;
+}
+
 function isLexBootstrapTraceEnabled(): boolean {
   return isAilyCategoryDebugEnabled('aily.chat.traceLexBootstrap', [
     '__AILY_CHAT_TRACE_LEX_BOOTSTRAP__',
@@ -301,7 +315,9 @@ export function listPersistedBlocklyCommandSessionSnapshots(
       .sort((left, right) => right.startedAt - left.startedAt);
   }
 
-  return [];
+  return listPersistedBlocklyProjectCommandSessionSnapshots(projectPathHint)
+    .filter(summary => summary.sessionId === normalizedSessionId)
+    .sort((left, right) => right.startedAt - left.startedAt);
 }
 
 export function listPersistedBlocklyProjectCommandSessionSnapshots(
@@ -2049,8 +2065,10 @@ export function bootstrapBlocklyLexAgent(
     return toAskUserBridgeResponse(questions, response);
   };
 
+  const lineReadExtension = createBlocklyLineReadExtension();
   const runtimeExtensions: Record<string, unknown> = {
     syncFs: AilyHost.get().fs,
+    ...(lineReadExtension ? { readline: lineReadExtension } : {}),
     environment: createEnvironmentProviderFromContext(
       contextSnapshotService,
       subagentRequiredContext,
@@ -2376,6 +2394,22 @@ export function bootstrapBlocklyLexAgent(
   attachBlocklyPostCreateExtensions(agent, adapter);
 
   return agent;
+}
+
+function createBlocklyLineReadExtension(): BlocklyLineReadExtension | null {
+  const fsApi = (window as any)?.electronAPI?.fs;
+  if (!fsApi) {
+    return null;
+  }
+  if (typeof fsApi.readHeadLines !== 'function' || typeof fsApi.readTailLines !== 'function' || typeof fsApi.readLineRange !== 'function') {
+    return null;
+  }
+
+  return {
+    head: (filePath: string, options?: BlocklyLineReadOptions) => fsApi.readHeadLines(filePath, options ?? {}),
+    tail: (filePath: string, options?: BlocklyLineReadOptions) => fsApi.readTailLines(filePath, options ?? {}),
+    sed: (filePath: string, options: BlocklyLineReadOptions) => fsApi.readLineRange(filePath, options ?? {}),
+  };
 }
 
 function normalizeRuntimePath(value: unknown): string {
@@ -3535,26 +3569,14 @@ function collectProjectProcessMetadataFiles(
     return;
   }
 
-  for (const subappEntry of readBlocklyCommandSessionDirEntries(host, processRootDir)) {
-    if (!subappEntry.isDirectory()) {
+  for (const dayEntry of readBlocklyCommandSessionDirEntries(host, processRootDir)) {
+    if (!dayEntry.isDirectory()) {
       continue;
     }
-    const subappDirPath = host.path.join(processRootDir, subappEntry.name);
-    for (const dayEntry of readBlocklyCommandSessionDirEntries(host, subappDirPath)) {
-      if (!dayEntry.isDirectory()) {
-        continue;
-      }
-      const dayDirPath = host.path.join(subappDirPath, dayEntry.name);
-      for (const minuteEntry of readBlocklyCommandSessionDirEntries(host, dayDirPath)) {
-        if (!minuteEntry.isDirectory()) {
-          continue;
-        }
-        const minuteDirPath = host.path.join(dayDirPath, minuteEntry.name);
-        for (const fileEntry of readBlocklyCommandSessionDirEntries(host, minuteDirPath)) {
-          if (fileEntry.isFile() && fileEntry.name.endsWith('.json')) {
-            candidates.add(host.path.join(minuteDirPath, fileEntry.name));
-          }
-        }
+    const dayDirPath = host.path.join(processRootDir, dayEntry.name);
+    for (const fileEntry of readBlocklyCommandSessionDirEntries(host, dayDirPath)) {
+      if (fileEntry.isFile() && fileEntry.name.endsWith('.json')) {
+        candidates.add(host.path.join(dayDirPath, fileEntry.name));
       }
     }
   }
@@ -3769,7 +3791,9 @@ function createBlocklyCommandSessionSummaryFromPersistedRecord(
     typeof record.status === 'string' ? record.status : undefined,
     running,
   );
-  const lastTimestamp = completedAt ?? lastOutputAt ?? Date.now();
+  const lastTimestamp = running
+    ? Date.now()
+    : completedAt ?? lastOutputAt ?? Date.now();
 
   return {
     processId,

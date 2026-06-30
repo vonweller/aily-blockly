@@ -17,6 +17,7 @@ import { readChatProcessOutputFile } from '../../helpers/chat-process-window';
 import {
   getBlocklyCommandSessionStatus,
   listPersistedBlocklyCommandSessionSnapshots,
+  listPersistedBlocklyProjectCommandSessionSnapshots,
 } from '../../helpers/lex-agent-bootstrap';
 import { ChatHistoryService } from '../../services/chat-history.service';
 
@@ -188,7 +189,7 @@ export class ChatProcessDetailWindowComponent implements OnInit, OnDestroy {
   }
 
   private async refresh(): Promise<void> {
-    if (!this.sessionId || !this.processId) {
+    if (!this.processId) {
       this.cdr.markForCheck();
       return;
     }
@@ -211,15 +212,20 @@ export class ChatProcessDetailWindowComponent implements OnInit, OnDestroy {
   }
 
   private async readSummaryFromHost(): Promise<ProcessWindowProcessSummary | null> {
+    const persistedFromOutputPath = this.readPersistedSummaryFromOutputFilePath();
+    if (persistedFromOutputPath) {
+      return persistedFromOutputPath;
+    }
+
     try {
       const electronApi = window['electronAPI'] as { chatRuntimeHost?: { call?: (method: string, args: readonly unknown[]) => Promise<unknown> } } | undefined;
-      const snapshot = await electronApi?.chatRuntimeHost?.call?.('readInteractionSnapshot', [this.sessionId]) as {
-        processes?: readonly ProcessWindowProcessSummary[];
-      } | null;
+      const snapshot = this.sessionId
+        ? await electronApi?.chatRuntimeHost?.call?.('readInteractionSnapshot', [this.sessionId]) as {
+          processes?: readonly ProcessWindowProcessSummary[];
+        } | null
+        : null;
       const liveProcess = snapshot?.processes?.find(item => item.processId === this.processId) ?? null;
-      const projectPathHint = this.chatHistoryService.findEntry(this.sessionId)?.projectPath ?? null;
-      const persistedProcess = listPersistedBlocklyCommandSessionSnapshots(this.sessionId, projectPathHint)
-        .find(item => item.processId === this.processId) ?? null;
+      const persistedProcess = this.readPersistedSummary();
       if (liveProcess && persistedProcess) {
         return {
           ...persistedProcess,
@@ -229,9 +235,83 @@ export class ChatProcessDetailWindowComponent implements OnInit, OnDestroy {
       }
       return liveProcess ?? persistedProcess;
     } catch {
-      const projectPathHint = this.chatHistoryService.findEntry(this.sessionId)?.projectPath ?? null;
-      return listPersistedBlocklyCommandSessionSnapshots(this.sessionId, projectPathHint)
-        .find(item => item.processId === this.processId) ?? null;
+      return this.readPersistedSummary();
+    }
+  }
+
+  private readPersistedSummaryFromOutputFilePath(): ProcessWindowProcessSummary | null {
+    const normalizedOutputFilePath = typeof this.outputFilePath === 'string' ? this.outputFilePath.trim() : '';
+    if (!normalizedOutputFilePath) {
+      return null;
+    }
+
+    try {
+      const host = AilyHost.get();
+      const metadataFilePath = normalizedOutputFilePath.replace(/\.log$/i, '.json');
+      if (!host.fs?.existsSync?.(metadataFilePath)) {
+        return null;
+      }
+
+      const raw = host.fs.readFileSync(metadataFilePath, 'utf-8');
+      if (!raw) {
+        return null;
+      }
+
+      const parsed = JSON.parse(String(raw)) as {
+        processId?: string;
+        outputSessionId?: string | null;
+        command?: string | null;
+        cwd?: string | null;
+        status?: string | null;
+        running?: boolean;
+        exitCode?: number | null;
+        pid?: number | null;
+        startedAt?: number | null;
+        lastOutputAt?: number | null;
+        completedAt?: number | null;
+        bytesTotal?: number | null;
+        outputFilePath?: string | null;
+      };
+      const processId = typeof parsed.processId === 'string' && parsed.processId.trim()
+        ? parsed.processId.trim()
+        : this.processId;
+      const startedAt = typeof parsed.startedAt === 'number' && Number.isFinite(parsed.startedAt)
+        ? parsed.startedAt
+        : undefined;
+      const lastOutputAt = typeof parsed.lastOutputAt === 'number' && Number.isFinite(parsed.lastOutputAt)
+        ? parsed.lastOutputAt
+        : undefined;
+      const completedAt = typeof parsed.completedAt === 'number' && Number.isFinite(parsed.completedAt)
+        ? parsed.completedAt
+        : undefined;
+      const elapsedMs = typeof startedAt === 'number'
+        ? Math.max(0, (completedAt ?? lastOutputAt ?? Date.now()) - startedAt)
+        : undefined;
+
+      return {
+        processId,
+        outputSessionId: typeof parsed.outputSessionId === 'string' && parsed.outputSessionId.trim()
+          ? parsed.outputSessionId.trim()
+          : this.outputSessionId || processId,
+        command: typeof parsed.command === 'string' && parsed.command.trim()
+          ? parsed.command.trim()
+          : this.command,
+        cwd: typeof parsed.cwd === 'string' ? parsed.cwd : undefined,
+        status: typeof parsed.status === 'string' ? parsed.status : undefined,
+        running: parsed.running === true,
+        exitCode: typeof parsed.exitCode === 'number' && Number.isFinite(parsed.exitCode) ? parsed.exitCode : undefined,
+        pid: typeof parsed.pid === 'number' && Number.isFinite(parsed.pid) ? parsed.pid : undefined,
+        startedAt,
+        lastOutputAt,
+        completedAt,
+        elapsedMs,
+        bytesTotal: typeof parsed.bytesTotal === 'number' && Number.isFinite(parsed.bytesTotal) ? parsed.bytesTotal : undefined,
+        outputFilePath: typeof parsed.outputFilePath === 'string' && parsed.outputFilePath.trim()
+          ? parsed.outputFilePath.trim()
+          : normalizedOutputFilePath,
+      };
+    } catch {
+      return null;
     }
   }
 
@@ -267,5 +347,17 @@ export class ChatProcessDetailWindowComponent implements OnInit, OnDestroy {
         ? liveStatus.exitCode
         : summary?.exitCode,
     };
+  }
+
+  private readPersistedSummary(): ProcessWindowProcessSummary | null {
+    const projectPathHint = this.chatHistoryService.findEntry(this.sessionId)?.projectPath ?? null;
+    const sessionScoped = listPersistedBlocklyCommandSessionSnapshots(this.sessionId, projectPathHint)
+      .find(item => item.processId === this.processId) ?? null;
+    if (sessionScoped) {
+      return sessionScoped;
+    }
+
+    return listPersistedBlocklyProjectCommandSessionSnapshots(projectPathHint)
+      .find(item => item.processId === this.processId) ?? null;
   }
 }

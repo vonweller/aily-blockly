@@ -16,14 +16,14 @@ export function appendProjectLog(
 
   const pathApi = (window as any).path;
   const fsApi = (window as any).fs;
-  const appDataLogRoot = resolveAppDataLogRoot(pathApi);
-  if (!appDataLogRoot) {
+  const projectLogRoot = resolveProjectLogRootDir(normalizedProjectPath, pathApi);
+  if (!projectLogRoot) {
     return null;
   }
   const sourceId = normalizeLogSource(source);
   const daySegment = formatDateSegment(at);
   const minuteSegment = formatMinuteSegment(at);
-  const dirPath = pathApi.join(appDataLogRoot, sourceId, daySegment);
+  const dirPath = pathApi.join(projectLogRoot, sourceId, daySegment);
   const filePath = pathApi.join(dirPath, `${minuteSegment}.log`);
 
   if (!fsApi.existsSync(dirPath)) {
@@ -47,7 +47,7 @@ export function resolveProcessLogStoragePaths(
   projectPath: string | undefined,
   processId: string,
   at = new Date(),
-  subapp = DEFAULT_PROCESS_LOG_SUBAPP,
+  _subapp = DEFAULT_PROCESS_LOG_SUBAPP,
 ): { outputFilePath: string; metadataFilePath: string } | null {
   const normalizedProjectPath = typeof projectPath === 'string' ? projectPath.trim() : '';
   if (!normalizedProjectPath || !(window as any)?.path || !(window as any)?.fs) {
@@ -56,22 +56,19 @@ export function resolveProcessLogStoragePaths(
 
   const pathApi = (window as any).path;
   const fsApi = (window as any).fs;
-  const appDataLogRoot = resolveAppDataLogRoot(pathApi);
-  if (!appDataLogRoot) {
+  const processRootDir = resolveProcessLogProjectDir(normalizedProjectPath);
+  if (!processRootDir) {
     return null;
   }
   const dirPath = pathApi.join(
-    appDataLogRoot,
-    resolveProjectLogId(normalizedProjectPath),
-    normalizeProcessLogSubappName(subapp),
+    processRootDir,
     formatDateSegment(at),
-    formatMinuteSegment(at),
   );
   if (!fsApi.existsSync(dirPath)) {
     fsApi.mkdirSync(dirPath, { recursive: true });
   }
 
-  const fileBaseName = sanitizeProcessFileName(processId);
+  const fileBaseName = `${formatMinuteSegment(at)}-${sanitizeProcessFileName(processId)}`;
   return {
     outputFilePath: pathApi.join(dirPath, `${fileBaseName}.log`),
     metadataFilePath: pathApi.join(dirPath, `${fileBaseName}.json`),
@@ -97,6 +94,11 @@ export function resolveProcessLogSubappNameFromOutputFilePath(outputFilePath: st
     .split(/[\\/]+/)
     .map(segment => segment.trim())
     .filter(Boolean);
+  const processSegmentIndex = segments.lastIndexOf('process');
+  if (processSegmentIndex >= 0) {
+    return DEFAULT_PROCESS_LOG_SUBAPP;
+  }
+
   if (segments.length < 4) {
     return DEFAULT_PROCESS_LOG_SUBAPP;
   }
@@ -111,14 +113,27 @@ export function resolveProcessLogProjectDir(projectPath: string | undefined): st
   }
 
   const pathApi = (window as any).path;
-  const appDataLogRoot = resolveAppDataLogRoot(pathApi);
-  if (!appDataLogRoot) {
+  return pathApi.join(normalizedProjectPath, '.log', 'process');
+}
+
+export function resolveProjectLogRootDir(projectPath: string | undefined, pathApi?: any): string | null {
+  const normalizedProjectPath = typeof projectPath === 'string' ? projectPath.trim() : '';
+  const resolvedPathApi = pathApi ?? (window as any)?.path;
+  if (!normalizedProjectPath || !resolvedPathApi) {
     return null;
   }
-  return pathApi.join(
-    appDataLogRoot,
-    resolveProjectLogId(normalizedProjectPath),
-  );
+
+  return resolvedPathApi.join(normalizedProjectPath, '.log');
+}
+
+export function resolveProjectAssetsRootDir(projectPath: string | undefined, pathApi?: any): string | null {
+  const normalizedProjectPath = typeof projectPath === 'string' ? projectPath.trim() : '';
+  const resolvedPathApi = pathApi ?? (window as any)?.path;
+  if (!normalizedProjectPath || !resolvedPathApi) {
+    return null;
+  }
+
+  return resolvedPathApi.join(normalizedProjectPath, '.assets');
 }
 
 function normalizeLogMessage(message: string): string {
@@ -133,38 +148,6 @@ function normalizeLogSource(source: string): string {
 function sanitizeProcessFileName(processId: string): string {
   const trimmed = typeof processId === 'string' ? processId.trim() : '';
   return trimmed.replace(/[^a-zA-Z0-9._-]/g, '_') || 'process';
-}
-
-function resolveProjectLogId(projectPath: string): string {
-  const pathApi = (window as any).path;
-  const fsApi = (window as any).fs;
-  const packageJsonPath = pathApi.join(projectPath, 'package.json');
-  if (fsApi.existsSync(packageJsonPath)) {
-    try {
-      const packageJson = JSON.parse(fsApi.readFileSync(packageJsonPath, 'utf-8'));
-      const cloudId = typeof packageJson?.cloudId === 'string' ? packageJson.cloudId.trim() : '';
-      if (cloudId) {
-        return sanitizeProjectLogId(cloudId);
-      }
-    } catch {
-      // Fall through to basename.
-    }
-  }
-
-  return sanitizeProjectLogId(pathApi.basename(projectPath));
-}
-
-function resolveAppDataLogRoot(pathApi: any): string | null {
-  const appDataPath = typeof pathApi.getAppDataPath === 'function' ? pathApi.getAppDataPath() : '';
-  if (!appDataPath) {
-    return null;
-  }
-  return pathApi.join(appDataPath, '.log');
-}
-
-function sanitizeProjectLogId(value: string): string {
-  const trimmed = typeof value === 'string' ? value.trim() : '';
-  return trimmed.replace(/[\\/:*?"<>|]/g, '_') || 'default-project';
 }
 
 function formatDateSegment(value: Date): string {

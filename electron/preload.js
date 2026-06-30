@@ -3,7 +3,8 @@ const { SerialPort } = require("serialport");
 const { createThrottledSerialPort, createRawSerialPort, listPorts } = require("./serial");
 const { exec } = require("child_process");
 const { createHash } = require("crypto");
-const { existsSync, statSync } = require("fs");
+const { existsSync, statSync, createReadStream } = require("fs");
+const { createInterface } = require("readline");
 const { isAbsolute } = require("path");
 const { tmpdir } = require("os");
 const nodeFsp = require("node:fs/promises");
@@ -49,6 +50,93 @@ const fspApi = {
   unlink: (...args) => nodeFsp.unlink(...args),
   open: (...args) => nodeFsp.open(...args),
 };
+
+async function readLinesWithMode(filePath, options = {}) {
+  const mode = options?.mode === 'head' || options?.mode === 'sed' ? options.mode : 'tail';
+  const maxLines = Number.isFinite(options?.maxLines) ? Math.max(1, Math.floor(options.maxLines)) : 20;
+  const startLine = Number.isFinite(options?.startLine) ? Math.max(1, Math.floor(options.startLine)) : 1;
+  const endLine = Number.isFinite(options?.endLine) ? Math.max(startLine, Math.floor(options.endLine)) : startLine;
+  const filterPattern = typeof options?.filterPattern === 'string' && options.filterPattern.trim() ? new RegExp(options.filterPattern) : null;
+
+  return await new Promise((resolve, reject) => {
+    const input = createReadStream(filePath, { encoding: 'utf8' });
+    const rl = createInterface({
+      input,
+      crlfDelay: Infinity,
+    });
+
+    const headLines = [];
+    const tailLines = [];
+    const sedLines = [];
+    let matchedLineNumber = 0;
+    let settled = false;
+
+    const finalize = (lines) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      resolve(lines);
+    };
+    const fail = (error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+    const cleanup = () => {
+      rl.removeAllListeners();
+      input.removeAllListeners();
+    };
+    const stopEarly = (lines) => {
+      rl.close();
+      input.destroy();
+      finalize(lines);
+    };
+
+    rl.on('line', (line) => {
+      if (filterPattern && !filterPattern.test(line)) {
+        return;
+      }
+
+      matchedLineNumber += 1;
+      if (mode === 'head') {
+        headLines.push(line);
+        if (headLines.length >= maxLines) {
+          stopEarly(headLines);
+        }
+        return;
+      }
+
+      if (mode === 'sed') {
+        if (matchedLineNumber >= startLine && matchedLineNumber <= endLine) {
+          sedLines.push(line);
+        }
+        if (matchedLineNumber >= endLine) {
+          stopEarly(sedLines);
+        }
+        return;
+      }
+
+      tailLines.push(line);
+      if (tailLines.length > maxLines) {
+        tailLines.shift();
+      }
+    });
+
+    rl.once('close', () => {
+      if (settled) {
+        return;
+      }
+      finalize(mode === 'head' ? headLines : mode === 'sed' ? sedLines : tailLines);
+    });
+    rl.once('error', fail);
+    input.once('error', fail);
+  });
+}
 
 contextBridge.exposeInMainWorld("electronAPI", {
   ipcRenderer: {
@@ -358,6 +446,15 @@ contextBridge.exposeInMainWorld("electronAPI", {
     linkSync: (existingPath, newPath) => require("fs").linkSync(existingPath, newPath),
     chmodSync: (path, mode) => require("fs").chmodSync(path, mode),
     appendFileSync: (path, data) => require("fs").appendFileSync(path, data),
+    readHeadLines: async (path, options = {}) => {
+      return await readLinesWithMode(path, { ...options, mode: 'head' });
+    },
+    readTailLines: async (path, options = {}) => {
+      return await readLinesWithMode(path, { ...options, mode: 'tail' });
+    },
+    readLineRange: async (path, options = {}) => {
+      return await readLinesWithMode(path, { ...options, mode: 'sed' });
+    },
     watch: (path, callback, options = {}) => {
       const watcher = require("fs").watch(
         path,
@@ -857,4 +954,3 @@ contextBridge.exposeInMainWorld("electronAPI", {
     readText: () => clipboard.readText(),
   }
 });
-

@@ -39,7 +39,7 @@ const PROJECT_TOOL_SETTINGS: ToolSettingsCatalogEntry[] = [
   { name: 'memory', description: '读写 /memories 下的 user、session、repo 记忆文件。', agents: [MAIN_AGENT_TYPE] },
   { name: 'resolve_memory_file_uri', description: '把 /memories 逻辑路径解析为真实文件 URI。', agents: [MAIN_AGENT_TYPE] },
   { name: 'get_errors', description: '收集项目中的诊断错误。', agents: [MAIN_AGENT_TYPE] },
-  { name: 'log_tool', description: '按来源、时间段和级别查询项目 .log 日志。', agents: [MAIN_AGENT_TYPE] },
+  { name: 'log_tool', description: '按来源、时间段和级别查询项目 .log 日志；支持 head/tail/sed。查最近日志时优先用 maxFiles=1 + tail 20 行，且不要退回到 find/read_file/终端方式。', agents: [MAIN_AGENT_TYPE] },
 ];
 
 const FILE_TOOL_SETTINGS: ToolSettingsCatalogEntry[] = [

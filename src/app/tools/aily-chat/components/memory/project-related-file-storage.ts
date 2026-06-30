@@ -4,6 +4,7 @@ import type {
   ProjectRelatedFileEntry,
   RelatedContentScope,
 } from './project-related-file.types';
+import { resolveProjectAssetsRootDir } from '../../../../utils/project-log.utils';
 
 const RELATED_URLS_FILE_NAME = 'RELATED_URLS.txt';
 
@@ -161,6 +162,7 @@ export class ProjectRelatedFileStorage {
       const urlKey = this.normalizeUrlKey(normalizedUrl);
       if (urlKey && existingKeys.has(urlKey)) {
         skippedOriginalPaths.push(rawUrl);
+        addedEntries.push(this.createLinkEntry(normalizedUrl));
         continue;
       }
 
@@ -444,12 +446,11 @@ export class ProjectRelatedFileStorage {
 
   private resolveAssetsRootDir(projectPath: string): string | undefined {
     const normalizedProjectPath = typeof projectPath === 'string' ? projectPath.trim() : '';
-    const appDataPath = this.host.path.getAppDataPath?.();
-    if (!normalizedProjectPath || !appDataPath) {
+    if (!normalizedProjectPath) {
       return undefined;
     }
 
-    return this.host.path.join(appDataPath, '.assets', this.resolveProjectId(normalizedProjectPath));
+    return resolveProjectAssetsRootDir(normalizedProjectPath, this.host.path) ?? undefined;
   }
 
   private requireAssetsRootDir(projectPath: string): string {
@@ -459,23 +460,6 @@ export class ProjectRelatedFileStorage {
     }
 
     return assetsRootDir;
-  }
-
-  private resolveProjectId(projectPath: string): string {
-    const packageJsonPath = this.host.path.join(projectPath, 'package.json');
-    if (this.host.fs.existsSync(packageJsonPath)) {
-      try {
-        const packageJson = JSON.parse(this.host.fs.readFileSync(packageJsonPath, 'utf-8'));
-        const cloudId = typeof packageJson?.cloudId === 'string' ? packageJson.cloudId.trim() : '';
-        if (cloudId) {
-          return sanitizeProjectId(cloudId);
-        }
-      } catch {
-        // Fall back to directory name below.
-      }
-    }
-
-    return sanitizeProjectId(this.host.path.basename(projectPath));
   }
 
   private ensureDir(dirPath: string): void {
@@ -550,11 +534,6 @@ function compareAssetEntries(
     return left.type.localeCompare(right.type);
   }
   return left.name.localeCompare(right.name);
-}
-
-function sanitizeProjectId(value: string): string {
-  const trimmed = typeof value === 'string' ? value.trim() : '';
-  return trimmed.replace(/[\\/:*?"<>|]/g, '_') || 'default-project';
 }
 
 function withUniqueNameSuffix(name: string, index: number): string {

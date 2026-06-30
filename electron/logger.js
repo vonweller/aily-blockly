@@ -95,9 +95,8 @@ function writeAppConsoleLog(level, args) {
 
 function writeStructuredProjectLog(source, level, message, projectPath) {
     const normalizedProjectPath = typeof projectPath === 'string' ? projectPath.trim() : '';
-    const normalizedMessage = typeof message === 'string' ? message.trim() : '';
-    const appDataPath = process.env.AILY_APPDATA_PATH || '';
-    if (!appDataPath || !normalizedMessage) {
+    const normalizedMessage = normalizeLogMessage(message);
+    if (!normalizedProjectPath || !normalizedMessage) {
         return;
     }
 
@@ -105,7 +104,7 @@ function writeStructuredProjectLog(source, level, message, projectPath) {
     const sourceId = normalizeSourceId(source);
     const daySegment = `${now.getFullYear()}${pad2(now.getMonth() + 1)}${pad2(now.getDate())}`;
     const minuteSegment = `${pad2(now.getHours())}-${pad2(now.getMinutes())}`;
-    const dirPath = path.join(appDataPath, '.log', sourceId, daySegment);
+    const dirPath = path.join(normalizedProjectPath, '.log', sourceId, daySegment);
     const filePath = path.join(dirPath, `${minuteSegment}.log`);
 
     if (!fs.existsSync(dirPath)) {
@@ -115,9 +114,9 @@ function writeStructuredProjectLog(source, level, message, projectPath) {
     const timestamp = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())} ${pad2(now.getHours())}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())}.${pad3(now.getMilliseconds())}`;
     const lines = normalizedMessage
         .split(/\r?\n/)
-        .map((line) => line.trimEnd())
-        .filter((line) => line.length > 0)
-        .map((line) => `[${timestamp}] [${level}] [${sourceId}] ${line}`);
+        .map((line) => normalizeLogLine(line, level))
+        .filter(Boolean)
+        .map((line) => `[${timestamp}] [${line.level}] [${sourceId}] ${line.message}`);
     if (lines.length > 0) {
         fs.appendFileSync(filePath, `${lines.join('\n')}\n`);
     }
@@ -152,6 +151,32 @@ function normalizeSourceId(source) {
     return trimmed.replace(/[^a-zA-Z0-9._-]/g, '-') || 'app';
 }
 
+function normalizeLogMessage(message) {
+    return typeof message === 'string' ? stripAnsi(message).trim() : '';
+}
+
+function normalizeLogLine(line, fallbackLevel) {
+    const sanitized = stripAnsi(String(line || '')).trim();
+    if (!sanitized) {
+        return null;
+    }
+
+    const nestedPrefix = sanitized.match(/^\[(INFO|DEBUG|ERROR)\]\s*/i);
+    if (!nestedPrefix) {
+        return {
+            level: fallbackLevel,
+            message: sanitized,
+        };
+    }
+
+    const nestedLevel = nestedPrefix[1].toUpperCase();
+    const normalizedMessage = sanitized.slice(nestedPrefix[0].length).trim();
+    return {
+        level: nestedLevel,
+        message: normalizedMessage || sanitized,
+    };
+}
+
 function formatArgs(args) {
     return args.map((value) => {
         if (value instanceof Error) {
@@ -174,6 +199,10 @@ function pad2(value) {
 
 function pad3(value) {
     return String(value).padStart(3, '0');
+}
+
+function stripAnsi(value) {
+    return String(value || '').replace(/\u001b\[[0-9;]*m/g, '');
 }
 
 module.exports = {
