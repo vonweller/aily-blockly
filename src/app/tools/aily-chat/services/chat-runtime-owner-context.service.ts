@@ -274,7 +274,7 @@ export class ChatRuntimeOwnerContextService implements ChatRuntimeOwnerContextMa
 
 function createUnboundViewRequestDispatcher() {
   const failClosed = (): never => {
-    throw new Error('[AilyChat][RuntimeOwnerContext] View requests must be emitted through the execution-worker host event boundary.');
+    throw new Error('[AilyChat][RuntimeOwnerContext] View requests must be emitted through the runtime-owner host event boundary.');
   };
   return {
     notify: failClosed,

@@ -13,6 +13,7 @@ export type ChatRuntimeHostSessionId = string;
 export type ChatRuntimeHostEventKind =
   | 'session-state'
   | 'transcript'
+  | 'turn-transcript'
   | 'runtime-status'
   | 'interaction'
   | 'view-request'
@@ -213,6 +214,12 @@ export interface ChatRuntimeHostEventBase {
 export interface ChatRuntimeHostTranscriptEvent extends ChatRuntimeHostEventBase {
   readonly kind: 'transcript';
   readonly transcript: ChatRuntimeHostTranscriptSnapshot;
+}
+
+export interface ChatRuntimeHostTurnTranscriptEvent extends ChatRuntimeHostEventBase {
+  readonly kind: 'turn-transcript';
+  readonly turnId: string;
+  readonly turn: TurnResponseTurn;
 }
 
 export interface ChatRuntimeHostSessionStateEvent extends ChatRuntimeHostEventBase {
@@ -431,13 +438,14 @@ export interface ChatRuntimeHostErrorEvent extends ChatRuntimeHostEventBase {
 
 export type ChatRuntimeHostEvent =
   | ChatRuntimeHostTranscriptEvent
+  | ChatRuntimeHostTurnTranscriptEvent
   | ChatRuntimeHostSessionStateEvent
   | ChatRuntimeHostInteractionEvent
   | ChatRuntimeHostViewRequestEvent
   | ChatRuntimeHostResourceRequestEvent
   | ChatRuntimeHostErrorEvent;
 
-export interface ChatRuntimeExecutionWorkerRenderEventProgress {
+export interface ChatRuntimeOwnerExecutorRenderEventProgress {
   readonly kind: 'render-event';
   readonly sessionId: ChatRuntimeHostSessionId;
   readonly turnId?: string | null;
@@ -450,13 +458,13 @@ export interface ChatRuntimeHostEventSubscription {
   dispose(): void;
 }
 
-export type ChatRuntimeExecutionWorkerCommandMethod =
+export type ChatRuntimeOwnerExecutorCommandMethod =
   | 'startTurn'
   | 'stopTurn'
   | 'disposeSessionResources'
   | 'resolveInteraction';
 
-export interface ChatRuntimeExecutionWorkerStartTurnExecutionContext {
+export interface ChatRuntimeOwnerExecutorStartTurnExecutionContext {
   readonly selectedMode?: ChatSelectedMode | null;
   readonly providerOptions?: HostSessionProviderOptions | null;
   readonly agentRuntimeMode?: ChatAgentRuntimeMode | null;
@@ -466,60 +474,60 @@ export interface ChatRuntimeExecutionWorkerStartTurnExecutionContext {
   readonly protocolTruncation?: ChatRuntimeHostProtocolTruncation | null;
 }
 
-export interface ChatRuntimeExecutionWorkerStartTurnCommand {
+export interface ChatRuntimeOwnerExecutorStartTurnCommand {
   readonly sessionId: ChatRuntimeHostSessionId;
   readonly turnId: string;
   readonly request: ChatRuntimeHostSubmitRequest;
-  readonly executionContext?: ChatRuntimeExecutionWorkerStartTurnExecutionContext | null;
+  readonly executionContext?: ChatRuntimeOwnerExecutorStartTurnExecutionContext | null;
 }
 
-export interface ChatRuntimeExecutionWorkerStopTurnCommand {
+export interface ChatRuntimeOwnerExecutorStopTurnCommand {
   readonly sessionId: ChatRuntimeHostSessionId;
   readonly turnId?: string | null;
 }
 
-export interface ChatRuntimeExecutionWorkerDisposeSessionResourcesCommand {
+export interface ChatRuntimeOwnerExecutorDisposeSessionResourcesCommand {
   readonly sessionId: ChatRuntimeHostSessionId;
 }
 
-export interface ChatRuntimeExecutionWorkerResolveInteractionCommand {
+export interface ChatRuntimeOwnerExecutorResolveInteractionCommand {
   readonly sessionId: ChatRuntimeHostSessionId;
   readonly interactionId?: string;
   readonly request: ChatRuntimeHostInteractionRequest;
 }
 
-export type ChatRuntimeExecutionWorkerCommand =
+export type ChatRuntimeOwnerExecutorCommand =
   | {
       readonly method: 'startTurn';
-      readonly payload: ChatRuntimeExecutionWorkerStartTurnCommand;
+      readonly payload: ChatRuntimeOwnerExecutorStartTurnCommand;
     }
   | {
       readonly method: 'stopTurn';
-      readonly payload: ChatRuntimeExecutionWorkerStopTurnCommand;
+      readonly payload: ChatRuntimeOwnerExecutorStopTurnCommand;
     }
   | {
       readonly method: 'disposeSessionResources';
-      readonly payload: ChatRuntimeExecutionWorkerDisposeSessionResourcesCommand;
+      readonly payload: ChatRuntimeOwnerExecutorDisposeSessionResourcesCommand;
     }
   | {
       readonly method: 'resolveInteraction';
-      readonly payload: ChatRuntimeExecutionWorkerResolveInteractionCommand;
+      readonly payload: ChatRuntimeOwnerExecutorResolveInteractionCommand;
     };
 
-export type ChatRuntimeExecutionWorkerEventKind =
+export type ChatRuntimeOwnerExecutorEventKind =
   | 'turnProgress'
   | 'turnInteractionRequested'
   | 'turnError'
   | 'turnCompleted';
 
-export interface ChatRuntimeExecutionWorkerEventBase {
-  readonly kind: ChatRuntimeExecutionWorkerEventKind;
+export interface ChatRuntimeOwnerExecutorEventBase {
+  readonly kind: ChatRuntimeOwnerExecutorEventKind;
   readonly sessionId: ChatRuntimeHostSessionId;
   readonly turnId: string;
   readonly revision?: number;
 }
 
-export interface ChatRuntimeExecutionWorkerTurnProgressEvent extends ChatRuntimeExecutionWorkerEventBase {
+export interface ChatRuntimeOwnerExecutorTurnProgressEvent extends ChatRuntimeOwnerExecutorEventBase {
   readonly kind: 'turnProgress';
   readonly turn?: TurnResponseTurn;
   readonly request?: ChatRuntimeHostSubmitRequest;
@@ -529,12 +537,12 @@ export interface ChatRuntimeExecutionWorkerTurnProgressEvent extends ChatRuntime
     | ChatRuntimeHostResourceRequestEvent;
 }
 
-export interface ChatRuntimeExecutionWorkerTurnInteractionRequestedEvent extends ChatRuntimeExecutionWorkerEventBase {
+export interface ChatRuntimeOwnerExecutorTurnInteractionRequestedEvent extends ChatRuntimeOwnerExecutorEventBase {
   readonly kind: 'turnInteractionRequested';
   readonly interaction: ChatRuntimeHostInteractionSnapshot;
 }
 
-export interface ChatRuntimeExecutionWorkerTurnErrorEvent extends ChatRuntimeExecutionWorkerEventBase {
+export interface ChatRuntimeOwnerExecutorTurnErrorEvent extends ChatRuntimeOwnerExecutorEventBase {
   readonly kind: 'turnError';
   readonly error: {
     readonly code?: string;
@@ -543,25 +551,25 @@ export interface ChatRuntimeExecutionWorkerTurnErrorEvent extends ChatRuntimeExe
   };
 }
 
-export interface ChatRuntimeExecutionWorkerTurnCompletedEvent extends ChatRuntimeExecutionWorkerEventBase {
+export interface ChatRuntimeOwnerExecutorTurnCompletedEvent extends ChatRuntimeOwnerExecutorEventBase {
   readonly kind: 'turnCompleted';
   readonly turn?: TurnResponseTurn;
   readonly state?: ChatRuntimeHostSessionState;
   readonly interaction?: ChatRuntimeHostInteractionSnapshot;
 }
 
-export type ChatRuntimeExecutionWorkerEvent =
-  | ChatRuntimeExecutionWorkerTurnProgressEvent
-  | ChatRuntimeExecutionWorkerTurnInteractionRequestedEvent
-  | ChatRuntimeExecutionWorkerTurnErrorEvent
-  | ChatRuntimeExecutionWorkerTurnCompletedEvent;
+export type ChatRuntimeOwnerExecutorEvent =
+  | ChatRuntimeOwnerExecutorTurnProgressEvent
+  | ChatRuntimeOwnerExecutorTurnInteractionRequestedEvent
+  | ChatRuntimeOwnerExecutorTurnErrorEvent
+  | ChatRuntimeOwnerExecutorTurnCompletedEvent;
 
-export interface ChatRuntimeExecutionWorker {
-  startTurn(command: ChatRuntimeExecutionWorkerStartTurnCommand): Promise<ChatRuntimeHostSessionState>;
-  stopTurn(command: ChatRuntimeExecutionWorkerStopTurnCommand): Promise<void>;
-  disposeSessionResources(command: ChatRuntimeExecutionWorkerDisposeSessionResourcesCommand): Promise<void>;
-  resolveInteraction(command: ChatRuntimeExecutionWorkerResolveInteractionCommand): Promise<ChatRuntimeHostInteractionSnapshot | null>;
-  onEvent(listener: (event: ChatRuntimeHostEvent | ChatRuntimeExecutionWorkerRenderEventProgress | ChatRuntimeExecutionWorkerEvent) => void): ChatRuntimeHostEventSubscription;
+export interface ChatRuntimeOwnerExecutor {
+  startTurn(command: ChatRuntimeOwnerExecutorStartTurnCommand): Promise<ChatRuntimeHostSessionState>;
+  stopTurn(command: ChatRuntimeOwnerExecutorStopTurnCommand): Promise<void>;
+  disposeSessionResources(command: ChatRuntimeOwnerExecutorDisposeSessionResourcesCommand): Promise<void>;
+  resolveInteraction(command: ChatRuntimeOwnerExecutorResolveInteractionCommand): Promise<ChatRuntimeHostInteractionSnapshot | null>;
+  onEvent(listener: (event: ChatRuntimeHostEvent | ChatRuntimeOwnerExecutorRenderEventProgress | ChatRuntimeOwnerExecutorEvent) => void): ChatRuntimeHostEventSubscription;
 }
 
 export interface ChatRuntimeHostAttachViewOptions {

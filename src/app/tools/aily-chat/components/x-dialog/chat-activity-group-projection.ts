@@ -1,4 +1,4 @@
-import { ChatPart, ConfirmationPart, MarkdownPart, StatePart, TerminalPart, ThinkingPart, ToolCallPart } from '../../core/chat-parts';
+import { ChatPart, ConfirmationPart, MarkdownPart, StatePart, TerminalPart, ThinkingPart, ToolCallPart, getParentToolCallId, getSubAgentInvocationId, isSubagentChildPart } from '../../core/chat-parts';
 import { projectToolCallApprovalDisplayData } from '../../core/tool-call-approval';
 import {
   buildActivityItemsFromDetailSections,
@@ -487,7 +487,11 @@ export function buildToolActivityDisplayItem(
     approval,
     approvalSummary,
     invocationDetail,
-    loadDetail: undefined,
+    loadDetail: detailSections ? () => ({
+      detailSections,
+      invocationDetail,
+      detailKind: 'invocation',
+    }) : undefined,
     children: undefined,
     detailSections,
     detailExpanded: false,
@@ -1351,9 +1355,18 @@ function buildSubagentGroupHeader(parts: readonly ChatPart[]): ActivityGroupHead
   const latestSubagentPart = parts
     .filter((part): part is ToolCallPart => part.type === 'tool_call' && isSubagentToolCall(part))
     .at(-1);
+  const scopedChildParts = collectSubagentScopedChildParts(parts, latestSubagentPart);
 
   if (!latestSubagentPart) {
-    return undefined;
+    if (scopedChildParts.length === 0) {
+      return undefined;
+    }
+
+    return {
+      kind: 'subagent',
+      title: 'Subagent',
+      detail: buildScopedSubagentHeaderDetail(scopedChildParts) || undefined,
+    };
   }
 
   const toolSpecificData = asRecord(latestSubagentPart.metadata?.['toolSpecificData']);
@@ -1368,7 +1381,9 @@ function buildSubagentGroupHeader(parts: readonly ChatPart[]): ActivityGroupHead
   const prefix = capitalizeHeaderLabel(getSubagentName(latestSubagentPart) || '子代理');
   const detail = normalizeSubagentHeaderDetail(
     prefix,
-    buildSubagentSubtitle(description, childItems, result) || fallbackDetail,
+    buildSubagentSubtitle(description, childItems, result)
+      || buildScopedSubagentHeaderDetail(scopedChildParts)
+      || fallbackDetail,
   );
 
   return {
@@ -2271,6 +2286,88 @@ function buildSubagentNarrativeItem(input: {
     pill: '',
     pillTone: 'neutral',
   };
+}
+
+function collectSubagentScopedChildParts(
+  parts: readonly ChatPart[],
+  parent?: ToolCallPart,
+): ChatPart[] {
+  const parentSubAgentInvocationId = parent ? parent.toolCallId : undefined;
+  return parts.filter((part) => {
+    if (part === parent || !isSubagentChildPart(part)) {
+      return false;
+    }
+    if (!parentSubAgentInvocationId) {
+      return true;
+    }
+    return (getSubAgentInvocationId(part) || getParentToolCallId(part)) === parentSubAgentInvocationId;
+  });
+}
+
+function buildScopedSubagentHeaderDetail(parts: readonly ChatPart[]): string {
+  for (let index = parts.length - 1; index >= 0; index -= 1) {
+    const part = parts[index];
+    switch (part.type) {
+      case 'tool_call': {
+        const summary = buildActivityToolSummaryCandidate(part);
+        const text = [summary.label || summary.rawText, summary.subtitle].filter(Boolean).join(' ');
+        if (text.trim()) {
+          return text.trim();
+        }
+        break;
+      }
+      case 'thinking': {
+        const text = normalizeSubagentHeaderText(part.content);
+        if (text) {
+          return text;
+        }
+        break;
+      }
+      case 'markdown': {
+        const text = normalizeSubagentHeaderText(part.content);
+        if (text) {
+          return text;
+        }
+        break;
+      }
+      case 'question': {
+        const text = part.questions.map((question) => question.question).find((question) => question.trim().length > 0);
+        if (text) {
+          return normalizeSubagentHeaderText(text);
+        }
+        break;
+      }
+      case 'confirmation': {
+        const text = normalizeSubagentHeaderText(part.title || part.message);
+        if (text) {
+          return text;
+        }
+        break;
+      }
+      case 'terminal': {
+        const text = normalizeSubagentHeaderText(part.command || part.output || part.stderr || '');
+        if (text) {
+          return text;
+        }
+        break;
+      }
+      case 'state': {
+        const text = normalizeSubagentHeaderText(part.text);
+        if (text) {
+          return text;
+        }
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  return '';
+}
+
+function normalizeSubagentHeaderText(value: string): string {
+  return value.replace(/\s+/g, ' ').trim().slice(0, 120);
 }
 
 function buildSubagentPendingItem(

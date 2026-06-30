@@ -1471,6 +1471,10 @@ export class ChatEngineService implements IChatContext {
     readonly handle: number;
     turnResponses: readonly TurnResponseTurn[] | null;
   }>();
+  private readonly runtimeHostVisibleTurnProjectionFrames = new Map<string, {
+    readonly handle: number;
+    turnsById: Map<string, TurnResponseTurn>;
+  }>();
   private readonly runtimeHostVisibleTranscriptProjectionCooldown = new Set<string>();
   private dialogItemsCache: {
     sessionResource: string;
@@ -5276,15 +5280,25 @@ export class ChatEngineService implements IChatContext {
       requestInProgress: event.kind === 'session-state' || event.kind === 'runtime-status'
         ? event.state.requestInProgress
         : null,
-      transcriptTurns: event.kind === 'transcript' ? event.transcript.turnResponses.length : null,
+      transcriptTurns: event.kind === 'transcript'
+        ? event.transcript.turnResponses.length
+        : event.kind === 'turn-transcript'
+          ? 1
+          : null,
       transcriptLastTurn: event.kind === 'transcript'
         ? event.transcript.turnResponses[event.transcript.turnResponses.length - 1]?.turnId ?? null
+        : event.kind === 'turn-transcript'
+          ? event.turnId
         : null,
       transcriptLastParts: event.kind === 'transcript'
         ? event.transcript.turnResponses[event.transcript.turnResponses.length - 1]?.response?.parts?.length ?? 0
+        : event.kind === 'turn-transcript'
+          ? event.turn.response?.parts?.length ?? 0
         : null,
       transcriptLastTextLength: event.kind === 'transcript'
         ? event.transcript.turnResponses[event.transcript.turnResponses.length - 1]?.response?.resultText?.length ?? 0
+        : event.kind === 'turn-transcript'
+          ? event.turn.response?.resultText?.length ?? 0
         : null,
       error: event.kind === 'error'
         ? {
@@ -5301,6 +5315,12 @@ export class ChatEngineService implements IChatContext {
           visibleProjection: this.shouldProjectRuntimeHostTranscriptEvent(targetSessionId),
           // Runtime-host live transcript events are progress deltas over the service-owned model.
           authoritativeSnapshot: false,
+          revision: event.revision,
+        });
+        return;
+      case 'turn-transcript':
+        this.applyRuntimeHostTurnTranscriptEvent(targetSessionId, event.turn, {
+          visibleProjection: this.shouldProjectRuntimeHostTranscriptEvent(targetSessionId),
           revision: event.revision,
         });
         return;
@@ -5567,6 +5587,37 @@ export class ChatEngineService implements IChatContext {
     }
   }
 
+  private applyRuntimeHostTurnTranscriptEvent(
+    sessionId: string,
+    turnResponse: TurnResponseTurn,
+    options?: {
+      readonly visibleProjection?: boolean;
+      readonly revision?: number;
+    },
+  ): void {
+    const committedTurnResponses = this.mergeSessionModelTurnResponses(sessionId, [turnResponse], {
+      source: 'runtime-host-turn-transcript',
+    }) ?? null;
+    if (!committedTurnResponses) {
+      return;
+    }
+
+    if (this.shouldRefreshRuntimeTranscriptCheckpointTimeline([turnResponse], committedTurnResponses, {
+      authoritativeSnapshot: false,
+    })) {
+      this.refreshSessionCheckpointTimelineFromRuntimeTranscript(sessionId, committedTurnResponses);
+    }
+
+    const visibleCurrentSession = options?.visibleProjection === true
+      && this.ensureRuntimeEventSessionViewAttached(sessionId);
+    this.traceRuntimeHostTranscriptProjection(sessionId, [turnResponse], committedTurnResponses, visibleCurrentSession);
+    this.syncResolvedActiveModelFromCommittedTranscript(sessionId, committedTurnResponses);
+
+    if (visibleCurrentSession) {
+      this.projectRuntimeHostVisibleTurnTranscript(sessionId, turnResponse);
+    }
+  }
+
   private projectRuntimeHostVisibleTranscript(
     sessionId: string,
     turnResponses: readonly TurnResponseTurn[],
@@ -5608,6 +5659,48 @@ export class ChatEngineService implements IChatContext {
       ?? ChatEngineService.prototype['scheduleRuntimeHostVisibleTranscriptProjection']
     );
     scheduleProjection.call(this, targetSessionId, turnResponses);
+  }
+
+  private projectRuntimeHostVisibleTurnTranscript(
+    sessionId: string,
+    turnResponse: TurnResponseTurn,
+  ): void {
+    const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    const turnId = typeof turnResponse?.turnId === 'string' ? turnResponse.turnId.trim() : '';
+    if (!targetSessionId || !turnId) {
+      return;
+    }
+
+    const frames = (this as unknown as {
+      runtimeHostVisibleTurnProjectionFrames?: Map<string, {
+        readonly handle: number;
+        turnsById: Map<string, TurnResponseTurn>;
+      }>;
+    }).runtimeHostVisibleTurnProjectionFrames;
+    if (!frames) {
+      this.projectRuntimeHostVisibleTurnsNow(targetSessionId, [turnResponse]);
+      return;
+    }
+
+    const existing = frames.get(targetSessionId);
+    if (existing) {
+      existing.turnsById.set(turnId, turnResponse);
+      return;
+    }
+
+    const schedule = typeof globalThis.requestAnimationFrame === 'function'
+      ? globalThis.requestAnimationFrame.bind(globalThis)
+      : (callback: FrameRequestCallback) => globalThis.setTimeout(() => callback(Date.now()), 16) as unknown as number;
+    const turnsById = new Map<string, TurnResponseTurn>([[turnId, turnResponse]]);
+    const handle = schedule(() => {
+      const entry = frames.get(targetSessionId);
+      frames.delete(targetSessionId);
+      if (!entry) {
+        return;
+      }
+      this.projectRuntimeHostVisibleTurnsNow(targetSessionId, [...entry.turnsById.values()]);
+    });
+    frames.set(targetSessionId, { handle, turnsById });
   }
 
   private scheduleRuntimeHostVisibleTranscriptProjection(
@@ -5661,6 +5754,46 @@ export class ChatEngineService implements IChatContext {
       projectNow.call(this, sessionId, entry.turnResponses);
     });
     frames.set(sessionId, { handle, turnResponses });
+  }
+
+  private projectRuntimeHostVisibleTurnsNow(
+    sessionId: string,
+    turnResponses: readonly TurnResponseTurn[],
+  ): void {
+    const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!targetSessionId || turnResponses.length === 0) {
+      return;
+    }
+
+    for (const turn of turnResponses) {
+      this.visibleTranscriptModel.upsertTurnRequest(turn);
+      this.visibleTranscriptModel.upsertTurnResponse(turn);
+    }
+    const changes = this.visibleTranscriptModel.drainChanges();
+    const items = [...this.visibleTranscriptModel.toDialogItems()];
+    this.recordVisibleTranscriptProjection({
+      sessionResource: targetSessionId,
+      projectionSource: 'runtime',
+      changes,
+      items,
+    });
+
+    const model = this.chatSessionModelStore.get(targetSessionId);
+    const modelTurnResponses = Array.isArray(model?.turnResponses) ? model.turnResponses : turnResponses;
+    const lastTurn = modelTurnResponses[modelTurnResponses.length - 1];
+    this.dialogItemsCache = {
+      sessionResource: targetSessionId,
+      projectionSource: 'model',
+      turnResponses: modelTurnResponses,
+      turnCount: modelTurnResponses.length,
+      lastTurnId: lastTurn?.turnId ?? '',
+      lastUpdatedAt: lastTurn?.updatedAt ?? lastTurn?.response?.updatedAt ?? -1,
+      requestIdentitySignature: this.buildVisibleTranscriptRequestIdentitySignature(modelTurnResponses),
+      responseIdentitySignature: this.buildVisibleTranscriptResponseIdentitySignature(modelTurnResponses),
+      items,
+    };
+    this.visibleProjectionSessionId = targetSessionId;
+    this.triggerSyncDetectChanges();
   }
 
   private projectRuntimeHostVisibleTranscriptNow(

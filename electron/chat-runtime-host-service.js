@@ -1,9 +1,9 @@
-﻿const EXECUTION_WORKER_REGISTER_CHANNEL = 'aily-chat-runtime-execution-worker-register';
-const EXECUTION_WORKER_UNREGISTER_CHANNEL = 'aily-chat-runtime-execution-worker-unregister';
+const RUNTIME_OWNER_REGISTER_CHANNEL = 'aily-chat-runtime-owner-register';
+const RUNTIME_OWNER_UNREGISTER_CHANNEL = 'aily-chat-runtime-owner-unregister';
 const HOST_COMMAND_CHANNEL = 'aily-chat-runtime-host-command';
-const EXECUTION_WORKER_COMMAND_CHANNEL = 'aily-chat-runtime-execution-worker-command';
-const EXECUTION_WORKER_RESPONSE_CHANNEL = 'aily-chat-runtime-execution-worker-response';
-const EXECUTION_WORKER_EVENT_CHANNEL = 'aily-chat-runtime-execution-worker-event';
+const RUNTIME_OWNER_COMMAND_CHANNEL = 'aily-chat-runtime-owner-command';
+const RUNTIME_OWNER_RESPONSE_CHANNEL = 'aily-chat-runtime-owner-response';
+const RUNTIME_OWNER_EVENT_CHANNEL = 'aily-chat-runtime-owner-event';
 const HOST_EVENT_CHANNEL = 'aily-chat-runtime-host-event';
 const RESOURCE_HANDLER_REGISTER_CHANNEL = 'aily-chat-runtime-resource-handler-register';
 const RESOURCE_HANDLER_UNREGISTER_CHANNEL = 'aily-chat-runtime-resource-handler-unregister';
@@ -16,17 +16,17 @@ const {
   normalizeSessionId,
 } = require('./chat-runtime-host-session-store');
 const {
-  ChatRuntimeHostExecutionWorkerController,
+  ChatRuntimeHostRuntimeOwnerController,
   DEFAULT_COMMAND_TIMEOUT_MS,
-} = require('./chat-runtime-host-execution-worker-controller');
+} = require('./chat-runtime-host-runtime-owner-controller');
 
 const channels = {
-  EXECUTION_WORKER_REGISTER_CHANNEL,
-  EXECUTION_WORKER_UNREGISTER_CHANNEL,
+  RUNTIME_OWNER_REGISTER_CHANNEL,
+  RUNTIME_OWNER_UNREGISTER_CHANNEL,
   HOST_COMMAND_CHANNEL,
-  EXECUTION_WORKER_COMMAND_CHANNEL,
-  EXECUTION_WORKER_RESPONSE_CHANNEL,
-  EXECUTION_WORKER_EVENT_CHANNEL,
+  RUNTIME_OWNER_COMMAND_CHANNEL,
+  RUNTIME_OWNER_RESPONSE_CHANNEL,
+  RUNTIME_OWNER_EVENT_CHANNEL,
   HOST_EVENT_CHANNEL,
   RESOURCE_HANDLER_REGISTER_CHANNEL,
   RESOURCE_HANDLER_UNREGISTER_CHANNEL,
@@ -111,7 +111,7 @@ function summarizeTranscript(transcript) {
   };
 }
 
-function summarizeExecutionWorkerPayload(payload) {
+function summarizeRuntimeOwnerPayload(payload) {
   const event = payload && typeof payload.event === 'object' ? payload.event : null;
   const state = event && typeof event.state === 'object' ? event.state : null;
   const renderEvent = payload && typeof payload.renderEvent === 'object' ? payload.renderEvent : null;
@@ -140,6 +140,7 @@ function summarizeCanonicalHostEvent(event) {
     sessionId: typeof event?.sessionId === 'string' ? event.sessionId : undefined,
     revision: Number(event?.revision) || 0,
     transcript: event?.transcript ? summarizeTranscript(event.transcript) : undefined,
+    turn: event?.turn ? summarizeTurnResponse(event.turn) : undefined,
     stateRequestInProgress: typeof state?.requestInProgress === 'boolean' ? state.requestInProgress : undefined,
     stateActiveTurnId: typeof state?.activeTurnId === 'string' ? state.activeTurnId : undefined,
     stateTranscriptRevision: Number(state?.transcriptRevision) || undefined,
@@ -157,14 +158,14 @@ class ChatRuntimeHostProcessService {
     }
     this.BrowserWindow = options.BrowserWindow;
     this.hostSessionStore = new ChatRuntimeHostSessionStore();
-    this.executionWorkerController = new ChatRuntimeHostExecutionWorkerController({
+    this.runtimeOwnerController = new ChatRuntimeHostRuntimeOwnerController({
       BrowserWindow: options.BrowserWindow,
       commandTimeoutMs: Number.isFinite(options.commandTimeoutMs)
         ? options.commandTimeoutMs
         : DEFAULT_COMMAND_TIMEOUT_MS,
-      executionWorkerCommandChannel: EXECUTION_WORKER_COMMAND_CHANNEL,
+      runtimeOwnerCommandChannel: RUNTIME_OWNER_COMMAND_CHANNEL,
       onCommandResult: (method, args, result) => this.hostSessionStore.cacheCommandResult(method, args, result),
-      onExecutionWorkerLost: error => this.handleExecutionWorkerLost(error),
+      onRuntimeOwnerLost: error => this.handleRuntimeOwnerLost(error),
     });
     this.resourceOperationHandler = typeof options.resourceOperationHandler === 'function'
       ? options.resourceOperationHandler
@@ -180,18 +181,19 @@ class ChatRuntimeHostProcessService {
 
   setMainWindow(mainWindow) {
     this.mainWindowRef = mainWindow || null;
+    this.runtimeOwnerController.setHostWindow(mainWindow);
   }
 
-  setExecutionWorkerWindow(executionWorkerWindow) {
-    this.executionWorkerController.setExecutionWorkerWindow(executionWorkerWindow);
+  setRuntimeOwnerWindow(runtimeOwnerWindow) {
+    this.runtimeOwnerController.setRuntimeOwnerWindow(runtimeOwnerWindow);
   }
 
-  async handleExecutionWorkerRegister(event, payload = {}) {
-    return this.executionWorkerController.handleExecutionWorkerRegister(event, payload);
+  async handleRuntimeOwnerRegister(event, payload = {}) {
+    return this.runtimeOwnerController.handleRuntimeOwnerRegister(event, payload);
   }
 
-  async handleExecutionWorkerUnregister(event, payload = {}) {
-    return this.executionWorkerController.handleExecutionWorkerUnregister(event, payload);
+  async handleRuntimeOwnerUnregister(event, payload = {}) {
+    return this.runtimeOwnerController.handleRuntimeOwnerUnregister(event, payload);
   }
 
   async handleResourceOperationHandlerRegister(event, payload = {}) {
@@ -267,9 +269,9 @@ class ChatRuntimeHostProcessService {
       return hostResult;
     }
 
-    const executionWorkerUnavailableHostResult = this.hostSessionStore.readExecutionWorkerUnavailableHostCommandResult(method, args);
-    if (executionWorkerUnavailableHostResult !== HOST_SESSION_STORE_MISS) {
-      return executionWorkerUnavailableHostResult;
+    const runtimeOwnerUnavailableHostResult = this.hostSessionStore.readRuntimeOwnerUnavailableHostCommandResult(method, args);
+    if (runtimeOwnerUnavailableHostResult !== HOST_SESSION_STORE_MISS) {
+      return runtimeOwnerUnavailableHostResult;
     }
     throw new Error(`[AilyChat][RuntimeHost] Host command is not implemented by the host service: ${method}.`);
   }
@@ -318,12 +320,12 @@ class ChatRuntimeHostProcessService {
         protocolTruncation: submittedRequest && submittedRequest.protocolTruncation ? submittedRequest.protocolTruncation : null,
       },
     };
-    if (!this.dispatchExecutionWorkerCommandIfAvailable('startTurn', [startTurnCommand], runningState.sessionId, {
+    if (!this.dispatchRuntimeOwnerCommandIfAvailable('startTurn', [startTurnCommand], runningState.sessionId, {
       failSubmittedTurnOnError: true,
-      unavailableMessage: '[AilyChat][RuntimeHost] No registered execution worker.',
+      unavailableMessage: '[AilyChat][RuntimeHost] No registered runtime owner.',
     })) {
-      const error = new Error('[AilyChat][RuntimeHost] No registered execution worker.');
-      error.code = 'execution_worker_unavailable';
+      const error = new Error('[AilyChat][RuntimeHost] No registered runtime owner.');
+      error.code = 'runtime_owner_unavailable';
       error.retryable = true;
       this.failSubmittedTurnWithError(runningState.sessionId, error);
     }
@@ -350,7 +352,7 @@ class ChatRuntimeHostProcessService {
     if (stoppedState) {
       this.broadcastSessionState('runtime-status', stoppedState);
     }
-    this.dispatchExecutionWorkerCommandIfAvailable('stopTurn', [{
+    this.dispatchRuntimeOwnerCommandIfAvailable('stopTurn', [{
       sessionId,
       turnId: previousState && previousState.activeTurnId,
     }], sessionId);
@@ -363,7 +365,7 @@ class ChatRuntimeHostProcessService {
     if (disposedState) {
       this.broadcastSessionState('runtime-status', disposedState);
     }
-    this.dispatchExecutionWorkerCommandIfAvailable('disposeSessionResources', [{ sessionId }], sessionId);
+    this.dispatchRuntimeOwnerCommandIfAvailable('disposeSessionResources', [{ sessionId }], sessionId);
     return undefined;
   }
 
@@ -373,8 +375,8 @@ class ChatRuntimeHostProcessService {
     if (!sessionId) {
       throw new Error('[AilyChat][RuntimeHost] resolveInteraction requires a session id.');
     }
-    if (!this.executionWorkerController.hasUsableExecutionWorker()) {
-      throw new Error('[AilyChat][RuntimeHost] No registered host runtime execution worker.');
+    if (!this.runtimeOwnerController.hasUsableRuntimeOwner()) {
+      throw new Error('[AilyChat][RuntimeHost] No registered host runtime owner.');
     }
     const hostResolution = this.hostSessionStore.resolveInteractionRequest(request);
     const hostEvents = Array.isArray(hostResolution.events) ? hostResolution.events : [];
@@ -383,12 +385,12 @@ class ChatRuntimeHostProcessService {
         this.broadcastHostEvent(hostEvent);
       }
     }
-    const workerSnapshot = await this.executionWorkerController.dispatchCommand('resolveInteraction', [{
+    const ownerSnapshot = await this.runtimeOwnerController.dispatchCommand('resolveInteraction', [{
       sessionId,
       interactionId: typeof request.id === 'string' ? request.id : '',
       request,
     }]);
-    return workerSnapshot || hostResolution.snapshot;
+    return ownerSnapshot || hostResolution.snapshot;
   }
 
   handleRecordResourceRequest(args) {
@@ -626,16 +628,16 @@ class ChatRuntimeHostProcessService {
     };
   }
 
-  dispatchExecutionWorkerCommandIfAvailable(method, args, sessionId, options = {}) {
-    if (!this.executionWorkerController.hasUsableExecutionWorker()) {
+  dispatchRuntimeOwnerCommandIfAvailable(method, args, sessionId, options = {}) {
+    if (!this.runtimeOwnerController.hasUsableRuntimeOwner()) {
       return false;
     }
-    this.executionWorkerController.dispatchCommand(method, args)
+    this.runtimeOwnerController.dispatchCommand(method, args)
       .catch(error => {
-        console.error('[AilyChat][RuntimeHost] Execution worker command dispatch failed:', {
+        console.error('[AilyChat][RuntimeHost] Runtime owner command dispatch failed:', {
           method,
           sessionId,
-          message: error && error.message ? error.message : String(error || 'Unknown execution worker error'),
+          message: error && error.message ? error.message : String(error || 'Unknown runtime owner error'),
           code: error && typeof error.code === 'string' ? error.code : undefined,
           stack: error && error.stack ? error.stack : undefined,
         });
@@ -661,15 +663,15 @@ class ChatRuntimeHostProcessService {
     this.broadcastSessionState('runtime-status', failedState);
   }
 
-  handleExecutionWorkerResponse(event, payload = {}) {
+  handleRuntimeOwnerResponse(event, payload = {}) {
     try {
-      this.executionWorkerController.handleExecutionWorkerResponse(event, payload);
+      this.runtimeOwnerController.handleRuntimeOwnerResponse(event, payload);
     } catch (error) {
-      console.warn('[AilyChat][RuntimeHost] Ignored execution worker response:', error.message);
+      console.warn('[AilyChat][RuntimeHost] Ignored runtime owner response:', error.message);
     }
   }
 
-  handleExecutionWorkerLost(error) {
+  handleRuntimeOwnerLost(error) {
     const failedStates = this.hostSessionStore.failRunningTurns();
     for (const failedState of failedStates) {
       this.broadcastRuntimeError(failedState.sessionId, error, failedState.transcriptRevision);
@@ -677,13 +679,13 @@ class ChatRuntimeHostProcessService {
     }
   }
 
-  handleExecutionWorkerEvent(event, payload = {}) {
+  handleRuntimeOwnerEvent(event, payload = {}) {
     try {
-      this.executionWorkerController.assertRegisteredExecutionWorkerSender(event);
-      console.log('[AilyChat][ExecutionWorkerEventIn]', JSON.stringify(summarizeExecutionWorkerPayload(payload)));
-      const canonicalEvents = this.hostSessionStore.cacheExecutionWorkerEvent(payload);
+      this.runtimeOwnerController.assertRegisteredRuntimeOwnerSender(event);
+      console.log('[AilyChat][RuntimeOwnerEventIn]', JSON.stringify(summarizeRuntimeOwnerPayload(payload)));
+      const canonicalEvents = this.hostSessionStore.cacheRuntimeOwnerEvent(payload);
       const eventList = Array.isArray(canonicalEvents) ? canonicalEvents : [canonicalEvents];
-      console.log('[AilyChat][ExecutionWorkerEventOut]', JSON.stringify({
+      console.log('[AilyChat][RuntimeOwnerEventOut]', JSON.stringify({
         sourceKind: typeof payload?.kind === 'string' ? payload.kind : undefined,
         sessionId: typeof payload?.sessionId === 'string' ? payload.sessionId : undefined,
         turnId: typeof payload?.turnId === 'string' ? payload.turnId : undefined,
@@ -696,7 +698,7 @@ class ChatRuntimeHostProcessService {
         }
       }
     } catch (error) {
-      console.warn('[AilyChat][RuntimeHost] Ignored execution worker event:', error.message);
+      console.warn('[AilyChat][RuntimeHost] Ignored runtime owner event:', error.message);
     }
   }
 
@@ -816,6 +818,7 @@ class ChatRuntimeHostProcessService {
     }
     switch (payload.kind) {
       case 'transcript':
+      case 'turn-transcript':
       case 'interaction':
       case 'view-request':
       case 'resource-request':

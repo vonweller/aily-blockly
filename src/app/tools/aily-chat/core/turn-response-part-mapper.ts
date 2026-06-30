@@ -8,7 +8,7 @@ import type {
 } from 'aily-lex/browser';
 import { collectTurnResponseText } from 'aily-lex/browser';
 
-import type { ChatPart } from './chat-parts';
+import type { ChatPart, ChatPartScope } from './chat-parts';
 import {
   buildConfirmationPartId,
   mkConfirmation,
@@ -30,16 +30,17 @@ import { normalizeChatErrorNotice } from './chat-error-notice-normalizer';
 
 type MutableQuestionAnswers = Extract<ChatPart, { type: 'question' }>['answers'];
 type ScopedTurnResponsePartMetadata = { readonly metadata?: Record<string, unknown> };
+type ScopedTurnResponsePart = ScopedTurnResponsePartMetadata & ChatPartScope;
 
 export function collectMainTurnResponseText(parts: readonly TurnResponsePart[]): string {
   return collectTurnResponseText(parts.filter(part => !isSubagentScopedTurnResponsePart(part)));
 }
 
-function isSubagentScopedTurnResponsePart(part: TurnResponsePart): boolean {
-  const metadata = (part as ScopedTurnResponsePartMetadata).metadata;
-  return !!metadata
-    && typeof metadata === 'object'
-    && metadata['sourceAgentRole'] === 'subagent';
+export function isSubagentScopedTurnResponsePart(part: TurnResponsePart): boolean {
+  const scope = readTurnResponsePartScope(part);
+  return scope?.sourceAgentRole === 'subagent'
+    || typeof scope?.subAgentInvocationId === 'string'
+    || typeof scope?.parentToolCallId === 'string';
 }
 
 function optionalTurnResponsePartId(part: TurnResponsePart): string | undefined {
@@ -110,25 +111,31 @@ export function hydrateQuestionAnswersFromAskUserToolMetadata(
 export function chatPartToTurnResponsePart(part: ChatPart): TurnResponsePart {
   switch (part.type) {
     case 'markdown': {
-      const metadata = withChatPartScopeMetadata(undefined, normalizeChatPartScope(part));
+      const scope = normalizeChatPartScope(part);
+      const metadata = withChatPartScopeMetadata(undefined, scope);
       return {
         type: 'markdown',
         ...(part.partId ? { partId: part.partId } : {}),
         content: part.content || (part.contentRef ? getMarkdownContent(part.contentRef) : ''),
+        ...(scope ? scope : {}),
         ...(metadata ? { metadata } : {}),
       } as TurnResponsePart;
     }
     case 'thinking': {
-      const metadata = withChatPartScopeMetadata(undefined, normalizeChatPartScope(part));
+      const scope = normalizeChatPartScope(part);
+      const metadata = withChatPartScopeMetadata(undefined, scope);
       return {
         type: 'thinking',
         ...(part.partId ? { partId: part.partId } : {}),
         content: part.content || (part.contentRef ? getThinkContent(part.contentRef) : ''),
         isComplete: part.isComplete,
+        ...(scope ? scope : {}),
         ...(metadata ? { metadata } : {}),
       } as TurnResponsePart;
     }
-    case 'tool_call':
+    case 'tool_call': {
+      const scope = normalizeChatPartScope(part);
+      const metadata = withChatPartScopeMetadata(part.metadata, scope);
       return {
         type: 'tool_call',
         partId: part.partId,
@@ -137,9 +144,13 @@ export function chatPartToTurnResponsePart(part: ChatPart): TurnResponsePart {
         text: part.text,
         state: part.state,
         args: part.args,
-        metadata: part.metadata,
-      };
-    case 'state':
+        ...(scope ? scope : {}),
+        ...(metadata ? { metadata } : {}),
+      } as TurnResponsePart;
+    }
+    case 'state': {
+      const scope = normalizeChatPartScope(part.metadata);
+      const metadata = withChatPartScopeMetadata(part.metadata, scope);
       return {
         type: 'state',
         stateId: part.stateId,
@@ -147,8 +158,10 @@ export function chatPartToTurnResponsePart(part: ChatPart): TurnResponsePart {
         state: part.state,
         progress: part.progress,
         kind: part.kind as TurnResponseStatePart['kind'],
-        metadata: part.metadata,
-      };
+        ...(scope ? scope : {}),
+        ...(metadata ? { metadata } : {}),
+      } as TurnResponsePart;
+    }
     case 'error':
       if (part.severity === 'warning') {
         return {
@@ -170,7 +183,8 @@ export function chatPartToTurnResponsePart(part: ChatPart): TurnResponsePart {
         ...(part.metadata ? { metadata: part.metadata } : {}),
       } as TurnResponsePart;
     case 'question': {
-      const metadata = withChatPartScopeMetadata(part.metadata, normalizeChatPartScope(part));
+      const scope = normalizeChatPartScope(part);
+      const metadata = withChatPartScopeMetadata(part.metadata, scope);
       return {
         type: 'question',
         partId: part.partId,
@@ -185,11 +199,13 @@ export function chatPartToTurnResponsePart(part: ChatPart): TurnResponsePart {
         })),
         answers: cloneQuestionAnswers(part.answers),
         isHistory: part.isHistory,
+        ...(scope ? scope : {}),
         ...(metadata ? { metadata } : {}),
       } satisfies TurnResponseQuestionPart;
     }
     case 'confirmation': {
-      const metadata = withChatPartScopeMetadata(part.metadata, normalizeChatPartScope(part));
+      const scope = normalizeChatPartScope(part);
+      const metadata = withChatPartScopeMetadata(part.metadata, scope);
       return {
         type: 'confirmation',
         partId: part.partId,
@@ -205,11 +221,14 @@ export function chatPartToTurnResponsePart(part: ChatPart): TurnResponsePart {
         resolved: part.resolved,
         result: part.result,
         scope: part.scope,
+        ...(scope ? scope : {}),
         ...(metadata ? { metadata } : {}),
         ...(part.description != null ? { description: part.description } : {}),
-      } satisfies TurnResponseConfirmationPart;
+      } as TurnResponseConfirmationPart;
     }
-    case 'terminal':
+    case 'terminal': {
+      const scope = normalizeChatPartScope(part);
+      const metadata = withChatPartScopeMetadata(undefined, scope);
       return {
         type: 'terminal',
         partId: part.partId,
@@ -228,7 +247,10 @@ export function chatPartToTurnResponsePart(part: ChatPart): TurnResponsePart {
         status: part.status,
         bytesTotal: part.bytesTotal,
         lastOutputAt: part.lastOutputAt,
-      } satisfies TurnResponseTerminalPart;
+        ...(scope ? scope : {}),
+        ...(metadata ? { metadata } : {}),
+      } as TurnResponseTerminalPart;
+    }
     case 'plan':
       return {
         type: 'plan',
@@ -248,23 +270,30 @@ export function turnResponsePartToChatPart(part: TurnResponsePart, existing?: Ch
     case 'markdown':
       return mkMarkdown(
         part.content,
-        normalizeChatPartScope((part as ScopedTurnResponsePartMetadata).metadata),
+        readTurnResponsePartScope(part),
         optionalTurnResponsePartId(part),
       );
     case 'thinking':
       return mkThinking(
         part.content,
         part.isComplete,
-        normalizeChatPartScope((part as ScopedTurnResponsePartMetadata).metadata),
+        readTurnResponsePartScope(part),
         optionalTurnResponsePartId(part),
       );
-    case 'tool_call':
+    case 'tool_call': {
+      const scope = readTurnResponsePartScope(part);
+      const metadata = withChatPartScopeMetadata(part.metadata, scope);
       return {
-        ...mkToolCall(part.toolCallId, part.toolName, part.text, part.state, part.args, part.metadata),
+        ...mkToolCall(part.toolCallId, part.toolName, part.text, part.state, part.args, metadata, scope),
         partId: part.partId,
       };
+    }
     case 'state':
-      return mkState(part.stateId, part.text, part.state, part.kind, part.progress, part.metadata);
+      const statePart = part as TurnResponseStatePart;
+      if (isPersistedSubagentStatePart(statePart)) {
+        return persistedSubagentStatePartToToolCall(statePart);
+      }
+      return mkState(statePart.stateId, statePart.text, statePart.state, statePart.kind, statePart.progress, withChatPartScopeMetadata(statePart.metadata, readTurnResponsePartScope(statePart)));
     case 'error': {
       const metadata = readPartMetadata(part);
       const normalized = normalizeChatErrorNotice({
@@ -286,6 +315,7 @@ export function turnResponsePartToChatPart(part: TurnResponsePart, existing?: Ch
     case 'info':
       return mkError(part.message, 'info', part.metadata);
     case 'question': {
+      const scope = readTurnResponsePartScope(part);
       const question = mkQuestion(part.questions.map(item => {
         const questionIdentity = item as typeof item & { id?: string; header?: string };
         return {
@@ -296,7 +326,7 @@ export function turnResponsePartToChatPart(part: TurnResponsePart, existing?: Ch
           allow_freeform: item.allowFreeform,
           multi_select: item.multiSelect,
         };
-      }), part.isHistory, part.partId?.replace(/^question:/, ''), normalizeChatPartScope(part.metadata), part.metadata);
+      }), part.isHistory, part.partId?.replace(/^question:/, ''), scope, withChatPartScopeMetadata(part.metadata, scope));
       question.partId = part.partId ?? question.partId;
       const mergedAnswers = part.answers
         ? cloneQuestionAnswers(part.answers)
@@ -309,6 +339,7 @@ export function turnResponsePartToChatPart(part: TurnResponsePart, existing?: Ch
       return question;
     }
     case 'confirmation': {
+      const scope = readTurnResponsePartScope(part);
       const existingConfirmation = existing?.type === 'confirmation' ? existing : undefined;
       const confirmation = mkConfirmation(part.askId, part.message, part.toolName, part.source, {
         args: part.args ?? existingConfirmation?.args,
@@ -317,8 +348,8 @@ export function turnResponsePartToChatPart(part: TurnResponsePart, existing?: Ch
         description: part.description ?? existingConfirmation?.description,
         actions: part.actions ?? existingConfirmation?.actions,
         primaryScope: part.primaryScope ?? existingConfirmation?.primaryScope,
-        metadata: part.metadata ?? existingConfirmation?.metadata,
-        ...(normalizeChatPartScope(part.metadata) ?? {}),
+        metadata: withChatPartScopeMetadata(part.metadata ?? existingConfirmation?.metadata, scope),
+        ...(scope ?? {}),
       });
       confirmation.partId = part.partId ?? confirmation.partId;
       confirmation.resolved = part.resolved || existingConfirmation?.resolved || false;
@@ -327,6 +358,7 @@ export function turnResponsePartToChatPart(part: TurnResponsePart, existing?: Ch
       return confirmation;
     }
     case 'terminal': {
+      const scope = readTurnResponsePartScope(part);
       const terminal = mkTerminal(part.command, part.toolCallId, part.partId, {
         sourceToolCallIds: part.sourceToolCallIds ? [...part.sourceToolCallIds] : undefined,
         processId: part.processId,
@@ -337,6 +369,7 @@ export function turnResponsePartToChatPart(part: TurnResponsePart, existing?: Ch
         status: part.status,
         bytesTotal: part.bytesTotal,
         lastOutputAt: part.lastOutputAt,
+        ...(scope ?? {}),
       });
       terminal.output = part.output;
       terminal.stderr = part.stderr;
@@ -418,6 +451,50 @@ function stripLegacySubagentChildItems(part: ChatPart): ChatPart {
       toolSpecificData: nextToolSpecificData,
     },
   };
+}
+
+function isPersistedSubagentStatePart(part: TurnResponseStatePart): boolean {
+  return part.type === 'state'
+    && typeof part.stateId === 'string'
+    && part.stateId.startsWith('subagent:');
+}
+
+function persistedSubagentStatePartToToolCall(part: TurnResponseStatePart): ChatPart {
+  const metadata = readPartMetadata(part) ?? {};
+  const toolCallId = stringMetadata(metadata, 'toolCallId')
+    || stringMetadata(metadata, 'subAgentInvocationId')
+    || part.stateId.slice('subagent:'.length);
+  const agentName = stringMetadata(metadata, 'agentName')
+    || stringMetadata(metadata, 'name')
+    || 'Agent';
+  const description = stringMetadata(metadata, 'description')
+    || part.text
+    || agentName;
+  const subAgentInvocationId = stringMetadata(metadata, 'subAgentInvocationId') || toolCallId;
+  const toolCall = mkSubagentToolCall(toolCallId, agentName, description, {
+    ...metadata,
+    subAgentInvocationId,
+    toolSpecificData: {
+      ...metadataRecord(metadata['toolSpecificData']),
+      kind: 'subagent',
+      agentName,
+      description,
+      result: stringMetadata(metadata, 'resultText') || stringMetadata(metadata, 'result') || '',
+    },
+  });
+  toolCall.state = part.state === 'error' ? 'error' : part.state === 'done' ? 'done' : 'doing';
+  return toolCall;
+}
+
+function stringMetadata(metadata: Record<string, unknown>, key: string): string | undefined {
+  const value = metadata[key];
+  return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
+}
+
+function metadataRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
 }
 
 function legacySubagentChildItemToChatPart(
@@ -738,4 +815,19 @@ function readPartMetadata(part: unknown): Record<string, unknown> | undefined {
   return metadata && typeof metadata === 'object' && !Array.isArray(metadata)
     ? metadata as Record<string, unknown>
     : undefined;
+}
+
+function readTurnResponsePartScope(part: TurnResponsePart): ChatPartScope | undefined {
+  const metadataScope = normalizeChatPartScope((part as ScopedTurnResponsePartMetadata).metadata);
+  const directScope = normalizeChatPartScope(part as ScopedTurnResponsePart);
+  if (!metadataScope) {
+    return directScope;
+  }
+  if (!directScope) {
+    return metadataScope;
+  }
+  return normalizeChatPartScope({
+    ...metadataScope,
+    ...directScope,
+  });
 }

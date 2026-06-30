@@ -1,4 +1,4 @@
-﻿import { InjectionToken } from '@angular/core';
+import { InjectionToken } from '@angular/core';
 import type { TurnResponseTurn } from 'aily-lex/browser';
 
 import type {
@@ -14,7 +14,7 @@ import type {
   ChatRuntimeHostInteractionRequest,
   ChatRuntimeHostInteractionSnapshot,
   ChatRuntimeHost,
-  ChatRuntimeExecutionWorker,
+  ChatRuntimeOwnerExecutor,
   ChatRuntimeHostSessionId,
   ChatRuntimeHostSessionState,
   ChatRuntimeHostSubmitReadiness,
@@ -75,10 +75,10 @@ export interface ChatRuntimeOwnerHostAdapterPort {
   ensureBound(): LexOwnerFacade;
 }
 
-export type ChatRuntimeOwnerHostPort = ChatRuntimeExecutionWorker;
+export type ChatRuntimeOwnerHostPort = ChatRuntimeOwnerExecutor;
 
 export interface ChatRuntimeOwnerEndpointPort {
-  startElectronHostExecutionWorker(executionWorkerId?: string): Promise<void>;
+  startElectronHostRuntimeOwner(runtimeOwnerId?: string): Promise<void>;
 }
 
 export interface ChatRuntimeOwnerInteractionHostPort {

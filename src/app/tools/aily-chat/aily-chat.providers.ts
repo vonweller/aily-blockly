@@ -122,7 +122,8 @@ export const AILY_CHAT_VIEW_PROVIDERS: Provider[] = [
   ChatEngineService,
 ];
 
-// Runtime owner providers are installed only by the host-created hidden execution-worker route.
+// Runtime owner providers are execution-host scoped. They must not be installed
+// by the visible app/root route; visible chat views only observe the host-owned model.
 export const AILY_CHAT_RUNTIME_OWNER_PROVIDERS: Provider[] = [
   ChatRuntimeOwnerService,
   ChatRuntimeOwnerStateService,

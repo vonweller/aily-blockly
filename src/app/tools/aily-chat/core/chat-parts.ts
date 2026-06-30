@@ -338,7 +338,9 @@ export function chatPartScopeOf(part: ChatPart | null | undefined): ChatPartScop
   }
 
   if ('metadata' in part) {
-    return normalizeChatPartScope(asRecord(part.metadata));
+    const metadata = asRecord(part.metadata);
+    return normalizeChatPartScope(metadata)
+      ?? normalizeChatPartScope(asRecord(metadata?.['scope']));
   }
 
   return undefined;
@@ -353,6 +355,10 @@ export function getParentToolCallId(part: ChatPart | null | undefined): string |
 }
 
 export function isSubagentChildPart(part: ChatPart | null | undefined): boolean {
+  if (part?.type === 'tool_call' && isSubagentToolCallMetadata(part.metadata)) {
+    return false;
+  }
+
   const scope = chatPartScopeOf(part);
   return scope?.sourceAgentRole === 'subagent'
     || typeof scope?.parentToolCallId === 'string';

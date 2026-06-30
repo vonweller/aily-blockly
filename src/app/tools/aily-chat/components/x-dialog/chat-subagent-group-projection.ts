@@ -1,4 +1,4 @@
-import { ChatPart, getSubAgentInvocationId, isSubagentChildPart } from '../../core/chat-parts';
+import { ChatPart, getParentToolCallId, getSubAgentInvocationId, isSubagentChildPart } from '../../core/chat-parts';
 import { isProgressMessageDisplayPart, type RenderableChatPart } from './chat-render-parts';
 import {
   buildActivityGroupIdentity,
@@ -41,6 +41,7 @@ export function buildChatRenderItems(
     && item.parts.some((part) => isSubagentToolCall(part))).length;
   const scopedSubagentChildCount = countScopedSubagentChildren(parts);
   const legacyChildCount = countLegacySubagentChildren(parts);
+  recordSubagentProjectionInvariant(items);
 
   ChatPerformanceTracer.recordDuration(
     'message_parts_projection',
@@ -61,10 +62,63 @@ export function buildChatRenderItems(
   return items;
 }
 
+function recordSubagentProjectionInvariant(items: readonly ChatRenderItem[]): void {
+  const topLevelScopedChildren = items
+    .map((item, index) => ({ item, index }))
+    .filter((entry): entry is { item: PartRenderItem; index: number } =>
+      entry.item.kind === 'part'
+      && !isProgressMessageDisplayPart(entry.item.part)
+      && isSubagentChildPart(entry.item.part as ChatPart));
+  const childOnlyGroups = items
+    .map((item, index) => ({ item, index }))
+    .filter((entry): entry is { item: ActivityGroupRenderItem; index: number } =>
+      entry.item.kind === 'group'
+      && entry.item.parts.some((part) => isSubagentChildPart(part))
+      && !entry.item.parts.some((part) => isSubagentParentToolPart(part)));
+  if (topLevelScopedChildren.length === 0 && childOnlyGroups.length === 0) {
+    return;
+  }
+
+  console.warn('[AilyChat][SubagentProjectionInvariant]', {
+    phase: topLevelScopedChildren.length > 0 ? 'top-level-scoped-child' : 'group-without-subagent-parent',
+    children: topLevelScopedChildren.map(({ item, index }) => {
+      const part = item.part as ChatPart;
+      return {
+        index,
+        type: part.type,
+        id: buildChatPartIdentity(part, index),
+        subAgentInvocationId: getSubAgentInvocationId(part),
+        parentToolCallId: getParentToolCallId(part),
+        sourceAgentRole: 'sourceAgentRole' in part ? part.sourceAgentRole : undefined,
+      };
+    }),
+    groups: childOnlyGroups.map(({ item, index }) => ({
+      index,
+      id: item.id,
+      partCount: item.parts.length,
+      children: item.parts
+        .filter((part) => isSubagentChildPart(part))
+        .map((part, partIndex) => ({
+          partIndex,
+          type: part.type,
+          id: buildChatPartIdentity(part, partIndex),
+          subAgentInvocationId: getSubAgentInvocationId(part),
+          parentToolCallId: getParentToolCallId(part),
+          sourceAgentRole: 'sourceAgentRole' in part ? part.sourceAgentRole : undefined,
+        })),
+    })),
+  });
+}
+
 function buildBaseRenderItems(parts: readonly RenderableChatPart[]): ChatRenderItem[] {
   const items: ChatRenderItem[] = [];
   let buffer: ChatPart[] = [];
   let bufferStartIndex = -1;
+  const subagentGroups = new Map<string, {
+    item: ActivityGroupRenderItem;
+    parts: ChatPart[];
+    startIndex: number;
+  }>();
 
   const flushBuffer = (): void => {
     if (buffer.length >= 1) {
@@ -80,6 +134,41 @@ function buildBaseRenderItems(parts: readonly RenderableChatPart[]): ChatRenderI
     bufferStartIndex = -1;
   };
 
+  const appendSubagentPart = (part: RenderableChatPart, index: number): boolean => {
+    const subagentId = getSubagentGroupId(part);
+    if (!subagentId) {
+      return false;
+    }
+
+    flushBuffer();
+    const chatPart = part as ChatPart;
+    let group = subagentGroups.get(subagentId);
+    if (!group) {
+      const groupParts = [chatPart];
+      const item: ActivityGroupRenderItem = {
+        kind: 'group',
+        id: buildActivityGroupIdentity(groupParts, index),
+        parts: groupParts,
+        revision: buildActivityGroupRevision(groupParts),
+        live: false,
+      };
+      group = { item, parts: groupParts, startIndex: index };
+      subagentGroups.set(subagentId, group);
+      items.push(item);
+      return true;
+    }
+
+    if (isSubagentParentToolPart(chatPart) && !group.parts.some(isSubagentParentToolPart)) {
+      group.parts.unshift(chatPart);
+    } else if (!group.parts.includes(chatPart)) {
+      group.parts.push(chatPart);
+    }
+
+    group.item.id = buildActivityGroupIdentity(group.parts, group.startIndex);
+    group.item.revision = buildActivityGroupRevision(group.parts);
+    return true;
+  };
+
   for (let index = 0; index < parts.length; index += 1) {
     const part = parts[index];
     if (isIgnorablePart(part)) {
@@ -92,27 +181,15 @@ function buildBaseRenderItems(parts: readonly RenderableChatPart[]): ChatRenderI
       continue;
     }
 
-    if (isSubagentToolCall(part)) {
-      flushBuffer();
-      const subagentGroup = collectSubagentGroup(parts, index, part);
-      if (subagentGroup.parts.length > 1) {
-        items.push({
-          kind: 'group',
-          id: buildActivityGroupIdentity(subagentGroup.parts, index),
-          parts: subagentGroup.parts,
-          revision: buildActivityGroupRevision(subagentGroup.parts),
-          live: false,
-        });
-        index = subagentGroup.endIndex;
-        continue;
-      }
-
-      items.push({ kind: 'part', id: buildChatPartIdentity(part, index), part });
+    if (appendSubagentPart(part, index)) {
       continue;
     }
 
     if (isRuntimeToolCallPart(part)) {
-      if (hasActiveThinkingGroup(buffer) && shouldPinToolCallToThinking(part)) {
+      if (shouldPinToolCallToThinking(part)) {
+        if (buffer.length === 0) {
+          bufferStartIndex = index;
+        }
         buffer.push(part as ChatPart);
         continue;
       }
@@ -157,57 +234,6 @@ function hasLookAheadBoundary(items: readonly ChatRenderItem[], groupIndex: numb
   return false;
 }
 
-function collectSubagentGroup(
-  parts: readonly RenderableChatPart[],
-  startIndex: number,
-  parent: ChatPart,
-): { parts: readonly ChatPart[]; endIndex: number } {
-  const startedAt = performance.now();
-  const subAgentInvocationId = getSubAgentInvocationId(parent) || (parent.type === 'tool_call' ? parent.toolCallId : undefined);
-  if (!subAgentInvocationId) {
-    ChatPerformanceTracer.recordDuration(
-      'message_parts_scoped_subagent_group',
-      performance.now() - startedAt,
-      `missingSubAgent=true,start=${startIndex}`,
-      { slowThresholdMs: 3 },
-    );
-    return { parts: [parent], endIndex: startIndex };
-  }
-
-  const group: ChatPart[] = [parent];
-  let endIndex = startIndex;
-
-  for (let index = startIndex + 1; index < parts.length; index += 1) {
-    const candidate = parts[index];
-    if (isProgressMessageDisplayPart(candidate)) {
-      break;
-    }
-    if (isIgnorablePart(candidate)) {
-      continue;
-    }
-    if (!isSubagentChildPart(candidate)) {
-      break;
-    }
-    if (getSubAgentInvocationId(candidate) !== subAgentInvocationId) {
-      break;
-    }
-
-    group.push(candidate);
-    endIndex = index;
-  }
-
-  ChatPerformanceTracer.increment('message_parts.scoped_subagent_group.count');
-  ChatPerformanceTracer.increment('message_parts.scoped_subagent_group.children', Math.max(0, group.length - 1));
-  ChatPerformanceTracer.recordDuration(
-    'message_parts_scoped_subagent_group',
-    performance.now() - startedAt,
-    `start=${startIndex},end=${endIndex},children=${Math.max(0, group.length - 1)},parts=${parts.length},subAgent=${subAgentInvocationId}`,
-    { slowThresholdMs: 3 },
-  );
-
-  return { parts: group, endIndex };
-}
-
 function isIgnorablePart(part: RenderableChatPart): boolean {
   if (isProgressMessageDisplayPart(part)) {
     return part.content.trim().length === 0;
@@ -227,10 +253,6 @@ function isRuntimeToolCallPart(part: RenderableChatPart): boolean {
 
 function isThinkingPart(part: RenderableChatPart): boolean {
   return (part as { readonly type?: string }).type === 'thinking';
-}
-
-function hasActiveThinkingGroup(parts: readonly ChatPart[]): boolean {
-  return parts.some(part => part.type === 'thinking');
 }
 
 function shouldPinToolCallToThinking(part: RenderableChatPart): boolean {
@@ -253,6 +275,29 @@ function shouldPinToolCallToThinking(part: RenderableChatPart): boolean {
   }
 
   return true;
+}
+
+function getSubagentGroupId(part: RenderableChatPart): string | null {
+  if (isProgressMessageDisplayPart(part)) {
+    return null;
+  }
+
+  const chatPart = part as ChatPart;
+  if (isSubagentToolCall(chatPart)) {
+    return chatPart.type === 'tool_call' ? chatPart.toolCallId : null;
+  }
+
+  if (!isSubagentChildPart(chatPart)) {
+    return null;
+  }
+
+  return getSubAgentInvocationId(chatPart)
+    || getParentToolCallId(chatPart)
+    || null;
+}
+
+function isSubagentParentToolPart(part: ChatPart): boolean {
+  return isSubagentToolCall(part);
 }
 
 function toRuntimeToolCallPart(part: RenderableChatPart): {

@@ -132,11 +132,12 @@ export const routes: Routes = [
         loadComponent: () => import('./tools/aily-chat/components/process-detail-window/chat-process-detail-window.component').then(m => m.ChatProcessDetailWindowComponent)
     },
     {
-        path: "aily-chat-execution-worker",
+        path: "aily-chat-runtime-owner",
         providers: [
             ...AILY_CHAT_RUNTIME_OWNER_PROVIDERS,
         ],
-        loadComponent: () => import('./tools/aily-chat/chat-runtime-execution-worker.component').then(m => m.ChatRuntimeExecutionWorkerComponent)
+        loadComponent: () => import('./tools/aily-chat/runtime-owner/chat-runtime-owner.component')
+            .then(m => m.AilyChatRuntimeOwnerComponent)
     },
     {
         path: "code-viewer",
