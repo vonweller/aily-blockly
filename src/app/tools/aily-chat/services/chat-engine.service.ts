@@ -3860,10 +3860,7 @@ export class ChatEngineService implements IChatContext {
       return normalizeHostSessionProviderOptions(runtimeProviderOptions);
     }
 
-    const currentSessionId = typeof this.chatService?.currentSessionId === 'string'
-      ? this.chatService.currentSessionId.trim()
-      : '';
-    const canUseCurrentVisibleSnapshot = !targetSessionId || !currentSessionId || targetSessionId === currentSessionId;
+    const canUseCurrentVisibleSnapshot = !targetSessionId || this.isCurrentVisibleSessionOwner(targetSessionId);
     const currentProviderOptions = canUseCurrentVisibleSnapshot
       ? this.chatService.getCurrentSessionProviderOptions?.()
         ?? {
@@ -3884,6 +3881,24 @@ export class ChatEngineService implements IChatContext {
       ? this.chatSessionItemsService?.sessionItemController?.getChatSessionProviderOptions?.(targetSessionId)
       : this.chatSessionItemsService?.sessionItemController?.getChatSessionProviderOptions?.();
     return normalizeHostSessionProviderOptions(sessionProviderOptions, currentProviderOptions);
+  }
+
+  private isCurrentVisibleSessionOwner(sessionId?: string | null): boolean {
+    const targetSessionId = typeof sessionId === 'string'
+      ? sessionId.trim()
+      : '';
+    if (!targetSessionId || this.chatService?.hasBlankSessionShell === true) {
+      return false;
+    }
+
+    const currentSessionId = typeof this.chatService?.currentSessionId === 'string'
+      ? this.chatService.currentSessionId.trim()
+      : '';
+    if (currentSessionId !== targetSessionId) {
+      return false;
+    }
+
+    return this.resolveCurrentViewSessionResource() === targetSessionId;
   }
 
   private resolveVisibleSelectedModeSnapshot(sessionId?: string | null): ChatSelectedMode {
@@ -3982,11 +3997,11 @@ export class ChatEngineService implements IChatContext {
       }).findEntry?.(targetSessionId);
 
     const persistedTitle = normalizeChatSessionTitleText(sessionEntry?.title);
-    const isCurrentSession = targetSessionId === (this.chatService.currentSessionId ?? '').trim();
-    const fallbackTitle = isCurrentSession
+    const isCurrentVisibleSession = this.isCurrentVisibleSessionOwner(targetSessionId);
+    const fallbackTitle = isCurrentVisibleSession
       ? normalizeChatSessionTitleText(this.sessionTitle || this.chatService.currentSessionTitle || '')
       : '';
-    const currentTitleCandidate = isCurrentSession
+    const currentTitleCandidate = isCurrentVisibleSession
       ? (typeof this.chatService.readCurrentSessionTitleCandidate === 'function'
         ? this.chatService.readCurrentSessionTitleCandidate()
         : normalizeChatSessionTitleCandidate({
@@ -4010,7 +4025,7 @@ export class ChatEngineService implements IChatContext {
       providerOptions,
       selectedMode,
       resolvedMode,
-      model: this.currentModel ? { ...this.currentModel } : null,
+      model: this.resolveVisibleCurrentModelSnapshot(targetSessionId),
     };
   }
 
