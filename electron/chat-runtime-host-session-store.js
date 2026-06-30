@@ -1984,14 +1984,6 @@ class ChatRuntimeHostSessionStore {
       : [];
     const existingTurn = turns.find(item =>
       this.normalizeActiveTurnId(item && item.turnId) === visibleTurnId);
-    const previousActiveTurnId = this.normalizeActiveTurnId(previousState && previousState.activeTurnId);
-    const isAlreadyCurrent = previousState
-      && previousState.requestInProgress === true
-      && previousActiveTurnId === visibleTurnId;
-    if (existingTurn && this.turnHasObservableProgress(existingTurn) && !isAlreadyCurrent) {
-      return false;
-    }
-
     const hasModelProgress = (renderEvent && typeof renderEvent === 'object')
       || this.turnHasObservableProgress(turn);
     if (!hasModelProgress) {
@@ -1999,6 +1991,21 @@ class ChatRuntimeHostSessionStore {
     }
 
     const effectiveRequest = request || this.readActiveSubmittedRequest(normalizedSessionId);
+    const previousActiveTurnId = this.normalizeActiveTurnId(previousState && previousState.activeTurnId);
+    const isAlreadyCurrent = previousState
+      && previousState.requestInProgress === true
+      && previousActiveTurnId === visibleTurnId;
+    if (existingTurn && this.turnHasObservableProgress(existingTurn) && !isAlreadyCurrent) {
+      const isSettledTurnSnapshotUpdate = this.isSettledRuntimeOwnerTurnSnapshotUpdate({
+        existingTurn,
+        incomingTurn: turn,
+        request: effectiveRequest,
+      });
+      if (!isSettledTurnSnapshotUpdate) {
+        return false;
+      }
+    }
+
     let nextTranscriptRevision = Math.max(
       Number(previousState && previousState.transcriptRevision) || 0,
       Number(transcript && transcript.revision) || 0,
@@ -2100,6 +2107,26 @@ class ChatRuntimeHostSessionStore {
       ? request.metadata
       : null;
     return this.normalizeActiveTurnId(metadata && metadata.requestId);
+  }
+
+  isSettledRuntimeOwnerTurnSnapshotUpdate({ existingTurn, incomingTurn, request }) {
+    if (!incomingTurn || typeof incomingTurn !== 'object') {
+      return false;
+    }
+
+    const existingTurnId = this.normalizeActiveTurnId(existingTurn && existingTurn.turnId);
+    const incomingTurnId = this.normalizeActiveTurnId(incomingTurn && incomingTurn.turnId);
+    if (!existingTurnId || existingTurnId !== incomingTurnId) {
+      return false;
+    }
+
+    const existingRequestId = this.readTurnRequestId(existingTurn);
+    const incomingRequestId = this.readSubmitRequestId(request) || this.readTurnRequestId(incomingTurn);
+    if (existingRequestId && incomingRequestId && existingRequestId !== incomingRequestId) {
+      return false;
+    }
+
+    return this.turnHasObservableProgress(incomingTurn);
   }
 
   readActiveSubmittedRequest(sessionId) {

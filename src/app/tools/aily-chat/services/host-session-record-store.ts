@@ -590,6 +590,17 @@ export class HostSessionRecordStore {
     if (!part || part['type'] !== 'plan') {
       return undefined;
     }
+    const metadata = isRecord(part['metadata']) ? part['metadata'] : undefined;
+    if (
+      part['sourceAgentRole'] === 'subagent'
+      || typeof part['subAgentInvocationId'] === 'string'
+      || typeof part['parentToolCallId'] === 'string'
+      || metadata?.['sourceAgentRole'] === 'subagent'
+      || typeof metadata?.['subAgentInvocationId'] === 'string'
+      || typeof metadata?.['parentToolCallId'] === 'string'
+    ) {
+      return undefined;
+    }
 
     const status = part['status'] === 'streaming' || part['status'] === 'completed' || part['status'] === 'failed'
       ? part['status']

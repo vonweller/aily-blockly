@@ -8,6 +8,20 @@ function normalizeRuntimeOwnerId(runtimeOwnerId) {
     : 'aily-chat-host-runtime-owner';
 }
 
+function isRuntimeOwnerTraceEnabled() {
+  const value = process && process.env
+    ? (process.env.AILY_CHAT_TRACE_RUNTIME_OWNER_EVENTS || process.env.__AILY_CHAT_TRACE_RUNTIME_OWNER_EVENTS__)
+    : '';
+  if (value === true || value === 1) {
+    return true;
+  }
+  if (typeof value !== 'string') {
+    return false;
+  }
+  const normalized = value.trim().toLowerCase();
+  return normalized === '1' || normalized === 'true' || normalized === 'on' || normalized === 'yes';
+}
+
 class ChatRuntimeHostRuntimeOwnerController {
   constructor(options = {}) {
     if (!options.BrowserWindow) {
@@ -63,10 +77,12 @@ class ChatRuntimeHostRuntimeOwnerController {
       webContentsId: event.sender.id,
       webContents: event.sender,
     };
-    console.log('[AilyChat][RuntimeOwnerRegistered]', JSON.stringify({
-      runtimeOwnerId,
-      webContentsId: event.sender.id,
-    }));
+    if (isRuntimeOwnerTraceEnabled()) {
+      console.log('[AilyChat][RuntimeOwnerRegistered]', JSON.stringify({
+        runtimeOwnerId,
+        webContentsId: event.sender.id,
+      }));
+    }
     event.sender.once('destroyed', () => this.clearRuntimeOwnerIfMatches(event.sender.id));
     return { ok: true, runtimeOwnerId };
   }
@@ -151,7 +167,9 @@ class ChatRuntimeHostRuntimeOwnerController {
     const error = new Error('[AilyChat][RuntimeHost] Registered runtime owner was destroyed.');
     error.code = 'runtime_owner_lost';
     error.retryable = true;
-    console.warn('[AilyChat][RuntimeOwnerLost]', JSON.stringify({ webContentsId }));
+    if (isRuntimeOwnerTraceEnabled()) {
+      console.warn('[AilyChat][RuntimeOwnerLost]', JSON.stringify({ webContentsId }));
+    }
     this.clearPendingCommands(error);
     this.onRuntimeOwnerLost(error);
   }

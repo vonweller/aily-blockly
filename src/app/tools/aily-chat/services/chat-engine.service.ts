@@ -3764,6 +3764,18 @@ export class ChatEngineService implements IChatContext {
     return normalized;
   }
 
+  private syncVisibleSelectedModeToRuntimeOwner(): void {
+    const currentViewSessionId = this.resolveCurrentViewSessionResource();
+    if (!currentViewSessionId) {
+      return;
+    }
+
+    this.rememberRuntimeSelectedMode(
+      currentViewSessionId,
+      this.chatService.selectedMode ?? { modeId: this.chatService.currentMode },
+    );
+  }
+
   private resolveRuntimeResolvedMode(sessionId?: string | null): ChatResolvedMode {
     const selectedMode = this.resolveRuntimeSelectedMode(sessionId);
     const currentResolvedMode = this.chatService.currentResolvedMode;
@@ -7326,7 +7338,7 @@ Do not create non-existent boards and libraries.
         `[AilyChat][HostSubmitModel] session=${targetSessionId || ''} currentSession=${currentServiceSessionId} model=${currentModelSnapshot?.model ?? ''} preset=${currentModelSnapshot?.presetId ?? ''} name=${currentModelSnapshot?.name ?? ''}`,
       );
       const protocolTruncation = this.peekPendingProtocolTruncation(targetSessionId);
-      await this.runtimeHostForView().submitTurn({
+      const submittedState = await this.runtimeHostForView().submitTurn({
         sessionId: targetSessionId,
         requestText: prepared.llmText,
         displayText: prepared.displayText,
@@ -7339,6 +7351,7 @@ Do not create non-existent boards and libraries.
         activeResponseHandle: null,
         ...(protocolTruncation ? { protocolTruncation } : {}),
       });
+      this.applyRuntimeHostSessionStateEvent(targetSessionId, submittedState);
       if (protocolTruncation) {
         this.clearPendingProtocolTruncation(targetSessionId);
       }
@@ -7660,7 +7673,7 @@ Do not create non-existent boards and libraries.
       console.info(
         `[AilyChat][HostSubmitModel] session=${runtimeSessionId || ''} currentSession=${currentServiceSessionId} model=${currentModelSnapshot?.model ?? ''} preset=${currentModelSnapshot?.presetId ?? ''} name=${currentModelSnapshot?.name ?? ''}`,
       );
-      await runtimeHost.submitTurn({
+      const submittedState = await runtimeHost.submitTurn({
         sessionId: runtimeSessionId,
         requestText: content,
         displayText: content,
@@ -7672,6 +7685,7 @@ Do not create non-existent boards and libraries.
         metadata: this.withHostRuntimeSessionInventoryMetadata(runtimeSessionId, appliedRequestMetadata),
         activeResponseHandle: null,
       });
+      this.applyRuntimeHostSessionStateEvent(runtimeSessionId, submittedState);
     } finally {
       updateAilyChatAgentLoopPendingCount(-1);
     }
@@ -8191,12 +8205,20 @@ Do not create non-existent boards and libraries.
   }
 
   async switchToMode(mode: string): Promise<void> {
+    const wasWaiting = this.isWaiting;
     await this.switchCoordinator.switchToMode(mode);
+    if (!wasWaiting) {
+      this.syncVisibleSelectedModeToRuntimeOwner();
+    }
     this.triggerSyncDetectChanges();
   }
 
   async switchToCustomAgent(selection: { readonly modeId?: string; readonly customAgentTarget?: string }): Promise<void> {
+    const wasWaiting = this.isWaiting;
     await this.switchCoordinator.switchToCustomAgent(selection);
+    if (!wasWaiting) {
+      this.syncVisibleSelectedModeToRuntimeOwner();
+    }
     this.triggerSyncDetectChanges();
   }
 
