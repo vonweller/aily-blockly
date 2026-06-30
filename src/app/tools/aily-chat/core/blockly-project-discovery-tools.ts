@@ -117,6 +117,7 @@ function makeProjectContribution(createDeferred: DeferredFactory): RuntimeScoped
 - "set_board_config": Modify board compile/upload configuration
 
 Project creation mutates the workspace and may require host-side user confirmation before execution.
+Before action="create" in a no-project request, the agent must have loaded blockly-project-planning, used board/library discovery to produce researched candidate options, and obtained the user's selected/confirmed option. Do not ask the user to choose a board before discovery, and do not use this tool to skip the candidate-plan workflow.
 Basic project info (path, board, libraries) is already in the environment section. Do not call this tool for read-only info.`,
     inputSchema: {
       type: 'object',

@@ -930,6 +930,46 @@ export function buildExternalHostAPI(
   const joinProjectPath = (...segments: string[]) => host.path?.join
     ? host.path.join(...segments)
     : segments.filter(Boolean).join('/');
+  const normalizeProjectCreateDirectoryName = (name: string) => {
+    const normalized = String(name || '').trim().replace(/\s/g, '_');
+    return normalized || 'project';
+  };
+  const projectPathExists = (projectPath: string) => {
+    if (!projectPath) {
+      return false;
+    }
+    if (typeof host.fs?.existsSync === 'function') {
+      if (!host.fs.existsSync(projectPath)) {
+        return false;
+      }
+      if (typeof (host.fs as any)?.isDirectory === 'function') {
+        return !!(host.fs as any).isDirectory(projectPath);
+      }
+      return true;
+    }
+    if (typeof (host.path as any)?.isExists === 'function') {
+      return !!(host.path as any).isExists(projectPath);
+    }
+    return false;
+  };
+  const resolveUniqueProjectCreateName = (basePath: string, requestedName: string) => {
+    const trimmedName = String(requestedName || '').trim() || 'project';
+    const baseDirectoryName = normalizeProjectCreateDirectoryName(trimmedName);
+    if (!basePath || !projectPathExists(joinProjectPath(basePath, baseDirectoryName))) {
+      return trimmedName;
+    }
+
+    const fallbackBaseName = baseDirectoryName
+      .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_')
+      .replace(/_+$/g, '') || 'project';
+    for (let index = 1; index <= 9999; index++) {
+      const candidateName = `${fallbackBaseName}_${index}`;
+      if (!projectPathExists(joinProjectPath(basePath, candidateName))) {
+        return candidateName;
+      }
+    }
+    return `${fallbackBaseName}_${Date.now()}`;
+  };
   const readJsonFile = <T = any>(filePath: string): T => JSON.parse(host.fs.readFileSync(filePath, 'utf8'));
   const readRuntimeProjectPackageJson = async () => {
     const projectPath = prjPath();
@@ -1210,18 +1250,38 @@ export function buildExternalHostAPI(
     createProject: host.project.createProject || createProjectFromLegacyProjectService
       ? async (name: string, board: string, path?: string) => {
           const createProject = host.project.createProject ?? createProjectFromLegacyProjectService!;
-          const result = await createProject(name, board, path ?? prjPath());
+          const basePath = normalizeProjectCreateBasePath(path ?? prjPath());
+          const projectName = resolveUniqueProjectCreateName(basePath, name);
+          const result = await createProject(projectName, board, basePath);
           const resultRecord = result && typeof result === 'object'
             ? result as Record<string, unknown>
             : null;
-          const projectPath = typeof resultRecord?.['projectPath'] === 'string'
+          const creationSucceeded = result !== false && result !== null && result !== undefined;
+          const projectPath = !creationSucceeded
+            ? ''
+            : typeof resultRecord?.['projectPath'] === 'string'
             ? resultRecord['projectPath'].trim()
             : typeof resultRecord?.['path'] === 'string'
               ? resultRecord['path'].trim()
-              : '';
+              : basePath
+                ? joinProjectPath(basePath, normalizeProjectCreateDirectoryName(projectName))
+                : '';
+          const response = resultRecord
+            ? {
+                ...resultRecord,
+                path: typeof resultRecord['path'] === 'string' && resultRecord['path'].trim()
+                  ? resultRecord['path']
+                  : projectPath,
+                projectPath,
+                projectName: typeof resultRecord['projectName'] === 'string' && resultRecord['projectName'].trim()
+                  ? resultRecord['projectName']
+                  : projectName,
+                ...(projectName !== String(name || '').trim() ? { requestedProjectName: String(name || '').trim() } : {}),
+              }
+            : result;
           if (projectPath) {
             createdProjectPath = projectPath;
-            await options.onProjectCreated?.(projectPath, result);
+            await options.onProjectCreated?.(projectPath, response);
           }
           contextSnapshotService.invalidate([
             'workspaceIdentity',
@@ -1232,7 +1292,7 @@ export function buildExternalHostAPI(
             'workspaceArtifacts',
             'workspaceState',
           ], 'project create');
-          return result;
+          return response;
         }
       : undefined,
     reloadProject: host.project.reloadProject
