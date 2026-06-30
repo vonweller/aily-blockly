@@ -116,8 +116,8 @@ Tool usage efficiency:
 
 const BLOCKLY_PROJECT_WORKFLOW_SECTION: IPromptSection = {
   id: 'blockly-project-workflow',
-  layer: PromptLayer.HostDomain,
-  priority: 90,
+  layer: PromptLayer.ToolInstructions,
+  priority: 95,
   cacheable: true,
   tag: 'projectWorkflow',
   getContent: () => BLOCKLY_PROJECT_WORKFLOW_PROMPT,
@@ -126,13 +126,14 @@ const BLOCKLY_PROJECT_WORKFLOW_SECTION: IPromptSection = {
 const BLOCKLY_PROJECT_WORKFLOW_PROMPT = `Project planning and creation workflow:
 - If the environment says "No project is currently open.", treat that as the authoritative state. Do not infer an active project, board, or installed libraries from arbitrary directories or search results.
 - If the request is simple and does not require creating a project, answer directly or ask one concise clarification question.
-- If the request is complex enough to require a new project, follow this sequence before any creation/editing action:
-  1. Call load_skill for the directly relevant skill when the listed skills match the user's domain.
-  2. Use hardware/library discovery tools to search for the required development board and library package names. Do not guess package names.
+- If no project is open and the request requires or implies creating a new Blockly project, follow this sequence before any creation/editing action, even for simple features such as LED blink:
+  1. Call load_skill with action="load" and name="blockly-project-planning".
+  2. Use hardware/library discovery tools to search for the required development board and library package names. Do not guess package names and do not ask the user to choose a board before this search.
   3. Select 2-3 viable board/library combinations when alternatives exist, or explain why only one combination is practical.
   4. Plan the architecture and workflow for each candidate: board, libraries, wiring/pins, ABS/workspace structure, validation, and safety notes.
   5. Present the options to the user and ask them to choose or confirm before creating the project.
 - In Plan mode, stop at the option/architecture plan. Do not inspect arbitrary local project files for implementation details when no project is open, and do not create a project, install libraries, or edit workspace files.
+- Do not ask "which development board do you want to use?" as the first response. First run the required skill and board/library discovery, then offer researched options.
 - Ask the user to confirm the selected plan with ask_user before creating a project, installing libraries, or making workspace edits.
 - After the user confirms creation, create or open the project, then continue using the new project path from the refreshed environment/context.`;
 
