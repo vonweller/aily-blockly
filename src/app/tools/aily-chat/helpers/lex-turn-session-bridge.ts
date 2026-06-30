@@ -261,6 +261,18 @@ export class LexTurnSessionBridge implements ITurnDataSource {
     }
   }
 
+  removeFromIndex(turnIndex: number): void {
+    const agent = this.getAgent();
+    if (!agent) return;
+    const normalizedIndex = typeof turnIndex === 'number' && Number.isFinite(turnIndex)
+      ? Math.max(0, Math.trunc(turnIndex))
+      : 0;
+    const turns = agent.turnManager.turns.get();
+    if (normalizedIndex < turns.length) {
+      agent.turnManager.removeFrom(normalizedIndex);
+    }
+  }
+
   truncateToTurn(turnId: string): void {
     const agent = this.getAgent();
     if (!agent) return;

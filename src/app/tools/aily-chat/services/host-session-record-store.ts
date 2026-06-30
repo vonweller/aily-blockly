@@ -39,6 +39,7 @@ import {
   readChatAgentRuntimeModeFromMetadata,
   readChatAgentRuntimeModeSourceFromMetadata,
 } from '../core/chat-agent-runtime-mode';
+import { HostSessionOperationLog } from './host-session-operation-log';
 
 import type {
   HostSessionRecord,
@@ -238,6 +239,8 @@ export interface HostSessionRecordStoreOptions {
  * Keeps host record disk IO and compatibility normalization out of ChatHistoryService.
  */
 export class HostSessionRecordStore {
+  private readonly operationLogs = new Map<string, HostSessionOperationLog>();
+
   constructor(private readonly options: HostSessionRecordStoreOptions) {}
 
   createFullMetadata(metadata: Partial<SessionMetadata> & { sessionId: string }): SessionMetadata {
@@ -367,15 +370,15 @@ export class HostSessionRecordStore {
     if (projectPath) {
       const dir = this.options.joinPath(projectPath, this.options.projectChatDir);
       this.ensureDir(dir);
-      const filePath = this.options.joinPath(dir, `${sessionId}.json`);
-      this.writeFileSync(filePath, JSON.stringify(data, null, 2));
+      const filePath = this.options.joinPath(dir, `${sessionId}.jsonl`);
+      this.writeOperationLog(filePath, data);
       return;
     }
 
     const dir = this.options.getGlobalChatDataDir();
     this.ensureDir(dir);
-    const filePath = this.options.joinPath(dir, `${sessionId}.json`);
-    this.writeFileSync(filePath, JSON.stringify(data, null, 2));
+    const filePath = this.options.joinPath(dir, `${sessionId}.jsonl`);
+    this.writeOperationLog(filePath, data);
   }
 
   read(sessionId: string, projectPath: string | null): HostSessionRecord | null {
@@ -383,9 +386,9 @@ export class HostSessionRecordStore {
 
     const paths: string[] = [];
     if (projectPath) {
-      paths.push(this.options.joinPath(projectPath, this.options.projectChatDir, `${sessionId}.json`));
+      paths.push(this.options.joinPath(projectPath, this.options.projectChatDir, `${sessionId}.jsonl`));
     }
-    paths.push(this.options.joinPath(this.options.getGlobalChatDataDir(), `${sessionId}.json`));
+    paths.push(this.options.joinPath(this.options.getGlobalChatDataDir(), `${sessionId}.jsonl`));
 
     for (const filePath of paths) {
       try {
@@ -394,7 +397,8 @@ export class HostSessionRecordStore {
         }
 
         const content = this.readFileSync(filePath);
-        const parsed = JSON.parse(content);
+        const log = this.getOperationLog(filePath);
+        const parsed = log.read(content);
 
         if (Array.isArray(parsed)) {
           console.warn(`[ChatHistory] 忽略旧版 chatList-only 宿主持久化记录 (${filePath})`);
@@ -937,9 +941,46 @@ export class HostSessionRecordStore {
     AilyHost.get().fs.writeFileSync(path, content, 'utf-8');
   }
 
+  private appendFileSync(path: string, content: string): void {
+    AilyHost.get().fs.appendFileSync(path, content);
+  }
+
   private ensureDir(dirPath: string): void {
     if (!this.fileExists(dirPath)) {
       AilyHost.get().fs.mkdirSync(dirPath, { recursive: true });
     }
+  }
+
+  private writeOperationLog(filePath: string, data: HostSessionRecord): void {
+    const log = this.getOperationLog(filePath);
+    if (!this.fileExists(filePath)) {
+      const content = log.createInitial(data);
+      this.writeFileSync(filePath, content);
+      return;
+    }
+
+    const result = log.write(data);
+    if (!result.data) {
+      return;
+    }
+
+    if (result.op === 'replace') {
+      this.writeFileSync(filePath, result.data);
+    } else {
+      this.appendFileSync(filePath, result.data);
+    }
+    log.confirmWrite();
+  }
+
+  private getOperationLog(filePath: string): HostSessionOperationLog {
+    let log = this.operationLogs.get(filePath);
+    if (!log) {
+      log = new HostSessionOperationLog();
+      if (this.fileExists(filePath)) {
+        log.read(this.readFileSync(filePath));
+      }
+      this.operationLogs.set(filePath, log);
+    }
+    return log;
   }
 }

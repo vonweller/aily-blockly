@@ -63,7 +63,7 @@ type LexOwnerUiAccess = Pick<LexUiEventBridge, 'presentQuestion' | 'updateQuesti
 type LexOwnerTurnAccess = Pick<LexTurnRuntimeBridge, 'begin' | 'run' | 'draft' | 'ensureMessage' | 'appendError'>;
 type LexOwnerTurnControlAccess = Pick<
   LexTurnControlBridge,
-  'currentId' | 'currentIndex' | 'turnIdByRound' | 'requestContent' | 'lastRoundId' | 'currentRequestMetadata' | 'complete' | 'fail' | 'discardIncomplete' | 'removeFrom' | 'restartFrom' | 'clear'
+  'currentId' | 'currentIndex' | 'turnIdByRound' | 'requestContent' | 'lastRoundId' | 'currentRequestMetadata' | 'complete' | 'fail' | 'discardIncomplete' | 'removeFrom' | 'removeFromIndex' | 'restartFrom' | 'clear'
 >;
 type LexOwnerRuntimeAccess = Pick<LexRuntimeConfigBridge, 'tools' | 'llmConfig'>;
 type LexOwnerSessionAccess = Pick<LexSessionFacade, 'save' | 'snapshot' | 'forkSnapshot' | 'resolveRestorePlan' | 'restoreResolvedSnapshot' | 'restore'>;

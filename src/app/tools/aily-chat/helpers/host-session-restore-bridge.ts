@@ -316,13 +316,6 @@ function buildSessionCheckpointTimelineStateFromHostRecord(
   }
 
   const checkpointMetadataMaps = buildCheckpointMetadataMapsFromSidecar(sidecar.checkpoints, targetResource);
-  if (!checkpointMetadataMaps && !hasCompleteCheckpointMetadataForTimelineTurns(sidecar.turnResponses, targetResource)) {
-    console.warn('[HostSessionRestore] dropped checkpoint timeline sidecar with incomplete checkpoint metadata', {
-      sessionResource: targetResource,
-    });
-    return null;
-  }
-
   return createSessionCheckpointTimelineState({
     sessionResource: targetResource,
     turnResponses: sidecar.turnResponses as unknown as readonly TurnResponseTurn[],
@@ -390,51 +383,6 @@ function isCompleteCheckpointMetadata(
     && typeof record['turnIndex'] === 'number'
     && Number.isFinite(record['turnIndex'])
     && hasCompleteAdditionalCheckpointRefs(record);
-}
-
-function hasCompleteCheckpointMetadataForTimelineTurns(
-  turnResponses: readonly unknown[],
-  targetSessionResource: string,
-): boolean {
-  for (const turn of turnResponses) {
-    const metadata = readTurnRequestMetadata(turn);
-    const checkpointId = readStringProperty(metadata, 'checkpointId');
-    if (!checkpointId) {
-      continue;
-    }
-
-    const checkpointNamespace = readStringProperty(metadata, 'checkpointNamespace');
-    const checkpointRef = readStringProperty(metadata, 'checkpointRef');
-    if (!checkpointNamespace || !checkpointRef) {
-      return false;
-    }
-
-    if (checkpointNamespace !== `refs/sessions/${targetSessionResource}`) {
-      return false;
-    }
-
-    if (!hasCompleteAdditionalCheckpointRefs(metadata)) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
-function readTurnRequestMetadata(turn: unknown): Record<string, unknown> | null {
-  if (!turn || typeof turn !== 'object') {
-    return null;
-  }
-
-  const request = (turn as { request?: unknown }).request;
-  if (!request || typeof request !== 'object') {
-    return null;
-  }
-
-  const metadata = (request as { metadata?: unknown }).metadata;
-  return metadata && typeof metadata === 'object'
-    ? metadata as Record<string, unknown>
-    : null;
 }
 
 function readStringProperty(record: Record<string, unknown> | null, key: string): string {

@@ -2,7 +2,6 @@ import type { TurnResponseTurn } from 'aily-lex/browser';
 
 import type { IAgentLifecycle, IChatCoordination, IChatServiceAccess } from '../core/chat-context';
 import type {
-  RequestCheckpointMetadata,
   RollbackResult,
   WorkspaceCheckpointPresentationMode,
 } from '../services/edit-checkpoint.service';
@@ -64,7 +63,6 @@ type CheckpointRestoreTarget = {
   sessionResource: string;
   requestId: string;
   turnId?: string;
-  metadata: RequestCheckpointMetadata;
 };
 
 type CheckpointWorkspaceApplyResult = NonNullable<
@@ -2611,31 +2609,32 @@ export class CheckpointReplayCoordinator {
     _requestedTurnId?: string,
   ): CheckpointRestoreTarget {
     const normalizedCheckpointId = typeof checkpointId === 'string' ? checkpointId.trim() : '';
+    const timelineSessionResource = this.resolveCheckpointSessionId();
+    const timelineState = timelineSessionResource
+      ? this.ctx.readSessionCheckpointTimelineState?.(timelineSessionResource) ?? null
+      : null;
+    const timelineCheckpoint = timelineState?.checkpoints.find(
+      candidate => candidate.checkpointId === normalizedCheckpointId,
+    );
+    if (normalizedCheckpointId && timelineSessionResource && timelineCheckpoint) {
+      return {
+        checkpointId: timelineCheckpoint.checkpointId,
+        sessionResource: timelineSessionResource,
+        requestId: timelineCheckpoint.requestId,
+        ...(timelineCheckpoint.turnId ? { turnId: timelineCheckpoint.turnId } : {}),
+      };
+    }
+
     if (!normalizedCheckpointId) {
-      throw new Error('检查点还原缺少 checkpointId');
+      throw new Error('checkpoint restore missing checkpointId');
     }
-
-    const metadata = this.ctx.editCheckpointService.getRequestCheckpointMetadataByCheckpointId?.(normalizedCheckpointId) ?? null;
-    if (!metadata) {
-      throw new Error(`检查点还原缺少 request checkpoint metadata: ${normalizedCheckpointId}`);
+    if (!timelineSessionResource) {
+      throw new Error(`checkpoint restore missing sessionResource: ${normalizedCheckpointId}`);
     }
-
-    const currentSessionResource = this.resolveCheckpointSessionId();
-    if (!currentSessionResource) {
-      throw new Error(`检查点还原缺少 sessionResource: ${normalizedCheckpointId}`);
+    if (normalizeString(timelineState?.sessionResource) !== timelineSessionResource) {
+      throw new Error(`checkpoint restore sessionResource mismatch: ${normalizedCheckpointId}`);
     }
-
-    if (metadata.sessionResource !== currentSessionResource) {
-      throw new Error(`检查点还原 sessionResource 不匹配: ${normalizedCheckpointId}`);
-    }
-
-    return {
-      checkpointId: metadata.checkpointId,
-      sessionResource: metadata.sessionResource,
-      requestId: metadata.requestId,
-      ...(metadata.turnId ? { turnId: metadata.turnId } : {}),
-      metadata,
-    };
+    throw new Error(`checkpoint restore missing timeline checkpoint: ${normalizedCheckpointId}`);
   }
 
   private resolveCheckpointRestoreTruncationBoundary(params: {
@@ -2948,4 +2947,3 @@ export class CheckpointReplayCoordinator {
     };
   }
 }
-

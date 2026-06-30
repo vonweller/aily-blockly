@@ -213,7 +213,7 @@ export class ChatHistoryIndexStore {
   ): SessionIndexEntry[] {
     try {
       const files: string[] = AilyHost.get().fs.readdirSync(chatDir);
-      const sessionFiles = files.filter((file) => file.endsWith('.json') && file !== this.options.indexFile);
+      const sessionFiles = files.filter((file) => file.endsWith('.jsonl'));
       if (sessionFiles.length === 0) return index;
 
       const projectName = this.options.extractProjectName(prjPath);
@@ -224,7 +224,7 @@ export class ChatHistoryIndexStore {
 
       let rebuilt = 0;
       for (const file of sessionFiles) {
-        const sessionId = file.replace(/\.json$/, '');
+        const sessionId = file.replace(/\.jsonl$/, '');
         const existing = indexMap.get(sessionId);
         if (existing && this.options.isSamePath(existing.projectPath, prjPath)) {
           continue;
