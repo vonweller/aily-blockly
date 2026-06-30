@@ -424,6 +424,7 @@ function createRuntimeOwnerEvent(
   const revision = Number(event.revision) || 0;
   switch (event.kind) {
     case 'transcript':
+    case 'turn-transcript':
       return null;
     case 'view-request':
       return {

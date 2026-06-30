@@ -574,6 +574,27 @@ class ChatRuntimeHostSessionStore {
     return this.transcriptBuilder.acceptTranscriptSnapshot(transcript);
   }
 
+  buildTurnTranscriptEvent(transcript, turnId, revisionFallback = 0) {
+    const normalizedTurnId = this.normalizeActiveTurnId(turnId);
+    if (!transcript || !normalizedTurnId) {
+      return null;
+    }
+    const turns = Array.isArray(transcript.turnResponses)
+      ? transcript.turnResponses
+      : [];
+    const turn = turns.find(candidate => this.normalizeActiveTurnId(candidate && candidate.turnId) === normalizedTurnId);
+    if (!turn) {
+      return null;
+    }
+    return {
+      kind: 'turn-transcript',
+      sessionId: transcript.sessionId,
+      turnId: normalizedTurnId,
+      revision: Number(transcript.revision) || Number(revisionFallback) || 0,
+      turn: clonePayload(turn),
+    };
+  }
+
   cacheRuntimeOwnerTurnSnapshot(payload) {
     const sessionId = payload && payload.sessionId;
     const turnId = payload && payload.turnId;
@@ -583,14 +604,11 @@ class ChatRuntimeHostSessionStore {
       revision: payload && payload.revision,
       turn: this.retargetRuntimeOwnerTurnSnapshot(payload && payload.turn, turnId),
     });
-    return transcript
-      ? {
-          kind: 'transcript',
-          sessionId: transcript.sessionId,
-          revision: Number(transcript.revision) || Number(payload && payload.revision) || 0,
-          transcript,
-        }
-      : null;
+    return this.buildTurnTranscriptEvent(
+      transcript,
+      turnId,
+      payload && payload.revision,
+    );
   }
 
   cacheRuntimeOwnerRenderEvent(payload) {
@@ -605,14 +623,11 @@ class ChatRuntimeHostSessionStore {
       request: (payload && payload.request) || this.readActiveSubmittedRequest(sessionId),
       event: this.retargetRuntimeOwnerRenderEvent(renderEvent, payload && payload.turnId),
     });
-    const transcriptEvent = transcript
-      ? {
-          kind: 'transcript',
-          sessionId: transcript.sessionId,
-          revision: Number(transcript.revision) || Number(payload && payload.revision) || 0,
-          transcript,
-        }
-      : null;
+    const transcriptEvent = this.buildTurnTranscriptEvent(
+      transcript,
+      payload && payload.turnId,
+      payload && payload.revision,
+    );
     const interactionEvents = this.cacheInteractionFromRenderEvent({
       sessionId,
       revision: Number(payload && payload.revision) || Number(transcript && transcript.revision) || 0,

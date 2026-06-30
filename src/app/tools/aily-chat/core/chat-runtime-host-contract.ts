@@ -13,6 +13,7 @@ export type ChatRuntimeHostSessionId = string;
 export type ChatRuntimeHostEventKind =
   | 'session-state'
   | 'transcript'
+  | 'turn-transcript'
   | 'runtime-status'
   | 'interaction'
   | 'view-request'
@@ -189,6 +190,12 @@ export interface ChatRuntimeHostEventBase {
 export interface ChatRuntimeHostTranscriptEvent extends ChatRuntimeHostEventBase {
   readonly kind: 'transcript';
   readonly transcript: ChatRuntimeHostTranscriptSnapshot;
+}
+
+export interface ChatRuntimeHostTurnTranscriptEvent extends ChatRuntimeHostEventBase {
+  readonly kind: 'turn-transcript';
+  readonly turnId: string;
+  readonly turn: TurnResponseTurn;
 }
 
 export interface ChatRuntimeHostSessionStateEvent extends ChatRuntimeHostEventBase {
@@ -407,6 +414,7 @@ export interface ChatRuntimeHostErrorEvent extends ChatRuntimeHostEventBase {
 
 export type ChatRuntimeHostEvent =
   | ChatRuntimeHostTranscriptEvent
+  | ChatRuntimeHostTurnTranscriptEvent
   | ChatRuntimeHostSessionStateEvent
   | ChatRuntimeHostInteractionEvent
   | ChatRuntimeHostViewRequestEvent

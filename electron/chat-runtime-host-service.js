@@ -140,6 +140,7 @@ function summarizeCanonicalHostEvent(event) {
     sessionId: typeof event?.sessionId === 'string' ? event.sessionId : undefined,
     revision: Number(event?.revision) || 0,
     transcript: event?.transcript ? summarizeTranscript(event.transcript) : undefined,
+    turn: event?.turn ? summarizeTurnResponse(event.turn) : undefined,
     stateRequestInProgress: typeof state?.requestInProgress === 'boolean' ? state.requestInProgress : undefined,
     stateActiveTurnId: typeof state?.activeTurnId === 'string' ? state.activeTurnId : undefined,
     stateTranscriptRevision: Number(state?.transcriptRevision) || undefined,
@@ -817,6 +818,7 @@ class ChatRuntimeHostProcessService {
     }
     switch (payload.kind) {
       case 'transcript':
+      case 'turn-transcript':
       case 'interaction':
       case 'view-request':
       case 'resource-request':
