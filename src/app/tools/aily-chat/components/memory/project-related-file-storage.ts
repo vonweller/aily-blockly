@@ -228,6 +228,8 @@ export class ProjectRelatedFileStorage {
 
     return [
       'Project assets are stored under the project asset directory.',
+      'When the user asks about attached, related, or imported project materials, interpret that request as referring to the project asset directory by default.',
+      'Do not expand such asset-oriented requests to memory stores or unrelated project files unless the user clearly asks for those broader sources.',
       'Use assets_tool to search and read these project assets when the user refers to attached files, folders, videos, FFS resources, or related URLs.',
     ].join('\n');
   }
