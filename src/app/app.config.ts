@@ -8,11 +8,9 @@ import { NzModalModule } from 'ng-zorro-antd/modal';
 import { authInterceptor } from './interceptors/auth.interceptor';
 import { retryInterceptor } from './interceptors/retry.interceptor';
 import {
-  AILY_CHAT_RUNTIME_OWNER_PROVIDERS,
   AILY_CHAT_SHARED_PROVIDERS,
 } from './tools/aily-chat/aily-chat.providers';
 import { AilyChatHostInitializerService } from './tools/aily-chat/services/aily-chat-host-initializer.service';
-import { ChatRuntimeHostBootstrapService } from './tools/aily-chat/services/chat-runtime-host-bootstrap.service';
 
 export const appConfig: ApplicationConfig = {
   providers: [
@@ -31,11 +29,7 @@ export const appConfig: ApplicationConfig = {
     importProvidersFrom(NzModalModule),
     provideAppInitializer(() => {
       inject(AilyChatHostInitializerService).ensureInitialized();
-      void inject(ChatRuntimeHostBootstrapService).startHostRuntimeOwner().catch((error) => {
-        console.error('[AilyChat][RuntimeHost] Failed to start host runtime owner:', error);
-      });
     }),
     ...AILY_CHAT_SHARED_PROVIDERS,
-    ...AILY_CHAT_RUNTIME_OWNER_PROVIDERS
   ]
 };

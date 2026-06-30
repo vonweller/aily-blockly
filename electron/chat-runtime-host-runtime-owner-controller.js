@@ -30,6 +30,7 @@ class ChatRuntimeHostRuntimeOwnerController {
       : () => {};
 
     this.hostWindowRef = null;
+    this.runtimeOwnerWindowRef = null;
     this.runtimeOwner = null;
     this.commandSeed = 0;
     this.pendingCommands = new Map();
@@ -37,6 +38,17 @@ class ChatRuntimeHostRuntimeOwnerController {
 
   setHostWindow(hostWindow) {
     this.hostWindowRef = hostWindow || null;
+  }
+
+  setRuntimeOwnerWindow(runtimeOwnerWindow) {
+    this.runtimeOwnerWindowRef = runtimeOwnerWindow || null;
+    if (!runtimeOwnerWindow && this.runtimeOwner) {
+      const error = new Error('[AilyChat][RuntimeHost] Runtime owner window was cleared.');
+      error.code = 'runtime_owner_lost';
+      error.retryable = true;
+      this.clearRuntimeOwnerIfMatches(this.runtimeOwner.webContentsId);
+      this.clearPendingCommands(error);
+    }
   }
 
   handleRuntimeOwnerRegister(event, payload = {}) {
@@ -150,8 +162,8 @@ class ChatRuntimeHostRuntimeOwnerController {
 
   assertHostRuntimeOwner(event) {
     const senderWindow = this.getSenderWindow(event);
-    if (!this.hostWindowRef || !senderWindow || senderWindow !== this.hostWindowRef) {
-      throw new Error('[AilyChat][RuntimeHost] Runtime owner must be registered by the host main window.');
+    if (!this.runtimeOwnerWindowRef || !senderWindow || senderWindow !== this.runtimeOwnerWindowRef) {
+      throw new Error('[AilyChat][RuntimeHost] Runtime owner must be registered by the designated execution host window.');
     }
   }
 

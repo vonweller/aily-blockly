@@ -183,6 +183,10 @@ class ChatRuntimeHostProcessService {
     this.runtimeOwnerController.setHostWindow(mainWindow);
   }
 
+  setRuntimeOwnerWindow(runtimeOwnerWindow) {
+    this.runtimeOwnerController.setRuntimeOwnerWindow(runtimeOwnerWindow);
+  }
+
   async handleRuntimeOwnerRegister(event, payload = {}) {
     return this.runtimeOwnerController.handleRuntimeOwnerRegister(event, payload);
   }

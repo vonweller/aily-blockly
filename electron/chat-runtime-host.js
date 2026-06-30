@@ -48,7 +48,12 @@ function registerChatRuntimeHostIpc(mainWindow) {
   });
 }
 
+function setChatRuntimeOwnerWindow(runtimeOwnerWindow) {
+  readRuntimeHostService().setRuntimeOwnerWindow(runtimeOwnerWindow);
+}
+
 module.exports = {
   registerChatRuntimeHostIpc,
+  setChatRuntimeOwnerWindow,
   channels,
 };

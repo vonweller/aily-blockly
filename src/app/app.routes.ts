@@ -1,5 +1,6 @@
 import { Routes } from '@angular/router';
 import {
+    AILY_CHAT_RUNTIME_OWNER_PROVIDERS,
     AILY_CHAT_VIEW_PROVIDERS,
 } from './tools/aily-chat/aily-chat.providers';
 
@@ -125,6 +126,14 @@ export const routes: Routes = [
             ...AILY_CHAT_VIEW_PROVIDERS,
         ],
         loadComponent: () => import('./tools/aily-chat/aily-chat.component').then(m => m.AilyChatComponent)
+    },
+    {
+        path: "aily-chat-runtime-owner",
+        providers: [
+            ...AILY_CHAT_RUNTIME_OWNER_PROVIDERS,
+        ],
+        loadComponent: () => import('./tools/aily-chat/runtime-owner/chat-runtime-owner.component')
+            .then(m => m.AilyChatRuntimeOwnerComponent)
     },
     {
         path: "code-viewer",
