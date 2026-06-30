@@ -123,6 +123,8 @@ interface BlocklyLineReadOptions {
   readonly startLine?: number;
   readonly endLine?: number;
   readonly filterPattern?: string;
+  readonly timestampFromMs?: number;
+  readonly timestampToMs?: number;
   readonly signal?: AbortSignal;
 }
 
@@ -192,12 +194,6 @@ interface PersistedBlocklyCommandSessionRecord {
   readonly outputFilePath?: string | null;
   readonly removed?: boolean;
   readonly removedAt?: number | null;
-}
-
-interface PersistedBlocklyCommandSessionIndexRecord {
-  readonly version?: number;
-  readonly processIds?: readonly string[];
-  readonly updatedAt?: number;
 }
 
 function normalizeBlocklyCommandSessionStatus(
@@ -311,20 +307,6 @@ export function listPersistedBlocklyCommandSessionSnapshots(
   const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
   if (!normalizedSessionId) {
     return [];
-  }
-
-  const linkedProcessIds = readPersistedBlocklyCommandSessionIndexProcessIds(
-    AilyHost.get(),
-    normalizedSessionId,
-    projectPathHint,
-  );
-  if (linkedProcessIds.length > 0) {
-    const projectSummaries = listPersistedBlocklyProjectCommandSessionSnapshots(projectPathHint);
-    const summaryMap = new Map(projectSummaries.map(summary => [summary.processId, summary] as const));
-    return linkedProcessIds
-      .map(processId => summaryMap.get(processId))
-      .filter((summary): summary is BlocklyCommandSessionSummary => !!summary)
-      .sort((left, right) => right.startedAt - left.startedAt);
   }
 
   return listPersistedBlocklyProjectCommandSessionSnapshots(projectPathHint)
@@ -510,10 +492,6 @@ export function purgeBlocklyCommandSession(
     } catch {
       // best-effort
     }
-  }
-
-  if (targetSessionId) {
-    removePersistedBlocklyCommandSessionIndexProcessId(targetSessionId, normalizedProcessId, runtimeSession?.cwd);
   }
 
   return deletedAny || !!runtimeSession || !!persisted;
@@ -3808,107 +3786,6 @@ function readBlocklyCommandSessionDirEntries(
   }
 }
 
-function resolveBlocklyCommandSessionIndexFilePath(
-  host: any,
-  sessionId: string,
-  projectPathHint?: string | null,
-): string | null {
-  const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
-  if (!normalizedSessionId || !host.path?.join || !host.path?.getUserHome) {
-    return null;
-  }
-
-  const normalizedProjectPath = typeof projectPathHint === 'string' ? projectPathHint.trim() : '';
-  const currentProjectPath = host.project?.currentProjectPath || host.project?.projectRootPath || '';
-  const baseDir = normalizedProjectPath
-    ? host.path.join(normalizedProjectPath, '.chat_history')
-    : currentProjectPath
-      ? host.path.join(currentProjectPath, '.chat_history')
-      : host.path.join(host.path.getUserHome(), '.aily', 'chat_history');
-
-  return host.path.join(baseDir, encodeURIComponent(normalizedSessionId), 'process.json');
-}
-
-function readPersistedBlocklyCommandSessionIndexProcessIds(
-  host: any,
-  sessionId: string,
-  projectPathHint?: string | null,
-): string[] {
-  const filePath = resolveBlocklyCommandSessionIndexFilePath(host, sessionId, projectPathHint);
-  if (!filePath || !host.fs?.existsSync?.(filePath)) {
-    return [];
-  }
-
-  try {
-    const raw = host.fs.readFileSync(filePath, 'utf-8');
-    if (!raw) {
-      return [];
-    }
-    const parsed = JSON.parse(String(raw)) as PersistedBlocklyCommandSessionIndexRecord;
-    return Array.isArray(parsed?.processIds)
-      ? parsed.processIds
-        .map(processId => typeof processId === 'string' ? processId.trim() : '')
-        .filter(Boolean)
-      : [];
-  } catch {
-    return [];
-  }
-}
-
-function persistBlocklyCommandSessionIndexRecord(
-  session: Pick<ExternalTerminalSession, 'sessionId' | 'id' | 'cwd'>,
-): void {
-  const host = AilyHost.get();
-  const filePath = resolveBlocklyCommandSessionIndexFilePath(host, session.sessionId, session.cwd);
-  if (!filePath) {
-    return;
-  }
-
-  const processIds = new Set(readPersistedBlocklyCommandSessionIndexProcessIds(host, session.sessionId, session.cwd));
-  processIds.add(session.id);
-
-  try {
-    host.fs.mkdirSync(host.path.dirname(filePath), { recursive: true });
-    host.fs.writeFileSync(filePath, JSON.stringify({
-      version: 1,
-      processIds: [...processIds],
-      updatedAt: Date.now(),
-    }, null, 2), 'utf-8');
-  } catch {
-    // best-effort
-  }
-}
-
-function removePersistedBlocklyCommandSessionIndexProcessId(
-  sessionId: string,
-  processId: string,
-  projectPathHint?: string | null,
-): void {
-  const host = AilyHost.get();
-  const filePath = resolveBlocklyCommandSessionIndexFilePath(host, sessionId, projectPathHint);
-  if (!filePath || !host.fs?.existsSync?.(filePath)) {
-    return;
-  }
-
-  const nextProcessIds = readPersistedBlocklyCommandSessionIndexProcessIds(host, sessionId, projectPathHint)
-    .filter(candidate => candidate !== processId);
-
-  try {
-    if (nextProcessIds.length === 0) {
-      host.fs.unlinkSync(filePath);
-      return;
-    }
-
-    host.fs.writeFileSync(filePath, JSON.stringify({
-      version: 1,
-      processIds: nextProcessIds,
-      updatedAt: Date.now(),
-    }, null, 2), 'utf-8');
-  } catch {
-    // best-effort
-  }
-}
-
 function readPersistedBlocklyCommandSessionRecord(
   host: any,
   filePath: string,
@@ -4085,8 +3962,6 @@ function persistBlocklyCommandSessionRecord(session: ExternalTerminalSession): v
   } catch {
     // Keep runtime flow resilient if persistence fails.
   }
-
-  persistBlocklyCommandSessionIndexRecord(session);
 }
 
 function persistBlocklyCommandSessionOutput(

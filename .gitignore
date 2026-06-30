@@ -7,9 +7,6 @@
 /bazel-out
 /out
 
-# Graphify
-graphify-out
-
 # Node
 /node_modules
 npm-debug.log
