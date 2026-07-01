@@ -133,9 +133,10 @@
             <h2 class="section-title">
               <div style="position:relative;">
                 {{ 'SETTINGS.SECTIONS.DEPENDENCIES' | translate }}
-                <div class="btn ccenter link" style="position: absolute;right: -30px; top:6px" (click)="openResources()"
-                  nz-tooltip nzTooltipTitle="open resource folder">
-                  <i class="fa-light fa-folder-bookmark"></i>
+                <div class="btn ccenter link folder-open-btn" style="position: absolute;right: -30px; top:6px" (click)="openResources()"
+                  nz-tooltip [nzTooltipTitle]="'SETTINGS.FIELDS.OPEN_RESOURCE_FOLDER' | translate">
+                  <i class="fa-light fa-folder folder-icon folder-icon-close"></i>
+                  <i class="fa-light fa-folder-open folder-icon folder-icon-open"></i>
                 </div>
               </div>
               <div class="search-box">
@@ -168,29 +169,18 @@
               </div>
             </div>
           </div>
-          <!-- <div id="SETTINGS.SECTIONS.MCP" class="section">
-            <h2 class="section-title">MCP</h2>
-            <div class="right-inner">
-              <div class="board-list sscroll bborder">
-                @if(mcpServiceList.length == 0) {
-                <div class="board-item">Coming soon</div>
-                }@else{
-                @for (mcpService of mcpServiceList; track $index) {
-                <div class="board-item">
-                  <div>{{ mcpService.name }}</div>
-                  <div class="version">&#64;{{ mcpService.version }}</div>
-                  <div class="btns">
-                  </div>
-                </div>
-                }
-                }
-
-              </div>
-            </div>
-          </div> -->
           <!-- 缓存管理 -->
           <div id="SETTINGS.SECTIONS.CACHE" class="section">
-            <h2 class="section-title">{{ 'SETTINGS.SECTIONS.CACHE' | translate }}</h2>
+            <h2 class="section-title">
+              <div style="position:relative;">
+                {{ 'SETTINGS.SECTIONS.CACHE' | translate }}
+                <div class="btn ccenter link folder-open-btn" style="position: absolute;right: -30px; top:6px" (click)="openCacheFolder()"
+                  nz-tooltip [nzTooltipTitle]="'SETTINGS.FIELDS.OPEN_CACHE_FOLDER' | translate">
+                  <i class="fa-light fa-folder folder-icon folder-icon-close"></i>
+                  <i class="fa-light fa-folder-open folder-icon folder-icon-open"></i>
+                </div>
+              </div>
+            </h2>
             <div class="right-inner">
               <div class="item">
                 <div>{{ 'SETTINGS.FIELDS.CACHE_SIZE' | translate }}:</div>

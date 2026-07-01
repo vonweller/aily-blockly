@@ -88,10 +88,10 @@ export class SettingsComponent implements OnDestroy {
       name: 'SETTINGS.SECTIONS.CACHE',
       icon: 'fa-light fa-broom'
     },
-    {
-      name: 'SETTINGS.SECTIONS.DEVMODE',
-      icon: 'fa-light fa-gear-code'
-    },
+    // {
+    //   name: 'SETTINGS.SECTIONS.DEVMODE',
+    //   icon: 'fa-light fa-gear-code'
+    // },
   ];
 
   // 缓存管理
@@ -584,5 +584,9 @@ export class SettingsComponent implements OnDestroy {
 
   openResources() {
     this.electronService.openByExplorer(window['path'].getAppDataPath());
+  }
+
+  openCacheFolder() {
+    this.electronService.openByExplorer(window['path'].getAilyBuilderCachePath());
   }
 }

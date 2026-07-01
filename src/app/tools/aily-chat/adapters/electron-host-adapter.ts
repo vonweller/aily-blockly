@@ -141,6 +141,7 @@ export function createElectronHostAdapter(deps: ElectronAdapterDeps): IAilyHostA
     getUserDocuments: () => wPath.getUserDocuments(),
     getUserHome: () => wPath.getUserHome(),
     getAilyBuilderPath: () => wPath.getAilyBuilderPath?.(),
+    getAilyBuilderCachePath: () => wPath.getAilyBuilderCachePath?.(),
     getAilyBuilderBuildPath: () => wPath.getAilyBuilderBuildPath?.(),
     getAilyChildPath: () => wPath.getAilyChildPath?.(),
     getElectronPath: () => wPath.getElectronPath?.(),

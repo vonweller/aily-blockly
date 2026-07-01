@@ -170,9 +170,28 @@ ngx-simplebar {
 
   .search-box {
     position: relative;
+
     i {
       position: absolute;
       right: 5px;
+    }
+  }
+
+  .folder-open-btn {
+    .folder-icon-open {
+      display: none;
+      position: relative;
+      left: 2px;
+    }
+
+    &:hover {
+      .folder-icon-close {
+        display: none;
+      }
+
+      .folder-icon-open {
+        display: inline-block;
+      }
     }
   }
 }

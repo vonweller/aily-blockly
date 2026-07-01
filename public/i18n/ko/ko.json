@@ -313,6 +313,7 @@
             "RESOURCE_SOURCE_AUTO": "자동",
             "RESOURCE_SOURCE_PRIMARY": "기본 사이트",
             "RESOURCE_SOURCE_MIRROR": "미러 사이트",
+            "OPEN_RESOURCE_FOLDER": "리소스 폴더 열기",
             "REGION_TITLE": "서비스 지역 전환",
             "REGION_DESC": "서비스 지역을 전환하면 다시 로그인해야 합니다. 계속하시겠습니까?",
             "REGION_CONFIRM": "확인",
@@ -321,7 +322,8 @@
             "BOARD_LIST": "개발 보드 목록",
             "LIBRARY_LIST": "라이브러리 목록",
             "INSTALL": "설치",
-            "UNINSTALL": "제거"
+            "UNINSTALL": "제거",
+            "OPEN_CACHE_FOLDER": "캐시 폴더 열기"
         },
         "BUTTONS": {
             "CANCEL": "취소",
@@ -522,6 +524,9 @@
         "CIRCUIT": "회로 연결도",
         "DOCUMENTATION": "문서",
         "FEEDBACK": "피드백",
+        "DRAG_TO_MOVE": "드래그하여 이동",
+        "RELOAD_PROJECT": "프로젝트 다시 불러오기",
+        "CLEAR_CACHE": "캐시 지우기",
         "NO_PINMAP": "이 보드에 대한 핀 맵을 사용할 수 없습니다",
         "PINMAP_PARSE_ERROR": "핀 맵 파싱 실패",
         "NO_DOCUMENTATION": "이 보드에 대한 문서를 사용할 수 없습니다",
