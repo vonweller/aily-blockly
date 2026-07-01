@@ -399,7 +399,7 @@ async function processLibrary(lib, librariesPath, currentProjectPath, za7Path, d
             const sourceZipPath = path.join(currentProjectPath, 'node_modules', lib, 'src.7z');
             if (fs.existsSync(sourceZipPath)) {
                 try {
-                    execSync(`"${za7Path}" x "${sourceZipPath}" -o"${sourcePath}" -y`);
+                    execSync(`"${za7Path}" x "${sourceZipPath}" -o"${path.dirname(sourcePath)}" -y`);
                 } catch (error) {
                     return { targetNames: [], success: false, error: `解压失败: ${error.message}` };
                 }
