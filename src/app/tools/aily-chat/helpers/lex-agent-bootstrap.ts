@@ -204,6 +204,7 @@ function normalizeBlocklyCommandSessionStatus(
 ): ExternalTerminalSession['status'] {
   switch (status) {
     case 'running':
+      return running ? 'running' : 'cancelled';
     case 'completed':
     case 'failed':
     case 'timeout':
@@ -213,6 +214,16 @@ function normalizeBlocklyCommandSessionStatus(
     default:
       return running ? 'running' : 'completed';
   }
+}
+
+function resolvePersistedBlocklyCommandSessionRunningState(
+  processId: string,
+  persistedRunning: boolean,
+): boolean {
+  if (!persistedRunning || !processId) {
+    return false;
+  }
+  return blocklyCommandSessions.get(processId)?.running === true;
 }
 
 function registerBlocklyCommandSessionController(terminal: BlocklyExternalTerminal | undefined): void {
@@ -3898,14 +3909,14 @@ function createBlocklyCommandSessionSummaryFromPersistedRecord(
   const removedAt = typeof record.removedAt === 'number' && Number.isFinite(record.removedAt)
     ? record.removedAt
     : undefined;
-  const running = record.running === true;
+  const running = resolvePersistedBlocklyCommandSessionRunningState(processId, record.running === true);
   const normalizedStatus = normalizeBlocklyCommandSessionStatus(
     typeof record.status === 'string' ? record.status : undefined,
     running,
   );
   const lastTimestamp = running
     ? Date.now()
-    : completedAt ?? lastOutputAt ?? Date.now();
+    : completedAt ?? lastOutputAt ?? startedAt;
 
   return {
     processId,

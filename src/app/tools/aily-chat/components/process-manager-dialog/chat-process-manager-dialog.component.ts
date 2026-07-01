@@ -402,7 +402,11 @@ export class ChatProcessManagerDialogComponent {
     }
 
     const snapshot = await getBlocklyCommandSessionStatus(process.processId);
-    const persistedFromOutputPath = this.readPersistedSummaryFromOutputFilePath(process.outputFilePath, process.processId);
+    const persistedFromOutputPath = this.readPersistedSummaryFromOutputFilePath(
+      process.outputFilePath,
+      process.processId,
+      snapshot,
+    );
     const detailProcess = this.mergeDetailProcess(process, persistedFromOutputPath, snapshot);
     this.selectedProcessDetail = detailProcess;
     this.selectedProcessOutput = readChatProcessOutputFile(detailProcess.outputFilePath || process.outputFilePath)
@@ -713,6 +717,7 @@ export class ChatProcessManagerDialogComponent {
   private readPersistedSummaryFromOutputFilePath(
     outputFilePath: string | undefined,
     processId: string,
+    snapshot: Awaited<ReturnType<typeof getBlocklyCommandSessionStatus>>,
   ): ChatRuntimeHostSessionProcessSummary | null {
     const normalizedOutputFilePath = typeof outputFilePath === 'string' ? outputFilePath.trim() : '';
     if (!normalizedOutputFilePath) {
@@ -765,6 +770,10 @@ export class ChatProcessManagerDialogComponent {
       const bytesTotal = typeof parsed.bytesTotal === 'number' && Number.isFinite(parsed.bytesTotal)
         ? parsed.bytesTotal
         : 0;
+      const running = parsed.running === true && snapshot?.running === true;
+      const status = typeof parsed.status === 'string'
+        ? (parsed.status === 'running' && !running ? 'cancelled' : parsed.status)
+        : 'failed';
       const elapsedMs = Math.max(0, (completedAt ?? lastOutputAt ?? Date.now()) - startedAt);
 
       return {
@@ -775,8 +784,8 @@ export class ChatProcessManagerDialogComponent {
           : resolvedProcessId,
         command: typeof parsed.command === 'string' && parsed.command.trim() ? parsed.command.trim() : resolvedProcessId,
         cwd: typeof parsed.cwd === 'string' ? parsed.cwd : '',
-        status: typeof parsed.status === 'string' ? parsed.status as ChatRuntimeHostSessionProcessSummary['status'] : 'failed',
-        running: parsed.running === true,
+        status: status as ChatRuntimeHostSessionProcessSummary['status'],
+        running,
         startedAt,
         elapsedMs,
         bytesTotal,
