@@ -32,6 +32,7 @@ import {
   cloneTurnResponseModelSidecar,
   normalizeTurnResponseSummaryPreview,
 } from './turn-response-response-model';
+import { isTerminalSessionToolName } from '../core/tool-name-normalizer';
 
 function applyHostStreamResponseProgressUpdate(
   baseTurn: TurnResponseTurn,
@@ -2918,7 +2919,72 @@ function normalizePersistedTurnResponseParts(parts: readonly TurnResponsePart[])
     normalizedParts[existingIndex] = mergePersistedTurnResponsePart(normalizedParts[existingIndex], part);
   }
 
-  return normalizedParts;
+  return removePersistedTerminalOwnedToolCalls(normalizedParts);
+}
+
+function removePersistedTerminalOwnedToolCalls(parts: readonly TurnResponsePart[]): TurnResponsePart[] {
+  const owners = collectPersistedTerminalOwners(parts);
+  if (owners.toolCallIds.size === 0 && owners.sessionIds.size === 0) {
+    return [...parts];
+  }
+
+  return parts.filter(part => !isPersistedTerminalOwnedToolCall(part, owners));
+}
+
+function collectPersistedTerminalOwners(parts: readonly TurnResponsePart[]): { toolCallIds: Set<string>; sessionIds: Set<string> } {
+  const toolCallIds = new Set<string>();
+  const sessionIds = new Set<string>();
+
+  for (const part of parts) {
+    if (part.type !== 'terminal') {
+      continue;
+    }
+
+    const terminal = part as Extract<TurnResponsePart, { type: 'terminal' }>;
+    if (terminal.toolCallId) {
+      toolCallIds.add(terminal.toolCallId);
+    }
+    for (const sourceToolCallId of terminal.sourceToolCallIds ?? []) {
+      if (sourceToolCallId) {
+        toolCallIds.add(sourceToolCallId);
+      }
+    }
+    for (const sessionId of [terminal.processId, terminal.outputSessionId, terminal.terminalId]) {
+      if (sessionId) {
+        sessionIds.add(sessionId);
+      }
+    }
+  }
+
+  return { toolCallIds, sessionIds };
+}
+
+function isPersistedTerminalOwnedToolCall(
+  part: TurnResponsePart,
+  owners: { toolCallIds: ReadonlySet<string>; sessionIds: ReadonlySet<string> },
+): boolean {
+  if (part.type !== 'tool_call' || !isTerminalSessionToolName(part.toolName)) {
+    return false;
+  }
+
+  if (owners.toolCallIds.has(part.toolCallId)) {
+    return true;
+  }
+
+  const args = asPersistedRecord(part.args);
+  const metadata = asPersistedRecord(part.metadata);
+  const sessionIds = [
+    firstPersistedString(args?.['processId']),
+    firstPersistedString(args?.['outputSessionId']),
+    firstPersistedString(args?.['terminalId']),
+    firstPersistedString(args?.['id']),
+    firstPersistedString(metadata?.['processId']),
+    firstPersistedString(metadata?.['outputSessionId']),
+    firstPersistedString(metadata?.['terminalId']),
+    firstPersistedString(metadata?.['id']),
+  ].filter((value): value is string => !!value);
+
+  return sessionIds.some(sessionId => owners.sessionIds.has(sessionId));
 }
 
 function getPersistedTurnDisplayContent(turn: TurnResponseTurn): string {

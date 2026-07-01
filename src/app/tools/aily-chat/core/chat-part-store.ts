@@ -1098,6 +1098,7 @@ export class ChatPartStore {
       ...existing,
       ...terminal,
       partId: existing.partId || terminal.partId,
+      toolCallId: existing.toolCallId || terminal.toolCallId,
       command: terminal.command || existing.command,
       output,
       stderr,
