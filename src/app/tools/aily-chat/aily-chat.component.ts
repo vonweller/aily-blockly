@@ -1008,7 +1008,7 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
     if (resolvedToolId) {
       const config = getChildToolConfig(resolvedToolId);
       this.uiService.openToolWindow(resolvedToolId, {
-        title: config ? this.translate.instant(config.titleKey) : resolvedToolId,
+        title: this.resolveChildToolDisplayName(resolvedToolId, config),
       });
       return;
     }
@@ -1128,6 +1128,24 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
       ? payload as ChildToolSessionListItem[]
       : [];
     this.cdr.markForCheck();
+  }
+
+  private resolveChildToolDisplayName(toolId: string, config = getChildToolConfig(toolId)): string {
+    if (!config) {
+      return toolId;
+    }
+
+    const globalName = this.translate.instant(config.namespace);
+    if (typeof globalName === 'string' && globalName && globalName !== config.namespace) {
+      return globalName;
+    }
+
+    const title = this.translate.instant(config.titleKey);
+    if (typeof title === 'string' && title && title !== config.titleKey) {
+      return title;
+    }
+
+    return toolId;
   }
 
   returnStandaloneSurfaceToMain(): void {

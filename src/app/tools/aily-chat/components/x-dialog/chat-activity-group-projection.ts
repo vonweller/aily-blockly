@@ -34,6 +34,7 @@ import { getMarkdownContentWindow } from '../../core/markdown-content-store';
 import { getThinkContentWindow } from '../../core/think-content-store';
 import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
 import { chatI18n } from '../../helpers/chat-i18n';
+import { resolveChildToolIdFromProcess } from '../../helpers/child-tool-process-summary';
 import type {
   ActivityApprovalDisplayData,
   ActivityApprovalSummaryDisplayData,
@@ -798,11 +799,17 @@ function buildTerminalToolbarActions(part: TerminalPart): readonly ActivityToolb
   }
 
   if (part.processId) {
+    const childToolId = resolveChildToolIdFromProcess({
+      processId: part.processId,
+      command: part.command,
+      cwd: part.cwd,
+      outputFilePath: part.outputFilePath,
+    });
     actions.push({
       id: 'open-process-window',
       iconClass: 'fa-light fa-square-terminal',
-      label: chatI18n('AILY_CHAT.PROCESS_ACTION_OPEN_WINDOW'),
-      tooltip: chatI18n('AILY_CHAT.PROCESS_ACTION_OPEN_WINDOW_TOOLTIP'),
+      label: chatI18n(childToolId ? 'AILY_CHAT.PROCESS_ACTION_CONTROL_PANEL' : 'AILY_CHAT.PROCESS_ACTION_OPEN_WINDOW'),
+      tooltip: chatI18n(childToolId ? 'AILY_CHAT.PROCESS_ACTION_CONTROL_PANEL_TOOLTIP' : 'AILY_CHAT.PROCESS_ACTION_OPEN_WINDOW_TOOLTIP'),
       data: {
         processId: part.processId,
         command: part.command,

@@ -54,6 +54,8 @@ import { CommonModule } from '@angular/common';
       overflow-wrap: break-word;
       background: transparent;
       border: 0;
+      user-select: none;
+      -webkit-user-select: none;
     }
     .cmdp-meta {
       margin-bottom: 4px;
@@ -64,6 +66,8 @@ import { CommonModule } from '@angular/common';
       word-break: break-word;
       overflow-wrap: break-word;
       letter-spacing: 0.01em;
+      user-select: none;
+      -webkit-user-select: none;
     }
   `],
 })

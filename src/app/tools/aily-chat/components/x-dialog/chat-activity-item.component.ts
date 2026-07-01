@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, ChangeDetectorRef, Component, Input, OnChanges, SimpleChanges, forwardRef, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { TranslateModule } from '@ngx-translate/core';
+import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { XMarkdownComponent } from 'ngx-x-markdown';
 import type { ComponentMap } from 'ngx-x-markdown';
 
@@ -30,6 +30,7 @@ import {
 import { getBlocklyArtifactReferenceLabel, resolveBlocklyArtifactReferenceTarget } from '../../helpers/chat-artifact-reference';
 import { openChatProcessWindow } from '../../helpers/chat-process-window';
 import { resolveChildToolIdFromProcess } from '../../helpers/child-tool-process-summary';
+import { getChildToolConfig } from '../../../../configs/tool.config';
 import {
   ChatRuntimeInteractionHostService,
   type RuntimeCommandSessionActionResult,
@@ -2255,6 +2256,7 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
   `],
 })
 export class ChatActivityItemComponent implements OnChanges {
+  private readonly translate = inject(TranslateService);
   @Input({ required: true }) item!: ActivityGroupDisplayItem;
   @Input() sessionId = '';
   @Input() first = false;
@@ -2592,7 +2594,7 @@ export class ChatActivityItemComponent implements OnChanges {
       subappName: typeof action.data?.['subappName'] === 'string' ? action.data['subappName'] : undefined,
     });
     if (toolId) {
-      AilyHost.get().ui?.openToolWindow?.(toolId, { title: toolId });
+      AilyHost.get().ui?.openToolWindow?.(toolId, { title: this.resolveChildToolDisplayName(toolId) });
       return;
     }
 
@@ -2607,6 +2609,25 @@ export class ChatActivityItemComponent implements OnChanges {
         : undefined,
       command,
     });
+  }
+
+  private resolveChildToolDisplayName(toolId: string): string {
+    const config = getChildToolConfig(toolId);
+    if (!config) {
+      return toolId;
+    }
+
+    const globalName = this.translate.instant(config.namespace);
+    if (typeof globalName === 'string' && globalName && globalName !== config.namespace) {
+      return globalName;
+    }
+
+    const title = this.translate.instant(config.titleKey);
+    if (typeof title === 'string' && title && title !== config.titleKey) {
+      return title;
+    }
+
+    return toolId;
   }
 
   hasDetailContent(): boolean {

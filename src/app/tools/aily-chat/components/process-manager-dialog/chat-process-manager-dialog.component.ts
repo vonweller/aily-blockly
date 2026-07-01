@@ -168,12 +168,10 @@ export class ChatProcessManagerDialogComponent {
   openProcessWindow(process: ChatRuntimeHostSessionProcessSummary): void {
     const toolId = resolveChildToolIdFromProcess(process);
     if (toolId) {
-      if (toolId) {
-        const config = getChildToolConfig(toolId);
-        this.uiService.openToolWindow(toolId, {
-          title: config ? this.translate.instant(config.titleKey) : toolId,
-        });
-      }
+      const config = getChildToolConfig(toolId);
+      this.uiService.openToolWindow(toolId, {
+        title: this.resolveChildToolDisplayName(toolId, config),
+      });
       return;
     }
     openChatProcessWindow({
@@ -257,8 +255,19 @@ export class ChatProcessManagerDialogComponent {
   }
 
   resolveProcessPrimaryLabel(process: ChatRuntimeHostSessionProcessSummary): string {
+    const toolId = resolveChildToolIdFromProcess(process);
+    if (toolId) {
+      return this.resolveChildToolDisplayName(toolId);
+    }
+
     const displayName = resolveChildToolProcessDisplayName(process);
     return displayName || process.command;
+  }
+
+  resolveOpenActionLabel(process: ChatRuntimeHostSessionProcessSummary): string {
+    return resolveChildToolIdFromProcess(process)
+      ? 'AILY_CHAT.PROCESS_ACTION_CONTROL_PANEL'
+      : 'AILY_CHAT.PROCESS_ACTION_OPEN_WINDOW';
   }
 
   formatStartedAt(process: ChatRuntimeHostSessionProcessSummary): string {
@@ -386,7 +395,7 @@ export class ChatProcessManagerDialogComponent {
 
     if (isChildToolProcessSummary(process)) {
       this.selectedProcessDetail = process;
-      this.selectedProcessOutput = '';
+      this.selectedProcessOutput = await this.readChildToolProcessOutput(process);
       this.selectedProcessStatusLabel = this.summarizeStatus(process);
       this.cdr.markForCheck();
       return;
@@ -608,6 +617,96 @@ export class ChatProcessManagerDialogComponent {
     } catch (error) {
       console.warn('[ChatProcessManager] Failed to read child tool sessions:', error);
       return [];
+    }
+  }
+
+  private async readChildToolProcessOutput(process: ChatRuntimeHostSessionProcessSummary): Promise<string> {
+    const toolId = resolveChildToolIdFromProcess(process);
+    if (!toolId) {
+      return '';
+    }
+
+    try {
+      const sessions = await window['childToolSession']?.list?.();
+      const session = Array.isArray(sessions)
+        ? (sessions as ChildToolSessionListItem[]).find(candidate => candidate.toolId === toolId)
+        : null;
+      if (!session) {
+        return '';
+      }
+
+      const lines: string[] = [
+        `status: ${process.running ? 'running' : process.status || 'completed'}`,
+        `toolId: ${toolId}`,
+      ];
+
+      if (session.streamId) {
+        lines.push(`processId: ${session.streamId}`);
+      }
+      if (typeof session.pid === 'number') {
+        lines.push(`pid: ${session.pid}`);
+      }
+      if (session.cwd) {
+        lines.push(`cwd: ${session.cwd}`);
+      }
+      if (session.command) {
+        lines.push(`command: ${session.command}`);
+      }
+
+      lines.push('');
+      lines.push('stdout:');
+      lines.push(JSON.stringify({
+        event: 'ready',
+        data: this.sanitizeChildToolHostInfo(session.hostInfo),
+      }, null, 2));
+
+      return lines.join('\n');
+    } catch (error) {
+      console.warn('[ChatProcessManager] Failed to read child tool output preview:', error);
+      return '';
+    }
+  }
+
+  private resolveChildToolDisplayName(toolId: string, config = getChildToolConfig(toolId)): string {
+    if (!config) {
+      return toolId;
+    }
+
+    const globalName = this.translate.instant(config.namespace);
+    if (typeof globalName === 'string' && globalName && globalName !== config.namespace) {
+      return globalName;
+    }
+
+    const title = this.translate.instant(config.titleKey);
+    if (typeof title === 'string' && title && title !== config.titleKey) {
+      return title;
+    }
+
+    return toolId;
+  }
+
+  private sanitizeChildToolHostInfo(hostInfo: unknown): unknown {
+    if (!hostInfo || typeof hostInfo !== 'object') {
+      return hostInfo;
+    }
+
+    const normalized = { ...(hostInfo as Record<string, unknown>) };
+    for (const key of ['url', 'wsUrl', 'shutdownUrl'] as const) {
+      const value = normalized[key];
+      normalized[key] = typeof value === 'string' ? this.sanitizeUrl(value) : value;
+    }
+    return normalized;
+  }
+
+  private sanitizeUrl(url: string): string {
+    try {
+      const parsed = new URL(url);
+      if (parsed.searchParams.has('token')) {
+        parsed.searchParams.set('token', '<redacted>');
+      }
+      return parsed.toString();
+    } catch {
+      return url.replace(/([?&]token=)[^&]+/g, '$1<redacted>');
     }
   }
 

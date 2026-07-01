@@ -139,6 +139,7 @@ export function buildChildToolProcessSummaries(
         cwd,
         status: running ? 'running' : 'completed',
         running,
+        background: running,
         ...(typeof session.pid === 'number'
           ? { pid: session.pid }
           : typeof session.hostInfo?.pid === 'number'
