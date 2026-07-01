@@ -7,7 +7,12 @@ interface TurnControlLike {
   getRequestContent(turnId: string): string | undefined;
   getLastRoundId(turnId: string): string | undefined;
   getCurrentRequestMetadata?(): TurnRequest['metadata'] | undefined;
-  startTurn(content: string, displayContent?: string, metadata?: TurnRequest['metadata']): string | undefined;
+  startTurn(
+    content: string,
+    displayContent?: string,
+    metadata?: TurnRequest['metadata'],
+    options?: { readonly turnId?: string },
+  ): string | undefined;
   completeTurn(response: string): void;
   failTurn(): void;
   removeIncomplete(): boolean;
@@ -45,8 +50,13 @@ export class LexTurnControlBridge {
     return this.turnControl.getCurrentRequestMetadata?.();
   }
 
-  start(content: string, displayContent?: string, metadata?: TurnRequest['metadata']): string | undefined {
-    return this.turnControl.startTurn(content, displayContent, metadata);
+  start(
+    content: string,
+    displayContent?: string,
+    metadata?: TurnRequest['metadata'],
+    options?: { readonly turnId?: string },
+  ): string | undefined {
+    return this.turnControl.startTurn(content, displayContent, metadata, options);
   }
 
   complete(response: string): void {

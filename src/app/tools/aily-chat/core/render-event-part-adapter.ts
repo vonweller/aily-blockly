@@ -64,7 +64,6 @@ export type RenderEventPartStoreAccess = Pick<
   | 'updateConfirmationResultForHandle'
   | 'updateSubagentForHandle'
   | 'upsertTerminalForHandle'
-  | 'materializeFinalMarkdownAsPlanForHandle'
 >;
 
 function hasUsableStoreHandle(
@@ -420,10 +419,7 @@ export class RenderEventPartAdapter {
     this._toolOriginHandles.clear();
   }
 
-  finalize(
-    handle: ChatPartStoreOpaqueHandle | null,
-    options: { readonly materializeFinalMarkdownAsPlan?: boolean } = {},
-  ): void {
+  finalize(handle: ChatPartStoreOpaqueHandle | null): void {
     if (!hasUsableStoreHandle(handle)) {
       this.reset();
       return;
@@ -439,8 +435,6 @@ export class RenderEventPartAdapter {
 
     if (this._planStreamState === 'plan') {
       this._store.completePlanHandle(handle);
-    } else if (options.materializeFinalMarkdownAsPlan === true) {
-      this._store.materializeFinalMarkdownAsPlanForHandle(handle);
     }
 
     this.reset();
@@ -725,7 +719,8 @@ export class RenderEventPartAdapter {
       return;
     }
 
-    const terminal = extractTerminalPart(event.toolCallId, event.result);
+    const terminal = extractTerminalPart(event.toolCallId, event.result)
+      ?? extractTerminalReadPart(event);
     if (!terminal) {
       return;
     }
@@ -1113,6 +1108,65 @@ function extractTerminalPart(toolCallId: string, result: Extract<RenderEvent, { 
   terminal.exitCode = parsed.exitCode;
   terminal.isRunning = parsed.isRunning;
   return terminal;
+}
+
+function extractTerminalReadPart(event: Extract<RenderEvent, { type: 'tool_call_end' }>) {
+  if (!isTerminalReadToolName(event.toolName)) {
+    return null;
+  }
+
+  const input = asRecord((event as { input?: unknown }).input);
+  const processId = asString(input?.['processId'])
+    || asString(input?.['outputSessionId'])
+    || asString(input?.['terminalId'])
+    || asString(input?.['id']);
+  if (!processId) {
+    return null;
+  }
+
+  const rawText = extractToolResultText(event.result);
+  const { headers, body } = splitTerminalReadResult(rawText);
+  const output = body.trimEnd();
+  if (!output) {
+    return null;
+  }
+
+  const terminal = mkTerminal('', event.toolCallId, undefined, {
+    processId,
+    outputSessionId: asString(input?.['outputSessionId']) || processId,
+    terminalId: asString(input?.['terminalId']),
+    status: headers.get('status'),
+    bytesTotal: asNumber(headers.get('bytesTotal')),
+    outputUpdateKind: 'snapshot',
+  });
+  terminal.output = output;
+  terminal.stderr = '';
+  terminal.isRunning = headers.get('status') === 'running';
+  return terminal;
+}
+
+function isTerminalReadToolName(toolName: string | undefined): boolean {
+  return toolName === 'command_read'
+    || toolName === 'command_tail'
+    || toolName === 'command_status'
+    || toolName === 'get_terminal_output';
+}
+
+function splitTerminalReadResult(text: string): { headers: Map<string, string>; body: string } {
+  const normalized = text.replace(/\r\n/g, '\n');
+  const separatorIndex = normalized.indexOf('\n\n');
+  const headerText = separatorIndex >= 0 ? normalized.slice(0, separatorIndex) : '';
+  const body = separatorIndex >= 0 ? normalized.slice(separatorIndex + 2) : normalized;
+  const headers = new Map<string, string>();
+
+  for (const line of headerText.split('\n')) {
+    const match = /^([A-Za-z][A-Za-z0-9_-]*)\s*:\s*(.*)$/.exec(line.trim());
+    if (match) {
+      headers.set(match[1], match[2]);
+    }
+  }
+
+  return { headers, body };
 }
 
 function extractToolResultText(result: Extract<RenderEvent, { type: 'tool_call_end' }>['result']): string {

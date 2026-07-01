@@ -285,7 +285,7 @@ export interface PlanStep {
   status?: 'pending' | 'inProgress' | 'completed';
 }
 
-export interface PlanPart {
+export interface PlanPart extends ChatPartScope {
   type: 'plan';
   partId?: string;
   status: 'streaming' | 'completed' | 'failed';
@@ -361,6 +361,7 @@ export function isSubagentChildPart(part: ChatPart | null | undefined): boolean 
 
   const scope = chatPartScopeOf(part);
   return scope?.sourceAgentRole === 'subagent'
+    || typeof scope?.subAgentInvocationId === 'string'
     || typeof scope?.parentToolCallId === 'string';
 }
 
@@ -536,8 +537,11 @@ export function mkPlan(
   text: string,
   status: PlanPart['status'] = 'completed',
   partId = 'plan:proposed',
-  options: Partial<Pick<PlanPart, 'steps' | 'assumptions' | 'verification' | 'source'>> = {},
+  options: Partial<Pick<PlanPart, 'steps' | 'assumptions' | 'verification' | 'source'>> & {
+    readonly scope?: ChatPartScope;
+  } = {},
 ): PlanPart {
+  const scope = normalizeChatPartScope(options.scope);
   return {
     type: 'plan',
     partId,
@@ -547,6 +551,7 @@ export function mkPlan(
     ...(options.assumptions ? { assumptions: options.assumptions } : {}),
     ...(options.verification ? { verification: options.verification } : {}),
     ...(options.source ? { source: options.source } : {}),
+    ...(scope ? scope : {}),
   };
 }
 
