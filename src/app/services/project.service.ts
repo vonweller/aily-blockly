@@ -2428,6 +2428,10 @@ export class ProjectService {
    * @returns 返回构建路径
    */
   async getBuildPath(): Promise<string> {
+    if (this.currentProjectPath) {
+        return window['path'].join(this.currentProjectPath, '.build');
+    }
+
     const root = this.currentProjectPath;
     const aciPath = window['path'].join(root, 'project.aci');
     // 与 child/scripts/aily-code-project.js 中分段规则保持一致

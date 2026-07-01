@@ -1,5 +1,10 @@
 
 export async function getDefaultBuildPath(sketchFilePath: string): Promise<string> {
+    if (sketchFilePath) {
+        const projectPath = window['path'].resolve(window['path'].dirname(sketchFilePath), '..', '..');
+        return window['path'].join(projectPath, '.build');
+    }
+
     console.log("sketchFilePath: ", sketchFilePath);
     const sketchMd5Value = await window["tools"].calculateMD5(window['path'].resolve(sketchFilePath));
     const sketchMd5 = sketchMd5Value.slice(0, 8);

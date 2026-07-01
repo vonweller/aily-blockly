@@ -1682,15 +1682,18 @@ function loadEnv() {
   if (isWin32) {
     // 设置Windows的环境变量
     process.env.AILY_APPDATA_PATH = conf["appdata_path"]["win32"].replace('%HOMEPATH%', os.homedir());
-    process.env.AILY_BUILDER_BUILD_PATH = path.join(os.homedir(), "AppData", "Local", "aily-builder", "project");
+    process.env.AILY_BUILDER_CACHE_PATH = path.join(os.homedir(), "AppData", "Local", "aily-builder");
+    process.env.AILY_BUILDER_BUILD_PATH = path.join(process.env.AILY_BUILDER_CACHE_PATH, "project");
   } else if (isDarwin) {
     // 设置macOS的环境变量
     process.env.AILY_APPDATA_PATH = conf["appdata_path"]["darwin"].replace('~', os.homedir());
-    process.env.AILY_BUILDER_BUILD_PATH = path.join(os.homedir(), "Library", "aily-builder", "project");
+    process.env.AILY_BUILDER_CACHE_PATH = path.join(os.homedir(), "Library", "aily-builder");
+    process.env.AILY_BUILDER_BUILD_PATH = path.join(process.env.AILY_BUILDER_CACHE_PATH, "project");
   } else {
     // 设置Linux的环境变量
     process.env.AILY_APPDATA_PATH = conf["appdata_path"]["linux"];
-    process.env.AILY_BUILDER_BUILD_PATH = path.join(os.homedir(), ".cache", "aily-builder", "project");
+    process.env.AILY_BUILDER_CACHE_PATH = path.join(os.homedir(), ".cache", "aily-builder");
+    process.env.AILY_BUILDER_BUILD_PATH = path.join(process.env.AILY_BUILDER_CACHE_PATH, "project");
   }
 
   // 确保应用数据目录存在
@@ -1699,6 +1702,14 @@ function loadEnv() {
       fs.mkdirSync(process.env.AILY_APPDATA_PATH, { recursive: true });
     } catch (error) {
       console.error("创建应用数据目录失败:", error);
+    }
+  }
+
+  if (!fs.existsSync(process.env.AILY_BUILDER_CACHE_PATH)) {
+    try {
+      fs.mkdirSync(process.env.AILY_BUILDER_CACHE_PATH, { recursive: true });
+    } catch (error) {
+      console.error("Failed to create aily-builder cache path:", error);
     }
   }
 

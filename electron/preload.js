@@ -17,10 +17,12 @@ const pathApi = {
   getAilyChildPath: () => process.env.AILY_CHILD_PATH,
   getAppDataPath: () => process.env.AILY_APPDATA_PATH,
   getAilyBuilderPath: () => process.env.AILY_BUILDER_PATH,
+  getAilyBuilderCachePath: () => process.env.AILY_BUILDER_CACHE_PATH,
   getAilyBuilderBuildPath: () => process.env.AILY_BUILDER_BUILD_PATH,
   getUserDocuments: () => require("os").homedir() + `${pt}Documents`,
   isExists: (path) => existsSync(path),
   getElectronPath: () => {
+    // 当 preload.js 从 asar 解包后，将路径重定向到 asar 内部以便 fs 操作正常工作
     if (__dirname.includes('app.asar.unpacked')) {
       return __dirname.replace('app.asar.unpacked', 'app.asar');
     }
