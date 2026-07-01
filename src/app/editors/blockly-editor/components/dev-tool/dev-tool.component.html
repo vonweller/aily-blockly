@@ -1,5 +1,5 @@
 <div #devtoolBox class="devtool-box" [style.left.px]="currentX" [style.bottom.px]="currentY"
-    [class.dragging]="isDragging" [class.position-ready]="positionReady">
+    [class.dragging]="isDragging" [class.position-ready]="positionReady" [class.viewport-adjusting]="isViewportAdjusting">
     <div class="drag-handle" (mousedown)="onDragStart($event)" nz-tooltip [nzTooltipTitle]="'FLOAT_SIDER.DRAG_TO_MOVE' | translate">
         <i class="fa-solid fa-grip-dots-vertical"></i>
     </div>
