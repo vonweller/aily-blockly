@@ -14,6 +14,7 @@ import { ThemeService } from '../../../../services/theme.service';
 import { UiService } from '../../../../services/ui.service';
 import { WorkflowService, ProcessState } from '../../../../services/workflow.service';
 import { ImageViewerComponent } from '../../../../components/image-viewer/image-viewer.component';
+import { BackgroundAgentService } from '../../../../services/background-agent.service';
 
 @Component({
   selector: 'app-dev-tool',
@@ -73,10 +74,12 @@ export class DevToolComponent implements OnInit, AfterViewInit, OnDestroy {
     private translate: TranslateService,
     private authService: AuthService,
     private themeService: ThemeService,
+    private backgroundAgent: BackgroundAgentService,
     private injector: Injector
   ) { }
 
   ngOnInit() {
+    void this.backgroundAgent;
     const devmode = this.ensureDevModeConfig();
     this._autoSave = devmode.autoSave ?? true;
     this.loadBoardInfo();
