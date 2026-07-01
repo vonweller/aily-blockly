@@ -21,6 +21,10 @@
         visibility: visible;
     }
 
+    &.viewport-adjusting {
+        transition: none;
+    }
+
     &.dragging {
         transition: none;
         opacity: 0.8;
