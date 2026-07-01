@@ -65,6 +65,13 @@ import { ChatProcessManagerDialogComponent } from './components/process-manager-
 import { isSessionLifecycleSupersededError, readSessionLifecycleRestoreErrorDetails } from './helpers/session-lifecycle.helper';
 import { openChatProcessWindow } from './helpers/chat-process-window';
 import {
+  buildChildToolProcessSummaries,
+  collapseActiveChildToolServeProcesses,
+  resolveChildToolIdFromProcess,
+  type ChildToolSessionListItem,
+} from './helpers/child-tool-process-summary';
+import { getChildToolConfig } from '../../configs/tool.config';
+import {
   listPersistedBlocklyCommandSessionSnapshots,
   listPersistedBlocklyProjectCommandSessionSnapshots,
 } from './helpers/lex-agent-bootstrap';
@@ -251,6 +258,8 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
   private readonly debugBrowserChangeSubscription: Subscription;
   private readonly sessionViewModelChangeSubscription: Subscription;
   private readonly runtimeProcessSnapshotSubscription: { dispose(): void };
+  private childToolSessionStateCleanup: (() => void) | null = null;
+  private childToolSessions: readonly ChildToolSessionListItem[] = [];
   private runtimeInteractionRevealEffect: { destroy(): void } | null = null;
   private runtimeInteractionRevealTimer: ReturnType<typeof setTimeout> | null = null;
   private lastRuntimeInteractionRevealKey = '';
@@ -490,6 +499,10 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
       initializeEngine: () => this.engine.init(this.chatTextarea ?? null),
       detachEngineView: () => this.engine.detachView(),
     });
+    this.childToolSessionStateCleanup = window['childToolSession']?.onStateChanged?.((payload: unknown) => {
+      this.updateChildToolSessions(payload);
+    }) ?? null;
+    void this.refreshChildToolSessions();
   }
 
   shouldShowStopPrimaryAction(): boolean {
@@ -924,6 +937,8 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
     this.debugBrowserChangeSubscription.unsubscribe();
     this.sessionViewModelChangeSubscription.unsubscribe();
     this.runtimeProcessSnapshotSubscription.dispose();
+    this.childToolSessionStateCleanup?.();
+    this.childToolSessionStateCleanup = null;
     this.disconnectDialogContentObserver();
     this.disconnectSessionViewportObserver();
     this.cancelDialogVirtualRafs();
@@ -971,9 +986,30 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
     });
   }
 
-  openProcessWindowForCurrentSession(processId: string, outputSessionId?: string, outputFilePath?: string, command?: string): void {
+  openProcessWindowForCurrentSession(
+    processId: string,
+    outputSessionId?: string,
+    outputFilePath?: string,
+    command?: string,
+    subappName?: string,
+  ): void {
     const sessionId = this.getCurrentSessionId();
     if (!sessionId || !processId) {
+      return;
+    }
+    const toolId = resolveChildToolIdFromProcess({ processId, command, subappName });
+    const resolvedToolId = toolId || resolveChildToolIdFromProcess({
+      processId,
+      command,
+      subappName,
+      outputFilePath,
+      cwd: this.resolveCurrentProjectPathForProcessUi(),
+    });
+    if (resolvedToolId) {
+      const config = getChildToolConfig(resolvedToolId);
+      this.uiService.openToolWindow(resolvedToolId, {
+        title: config ? this.translate.instant(config.titleKey) : resolvedToolId,
+      });
       return;
     }
     openChatProcessWindow({
@@ -996,13 +1032,16 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
   private readCurrentSessionProcesses(): readonly ChatRuntimeHostSessionProcessSummary[] {
     const sessionId = this.getCurrentSessionId();
     if (!sessionId) {
-      return [];
+      return this.readActiveChildToolProcesses();
     }
     const snapshot = this.runtimeInteractionHost.readSnapshot(sessionId);
     const liveProcesses = Array.isArray(snapshot.processes) ? snapshot.processes : [];
     const projectPathHint = this.chatHistoryService.findEntry(sessionId)?.projectPath ?? null;
     const persistedProcesses = listPersistedBlocklyCommandSessionSnapshots(sessionId, projectPathHint);
-    return this.mergeProcessSummaries(liveProcesses, persistedProcesses);
+    return this.mergeProcessSummaries(
+      [...liveProcesses, ...this.readActiveChildToolProcesses()],
+      persistedProcesses,
+    );
   }
 
   private readCurrentProjectProcesses(): readonly ChatRuntimeHostSessionProcessSummary[] {
@@ -1014,12 +1053,15 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
     const persistedProcesses = listPersistedBlocklyProjectCommandSessionSnapshots(projectPath);
     const sessionId = this.getCurrentSessionId();
     if (!sessionId) {
-      return persistedProcesses;
+      return this.mergeProcessSummaries(this.readActiveChildToolProcesses(), persistedProcesses);
     }
 
     const snapshot = this.runtimeInteractionHost.readSnapshot(sessionId);
     const liveProcesses = Array.isArray(snapshot.processes) ? snapshot.processes : [];
-    return this.mergeProcessSummaries(liveProcesses, persistedProcesses);
+    return this.mergeProcessSummaries(
+      [...liveProcesses, ...this.readActiveChildToolProcesses()],
+      persistedProcesses,
+    );
   }
 
   private readVisibleProcessScopeProcesses(): readonly ChatRuntimeHostSessionProcessSummary[] {
@@ -1060,7 +1102,32 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
           }
         : process);
     }
-    return [...merged.values()].sort((left, right) => right.startedAt - left.startedAt);
+    return collapseActiveChildToolServeProcesses(
+      [...merged.values()].sort((left, right) => right.startedAt - left.startedAt),
+    );
+  }
+
+  private readActiveChildToolProcesses(): readonly ChatRuntimeHostSessionProcessSummary[] {
+    return buildChildToolProcessSummaries(this.childToolSessions, {
+      sessionId: this.getCurrentSessionId(),
+      projectPath: this.resolveCurrentProjectPathForProcessUi(),
+    });
+  }
+
+  private async refreshChildToolSessions(): Promise<void> {
+    try {
+      const sessions = await window['childToolSession']?.list?.();
+      this.updateChildToolSessions(sessions);
+    } catch (error) {
+      console.warn('[AilyChat] Failed to refresh child tool sessions:', error);
+    }
+  }
+
+  private updateChildToolSessions(payload: unknown): void {
+    this.childToolSessions = Array.isArray(payload)
+      ? payload as ChildToolSessionListItem[]
+      : [];
+    this.cdr.markForCheck();
   }
 
   returnStandaloneSurfaceToMain(): void {

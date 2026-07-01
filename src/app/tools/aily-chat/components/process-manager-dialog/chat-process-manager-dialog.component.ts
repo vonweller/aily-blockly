@@ -31,6 +31,16 @@ import {
   normalizeProcessLogSubappName,
   resolveProcessLogSubappNameFromOutputFilePath,
 } from '../../../../utils/project-log.utils';
+import { getChildToolConfig } from '../../../../configs/tool.config';
+import { UiService } from '../../../../services/ui.service';
+import {
+  buildChildToolProcessSummaries,
+  collapseActiveChildToolServeProcesses,
+  isChildToolProcessSummary,
+  resolveChildToolIdFromProcess,
+  resolveChildToolProcessDisplayName,
+  type ChildToolSessionListItem,
+} from '../../helpers/child-tool-process-summary';
 
 type ProcessFilter = 'all' | 'running' | 'background' | 'completed' | 'failed' | 'removed';
 
@@ -55,6 +65,7 @@ export class ChatProcessManagerDialogComponent {
   private readonly runtimeInteractionHost = inject(ChatRuntimeInteractionHostService);
   private readonly chatHistoryService = inject(ChatHistoryService);
   private readonly translate = inject(TranslateService);
+  private readonly uiService = inject(UiService);
 
   readonly sessionId = typeof this.data.sessionId === 'string' ? this.data.sessionId.trim() : '';
   readonly projectPath = typeof this.data.projectPath === 'string' ? this.data.projectPath.trim() : '';
@@ -155,6 +166,16 @@ export class ChatProcessManagerDialogComponent {
   }
 
   openProcessWindow(process: ChatRuntimeHostSessionProcessSummary): void {
+    const toolId = resolveChildToolIdFromProcess(process);
+    if (toolId) {
+      if (toolId) {
+        const config = getChildToolConfig(toolId);
+        this.uiService.openToolWindow(toolId, {
+          title: config ? this.translate.instant(config.titleKey) : toolId,
+        });
+      }
+      return;
+    }
     openChatProcessWindow({
       sessionId: process.sessionId,
       processId: process.processId,
@@ -166,6 +187,14 @@ export class ChatProcessManagerDialogComponent {
 
   async stopProcess(process: ChatRuntimeHostSessionProcessSummary): Promise<void> {
     if (!process.running) {
+      return;
+    }
+    if (isChildToolProcessSummary(process)) {
+      const toolId = resolveChildToolIdFromProcess(process);
+      if (toolId) {
+        await window['childToolSession']?.stop?.(toolId);
+      }
+      this.refreshProcesses();
       return;
     }
     await this.runtimeInteractionHost.requestCommandSessionAction(process.sessionId || this.sessionId, {
@@ -218,9 +247,18 @@ export class ChatProcessManagerDialogComponent {
   }
 
   resolveSubappName(process: ChatRuntimeHostSessionProcessSummary): string {
+    const childToolId = resolveChildToolIdFromProcess(process);
+    if (childToolId) {
+      return childToolId;
+    }
     return normalizeProcessLogSubappName(
       process.subappName || resolveProcessLogSubappNameFromOutputFilePath(process.outputFilePath) || DEFAULT_PROCESS_LOG_SUBAPP,
     );
+  }
+
+  resolveProcessPrimaryLabel(process: ChatRuntimeHostSessionProcessSummary): string {
+    const displayName = resolveChildToolProcessDisplayName(process);
+    return displayName || process.command;
   }
 
   formatStartedAt(process: ChatRuntimeHostSessionProcessSummary): string {
@@ -313,16 +351,20 @@ export class ChatProcessManagerDialogComponent {
     return 'neutral';
   }
 
-  private refreshProcesses(): void {
+  private async refreshProcesses(): Promise<void> {
     const snapshot = this.sessionId
       ? this.runtimeInteractionHost.readSnapshot(this.sessionId)
       : null;
     const liveProcesses = Array.isArray(snapshot?.processes) ? snapshot.processes : [];
+    const childToolProcesses = await this.readChildToolProcesses();
     const projectPathHint = this.projectPath || this.chatHistoryService.findEntry(this.sessionId)?.projectPath || null;
     const persistedProcesses = this.sessionId
       ? listPersistedBlocklyCommandSessionSnapshots(this.sessionId, projectPathHint)
       : listPersistedBlocklyProjectCommandSessionSnapshots(projectPathHint);
-    const nextProcesses = this.mergeProcessSummaries(liveProcesses, persistedProcesses);
+    const nextProcesses = this.mergeProcessSummaries(
+      [...liveProcesses, ...childToolProcesses],
+      persistedProcesses,
+    );
     this.processes = nextProcesses;
     const nextFilteredProcesses = this.filteredProcesses;
     if (!this.selectedProcessId || !nextFilteredProcesses.some(process => process.processId === this.selectedProcessId)) {
@@ -338,6 +380,14 @@ export class ChatProcessManagerDialogComponent {
       this.selectedProcessDetail = null;
       this.selectedProcessOutput = '';
       this.selectedProcessStatusLabel = '';
+      this.cdr.markForCheck();
+      return;
+    }
+
+    if (isChildToolProcessSummary(process)) {
+      this.selectedProcessDetail = process;
+      this.selectedProcessOutput = '';
+      this.selectedProcessStatusLabel = this.summarizeStatus(process);
       this.cdr.markForCheck();
       return;
     }
@@ -377,7 +427,9 @@ export class ChatProcessManagerDialogComponent {
           })
         : this.decorateProcessSummary(process));
     }
-    return [...merged.values()].sort((left, right) => right.startedAt - left.startedAt);
+    return collapseActiveChildToolServeProcesses(
+      [...merged.values()].sort((left, right) => right.startedAt - left.startedAt),
+    );
   }
 
   private decorateProcessSummary(process: ChatRuntimeHostSessionProcessSummary): ChatRuntimeHostSessionProcessSummary {
@@ -541,6 +593,22 @@ export class ChatProcessManagerDialogComponent {
       ...(snapshot.command ? { command: snapshot.command } : {}),
       ...(snapshot.cwd ? { cwd: snapshot.cwd } : {}),
     };
+  }
+
+  private async readChildToolProcesses(): Promise<readonly ChatRuntimeHostSessionProcessSummary[]> {
+    try {
+      const sessions = await window['childToolSession']?.list?.();
+      return buildChildToolProcessSummaries(
+        Array.isArray(sessions) ? sessions as ChildToolSessionListItem[] : [],
+        {
+          sessionId: this.sessionId,
+          projectPath: this.projectPath || this.chatHistoryService.findEntry(this.sessionId)?.projectPath || '',
+        },
+      );
+    } catch (error) {
+      console.warn('[ChatProcessManager] Failed to read child tool sessions:', error);
+      return [];
+    }
   }
 
   private readPersistedSummaryFromOutputFilePath(

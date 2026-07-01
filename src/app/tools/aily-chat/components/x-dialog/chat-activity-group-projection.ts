@@ -775,6 +775,7 @@ function buildTerminalToolbarActions(part: TerminalPart): readonly ActivityToolb
     const sessionData = {
       processId: part.processId,
       command: part.command,
+      ...(part.cwd ? { cwd: part.cwd } : {}),
       ...(part.outputSessionId ? { outputSessionId: part.outputSessionId } : {}),
       ...(part.outputFilePath ? { outputFilePath: part.outputFilePath } : {}),
     };
@@ -805,6 +806,7 @@ function buildTerminalToolbarActions(part: TerminalPart): readonly ActivityToolb
       data: {
         processId: part.processId,
         command: part.command,
+        ...(part.cwd ? { cwd: part.cwd } : {}),
         ...(part.outputSessionId ? { outputSessionId: part.outputSessionId } : {}),
         ...(part.outputFilePath ? { outputFilePath: part.outputFilePath } : {}),
       },

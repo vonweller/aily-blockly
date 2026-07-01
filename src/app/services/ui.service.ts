@@ -143,6 +143,21 @@ export class UiService {
     window['subWindow'].open(opt);
   }
 
+  openToolWindow(name: string, options?: { width?: number; height?: number; title?: string }) {
+    const toolWindowPath = this.getToolWindowPath(name);
+    if (!toolWindowPath) {
+      return false;
+    }
+
+    this.openWindow({
+      path: toolWindowPath.replace(/^\/+/, ''),
+      title: options?.title || name,
+      width: options?.width ?? 1200,
+      height: options?.height ?? 800,
+    });
+    return true;
+  }
+
   // 这个方法是给header用的
   turnTool(opt: ToolOpts) {
     if (this.topTool == opt.data) {

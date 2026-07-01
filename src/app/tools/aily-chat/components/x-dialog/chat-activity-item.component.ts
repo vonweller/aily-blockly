@@ -29,6 +29,7 @@ import {
 } from './x-aily-state-viewer/activity-detail-items';
 import { getBlocklyArtifactReferenceLabel, resolveBlocklyArtifactReferenceTarget } from '../../helpers/chat-artifact-reference';
 import { openChatProcessWindow } from '../../helpers/chat-process-window';
+import { resolveChildToolIdFromProcess } from '../../helpers/child-tool-process-summary';
 import {
   ChatRuntimeInteractionHostService,
   type RuntimeCommandSessionActionResult,
@@ -2580,6 +2581,21 @@ export class ChatActivityItemComponent implements OnChanges {
       return;
     }
 
+    const command = typeof action.data?.['command'] === 'string'
+      ? action.data['command']
+      : undefined;
+    const toolId = resolveChildToolIdFromProcess({
+      processId,
+      command,
+      cwd: typeof action.data?.['cwd'] === 'string' ? action.data['cwd'] : undefined,
+      outputFilePath: typeof action.data?.['outputFilePath'] === 'string' ? action.data['outputFilePath'] : undefined,
+      subappName: typeof action.data?.['subappName'] === 'string' ? action.data['subappName'] : undefined,
+    });
+    if (toolId) {
+      AilyHost.get().ui?.openToolWindow?.(toolId, { title: toolId });
+      return;
+    }
+
     openChatProcessWindow({
       sessionId: this.sessionId,
       processId,
@@ -2589,9 +2605,7 @@ export class ChatActivityItemComponent implements OnChanges {
       outputFilePath: typeof action.data?.['outputFilePath'] === 'string'
         ? action.data['outputFilePath']
         : undefined,
-      command: typeof action.data?.['command'] === 'string'
-        ? action.data['command']
-        : undefined,
+      command,
     });
   }
 

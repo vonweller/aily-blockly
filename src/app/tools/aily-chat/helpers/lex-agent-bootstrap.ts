@@ -114,7 +114,9 @@ import {
   DEFAULT_PROCESS_LOG_SUBAPP,
   normalizeProcessLogSubappName,
   resolveProcessLogProjectDir,
+  resolveProcessLogSubappNameFromCwd,
   resolveProcessLogStoragePaths,
+  resolveProcessLogSubappNameFromCommand,
   resolveProcessLogSubappNameFromOutputFilePath,
 } from '../../../utils/project-log.utils';
 
@@ -361,6 +363,13 @@ export function setBlocklyCommandSessionBackground(
   }
 
   session.background = background;
+  if (background && session.timer) {
+    clearTimeout(session.timer);
+    session.timer = undefined;
+  }
+  if (background && session.running && session.status !== 'running') {
+    session.status = 'running';
+  }
   persistBlocklyCommandSessionRecord(session);
   notifyBlocklyCommandSessionUpdate(normalizedSessionId, normalizedProcessId);
 }
@@ -3677,7 +3686,10 @@ function createBlocklyCommandSessionSummary(session: ExternalTerminalSession) {
     ? session.outputFilePath
     : undefined;
   const subappName = normalizeProcessLogSubappName(
-    session.subappName || resolveProcessLogSubappNameFromOutputFilePath(outputFilePath),
+    session.subappName
+      || resolveProcessLogSubappNameFromOutputFilePath(outputFilePath)
+      || resolveProcessLogSubappNameFromCwd(session.cwd)
+      || resolveProcessLogSubappNameFromCommand(session.command),
   );
   const lastTimestamp = completedAt ?? Date.now();
   return {
@@ -3757,19 +3769,25 @@ function collectProjectProcessMetadataFiles(
   projectPath: string,
   candidates: Set<string>,
 ): void {
-  const processRootDir = resolveProcessLogProjectDir(projectPath);
-  if (!processRootDir || !host.fs?.existsSync?.(processRootDir)) {
+  const logRootDir = host.path?.join?.(projectPath, '.log');
+  if (!logRootDir || !host.fs?.existsSync?.(logRootDir)) {
     return;
   }
 
-  for (const dayEntry of readBlocklyCommandSessionDirEntries(host, processRootDir)) {
-    if (!dayEntry.isDirectory()) {
+  for (const subappEntry of readBlocklyCommandSessionDirEntries(host, logRootDir)) {
+    if (!subappEntry.isDirectory()) {
       continue;
     }
-    const dayDirPath = host.path.join(processRootDir, dayEntry.name);
-    for (const fileEntry of readBlocklyCommandSessionDirEntries(host, dayDirPath)) {
-      if (fileEntry.isFile() && fileEntry.name.endsWith('.json')) {
-        candidates.add(host.path.join(dayDirPath, fileEntry.name));
+    const subappDirPath = host.path.join(logRootDir, subappEntry.name);
+    for (const dayEntry of readBlocklyCommandSessionDirEntries(host, subappDirPath)) {
+      if (!dayEntry.isDirectory()) {
+        continue;
+      }
+      const dayDirPath = host.path.join(subappDirPath, dayEntry.name);
+      for (const fileEntry of readBlocklyCommandSessionDirEntries(host, dayDirPath)) {
+        if (fileEntry.isFile() && fileEntry.name.endsWith('.json')) {
+          candidates.add(host.path.join(dayDirPath, fileEntry.name));
+        }
       }
     }
   }
@@ -3872,7 +3890,9 @@ function createBlocklyCommandSessionSummaryFromPersistedRecord(
   const subappName = normalizeProcessLogSubappName(
     typeof record.subappName === 'string' && record.subappName.trim()
       ? record.subappName.trim()
-      : resolveProcessLogSubappNameFromOutputFilePath(outputFilePath),
+      : resolveProcessLogSubappNameFromOutputFilePath(outputFilePath)
+        || resolveProcessLogSubappNameFromCwd(record.cwd)
+        || resolveProcessLogSubappNameFromCommand(record.command),
   );
   const removed = record.removed === true;
   const removedAt = typeof record.removedAt === 'number' && Number.isFinite(record.removedAt)
@@ -3936,7 +3956,7 @@ function appendBlocklyCommandSessionFile(
 
 function resolveBlocklyCommandSessionStoragePaths(
   host: any,
-  cwd: string,
+  projectPathHint: string,
   sessionId: string,
   processId: string,
   subappName?: string,
@@ -3946,7 +3966,10 @@ function resolveBlocklyCommandSessionStoragePaths(
     return null;
   }
 
-  const projectPath = cwd || host.project?.currentProjectPath || host.project?.projectRootPath || '';
+  const projectPath = projectPathHint
+    || host.project?.currentProjectPath
+    || host.project?.projectRootPath
+    || '';
   if (!projectPath) {
     return null;
   }
@@ -4048,6 +4071,58 @@ function createExternalTerminal(host: any, prjPath: () => string, runtimeSession
     session.resolveReady();
   };
 
+  const promoteExternalSessionToBackground = (session: ExternalTerminalSession): void => {
+    if (session.background || !session.running) {
+      return;
+    }
+    session.background = true;
+    if (session.timer) {
+      clearTimeout(session.timer);
+      session.timer = undefined;
+    }
+    if (session.status !== 'running') {
+      session.status = 'running';
+    }
+    persistBlocklyCommandSessionRecord(session);
+    if (session.sessionId) {
+      notifyBlocklyCommandSessionUpdate(session.sessionId, session.id);
+    }
+  };
+
+  const shouldAutoPromoteExternalSessionToBackground = (session: ExternalTerminalSession): boolean => {
+    if (session.background || !session.running) {
+      return false;
+    }
+
+    const normalizedCommand = session.command.toLowerCase();
+    const serviceLikeCommand = normalizedCommand.includes(' serve ')
+      || normalizedCommand.includes(' serve --')
+      || normalizedCommand.endsWith(' serve')
+      || normalizedCommand.includes(' --host ')
+      || normalizedCommand.includes(' --port ')
+      || normalizedCommand.includes('npm run dev')
+      || normalizedCommand.includes('npm run start')
+      || normalizedCommand.includes('vite')
+      || normalizedCommand.includes('http-server');
+
+    if (!serviceLikeCommand) {
+      return false;
+    }
+
+    const readinessText = `${session.stdout}\n${session.stderr}`.slice(-4096).toLowerCase();
+    return readinessText.includes('"event":"ready"')
+      || readinessText.includes('listening on')
+      || readinessText.includes('server running')
+      || /https?:\/\/127\.0\.0\.1:\d+/.test(readinessText)
+      || /ws:\/\/127\.0\.0\.1:\d+/.test(readinessText);
+  };
+
+  const maybeAutoPromoteExternalSessionToBackground = (session: ExternalTerminalSession): void => {
+    if (shouldAutoPromoteExternalSessionToBackground(session)) {
+      promoteExternalSessionToBackground(session);
+    }
+  };
+
   const finalize = (session: ExternalTerminalSession, exitCode: number) => {
     if (session.timer) {
       clearTimeout(session.timer);
@@ -4094,6 +4169,7 @@ function createExternalTerminal(host: any, prjPath: () => string, runtimeSession
             session.lastOutputAt = Date.now();
             persistBlocklyCommandSessionOutput(host, session, data.data ?? '');
             persistBlocklyCommandSessionRecord(session);
+            maybeAutoPromoteExternalSessionToBackground(session);
             emitExternalTerminalOutput(session, 'stdout', data.data ?? '');
             settleReady(session);
             break;
@@ -4102,6 +4178,7 @@ function createExternalTerminal(host: any, prjPath: () => string, runtimeSession
             session.lastOutputAt = Date.now();
             persistBlocklyCommandSessionOutput(host, session, data.data ?? '');
             persistBlocklyCommandSessionRecord(session);
+            maybeAutoPromoteExternalSessionToBackground(session);
             emitExternalTerminalOutput(session, 'stderr', data.data ?? '');
             settleReady(session);
             break;
@@ -4142,6 +4219,7 @@ function createExternalTerminal(host: any, prjPath: () => string, runtimeSession
           session.lastOutputAt = Date.now();
           persistBlocklyCommandSessionOutput(host, session, data.data ?? '');
           persistBlocklyCommandSessionRecord(session);
+          maybeAutoPromoteExternalSessionToBackground(session);
           emitExternalTerminalOutput(session, 'stdout', data.data ?? '');
           settleReady(session);
           break;
@@ -4150,6 +4228,7 @@ function createExternalTerminal(host: any, prjPath: () => string, runtimeSession
           session.lastOutputAt = Date.now();
           persistBlocklyCommandSessionOutput(host, session, data.data ?? '');
           persistBlocklyCommandSessionRecord(session);
+          maybeAutoPromoteExternalSessionToBackground(session);
           emitExternalTerminalOutput(session, 'stderr', data.data ?? '');
           settleReady(session);
           break;
@@ -4177,6 +4256,7 @@ function createExternalTerminal(host: any, prjPath: () => string, runtimeSession
       session.lastOutputAt = Date.now();
       persistBlocklyCommandSessionOutput(host, session, text);
       persistBlocklyCommandSessionRecord(session);
+      maybeAutoPromoteExternalSessionToBackground(session);
       emitExternalTerminalOutput(session, 'stdout', text);
       settleReady(session);
     });
@@ -4203,11 +4283,15 @@ function createExternalTerminal(host: any, prjPath: () => string, runtimeSession
   }) => {
     const id = opts?.processId?.trim() || `terminal_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     const cwd = opts?.cwd ?? prjPath();
+    const projectPathHint = prjPath();
     const sessionId = typeof runtimeSessionId === 'string' ? runtimeSessionId.trim() : '';
     let resolveReady!: () => void;
     let resolveFinished!: () => void;
-    const subappName = normalizeProcessLogSubappName(opts?.subappName || DEFAULT_PROCESS_LOG_SUBAPP);
-    const storagePaths = resolveBlocklyCommandSessionStoragePaths(host, cwd, sessionId, id, subappName);
+    const inferredSubappName = resolveProcessLogSubappNameFromCommand(command);
+    const subappName = normalizeProcessLogSubappName(
+      opts?.subappName || inferredSubappName || resolveProcessLogSubappNameFromCwd(cwd) || DEFAULT_PROCESS_LOG_SUBAPP,
+    );
+    const storagePaths = resolveBlocklyCommandSessionStoragePaths(host, projectPathHint, sessionId, id, subappName);
     const session: ExternalTerminalSession = {
       id,
       sessionId,
