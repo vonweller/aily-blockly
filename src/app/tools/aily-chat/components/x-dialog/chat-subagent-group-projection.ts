@@ -9,7 +9,6 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
 import {
   isInternalDiscoveryToolName,
   isTerminalSessionToolName,
-  isTodoToolName,
   normalizeReadSideToolName,
 } from '../../core/tool-name-normalizer';
 
@@ -268,7 +267,6 @@ function shouldPinToolCallToThinking(part: RenderableChatPart): boolean {
   if (isSubagentToolCall(part as ChatPart)
     || isInternalDiscoveryToolName(toolPart.toolName)
     || isTerminalSessionToolName(toolPart.toolName)
-    || isTodoToolName(toolPart.toolName)
     || isAskQuestionsToolName(toolPart.toolName)
     || hasTerminalSpecificData(toolPart)) {
     return false;

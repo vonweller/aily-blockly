@@ -64,7 +64,6 @@ export type RenderEventPartStoreAccess = Pick<
   | 'updateConfirmationResultForHandle'
   | 'updateSubagentForHandle'
   | 'upsertTerminalForHandle'
-  | 'materializeFinalMarkdownAsPlanForHandle'
 >;
 
 function hasUsableStoreHandle(
@@ -420,10 +419,7 @@ export class RenderEventPartAdapter {
     this._toolOriginHandles.clear();
   }
 
-  finalize(
-    handle: ChatPartStoreOpaqueHandle | null,
-    options: { readonly materializeFinalMarkdownAsPlan?: boolean } = {},
-  ): void {
+  finalize(handle: ChatPartStoreOpaqueHandle | null): void {
     if (!hasUsableStoreHandle(handle)) {
       this.reset();
       return;
@@ -439,8 +435,6 @@ export class RenderEventPartAdapter {
 
     if (this._planStreamState === 'plan') {
       this._store.completePlanHandle(handle);
-    } else if (options.materializeFinalMarkdownAsPlan === true) {
-      this._store.materializeFinalMarkdownAsPlanForHandle(handle);
     }
 
     this.reset();

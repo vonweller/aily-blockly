@@ -27,7 +27,9 @@ import {
   createChatAgentRuntimeConfigKey,
   normalizeChatAgentRuntimeMode,
   normalizeChatAgentRuntimeModeSource,
+  resolveChatAgentRuntimeModeForProject,
   type ChatAgentRuntimeMode,
+  type ChatAgentRuntimeModeResolution,
   type ChatAgentRuntimeModeSource,
 } from '../core/chat-agent-runtime-mode';
 import { RepetitionDetectionService } from './repetition-detection.service';
@@ -91,6 +93,7 @@ import { isDefaultAutoPresetSelected } from '../helpers/model-billing-label';
 import { buildTodoListSemanticDataFromTodos } from './todoUpdate.service';
 import { setTodos, type TodoItem as BlocklyTodoItem } from '../utils/todoStorage';
 import {
+  createTurnRequestModeInfoFromResolvedMode,
   normalizeChatSelectedMode,
   resolveChatCurrentMode,
   resolveChatSurfaceModeId,
@@ -198,6 +201,17 @@ type VisibleSessionProjectionResetOptions = {
   readonly clearEditSummary?: boolean;
   readonly resetToolCallingIteration?: boolean;
   readonly detectChanges?: boolean;
+};
+
+type HostSubmitExecutionSnapshot = {
+  readonly selectedMode: ChatSelectedMode;
+  readonly providerOptions: HostSessionProviderOptions;
+};
+
+type SubmitUserTextOptions = {
+  readonly clearInput?: boolean;
+  readonly sessionId?: string | null;
+  readonly executionSnapshot?: HostSubmitExecutionSnapshot | null;
 };
 
 function clonePendingFollowupRequestMetadata(
@@ -355,6 +369,7 @@ import {
   type HostSessionProviderOptions,
 } from '../helpers/host-session-input-state';
 import { buildHostSessionCurrentPickerRoutingSummary } from '../helpers/host-session-request-routing';
+import { buildHostSessionTurnRuntimeTruth } from '../helpers/host-session-runtime-truth';
 import { ChatViewAdapter } from './chat-view-adapter';
 import { ChatPartStore } from '../core/chat-part-store';
 import {
@@ -402,6 +417,7 @@ import { ChatPerformanceTracer } from './chat-perf-tracer';
 
 const INTERACTIVE_PLAN_REVIEW_ACTION_ID = 'interactive';
 const EXIT_ONLY_PLAN_REVIEW_ACTION_ID = 'exit_only';
+const START_IMPLEMENTATION_PLAN_REVIEW_ACTION_ID = 'start_implementation';
 
 interface VisibleTranscriptAttachment {
   readonly sessionId: string;
@@ -1069,22 +1085,14 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 }
 
 function shouldStartImplementationAfterPlanReview(
-  pendingReview: PendingPlanReview,
   result: RuntimePlanReviewDecision,
 ): boolean {
   if (!result.approved) {
     return false;
   }
 
-  if (result.actionId === EXIT_ONLY_PLAN_REVIEW_ACTION_ID) {
-    return false;
-  }
-
-  if (result.actionId === INTERACTIVE_PLAN_REVIEW_ACTION_ID) {
-    return true;
-  }
-
-  return findRuntimePlanReviewAction(pendingReview.actions, result.actionId)?.permissionLevel === 'autopilot';
+  return result.actionId === START_IMPLEMENTATION_PLAN_REVIEW_ACTION_ID
+    || result.actionId === INTERACTIVE_PLAN_REVIEW_ACTION_ID;
 }
 
 function resolveStartImplementationHandoff(
@@ -2109,7 +2117,7 @@ export class ChatEngineService implements IChatContext {
 
   get sessionTitle() { return this.chatService.currentSessionTitle; }
 
-  get currentMode() { return this.chatService.currentMode; }
+  get currentMode() { return this.resolveVisibleSelectedModeSnapshot().modeId; }
 
   get currentAgentRuntimeMode() { return this.chatService.currentAgentRuntimeMode; }
 
@@ -2240,7 +2248,7 @@ export class ChatEngineService implements IChatContext {
     );
   }
 
-  get currentCustomAgentTarget() { return this.chatService.currentCustomAgentTarget; }
+  get currentCustomAgentTarget() { return this.resolveVisibleSelectedModeSnapshot().customAgentTarget; }
 
   get selectedMode(): ChatSelectedMode {
     return this.resolveVisibleSelectedModeSnapshot();
@@ -2472,8 +2480,15 @@ export class ChatEngineService implements IChatContext {
     interactionAction: NonNullable<TurnRequest['metadata']>['interactionAction'],
     requestMetadata?: TurnRequest['metadata'],
     sessionId?: string | null,
+    executionSnapshot?: HostSubmitExecutionSnapshot | null,
   ): Promise<void> {
-    await this.submitSessionInteractionActionRequest(sessionId, content, interactionAction, requestMetadata);
+    await this.submitSessionInteractionActionRequest(
+      sessionId,
+      content,
+      interactionAction,
+      requestMetadata,
+      executionSnapshot,
+    );
   }
 
   get requestQuotaSnapshot(): RequestQuotaSnapshot | null {
@@ -3919,6 +3934,58 @@ export class ChatEngineService implements IChatContext {
       ?? resolveChatCurrentMode(selectedMode);
   }
 
+  private resolveExecutionSnapshotResolvedMode(snapshot: HostSubmitExecutionSnapshot): ChatResolvedMode {
+    const selectedMode = snapshot.selectedMode;
+    const currentResolvedMode = this.chatService.currentResolvedMode;
+    if (selectedMode.modeId === currentResolvedMode.kind
+      && selectedMode.customAgentTarget === currentResolvedMode.customAgentTarget) {
+      return currentResolvedMode;
+    }
+
+    return (selectedMode.customAgentTarget
+      ? this.chatService.findResolvedModeById?.(selectedMode.customAgentTarget)
+      : undefined)
+      ?? this.chatService.findResolvedModeById?.(selectedMode.modeId)
+      ?? resolveChatCurrentMode(selectedMode);
+  }
+
+  private withSubmitExecutionSnapshotMetadata(
+    metadata: TurnRequest['metadata'] | null | undefined,
+    snapshot?: HostSubmitExecutionSnapshot | null,
+  ): TurnRequest['metadata'] | undefined {
+    if (!snapshot) {
+      return metadata ?? undefined;
+    }
+
+    const selectedMode = snapshot.selectedMode;
+    const providerOptions = snapshot.providerOptions;
+    const resolvedMode = this.resolveExecutionSnapshotResolvedMode(snapshot);
+    const modeInfo = createTurnRequestModeInfoFromResolvedMode(resolvedMode);
+    const requestRouting = buildHostSessionCurrentPickerRoutingSummary(
+      selectedMode,
+      undefined,
+      providerOptions.permissionLevel,
+      providerOptions.approvalsReviewer,
+      providerOptions.approvalPolicy,
+    );
+
+    return {
+      ...(metadata ?? {}),
+      modeId: selectedMode.modeId,
+      modeInfo: {
+        ...modeInfo,
+        ...(providerOptions.permissionLevel ? { permissionLevel: providerOptions.permissionLevel } : {}),
+        ...(providerOptions.approvalsReviewer ? { approvalsReviewer: providerOptions.approvalsReviewer } : {}),
+        ...(providerOptions.approvalPolicy ? { approvalPolicy: providerOptions.approvalPolicy } : {}),
+      },
+      requestRouting: {
+        ...requestRouting,
+        modeId: selectedMode.modeId,
+        ...(selectedMode.customAgentTarget ? { customAgentTarget: selectedMode.customAgentTarget } : {}),
+      },
+    } as TurnRequest['metadata'];
+  }
+
   private buildExecutionSaveTarget(sessionId?: string | null): HostSessionSaveTarget | null {
     const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
     if (!targetSessionId) {
@@ -3972,6 +4039,8 @@ export class ChatEngineService implements IChatContext {
   private withHostRuntimeSessionInventoryMetadata(
     sessionId: string | null | undefined,
     metadata: TurnRequest['metadata'] | null | undefined,
+    runtimeResolution?: ChatAgentRuntimeModeResolution | null,
+    executionSnapshot?: HostSubmitExecutionSnapshot | null,
   ): TurnRequest['metadata'] {
     const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
     const baseMetadata = metadata && typeof metadata === 'object'
@@ -3985,14 +4054,39 @@ export class ChatEngineService implements IChatContext {
     if (!saveTarget) {
       return baseMetadata;
     }
+    const selectedMode = executionSnapshot?.selectedMode ?? saveTarget.selectedMode;
+    const providerOptions = executionSnapshot?.providerOptions ?? saveTarget.providerOptions;
 
     const title = normalizeChatSessionTitleText(
       saveTarget.sessionTitleCandidate?.text
       || saveTarget.sessionTitle
       || '',
     );
+    const runtimeTruth = buildHostSessionTurnRuntimeTruth({
+      chatMode: selectedMode.modeId,
+      runtimeMode: runtimeResolution?.mode ?? this.chatService.currentAgentRuntimeMode,
+      runtimeSource: runtimeResolution?.source ?? this.chatService.currentAgentRuntimeModeSource,
+      agentRole: 'main',
+      permissionMode: selectedMode.modeId === 'plan' ? 'plan' : providerOptions.permissionMode,
+      projectPath: providerOptions.folderPath ?? null,
+    });
+    if (runtimeTruth) {
+      console.info(
+        '[AilyChat][HostSubmitRuntimeTruth]',
+        [
+          `session=${normalizedSessionId}`,
+          `chatMode=${runtimeTruth.chatMode ?? ''}`,
+          `runtimeMode=${runtimeTruth.runtimeMode ?? ''}`,
+          `runtimeSource=${runtimeTruth.runtimeSource ?? ''}`,
+          `agentRole=${runtimeTruth.agentRole ?? ''}`,
+          `permissionMode=${runtimeTruth.permissionMode ?? ''}`,
+          `projectPath=${runtimeTruth.projectPath ?? ''}`,
+        ].join(' '),
+      );
+    }
     return {
       ...baseMetadata,
+      ...(runtimeTruth ? { runtimeTruth } : {}),
       hostSessionInventory: {
         ...(baseMetadata['hostSessionInventory'] && typeof baseMetadata['hostSessionInventory'] === 'object'
           ? baseMetadata['hostSessionInventory'] as Record<string, unknown>
@@ -4001,10 +4095,45 @@ export class ChatEngineService implements IChatContext {
         ...(saveTarget.sessionTitleCandidate?.source ? { titleSource: saveTarget.sessionTitleCandidate.source } : {}),
         titleDurable: saveTarget.sessionTitleCandidate?.source !== 'empty',
         sessionType: saveTarget.sessionType,
-        projectPath: saveTarget.providerOptions.folderPath ?? null,
-        mode: saveTarget.selectedMode.modeId,
+        projectPath: providerOptions.folderPath ?? null,
+        mode: selectedMode.modeId,
       },
     } as TurnRequest['metadata'];
+  }
+
+  private resolveSubmitRuntimeMode(
+    sessionId: string | null | undefined,
+    providerOptions: HostSessionProviderOptions,
+    metadata: TurnRequest['metadata'] | null | undefined,
+  ): ChatAgentRuntimeModeResolution {
+    const projectPath = providerOptions.folderPath ?? null;
+    const resolution = resolveChatAgentRuntimeModeForProject({
+      projectPath,
+      metadata: metadata as any,
+      userPreferenceMode: this.configService?.getPreferredChatAgentRuntimeMode?.(),
+      fallback: projectPath ? 'coder' : 'unbound',
+      requireExistingProjectPath: false,
+    });
+    if (
+      this.chatService.currentAgentRuntimeMode !== resolution.mode
+      || this.chatService.currentAgentRuntimeModeSource !== resolution.source
+    ) {
+      if (typeof this.chatService.setCurrentAgentRuntimeMode === 'function') {
+        this.chatService.setCurrentAgentRuntimeMode(resolution.mode, resolution.source);
+      } else {
+        this.chatService.currentAgentRuntimeMode = resolution.mode;
+        this.chatService.currentAgentRuntimeModeSource = resolution.source;
+      }
+      this.syncCurrentSessionEntryTargetRuntimeMode(sessionId);
+    }
+    console.info('[AilyChat][HostSubmitRuntimeResolve]', {
+      sessionId: typeof sessionId === 'string' ? sessionId.trim() : null,
+      mode: resolution.mode,
+      source: resolution.source,
+      reason: resolution.reason,
+      projectPath: resolution.projectPath,
+    });
+    return resolution;
   }
 
   private readSessionTurnResponses(
@@ -7003,23 +7132,31 @@ export class ChatEngineService implements IChatContext {
     }, 50);
   }
 
-  async submitUserText(content: string, options?: { clearInput?: boolean; sessionId?: string | null }): Promise<void> {
-    await this.send('user', content, options?.clearInput ?? true, options?.sessionId);
+  async submitUserText(content: string, options?: SubmitUserTextOptions): Promise<void> {
+    await this.send('user', content, options?.clearInput ?? true, options?.sessionId, options?.executionSnapshot ?? null);
   }
 
-  async startImplementationFromPlanPart(sessionId?: string | null, _planText?: string | null): Promise<void> {
+  async startImplementationFromPlanPart(sessionId?: string | null, planText?: string | null): Promise<void> {
     const targetSessionId = this.resolvePlanHandoffTargetSessionId(sessionId);
     if (!this.canRunPlanHandoff(targetSessionId)) {
       return;
     }
 
-    await this.applyRuntimeSelectedModeTransition(targetSessionId, { modeId: 'agent' });
-    await this.submitUserText(this.resolveLocalizedPlanActionText(
+    const normalizedPlanText = this.resolvePlanImplementationText(targetSessionId, planText);
+    if (!normalizedPlanText) {
+      this.message?.warning?.('没有可实施的计划内容');
+      return;
+    }
+
+    const executionSnapshot = await this.applyPlanImplementationHandoffTransition(targetSessionId);
+    const actionText = this.resolveLocalizedPlanActionText(
       'AILY_CHAT.PLAN_ACTION_START_IMPLEMENTATION',
       PLAN_CHAT_MODE_START_IMPLEMENTATION_PROMPT,
-    ), {
+    );
+    await this.submitUserText(buildStartImplementationPrompt(actionText), {
       clearInput: false,
       sessionId: targetSessionId,
+      executionSnapshot,
     });
   }
 
@@ -7042,10 +7179,11 @@ export class ChatEngineService implements IChatContext {
       return;
     }
 
-    await this.applyRuntimeSelectedModeTransition(targetSessionId, { modeId: 'agent' });
+    const executionSnapshot = await this.applyPlanImplementationHandoffTransition(targetSessionId);
     await this.submitUserText(buildClearContextImplementationPrompt(normalizedPlanText), {
       clearInput: false,
       sessionId: targetSessionId,
+      executionSnapshot,
     });
   }
 
@@ -7104,6 +7242,32 @@ export class ChatEngineService implements IChatContext {
     }
 
     return true;
+  }
+
+  private resolvePlanImplementationText(sessionId: string, planText?: string | null): string {
+    const directPlanText = normalizePlanHandoffText(planText);
+    if (directPlanText) {
+      return directPlanText;
+    }
+
+    const turnResponses = this.readSessionTurnResponses(sessionId);
+    for (let index = turnResponses.length - 1; index >= 0; index -= 1) {
+      const turn = turnResponses[index];
+      const topLevelPlanText = extractCompletedPlanPartText((turn as unknown as Record<string, unknown>)['planPart']);
+      if (topLevelPlanText) {
+        return topLevelPlanText;
+      }
+
+      const parts = Array.isArray(turn.response?.parts) ? turn.response.parts : [];
+      for (let partIndex = parts.length - 1; partIndex >= 0; partIndex -= 1) {
+        const partPlanText = extractCompletedPlanPartText(parts[partIndex]);
+        if (partPlanText) {
+          return partPlanText;
+        }
+      }
+    }
+
+    return '';
   }
 
   private async writePlanPartEditorArtifact(sessionId: string, planText: string): Promise<string> {
@@ -7268,6 +7432,7 @@ Do not create non-existent boards and libraries.
     options?: {
       clearInput?: boolean;
       resetPreparedUserTurnState?: boolean;
+      executionSnapshot?: HostSubmitExecutionSnapshot | null;
     },
   ): Promise<void> {
     const clearInput = options?.clearInput !== false;
@@ -7338,16 +7503,30 @@ Do not create non-existent boards and libraries.
         `[AilyChat][HostSubmitModel] session=${targetSessionId || ''} currentSession=${currentServiceSessionId} model=${currentModelSnapshot?.model ?? ''} preset=${currentModelSnapshot?.presetId ?? ''} name=${currentModelSnapshot?.name ?? ''}`,
       );
       const protocolTruncation = this.peekPendingProtocolTruncation(targetSessionId);
+      const selectedModeSnapshot = options?.executionSnapshot?.selectedMode
+        ?? this.resolveVisibleSelectedModeSnapshot(targetSessionId);
+      const providerOptionsSnapshot = options?.executionSnapshot?.providerOptions
+        ?? this.resolveVisibleSessionProviderOptionsSnapshot(targetSessionId);
+      const requestMetadata = this.withSubmitExecutionSnapshotMetadata(
+        prepared.requestMetadata ?? null,
+        options?.executionSnapshot ?? null,
+      );
+      const runtimeResolution = this.resolveSubmitRuntimeMode(targetSessionId, providerOptionsSnapshot, requestMetadata ?? null);
       const submittedState = await this.runtimeHostForView().submitTurn({
         sessionId: targetSessionId,
         requestText: prepared.llmText,
         displayText: prepared.displayText,
-        selectedMode: this.resolveVisibleSelectedModeSnapshot(targetSessionId),
-        providerOptions: this.resolveVisibleSessionProviderOptionsSnapshot(targetSessionId),
-        agentRuntimeMode: this.chatService.currentAgentRuntimeMode,
-        agentRuntimeModeSource: this.chatService.currentAgentRuntimeModeSource,
+        selectedMode: selectedModeSnapshot,
+        providerOptions: providerOptionsSnapshot,
+        agentRuntimeMode: runtimeResolution.mode,
+        agentRuntimeModeSource: runtimeResolution.source,
         currentModel: currentModelSnapshot,
-        metadata: this.withHostRuntimeSessionInventoryMetadata(targetSessionId, prepared.requestMetadata ?? null),
+        metadata: this.withHostRuntimeSessionInventoryMetadata(
+          targetSessionId,
+          requestMetadata ?? null,
+          runtimeResolution,
+          options?.executionSnapshot ?? null,
+        ),
         activeResponseHandle: null,
         ...(protocolTruncation ? { protocolTruncation } : {}),
       });
@@ -7366,7 +7545,13 @@ Do not create non-existent boards and libraries.
     }
   }
 
-  async send(sender: string, content: string, clear: boolean = true, sessionId?: string | null): Promise<void> {
+  async send(
+    sender: string,
+    content: string,
+    clear: boolean = true,
+    sessionId?: string | null,
+    executionSnapshot?: HostSubmitExecutionSnapshot | null,
+  ): Promise<void> {
     await maybeAutoSwitchToDefaultModelAfterRateLimit(this);
 
     const explicitSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
@@ -7490,6 +7675,7 @@ Do not create non-existent boards and libraries.
 
       await this.executePreparedUserSend(runtimeSessionId, prepared, {
         clearInput: clear,
+        executionSnapshot,
       });
       if (isRequestStateTraceEnabled()) {
         console.info(
@@ -7646,6 +7832,7 @@ Do not create non-existent boards and libraries.
     interactionAction: NonNullable<TurnRequest['metadata']>['interactionAction'],
     requestMetadata?: TurnRequest['metadata'],
     sessionId?: string | null,
+    executionSnapshot?: HostSubmitExecutionSnapshot | null,
   ): Promise<void> {
     const explicitSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
     const runtimeSessionId = explicitSessionId
@@ -7673,16 +7860,30 @@ Do not create non-existent boards and libraries.
       console.info(
         `[AilyChat][HostSubmitModel] session=${runtimeSessionId || ''} currentSession=${currentServiceSessionId} model=${currentModelSnapshot?.model ?? ''} preset=${currentModelSnapshot?.presetId ?? ''} name=${currentModelSnapshot?.name ?? ''}`,
       );
+      const selectedModeSnapshot = executionSnapshot?.selectedMode
+        ?? this.resolveVisibleSelectedModeSnapshot(runtimeSessionId);
+      const providerOptionsSnapshot = executionSnapshot?.providerOptions
+        ?? this.resolveVisibleSessionProviderOptionsSnapshot(runtimeSessionId);
+      const requestMetadata = this.withSubmitExecutionSnapshotMetadata(
+        appliedRequestMetadata,
+        executionSnapshot ?? null,
+      );
+      const runtimeResolution = this.resolveSubmitRuntimeMode(runtimeSessionId, providerOptionsSnapshot, requestMetadata ?? null);
       const submittedState = await runtimeHost.submitTurn({
         sessionId: runtimeSessionId,
         requestText: content,
         displayText: content,
-        selectedMode: this.resolveVisibleSelectedModeSnapshot(runtimeSessionId),
-        providerOptions: this.resolveVisibleSessionProviderOptionsSnapshot(runtimeSessionId),
-        agentRuntimeMode: this.chatService.currentAgentRuntimeMode,
-        agentRuntimeModeSource: this.chatService.currentAgentRuntimeModeSource,
+        selectedMode: selectedModeSnapshot,
+        providerOptions: providerOptionsSnapshot,
+        agentRuntimeMode: runtimeResolution.mode,
+        agentRuntimeModeSource: runtimeResolution.source,
         currentModel: currentModelSnapshot,
-        metadata: this.withHostRuntimeSessionInventoryMetadata(runtimeSessionId, appliedRequestMetadata),
+        metadata: this.withHostRuntimeSessionInventoryMetadata(
+          runtimeSessionId,
+          requestMetadata,
+          runtimeResolution,
+          executionSnapshot ?? null,
+        ),
         activeResponseHandle: null,
       });
       this.applyRuntimeHostSessionStateEvent(runtimeSessionId, submittedState);
@@ -7696,6 +7897,7 @@ Do not create non-existent boards and libraries.
     content: string,
     interactionAction: NonNullable<TurnRequest['metadata']>['interactionAction'],
     requestMetadata?: TurnRequest['metadata'],
+    executionSnapshot?: HostSubmitExecutionSnapshot | null,
   ): Promise<void> {
     const explicitSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
     const targetSessionId = explicitSessionId || this.resolveCurrentViewSessionResource();
@@ -7704,7 +7906,13 @@ Do not create non-existent boards and libraries.
     }
 
     await this.runWithRuntimeSessionOwner(targetSessionId, async () => {
-      await this.resumeRestoredInteraction(content, interactionAction, requestMetadata, targetSessionId);
+      await this.resumeRestoredInteraction(
+        content,
+        interactionAction,
+        requestMetadata,
+        targetSessionId,
+        executionSnapshot,
+      );
     });
   }
 
@@ -7817,6 +8025,49 @@ Do not create non-existent boards and libraries.
     await this.switchToMode(state.selectedMode.modeId);
   }
 
+  private async applyPlanImplementationHandoffTransition(
+    sessionId: string | null | undefined,
+    selectedModeInput?: ChatSelectedMode | null,
+    permissionLevelInput?: string | null,
+  ): Promise<HostSubmitExecutionSnapshot> {
+    const targetSessionId = this.resolveRuntimeSessionIdForOwner(sessionId);
+    const selectedMode = normalizeChatSelectedMode(selectedModeInput ?? { modeId: 'agent' });
+    const currentProviderOptions = this.resolveVisibleSessionProviderOptionsSnapshot(targetSessionId);
+    const permissionLevel = typeof permissionLevelInput === 'string' && permissionLevelInput.trim().length > 0
+      ? permissionLevelInput.trim()
+      : undefined;
+    const providerOptions = normalizeHostSessionProviderOptions({
+      ...currentProviderOptions,
+      permissionMode: 'default',
+      permissionLevel,
+      approvalsReviewer: 'user',
+      approvalPolicy: 'on_request',
+    });
+
+    this.rememberRuntimeSessionProviderOptions(targetSessionId, providerOptions);
+    await this.applyRuntimeSelectedModeTransition(targetSessionId, selectedMode);
+
+    const shouldProjectToVisibleOwner = this.shouldProjectRuntimeViewStateToVisibleOwner(targetSessionId)
+      || !(this as unknown as { chatSessionRuntimeStore?: unknown }).chatSessionRuntimeStore;
+    if (shouldProjectToVisibleOwner) {
+      this.chatService.setCurrentSessionPermissionMode(providerOptions.permissionMode);
+      this.chatService.setCurrentSessionPermissionLevel(providerOptions.permissionLevel);
+      this.chatService.setCurrentSessionApprovalsReviewer?.(providerOptions.approvalsReviewer);
+      this.chatService.setCurrentSessionApprovalPolicy?.(providerOptions.approvalPolicy);
+      this.syncExecutionModeGuidanceNotice(
+        providerOptions.permissionLevel,
+        providerOptions.approvalsReviewer,
+        providerOptions.approvalPolicy,
+      );
+    }
+    this.syncCurrentSessionEntryTargetRuntimeMode(targetSessionId);
+
+    return {
+      selectedMode,
+      providerOptions,
+    };
+  }
+
   private async applyRuntimeSelectedModeTransition(
     sessionId: string | null | undefined,
     selectedMode: ChatSelectedMode,
@@ -7844,7 +8095,7 @@ Do not create non-existent boards and libraries.
     pendingReview: PendingPlanReview,
     result: RuntimePlanReviewDecision,
     currentRequestPermissionLevel?: string,
-  ): Promise<void> {
+  ): Promise<HostSubmitExecutionSnapshot | null> {
     const targetSessionId = this.resolveRuntimeSessionIdForOwner(sessionId);
     const permissionLevel = resolvePlanReviewPermissionLevel(pendingReview, result, currentRequestPermissionLevel);
     const baseProviderOptions = this.resolveRuntimeSessionProviderOptions(targetSessionId);
@@ -7866,29 +8117,24 @@ Do not create non-existent boards and libraries.
       );
     }
 
-    if (!shouldStartImplementationAfterPlanReview(pendingReview, result)) {
-      return;
+    if (!shouldStartImplementationAfterPlanReview(result)) {
+      return null;
     }
 
     const handoff = resolveStartImplementationHandoff(this.resolveRuntimeResolvedMode(targetSessionId));
     if (!handoff) {
-      await this.applyRuntimeSelectedModeTransition(targetSessionId, { modeId: 'agent' });
-      return;
+      return this.applyPlanImplementationHandoffTransition(targetSessionId, { modeId: 'agent' }, permissionLevel);
     }
 
     const targetMode = resolveChatSurfaceModeId(handoff.agent);
     if (targetMode) {
-      await this.applyRuntimeSelectedModeTransition(targetSessionId, { modeId: targetMode });
-      return;
+      return this.applyPlanImplementationHandoffTransition(targetSessionId, { modeId: targetMode }, permissionLevel);
     }
 
-    await this.applyRuntimeSelectedModeTransition(targetSessionId, {
+    return this.applyPlanImplementationHandoffTransition(targetSessionId, {
       modeId: 'agent',
       customAgentTarget: handoff.agent,
-    });
-    if (nextProviderOptions) {
-      this.rememberRuntimeSessionProviderOptions(targetSessionId, nextProviderOptions);
-    }
+    }, permissionLevel);
   }
 
   private buildLocalizedPlanReviewResumeContent(
@@ -7932,7 +8178,7 @@ Do not create non-existent boards and libraries.
 
     const actionLabelKey = (() => {
       switch (actionId) {
-        case 'start_implementation':
+        case START_IMPLEMENTATION_PLAN_REVIEW_ACTION_ID:
         case INTERACTIVE_PLAN_REVIEW_ACTION_ID:
           return 'AILY_CHAT.PLAN_ACTION_START_IMPLEMENTATION';
         case 'autopilot':
@@ -7983,7 +8229,12 @@ Do not create non-existent boards and libraries.
         : await this.runtimeInteractionHost.presentPlanReview(targetSessionId, pendingReview);
       const previousState = this.capturePlanReviewTransitionState(targetSessionId);
       try {
-        await this.applyPlanReviewTransitionBeforeResume(targetSessionId, pendingReview, result, currentRequestPermissionLevel);
+        const executionSnapshot = await this.applyPlanReviewTransitionBeforeResume(
+          targetSessionId,
+          pendingReview,
+          result,
+          currentRequestPermissionLevel,
+        );
         this.scrollManager?.setScrollLock?.(true);
         this.scrollManager?.resumeFollowBottom?.('auto');
         await this.submitInteractionActionRequest(
@@ -7997,6 +8248,7 @@ Do not create non-existent boards and libraries.
               }
             : undefined,
           targetSessionId,
+          executionSnapshot,
         );
       } catch (error) {
         try {
@@ -8323,6 +8575,10 @@ function normalizePlanHandoffText(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function buildStartImplementationPrompt(actionText: string): string {
+  return actionText || PLAN_CHAT_MODE_START_IMPLEMENTATION_PROMPT;
+}
+
 function buildClearContextImplementationPrompt(planText: string): string {
   return [
     'A previous agent produced the plan below to accomplish the user\'s task.',
@@ -8330,6 +8586,27 @@ function buildClearContextImplementationPrompt(planText: string): string {
     '',
     planText,
   ].join('\n');
+}
+
+function extractCompletedPlanPartText(value: unknown): string {
+  const part = asRecord(value);
+  if (!part || part['type'] !== 'plan' || part['status'] !== 'completed') {
+    return '';
+  }
+
+  const metadata = asRecord(part['metadata']);
+  if (
+    part['sourceAgentRole'] === 'subagent'
+    || typeof part['subAgentInvocationId'] === 'string'
+    || typeof part['parentToolCallId'] === 'string'
+    || metadata?.['sourceAgentRole'] === 'subagent'
+    || typeof metadata?.['subAgentInvocationId'] === 'string'
+    || typeof metadata?.['parentToolCallId'] === 'string'
+  ) {
+    return '';
+  }
+
+  return normalizePlanHandoffText(part['text']);
 }
 
 function buildPlanEditorArtifactContent(planText: string): string {

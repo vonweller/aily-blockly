@@ -85,6 +85,7 @@ import {
   normalizeHostSessionInteractionActionSummary,
   type HostSessionInteractionActionSummary,
 } from '../helpers/host-session-interaction-action';
+import type { HostSessionTurnRuntimeTruth } from '../helpers/host-session-runtime-truth';
 import type { PendingFollowupRequest } from '../helpers/chat-pending-request';
 import {
   type HostSessionSelectedModeResolveOptions,
@@ -158,6 +159,8 @@ export type PersistedHostTurnResponse = Omit<TurnResponseTurn, 'response'> & {
   planPart?: PlanPart;
   /** Latest handoff / restored interaction action associated with this turn. */
   handoffAction?: HostSessionInteractionActionSummary;
+  /** Per-turn runtime/profile truth captured at submit time. */
+  runtimeTruth?: HostSessionTurnRuntimeTruth;
   response: TurnResponseTurn['response'] & PersistedHostResponseData;
 };
 

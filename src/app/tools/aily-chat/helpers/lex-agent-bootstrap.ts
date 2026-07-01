@@ -2286,6 +2286,33 @@ export function bootstrapBlocklyLexAgent(
         })), askUserPresentationContext(opts));
       },
     },
+    planReview: {
+      present: async (review: {
+        readonly id: string;
+        readonly title: string;
+        readonly planUri?: string;
+        readonly content: string;
+        readonly actions: readonly {
+          readonly id: string;
+          readonly label: string;
+          readonly description?: string;
+          readonly default?: boolean;
+          readonly permissionLevel?: 'autopilot';
+        }[];
+        readonly canProvideFeedback: boolean;
+      }) => {
+        const targetSessionId = (
+          runtimeSessionId
+          || ctx.resolveActiveRuntimeSessionId?.()
+          || ctx.sessionId
+          || ''
+        ).trim();
+        if (!targetSessionId) {
+          throw new Error('review_plan requires a runtime session owner.');
+        }
+        return ctx.runtimeInteractionHost.presentPlanReview(targetSessionId, review);
+      },
+    },
     diagnostics: {
       getErrors: async (filePaths?: string[]) => collectDiagnostics(filePaths),
     },

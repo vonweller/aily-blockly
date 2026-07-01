@@ -735,25 +735,32 @@ export class ChatService {
     const config = AilyHost.get().config;
     const persistedMode = config.data?.aiChatMode;
     const persistedCustomAgentTarget = normalizeAgentIdentifier(config.data?.aiChatCustomAgentTarget);
-    if (persistedMode !== undefined) {
-      const normalizedMode = normalizeChatSurfaceModeId(persistedMode);
-      if (normalizedMode === 'agent' && persistedCustomAgentTarget) {
-        this.setSelectedMode({
-          modeId: 'agent',
-          customAgentTarget: persistedCustomAgentTarget,
-        }, { persist: false });
-      } else {
-        this.setChatMode(normalizedMode, false);
-      }
+    const normalizedMode = persistedMode !== undefined
+      ? normalizeChatSurfaceModeId(persistedMode)
+      : DEFAULT_CHAT_SELECTED_MODE.modeId;
 
-      if (config.data && (persistedMode !== normalizedMode || config.data.aiChatCustomAgentTarget !== persistedCustomAgentTarget)) {
-        config.data.aiChatMode = normalizedMode;
-        config.data.aiChatCustomAgentTarget = normalizedMode === 'agent'
-          ? persistedCustomAgentTarget || undefined
-          : undefined;
-        config.save?.();
-      }
+    if (normalizedMode === 'agent' && persistedCustomAgentTarget) {
+      this.setSelectedMode({
+        modeId: 'agent',
+        customAgentTarget: persistedCustomAgentTarget,
+      }, { persist: false });
+    } else {
+      this.setChatMode(normalizedMode, false);
     }
+
+    if (persistedMode !== undefined
+      && config.data
+      && (persistedMode !== normalizedMode || config.data.aiChatCustomAgentTarget !== persistedCustomAgentTarget)) {
+      config.data.aiChatMode = normalizedMode;
+      config.data.aiChatCustomAgentTarget = normalizedMode === 'agent'
+        ? persistedCustomAgentTarget || undefined
+        : undefined;
+      config.save?.();
+    }
+  }
+
+  resetChatModeToPersistedSelection(): void {
+    this.loadChatMode();
   }
 
   private loadRateLimitAutoSwitchToAuto(): void {

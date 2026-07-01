@@ -20,7 +20,6 @@ import {
   resolveHostSessionInteractionActionSummary,
 } from '../helpers/host-session-interaction-action';
 import type { PlanPart } from '../core/chat-parts';
-import { isLikelyPlanMarkdown } from '../core/chat-parts';
 import {
   type HostSessionSelectedModeResolveOptions,
   normalizeHostSessionInputStateFromMetadata,
@@ -35,6 +34,10 @@ import {
   cloneHostSessionRuntimeAuxiliary,
   stripLegacyRuntimeAuxiliaryFromMetadata,
 } from '../helpers/host-session-runtime-auxiliary';
+import {
+  normalizeHostSessionTurnRuntimeTruth,
+  readHostSessionTurnRuntimeTruthFromMetadata,
+} from '../helpers/host-session-runtime-truth';
 import {
   readChatAgentRuntimeModeFromMetadata,
   readChatAgentRuntimeModeSourceFromMetadata,
@@ -476,6 +479,7 @@ export class HostSessionRecordStore {
       requestRouting: _turnRequestRouting,
       planPart: _planPart,
       handoffAction: _handoffAction,
+      runtimeTruth: _runtimeTruth,
       ...turnWithoutEnvelope
     } = turn;
     const {
@@ -503,10 +507,11 @@ export class HostSessionRecordStore {
       : undefined;
     const modeId = requestRouting?.requestModeId ?? requestRouting?.selectedModeId;
     const planPart = this.normalizePersistedTurnPlanPart(turn.planPart)
-      ?? this.findPersistedTurnPlanPart(turn.response.parts)
-      ?? this.synthesizePersistedTurnPlanPartFromMarkdown(turn.response.parts, modeId);
+      ?? this.findPersistedTurnPlanPart(turn.response.parts);
     const handoffAction = normalizeHostSessionInteractionActionSummary(turn.handoffAction)
       ?? this.resolveTurnInteractionActionSummary(turn);
+    const runtimeTruth = normalizeHostSessionTurnRuntimeTruth(turn.runtimeTruth)
+      ?? readHostSessionTurnRuntimeTruthFromMetadata(turn.request?.metadata);
     const responseParts = this.materializeEnvelopePlanPart(
       turn.response.parts.map(part => clonePersistedValue(part)),
       planPart,
@@ -519,6 +524,7 @@ export class HostSessionRecordStore {
       ...(requestRouting ? { requestRouting } : {}),
       ...(planPart ? { planPart } : {}),
       ...(handoffAction ? { handoffAction } : {}),
+      ...(runtimeTruth ? { runtimeTruth } : {}),
       request: {
         ...turn['request'],
         ...(turn.request?.metadata ? { metadata: clonePersistedValue(turn.request.metadata) } : {}),
@@ -630,48 +636,6 @@ export class HostSessionRecordStore {
       if (planPart) {
         return planPart;
       }
-    }
-
-    return undefined;
-  }
-
-  private synthesizePersistedTurnPlanPartFromMarkdown(
-    parts: readonly TurnResponseTurn['response']['parts'][number][],
-    modeId: string | undefined,
-  ): PlanPart | undefined {
-    if (modeId !== 'plan') {
-      return undefined;
-    }
-
-    for (let index = parts.length - 1; index >= 0; index -= 1) {
-      const part = parts[index];
-      if (!isRecord(part) || part['type'] !== 'markdown') {
-        continue;
-      }
-      const metadata = isRecord(part['metadata']) ? part['metadata'] : undefined;
-      if (
-        part['sourceAgentRole'] === 'subagent'
-        || typeof part['subAgentInvocationId'] === 'string'
-        || typeof part['parentToolCallId'] === 'string'
-        || metadata?.['sourceAgentRole'] === 'subagent'
-        || typeof metadata?.['subAgentInvocationId'] === 'string'
-        || typeof metadata?.['parentToolCallId'] === 'string'
-      ) {
-        continue;
-      }
-
-      const text = typeof part['content'] === 'string' ? part['content'].trim() : '';
-      if (!isLikelyPlanMarkdown(text)) {
-        continue;
-      }
-
-      return {
-        type: 'plan',
-        partId: 'plan:fallback',
-        status: 'completed',
-        text,
-        source: 'summary',
-      };
     }
 
     return undefined;
