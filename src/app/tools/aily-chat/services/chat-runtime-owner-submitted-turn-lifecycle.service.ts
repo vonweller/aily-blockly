@@ -1,5 +1,5 @@
 import { inject, Injectable } from '@angular/core';
-import type { TurnResponseTurn } from 'aily-lex/browser';
+import type { SessionSnapshot, TurnResponseTurn } from 'aily-lex/browser';
 import type { LexOwnerFacade } from '../helpers/lex-stream.helper';
 
 import {
@@ -61,13 +61,13 @@ export class ChatRuntimeOwnerSubmittedTurnLifecycleService implements ChatRuntim
     }
 
     const startedAt = Date.now();
-    const hydrateStartedAt = Date.now();
-    const hydratedTurnCount = this.hydrateExistingTurnResponses(targetSessionId, owner, request.activeResponseHandle);
-    const hydrateMs = Date.now() - hydrateStartedAt;
-
     const ensureAgentStartedAt = Date.now();
     await this.ensureRuntimeAgentForSession(targetSessionId, owner, request);
     const ensureAgentMs = Date.now() - ensureAgentStartedAt;
+
+    const hydrateStartedAt = Date.now();
+    const hydratedTurnCount = await this.syncExistingTurnResponses(targetSessionId, owner, request.activeResponseHandle);
+    const hydrateMs = Date.now() - hydrateStartedAt;
 
     const displayText = request.displayText ?? request.requestText;
     const titleDispatchStartedAt = Date.now();
@@ -249,11 +249,14 @@ export class ChatRuntimeOwnerSubmittedTurnLifecycleService implements ChatRuntim
       agentRuntimeMode,
       this.ownerSessionContext.currentModel,
     );
-    if (owner.agent.isConfiguredFor?.(sessionId, providerOptionsKey)) {
-      await owner.agent.ensureAgent(sessionId, providerOptionsKey);
+    const ensured = await owner.agent.ensureAgent(sessionId, providerOptionsKey);
+    if (!ensured) {
+      throw new Error(`[AilyChat][RuntimeOwnerLifecycle] Failed to initialize Lex agent for session ${sessionId}.`);
+    }
+    if (owner.agent.getHandle?.(sessionId) || owner.agent.getAgent?.(sessionId)) {
       return;
     }
-    await owner.agent.ensureAgent(sessionId, providerOptionsKey);
+    throw new Error(`[AilyChat][RuntimeOwnerLifecycle] Lex agent is unavailable after initialization for session ${sessionId}.`);
   }
 
   private rememberRuntimeSessionProviderOptions(
@@ -294,20 +297,72 @@ export class ChatRuntimeOwnerSubmittedTurnLifecycleService implements ChatRuntim
       : this.ownerSessionContext.currentAgentRuntimeModeSource;
   }
 
-  private hydrateExistingTurnResponses(
+  private async syncExistingTurnResponses(
     sessionId: string,
     owner: LexOwnerFacade,
     activeResponseHandle?: unknown,
-  ): number {
+  ): Promise<number> {
     const activeTurnId = this.normalizeSessionId(activeResponseHandle);
     const turnResponses = this.ownerSessionModel.readTurnResponses(sessionId);
     const historyTurnResponses = activeTurnId
       ? turnResponses.filter(turn => turn?.turnId !== activeTurnId)
       : turnResponses;
-    owner.hydrateTurnResponses?.(sessionId, historyTurnResponses, {
+
+    if (historyTurnResponses.length === 0) {
+      owner.hydrateTurnResponses?.(sessionId, [], {
+        visibility: 'detached',
+      });
+      return 0;
+    }
+
+    const liveSnapshot = owner.session.snapshot(sessionId);
+    if (this.isLiveSessionAlignedWithHistory(liveSnapshot, sessionId, historyTurnResponses)) {
+      owner.hydrateTurnResponses?.(sessionId, historyTurnResponses, {
+        visibility: 'detached',
+      });
+      return historyTurnResponses.length;
+    }
+
+    const restorePlan = await owner.session.resolveRestorePlan(sessionId, historyTurnResponses);
+    if (!restorePlan?.snapshot) {
+      throw new Error(`[AilyChat][SubmittedTurnLifecycle] Missing Lex session snapshot for restored history: session=${sessionId}, turns=${historyTurnResponses.length}`);
+    }
+
+    const restored = owner.session.restoreResolvedSnapshot(restorePlan.snapshot, sessionId);
+    if (!restored) {
+      throw new Error(`[AilyChat][SubmittedTurnLifecycle] Failed to restore Lex session snapshot before submitting turn: session=${sessionId}, turns=${historyTurnResponses.length}`);
+    }
+
+    owner.hydrateTurnResponses?.(sessionId, restorePlan.turnResponses, {
       visibility: 'detached',
     });
-    return historyTurnResponses.length;
+    return restorePlan.turnResponses.length;
+  }
+
+  private isLiveSessionAlignedWithHistory(
+    snapshot: SessionSnapshot | null | undefined,
+    sessionId: string,
+    historyTurnResponses: readonly TurnResponseTurn[],
+  ): boolean {
+    if (!snapshot || snapshot.sessionId !== sessionId) {
+      return false;
+    }
+
+    const liveTurns = Array.isArray(snapshot.turns) ? snapshot.turns : [];
+    if (liveTurns.length !== historyTurnResponses.length) {
+      return false;
+    }
+
+    for (let index = 0; index < historyTurnResponses.length; index += 1) {
+      const historyTurn = historyTurnResponses[index];
+      const historyTurnId = this.normalizeSessionId(historyTurn?.turnId);
+      const liveTurnId = this.normalizeSessionId(liveTurns[index]?.id);
+      if (!historyTurnId || historyTurnId !== liveTurnId) {
+        return false;
+      }
+    }
+
+    return true;
   }
 
   private logSubmittedTurnStartupLatency(input: {

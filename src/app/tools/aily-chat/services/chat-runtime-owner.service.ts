@@ -206,6 +206,7 @@ export class ChatRuntimeOwnerService implements ChatRuntimeOwnerExecutor, ChatRu
     readonly activeResponseHandle: unknown;
     readonly releaseOwnerScope: () => void;
   }): void {
+    let observedExecutionFailure = false;
     void (async () => {
       let completedSuccessfully = false;
       try {
@@ -219,6 +220,9 @@ export class ChatRuntimeOwnerService implements ChatRuntimeOwnerExecutor, ChatRu
           options.request.requestText,
           options.displayText,
           options.request.metadata ?? undefined,
+          {
+            turnId: this.normalizeSubmittedTurnId(options.activeResponseHandle) || undefined,
+          },
         );
         const seededTurn = this.buildSubmittedSeededTurn(
           options.owner,
@@ -235,23 +239,35 @@ export class ChatRuntimeOwnerService implements ChatRuntimeOwnerExecutor, ChatRu
         this.emitTranscript(options.request.sessionId);
         this.emitSessionState(options.request.sessionId, 'runtime-status');
         this.scheduleSubmittedTurnStartupResourceSettle(options.request.sessionId);
-        await options.owner.turn.run(options.request.requestText, options.displayText);
+        await options.owner.turn.run(options.request.requestText, options.displayText, {
+          turnId: this.normalizeSubmittedTurnId(options.activeResponseHandle) || undefined,
+          sessionId: options.request.sessionId,
+        });
         completedSuccessfully = true;
       } catch (error) {
-        this.emitRuntimeError(options.request.sessionId, error);
+        observedExecutionFailure = true;
+        this.emitRuntimeTurnError(options.request.sessionId, options.activeResponseHandle, error);
       }
       if (completedSuccessfully) {
         await this.completeSubmittedTurnEffects(options.request.sessionId);
       }
     })()
       .catch(error => {
-        this.emitRuntimeError(options.request.sessionId, error);
+        observedExecutionFailure = true;
+        this.emitRuntimeTurnError(options.request.sessionId, options.activeResponseHandle, error);
       })
       .finally(() => {
-        this.publishTerminalSessionModelTranscript(options.request.sessionId);
-        this.completeSubmittedRequestState(options.request.sessionId, options.activeResponseHandle, {
-          emitState: false,
-        });
+        const terminalTurn = this.publishTerminalSessionModelTranscript(options.request.sessionId);
+        if (terminalTurn) {
+          this.emitServiceOwnedResponseModelCompleted(options.request.sessionId, terminalTurn);
+        } else if (!observedExecutionFailure) {
+          this.emitRuntimeTurnError(
+            options.request.sessionId,
+            options.activeResponseHandle,
+            this.createMissingAuthoritativeResponseModelError(options.request.sessionId, options.activeResponseHandle),
+          );
+        }
+        this.completeSubmittedRequestState(options.request.sessionId, options.activeResponseHandle, { emitState: false });
         const state = this.buildSessionState(options.request.sessionId);
         this.emitTranscript(options.request.sessionId);
         this.emitSessionState(options.request.sessionId, 'runtime-status', state);
@@ -356,12 +372,12 @@ export class ChatRuntimeOwnerService implements ChatRuntimeOwnerExecutor, ChatRu
     }
   }
 
-  private publishTerminalSessionModelTranscript(sessionId: ChatRuntimeHostSessionId): void {
+  private publishTerminalSessionModelTranscript(sessionId: ChatRuntimeHostSessionId): TurnResponseTurn | null {
     const context = this.requireContext();
     const turnResponses = this.readAuthoritativeServiceOwnedTurnResponses(sessionId);
     if (!Array.isArray(turnResponses) || turnResponses.length === 0) {
       this.logTerminalTranscriptModel(sessionId, 'missing-authoritative-service-model', []);
-      return;
+      return null;
     }
 
     this.logTerminalTranscriptModel(sessionId, 'service-owned-response-model', turnResponses);
@@ -370,7 +386,7 @@ export class ChatRuntimeOwnerService implements ChatRuntimeOwnerExecutor, ChatRu
       turnResponses,
       terminalTranscriptProjection('execution'),
     );
-    this.emitServiceOwnedResponseModelProgress(sessionId, turnResponses);
+    return this.emitServiceOwnedResponseModelProgress(sessionId, turnResponses);
   }
 
   private publishStoppedSessionModelTranscript(
@@ -507,10 +523,10 @@ export class ChatRuntimeOwnerService implements ChatRuntimeOwnerExecutor, ChatRu
   private emitServiceOwnedResponseModelProgress(
     sessionId: ChatRuntimeHostSessionId,
     turnResponses: readonly TurnResponseTurn[],
-  ): void {
+  ): TurnResponseTurn | null {
     const turn = selectLatestAuthoritativeResponseTurn(turnResponses);
     if (!turn?.turnId) {
-      return;
+      return null;
     }
     const event: ChatRuntimeOwnerExecutorEvent = {
       kind: 'turnProgress',
@@ -522,6 +538,65 @@ export class ChatRuntimeOwnerService implements ChatRuntimeOwnerExecutor, ChatRu
     for (const listener of [...this.eventListeners]) {
       listener(event);
     }
+    return turn;
+  }
+
+  private emitServiceOwnedResponseModelCompleted(
+    sessionId: ChatRuntimeHostSessionId,
+    turn: TurnResponseTurn,
+  ): void {
+    if (!turn?.turnId) {
+      return;
+    }
+    const event: ChatRuntimeOwnerExecutorEvent = {
+      kind: 'turnCompleted',
+      sessionId,
+      turnId: turn.turnId,
+      revision: this.readTranscriptRevision(sessionId),
+      turn,
+    };
+    for (const listener of [...this.eventListeners]) {
+      listener(event);
+    }
+  }
+
+  private emitRuntimeTurnError(
+    sessionId: ChatRuntimeHostSessionId,
+    activeResponseHandle: unknown,
+    error: unknown,
+  ): void {
+    const turnId = this.normalizeSubmittedTurnId(activeResponseHandle);
+    if (!turnId) {
+      this.emitRuntimeError(sessionId, error);
+      return;
+    }
+    const maybeError = error as { message?: unknown; code?: unknown; retryable?: unknown } | null | undefined;
+    const event: ChatRuntimeOwnerExecutorEvent = {
+      kind: 'turnError',
+      sessionId,
+      turnId,
+      revision: this.readTranscriptRevision(sessionId),
+      error: {
+        code: typeof maybeError?.code === 'string' ? maybeError.code : undefined,
+        message: typeof maybeError?.message === 'string' ? maybeError.message : String(error || 'Unknown runtime error'),
+        retryable: typeof maybeError?.retryable === 'boolean' ? maybeError.retryable : undefined,
+      },
+    };
+    for (const listener of [...this.eventListeners]) {
+      listener(event);
+    }
+  }
+
+  private createMissingAuthoritativeResponseModelError(
+    sessionId: ChatRuntimeHostSessionId,
+    activeResponseHandle: unknown,
+  ): Error {
+    const error = new Error(
+      `[AilyChat][RuntimeOwner] Lex execution finished without an authoritative response model: session=${sessionId}, turn=${this.normalizeSubmittedTurnId(activeResponseHandle) || '<unknown>'}.`,
+    ) as Error & { code?: string; retryable?: boolean };
+    error.code = 'missing_authoritative_response_model';
+    error.retryable = true;
+    return error;
   }
 
   private beginSubmittedRequestState(

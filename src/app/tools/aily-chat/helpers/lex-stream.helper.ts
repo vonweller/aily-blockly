@@ -394,7 +394,7 @@ export class LexOwnerFacade {
     this._uiEventBridge = uiEventBridge;
     const turnStartupBridge = new LexTurnStartupBridge(
       this.ctx,
-      (userMessage, displayContent, metadata) => turnControlBridge.start(userMessage, displayContent, metadata),
+      (userMessage, displayContent, metadata, options) => turnControlBridge.start(userMessage, displayContent, metadata, options),
       (turnId, userMessage, displayContent, metadata) => renderEventBridge.seedPendingTurn(turnId, userMessage, displayContent, metadata),
       (turnId) => uiEventBridge.ensureResponseItem(turnId),
       () => turnBridge.messages(),

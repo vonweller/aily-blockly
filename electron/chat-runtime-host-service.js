@@ -53,6 +53,20 @@ const ALLOWED_METHODS = new Set([
   'requestResourceOperation',
 ]);
 
+function isRuntimeOwnerTraceEnabled() {
+  const value = process && process.env
+    ? (process.env.AILY_CHAT_TRACE_RUNTIME_OWNER_EVENTS || process.env.__AILY_CHAT_TRACE_RUNTIME_OWNER_EVENTS__)
+    : '';
+  if (value === true || value === 1) {
+    return true;
+  }
+  if (typeof value !== 'string') {
+    return false;
+  }
+  const normalized = value.trim().toLowerCase();
+  return normalized === '1' || normalized === 'true' || normalized === 'on' || normalized === 'yes';
+}
+
 function measureTextLength(value) {
   if (typeof value === 'string') {
     return value.length;
@@ -682,16 +696,21 @@ class ChatRuntimeHostProcessService {
   handleRuntimeOwnerEvent(event, payload = {}) {
     try {
       this.runtimeOwnerController.assertRegisteredRuntimeOwnerSender(event);
-      console.log('[AilyChat][RuntimeOwnerEventIn]', JSON.stringify(summarizeRuntimeOwnerPayload(payload)));
+      const shouldTraceRuntimeOwnerEvents = isRuntimeOwnerTraceEnabled();
+      if (shouldTraceRuntimeOwnerEvents) {
+        console.log('[AilyChat][RuntimeOwnerEventIn]', JSON.stringify(summarizeRuntimeOwnerPayload(payload)));
+      }
       const canonicalEvents = this.hostSessionStore.cacheRuntimeOwnerEvent(payload);
       const eventList = Array.isArray(canonicalEvents) ? canonicalEvents : [canonicalEvents];
-      console.log('[AilyChat][RuntimeOwnerEventOut]', JSON.stringify({
-        sourceKind: typeof payload?.kind === 'string' ? payload.kind : undefined,
-        sessionId: typeof payload?.sessionId === 'string' ? payload.sessionId : undefined,
-        turnId: typeof payload?.turnId === 'string' ? payload.turnId : undefined,
-        canonicalEvents: eventList.filter(Boolean).map(item => summarizeCanonicalHostEvent(item)),
-        dropped: !eventList.some(Boolean),
-      }));
+      if (shouldTraceRuntimeOwnerEvents) {
+        console.log('[AilyChat][RuntimeOwnerEventOut]', JSON.stringify({
+          sourceKind: typeof payload?.kind === 'string' ? payload.kind : undefined,
+          sessionId: typeof payload?.sessionId === 'string' ? payload.sessionId : undefined,
+          turnId: typeof payload?.turnId === 'string' ? payload.turnId : undefined,
+          canonicalEvents: eventList.filter(Boolean).map(item => summarizeCanonicalHostEvent(item)),
+          dropped: !eventList.some(Boolean),
+        }));
+      }
       for (const canonicalEvent of eventList) {
         if (canonicalEvent) {
           this.broadcastHostEvent(canonicalEvent);

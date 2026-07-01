@@ -1252,6 +1252,7 @@ export class SessionLifecycleHelper {
     this.applySessionType(DEFAULT_CHAT_SESSION_TYPE);
     this.ctx.chatService.currentSessionPath = explicitProjectPath ?? '';
     this.ctx.chatService.clearResolvedActiveModel?.();
+    this.ctx.chatService.resetChatModeToPersistedSelection?.();
     this.ctx.clearEntryInputState?.();
     this.ctx.isSessionStarting = false;
 

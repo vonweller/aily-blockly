@@ -72,19 +72,17 @@ describe('RenderEventPartAdapter', () => {
     ]);
   });
 
-  it('can materialize final plan-mode markdown as a plan part when the model omits proposed_plan tags', () => {
+  it('does not materialize final plan-mode markdown as a plan part when the model omits proposed_plan tags', () => {
     processCurrent({ type: 'markdown_delta', text: 'Intro\n', timestamp: 1 });
     processCurrent({ type: 'markdown_delta', text: '## Plan\n1. Wire DHT11\n2. Verify OLED', timestamp: 2 });
 
-    adapter.finalize(currentHandle, { materializeFinalMarkdownAsPlan: true });
+    adapter.finalize(currentHandle);
 
     const parts = store.getPartsForHandle(currentHandle);
     expect(parts).toEqual([
       jasmine.objectContaining({
-        type: 'plan',
-        status: 'completed',
-        text: 'Intro\n## Plan\n1. Wire DHT11\n2. Verify OLED',
-        source: 'summary',
+        type: 'markdown',
+        content: 'Intro\n## Plan\n1. Wire DHT11\n2. Verify OLED',
       }),
     ]);
   });

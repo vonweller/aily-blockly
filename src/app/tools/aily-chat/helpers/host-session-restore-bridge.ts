@@ -1,7 +1,7 @@
 import type { TurnRequest, TurnResponseTurn, SessionSnapshot } from 'aily-lex/browser';
 import { DEFAULT_CHAT_SESSION_TYPE, normalizeChatSelectedMode, normalizeChatSessionType, normalizeChatSurfaceModeId } from '../core/chat-mode';
 import {
-  normalizeChatAgentRuntimeMode,
+  resolveChatAgentRuntimeModeForProject,
   readChatAgentRuntimeModeSourceFromMetadata,
   readChatAgentRuntimeModeFromMetadata,
   type ChatAgentRuntimeMode,
@@ -214,6 +214,7 @@ type HostSessionRestoreContext = Pick<IChatViewAccess, 'scrollManager' | 'invali
   & Pick<IChatServiceAccess, 'contextBudgetService' | 'ailyChatConfigService' | 'runtimeInteractionHost'>
   & Pick<IChatCoordination, 'lexStream'>
   & {
+    getDevelopmentModePreferenceRuntimeMode?(): ChatAgentRuntimeMode | undefined;
     readSessionRuntimeState?(sessionId?: string | null): Readonly<ChatSessionRuntimeState> | undefined;
     projectRestoredRuntimeAuxiliary?(
       sessionId: string,
@@ -761,16 +762,19 @@ export class HostSessionRestoreBridge {
       providerOptions,
       inputState: sessionContent?.inputState ?? sessionMetadata?.inputState,
     });
-    this.ctx.chatService.setCurrentAgentRuntimeMode?.(
-      normalizeChatAgentRuntimeMode(
-        sessionMetadata.agentRuntimeMode ?? sessionMetadata.runtimeMode,
-        this.ctx.chatService.currentAgentRuntimeMode ?? 'unbound',
-      ),
-      sessionMetadata.agentRuntimeModeSource ?? sessionMetadata.runtimeModeSource ?? 'restored',
-    ) ?? (this.ctx.chatService.currentAgentRuntimeMode = normalizeChatAgentRuntimeMode(
-      sessionMetadata.agentRuntimeMode ?? sessionMetadata.runtimeMode,
-      this.ctx.chatService.currentAgentRuntimeMode ?? 'unbound',
-    ));
+    const runtimeResolution = resolveChatAgentRuntimeModeForProject({
+      projectPath: providerOptions.folderPath ?? sessionMetadata.projectPath ?? null,
+      metadata: sessionMetadata,
+      userPreferenceMode: this.ctx.getDevelopmentModePreferenceRuntimeMode?.(),
+      fallback: providerOptions.folderPath ? 'coder' : 'unbound',
+      requireExistingProjectPath: Boolean(providerOptions.folderPath),
+    });
+    if (typeof this.ctx.chatService.setCurrentAgentRuntimeMode === 'function') {
+      this.ctx.chatService.setCurrentAgentRuntimeMode(runtimeResolution.mode, runtimeResolution.source);
+    } else {
+      this.ctx.chatService.currentAgentRuntimeMode = runtimeResolution.mode;
+      this.ctx.chatService.currentAgentRuntimeModeSource = runtimeResolution.source;
+    }
 
     const resolveModeById = (modeId: string) => typeof this.ctx.chatService.findResolvedModeById === 'function'
       ? this.ctx.chatService.findResolvedModeById(modeId)

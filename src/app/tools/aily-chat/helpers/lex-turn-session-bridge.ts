@@ -56,7 +56,7 @@ interface LexTurnManagerAccess {
     content: string;
     displayContent?: string;
     metadata?: LexTurnRequestMetadata;
-  }): { id: string };
+  }, options?: { readonly turnId?: string }): { id: string };
   completeTurnText(response: string): void;
   failTurn(reason: string): void;
   removeIncomplete(): boolean;
@@ -200,7 +200,12 @@ export class LexTurnSessionBridge implements ITurnDataSource {
     return this.getAgent()?.turnManager.activeTurn?.request.metadata;
   }
 
-  startTurn(content: string, displayContent?: string, metadata?: LexTurnRequestMetadata): string | undefined {
+  startTurn(
+    content: string,
+    displayContent?: string,
+    metadata?: LexTurnRequestMetadata,
+    options?: { readonly turnId?: string },
+  ): string | undefined {
     const agent = this.getAgent();
     if (!agent) return undefined;
     const persistedRequestContext = agent.saveSession?.().requestContext as unknown as LexTurnRequestMetadata | undefined;
@@ -214,6 +219,7 @@ export class LexTurnSessionBridge implements ITurnDataSource {
         ...(typeof displayContent === 'string' ? { displayContent } : {}),
         ...(effectiveMetadata ? { metadata: effectiveMetadata } : {}),
       },
+      options,
     );
     const activeMetadata = agent.turnManager.activeTurn?.request.metadata;
     const activeModelRouting = activeMetadata?.['modelRouting'];

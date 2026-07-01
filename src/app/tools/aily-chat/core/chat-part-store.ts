@@ -16,7 +16,7 @@ import { appendMarkdownContent, getMarkdownContentLength, getMarkdownContentWind
 import { appendThinkContent, getThinkContentLength, getThinkContentWindow, storeThinkContent } from './think-content-store';
 import {
   ChatPart, MarkdownPart, ThinkingPart, ToolCallPart, StatePart, TerminalPart,
-  SubagentToolCallSnapshot, isSubagentToolCallMetadata, mkMarkdown, mkThinking, mkToolCall, mkError, mkState, mkSubagentTimelineEntry, subagentSnapshotToToolCall, toolCallPartToSubagentSnapshot, mkPlan, mkQuestion, mkConfirmation, isLikelyPlanMarkdown, buildScopedTextPartId,
+  SubagentToolCallSnapshot, isSubagentToolCallMetadata, mkMarkdown, mkThinking, mkToolCall, mkError, mkState, mkSubagentTimelineEntry, subagentSnapshotToToolCall, toolCallPartToSubagentSnapshot, mkPlan, mkQuestion, mkConfirmation, buildScopedTextPartId,
   type ChatPartScope, isSameChatPartScope, normalizeChatPartScope, withChatPartScopeMetadata,
 } from './chat-parts';
 import type { SubagentChildItem } from './chat-parts';
@@ -28,7 +28,11 @@ const TERMINAL_LIVE_STREAM_MAX_CHARS = 32 * 1024;
 const TERMINAL_LIVE_OMITTED_MARKER = '[earlier terminal output omitted]\n';
 const SUBAGENT_CHILD_LIVE_STREAM_MAX_CHARS = 12 * 1024;
 const SUBAGENT_CHILD_LIVE_OMITTED_MARKER = '[earlier subagent output omitted]\n';
+const TEXT_PART_EXTERNALIZE_THRESHOLD_CHARS = 24 * 1024;
+const TEXT_PART_LIVE_STREAM_MAX_CHARS = 48 * 1024;
+const TEXT_PART_LIVE_OMITTED_MARKER = '[earlier streaming text omitted]\n\n';
 let subagentChildContentRefCounter = 0;
+let textPartContentRefCounter = 0;
 type RunningPartFinalizeStatus = 'completed' | 'cancelled' | 'error';
 
 // ==================== 变更事件 ====================
@@ -237,6 +241,73 @@ function getSubagentChildContentWindow(kind: 'markdown' | 'thinking', key: strin
   return kind === 'thinking'
     ? getThinkContentWindow(key, SUBAGENT_CHILD_LIVE_STREAM_MAX_CHARS, SUBAGENT_CHILD_LIVE_OMITTED_MARKER)
     : getMarkdownContentWindow(key, SUBAGENT_CHILD_LIVE_STREAM_MAX_CHARS, SUBAGENT_CHILD_LIVE_OMITTED_MARKER);
+}
+
+function createTextPartContentRef(kind: 'markdown' | 'thinking'): string {
+  const randomId = typeof globalThis.crypto?.randomUUID === 'function'
+    ? globalThis.crypto.randomUUID()
+    : `${Date.now().toString(36)}-${(++textPartContentRefCounter).toString(36)}`;
+  return `chat-part:${kind}:${randomId}`;
+}
+
+function storeTextPartContent(kind: 'markdown' | 'thinking', key: string, content: string): void {
+  if (kind === 'thinking') {
+    storeThinkContent(key, content);
+    return;
+  }
+  storeMarkdownContent(key, content);
+}
+
+function appendTextPartContent(kind: 'markdown' | 'thinking', key: string, delta: string): void {
+  if (kind === 'thinking') {
+    appendThinkContent(key, delta);
+    return;
+  }
+  appendMarkdownContent(key, delta);
+}
+
+function getTextPartContentLength(kind: 'markdown' | 'thinking', key: string): number {
+  return kind === 'thinking' ? getThinkContentLength(key) : getMarkdownContentLength(key);
+}
+
+function getTextPartContentWindow(kind: 'markdown' | 'thinking', key: string): string {
+  return kind === 'thinking'
+    ? getThinkContentWindow(key, TEXT_PART_LIVE_STREAM_MAX_CHARS, TEXT_PART_LIVE_OMITTED_MARKER)
+    : getMarkdownContentWindow(key, TEXT_PART_LIVE_STREAM_MAX_CHARS, TEXT_PART_LIVE_OMITTED_MARKER);
+}
+
+function appendLiveTextPartContent<TPart extends MarkdownPart | ThinkingPart>(
+  part: TPart,
+  kind: 'markdown' | 'thinking',
+  delta: string,
+): TPart {
+  if (!delta) {
+    return part;
+  }
+
+  let contentRef = asString(part.contentRef);
+  if (contentRef) {
+    appendTextPartContent(kind, contentRef, delta);
+    const contentLength = getTextPartContentLength(kind, contentRef);
+    part.content = getTextPartContentWindow(kind, contentRef);
+    part.contentRef = contentRef;
+    part.contentLength = contentLength;
+    return part;
+  }
+
+  const combined = `${part.content || ''}${delta}`;
+  if (combined.length <= TEXT_PART_EXTERNALIZE_THRESHOLD_CHARS) {
+    part.content = combined;
+    part.contentLength = combined.length;
+    return part;
+  }
+
+  contentRef = createTextPartContentRef(kind);
+  storeTextPartContent(kind, contentRef, combined);
+  part.contentRef = contentRef;
+  part.contentLength = combined.length;
+  part.content = getTextPartContentWindow(kind, contentRef);
+  return part;
 }
 
 function ensureSubagentChildContentRef(child: SubagentChildItem): SubagentChildItem {
@@ -1027,6 +1098,7 @@ export class ChatPartStore {
       ...existing,
       ...terminal,
       partId: existing.partId || terminal.partId,
+      toolCallId: existing.toolCallId || terminal.toolCallId,
       command: terminal.command || existing.command,
       output,
       stderr,
@@ -1097,14 +1169,16 @@ export class ChatPartStore {
     const last = parts.length > 0 ? parts[parts.length - 1] : undefined;
     if (last && last.type === 'markdown' && isSameChatPartScope(last, normalizedScope)) {
       const idx = parts.length - 1;
-      (last as MarkdownPart).content += text;
+      appendLiveTextPartContent(last as MarkdownPart, 'markdown', text);
       this.emitChange(storeKey, idx, 'append');
       return idx;
     }
 
     // 创建新 MarkdownPart
     const idx = parts.length;
-    parts.push(mkMarkdown(text, normalizedScope, buildScopedTextPartId('markdown', normalizedScope, idx)));
+    const part = mkMarkdown('', normalizedScope, buildScopedTextPartId('markdown', normalizedScope, idx));
+    appendLiveTextPartContent(part, 'markdown', text);
+    parts.push(part);
     this.emitChange(storeKey, idx, 'add');
     return idx;
   }
@@ -1239,36 +1313,6 @@ export class ChatPartStore {
     }
   }
 
-  materializeFinalMarkdownAsPlanForHandle(handle: ChatPartStoreReadableHandle | null): boolean {
-    const storeKey = this.resolveStoreKey(handle);
-    if (storeKey === null) {
-      return false;
-    }
-
-    const parts = this._store.get(storeKey);
-    if (!parts || parts.some(part => part.type === 'plan')) {
-      return false;
-    }
-
-    for (let partIndex = parts.length - 1; partIndex >= 0; partIndex -= 1) {
-      const part = parts[partIndex];
-      if (part.type !== 'markdown') {
-        continue;
-      }
-      if (part.sourceAgentRole === 'subagent' || part.subAgentInvocationId || part.parentToolCallId) {
-        continue;
-      }
-      const text = part.content.trim();
-      if (!isLikelyPlanMarkdown(text)) {
-        continue;
-      }
-      this.updatePart(storeKey, partIndex, mkPlan(text, 'completed', 'plan:fallback', { source: 'summary' }));
-      return true;
-    }
-
-    return false;
-  }
-
   /**
    * 追加文本到最后一个 ThinkingPart。
    * 如果最后一个 Part 不是 ThinkingPart，则创建新的。
@@ -1284,14 +1328,16 @@ export class ChatPartStore {
     const last = parts.length > 0 ? parts[parts.length - 1] : undefined;
     if (last && last.type === 'thinking' && !last.isComplete && isSameChatPartScope(last, normalizedScope)) {
       const idx = parts.length - 1;
-      (last as ThinkingPart).content += text;
+      appendLiveTextPartContent(last as ThinkingPart, 'thinking', text);
       this.emitChange(storeKey, idx, 'append');
       return idx;
     }
 
     // 创建新 ThinkingPart（streaming，未完成）
     const idx = parts.length;
-    parts.push(mkThinking(text, false, normalizedScope, buildScopedTextPartId('thinking', normalizedScope, idx)));
+    const part = mkThinking('', false, normalizedScope, buildScopedTextPartId('thinking', normalizedScope, idx));
+    appendLiveTextPartContent(part, 'thinking', text);
+    parts.push(part);
     this.emitChange(storeKey, idx, 'add');
     return idx;
   }

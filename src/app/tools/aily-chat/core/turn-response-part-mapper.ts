@@ -251,7 +251,9 @@ export function chatPartToTurnResponsePart(part: ChatPart): TurnResponsePart {
         ...(metadata ? { metadata } : {}),
       } as TurnResponseTerminalPart;
     }
-    case 'plan':
+    case 'plan': {
+      const scope = normalizeChatPartScope(part);
+      const metadata = withChatPartScopeMetadata(undefined, scope);
       return {
         type: 'plan',
         partId: part.partId,
@@ -261,7 +263,10 @@ export function chatPartToTurnResponsePart(part: ChatPart): TurnResponsePart {
         assumptions: part.assumptions ? [...part.assumptions] : undefined,
         verification: part.verification ? [...part.verification] : undefined,
         source: part.source,
+        ...(scope ? scope : {}),
+        ...(metadata ? { metadata } : {}),
       } satisfies TurnResponsePlanPart;
+    }
   }
 }
 
@@ -383,6 +388,7 @@ export function turnResponsePartToChatPart(part: TurnResponsePart, existing?: Ch
         assumptions: part.assumptions ? [...part.assumptions] : undefined,
         verification: part.verification ? [...part.verification] : undefined,
         source: part.source,
+        scope: readTurnResponsePartScope(part),
       });
     case 'subagent': {
       const subAgentInvocationId = (part as { readonly subAgentInvocationId?: string }).subAgentInvocationId || part.toolCallId;

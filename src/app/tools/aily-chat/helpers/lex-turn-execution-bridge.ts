@@ -30,6 +30,8 @@ type LexTurnExecutionContext = Pick<
 
 type LexTurnRunOptions = {
   readonly yieldRequested?: () => boolean;
+  readonly turnId?: string;
+  readonly sessionId?: string;
 };
 
 type LexChatAgent = {
@@ -247,29 +249,30 @@ export class LexTurnExecutionBridge {
     this._renderEventBridge = bridge;
   }
 
-  runTurn(agent: LexChatAgent | null, userMessage: string): Promise<void> {
+  runTurn(agent: LexChatAgent | null, userMessage: string, options: { readonly turnId?: string; readonly sessionId?: string } = {}): Promise<void> {
     traceBackgroundSessionExecution('run-legacy-turn-start', {
       hasAgent: !!agent,
       sessionId: this.captureExecutionSessionId(),
     });
+    const executionState = this.createExecutionRunState(userMessage, undefined, options);
     if (!agent) {
-      console.error('[LexStream] Agent 未初始化，请先调用 ensureAgent()');
-      this.uiEventBridge.appendExecutionError(GENERIC_EXECUTION_ERROR_MESSAGE);
-      this.ctx.isWaiting = false;
-      return Promise.resolve();
+      const error = new Error(`[AilyChat][TurnOwner] No Lex agent is available for session ${executionState.sessionId ?? '<unknown>'}.`);
+      this.reportExecutionError(error, executionState);
+      return this.finalizeTurnExecution(executionState).then(() => {
+        throw error;
+      });
     }
 
-    const executionState = this.createExecutionRunState(userMessage);
     if (!this.canUseLegacyAgentEventPath(executionState)) {
+      const error = new Error('Legacy AgentEvent execution cannot be projected to a detached session.');
       console.warn('[AilyChat][TurnOwner] Legacy AgentEvent path cannot run detached session safely', {
         executionSessionId: executionState.sessionId,
         visibleSessionId: this.captureVisibleSessionId(),
       });
-      this.reportExecutionError(
-        new Error('Legacy AgentEvent execution cannot be projected to a detached session.'),
-        executionState,
-      );
-      return this.finalizeTurnExecution(executionState);
+      this.reportExecutionError(error, executionState);
+      return this.finalizeTurnExecution(executionState).then(() => {
+        throw error;
+      });
     }
 
     const abortController = new AbortController();
@@ -284,23 +287,33 @@ export class LexTurnExecutionBridge {
       return Promise.resolve(this.ctx.ownerScheduler.runOutsideOwner(async () => {
         await this.preparePartsRendering(this.resolveExecutionResponseTurnId(executionState));
 
+        let executionError: any;
         try {
-          await ChatPerformanceTracer.runWithSurface(
+          const acceptedEventCount = await ChatPerformanceTracer.runWithSurface(
             'agent_loop',
             () => this.consumeAgentEvents(executionState, agent, userMessage, signal),
             `session=${executionState.sessionId ?? ''}`,
           );
+          if (acceptedEventCount === 0 && !this.isExecutionCancellationEffective(executionState)) {
+            throw new Error(`[AilyChat][TurnOwner] Lex agent event stream completed without any events for session ${executionState.sessionId ?? '<unknown>'}.`);
+          }
         } catch (error: any) {
           this.reportExecutionError(error, executionState);
+          executionError = error;
         }
 
         const turnDraft = this.uiEventBridge.getCurrentTurnDraft();
         ChatPerformanceTracer.end(turnSpan, 'lex_runTurn', `toolCalls=${turnDraft.toolCallCount}`);
         await this.finalizeTurnExecution(executionState);
+        if (executionError) {
+          throw executionError;
+        }
       }));
     } catch (error: any) {
       ChatPerformanceTracer.end(turnSpan, 'lex_runTurn', `error: ${error.message}`);
-      return this.finalizeTurnExecution(executionState);
+      return this.finalizeTurnExecution(executionState).then(() => {
+        throw error;
+      });
     }
   }
 
@@ -319,13 +332,17 @@ export class LexTurnExecutionBridge {
    * This is the new R3 path: RenderEvent → LexRenderEventBridge → ChatPartStore.
    * No PartEventProcessor, no state-event/runtime-event bridge chain.
    */
-  runTurnWithRenderEvents(source: RenderEventSource, userMessage: string, displayContent?: string): Promise<void> {
+  runTurnWithRenderEvents(
+    source: RenderEventSource,
+    userMessage: string,
+    displayContent?: string,
+    options: { readonly turnId?: string; readonly sessionId?: string } = {},
+  ): Promise<void> {
     if (!this._renderEventBridge) {
-      console.error('[LexStream] RenderEvent bridge not set, cannot use RenderEvent path');
-      return Promise.resolve();
+      return Promise.reject(new Error('[AilyChat][TurnOwner] RenderEvent bridge is not set for Lex execution.'));
     }
 
-    const executionState = this.createExecutionRunState(userMessage, displayContent);
+    const executionState = this.createExecutionRunState(userMessage, displayContent, options);
     const abortController = new AbortController();
     this.setAbortController(executionState.sessionId, abortController);
     const signal = abortController.signal;
@@ -338,37 +355,48 @@ export class LexTurnExecutionBridge {
       return Promise.resolve(this.ctx.ownerScheduler.runOutsideOwner(async () => {
         await yieldOutsideOwner(this.ctx, 'prepare');
 
+        let executionError: any;
         try {
-          await ChatPerformanceTracer.runWithSurface(
+          const acceptedEventCount = await ChatPerformanceTracer.runWithSurface(
             'agent_loop',
             () => this.consumeRenderEvents(executionState, source, userMessage, signal),
             `session=${executionState.sessionId ?? ''}`,
           );
+          if (acceptedEventCount === 0 && !this.isExecutionCancellationEffective(executionState)) {
+            throw new Error(`[AilyChat][TurnOwner] Lex render event stream completed without any accepted events for session ${executionState.sessionId ?? '<unknown>'}.`);
+          }
         } catch (error: any) {
           this.reportExecutionError(error, executionState);
+          executionError = error;
         }
 
         const turnDraft = this.uiEventBridge.getCurrentTurnDraft();
         ChatPerformanceTracer.end(turnSpan, 'lex_runTurn_render', `toolCalls=${turnDraft.toolCallCount}`);
         await this.finalizeTurnExecution(executionState);
+        if (executionError) {
+          throw executionError;
+        }
       }));
     } catch (error: any) {
       ChatPerformanceTracer.end(turnSpan, 'lex_runTurn_render', `error: ${error.message}`);
-      return this.finalizeTurnExecution(executionState);
+      return this.finalizeTurnExecution(executionState).then(() => {
+        throw error;
+      });
     }
   }
 
   private createExecutionRunState(
     requestContent: string,
     requestDisplayContent?: string,
+    options: { readonly turnId?: string; readonly sessionId?: string } = {},
   ): LexTurnExecutionRunState {
-    const sessionId = this.captureExecutionSessionId();
+    const sessionId = this.normalizeExecutionTurnId(options.sessionId) ?? this.captureExecutionSessionId();
     return {
       sessionId,
       saveTarget: this.captureExecutionSaveTarget?.(sessionId) ?? null,
       detachedRenderEventBridge: null,
       visibleSinkGeneration: null,
-      activeTurnId: null,
+      activeTurnId: this.normalizeExecutionTurnId(options.turnId),
       activeSubagentRenderScopes: [],
       requestContent,
       requestDisplayContent,
@@ -450,6 +478,15 @@ export class LexTurnExecutionBridge {
     };
   }
 
+  private normalizeExecutionTurnId(value: unknown): string | null {
+    if (typeof value !== 'string') {
+      return null;
+    }
+
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+
   private readCurrentExecutionTurnResponses(state: LexTurnExecutionRunState): readonly TurnResponseTurn[] | undefined {
     const canonicalTurnResponses = this.readExecutionTurnResponses?.(state.sessionId);
     if (state.sessionId
@@ -507,7 +544,7 @@ export class LexTurnExecutionBridge {
     source: RenderEventSource,
     userMessage: string,
     signal: AbortSignal,
-  ): Promise<void> {
+  ): Promise<number> {
     state.usedRenderEventStream = true;
     traceBackgroundSessionExecution('consume-render-events-start', {
       sessionId: state.sessionId,
@@ -515,16 +552,19 @@ export class LexTurnExecutionBridge {
     });
     let lastYieldTime = 0;
     let eventCount = 0;
+    let acceptedEventCount = 0;
     let ignoredCrossSessionCancel = false;
     let cancelled = false;
     for await (const event of source.chat(userMessage, signal, {
       yieldRequested: () => this.isExecutionYieldRequested(state),
+      ...(state.activeTurnId ? { turnId: state.activeTurnId } : {}),
     })) {
       eventCount += 1;
       if (!this.acceptRenderEventForExecutionOwner(state, event)
         || !this.acceptRenderEventForActiveTurn(state, event)) {
         continue;
       }
+      acceptedEventCount += 1;
       if (eventCount === 1) {
         traceBackgroundSessionExecution('consume-render-events-first', {
           sessionId: state.sessionId,
@@ -564,8 +604,10 @@ export class LexTurnExecutionBridge {
     traceBackgroundSessionExecution('consume-render-events-end', {
       sessionId: state.sessionId,
       eventCount,
+      acceptedEventCount,
       cancelled,
     });
+    return acceptedEventCount;
   }
 
   private shouldYieldForRenderEvent(eventType: string): boolean {
@@ -978,11 +1020,14 @@ export class LexTurnExecutionBridge {
     agent: LexChatAgent,
     userMessage: string,
     signal: AbortSignal,
-  ): Promise<void> {
+  ): Promise<number> {
     let lastYieldTime = 0;
+    let eventCount = 0;
     for await (const event of agent.chat(userMessage, signal, {
       yieldRequested: () => this.isExecutionYieldRequested(state),
+      ...(state.activeTurnId ? { turnId: state.activeTurnId } : {}),
     })) {
+      eventCount += 1;
       this.uiEventBridge.processEvent(event);
       traceBackgroundSessionExecution('legacy-agent-event', {
         type: event?.type,
@@ -1000,6 +1045,7 @@ export class LexTurnExecutionBridge {
         lastYieldTime = performance.now();
       }
     }
+    return eventCount;
   }
 
   private canUseLegacyAgentEventPath(state: LexTurnExecutionRunState): boolean {

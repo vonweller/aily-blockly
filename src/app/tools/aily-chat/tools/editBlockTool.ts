@@ -11876,6 +11876,15 @@ interface AnalyzeLibraryDocReference {
   libraryPath?: string;
 }
 
+interface AnalyzeLibraryPlanDependency {
+  status: 'blocked';
+  kind: 'missing_dependency';
+  dependencyType: 'node_modules' | 'library';
+  dependencies: string[];
+  projectPath?: string;
+  recommendedAction: string;
+}
+
 interface AnalyzeLibraryBlocksResult extends ToolUseResult {
   metadata?: {
     resultKind?: 'analysis' | 'readme_ref' | 'mixed';
@@ -11886,6 +11895,9 @@ interface AnalyzeLibraryBlocksResult extends ToolUseResult {
     error?: string;
     projectPath?: string;
     troubleshooting?: string[];
+    missingLibraries?: string[];
+    analysisFailures?: Record<string, string>;
+    planDependency?: AnalyzeLibraryPlanDependency;
     libraryDocs?: {
       [libraryName: string]: AnalyzeLibraryDocReference;
     };
@@ -12090,6 +12102,14 @@ export async function analyzeLibraryBlocksTool(
         metadata: {
           error: 'NO_NODE_MODULES',
           projectPath: projectInfo.projectPath,
+          planDependency: {
+            status: 'blocked' as const,
+            kind: 'missing_dependency' as const,
+            dependencyType: 'node_modules' as const,
+            dependencies: ['node_modules'],
+            projectPath: projectInfo.projectPath,
+            recommendedAction: 'Record dependency installation in the plan and run it only during Start Implementation or Agent execution.'
+          },
           troubleshooting: [
             '1. 运行 npm install 安装依赖',
             '2. 检查项目根目录是否正确',
@@ -12160,6 +12180,7 @@ export async function analyzeLibraryBlocksTool(
 
     const analysisTargets = mode === 'analysis' ? libraryNames : librariesWithoutReadme;
     const libraryResults: { [libraryName: string]: LibraryBlockKnowledge } = {};
+    const analysisFailures: Record<string, string> = {};
     let totalBlocks = 0;
     let totalPatterns = 0;
 
@@ -12179,10 +12200,48 @@ export async function analyzeLibraryBlocksTool(
         
       } catch (error) {
         console.warn(`⚠️ 分析库 ${libraryName} 失败:`, error);
+        analysisFailures[libraryName] = getAnalyzeLibraryErrorMessage(error);
       }
     }
 
     const analysisTime = Date.now() - startTime;
+    const missingLibraries = analysisTargets.filter(libraryName => !libraryResults[libraryName]);
+
+    if (missingLibraries.length > 0) {
+      toolResult = [
+        '# Library Dependency Plan Required',
+        '',
+        `The following Blockly library packages could not be inspected in the current project: ${missingLibraries.join(', ')}`,
+        '',
+        'Plan mode should record these as missing dependencies and stop further implementation-oriented inspection.',
+        'Install or add the dependencies during Start Implementation or Agent execution, then rerun library analysis if needed.',
+      ].join('\n');
+      is_error = true;
+      metadata = {
+        resultKind: 'analysis',
+        librariesAnalyzed: Object.keys(libraryResults).length,
+        totalBlocks,
+        totalPatterns,
+        analysisTime,
+        libraryDocs,
+        libraries: {},
+        missingLibraries,
+        analysisFailures,
+        planDependency: {
+          status: 'blocked' as const,
+          kind: 'missing_dependency' as const,
+          dependencyType: 'library' as const,
+          dependencies: missingLibraries,
+          projectPath: projectInfo.projectPath,
+          recommendedAction: 'Record the missing libraries in the plan; do not install or inspect implementation files until Start Implementation or Agent execution.'
+        },
+      };
+      return {
+        content: toolResult,
+        is_error,
+        metadata,
+      };
+    }
     
     // 生成简化的块定义报告（类似 readme.md 格式）
     const reportBuilder = new BoundedAnalyzeLibraryReportBuilder(ANALYZE_LIBRARY_REPORT_MAX_CHARS);
@@ -12360,6 +12419,20 @@ export async function analyzeLibraryBlocksTool(
   return toolResults;
 }
 
+function getAnalyzeLibraryErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (typeof error === 'string') {
+    return error;
+  }
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
 async function resolveAnalyzeLibraryDocReferences(
   projectService: any,
   libraryNames: readonly string[],
@@ -12411,6 +12484,9 @@ function buildAnalyzeLibraryReadmeReport(
         lines.push(`- Library path: ${docRef.libraryPath}`);
       }
       lines.push('- Recommended next step: read this file with read_file before relying on deeper block analysis.');
+    } else if (!docRef?.libraryPath) {
+      lines.push('- No installed library reference found for this library.');
+      lines.push('- Recommended next step: record the library as a plan dependency if it is required.');
     } else {
       lines.push('- No readme_ai.md found for this library.');
       lines.push('- Recommended next step: retry analyzeLibrary with mode="analysis" for block-level documentation.');

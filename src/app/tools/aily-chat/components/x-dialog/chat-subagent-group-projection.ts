@@ -9,7 +9,6 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
 import {
   isInternalDiscoveryToolName,
   isTerminalSessionToolName,
-  isTodoToolName,
   normalizeReadSideToolName,
 } from '../../core/tool-name-normalizer';
 
@@ -114,6 +113,7 @@ function buildBaseRenderItems(parts: readonly RenderableChatPart[]): ChatRenderI
   const items: ChatRenderItem[] = [];
   let buffer: ChatPart[] = [];
   let bufferStartIndex = -1;
+  const terminalOwnedToolCallIds = collectTerminalOwnedToolCallIds(parts);
   const subagentGroups = new Map<string, {
     item: ActivityGroupRenderItem;
     parts: ChatPart[];
@@ -186,6 +186,9 @@ function buildBaseRenderItems(parts: readonly RenderableChatPart[]): ChatRenderI
     }
 
     if (isRuntimeToolCallPart(part)) {
+      if (isToolCallOwnedByTerminalPart(part, terminalOwnedToolCallIds)) {
+        continue;
+      }
       if (shouldPinToolCallToThinking(part)) {
         if (buffer.length === 0) {
           bufferStartIndex = index;
@@ -212,6 +215,94 @@ function buildBaseRenderItems(parts: readonly RenderableChatPart[]): ChatRenderI
 
   flushBuffer();
   return items;
+}
+
+function collectTerminalOwnedToolCallIds(parts: readonly RenderableChatPart[]): Set<string> {
+  const ids = new Set<string>();
+  const terminalSessionIds = new Set<string>();
+  for (const part of parts) {
+    if ((part as { readonly type?: string }).type !== 'terminal') {
+      continue;
+    }
+
+    const terminal = part as {
+      readonly toolCallId?: string;
+      readonly sourceToolCallIds?: readonly string[];
+      readonly processId?: string;
+      readonly outputSessionId?: string;
+      readonly terminalId?: string;
+    };
+    if (terminal.toolCallId) {
+      ids.add(terminal.toolCallId);
+    }
+    for (const sourceToolCallId of terminal.sourceToolCallIds ?? []) {
+      if (sourceToolCallId) {
+        ids.add(sourceToolCallId);
+      }
+    }
+    for (const sessionId of [terminal.processId, terminal.outputSessionId, terminal.terminalId]) {
+      if (sessionId) {
+        terminalSessionIds.add(sessionId);
+      }
+    }
+  }
+
+  for (const part of parts) {
+    const toolPart = toRuntimeToolCallPart(part);
+    if (toolPart.type !== 'tool_call'
+      || !toolPart.toolCallId
+      || !isTerminalSessionToolName(toolPart.toolName)
+      || !isToolCallBoundToTerminalSession(toolPart, terminalSessionIds)) {
+      continue;
+    }
+    ids.add(toolPart.toolCallId);
+  }
+  return ids;
+}
+
+function isToolCallOwnedByTerminalPart(
+  part: RenderableChatPart,
+  terminalOwnedToolCallIds: ReadonlySet<string>,
+): boolean {
+  const toolPart = toRuntimeToolCallPart(part);
+  return toolPart.type === 'tool_call'
+    && typeof toolPart.toolCallId === 'string'
+    && terminalOwnedToolCallIds.has(toolPart.toolCallId);
+}
+
+function isToolCallBoundToTerminalSession(
+  toolPart: {
+    readonly args?: unknown;
+    readonly metadata?: Record<string, unknown>;
+  },
+  terminalSessionIds: ReadonlySet<string>,
+): boolean {
+  if (terminalSessionIds.size === 0) {
+    return false;
+  }
+
+  const args = asRecord(toolPart.args);
+  const metadata = asRecord(toolPart.metadata);
+  const candidateIds = [
+    asString(args?.['processId']),
+    asString(args?.['outputSessionId']),
+    asString(args?.['terminalId']),
+    asString(args?.['id']),
+    asString(metadata?.['processId']),
+    asString(metadata?.['outputSessionId']),
+    asString(metadata?.['terminalId']),
+  ];
+  return candidateIds.some((candidateId) => !!candidateId && terminalSessionIds.has(candidateId));
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
 }
 
 function markLiveActivityGroups(items: readonly ChatRenderItem[], doing: boolean): ChatRenderItem[] {
@@ -268,7 +359,6 @@ function shouldPinToolCallToThinking(part: RenderableChatPart): boolean {
   if (isSubagentToolCall(part as ChatPart)
     || isInternalDiscoveryToolName(toolPart.toolName)
     || isTerminalSessionToolName(toolPart.toolName)
-    || isTodoToolName(toolPart.toolName)
     || isAskQuestionsToolName(toolPart.toolName)
     || hasTerminalSpecificData(toolPart)) {
     return false;
@@ -303,12 +393,16 @@ function isSubagentParentToolPart(part: ChatPart): boolean {
 function toRuntimeToolCallPart(part: RenderableChatPart): {
   readonly type?: string;
   readonly toolName?: string;
+  readonly toolCallId?: string;
+  readonly args?: unknown;
   readonly state?: string;
   readonly metadata?: Record<string, unknown>;
 } {
   return part as {
     readonly type?: string;
     readonly toolName?: string;
+    readonly toolCallId?: string;
+    readonly args?: unknown;
     readonly state?: string;
     readonly metadata?: Record<string, unknown>;
   };
@@ -378,6 +472,7 @@ function buildActivityPartRevision(part: ChatPart, index: number): string {
         part.outputSessionId ?? '',
         part.terminalId ?? '',
         part.toolCallId ?? '',
+        (part.sourceToolCallIds ?? []).join(','),
         part.isRunning ? 'running' : 'settled',
         part.status ?? '',
         part.exitCode ?? '',

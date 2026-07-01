@@ -48,7 +48,7 @@ import {
   getTurnResponseResponseText,
 } from '../../core/turn-response-stream-contract';
 import { buildRenderableProgressParts, type RenderableChatPart } from './chat-render-parts';
-import { isInternalDiscoveryToolName } from '../../core/tool-name-normalizer';
+import { isInternalDiscoveryToolName, isTerminalSessionToolName } from '../../core/tool-name-normalizer';
 import type { HostResponseVoteDirection } from '../../helpers/host-turn-response-state';
 import { ChatRuntimeInteractionHostService } from '../../services/chat-runtime-interaction-host.service';
 import type { WorkspaceCheckpointPresentationMode } from '../../services/edit-checkpoint.service';
@@ -284,7 +284,7 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
     this._effectiveProgressMessagesSource = progressMessages;
     this._effectivePartsDoing = doing;
     this._effectivePartsRevisionKey = revisionKey;
-    const visibleItemParts = itemParts.filter(isVisibleResponsePart);
+    const visibleItemParts = filterTerminalOwnedToolCalls(itemParts.filter(isVisibleResponsePart));
     this._effectivePartsCache = [
       ...visibleItemParts,
       ...buildRenderableProgressParts(response, visibleItemParts, doing, this.hasActiveConfirmationCarousel),
@@ -1196,6 +1196,10 @@ function buildTerminalPartRevisionKey(part: TurnResponsePart, index: number): st
     part.partId ?? '',
     part.processId ?? '',
     part.outputSessionId ?? '',
+    part.terminalId ?? '',
+    part.toolCallId ?? '',
+    Array.isArray(part.sourceToolCallIds) ? part.sourceToolCallIds.join(',') : '',
+    part.command ?? '',
     part.status ?? '',
     part.isRunning ? 'running' : 'idle',
     part.exitCode ?? '',
@@ -1212,7 +1216,7 @@ function readChatPartStableRevision(part: ChatPart): string {
     case 'thinking':
       return String(part.content?.length ?? 0);
     case 'tool_call':
-      return [part.partId ?? '', part.toolCallId ?? '', part.state ?? '', part.text ?? '', part.args ?? ''].join(':');
+      return [part.partId ?? '', part.toolCallId ?? '', part.state ?? '', part.text ?? '', stableJson(part.args ?? null)].join(':');
     case 'state':
       return [part.stateId ?? '', part.state ?? '', part.text ?? '', part.progress ?? ''].join(':');
     case 'error':
@@ -1246,6 +1250,75 @@ function isVisibleResponsePart(part: ChatPart): boolean {
 
   const content = typeof part.content === 'string' ? part.content : '';
   return content.trim().length > 0;
+}
+
+function filterTerminalOwnedToolCalls(parts: readonly ChatPart[]): ChatPart[] {
+  const terminalOwners = collectTerminalPartOwners(parts);
+  if (terminalOwners.toolCallIds.size === 0 && terminalOwners.sessionIds.size === 0) {
+    return [...parts];
+  }
+
+  return parts.filter(part => {
+    if (part.type !== 'tool_call' || !isTerminalSessionToolName(part.toolName)) {
+      return true;
+    }
+
+    if (terminalOwners.toolCallIds.has(part.toolCallId)) {
+      return false;
+    }
+
+    const args = toObjectRecord(part.args);
+    const metadata = toObjectRecord(part.metadata);
+    const sessionIds = [
+      readString(args?.['processId']),
+      readString(args?.['outputSessionId']),
+      readString(args?.['terminalId']),
+      readString(args?.['id']),
+      readString(metadata?.['processId']),
+      readString(metadata?.['outputSessionId']),
+      readString(metadata?.['terminalId']),
+      readString(metadata?.['id']),
+    ].filter((value): value is string => !!value);
+
+    return !sessionIds.some(sessionId => terminalOwners.sessionIds.has(sessionId));
+  });
+}
+
+function collectTerminalPartOwners(parts: readonly ChatPart[]): { toolCallIds: Set<string>; sessionIds: Set<string> } {
+  const toolCallIds = new Set<string>();
+  const sessionIds = new Set<string>();
+
+  for (const part of parts) {
+    if (part.type !== 'terminal') {
+      continue;
+    }
+
+    if (part.toolCallId) {
+      toolCallIds.add(part.toolCallId);
+    }
+    for (const sourceToolCallId of part.sourceToolCallIds ?? []) {
+      if (sourceToolCallId) {
+        toolCallIds.add(sourceToolCallId);
+      }
+    }
+    for (const sessionId of [part.processId, part.outputSessionId, part.terminalId]) {
+      if (sessionId) {
+        sessionIds.add(sessionId);
+      }
+    }
+  }
+
+  return { toolCallIds, sessionIds };
+}
+
+function toObjectRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function readString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
 }
 
 function getOptionalAilyHost(): ReturnType<typeof AilyHost.get> | null {
