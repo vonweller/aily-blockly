@@ -2749,18 +2749,26 @@ function attachBlocklyPostCreateExtensions(
       const seen = new Set<string>();
       const roots: string[] = [];
 
+      const addRoot = (value: unknown): void => {
+        const root = typeof value === 'string' ? value.trim() : '';
+        if (!root || seen.has(root)) {
+          return;
+        }
+
+        seen.add(root);
+        roots.push(root);
+      };
+
+      addRoot(AilyHost.get().project?.currentProjectPath);
+      addRoot(AilyHost.get().project?.projectRootPath);
+
       for (const skill of BlocklySkillRegistry.getAll()) {
         if (skill.origin?.type === 'url') {
           continue;
         }
 
         const baseDir = typeof skill.baseDir === 'string' ? skill.baseDir.trim() : '';
-        if (!baseDir || seen.has(baseDir)) {
-          continue;
-        }
-
-        seen.add(baseDir);
-        roots.push(baseDir);
+        addRoot(baseDir);
       }
 
       return roots;

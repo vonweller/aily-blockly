@@ -199,22 +199,26 @@ export function normalizeHostSessionProviderOptions(
   value?: Partial<HostSessionProviderOptions> | null,
   fallback?: Partial<HostSessionProviderOptions> | null,
 ): HostSessionProviderOptions {
+  const permissionMode = normalizeChatSessionPermissionMode(
+    value?.permissionMode,
+    normalizeChatSessionPermissionMode(fallback?.permissionMode, DEFAULT_CHAT_SESSION_PERMISSION_MODE),
+  );
   const permissionLevel = normalizeHostSessionPermissionLevel(value?.permissionLevel)
     ?? normalizeHostSessionPermissionLevel(fallback?.permissionLevel);
   const approvalsReviewer = normalizeHostSessionApprovalsReviewer(value?.approvalsReviewer)
     ?? normalizeHostSessionApprovalsReviewer(fallback?.approvalsReviewer);
   const approvalPolicy = normalizeHostSessionApprovalPolicy(value?.approvalPolicy)
     ?? normalizeHostSessionApprovalPolicy(fallback?.approvalPolicy);
+  const effectiveApprovalPolicy = permissionMode === 'bypassPermissions'
+    ? 'never'
+    : approvalPolicy;
 
   return {
     folderPath: normalizeHostSessionFolderPath(value?.folderPath) ?? normalizeHostSessionFolderPath(fallback?.folderPath) ?? null,
-    permissionMode: normalizeChatSessionPermissionMode(
-      value?.permissionMode,
-      normalizeChatSessionPermissionMode(fallback?.permissionMode, DEFAULT_CHAT_SESSION_PERMISSION_MODE),
-    ),
+    permissionMode,
     ...(permissionLevel ? { permissionLevel } : {}),
     ...(approvalsReviewer ? { approvalsReviewer } : {}),
-    ...(approvalPolicy ? { approvalPolicy } : {}),
+    ...(effectiveApprovalPolicy ? { approvalPolicy: effectiveApprovalPolicy } : {}),
   };
 }
 

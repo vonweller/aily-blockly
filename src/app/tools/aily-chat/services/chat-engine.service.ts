@@ -2150,13 +2150,16 @@ export class ChatEngineService implements IChatContext {
 
   private syncCurrentSessionEntryTargetRuntimeMode(sessionId?: string | null): void {
     const currentSessionId = resolveOptionalUiSessionOwner(this, sessionId);
+    const providerOptions = this.resolveVisibleSessionProviderOptionsSnapshot(currentSessionId);
+    const projectPath = providerOptions.folderPath ?? null;
+
+    this.chatSessionEntryStateService?.setEntryProviderOptions?.(providerOptions, projectPath);
+
     if (!currentSessionId) {
       return;
     }
 
-    const providerOptions = this.resolveVisibleSessionProviderOptionsSnapshot(currentSessionId);
     const selectedMode = this.resolveVisibleSelectedModeSnapshot(currentSessionId);
-    const projectPath = providerOptions.folderPath ?? null;
 
     this.chatSessionEntryStateService?.setSessionEntryTarget({
       sessionId: currentSessionId,
@@ -2228,7 +2231,7 @@ export class ChatEngineService implements IChatContext {
         permissionMode: 'bypassPermissions',
         permissionLevel: undefined,
         approvalsReviewer: 'user',
-        approvalPolicy: 'on_request',
+        approvalPolicy: 'never',
       });
     }
 
@@ -2241,6 +2244,10 @@ export class ChatEngineService implements IChatContext {
     this.chatService.setCurrentSessionPermissionLevel(nextProviderOptions.permissionLevel);
     this.chatService.setCurrentSessionApprovalsReviewer?.(nextProviderOptions.approvalsReviewer);
     this.chatService.setCurrentSessionApprovalPolicy?.(nextProviderOptions.approvalPolicy);
+    this.chatSessionEntryStateService?.setEntryProviderOptions?.(
+      nextProviderOptions,
+      nextProviderOptions.folderPath ?? this.getCurrentProjectPath(),
+    );
     this.syncExecutionModeGuidanceNotice(
       nextProviderOptions.permissionLevel,
       nextProviderOptions.approvalsReviewer,

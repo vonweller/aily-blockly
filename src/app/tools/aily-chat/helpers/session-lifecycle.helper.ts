@@ -139,7 +139,7 @@ type SessionLifecycleContext = ChatViewWriteBridgeContext
     readonly chatSessionItemsService?: Pick<ChatSessionItemsService, 'sessionItemController' | 'refreshHistoryList' | 'requestSessionListRefresh' | 'loadInitialSummaries' | 'sessionListItems'>;
     readonly chatSessionEntryStateService?: Pick<
       ChatSessionEntryStateService,
-      'readSessionEntryTarget' | 'setSessionEntryTarget' | 'clearSessionEntryTarget'
+      'readSessionEntryTarget' | 'setSessionEntryTarget' | 'clearSessionEntryTarget' | 'readEntryProviderOptions' | 'setEntryProviderOptions'
     >;
     readonly hostResponseProjection?: HostSessionSaveContext['hostResponseProjection'];
     acquireExistingSessionModel?(sessionId?: string | null): ChatSessionModelReference | undefined;
@@ -1253,6 +1253,7 @@ export class SessionLifecycleHelper {
     this.ctx.chatService.currentSessionPath = explicitProjectPath ?? '';
     this.ctx.chatService.clearResolvedActiveModel?.();
     this.ctx.chatService.resetChatModeToPersistedSelection?.();
+    this.applyPersistedEntryProviderOptions(explicitProjectPath ?? this.resolveCurrentProjectPath());
     this.ctx.clearEntryInputState?.();
     this.ctx.isSessionStarting = false;
 
@@ -2559,6 +2560,25 @@ export class SessionLifecycleHelper {
   }
 
   private resolveCurrentProjectProviderOptions(): HostSessionProviderOptions {
+    const persistedEntryProviderOptions = this.ctx.chatSessionEntryStateService?.readEntryProviderOptions?.(
+      this.resolveCurrentProjectPath(),
+    );
+    if (persistedEntryProviderOptions) {
+      return normalizeHostSessionProviderOptions(persistedEntryProviderOptions, {
+        folderPath: chatSessionScopeProjectPath(resolveChatSessionScopeFromProject(AilyHost.get().project)),
+        permissionMode: this.ctx.chatService.currentSessionPermissionMode,
+        ...(this.ctx.chatService.currentSessionPermissionLevel
+          ? { permissionLevel: this.ctx.chatService.currentSessionPermissionLevel }
+          : {}),
+        ...(this.ctx.chatService.currentSessionApprovalsReviewer
+          ? { approvalsReviewer: this.ctx.chatService.currentSessionApprovalsReviewer }
+          : {}),
+        ...(this.ctx.chatService.currentSessionApprovalPolicy
+          ? { approvalPolicy: this.ctx.chatService.currentSessionApprovalPolicy }
+          : {}),
+      });
+    }
+
     const scope = resolveChatSessionScopeFromProject(AilyHost.get().project);
     return {
       folderPath: chatSessionScopeProjectPath(scope),
@@ -2573,6 +2593,15 @@ export class SessionLifecycleHelper {
         ? { approvalPolicy: this.ctx.chatService.currentSessionApprovalPolicy }
         : {}),
     };
+  }
+
+  private applyPersistedEntryProviderOptions(projectPathHint?: string | null): void {
+    const persistedEntryProviderOptions = this.ctx.chatSessionEntryStateService?.readEntryProviderOptions?.(projectPathHint);
+    if (!persistedEntryProviderOptions) {
+      return;
+    }
+
+    this.applySessionProviderOptions(persistedEntryProviderOptions);
   }
 
   private resolveCurrentSessionProviderOptions(): HostSessionProviderOptions {

@@ -1010,9 +1010,12 @@ export class ChatService {
     const approvalsReviewer = normalizeChatSessionApprovalsReviewer(providerOptions?.approvalsReviewer)
       ?? this.currentSessionApprovalsReviewer
       ?? this.ailyChatConfigService.getLexApprovalsReviewer?.();
-    const approvalPolicy = normalizeChatSessionApprovalPolicy(providerOptions?.approvalPolicy)
+    const normalizedApprovalPolicy = normalizeChatSessionApprovalPolicy(providerOptions?.approvalPolicy)
       ?? this.currentSessionApprovalPolicy
       ?? this.ailyChatConfigService.getLexApprovalPolicy?.();
+    const approvalPolicy = permissionMode === 'bypassPermissions'
+      ? 'never'
+      : normalizedApprovalPolicy;
 
     this.currentSessionPath = folderPath;
     this.currentSessionPermissionMode = permissionMode;
@@ -1069,12 +1072,19 @@ export class ChatService {
   private normalizeProviderOptionsInput(
     providerOptions?: ChatServiceSessionProviderOptions | null,
   ): { folderPath?: string; permissionMode?: ChatSessionPermissionMode; permissionLevel?: string; approvalsReviewer?: 'user' | 'auto_review'; approvalPolicy?: 'on_request' | 'never' } {
+    const permissionMode = providerOptions?.permissionMode !== undefined
+      ? normalizeChatSessionPermissionMode(providerOptions.permissionMode, DEFAULT_CHAT_SESSION_PERMISSION_MODE)
+      : undefined;
+    const approvalPolicy = providerOptions?.approvalPolicy !== undefined
+      ? normalizeChatSessionApprovalPolicy(providerOptions.approvalPolicy)
+      : undefined;
+
     return {
       ...(typeof providerOptions?.folderPath === 'string'
         ? { folderPath: providerOptions.folderPath.trim() }
         : {}),
-      ...(providerOptions?.permissionMode !== undefined
-        ? { permissionMode: normalizeChatSessionPermissionMode(providerOptions.permissionMode, DEFAULT_CHAT_SESSION_PERMISSION_MODE) }
+      ...(permissionMode !== undefined
+        ? { permissionMode }
         : {}),
       ...(providerOptions?.permissionLevel !== undefined
         ? { permissionLevel: normalizeChatSessionPermissionLevel(providerOptions.permissionLevel) }
@@ -1082,8 +1092,10 @@ export class ChatService {
       ...(providerOptions?.approvalsReviewer !== undefined
         ? { approvalsReviewer: normalizeChatSessionApprovalsReviewer(providerOptions.approvalsReviewer) }
         : {}),
-      ...(providerOptions?.approvalPolicy !== undefined
-        ? { approvalPolicy: normalizeChatSessionApprovalPolicy(providerOptions.approvalPolicy) }
+      ...((permissionMode === 'bypassPermissions'
+        ? 'never'
+        : approvalPolicy) !== undefined
+        ? { approvalPolicy: permissionMode === 'bypassPermissions' ? 'never' : approvalPolicy }
         : {}),
     };
   }
