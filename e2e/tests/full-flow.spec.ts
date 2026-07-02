@@ -17,6 +17,8 @@ import path from 'node:path';
  *   $env:AILY_E2E_FULLFLOW = '1'
  *   # 可选：指定要选择的开发板搜索关键字（默认 "uno r4"，需本机已装该板的编译器/SDK）
  *   $env:AILY_E2E_BOARD_KEYWORD = 'uno r4'
+ *   # 可选：指定多个开发板搜索关键字，逗号分隔；设置后优先于 AILY_E2E_BOARD_KEYWORD
+ *   $env:AILY_E2E_BOARD_KEYWORDS = 'uno r4,esp32'
  *   npm run test:e2e:fast -- full-flow.spec.ts
  *
  * 本机需具备：内置工具链（child/node、child/aily-builder）、该开发板可安装
@@ -25,6 +27,7 @@ import path from 'node:path';
 const ENABLED = process.env['AILY_E2E_FULLFLOW'] === '1';
 const ALL_BOARDS_ENABLED = process.env['AILY_E2E_ALL_BOARDS'] === '1';
 const BOARD_KEYWORD = process.env['AILY_E2E_BOARD_KEYWORD'] || 'uno r4';
+const BOARD_KEYWORDS = readBoardKeywords();
 const SINGLE_BOARD_TIMEOUT_MS = readTimeoutEnv('AILY_E2E_SINGLE_BOARD_TIMEOUT_MS', 45 * 60_000);
 const INSTALL_TIMEOUT_MS = readTimeoutEnv('AILY_E2E_INSTALL_TIMEOUT_MS', 30 * 60_000);
 const COMPILE_TIMEOUT_MS = readTimeoutEnv('AILY_E2E_COMPILE_TIMEOUT_MS', 10 * 60_000);
@@ -55,6 +58,25 @@ function readTimeoutEnv(name: string, fallbackMs: number): number {
   return value;
 }
 
+function readBoardKeywords(): string[] {
+  const raw = process.env['AILY_E2E_BOARD_KEYWORDS'];
+  if (!raw) {
+    return [BOARD_KEYWORD];
+  }
+
+  const keywords = raw
+    .split(',')
+    .map((keyword) => keyword.trim())
+    .filter(Boolean);
+
+  if (keywords.length === 0) {
+    console.warn('[e2e] AILY_E2E_BOARD_KEYWORDS 未包含有效关键字，回退到 AILY_E2E_BOARD_KEYWORD。');
+    return [BOARD_KEYWORD];
+  }
+
+  return keywords;
+}
+
 test.describe('全流程：选板子 → 新建项目 → 编译', () => {
   const projectDirs: string[] = [];
   const singleBoardTest = ENABLED ? test : test.skip;
@@ -73,13 +95,41 @@ test.describe('全流程：选板子 → 新建项目 → 编译', () => {
     }
   });
 
-  singleBoardTest('应能从选板子一路走到编译完成', async ({ electronApp }) => {
-    test.setTimeout(SINGLE_BOARD_TIMEOUT_MS);
+  singleBoardTest('应能让指定开发板从选板子一路走到编译完成', async ({ electronApp }) => {
+    test.setTimeout(SINGLE_BOARD_TIMEOUT_MS * BOARD_KEYWORDS.length);
 
-    const win = await getMainWindow(electronApp);
-    const pageLog = attachDiagnostics(win);
+    if (BOARD_KEYWORDS.length === 1) {
+      const win = await getMainWindow(electronApp);
+      const pageLog = attachDiagnostics(win);
+      await createProjectAndCompile(win, BOARD_KEYWORDS[0], projectDirs, pageLog);
+      return;
+    }
 
-    await createProjectAndCompile(win, BOARD_KEYWORD, projectDirs, pageLog);
+    console.log(`[e2e] 将验证 ${BOARD_KEYWORDS.length} 个指定开发板：${BOARD_KEYWORDS.join(', ')}`);
+    await closeAilyElectronApp(electronApp).catch(() => {});
+
+    const failures: Array<{ keyword: string; message: string }> = [];
+    for (const keyword of BOARD_KEYWORDS) {
+      await test.step(`创建并编译 ${keyword}`, async () => {
+        const launched = await launchAilyElectron();
+        try {
+          const isolatedWin = await getMainWindow(launched.app);
+          const pageLog = attachDiagnostics(isolatedWin);
+          await createProjectAndCompile(isolatedWin, keyword, projectDirs, pageLog);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          failures.push({ keyword, message });
+          console.log(`[e2e] ${keyword} 失败：${message}`);
+        } finally {
+          await launched.close();
+        }
+      });
+    }
+
+    expect(
+      failures.map((failure) => `${failure.keyword}: ${failure.message}`),
+      '以下指定开发板未完成新建项目并编译',
+    ).toEqual([]);
   });
 
   allBoardsTest('应能让所有可创建开发板完成新建项目并编译', async ({ electronApp }) => {
