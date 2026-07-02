@@ -32,6 +32,7 @@ import {
 } from '../../core/tool-name-normalizer';
 import { getMarkdownContentWindow } from '../../core/markdown-content-store';
 import { getThinkContentWindow } from '../../core/think-content-store';
+import { isTerminalCancelledState, isTerminalFailureState, resolveTerminalLifecycleState } from '../../core/terminal-status';
 import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
 import { chatI18n } from '../../helpers/chat-i18n';
 import { resolveChildToolIdFromProcess } from '../../helpers/child-tool-process-summary';
@@ -714,9 +715,22 @@ export function buildTerminalActivityDisplayItem(
 ): ActivityGroupDisplayItem {
   const detailSections = buildTerminalDetailSections(part);
   const invocationDetail = buildInvocationDetailDisplay({ detailSections });
-  const pill = part.isRunning ? '进行中' : (part.exitCode != null && part.exitCode !== 0 ? '失败' : '');
-  const tone = part.isRunning ? 'info' : (part.exitCode != null && part.exitCode !== 0 ? 'error' : 'neutral');
-  const meta = part.exitCode != null && part.exitCode !== 0 ? `退出码 ${part.exitCode}` : undefined;
+  const terminalState = resolveTerminalLifecycleState(part);
+  const pill = terminalState === 'running'
+    ? chatI18n('AILY_CHAT.PROCESS_STATUS_RUNNING')
+    : terminalState === 'failed'
+      ? chatI18n('AILY_CHAT.PROCESS_STATUS_FAILED')
+      : terminalState === 'cancelled'
+        ? chatI18n('AILY_CHAT.PROCESS_STATUS_CANCELLED')
+        : '';
+  const tone = terminalState === 'running'
+    ? 'info'
+    : terminalState === 'failed'
+      ? 'error'
+      : terminalState === 'cancelled'
+        ? 'warn'
+        : 'neutral';
+  const meta = terminalState !== 'running' && part.exitCode != null ? `退出码 ${part.exitCode}` : undefined;
 
   return {
     id: options?.id || buildChatPartIdentity(part, 0),
@@ -729,11 +743,15 @@ export function buildTerminalActivityDisplayItem(
       pill: pill || undefined,
       pillTone: tone,
     },
-    iconClass: part.isRunning
+    iconClass: terminalState === 'running'
       ? 'fa-light fa-spinner-third'
-      : (part.exitCode != null && part.exitCode !== 0 ? 'fa-light fa-circle-xmark' : 'fa-light fa-circle-check'),
-    isSpinning: part.isRunning,
-    iconColor: getStateColor(part.isRunning ? 'doing' : (part.exitCode != null && part.exitCode !== 0 ? 'error' : 'done')),
+      : terminalState === 'failed'
+        ? 'fa-light fa-circle-xmark'
+        : terminalState === 'cancelled'
+          ? 'fa-light fa-circle-minus'
+          : 'fa-light fa-circle-check',
+    isSpinning: terminalState === 'running',
+    iconColor: getStateColor(terminalState === 'running' ? 'doing' : (terminalState === 'failed' ? 'error' : 'done')),
     kicker: undefined,
     label: chatI18n('AILY_CHAT.PROCESS_TOOL_RUN_COMMAND'),
     subtitle: undefined,
@@ -827,7 +845,7 @@ function shouldExpandTerminalOutput(part: TerminalPart): boolean {
   if (part.isRunning) {
     return !!(part.output || part.stderr);
   }
-  if (part.exitCode != null && part.exitCode !== 0) {
+  if (isTerminalFailureState(part) || isTerminalCancelledState(part)) {
     return true;
   }
   return !!(part.output || part.stderr);
@@ -1431,11 +1449,12 @@ function getToolLikeActivityState(part: ToolCallPart | ConfirmationPart | Termin
   }
 
   if (part.type === 'terminal') {
-    if (part.isRunning) {
+    const terminalState = resolveTerminalLifecycleState(part);
+    if (terminalState === 'running') {
       return 'doing';
     }
 
-    return part.exitCode != null && part.exitCode !== 0 ? 'error' : 'done';
+    return terminalState === 'failed' ? 'error' : 'done';
   }
 
   return part.state;
@@ -1443,9 +1462,14 @@ function getToolLikeActivityState(part: ToolCallPart | ConfirmationPart | Termin
 
 function buildTerminalDetailSections(part: TerminalPart): readonly DetailSectionDescriptor[] {
   const terminalKey = getTerminalDisplayKey(part);
-  const commandTone: StateDetailRow['tone'] = part.isRunning
+  const terminalState = resolveTerminalLifecycleState(part);
+  const commandTone: StateDetailRow['tone'] = terminalState === 'running'
     ? 'info'
-    : (part.exitCode != null && part.exitCode !== 0 ? 'error' : 'success');
+    : terminalState === 'failed'
+      ? 'error'
+      : terminalState === 'cancelled'
+        ? 'warn'
+        : 'success';
   const metadataRows = buildTerminalMetadataRows(part, terminalKey);
   const rows = [
     {
@@ -1472,7 +1496,7 @@ function buildTerminalDetailSections(part: TerminalPart): readonly DetailSection
       title: 'stderr tail',
       subtitle: formatTerminalTailSubtitle(part, 'stderr'),
       note: part.stderr,
-      tone: 'error' as const,
+      tone: isTerminalFailureState(part) ? 'error' as const : 'warn' as const,
       outputKind: 'terminal-stream' as const,
       outputChannel: 'stderr' as const,
     }] : []),
@@ -1561,6 +1585,9 @@ function formatTerminalByteCount(value: number): string {
 function formatTerminalStatusLabel(part: TerminalPart): string {
   if (part.isRunning) {
     return chatI18n('AILY_CHAT.PROCESS_STATUS_RUNNING');
+  }
+  if (part.status === 'cancelled') {
+    return chatI18n('AILY_CHAT.PROCESS_STATUS_CANCELLED');
   }
   if (part.status === 'killed') {
     return chatI18n('AILY_CHAT.PROCESS_STATUS_STOPPED');

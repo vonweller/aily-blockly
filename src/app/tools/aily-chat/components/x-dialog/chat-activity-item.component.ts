@@ -31,6 +31,7 @@ import { getBlocklyArtifactReferenceLabel, resolveBlocklyArtifactReferenceTarget
 import { openChatProcessWindow } from '../../helpers/chat-process-window';
 import { resolveChildToolIdFromProcess } from '../../helpers/child-tool-process-summary';
 import { getChildToolConfig } from '../../../../configs/tool.config';
+import { resolveTerminalLifecycleState } from '../../core/terminal-status';
 import {
   ChatRuntimeInteractionHostService,
   type RuntimeCommandSessionActionResult,
@@ -2537,20 +2538,39 @@ export class ChatActivityItemComponent implements OnChanges {
     const exitCode = typeof snapshot?.exitCode === 'number' ? snapshot.exitCode : 130;
     const status = snapshot?.status || 'killed';
     const stopped = !running;
+    const terminalState = resolveTerminalLifecycleState({ running, exitCode, status });
 
     this.item = {
       ...this.item,
       isSpinning: running,
-      iconClass: running
+      iconClass: terminalState === 'running'
         ? this.item.iconClass
-        : (exitCode && exitCode !== 0 ? 'fa-light fa-circle-xmark' : 'fa-light fa-circle-check'),
-      iconColor: running ? this.item.iconColor : (exitCode && exitCode !== 0 ? '#d4380d' : '#389e0d'),
+        : terminalState === 'failed'
+          ? 'fa-light fa-circle-xmark'
+          : terminalState === 'cancelled'
+            ? 'fa-light fa-circle-minus'
+            : 'fa-light fa-circle-check',
+      iconColor: running
+        ? this.item.iconColor
+        : terminalState === 'failed'
+          ? '#d4380d'
+          : terminalState === 'cancelled'
+            ? '#d89614'
+            : '#389e0d',
       toolHeader: this.item.toolHeader
         ? {
             ...this.item.toolHeader,
             meta: stopped && exitCode != null ? `退出码 ${exitCode}` : this.item.toolHeader.meta,
-            pill: stopped ? (status === 'killed' ? '已停止' : this.item.toolHeader.pill) : this.item.toolHeader.pill,
-            pillTone: stopped ? (status === 'killed' ? 'warn' : this.item.toolHeader.pillTone) : this.item.toolHeader.pillTone,
+            pill: stopped
+              ? (terminalState === 'cancelled'
+                  ? '已取消'
+                  : (status === 'killed' ? '已停止' : this.item.toolHeader.pill))
+              : this.item.toolHeader.pill,
+            pillTone: stopped
+              ? (terminalState === 'failed'
+                  ? 'error'
+                  : (terminalState === 'cancelled' || status === 'killed' ? 'warn' : this.item.toolHeader.pillTone))
+              : this.item.toolHeader.pillTone,
           }
         : this.item.toolHeader,
       toolbarActions: this.item.toolbarActions?.filter(toolbarAction =>

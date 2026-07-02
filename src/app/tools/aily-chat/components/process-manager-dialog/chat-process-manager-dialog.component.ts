@@ -26,6 +26,7 @@ import {
 import { openChatProcessWindow, readChatProcessOutputFile } from '../../helpers/chat-process-window';
 import { ChatHistoryService } from '../../services/chat-history.service';
 import { ChatRuntimeInteractionHostService } from '../../services/chat-runtime-interaction-host.service';
+import { resolveTerminalLifecycleState } from '../../core/terminal-status';
 import {
   DEFAULT_PROCESS_LOG_SUBAPP,
   normalizeProcessLogSubappName,
@@ -348,13 +349,14 @@ export class ChatProcessManagerDialogComponent {
   }
 
   resolveStatusTone(process: ChatRuntimeHostSessionProcessSummary): 'info' | 'success' | 'error' | 'neutral' {
-    if (process.running) {
+    const terminalState = resolveTerminalLifecycleState(process);
+    if (terminalState === 'running') {
       return process.background ? 'neutral' : 'info';
     }
-    if (typeof process.exitCode === 'number' && process.exitCode !== 0) {
+    if (terminalState === 'failed') {
       return 'error';
     }
-    if (process.status === 'completed') {
+    if (terminalState === 'completed') {
       return 'success';
     }
     return 'neutral';
