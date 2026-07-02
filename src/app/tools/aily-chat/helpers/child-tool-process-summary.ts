@@ -235,15 +235,15 @@ export function collapseActiveChildToolServeProcesses(
       return true;
     }
 
-    if (!process.running) {
-      return true;
-    }
-
     const toolId = resolveChildToolIdFromProcess(process);
     if (!toolId || !activeChildToolIds.has(toolId)) {
       return true;
     }
 
-    return !isChildToolServeCommand(process.command);
+    if (!isChildToolServeCommand(process.command)) {
+      return true;
+    }
+
+    return process.background !== true;
   });
 }

@@ -4150,6 +4150,35 @@ function createExternalTerminal(host: any, prjPath: () => string, runtimeSession
     session.resolveReady();
   };
 
+  const registerManagedChildToolServeSession = async (session: ExternalTerminalSession): Promise<void> => {
+    if (session.childToolSessionRegistered || !isManagedChildToolServeCommand(session.command, session.subappName)) {
+      return;
+    }
+
+    const hostInfo = readManagedChildToolReadyHostInfo(session.stdout);
+    if (!hostInfo?.url) {
+      return;
+    }
+
+    if (typeof hostInfo.pid === 'number' && Number.isFinite(hostInfo.pid)) {
+      session.pid = hostInfo.pid;
+    }
+
+    try {
+      const result = await (window as any)['childToolSession']?.register?.({
+        toolId: session.subappName,
+        hostInfo,
+        streamId: session.id,
+      });
+      if (result?.success) {
+        session.childToolSessionRegistered = true;
+        persistBlocklyCommandSessionRecord(session);
+      }
+    } catch (error) {
+      console.warn('[LexStream] Failed to register managed child tool session:', session.subappName, error);
+    }
+  };
+
   const promoteExternalSessionToBackground = (session: ExternalTerminalSession): void => {
     if (session.background || !session.running) {
       return;
@@ -4249,6 +4278,7 @@ function createExternalTerminal(host: any, prjPath: () => string, runtimeSession
             persistBlocklyCommandSessionOutput(host, session, data.data ?? '');
             persistBlocklyCommandSessionRecord(session);
             maybeAutoPromoteExternalSessionToBackground(session);
+            void registerManagedChildToolServeSession(session);
             emitExternalTerminalOutput(session, 'stdout', data.data ?? '');
             settleReady(session);
             break;
@@ -4336,6 +4366,7 @@ function createExternalTerminal(host: any, prjPath: () => string, runtimeSession
       persistBlocklyCommandSessionOutput(host, session, text);
       persistBlocklyCommandSessionRecord(session);
       maybeAutoPromoteExternalSessionToBackground(session);
+      void registerManagedChildToolServeSession(session);
       emitExternalTerminalOutput(session, 'stdout', text);
       settleReady(session);
     });
@@ -4686,10 +4717,39 @@ interface ExternalTerminalSession {
   abortCleanup?: () => void;
   executionKind: 'buffered' | 'pty';
   background: boolean;
+  childToolSessionRegistered?: boolean;
 }
 
 function delay(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function readManagedChildToolReadyHostInfo(output: string): {
+  url?: string;
+  origin?: string;
+  wsUrl?: string;
+  shutdownUrl?: string;
+  port?: number;
+  pid?: number;
+} | null {
+  const text = typeof output === 'string' ? output : '';
+  if (!text) {
+    return null;
+  }
+
+  const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    try {
+      const parsed = JSON.parse(lines[index]) as { event?: string; data?: any };
+      if (parsed?.event === 'ready' && parsed.data?.url) {
+        return parsed.data;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
 }
 
 async function waitForExternalSession(

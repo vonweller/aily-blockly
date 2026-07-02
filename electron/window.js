@@ -2,6 +2,7 @@
 const { ipcMain, BrowserWindow, app, screen } = require("electron");
 const { requestWindowAttention } = require('./window-attention');
 const { killCmdProcess, getActiveCmdProcesses } = require('./cmd');
+const { killRegisteredProcessTree } = require('./process-tree');
 const {
     registerChatRuntimeHostIpc,
     setChatRuntimeOwnerWindow,
@@ -87,6 +88,18 @@ function sanitizeChildToolId(toolId) {
     return String(toolId || '').trim();
 }
 
+function isPidAlive(pid) {
+    if (!Number.isInteger(pid) || pid <= 0) {
+        return false;
+    }
+    try {
+        process.kill(pid, 0);
+        return true;
+    } catch (_) {
+        return false;
+    }
+}
+
 function cloneChildToolSession(session) {
     return session
         ? {
@@ -118,6 +131,46 @@ function cancelChildToolRelease(session) {
     session.releaseTimer = null;
 }
 
+async function tryShutdownChildToolByUrl(session) {
+    const shutdownUrl = typeof session?.hostInfo?.shutdownUrl === 'string'
+        ? session.hostInfo.shutdownUrl.trim()
+        : '';
+    if (!shutdownUrl || typeof fetch !== 'function') {
+        return false;
+    }
+
+    try {
+        const response = await fetch(shutdownUrl, { method: 'POST' }).catch(() => fetch(shutdownUrl));
+        return !!response?.ok;
+    } catch (_) {
+        return false;
+    }
+}
+
+async function stopChildToolSessionProcess(session) {
+    if (!session) {
+        return false;
+    }
+
+    const hasActiveStream = !!session.streamId
+        && getActiveCmdProcesses().some(processInfo => processInfo.streamId === session.streamId);
+    if (hasActiveStream) {
+        killCmdProcess(session.streamId);
+    }
+
+    const hostPid = Number.isInteger(session?.hostInfo?.pid) ? session.hostInfo.pid : null;
+    if (hostPid && !isPidAlive(hostPid)) {
+        return true;
+    }
+
+    const shutdownOk = await tryShutdownChildToolByUrl(session);
+    if (hostPid && isPidAlive(hostPid)) {
+        await killRegisteredProcessTree(hostPid, `child-tool:${session.streamId || 'detached'}`);
+    }
+
+    return shutdownOk || !hostPid || !isPidAlive(hostPid);
+}
+
 function scheduleChildToolRelease(toolId, session) {
     if (!session || session.releaseTimer) {
         return;
@@ -128,11 +181,10 @@ function scheduleChildToolRelease(toolId, session) {
         if (session.refCount > 0) {
             return;
         }
-        if (session.streamId) {
-            killCmdProcess(session.streamId);
-        }
-        childToolSessions.delete(toolId);
-        broadcastChildToolSessionStateChanged();
+        void stopChildToolSessionProcess(session).finally(() => {
+            childToolSessions.delete(toolId);
+            broadcastChildToolSessionStateChanged();
+        });
     }, CHILD_TOOL_RELEASE_GRACE_MS);
 }
 
@@ -159,18 +211,19 @@ function restartChildToolSession(toolId) {
     }
 
     cancelChildToolRelease(session);
-    if (session.streamId) {
-        killCmdProcess(session.streamId);
-    }
+    void stopChildToolSessionProcess(session);
     childToolSessions.delete(normalizedToolId);
     return { success: true };
 }
 
 function isChildToolSessionAlive(session) {
-    if (!session?.streamId) {
+    if (!session) {
         return false;
     }
-    return getActiveCmdProcesses().some(processInfo => processInfo.streamId === session.streamId);
+    if (session.streamId && getActiveCmdProcesses().some(processInfo => processInfo.streamId === session.streamId)) {
+        return true;
+    }
+    return isPidAlive(session?.hostInfo?.pid);
 }
 
 function listChildToolSessions() {
@@ -179,12 +232,13 @@ function listChildToolSessions() {
     );
     return Array.from(childToolSessions.entries()).map(([toolId, session]) => {
         const processInfo = session?.streamId ? activeProcesses.get(session.streamId) : null;
+        const running = !!processInfo || isPidAlive(session?.hostInfo?.pid);
         return {
             toolId,
             streamId: session?.streamId || '',
             hostInfo: session?.hostInfo || null,
             refCount: session?.refCount || 0,
-            running: !!processInfo,
+            running,
             pid: processInfo?.pid ?? session?.hostInfo?.pid,
             command: processInfo?.command || '',
             cwd: processInfo?.cwd || '',
@@ -804,7 +858,7 @@ function registerWindowHandlers(mainWindow) {
         return cloneChildToolSession(session);
     });
 
-    ipcMain.handle("child-tool-session-register", (_event, payload = {}) => {
+    ipcMain.handle("child-tool-session-register", async (_event, payload = {}) => {
         const toolId = sanitizeChildToolId(payload.toolId);
         if (!toolId || !payload.hostInfo || !payload.streamId) {
             return { success: false, reason: 'invalid-payload' };
@@ -813,7 +867,7 @@ function registerWindowHandlers(mainWindow) {
         const existing = childToolSessions.get(toolId);
         if (existing && existing.streamId && existing.streamId !== payload.streamId) {
             cancelChildToolRelease(existing);
-            killCmdProcess(existing.streamId);
+            await stopChildToolSessionProcess(existing);
         }
 
         childToolSessions.set(toolId, {
@@ -856,14 +910,14 @@ function registerWindowHandlers(mainWindow) {
         return listChildToolSessions();
     });
 
-    ipcMain.handle("child-tool-session-stop", (_event, toolId) => {
+    ipcMain.handle("child-tool-session-stop", async (_event, toolId) => {
         const normalizedToolId = sanitizeChildToolId(toolId);
         const session = childToolSessions.get(normalizedToolId);
-        if (!session?.streamId) {
+        if (!session) {
             return { success: false, reason: 'not-found' };
         }
         cancelChildToolRelease(session);
-        killCmdProcess(session.streamId);
+        await stopChildToolSessionProcess(session);
         childToolSessions.delete(normalizedToolId);
         notifyChildToolSessionStateChanged();
         return { success: true };
