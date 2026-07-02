@@ -64,7 +64,10 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   private penpalConnection: Connection | null = null;
   private remoteApi: any = null;
   private childReadyTimer: ReturnType<typeof setTimeout> | null = null;
+  private activeIframe: HTMLIFrameElement | null = null;
+  private childReadyRetryCount = 0;
   private readonly hostContextId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  private readonly maxChildReadyRetries = 1;
   private hostContextVersion = 0;
   private beforeCloseNotified = false;
   private langSubscription: Subscription | null = null;
@@ -175,6 +178,14 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
 
   onFrameLoad(event: Event): void {
     const iframe = event.target as HTMLIFrameElement;
+    this.activeIframe = iframe;
+    this.childReadyRetryCount = 0;
+    if (this.isStandalone) {
+      this.frameLoaded = true;
+      this.hostStatus = 'ready';
+      this.errorMessage = '';
+      this.clearChildReadyTimer();
+    }
     this.log('iframe load', {
       url: this.sanitizeUrl(this.serverInfo?.url),
       hasContentWindow: !!iframe.contentWindow
@@ -242,6 +253,8 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     this.hostStatus = 'starting';
     this.errorMessage = '';
     this.frameLoaded = false;
+    this.activeIframe = null;
+    this.childReadyRetryCount = 0;
     this.destroyPenpalConnection();
     this.log(restart ? 'restart server' : 'start server');
 
@@ -264,6 +277,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
 
   private startPenpalConnection(iframe: HTMLIFrameElement): void {
     this.destroyPenpalConnection();
+    this.activeIframe = iframe;
 
     const allowedOrigin = this.serverInfo?.origin || this.resolveOrigin(this.serverInfo?.url);
     this.log('penpal connect', {
@@ -278,6 +292,12 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
 
     this.childReadyTimer = setTimeout(() => {
       if (!this.frameLoaded) {
+        if (this.retryChildReadyHandshake()) {
+          return;
+        }
+        if (this.promoteLoadedIframeWithoutReadySignal()) {
+          return;
+        }
         this.ngZone.run(() => {
           this.hostStatus = 'error';
           this.errorMessage = `${this.resolvedToolId} UI did not report ready`;
@@ -560,6 +580,68 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     if (this.childReadyTimer) {
       clearTimeout(this.childReadyTimer);
       this.childReadyTimer = null;
+    }
+  }
+
+  private retryChildReadyHandshake(): boolean {
+    if (this.frameLoaded || this.childReadyRetryCount >= this.maxChildReadyRetries) {
+      return false;
+    }
+
+    const iframe = this.activeIframe;
+    if (!iframe?.contentWindow || !iframe.isConnected) {
+      return false;
+    }
+
+    this.childReadyRetryCount += 1;
+    this.log('child ready timeout; retrying handshake', {
+      attempt: this.childReadyRetryCount,
+      url: this.sanitizeUrl(this.serverInfo?.url)
+    });
+
+    this.destroyPenpalConnection();
+    setTimeout(() => {
+      if (!this.frameLoaded && this.activeIframe === iframe && iframe.isConnected) {
+        this.startPenpalConnection(iframe);
+      }
+    }, 0);
+    return true;
+  }
+
+  private promoteLoadedIframeWithoutReadySignal(): boolean {
+    const iframe = this.activeIframe;
+    if (!iframe?.isConnected || !this.hasRenderableIframeContent(iframe)) {
+      return false;
+    }
+
+    this.ngZone.run(() => {
+      this.frameLoaded = true;
+      this.hostStatus = 'ready';
+      this.errorMessage = '';
+      this.clearChildReadyTimer();
+      this.log('child ready timeout; using iframe content fallback', {
+        url: this.sanitizeUrl(this.serverInfo?.url)
+      });
+    });
+    return true;
+  }
+
+  private hasRenderableIframeContent(iframe: HTMLIFrameElement): boolean {
+    try {
+      const doc = iframe.contentDocument;
+      const body = doc?.body;
+      if (!body) {
+        return false;
+      }
+
+      const text = body.innerText?.trim() || body.textContent?.trim() || '';
+      if (text.length >= 32) {
+        return true;
+      }
+
+      return !!body.querySelector('button, input, select, textarea, canvas, svg, [role], [data-testid]');
+    } catch {
+      return false;
     }
   }
 
