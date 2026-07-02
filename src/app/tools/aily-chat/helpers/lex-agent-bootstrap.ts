@@ -208,9 +208,10 @@ function normalizeBlocklyCommandSessionStatus(
     case 'completed':
     case 'failed':
     case 'timeout':
-    case 'killed':
     case 'cancelled':
       return status;
+    case 'killed':
+      return 'cancelled';
     default:
       return running ? 'running' : 'completed';
   }
@@ -4621,11 +4622,11 @@ function createExternalTerminal(host: any, prjPath: () => string, runtimeSession
       if (!session) {
         return null;
       }
-      session.status = 'killed';
+      session.status = 'cancelled';
       session.stderr += `${session.stderr ? '\n' : ''}[Process stopped by user]`;
       session.lastOutputAt = Date.now();
       emitExternalTerminalOutput(session, 'stderr', '[Process stopped by user]', {
-        status: 'killed',
+        status: 'cancelled',
         running: false,
       });
       const stopped = await stopExternalSession(session, host);
