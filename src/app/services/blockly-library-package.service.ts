@@ -33,6 +33,11 @@ export interface BlocklyLibraryPackagePaths {
   blockJson: string;
   toolboxJson: string;
   generatorJs: string;
+  readme: string;
+  readmeAi: string;
+  srcArchive: string;
+  i18nDir: string;
+  pinmapsDir: string;
 }
 
 export interface BlocklyLibraryPackageSnapshot {
@@ -49,6 +54,22 @@ export interface BlocklyLibraryDiagnostics {
   valid: boolean;
   errors: string[];
   warnings: string[];
+}
+
+export interface BlocklyLibrarySubmissionPackage {
+  packageJson: any;
+  blockJson: any;
+  toolboxJson: any;
+  generatorJs: string;
+  readme: string;
+  readmeAi: string;
+  i18n: Record<string, any>;
+  pinmaps: Record<string, any>;
+}
+
+export interface BlocklyLibrarySubmissionBundle {
+  package: BlocklyLibrarySubmissionPackage;
+  srcArchivePath?: string;
 }
 
 @Injectable({
@@ -91,6 +112,11 @@ export class BlocklyLibraryPackageService {
       blockJson: this.electronService.pathJoin(packagePath, 'block.json'),
       toolboxJson: this.electronService.pathJoin(packagePath, 'toolbox.json'),
       generatorJs: this.electronService.pathJoin(packagePath, 'generator.js'),
+      readme: this.electronService.pathJoin(packagePath, 'readme.md'),
+      readmeAi: this.electronService.pathJoin(packagePath, 'readme_ai.md'),
+      srcArchive: this.electronService.pathJoin(packagePath, 'src.7z'),
+      i18nDir: this.electronService.pathJoin(packagePath, 'i18n'),
+      pinmapsDir: this.electronService.pathJoin(packagePath, 'pinmaps'),
     };
   }
 
@@ -187,6 +213,40 @@ export class BlocklyLibraryPackageService {
       valid: errors.length === 0,
       errors,
       warnings,
+    };
+  }
+
+  readLibrarySubmissionPackage(projectPath: string, packageName: string): BlocklyLibrarySubmissionBundle {
+    return this.readLibrarySubmissionPackageByRef(this.getPackageRef(projectPath, packageName));
+  }
+
+  readLibrarySubmissionPackageByRef(ref: BlocklyLibraryPackageRef): BlocklyLibrarySubmissionBundle {
+    const snapshot = this.readLibraryPackageByRef(ref);
+    const diagnostics = this.validateLibraryPackage(snapshot, ref.name);
+    if (!diagnostics.valid) {
+      throw new Error(diagnostics.errors.join('\n'));
+    }
+
+    const paths = snapshot.paths;
+    const readme = this.readRequiredTextFile(paths.readme, 'readme.md');
+    const readmeAi = this.readRequiredTextFile(paths.readmeAi, 'readme_ai.md');
+    const generatorJs = this.readRequiredTextFile(paths.generatorJs, 'generator.js');
+    const i18n = this.readJsonDirectory(paths.i18nDir);
+    const pinmaps = this.readJsonDirectory(paths.pinmapsDir);
+    const srcArchivePath = this.pathExists(paths.srcArchive) ? paths.srcArchive : undefined;
+
+    return {
+      package: {
+        packageJson: snapshot.packageJson,
+        blockJson: snapshot.blockJson,
+        toolboxJson: snapshot.toolboxJson,
+        generatorJs,
+        readme,
+        readmeAi,
+        i18n,
+        pinmaps,
+      },
+      srcArchivePath,
     };
   }
 
@@ -308,6 +368,42 @@ export class BlocklyLibraryPackageService {
     } catch (error) {
       throw new Error(`JSON 格式错误 (${filePath})，${this.formatError(error)}`);
     }
+  }
+
+  private readRequiredTextFile(filePath: string, fileName: string): string {
+    if (!this.pathExists(filePath)) {
+      throw new Error(`${fileName} 不合规: 文件不存在 (${filePath})`);
+    }
+
+    try {
+      const content = this.electronService.readFile(filePath);
+      if (typeof content !== 'string' || !content.trim()) {
+        throw new Error('文件内容为空');
+      }
+      return content;
+    } catch (error) {
+      throw new Error(`${fileName} 不合规: 读取失败 (${filePath})，${this.formatError(error)}`);
+    }
+  }
+
+  private readJsonDirectory(dirPath: string): Record<string, any> {
+    const result: Record<string, any> = {};
+    if (!this.pathExists(dirPath) || !this.isDirectory(dirPath)) {
+      return result;
+    }
+
+    for (const fileName of this.readDirectoryNames(dirPath)) {
+      if (!fileName.endsWith('.json')) {
+        continue;
+      }
+      const filePath = this.electronService.pathJoin(dirPath, fileName);
+      if (!this.pathExists(filePath) || this.isDirectory(filePath)) {
+        continue;
+      }
+      const key = fileName.slice(0, -'.json'.length);
+      result[key] = this.readJsonFile(filePath, fileName);
+    }
+    return result;
   }
 
   private validatePackageJson(packageJson: any, filePath: string, errors: string[], expectedPackageName?: string) {
