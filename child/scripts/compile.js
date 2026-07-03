@@ -49,7 +49,8 @@ async function main() {
         currentProjectPath,
         boardModule,
         code,
-        ailyBuilderPath
+        ailyBuilderPath,
+        ailyBuilderCommand
     } = config;
 
     // 辅助函数：递归创建目录
@@ -110,8 +111,8 @@ async function main() {
         }
 
         // 5. 执行编译
+        const builderCommand = ailyBuilderCommand || process.env.AILY_BUILDER_COMMAND || `node "${path.join(ailyBuilderPath, 'index.js')}"`;
         const args = [
-            `"${path.join(ailyBuilderPath, 'index.js')}"`,
             'compile',
             `"${sketchFilePath}"`,
             '--board', `"${boardType}"`,
@@ -119,9 +120,9 @@ async function main() {
             '--preprocess-result', `"${preprocessCachePath}"`,
         ];
 
-        logger.log(`执行编译: node ${args.join(' ')}`);
+        logger.log(`执行编译: ${builderCommand} ${args.join(' ')}`);
 
-        const child = spawn('node', args, {
+        const child = spawn(builderCommand, args, {
             cwd: currentProjectPath,
             shell: true,
             stdio: 'inherit'

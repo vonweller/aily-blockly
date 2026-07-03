@@ -53,6 +53,7 @@ async function main() {
         appDataPath,
         za7Path,
         ailyBuilderPath,
+        ailyBuilderCommand,
         devmode,
         partitionFilePath: customPartitionFilePath
     } = config;
@@ -274,8 +275,8 @@ async function main() {
         const preprocessCachePath = path.join(tempPath, 'preprocess.json');
         
         logger.log('开始预编译...');
+        const builderCommand = ailyBuilderCommand || process.env.AILY_BUILDER_COMMAND || `node "${path.join(ailyBuilderPath, 'index.js')}"`;
         const pre_args = [
-            `"${path.join(ailyBuilderPath, 'index.js')}"`,
             'preprocess',
             // `...parseArgs(compilerParam)`,
             `"${sketchFilePath}"`,
@@ -310,11 +311,11 @@ async function main() {
             });
         }
 
-        logger.log(`执行预编译: node ${pre_args.join(' ')}`);
+        logger.log(`执行预编译: ${builderCommand} ${pre_args.join(' ')}`);
 
         // 使用同步执行预编译，确保完成后再继续
         await new Promise((resolve, reject) => {
-            const preChild = spawn('node', pre_args, {
+            const preChild = spawn(builderCommand, pre_args, {
                 cwd: currentProjectPath,
                 shell: true,
                 stdio: 'inherit'

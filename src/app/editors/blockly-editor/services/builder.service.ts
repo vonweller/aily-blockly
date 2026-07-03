@@ -264,6 +264,7 @@ export class _BuilderService {
         }
         const currentProjectPath = this.projectService.currentProjectPath;
         const ailyBuilderPath = window['path'].getAilyBuilderPath();
+        const ailyBuilderCommand = window['path'].getAilyBuilderCommand();
         const boardModule = await this.projectService.getBoardModule();
         const appDataPath = window['path'].getAppDataPath();
         const ailyChildPath = window['path'].getAilyChildPath();
@@ -281,6 +282,7 @@ export class _BuilderService {
           console.error('[后台预处理] 参数详情:', {
             currentProjectPath,
             ailyBuilderPath,
+            ailyBuilderCommand,
             boardModule,
             appDataPath,
             ailyChildPath
@@ -296,6 +298,7 @@ export class _BuilderService {
           appDataPath,
           za7Path: this.platformService.za7,
           ailyBuilderPath,
+          ailyBuilderCommand,
           devmode: this.configService.data.devmode || false,
           partitionFilePath: this.electronService.pathJoin(currentProjectPath, 'partitions.csv')
         };
@@ -553,6 +556,7 @@ export class _BuilderService {
   private async runPreprocess(): Promise<void> {
     const currentProjectPath = this.projectService.currentProjectPath;
     const ailyBuilderPath = window['path'].getAilyBuilderPath();
+    const ailyBuilderCommand = window['path'].getAilyBuilderCommand();
     const boardModule = await this.projectService.getBoardModule();
     const appDataPath = window['path'].getAppDataPath();
     const ailyChildPath = window['path'].getAilyChildPath();
@@ -576,6 +580,7 @@ export class _BuilderService {
       console.error('[同步预处理] 参数详情:', {
         currentProjectPath,
         ailyBuilderPath,
+        ailyBuilderCommand,
         boardModule,
         appDataPath,
         ailyChildPath
@@ -597,6 +602,7 @@ export class _BuilderService {
       appDataPath,
       za7Path: this.platformService.za7,
       ailyBuilderPath,
+      ailyBuilderCommand,
       devmode: this.configService.data.devmode || false,
       partitionFilePath: this.electronService.pathJoin(currentProjectPath, 'partitions.csv')
     };

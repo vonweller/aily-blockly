@@ -774,12 +774,38 @@ function buildZipUrls(conf = {}) {
 let isRendererReady = false;
 
 function isAilyBuilderInstallComplete(targetPath) {
+  if (!targetPath) {
+    return false;
+  }
   const requiredFiles = [
     path.join(targetPath, "index.js"),
     path.join(targetPath, "node_modules/tree-sitter/build/Release/tree_sitter_runtime_binding.node"),
     path.join(targetPath, "node_modules/tree-sitter-cpp/build/Release/tree_sitter_cpp_binding.node"),
   ];
   return requiredFiles.every((filePath) => fs.existsSync(filePath));
+}
+
+function appendEnvPathSegment(segment) {
+  if (!segment || !fs.existsSync(segment)) {
+    return;
+  }
+  const currentPath = process.env.PATH || "";
+  const parts = currentPath.split(path.delimiter).filter(Boolean);
+  if (!parts.includes(segment)) {
+    process.env.PATH = `${segment}${path.delimiter}${currentPath}`;
+  }
+}
+
+function applyAilyBuilderCommandEnv(childPath) {
+  const ailyBuilderPath = resolveAilyBuilderPath(childPath);
+  const npmAilyBuilderBinPath = getNpmAilyBuilderBinPath();
+
+  appendEnvPathSegment(npmAilyBuilderBinPath);
+  process.env.AILY_BUILDER_PATH = ailyBuilderPath;
+  process.env.AILY_BUILDER_BIN_PATH = npmAilyBuilderBinPath || "";
+  process.env.AILY_BUILDER_COMMAND = isAilyBuilderInstallComplete(getNpmAilyBuilderPath())
+    ? "aily-builder"
+    : `node "${path.join(ailyBuilderPath, "index.js")}"`;
 }
 
 function getAilyBuilderPackageName() {
@@ -794,6 +820,14 @@ function getNpmAilyBuilderPath() {
     return null;
   }
   return path.join(prefix, "node_modules", ...packageName.split("/"));
+}
+
+function getNpmAilyBuilderBinPath() {
+  const prefix = process.env.AILY_NPM_PREFIX || process.env.AILY_APPDATA_PATH;
+  if (!prefix) {
+    return null;
+  }
+  return path.join(prefix, "node_modules", ".bin");
 }
 
 function resolveAilyBuilderPath(childPath) {
@@ -871,7 +905,7 @@ function installAilyBuilderFromNpm(childPath, version = AILY_BUILDER_DEFAULT_VER
 function ensureAilyBuilderFromNpm(childPath) {
   const npmBuilderPath = getNpmAilyBuilderPath();
   if (npmBuilderPath && isAilyBuilderInstallComplete(npmBuilderPath)) {
-    process.env.AILY_BUILDER_PATH = npmBuilderPath;
+    applyAilyBuilderCommandEnv(childPath);
     return { ok: true, path: npmBuilderPath, installed: false };
   }
 
@@ -879,13 +913,13 @@ function ensureAilyBuilderFromNpm(childPath) {
   console.warn(`未找到可用的 aily-builder，准备从 npm 安装: ${packageName}@${AILY_BUILDER_DEFAULT_VERSION}`);
   const installResult = installAilyBuilderFromNpm(childPath);
   if (installResult.ok) {
-    process.env.AILY_BUILDER_PATH = installResult.path;
+    applyAilyBuilderCommandEnv(childPath);
     console.log(`aily-builder npm 安装完成: ${installResult.path}`);
     return { ok: true, path: installResult.path, installed: true };
   }
 
   const fallbackPath = resolveAilyBuilderPath(childPath);
-  process.env.AILY_BUILDER_PATH = fallbackPath;
+  applyAilyBuilderCommandEnv(childPath);
   console.error(`aily-builder npm 安装失败: ${installResult.error}`);
   return {
     ...installResult,
@@ -1386,12 +1420,14 @@ function applyChildToolEnv(childPath) {
   }
 
   const ailyBuilderPath = resolveAilyBuilderPath(childPath);
+  const npmAilyBuilderBinPath = getNpmAilyBuilderBinPath();
   const ninjaPath = path.join(ailyBuilderPath, "ninja");
   const probeRsDir = path.join(childPath, "probe-rs");
   const z7Path = path.join(childPath, isWin32 ? "7za.exe" : "7zz");
   const rgPath = path.join(childPath, isWin32 ? "rg.exe" : "rg");
   const probeRsPath = path.join(probeRsDir, `probe-rs${isWin32 ? ".exe" : ""}`);
 
+  customPath = appendPathSegment(customPath, npmAilyBuilderBinPath);
   customPath = appendPathSegment(customPath, ailyBuilderPath);
   customPath = appendPathSegment(customPath, ninjaPath);
   customPath = appendPathSegment(customPath, probeRsDir);
@@ -1402,6 +1438,10 @@ function applyChildToolEnv(childPath) {
   process.env.AILY_RG_PATH = fs.existsSync(rgPath) ? rgPath : path.join(childPath, isWin32 ? "rg.exe" : "rg");
   process.env.AILY_PROBE_RS_PATH = probeRsPath;
   process.env.AILY_BUILDER_PATH = ailyBuilderPath;
+  process.env.AILY_BUILDER_BIN_PATH = npmAilyBuilderBinPath || "";
+  process.env.AILY_BUILDER_COMMAND = isAilyBuilderInstallComplete(getNpmAilyBuilderPath())
+    ? "aily-builder"
+    : `node "${path.join(ailyBuilderPath, "index.js")}"`;
 }
 
 function runInstallEnv(childPath) {
@@ -1633,18 +1673,18 @@ function loadEnv() {
 
   process.env.AILY_PROJECT_PATH = conf["project_path"];
 
+  const hasNpmAilyBuilder = isAilyBuilderInstallComplete(getNpmAilyBuilderPath());
+
   // macOS 生产/开发均走异步自解压，完成后再次覆盖 child 环境变量；Windows 生产包由 NSIS 预解压。
-  // 如果没有可用的 aily-builder，则同步准备 child/node 后从 npm 安装，避免窗口启动后拿到无效路径。
-  if (isAilyBuilderInstallComplete(resolveAilyBuilderPath(childPath))) {
+  // aily-builder 需要在窗口创建前优先准备到用户目录，避免 preload 拿到旧 child 路径。
+  if (hasNpmAilyBuilder) {
     if (isDarwin || serve) {
       applyChildToolEnv(childPath);
       setImmediate(() => {
         runInstallEnv(childPath);
-        ensureAilyBuilderFromNpm(childPath);
       });
     } else {
       runInstallEnv(childPath);
-      ensureAilyBuilderFromNpm(childPath);
     }
   } else {
     runInstallEnv(childPath);
@@ -2570,9 +2610,10 @@ ipcMain.handle("aily-builder-update", async (event, { version = AILY_BUILDER_DEF
     throw new Error(result.error || "aily-builder npm 安装失败");
   }
 
-  process.env.AILY_BUILDER_PATH = result.path;
+  applyAilyBuilderCommandEnv(childPath);
   return {
     path: result.path,
+    command: process.env.AILY_BUILDER_COMMAND,
     version,
   };
 });

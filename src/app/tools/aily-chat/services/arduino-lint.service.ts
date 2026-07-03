@@ -406,9 +406,9 @@ export class ArduinoLintService {
     const toolsPath = await window["env"].get('AILY_TOOLS_PATH');
 
     // 构建完整的 lint 命令
+    const builderCommand = AilyHost.get().path.getAilyBuilderCommand?.() || 'aily-builder';
     const lintCommandParts = [
-      "node",
-      `"${AilyHost.get().path.getAilyBuilderPath()}/index.js"`,
+      builderCommand,
       lintParam,
       `"${env.sketchFilePath}"`,
       '--board', `"${boardType}"`,
@@ -688,9 +688,15 @@ export class ArduinoLintService {
         return false;
       }
       
-      // 检查 getAilyBuilderPath 方法
+      // 检查 getAilyBuilderCommand 方法
+      if (typeof AilyHost.get().path.getAilyBuilderCommand === 'function') {
+        const ailyBuilderCommand = AilyHost.get().path.getAilyBuilderCommand();
+        if (ailyBuilderCommand) {
+          return true;
+        }
+      }
+
       if (typeof AilyHost.get().path.getAilyBuilderPath !== 'function') {
-        // console.warn('❌ window.path.getAilyBuilderPath 方法不存在');
         return false;
       }
       
