@@ -275,6 +275,7 @@ export interface RuntimeRestoreHostRecordRequest {
 
 export type HostSessionRestoreFailureKind =
   | 'host-record-session-mismatch'
+  | 'restore-plan-resolution-failed'
   | 'restore-plan-apply-failed';
 
 export interface HostSessionRestoreFailureDetails {
