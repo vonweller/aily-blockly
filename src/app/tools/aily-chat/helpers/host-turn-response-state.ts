@@ -15,7 +15,7 @@ import type {
   CanonicalRenderItemScope,
   CanonicalRenderLifecycleEvent,
 } from '../core/render-event-item-lifecycle';
-import { collectMainTurnResponseText, turnResponsePartToChatParts } from '../core/turn-response-part-mapper';
+import { collectMainTurnResponseText, isSubagentScopedTurnResponsePart, turnResponsePartToChatParts } from '../core/turn-response-part-mapper';
 import {
   buildDialogTurnContext,
   type DialogTurnContext,
@@ -32,6 +32,7 @@ import {
   cloneTurnResponseModelSidecar,
   normalizeTurnResponseSummaryPreview,
 } from './turn-response-response-model';
+import { isTerminalSessionToolName } from '../core/tool-name-normalizer';
 
 function applyHostStreamResponseProgressUpdate(
   baseTurn: TurnResponseTurn,
@@ -2918,7 +2919,72 @@ function normalizePersistedTurnResponseParts(parts: readonly TurnResponsePart[])
     normalizedParts[existingIndex] = mergePersistedTurnResponsePart(normalizedParts[existingIndex], part);
   }
 
-  return normalizedParts;
+  return removePersistedTerminalOwnedToolCalls(normalizedParts);
+}
+
+function removePersistedTerminalOwnedToolCalls(parts: readonly TurnResponsePart[]): TurnResponsePart[] {
+  const owners = collectPersistedTerminalOwners(parts);
+  if (owners.toolCallIds.size === 0 && owners.sessionIds.size === 0) {
+    return [...parts];
+  }
+
+  return parts.filter(part => !isPersistedTerminalOwnedToolCall(part, owners));
+}
+
+function collectPersistedTerminalOwners(parts: readonly TurnResponsePart[]): { toolCallIds: Set<string>; sessionIds: Set<string> } {
+  const toolCallIds = new Set<string>();
+  const sessionIds = new Set<string>();
+
+  for (const part of parts) {
+    if (part.type !== 'terminal') {
+      continue;
+    }
+
+    const terminal = part as Extract<TurnResponsePart, { type: 'terminal' }>;
+    if (terminal.toolCallId) {
+      toolCallIds.add(terminal.toolCallId);
+    }
+    for (const sourceToolCallId of terminal.sourceToolCallIds ?? []) {
+      if (sourceToolCallId) {
+        toolCallIds.add(sourceToolCallId);
+      }
+    }
+    for (const sessionId of [terminal.processId, terminal.outputSessionId, terminal.terminalId]) {
+      if (sessionId) {
+        sessionIds.add(sessionId);
+      }
+    }
+  }
+
+  return { toolCallIds, sessionIds };
+}
+
+function isPersistedTerminalOwnedToolCall(
+  part: TurnResponsePart,
+  owners: { toolCallIds: ReadonlySet<string>; sessionIds: ReadonlySet<string> },
+): boolean {
+  if (part.type !== 'tool_call' || !isTerminalSessionToolName(part.toolName)) {
+    return false;
+  }
+
+  if (owners.toolCallIds.has(part.toolCallId)) {
+    return true;
+  }
+
+  const args = asPersistedRecord(part.args);
+  const metadata = asPersistedRecord(part.metadata);
+  const sessionIds = [
+    firstPersistedString(args?.['processId']),
+    firstPersistedString(args?.['outputSessionId']),
+    firstPersistedString(args?.['terminalId']),
+    firstPersistedString(args?.['id']),
+    firstPersistedString(metadata?.['processId']),
+    firstPersistedString(metadata?.['outputSessionId']),
+    firstPersistedString(metadata?.['terminalId']),
+    firstPersistedString(metadata?.['id']),
+  ].filter((value): value is string => !!value);
+
+  return sessionIds.some(sessionId => owners.sessionIds.has(sessionId));
 }
 
 function getPersistedTurnDisplayContent(turn: TurnResponseTurn): string {
@@ -3511,7 +3577,7 @@ function buildCanonicalDialogRequestSignature(
     requestDisabled === true ? 'disabled' : 'enabled',
     request?.content ?? '',
     request?.displayContent ?? '',
-    turn?.createdAt ?? '',
+    getRequestMetadataSignature(request?.metadata),
     buildRoundsProjectionSignature(turn?.rounds),
     entry.user?.displayContent ?? '',
     entry.user?.requestContent ?? '',
@@ -3525,12 +3591,14 @@ function buildCanonicalDialogResponseSignature(
 ): string {
   const turn = entry.turnResponse;
   const response = turn?.response;
+  const request = turn?.request;
   const parts = response?.parts ?? [];
   const lastPart = parts.length > 0 ? parts[parts.length - 1] : null;
 
   return [
     entry.turnId,
     requestDisabled === true ? 'disabled' : 'enabled',
+    getRequestMetadataSignature(request?.metadata),
     turn?.updatedAt ?? '',
     response?.id ?? '',
     response?.participant ?? '',
@@ -3547,6 +3615,43 @@ function buildCanonicalDialogResponseSignature(
     entry.assistant?.modelBillingLabel ?? '',
     entry.runtimeState?.responseSidecar?.vote ?? '',
   ].join('\u0000');
+}
+
+function getRequestMetadataSignature(metadata: TurnResponseTurn['request']['metadata'] | undefined): string {
+  if (!metadata || typeof metadata !== 'object') {
+    return '';
+  }
+  const record = metadata as Record<string, unknown>;
+  return [
+    normalizeMetadataSignatureValue(record['checkpointId']),
+    normalizeMetadataSignatureValue(record['requestId']),
+    normalizeMetadataSignatureValue(record['checkpointRef']),
+    normalizeMetadataSignatureValue(record['startCheckpointRef']),
+    normalizeMetadataSignatureValue(record['checkpointNamespace']),
+    normalizeMetadataSignatureValue(record['checkpointTurnIndex']),
+    getMetadataRecordSignature(record['checkpointRefs']),
+    getMetadataRecordSignature(record['startCheckpointRefs']),
+  ].join('\u001f');
+}
+
+function getMetadataRecordSignature(value: unknown): string {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return '';
+  }
+  return Object.entries(value as Record<string, unknown>)
+    .map(([key, item]) => `${key}:${normalizeMetadataSignatureValue(item)}`)
+    .sort()
+    .join('\u001e');
+}
+
+function normalizeMetadataSignatureValue(value: unknown): string {
+  if (typeof value === 'string') {
+    return value.trim();
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+  return '';
 }
 
 function buildRoundsProjectionSignature(rounds: TurnResponseTurn['rounds'] | undefined): string {
@@ -3920,7 +4025,7 @@ function deriveHostStreamResultText(
   nextParts: readonly TurnResponsePart[],
 ): string {
   let resultText = previousResultText ?? '';
-  if (event.part.type !== 'markdown' || isSubagentScopedHostStreamResponsePart(event.part)) {
+  if (event.part.type !== 'markdown' || isSubagentScopedTurnResponsePart(event.part)) {
     return resultText;
   }
 
@@ -3933,13 +4038,6 @@ function deriveHostStreamResultText(
   }
 
   return collectMainTurnResponseText(nextParts);
-}
-
-function isSubagentScopedHostStreamResponsePart(part: TurnResponsePart): boolean {
-  const metadata = (part as { readonly metadata?: unknown }).metadata;
-  return !!metadata
-    && typeof metadata === 'object'
-    && (metadata as Record<string, unknown>)['sourceAgentRole'] === 'subagent';
 }
 
 function mergeHostStreamResponsePart(

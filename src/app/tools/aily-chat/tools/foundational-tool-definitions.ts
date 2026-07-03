@@ -162,14 +162,15 @@ export const FOUNDATIONAL_TOOL_DEFINITIONS = [
 - 启动 CLI 形态的串口/蓝牙/网络调试工具
 - 执行耗时较长的编译/下载任务
 
-长输出不要直接要求全文，使用 command_tail、command_read 或 command_search。`,
+长输出不要直接要求全文，使用 command_tail、command_read 或 command_search。
+如果命令返回 outputFilePath，不要再用 read_file 读取该路径；继续使用 command_status / command_tail / command_read / command_search，或在项目 .log 查询中使用 log_tool。`,
         input_schema: {
             type: 'object',
             properties: {
                 command: { type: 'string', description: '要执行的命令' },
                 processId: { type: 'string', description: '可选的调用方进程 ID；交互式 PTY 会话可用它作为稳定 processId' },
                 cwd: { type: 'string', description: '工作目录（可选，默认当前项目路径）' },
-                timeoutMs: { type: 'number', description: '硬超时毫秒数（默认 30000）' },
+                timeoutMs: { type: 'number', description: '硬超时毫秒数（默认 30000）。对于长程任务，请显式传递该属性，确保进程完整执行。' },
                 yieldTimeMs: { type: 'number', description: '短等待毫秒数，超过后返回 running（默认 1000）' },
                 tty: { type: 'boolean', description: '需要真实 PTY 交互时设为 true；默认使用普通 buffered 命令执行' },
                 streamStdin: { type: 'boolean', description: '保持 stdin 可写；tty=true 时隐含支持' },

@@ -6,6 +6,8 @@ import { ChatPartHeaderShellComponent } from '../chat-part-header-shell.componen
 
 /** 组件内部归一化的问题（所有字段必填） */
 interface NormalizedQuestion {
+  id?: string;
+  header?: string;
   question: string;
   options: AskUserOption[];
   multi_select: boolean;
@@ -19,6 +21,20 @@ interface AnswerRecord {
 
 interface QuestionAnsweredEvent {
   answers: Record<string, AskUserAnswer>;
+}
+
+interface HistorySummaryItem {
+  key: string;
+  question: string;
+  answer: string;
+  skipped: boolean;
+  options: HistorySummaryOption[];
+}
+
+interface HistorySummaryOption {
+  label: string;
+  description?: string;
+  selected: boolean;
 }
 
 @Component({
@@ -54,7 +70,7 @@ interface QuestionAnsweredEvent {
           @if (!collapsed) {
             <div class="aq-body">
               <div class="aq-input-container">
-                @if (currentQ.options.length > 0) {
+                @if (!showHistorySummaryList && currentQ.options.length > 0) {
                   <div class="aq-options">
                     @for (opt of currentQ.options; track $index) {
                       <label class="aq-option"
@@ -84,7 +100,7 @@ interface QuestionAnsweredEvent {
                   </div>
                 }
 
-                @if (currentQ.allow_freeform) {
+                @if (!showHistorySummaryList && currentQ.allow_freeform) {
                   <div class="aq-freeform" [class.aq-freeform-only]="currentQ.options.length === 0">
                     @if (currentQ.options.length > 0) {
                       <span class="aq-opt-num aq-opt-num-free">{{ currentQ.options.length + 1 }}</span>
@@ -100,12 +116,36 @@ interface QuestionAnsweredEvent {
                   </div>
                 }
 
-                @if (resultSummary) {
+                @if (showHistorySummaryList) {
+                  <div class="aq-history-summary">
+                    @for (item of historySummaryItems; track item.key) {
+                      <div class="aq-history-summary-item" [class.aq-history-summary-skipped]="item.skipped">
+                        <div class="aq-history-summary-question">{{ item.question }}</div>
+                        <div class="aq-history-summary-answer">{{ item.answer }}</div>
+                        @if (item.options.length > 0) {
+                          <div class="aq-history-options">
+                            @for (option of item.options; track option.label) {
+                              <span class="aq-history-option" [class.aq-history-option-selected]="option.selected">
+                                @if (option.selected) {
+                                  <i class="fa-solid fa-check aq-history-option-check"></i>
+                                }
+                                <span class="aq-history-option-label">{{ option.label }}</span>
+                                @if (option.description) {
+                                  <span class="aq-history-option-desc">{{ option.description }}</span>
+                                }
+                              </span>
+                            }
+                          </div>
+                        }
+                      </div>
+                    }
+                  </div>
+                } @else if (resultSummary) {
                   <div class="aq-result-note">{{ resultSummary }}</div>
                 }
               </div>
 
-              @if (questions.length > 1) {
+              @if (!showHistorySummaryList && questions.length > 1) {
                 <div class="aq-nav">
                   <div class="aq-nav-left">
                     <button class="aq-nav-btn" [disabled]="currentIndex === 0" (click)="goPrev()">
@@ -409,6 +449,92 @@ interface QuestionAnsweredEvent {
       overflow-wrap: anywhere;
     }
 
+    .aq-history-summary {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .aq-history-summary-item {
+      padding: 6px 8px;
+      border: 1px solid var(--aq-border-soft);
+      border-radius: 5px;
+      background: rgba(255,255,255,0.025);
+      min-width: 0;
+    }
+
+    .aq-history-summary-question {
+      font-size: 11px;
+      line-height: 1.35;
+      color: var(--aq-fg-dim);
+      word-break: break-word;
+      overflow-wrap: anywhere;
+    }
+
+    .aq-history-summary-answer {
+      margin-top: 2px;
+      font-size: 12px;
+      line-height: 1.4;
+      color: var(--aq-fg);
+      word-break: break-word;
+      overflow-wrap: anywhere;
+    }
+
+    .aq-history-summary-skipped .aq-history-summary-answer {
+      color: var(--aq-fg-muted);
+    }
+
+    .aq-history-options {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 6px;
+      min-width: 0;
+    }
+
+    .aq-history-option {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      max-width: 100%;
+      min-width: 0;
+      padding: 2px 6px;
+      border: 1px solid var(--aq-border-soft);
+      border-radius: 5px;
+      color: var(--aq-fg-dim);
+      background: rgba(255,255,255,0.018);
+      font-size: 11px;
+      line-height: 1.35;
+    }
+
+    .aq-history-option-selected {
+      color: var(--aq-fg);
+      border-color: color-mix(in srgb, var(--aq-accent, #60a5fa) 55%, var(--aq-border));
+      background: color-mix(in srgb, var(--aq-accent, #60a5fa) 14%, transparent);
+    }
+
+    .aq-history-option-check {
+      flex: 0 0 auto;
+      font-size: 10px;
+      color: var(--aq-fg);
+    }
+
+    .aq-history-option-label {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .aq-history-option-desc {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--aq-fg-muted);
+    }
+
 
   `],
 })
@@ -503,6 +629,25 @@ export class XAilyQuestionViewerComponent implements OnChanges {
     return '';
   }
 
+  get showHistorySummaryList(): boolean {
+    return this.isHistory && this.historySummaryItems.length > 0;
+  }
+
+  get historySummaryItems(): HistorySummaryItem[] {
+    if (!this.isHistory) return [];
+    return this.questions.map((question, index) => {
+      const answerRecord = this.answers.get(index);
+      const answer = this.formatAnswerSummary(question, answerRecord);
+      return {
+        key: this.getQuestionAnswerKey(question),
+        question: question.question,
+        answer: answer || '已跳过',
+        skipped: !answer,
+        options: this.formatHistoryOptions(question, answerRecord),
+      };
+    });
+  }
+
   toggleCollapsed(): void {
     this.collapsed = !this.collapsed;
     this.cdr.markForCheck();
@@ -543,14 +688,33 @@ export class XAilyQuestionViewerComponent implements OnChanges {
   /** 历史模式摘要：显示用户之前的选择 */
   get historySummary(): string {
     const ans = this.answers.get(this.currentIndex);
-    if (!ans) return '';
     const q = this.questions[this.currentIndex];
     if (!q) return '';
-    const labels = Array.from(ans.selected).sort((a, b) => a - b)
-      .map(idx => q.options[idx]?.label).filter(Boolean);
+    const answer = this.formatAnswerSummary(q, ans);
+    return answer ? '已选择: ' + answer : '';
+  }
+
+  private formatAnswerSummary(question: NormalizedQuestion, answer: AnswerRecord | undefined): string {
+    if (!answer) return '';
+    const labels = Array.from(answer.selected).sort((a, b) => a - b)
+      .map(idx => question.options[idx]?.label)
+      .filter((label): label is string => Boolean(label));
     const parts = [...labels];
-    if (ans.freeform.trim()) parts.push(ans.freeform.trim());
-    return parts.length > 0 ? '已选择: ' + parts.join(', ') : '';
+    const freeform = answer.freeform.trim();
+    if (freeform) parts.push(freeform);
+    return parts.join(', ');
+  }
+
+  private formatHistoryOptions(question: NormalizedQuestion, answer: AnswerRecord | undefined): HistorySummaryOption[] {
+    return question.options.map((option, index) => ({
+      label: option.label,
+      description: option.description,
+      selected: answer?.selected.has(index) ?? false,
+    }));
+  }
+
+  private getQuestionAnswerKey(question: NormalizedQuestion): string {
+    return question.id || question.header || question.question;
   }
 
   isOptionSelected(idx: number): boolean {
@@ -658,9 +822,10 @@ export class XAilyQuestionViewerComponent implements OnChanges {
 
     for (let i = 0; i < this.questions.length; i++) {
       const q = this.questions[i];
+      const answerKey = this.getQuestionAnswerKey(q);
       const ans = this.answers.get(i);
       if (!ans) {
-        answersMap[q.question] = { selected: [], freeText: null, skipped: true };
+        answersMap[answerKey] = { selected: [], freeText: null, skipped: true };
         continue;
       }
 
@@ -671,7 +836,7 @@ export class XAilyQuestionViewerComponent implements OnChanges {
 
       const freeText = ans.freeform.trim() || null;
 
-      answersMap[q.question] = {
+      answersMap[answerKey] = {
         selected: selectedLabels,
         freeText,
         skipped: selectedLabels.length === 0 && !freeText,
@@ -699,7 +864,9 @@ export class XAilyQuestionViewerComponent implements OnChanges {
 
   private processData(): void {
     // 已提交后忽略后续数据变更（防止 _patchAilyQuestionBlock 触发 re-render 导致重置）
-    if (this.allDone && !this.isHistory) return;
+    const incomingAnswers = this.readSavedAnswers();
+    const incomingIsHistory = this.data?.isHistory === true;
+    if (this.allDone && !this.isHistory && !incomingIsHistory && !incomingAnswers) return;
 
     if (!this.data) {
       if (this.streamStatus === 'done') this.questions = [];
@@ -707,8 +874,8 @@ export class XAilyQuestionViewerComponent implements OnChanges {
     }
     try {
       let rawQuestions: AskUserQuestion[];
-      const savedAnswers = this.readSavedAnswers();
-      const nextIsHistory = this.data.isHistory === true;
+      const savedAnswers = incomingAnswers;
+      const nextIsHistory = incomingIsHistory;
 
       // 主格式：{ questions: AskUserQuestion[] }（来自 chat-engine._handleAskUser）
       if (this.data.questions && Array.isArray(this.data.questions)) {
@@ -767,9 +934,14 @@ export class XAilyQuestionViewerComponent implements OnChanges {
 
     return {
       question: d.question,
+      id: (d as { id?: string }).id,
+      header: (d as { header?: string }).header,
       options,
-      multi_select: d.multi_select ?? false,
-      allow_freeform: d.allow_freeform ?? (options.length === 0),
+      multi_select: d.multi_select ?? (d as { multiSelect?: boolean }).multiSelect ?? false,
+      allow_freeform: d.allow_freeform
+        ?? (d as { allowFreeform?: boolean }).allowFreeform
+        ?? (d as { allowFreeformInput?: boolean }).allowFreeformInput
+        ?? (options.length === 0),
     };
   }
 
@@ -803,7 +975,9 @@ export class XAilyQuestionViewerComponent implements OnChanges {
 
     for (let i = 0; i < this.questions.length; i++) {
       const q = this.questions[i];
-      const saved = savedAnswers[q.question];
+      const saved = (q.id ? savedAnswers[q.id] : undefined)
+        ?? (q.header ? savedAnswers[q.header] : undefined)
+        ?? savedAnswers[q.question];
       if (!saved) continue;
 
       const ans: AnswerRecord = { selected: new Set(), freeform: saved.freeText || '' };
@@ -846,8 +1020,13 @@ export class XAilyQuestionViewerComponent implements OnChanges {
       }
       if (
         prevQuestion.question !== nextQuestion.question
+        || (prevQuestion as { id?: string }).id !== (nextQuestion as { id?: string }).id
+        || (prevQuestion as { header?: string }).header !== (nextQuestion as { header?: string }).header
         || (prevQuestion.multi_select ?? false) !== (nextQuestion.multi_select ?? false)
+        || ((prevQuestion as { multiSelect?: boolean }).multiSelect ?? false) !== ((nextQuestion as { multiSelect?: boolean }).multiSelect ?? false)
         || (prevQuestion.allow_freeform ?? false) !== (nextQuestion.allow_freeform ?? false)
+        || ((prevQuestion as { allowFreeform?: boolean }).allowFreeform ?? false) !== ((nextQuestion as { allowFreeform?: boolean }).allowFreeform ?? false)
+        || ((prevQuestion as { allowFreeformInput?: boolean }).allowFreeformInput ?? false) !== ((nextQuestion as { allowFreeformInput?: boolean }).allowFreeformInput ?? false)
       ) {
         return false;
       }

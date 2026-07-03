@@ -47,7 +47,7 @@ test.describe('编译', () => {
         compileResult = 'error';
         break;
       }
-      await win.waitForTimeout(3000);
+      await win.waitForTimeout(500);
     }
     expect(compileResult, '编译未成功完成（请查看 Playwright 输出与 trace）').toBe('done');
 

@@ -1,7 +1,7 @@
 import type { TurnRequest, TurnResponseTurn, SessionSnapshot } from 'aily-lex/browser';
 import { DEFAULT_CHAT_SESSION_TYPE, normalizeChatSelectedMode, normalizeChatSessionType, normalizeChatSurfaceModeId } from '../core/chat-mode';
 import {
-  normalizeChatAgentRuntimeMode,
+  resolveChatAgentRuntimeModeForProject,
   readChatAgentRuntimeModeSourceFromMetadata,
   readChatAgentRuntimeModeFromMetadata,
   type ChatAgentRuntimeMode,
@@ -40,10 +40,14 @@ import {
 
 import type { HostSessionRecord } from '../services/chat-history.service';
 import type { ChatSessionRuntimeState } from '../services/chat-session-runtime-store.service';
+import type { RequestCheckpointMetadata } from '../services/edit-checkpoint.service';
 import type { AskUserAnswer, AskUserQuestion } from '../core/ask-user';
 import type { ConfirmationPart, QuestionPart } from '../core/chat-parts';
-import { createElectronChatRuntimeHostTransport } from '../core/electron-chat-runtime-host-transport';
 import type { RuntimePlanReviewAction, RuntimePlanReviewDecision } from '../services/chat-runtime-interaction-host.service';
+import type {
+  ChatRuntimeHostResourceOperationRequest,
+  ChatRuntimeHostResourceOperationResult,
+} from '../core/chat-runtime-host-contract';
 import {
   createSessionCheckpointTimelineState,
   type SessionCheckpointTimelineState,
@@ -217,6 +221,7 @@ type HostSessionRestoreContext = Pick<IChatViewAccess, 'scrollManager' | 'invali
   & Pick<IChatServiceAccess, 'contextBudgetService' | 'ailyChatConfigService' | 'runtimeInteractionHost'>
   & Pick<IChatCoordination, 'lexStream'>
   & {
+    getDevelopmentModePreferenceRuntimeMode?(): ChatAgentRuntimeMode | undefined;
     readSessionRuntimeState?(sessionId?: string | null): Readonly<ChatSessionRuntimeState> | undefined;
     projectRestoredRuntimeAuxiliary?(
       sessionId: string,
@@ -250,6 +255,9 @@ type HostSessionRestoreContext = Pick<IChatViewAccess, 'scrollManager' | 'invali
       state: HostTurnResponseState | null,
       options: { readonly sessionId: string | null; readonly attachedView?: boolean },
     ): void;
+    requestHostResourceOperation?(
+      request: ChatRuntimeHostResourceOperationRequest,
+    ): Promise<ChatRuntimeHostResourceOperationResult>;
   };
 
 export interface RuntimeRestoreHostRecordRequest {
@@ -267,7 +275,6 @@ export interface RuntimeRestoreHostRecordRequest {
 
 export type HostSessionRestoreFailureKind =
   | 'host-record-session-mismatch'
-  | 'restore-plan-resolution-failed'
   | 'restore-plan-apply-failed';
 
 export interface HostSessionRestoreFailureDetails {
@@ -316,63 +323,74 @@ function buildSessionCheckpointTimelineStateFromHostRecord(
     return null;
   }
 
-  if (!hasCompleteCheckpointMetadataForTimelineTurns(sidecar.turnResponses, targetResource)) {
-    console.warn('[HostSessionRestore] dropped checkpoint timeline sidecar with incomplete checkpoint metadata', {
-      sessionResource: targetResource,
-    });
-    return null;
-  }
-
+  const checkpointMetadataMaps = buildCheckpointMetadataMapsFromSidecar(sidecar.checkpoints, targetResource);
   return createSessionCheckpointTimelineState({
     sessionResource: targetResource,
     turnResponses: sidecar.turnResponses as unknown as readonly TurnResponseTurn[],
     currentCheckpointIndex: sidecar.currentCheckpointIndex,
+    currentTurnResponseCount: sidecar.currentTurnResponseCount,
+    ...(checkpointMetadataMaps ? {
+      metadataByCheckpointId: checkpointMetadataMaps.metadataByCheckpointId,
+      metadataByRequestId: checkpointMetadataMaps.metadataByRequestId,
+      metadataByTurnId: checkpointMetadataMaps.metadataByTurnId,
+    } : {}),
   });
 }
 
-function hasCompleteCheckpointMetadataForTimelineTurns(
-  turnResponses: readonly unknown[],
+function buildCheckpointMetadataMapsFromSidecar(
+  checkpoints: unknown,
   targetSessionResource: string,
-): boolean {
-  for (const turn of turnResponses) {
-    const metadata = readTurnRequestMetadata(turn);
-    const checkpointId = readStringProperty(metadata, 'checkpointId');
-    if (!checkpointId) {
-      continue;
-    }
+): {
+  readonly metadataByCheckpointId: ReadonlyMap<string, RequestCheckpointMetadata>;
+  readonly metadataByRequestId: ReadonlyMap<string, RequestCheckpointMetadata>;
+  readonly metadataByTurnId: ReadonlyMap<string, RequestCheckpointMetadata>;
+} | null {
+  if (!Array.isArray(checkpoints) || checkpoints.length === 0) {
+    return null;
+  }
 
-    const checkpointNamespace = readStringProperty(metadata, 'checkpointNamespace');
-    const checkpointRef = readStringProperty(metadata, 'checkpointRef');
-    if (!checkpointNamespace || !checkpointRef) {
-      return false;
+  const metadataByCheckpointId = new Map<string, RequestCheckpointMetadata>();
+  const metadataByRequestId = new Map<string, RequestCheckpointMetadata>();
+  const metadataByTurnId = new Map<string, RequestCheckpointMetadata>();
+  for (const checkpoint of checkpoints) {
+    if (!checkpoint || typeof checkpoint !== 'object') {
+      return null;
     }
-
-    if (checkpointNamespace !== `refs/sessions/${targetSessionResource}`) {
-      return false;
+    const metadata = (checkpoint as { metadata?: unknown }).metadata;
+    if (!isCompleteCheckpointMetadata(metadata, targetSessionResource)) {
+      return null;
     }
-
-    if (!hasCompleteAdditionalCheckpointRefs(metadata)) {
-      return false;
+    metadataByCheckpointId.set(metadata.checkpointId, metadata);
+    metadataByRequestId.set(metadata.requestId, metadata);
+    if (metadata.turnId) {
+      metadataByTurnId.set(metadata.turnId, metadata);
     }
   }
 
-  return true;
+  return {
+    metadataByCheckpointId,
+    metadataByRequestId,
+    metadataByTurnId,
+  };
 }
 
-function readTurnRequestMetadata(turn: unknown): Record<string, unknown> | null {
-  if (!turn || typeof turn !== 'object') {
-    return null;
+function isCompleteCheckpointMetadata(
+  metadata: unknown,
+  targetSessionResource: string,
+): metadata is RequestCheckpointMetadata {
+  if (!metadata || typeof metadata !== 'object') {
+    return false;
   }
-
-  const request = (turn as { request?: unknown }).request;
-  if (!request || typeof request !== 'object') {
-    return null;
-  }
-
-  const metadata = (request as { metadata?: unknown }).metadata;
-  return metadata && typeof metadata === 'object'
-    ? metadata as Record<string, unknown>
-    : null;
+  const record = metadata as Record<string, unknown>;
+  return record['source'] === 'request-metadata'
+    && readStringProperty(record, 'checkpointId').length > 0
+    && readStringProperty(record, 'requestId').length > 0
+    && readStringProperty(record, 'sessionResource') === targetSessionResource
+    && readStringProperty(record, 'checkpointNamespace') === `refs/sessions/${targetSessionResource}`
+    && readStringProperty(record, 'checkpointRef').length > 0
+    && typeof record['turnIndex'] === 'number'
+    && Number.isFinite(record['turnIndex'])
+    && hasCompleteAdditionalCheckpointRefs(record);
 }
 
 function readStringProperty(record: Record<string, unknown> | null, key: string): string {
@@ -483,8 +501,12 @@ export class HostSessionRestoreBridge {
     }
 
     try {
-      const initialTurnResponses = [...(restorePlan?.turnResponses ?? sanitizedHostRecord.turnResponses ?? [])];
-      const hostResponseState = this.resolveRuntimeHostProjectionState(targetSessionId, initialTurnResponses)
+      const persistedTurnResponses = [...(restorePlan.turnResponses ?? sanitizedHostRecord.turnResponses ?? [])];
+      const runtimeHostResponseState = this.resolveRuntimeHostProjectionState(targetSessionId, persistedTurnResponses);
+      const initialTurnResponses = runtimeHostResponseState?.turnResponses
+        ? [...runtimeHostResponseState.turnResponses]
+        : persistedTurnResponses;
+      const hostResponseState = runtimeHostResponseState
         ?? buildHostProjectionStateFromPersistedRecord({
           turnResponses: initialTurnResponses,
         });
@@ -602,9 +624,7 @@ export class HostSessionRestoreBridge {
     const runtimeTurnResponses = Array.isArray(runtimeState.turnResponses)
       ? runtimeState.turnResponses
       : [];
-    const runtimeMatchesDurableRecord = durableTurnResponses.length === 0
-      || turnResponseIdsExactlyMatch(runtimeTurnResponses, durableTurnResponses);
-    const fallbackTurnResponses = runtimeTurnResponses.length > 0 && runtimeMatchesDurableRecord
+    const fallbackTurnResponses = runtimeTurnResponses.length > 0
       ? runtimeTurnResponses
       : durableTurnResponses;
     const runtimeAuxiliary = cloneHostSessionRuntimeAuxiliary({
@@ -785,16 +805,19 @@ export class HostSessionRestoreBridge {
       providerOptions,
       inputState: sessionContent?.inputState ?? sessionMetadata?.inputState,
     });
-    this.ctx.chatService.setCurrentAgentRuntimeMode?.(
-      normalizeChatAgentRuntimeMode(
-        sessionMetadata.agentRuntimeMode ?? sessionMetadata.runtimeMode,
-        this.ctx.chatService.currentAgentRuntimeMode ?? 'unbound',
-      ),
-      sessionMetadata.agentRuntimeModeSource ?? sessionMetadata.runtimeModeSource ?? 'restored',
-    ) ?? (this.ctx.chatService.currentAgentRuntimeMode = normalizeChatAgentRuntimeMode(
-      sessionMetadata.agentRuntimeMode ?? sessionMetadata.runtimeMode,
-      this.ctx.chatService.currentAgentRuntimeMode ?? 'unbound',
-    ));
+    const runtimeResolution = resolveChatAgentRuntimeModeForProject({
+      projectPath: providerOptions.folderPath ?? sessionMetadata.projectPath ?? null,
+      metadata: sessionMetadata,
+      userPreferenceMode: this.ctx.getDevelopmentModePreferenceRuntimeMode?.(),
+      fallback: providerOptions.folderPath ? 'coder' : 'unbound',
+      requireExistingProjectPath: Boolean(providerOptions.folderPath),
+    });
+    if (typeof this.ctx.chatService.setCurrentAgentRuntimeMode === 'function') {
+      this.ctx.chatService.setCurrentAgentRuntimeMode(runtimeResolution.mode, runtimeResolution.source);
+    } else {
+      this.ctx.chatService.currentAgentRuntimeMode = runtimeResolution.mode;
+      this.ctx.chatService.currentAgentRuntimeModeSource = runtimeResolution.source;
+    }
 
     const resolveModeById = (modeId: string) => typeof this.ctx.chatService.findResolvedModeById === 'function'
       ? this.ctx.chatService.findResolvedModeById(modeId)
@@ -889,11 +912,11 @@ export class HostSessionRestoreBridge {
     workspaceRoot: string | null,
     turnResponses: readonly TurnResponseTurn[],
   ): Promise<void> {
-    const runtimeHost = createElectronChatRuntimeHostTransport();
-    if (!runtimeHost) {
-      throw new Error('[AilyChat][Restore] Runtime host transport is required to restore edit tracking state.');
+    const requestHostResourceOperation = this.ctx.requestHostResourceOperation;
+    if (typeof requestHostResourceOperation !== 'function') {
+      throw new Error('[AilyChat][Restore] Runtime host resource operation bridge is required to restore edit tracking state.');
     }
-    await runtimeHost.requestResourceOperation({
+    await requestHostResourceOperation({
       sessionId,
       kind: 'edit-tracking',
       label: 'Restoring edit tracking timeline',
@@ -1072,25 +1095,6 @@ function areHostProjectionTurnResponsesEquivalent(
   }
 
   return true;
-}
-
-function turnResponseIdsExactlyMatch(
-  left: readonly TurnResponseTurn[] | null | undefined,
-  right: readonly TurnResponseTurn[] | null | undefined,
-): boolean {
-  if (!Array.isArray(left)
-    || !Array.isArray(right)
-    || left.length === 0
-    || right.length === 0
-    || left.length !== right.length) {
-    return false;
-  }
-
-  return left.every((leftTurn, index) => {
-    const leftTurnId = typeof leftTurn?.turnId === 'string' ? leftTurn.turnId.trim() : '';
-    const rightTurnId = typeof right[index]?.turnId === 'string' ? right[index].turnId.trim() : '';
-    return !!leftTurnId && leftTurnId === rightTurnId;
-  });
 }
 
 function formatHostSessionRestoreFailureDetails(details: HostSessionRestoreFailureDetails): string {

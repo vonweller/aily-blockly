@@ -191,15 +191,53 @@ function cloneBoardSerialPortOptions(options: BoardSerialPortOption[]): BoardSer
     return options.map(([label, value]) => [label, value]);
 }
 
+export const CDC_REPLACED_SERIAL_LABEL = 'Serial0';
+export const CDC_REPLACED_SERIAL_VALUE = 'Serial0';
+
 /**
- * 根据 USB CDC 开关，用 board.json 中的 cdcSerialPort 覆盖 serialPort 显示名。
- * 通过 cdcSerialPort[i][1] 与 serialPort[j][1] 匹配，仅替换 label（[0]），value 保持不变。
+ * CDC 禁用时，将工作区中 SERIAL 字段值映射回原始 serialPort 项。
+ * - 选中 CDC 项（value 为 cdcSerialPort[i][1]，如 Serial2）→ 保持该 value
+ * - 选中被替换后的 Serial0（原硬件 Serial2）→ 映射回 cdcSerialPort[i][1]
+ */
+export function resolveSerialPortValueAfterCdcDisabled(
+    currentValue: string,
+    cdcSerialPort: BoardSerialPortOption[],
+): string {
+    if (!currentValue || !Array.isArray(cdcSerialPort) || cdcSerialPort.length === 0) {
+        return currentValue;
+    }
+
+    if (currentValue === CDC_REPLACED_SERIAL_VALUE) {
+        for (const entry of cdcSerialPort) {
+            if (Array.isArray(entry) && entry.length >= 2) {
+                return String(entry[1]);
+            }
+        }
+    }
+
+    for (const entry of cdcSerialPort) {
+        if (Array.isArray(entry) && entry.length >= 2 && String(entry[1]) === currentValue) {
+            return currentValue;
+        }
+    }
+
+    return currentValue;
+}
+
+/**
+ * 根据 USB CDC 开关调整 serialPort / serialPins：
+ * - cdcSerialPort[i][1] 与 serialPort[j][1] 相同者视为被替换项，改为 ["Serial0", "Serial0"]
+ * - serialPins 中对应 key 从被替换 value 重命名为 "Serial0"
+ * - 在 serialPort 首部插入 cdcSerialPort 项（如 ["Serial(USB CDC)", "Serial"]）
  */
 export function applyCdcSerialPortOverrides(
     boardConfig: any,
     cdcEnabled: boolean,
 ): any {
     if (!boardConfig || !Array.isArray(boardConfig.cdcSerialPort) || boardConfig.cdcSerialPort.length === 0) {
+        if (boardConfig) {
+            boardConfig._cdcEnabled = false;
+        }
         return boardConfig;
     }
 
@@ -209,40 +247,54 @@ export function applyCdcSerialPortOverrides(
 
     boardConfig._serialPortBase = cloneBoardSerialPortOptions(baseSerialPort);
 
+    if (boardConfig.serialPins && !boardConfig._serialPinsBase) {
+        boardConfig._serialPinsBase = JSON.parse(JSON.stringify(boardConfig.serialPins));
+    }
+
     if (!cdcEnabled) {
         boardConfig.serialPort = cloneBoardSerialPortOptions(baseSerialPort);
         delete boardConfig.serialPortOriginal;
         if (boardConfig._serialPinsBase) {
             boardConfig.serialPins = JSON.parse(JSON.stringify(boardConfig._serialPinsBase));
         }
+        boardConfig._cdcEnabled = false;
         return boardConfig;
     }
 
-    const cdcLabelByValue = new Map<string, string>();
+    const cdcValues = new Set<string>();
+    const cdcEntries: BoardSerialPortOption[] = [];
     for (const entry of boardConfig.cdcSerialPort) {
         if (!Array.isArray(entry) || entry.length < 2) {
             continue;
         }
-        cdcLabelByValue.set(String(entry[1]), String(entry[0]));
+        cdcValues.add(String(entry[1]));
+        cdcEntries.push([String(entry[0]), String(entry[1])]);
     }
 
     boardConfig.serialPort = baseSerialPort.map(([label, value]) => {
-        const cdcLabel = cdcLabelByValue.get(value);
-        return cdcLabel ? [cdcLabel, value] : [label, value];
+        if (cdcValues.has(value)) {
+            return [CDC_REPLACED_SERIAL_LABEL, CDC_REPLACED_SERIAL_VALUE];
+        }
+        return [label, value];
     });
+    boardConfig.serialPort = [...cdcEntries, ...boardConfig.serialPort];
     delete boardConfig.serialPortOriginal;
 
     if (boardConfig.serialPins && typeof boardConfig.serialPins === 'object') {
-        if (!boardConfig._serialPinsBase) {
-            boardConfig._serialPinsBase = JSON.parse(JSON.stringify(boardConfig.serialPins));
-        }
-        for (const entry of boardConfig.cdcSerialPort) {
-            if (!Array.isArray(entry) || entry.length < 2) {
+        boardConfig.serialPins = boardConfig._serialPinsBase
+            ? JSON.parse(JSON.stringify(boardConfig._serialPinsBase))
+            : JSON.parse(JSON.stringify(boardConfig.serialPins));
+
+        for (const cdcValue of cdcValues) {
+            const pins = boardConfig.serialPins[cdcValue];
+            if (pins === undefined) {
                 continue;
             }
-            delete boardConfig.serialPins[String(entry[1])];
+            boardConfig.serialPins[CDC_REPLACED_SERIAL_VALUE] = JSON.parse(JSON.stringify(pins));
+            delete boardConfig.serialPins[cdcValue];
         }
     }
 
+    boardConfig._cdcEnabled = true;
     return boardConfig;
 }

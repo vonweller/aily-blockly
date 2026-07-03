@@ -8,6 +8,7 @@ import type { ChatRuntimeOwnerEditTrackingPort } from './chat-runtime-owner-cont
 export class ChatRuntimeOwnerEditTrackingResourceService implements ChatRuntimeOwnerEditTrackingPort {
   private currentAutoSaveEdits = false;
   private currentSessionId = '';
+  private operationQueue: Promise<void> = Promise.resolve();
 
   get autoSaveEdits(): boolean {
     return this.currentAutoSaveEdits;
@@ -15,7 +16,7 @@ export class ChatRuntimeOwnerEditTrackingResourceService implements ChatRuntimeO
 
   set autoSaveEdits(value: boolean) {
     this.currentAutoSaveEdits = !!value;
-    void this.requestEditTrackingOperation({
+    void this.enqueueEditTrackingOperation({
       action: 'setAutoSaveEdits',
       autoSaveEdits: this.currentAutoSaveEdits,
     }).catch(error => {
@@ -26,7 +27,7 @@ export class ChatRuntimeOwnerEditTrackingResourceService implements ChatRuntimeO
   setTimelineContext(sessionId: string | null | undefined, workspaceRoot: string | null | undefined): void {
     const targetSessionId = this.requireSessionId(sessionId, 'edit tracking timeline context');
     this.currentSessionId = targetSessionId;
-    void this.requestEditTrackingOperation({
+    void this.enqueueEditTrackingOperation({
       action: 'setTimelineContext',
       sessionId: targetSessionId,
       workspaceRoot: this.normalizeString(workspaceRoot) || null,
@@ -47,7 +48,7 @@ export class ChatRuntimeOwnerEditTrackingResourceService implements ChatRuntimeO
   ): void {
     const sessionId = this.readSessionIdFromRequestMetadata(requestMetadata);
     const targetSessionId = this.requireSessionId(sessionId || this.currentSessionId, 'edit tracking start turn');
-    void this.requestEditTrackingOperation({
+    void this.enqueueEditTrackingOperation({
       action: 'startTurn',
       sessionId: targetSessionId,
       turnIndex,
@@ -69,7 +70,7 @@ export class ChatRuntimeOwnerEditTrackingResourceService implements ChatRuntimeO
     if (normalizedPaths.length === 0) {
       return;
     }
-    void this.requestEditTrackingOperation({
+    void this.enqueueEditTrackingOperation({
       action: 'recordAdditionalRepositoryRootCandidates',
       paths: normalizedPaths,
     }).catch(error => {
@@ -82,7 +83,7 @@ export class ChatRuntimeOwnerEditTrackingResourceService implements ChatRuntimeO
     if (!normalizedFilePath) {
       return;
     }
-    void this.requestEditTrackingOperation({
+    void this.enqueueEditTrackingOperation({
       action: 'recordEdit',
       filePath: normalizedFilePath,
       editType: type,
@@ -92,9 +93,17 @@ export class ChatRuntimeOwnerEditTrackingResourceService implements ChatRuntimeO
   }
 
   async publishCurrentSummary(): Promise<void> {
-    await this.requestEditTrackingOperation({
+    await this.enqueueEditTrackingOperation({
       action: 'publishCurrentSummary',
     });
+  }
+
+  private enqueueEditTrackingOperation(
+    input: Parameters<ChatRuntimeOwnerEditTrackingResourceService['requestEditTrackingOperation']>[0],
+  ): Promise<void> {
+    const run = this.operationQueue.then(() => this.requestEditTrackingOperation(input));
+    this.operationQueue = run.catch(() => undefined);
+    return run;
   }
 
   private async requestEditTrackingOperation(input: {

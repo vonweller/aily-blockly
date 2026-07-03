@@ -1,5 +1,9 @@
 import type { TurnResponseTurn } from 'aily-lex/browser';
 
+import type {
+  ChatAgentRuntimeMode,
+  ChatAgentRuntimeModeSource,
+} from '../core/chat-agent-runtime-mode';
 import type { ChatSelectedMode } from '../core/chat-mode';
 import type { ChatRuntimeHostModelSelectionSnapshot } from '../core/chat-runtime-host-contract';
 import type { PendingFollowupRequest } from '../helpers/chat-pending-request';
@@ -34,6 +38,8 @@ export interface ChatSessionRuntimeProjectionPatch extends ChatSessionRuntimeHan
   readonly viewOverlay?: ChatSessionRuntimeViewOverlay | null | undefined;
   readonly providerOptions?: HostSessionProviderOptions | null | undefined;
   readonly selectedMode?: ChatSelectedMode | null | undefined;
+  readonly agentRuntimeMode?: ChatAgentRuntimeMode | null | undefined;
+  readonly agentRuntimeModeSource?: ChatAgentRuntimeModeSource | null | undefined;
   readonly currentModel?: ChatRuntimeHostModelSelectionSnapshot | null | undefined;
   readonly debugSummary?: Partial<ChatSessionRuntimeDebugSummary> | null | undefined;
 }
@@ -128,6 +134,8 @@ export class ChatSessionRuntimeProjectionCore {
       viewOverlay: patch.viewOverlay,
       providerOptions: patch.providerOptions,
       selectedMode: patch.selectedMode,
+      agentRuntimeMode: patch.agentRuntimeMode,
+      agentRuntimeModeSource: patch.agentRuntimeModeSource,
       currentModel: patch.currentModel,
       requestInProgress: handle.requestInProgress,
       attachedView: patch.attachedView,

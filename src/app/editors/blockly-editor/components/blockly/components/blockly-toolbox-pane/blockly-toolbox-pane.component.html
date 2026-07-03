@@ -36,7 +36,7 @@
           <i [class]="item.iconClass"></i>
         </span>
         <span class="toolbox-item__label">{{ item.name }}</span>
-        @if (item.isLocalLibrary) {
+        @if (item.isLocalLibrary && item.level === 0) {
           <span class="toolbox-item__local-badge" aria-hidden="true"></span>
         }
       </button>

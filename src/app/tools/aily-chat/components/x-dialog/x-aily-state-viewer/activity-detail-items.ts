@@ -1,4 +1,5 @@
 import { parseTerminalPayload } from '../../../core/terminal-payload';
+import { isTerminalFailureState, resolveTerminalLifecycleState } from '../../../core/terminal-status';
 import type { ToolResultContentPart } from '../../../core/tool-result-content';
 import { isReadFileToolName } from '../../../core/tool-name-normalizer';
 import { buildToolInvocationDisplaySummary } from '../../../core/tool-invocation-formatter';
@@ -12,6 +13,8 @@ import {
   getContinuationStopReasonPresentation,
 } from '../../../core/continuation-stop-reason';
 import type { MetricsSnapshot, TurnResponseTurn } from 'aily-lex/browser';
+import { projectRegisteredToolCallOutputRows } from './tool-call-output-projectors';
+import { chatI18n } from '../../../helpers/chat-i18n';
 
 export type StateTone = 'info' | 'success' | 'warn' | 'error' | 'neutral';
 
@@ -252,6 +255,19 @@ function buildToolCallOutputRowsWithFallback(input: {
     return metadataRows;
   }
 
+  const fallbackRegisteredRows = projectRegisteredToolCallOutputRows({
+    toolName: input.toolName,
+    entry: {
+      recordId: `${input.baseId}:output:text`,
+      phase: asString(input.metadata['phase']) || toolCallStateToNarrativePhase(input.state),
+      resultText: input.text,
+    },
+    index: 0,
+  });
+  if (fallbackRegisteredRows.length > 0) {
+    return fallbackRegisteredRows;
+  }
+
   const toolSpecificResult = asString(input.toolSpecificData?.['result']);
   if (toolSpecificResult) {
     return [buildFallbackToolCallOutputRow(`${input.baseId}:output:toolSpecificData`, input.toolName, toolSpecificResult, input.state)];
@@ -323,6 +339,22 @@ function asMeaningfulToolCallFallbackText(
   }
 
   return text;
+}
+
+function toolCallStateToNarrativePhase(
+  state: 'doing' | 'done' | 'warn' | 'error' | 'pending_approval' | undefined,
+): string | undefined {
+  switch (state) {
+    case 'done':
+    case 'warn':
+      return 'completed';
+    case 'error':
+      return 'failed';
+    case 'doing':
+      return 'progress';
+    default:
+      return undefined;
+  }
 }
 
 export function buildToolCallSummaryBadges(source: {
@@ -2074,6 +2106,11 @@ function buildToolCallOutputRows(
   index: number,
   toolName: string | undefined,
 ): StateDetailRow[] {
+  const registeredRows = projectRegisteredToolCallOutputRows({ toolName, entry, index });
+  if (registeredRows.length > 0) {
+    return registeredRows;
+  }
+
   if (isChangedFilesToolName(toolName)) {
     const changedFiles = collectChangedFilesEntriesFromToolResultEntry(entry);
     if (changedFiles.length > 0) {
@@ -2277,15 +2314,17 @@ function buildTerminalOutputRowsFromContent(input: {
     if (part.type === 'terminal_command') {
       const exitCode = typeof part['exitCode'] === 'number' ? part['exitCode'] : undefined;
       const isRunning = part['isRunning'] === true;
+      const status = typeof part['status'] === 'string' ? part['status'] : undefined;
+      const terminalState = resolveTerminalLifecycleState({ exitCode, isRunning, status });
       const terminalId = firstDisplayString(part['processId'], part['outputSessionId'], part['terminalId']);
       const cwd = typeof part['cwd'] === 'string' ? part['cwd'] : undefined;
       return [{
         id: `${recordId}:output:command`,
-        title: text || summary || toolName || '终端命令',
-        subtitle: [...baseSubtitle, terminalId ? `终端 ${terminalId}` : '', cwd || ''].filter(Boolean).join(' · ') || undefined,
+        title: text || summary || toolName || chatI18n('AILY_CHAT.PROCESS_FALLBACK_TERMINAL_COMMAND'),
+        subtitle: [...baseSubtitle, terminalId ? `${chatI18n('AILY_CHAT.PROCESS_TERMINAL_ID_PREFIX')} ${terminalId}` : '', cwd || ''].filter(Boolean).join(' · ') || undefined,
         note: summary && summary !== text ? summary : undefined,
-        trailing: isRunning ? '运行中' : (typeof exitCode === 'number' ? `退出码 ${exitCode}` : (phase ? formatNarrativePhase(phase) : undefined)),
-        tone: isRunning ? 'info' : (typeof exitCode === 'number' && exitCode !== 0 ? 'error' : toneFromNarrativePhase(phase)),
+        trailing: isRunning ? chatI18n('AILY_CHAT.PROCESS_STATUS_RUNNING') : (typeof exitCode === 'number' ? `${chatI18n('AILY_CHAT.PROCESS_LABEL_EXIT_CODE')} ${exitCode}` : (phase ? formatNarrativePhase(phase) : undefined)),
+        tone: terminalState === 'running' ? 'info' : (terminalState === 'failed' ? 'error' : (terminalState === 'cancelled' ? 'warn' : toneFromNarrativePhase(phase))),
         outputKind: 'terminal-command',
       }];
     }
@@ -2293,7 +2332,7 @@ function buildTerminalOutputRowsFromContent(input: {
     if (part.type === 'terminal_stdout') {
       return [{
         id: `${recordId}:output:stdout`,
-        title: '标准输出',
+        title: chatI18n('AILY_CHAT.PROCESS_OUTPUT_STDOUT'),
         subtitle: baseSubtitle.join(' · ') || undefined,
         note: text,
         tone: 'success',
@@ -2304,12 +2343,13 @@ function buildTerminalOutputRowsFromContent(input: {
 
     if (part.type === 'terminal_stderr') {
       const exitCode = typeof part['exitCode'] === 'number' ? part['exitCode'] : undefined;
+      const status = typeof part['status'] === 'string' ? part['status'] : undefined;
       return [{
         id: `${recordId}:output:stderr`,
-        title: '标准错误',
+        title: chatI18n('AILY_CHAT.PROCESS_OUTPUT_STDERR'),
         subtitle: baseSubtitle.join(' · ') || undefined,
         note: text,
-        tone: typeof exitCode === 'number' && exitCode !== 0 ? 'error' : 'warn',
+        tone: isTerminalFailureState({ exitCode, status }) ? 'error' : 'warn',
         outputKind: 'terminal-stream',
         outputChannel: 'stderr',
       }];
@@ -2343,20 +2383,21 @@ function buildTerminalOutputRows(input: {
   const { recordId, phase, timestamp, summary, toolName, terminal } = input;
   const baseSubtitle = [formatClock(timestamp), recordId].filter(Boolean);
   const rows: StateDetailRow[] = [];
-  const commandTitle = terminal.command || summary || toolName || '终端命令';
+  const commandTitle = terminal.command || summary || toolName || chatI18n('AILY_CHAT.PROCESS_FALLBACK_TERMINAL_COMMAND');
   const commandSubtitle = [
     ...baseSubtitle,
-    getParsedTerminalDisplayId(terminal) ? `终端 ${getParsedTerminalDisplayId(terminal)}` : '',
+    getParsedTerminalDisplayId(terminal) ? `${chatI18n('AILY_CHAT.PROCESS_TERMINAL_ID_PREFIX')} ${getParsedTerminalDisplayId(terminal)}` : '',
     terminal.cwd || '',
   ].filter(Boolean).join(' · ');
   const stderr = normalizeTerminalStream(terminal.stderr);
-  const commandTone: StateTone = terminal.isRunning
+  const terminalState = resolveTerminalLifecycleState(terminal);
+  const commandTone: StateTone = terminalState === 'running'
     ? 'info'
-    : (typeof terminal.exitCode === 'number' && terminal.exitCode !== 0)
-        ? 'error'
-        : stderr
-            ? 'warn'
-            : toneFromNarrativePhase(phase);
+    : terminalState === 'failed'
+      ? 'error'
+      : stderr || terminalState === 'cancelled'
+        ? 'warn'
+        : toneFromNarrativePhase(phase);
 
   rows.push({
     id: `${recordId}:output:command`,
@@ -2364,8 +2405,8 @@ function buildTerminalOutputRows(input: {
     subtitle: commandSubtitle || undefined,
     note: summary && summary !== commandTitle ? summary : undefined,
     trailing: terminal.isRunning
-      ? '运行中'
-      : (typeof terminal.exitCode === 'number' ? `退出码 ${terminal.exitCode}` : (phase ? formatNarrativePhase(phase) : undefined)),
+      ? chatI18n('AILY_CHAT.PROCESS_STATUS_RUNNING')
+      : (typeof terminal.exitCode === 'number' ? `${chatI18n('AILY_CHAT.PROCESS_LABEL_EXIT_CODE')} ${terminal.exitCode}` : (phase ? formatNarrativePhase(phase) : undefined)),
     tone: commandTone,
     outputKind: 'terminal-command',
   });
@@ -2373,7 +2414,7 @@ function buildTerminalOutputRows(input: {
   if (terminal.output) {
     rows.push({
       id: `${recordId}:output:stdout`,
-      title: '标准输出',
+      title: chatI18n('AILY_CHAT.PROCESS_OUTPUT_STDOUT'),
       subtitle: baseSubtitle.join(' · ') || undefined,
       note: terminal.output,
       tone: stderr ? 'neutral' : 'success',
@@ -2385,10 +2426,10 @@ function buildTerminalOutputRows(input: {
   if (stderr) {
     rows.push({
       id: `${recordId}:output:stderr`,
-      title: '标准错误',
+      title: chatI18n('AILY_CHAT.PROCESS_OUTPUT_STDERR'),
       subtitle: baseSubtitle.join(' · ') || undefined,
       note: stderr,
-      tone: typeof terminal.exitCode === 'number' && terminal.exitCode !== 0 ? 'error' : 'warn',
+      tone: isTerminalFailureState(terminal) ? 'error' : 'warn',
       outputKind: 'terminal-stream',
       outputChannel: 'stderr',
     });
@@ -2502,11 +2543,11 @@ function formatToolResultContentPartTitle(
 
   switch (type) {
     case 'terminal_command':
-      return summary || toolName || '终端命令';
+      return summary || toolName || chatI18n('AILY_CHAT.PROCESS_FALLBACK_TERMINAL_COMMAND');
     case 'terminal_stdout':
-      return '标准输出';
+      return chatI18n('AILY_CHAT.PROCESS_OUTPUT_STDOUT');
     case 'terminal_stderr':
-      return '标准错误';
+      return chatI18n('AILY_CHAT.PROCESS_OUTPUT_STDERR');
     case 'text':
     case 'output_text':
       return `文本输出 ${index + 1}`;
@@ -3520,4 +3561,3 @@ function descriptorOutputGroups(
   }
   return rows.some((row) => row.outputKind) ? buildStateDetailOutputGroups(rows) : undefined;
 }
-

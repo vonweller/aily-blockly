@@ -5,6 +5,7 @@ import {
   type ChatRuntimeOwnerTurnStartupEditLifecyclePort,
   type ChatRuntimeOwnerWorkspaceEditLifecycleResourcePort,
 } from './chat-runtime-owner-ports';
+import type { RequestCheckpointMetadata } from './edit-checkpoint.service';
 
 @Injectable()
 export class ChatRuntimeOwnerTurnStartupEditLifecycleService implements ChatRuntimeOwnerTurnStartupEditLifecyclePort {
@@ -23,7 +24,18 @@ export class ChatRuntimeOwnerTurnStartupEditLifecycleService implements ChatRunt
     });
   }
 
+  commitCurrentTurn(sessionId: string | null | undefined): Promise<void> {
+    return this.workspaceEditResource.commitCurrentTurn(sessionId);
+  }
+
   waitForCheckpointMetadataSettled(sessionId: string | null | undefined): Promise<void> {
     return this.workspaceEditResource.waitForCheckpointMetadataSettled(sessionId);
+  }
+
+  readFinalizedCheckpointMetadata(
+    sessionId: string | null | undefined,
+    input: { readonly checkpointId?: string; readonly requestId?: string },
+  ): Promise<RequestCheckpointMetadata | null> {
+    return this.workspaceEditResource.readFinalizedCheckpointMetadata(sessionId, input);
   }
 }

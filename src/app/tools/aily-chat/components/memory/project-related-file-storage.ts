@@ -4,27 +4,19 @@ import type {
   ProjectRelatedFileEntry,
   RelatedContentScope,
 } from './project-related-file.types';
+import { resolveProjectAssetsRootDir } from '../../../../utils/project-log.utils';
 
-const RELATED_FILES_METADATA_NAME = '.related-files.json';
-const RELATED_CONTENT_COPY_LIMIT_BYTES = 10 * 1024 * 1024;
+const RELATED_URLS_FILE_NAME = 'RELATED_URLS.txt';
 
 interface FileDialogSelection {
   canceled: boolean;
   filePaths: string[];
 }
 
-interface RelatedFileMetadataEntry {
-  readonly originalPath: string;
-  readonly relativePath: string;
-  readonly name?: string;
-  readonly type?: 'file' | 'folder' | 'link';
-  readonly isExternal?: boolean;
-  readonly addedAt?: number;
-}
-
 interface PickAndCopyResult {
   readonly addedEntries: readonly ProjectRelatedFileEntry[];
   readonly skippedOriginalPaths: readonly string[];
+  readonly invalidOriginalPaths: readonly string[];
 }
 
 type FileDialogLike = Pick<IAilyHostAPI['dialog'], 'selectFiles'>;
@@ -34,59 +26,25 @@ export class ProjectRelatedFileStorage {
     private readonly host: Pick<IAilyHostAPI, 'fs' | 'path' | 'dialog'>,
   ) {}
 
-  list(scope: RelatedContentScope, projectPath: string, sessionId?: string): ProjectRelatedFileEntry[] {
-    if (scope === 'session' && !this.normalizeSessionId(sessionId)) {
-      return this.listAllSessionEntries(projectPath);
+  list(scope: RelatedContentScope, projectPath: string, _sessionId?: string): ProjectRelatedFileEntry[] {
+    if (scope !== 'project') {
+      return [];
     }
 
-    const rootDir = this.resolveRootDir(scope, projectPath, sessionId);
-    const metadataEntries = this.readMetadata(scope, projectPath, sessionId);
-    const metadataByRelativePath = new Map(
-      metadataEntries.map((entry) => [entry.relativePath, entry]),
-    );
+    const assetsRootDir = this.resolveAssetsRootDir(projectPath);
+    if (!assetsRootDir || !this.host.fs.existsSync(assetsRootDir)) {
+      return [];
+    }
 
-    const copiedEntries = rootDir && this.host.fs.existsSync(rootDir)
-      ? readDirEntries(this.host.fs, rootDir)
-        .filter((entry) => !entry.name.startsWith('.') && entry.name !== RELATED_FILES_METADATA_NAME)
-        .map((entry) => {
-          const absolutePath = this.host.path.join(rootDir, entry.name);
-          const relativePath = this.host.path.join(
-            this.resolveRelativeRootDirName(scope, sessionId),
-            entry.name,
-          );
-          return {
-            type: entry.isDirectory() ? 'folder' : 'file',
-            name: entry.name,
-            absolutePath,
-            relativePath,
-            originalPath: metadataByRelativePath.get(relativePath)?.originalPath,
-          } as ProjectRelatedFileEntry;
-        })
-      : [];
+    const fileEntries = readDirEntries(this.host.fs, assetsRootDir)
+      .filter((entry) => !entry.name.startsWith('.') && entry.name !== RELATED_URLS_FILE_NAME)
+      .map((entry) => this.toAssetEntry(assetsRootDir, entry))
+      .sort((left, right) => compareAssetEntries(left, right));
 
-    const externalEntries = metadataEntries
-      .filter((entry) => entry.isExternal === true)
-      .map((entry) => {
-        return {
-          type: entry.type ?? 'file',
-          name: entry.name || this.host.path.basename(entry.originalPath),
-          absolutePath: entry.originalPath,
-          relativePath: entry.relativePath,
-          originalPath: entry.originalPath,
-          isExternal: true,
-        } as ProjectRelatedFileEntry;
-      })
-      .filter((entry) => entry.name.trim().length > 0);
-
-    return [...copiedEntries, ...externalEntries]
-      .sort((left, right) => {
-        const leftAddedAt = metadataByRelativePath.get(left.relativePath)?.addedAt ?? 0;
-        const rightAddedAt = metadataByRelativePath.get(right.relativePath)?.addedAt ?? 0;
-        if (rightAddedAt !== leftAddedAt) {
-          return rightAddedAt - leftAddedAt;
-        }
-        return left.name.localeCompare(right.name);
-      });
+    return [
+      ...fileEntries,
+      ...this.readUrlEntries(projectPath),
+    ];
   }
 
   listGrouped(
@@ -114,6 +72,10 @@ export class ProjectRelatedFileStorage {
     projectPath: string,
     sessionId?: string,
   ): Promise<PickAndCopyResult> {
+    if (scope !== 'project') {
+      return { addedEntries: [], skippedOriginalPaths: [], invalidOriginalPaths: [] };
+    }
+
     const result = await this.host.dialog.selectFiles({
       title: '选择文件或文件夹',
       properties: ['multiSelections', 'openFile', 'openDirectory'],
@@ -121,7 +83,7 @@ export class ProjectRelatedFileStorage {
     }) as FileDialogSelection | null | undefined;
 
     if (!result || result.canceled || !Array.isArray(result.filePaths) || result.filePaths.length === 0) {
-      return { addedEntries: [], skippedOriginalPaths: [] };
+      return { addedEntries: [], skippedOriginalPaths: [], invalidOriginalPaths: [] };
     }
 
     return this.importPaths(scope, projectPath, result.filePaths, sessionId);
@@ -131,140 +93,88 @@ export class ProjectRelatedFileStorage {
     scope: RelatedContentScope,
     projectPath: string,
     sourcePaths: readonly string[],
-    sessionId?: string,
+    _sessionId?: string,
   ): PickAndCopyResult {
-    const rootDir = this.requireRootDir(scope, projectPath, sessionId);
-    this.ensureDir(rootDir);
-    const metadataEntries = this.readMetadata(scope, projectPath, sessionId);
-    const existingOriginalPaths = new Set(
-      metadataEntries.map((entry) => this.normalizePath(entry.originalPath)).filter(Boolean),
-    );
+    if (scope !== 'project') {
+      return { addedEntries: [], skippedOriginalPaths: [], invalidOriginalPaths: [] };
+    }
+
+    const assetsRootDir = this.requireAssetsRootDir(projectPath);
+    this.ensureDir(assetsRootDir);
 
     const addedEntries: ProjectRelatedFileEntry[] = [];
     const skippedOriginalPaths: string[] = [];
-    const nextMetadataEntries = [...metadataEntries];
+    const invalidOriginalPaths: string[] = [];
 
     for (const sourcePath of sourcePaths) {
-      const normalizedOriginalPath = this.normalizePath(sourcePath);
-      if (normalizedOriginalPath && existingOriginalPaths.has(normalizedOriginalPath)) {
+      const normalizedSourcePath = typeof sourcePath === 'string' ? sourcePath.trim() : '';
+      if (!normalizedSourcePath || !this.host.fs.existsSync(normalizedSourcePath)) {
+        invalidOriginalPaths.push(sourcePath);
+        continue;
+      }
+
+      const originalName = this.host.path.basename(normalizedSourcePath);
+      const importDecision = this.resolveImportDecision(assetsRootDir, normalizedSourcePath, originalName);
+      if (importDecision.action === 'skip') {
         skippedOriginalPaths.push(sourcePath);
         continue;
       }
-
-      const name = this.host.path.basename(sourcePath);
-      const sourceStat = this.host.fs.statSync(sourcePath);
-      const type: ProjectRelatedFileEntry['type'] = sourceStat.isDirectory()
-        ? 'folder'
-        : 'file';
-      const shouldStoreAsReference = sourceStat.isFile()
-        && ((Number.isFinite(sourceStat.size) ? sourceStat.size : 0) > RELATED_CONTENT_COPY_LIMIT_BYTES);
-
-      if (shouldStoreAsReference) {
-        if (normalizedOriginalPath) {
-          existingOriginalPaths.add(normalizedOriginalPath);
-          nextMetadataEntries.push({
-            originalPath: sourcePath,
-            relativePath: sourcePath,
-            name,
-            type,
-            isExternal: true,
-            addedAt: Date.now(),
-          });
-        }
-
-        addedEntries.push({
-          type,
-          name,
-          absolutePath: sourcePath,
-          relativePath: sourcePath,
-          ...(normalizedOriginalPath ? { originalPath: sourcePath } : {}),
-          isExternal: true,
-        });
+      if (importDecision.action === 'reuse') {
+        skippedOriginalPaths.push(sourcePath);
+        addedEntries.push(this.createEntryFromAbsolutePath(assetsRootDir, importDecision.existingPath));
         continue;
       }
 
-      const destinationPath = this.createUniqueDestination(rootDir, name);
-      this.copyPath(sourcePath, destinationPath);
-      const relativePath = this.host.path.join(
-        this.resolveRelativeRootDirName(scope, sessionId),
-        this.host.path.basename(destinationPath),
-      );
-      if (normalizedOriginalPath) {
-        existingOriginalPaths.add(normalizedOriginalPath);
-        nextMetadataEntries.push({
-          originalPath: sourcePath,
-          relativePath,
-          addedAt: Date.now(),
-        });
-      }
-      addedEntries.push({
-        type: this.host.fs.statSync(destinationPath).isDirectory() ? 'folder' : 'file',
-        name: this.host.path.basename(destinationPath),
-        absolutePath: destinationPath,
-        relativePath,
-        ...(normalizedOriginalPath ? { originalPath: sourcePath } : {}),
-      });
+      this.copyPath(normalizedSourcePath, importDecision.destinationPath);
+      addedEntries.push(this.createEntryFromAbsolutePath(assetsRootDir, importDecision.destinationPath));
     }
 
-    this.writeMetadata(scope, projectPath, sessionId, nextMetadataEntries);
-    return { addedEntries, skippedOriginalPaths };
+    return { addedEntries, skippedOriginalPaths, invalidOriginalPaths };
   }
 
   importLinks(
     scope: RelatedContentScope,
     projectPath: string,
     urls: readonly string[],
-    sessionId?: string,
+    _sessionId?: string,
   ): PickAndCopyResult {
-    const rootDir = this.requireRootDir(scope, projectPath, sessionId);
-    this.ensureDir(rootDir);
-    const metadataEntries = this.readMetadata(scope, projectPath, sessionId);
-    const existingOriginalPaths = new Set(
-      metadataEntries.map((entry) => this.normalizePath(entry.originalPath)).filter(Boolean),
-    );
+    if (scope !== 'project') {
+      return { addedEntries: [], skippedOriginalPaths: [], invalidOriginalPaths: [] };
+    }
 
+    const assetsRootDir = this.requireAssetsRootDir(projectPath);
+    this.ensureDir(assetsRootDir);
+
+    const existingUrls = this.readStoredUrls(projectPath);
+    const existingKeys = new Set(existingUrls.map((url) => this.normalizeUrlKey(url)).filter(Boolean));
+    const nextUrls = [...existingUrls];
     const addedEntries: ProjectRelatedFileEntry[] = [];
     const skippedOriginalPaths: string[] = [];
-    const nextMetadataEntries = [...metadataEntries];
+    const invalidOriginalPaths: string[] = [];
 
     for (const rawUrl of urls) {
       const normalizedUrl = this.normalizeUrl(rawUrl);
       if (!normalizedUrl) {
-        skippedOriginalPaths.push(rawUrl);
+        invalidOriginalPaths.push(rawUrl);
         continue;
       }
 
-      const dedupeKey = this.normalizePath(normalizedUrl);
-      if (dedupeKey && existingOriginalPaths.has(dedupeKey)) {
+      const urlKey = this.normalizeUrlKey(normalizedUrl);
+      if (urlKey && existingKeys.has(urlKey)) {
         skippedOriginalPaths.push(rawUrl);
+        addedEntries.push(this.createLinkEntry(normalizedUrl));
         continue;
       }
 
-      const name = this.buildLinkName(normalizedUrl);
-      if (dedupeKey) {
-        existingOriginalPaths.add(dedupeKey);
-        nextMetadataEntries.push({
-          originalPath: normalizedUrl,
-          relativePath: normalizedUrl,
-          name,
-          type: 'link',
-          isExternal: true,
-          addedAt: Date.now(),
-        });
+      nextUrls.push(normalizedUrl);
+      if (urlKey) {
+        existingKeys.add(urlKey);
       }
-
-      addedEntries.push({
-        type: 'link',
-        name,
-        absolutePath: normalizedUrl,
-        relativePath: normalizedUrl,
-        originalPath: normalizedUrl,
-        isExternal: true,
-      });
+      addedEntries.push(this.createLinkEntry(normalizedUrl));
     }
 
-    this.writeMetadata(scope, projectPath, sessionId, nextMetadataEntries);
-    return { addedEntries, skippedOriginalPaths };
+    this.writeStoredUrls(projectPath, nextUrls);
+    return { addedEntries, skippedOriginalPaths, invalidOriginalPaths };
   }
 
   importPathReferences(
@@ -273,80 +183,38 @@ export class ProjectRelatedFileStorage {
     sourcePaths: readonly string[],
     sessionId?: string,
   ): PickAndCopyResult {
-    const rootDir = this.requireRootDir(scope, projectPath, sessionId);
-    this.ensureDir(rootDir);
-    const metadataEntries = this.readMetadata(scope, projectPath, sessionId);
-    const existingOriginalPaths = new Set(
-      metadataEntries.map((entry) => this.normalizePath(entry.originalPath)).filter(Boolean),
-    );
-
-    const addedEntries: ProjectRelatedFileEntry[] = [];
-    const skippedOriginalPaths: string[] = [];
-    const nextMetadataEntries = [...metadataEntries];
-
-    for (const sourcePath of sourcePaths) {
-      const normalizedOriginalPath = this.normalizePath(sourcePath);
-      if (normalizedOriginalPath && existingOriginalPaths.has(normalizedOriginalPath)) {
-        skippedOriginalPaths.push(sourcePath);
-        continue;
-      }
-
-      const stat = this.host.fs.statSync(sourcePath);
-      const type: ProjectRelatedFileEntry['type'] = stat.isDirectory()
-        ? 'folder'
-        : 'file';
-      const name = this.host.path.basename(sourcePath);
-
-      if (normalizedOriginalPath) {
-        existingOriginalPaths.add(normalizedOriginalPath);
-        nextMetadataEntries.push({
-          originalPath: sourcePath,
-          relativePath: sourcePath,
-          name,
-          type,
-          isExternal: true,
-          addedAt: Date.now(),
-        });
-      }
-
-      addedEntries.push({
-        type,
-        name,
-        absolutePath: sourcePath,
-        relativePath: sourcePath,
-        originalPath: sourcePath,
-        isExternal: true,
-      });
-    }
-
-    this.writeMetadata(scope, projectPath, sessionId, nextMetadataEntries);
-    return { addedEntries, skippedOriginalPaths };
+    return this.importPaths(scope, projectPath, sourcePaths, sessionId);
   }
 
   remove(
     scope: RelatedContentScope,
     projectPath: string,
     entry: ProjectRelatedFileEntry,
-    sessionId?: string,
+    _sessionId?: string,
   ): void {
-    if (entry.isExternal === true) {
-      this.removeMetadataEntry(scope, projectPath, entry, sessionId);
+    if (scope !== 'project') {
+      return;
+    }
+
+    if (entry.type === 'link') {
+      const targetKey = this.normalizeUrlKey(entry.absolutePath);
+      const nextUrls = this.readStoredUrls(projectPath)
+        .filter((url) => this.normalizeUrlKey(url) !== targetKey);
+      this.writeStoredUrls(projectPath, nextUrls);
       return;
     }
 
     if (!this.host.fs.existsSync(entry.absolutePath)) {
-      this.removeMetadataEntry(scope, projectPath, entry, sessionId);
       return;
     }
 
-    if (this.host.fs.statSync(entry.absolutePath).isDirectory()) {
+    const stat = this.host.fs.statSync(entry.absolutePath);
+    if (stat.isDirectory()) {
       this.host.fs.rmdirSync(entry.absolutePath, { recursive: true, force: true });
-      this.removeMetadataEntry(scope, projectPath, entry, sessionId);
       return;
     }
 
     this.host.fs.unlinkSync(entry.absolutePath);
-    this.removeMetadataEntry(scope, projectPath, entry, sessionId);
   }
 
   buildPromptText(
@@ -354,126 +222,85 @@ export class ProjectRelatedFileStorage {
     projectPath: string,
     sessionId?: string,
   ): string {
-    const entries = this.list(scope, projectPath, sessionId);
-    if (entries.length === 0) {
+    if (scope !== 'project') {
       return '';
     }
 
-    const normalizedSessionId = this.normalizeSessionId(sessionId);
-    const scopeLabel = scope === 'session'
-      ? (normalizedSessionId ? 'session' : 'sessions')
-      : scope;
-    const hasLinkEntries = entries.some((entry) => entry.type === 'link');
-    const lines = [
-      `Reference related content when it may help with the current ${scopeLabel}.`,
-      `The following related-files entries are attached reference materials for the current ${scopeLabel}.`,
-      'Treat related-files as the project\'s attached reference context.',
-      'Requests to read, inspect, summarize, or compare attached references or their links refer to these entries.',
-      ...(hasLinkEntries
-        ? ['For link entries, fetch the URL when their contents are needed.']
-        : []),
-      ...entries.map((entry) => this.formatPromptEntry(entry)),
-    ];
-
-    return lines.join('\n');
+    return [
+      'Project assets are stored under the project asset directory.',
+      'When the user asks about attached, related, or imported project materials, interpret that request as referring to the project asset directory by default.',
+      'Do not expand such asset-oriented requests to memory stores or unrelated project files unless the user clearly asks for those broader sources.',
+      'For questions about what related materials exist, inspect the asset root first and derive the answer from that inventory instead of inferring from other prompt context.',
+      'Use assets_tool with action="list" and path="." to inspect the asset root when needed.',
+      'If an asset entry is a directory, continue by listing that directory progressively instead of trying to read it like a file.',
+      'Use assets_tool to list and read these project assets when the user refers to attached files, folders, videos, FFS resources, or related URLs.',
+      'When checking related links, read RELATED_URLS.txt from the asset directory rather than assuming URLs from memory or environment context.',
+    ].join('\n');
   }
 
-  private listAllSessionEntries(projectPath: string): ProjectRelatedFileEntry[] {
-    const sessionContentsRootDir = this.resolveSessionContentsRootDir(projectPath);
-    if (!sessionContentsRootDir || !this.host.fs.existsSync(sessionContentsRootDir)) {
-      return [];
-    }
+  private toAssetEntry(
+    assetsRootDir: string,
+    entry: IDirent,
+  ): ProjectRelatedFileEntry {
+    const absolutePath = this.host.path.join(assetsRootDir, entry.name);
+    return this.createEntryFromAbsolutePath(assetsRootDir, absolutePath, entry.isDirectory() ? 'folder' : 'file');
+  }
 
-    const entriesByKey = new Map<string, { entry: ProjectRelatedFileEntry; addedAt: number }>();
-    for (const dirEntry of readDirEntries(this.host.fs, sessionContentsRootDir)) {
-      if (!dirEntry.isDirectory() || dirEntry.name.startsWith('.')) {
-        continue;
+  private createEntryFromAbsolutePath(
+    assetsRootDir: string,
+    absolutePath: string,
+    forcedType?: ProjectRelatedFileEntry['type'],
+  ): ProjectRelatedFileEntry {
+    const normalizedRelativePath = this.normalizeRelativeAssetPath(
+      this.host.path.relative(assetsRootDir, absolutePath),
+    );
+    const type = forcedType ?? (this.host.fs.statSync(absolutePath).isDirectory() ? 'folder' : 'file');
+    return {
+      type,
+      name: this.host.path.basename(absolutePath),
+      absolutePath,
+      relativePath: normalizedRelativePath,
+    };
+  }
+
+  private createLinkEntry(url: string): ProjectRelatedFileEntry {
+    return {
+      type: 'link',
+      name: this.buildLinkName(url),
+      absolutePath: url,
+      relativePath: url,
+      originalPath: url,
+    };
+  }
+
+  private resolveImportDecision(
+    assetsRootDir: string,
+    sourcePath: string,
+    originalName: string,
+  ): { action: 'copy'; destinationPath: string } | { action: 'reuse'; existingPath: string } | { action: 'skip' } {
+    let candidateName = originalName;
+    let candidatePath = this.host.path.join(assetsRootDir, candidateName);
+    let suffixIndex = 2;
+
+    while (this.host.fs.existsSync(candidatePath)) {
+      const sourceHash = this.computePathHash(sourcePath);
+      const existingHash = this.computePathHash(candidatePath);
+      if (sourceHash === existingHash) {
+        return { action: 'reuse', existingPath: candidatePath };
       }
 
-      const nestedSessionId = this.normalizeSessionId(dirEntry.name);
-      if (!nestedSessionId) {
-        continue;
-      }
-
-      const metadataByRelativePath = this.readMetadataByRelativePath('session', projectPath, nestedSessionId);
-      for (const entry of this.list('session', projectPath, nestedSessionId)) {
-        const addedAt = metadataByRelativePath.get(entry.relativePath)?.addedAt ?? 0;
-        const dedupeKey = `${entry.type}:${entry.relativePath}:${entry.absolutePath}`;
-        const existing = entriesByKey.get(dedupeKey);
-        if (!existing || addedAt > existing.addedAt) {
-          entriesByKey.set(dedupeKey, { entry, addedAt });
-        }
-      }
+      candidateName = withUniqueNameSuffix(originalName, suffixIndex);
+      candidatePath = this.host.path.join(assetsRootDir, candidateName);
+      suffixIndex += 1;
     }
 
-    return [...entriesByKey.values()]
-      .sort((left, right) => {
-        if (right.addedAt !== left.addedAt) {
-          return right.addedAt - left.addedAt;
-        }
-        return left.entry.name.localeCompare(right.entry.name);
-      })
-      .map(({ entry }) => entry);
-  }
-
-  private resolveRootDir(
-    scope: RelatedContentScope,
-    projectPath: string,
-    sessionId?: string,
-  ): string | undefined {
-    const normalizedProjectPath = typeof projectPath === 'string' ? projectPath.trim() : '';
-    return normalizedProjectPath
-      ? this.host.path.join(
-        normalizedProjectPath,
-        this.resolveRelativeRootDirName(scope, sessionId),
-      )
-      : undefined;
-  }
-
-  private resolveSessionContentsRootDir(projectPath: string): string | undefined {
-    const normalizedProjectPath = typeof projectPath === 'string' ? projectPath.trim() : '';
-    return normalizedProjectPath
-      ? this.host.path.join(normalizedProjectPath, '.chat_history', 'memory-tool', 'contents')
-      : undefined;
-  }
-
-  private requireRootDir(
-    scope: RelatedContentScope,
-    projectPath: string,
-    sessionId?: string,
-  ): string {
-    const rootDir = this.resolveRootDir(scope, projectPath, sessionId);
-    if (!rootDir) {
-      throw new Error('Project path is required for related files.');
-    }
-
-    return rootDir;
-  }
-
-  private ensureDir(dirPath: string): void {
-    if (!this.host.fs.existsSync(dirPath)) {
-      this.host.fs.mkdirSync(dirPath, { recursive: true });
-    }
-  }
-
-  private createUniqueDestination(rootDir: string, name: string): string {
-    const extension = this.host.path.extname(name);
-    const baseName = extension ? name.slice(0, -extension.length) : name;
-    let candidateName = name;
-    let index = 2;
-
-    while (this.host.fs.existsSync(this.host.path.join(rootDir, candidateName))) {
-      candidateName = extension
-        ? `${baseName}-${index}${extension}`
-        : `${baseName}-${index}`;
-      index += 1;
-    }
-
-    return this.host.path.join(rootDir, candidateName);
+    return {
+      action: 'copy',
+      destinationPath: candidatePath,
+    };
   }
 
   private copyPath(sourcePath: string, destinationPath: string): void {
-    // Prefer the host's native copy so binary assets keep their original bytes.
     if (this.host.fs.copySync) {
       this.host.fs.copySync(sourcePath, destinationPath);
       return;
@@ -503,116 +330,144 @@ export class ProjectRelatedFileStorage {
   }
 
   private copyFile(sourcePath: string, destinationPath: string): void {
+    const rawFs = this.host.fs as IFileSystem & {
+      readFileAsBase64?: (path: string) => string;
+      writeBase64File?: (path: string, base64: string) => void;
+    };
+
+    if (typeof rawFs.readFileAsBase64 === 'function' && typeof rawFs.writeBase64File === 'function') {
+      rawFs.writeBase64File(destinationPath, rawFs.readFileAsBase64(sourcePath));
+      return;
+    }
+
     const content = this.host.fs.readFileSync(sourcePath);
     this.host.fs.writeFileSync(destinationPath, content);
   }
 
-  private readMetadata(
-    scope: RelatedContentScope,
-    projectPath: string,
-    sessionId?: string,
-  ): RelatedFileMetadataEntry[] {
-    const metadataPath = this.resolveMetadataPath(scope, projectPath, sessionId);
-    if (!metadataPath || !this.host.fs.existsSync(metadataPath)) {
+  private computePathHash(targetPath: string): string {
+    const stat = this.host.fs.statSync(targetPath);
+    return stat.isDirectory()
+      ? this.computeDirectoryHash(targetPath)
+      : this.computeFileHash(targetPath);
+  }
+
+  private computeDirectoryHash(targetDir: string): string {
+    const digestParts: string[] = [];
+    this.collectDirectoryFingerprint(targetDir, targetDir, digestParts);
+    return hashText(digestParts.join('\n'));
+  }
+
+  private collectDirectoryFingerprint(
+    rootDir: string,
+    currentDir: string,
+    digestParts: string[],
+  ): void {
+    const entries = readDirEntries(this.host.fs, currentDir)
+      .sort((left, right) => left.name.localeCompare(right.name));
+
+    for (const entry of entries) {
+      const absolutePath = this.host.path.join(currentDir, entry.name);
+      const relativePath = this.normalizeRelativeAssetPath(
+        this.host.path.relative(rootDir, absolutePath),
+      );
+
+      if (entry.isDirectory()) {
+        digestParts.push(`dir:${relativePath}`);
+        this.collectDirectoryFingerprint(rootDir, absolutePath, digestParts);
+        continue;
+      }
+
+      digestParts.push(`file:${relativePath}:${this.computeFileHash(absolutePath)}`);
+    }
+  }
+
+  private computeFileHash(filePath: string): string {
+    const rawFs = this.host.fs as IFileSystem & {
+      readFileAsBase64?: (path: string) => string;
+    };
+
+    if (typeof rawFs.readFileAsBase64 === 'function') {
+      return hashBase64(rawFs.readFileAsBase64(filePath));
+    }
+
+    return hashText(this.host.fs.readFileSync(filePath));
+  }
+
+  private readUrlEntries(projectPath: string): ProjectRelatedFileEntry[] {
+    return this.readStoredUrls(projectPath).map((url) => this.createLinkEntry(url));
+  }
+
+  private readStoredUrls(projectPath: string): string[] {
+    const urlsFilePath = this.resolveRelatedUrlsFilePath(projectPath);
+    if (!urlsFilePath || !this.host.fs.existsSync(urlsFilePath)) {
       return [];
     }
 
     try {
-      const raw = this.host.fs.readFileSync(metadataPath, 'utf-8');
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) {
-        return [];
-      }
-
-      return parsed
-        .filter((entry): entry is RelatedFileMetadataEntry => (
-          entry
-          && typeof entry === 'object'
-          && typeof entry.originalPath === 'string'
-          && typeof entry.relativePath === 'string'
-        ))
-        .map((entry) => ({
-          originalPath: entry.originalPath,
-          relativePath: entry.relativePath,
-          ...(typeof entry.name === 'string' ? { name: entry.name } : {}),
-          ...(entry.type === 'file' || entry.type === 'folder' || entry.type === 'link'
-            ? { type: entry.type }
-            : {}),
-          ...(entry.isExternal === true ? { isExternal: true } : {}),
-          ...(typeof entry.addedAt === 'number' ? { addedAt: entry.addedAt } : {}),
-        }));
+      return this.host.fs.readFileSync(urlsFilePath, 'utf-8')
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0);
     } catch {
       return [];
     }
   }
 
-  private readMetadataByRelativePath(
-    scope: RelatedContentScope,
-    projectPath: string,
-    sessionId?: string,
-  ): Map<string, RelatedFileMetadataEntry> {
-    const entries = this.readMetadata(scope, projectPath, sessionId);
-    return new Map(entries.map((entry) => [entry.relativePath, entry]));
-  }
-
-  private writeMetadata(
-    scope: RelatedContentScope,
-    projectPath: string,
-    sessionId: string | undefined,
-    entries: readonly RelatedFileMetadataEntry[],
-  ): void {
-    const metadataPath = this.resolveMetadataPath(scope, projectPath, sessionId);
-    if (!metadataPath) {
+  private writeStoredUrls(projectPath: string, urls: readonly string[]): void {
+    const urlsFilePath = this.resolveRelatedUrlsFilePath(projectPath);
+    if (!urlsFilePath) {
       return;
     }
 
-    const nextEntries = entries
-      .filter((entry) => entry.originalPath.trim().length > 0 && entry.relativePath.trim().length > 0)
-      .sort((left, right) => left.relativePath.localeCompare(right.relativePath));
-    this.host.fs.writeFileSync(metadataPath, JSON.stringify(nextEntries, null, 2), 'utf-8');
+    const uniqueUrls: string[] = [];
+    const seen = new Set<string>();
+    for (const url of urls) {
+      const normalizedUrl = this.normalizeUrl(url);
+      if (!normalizedUrl) {
+        continue;
+      }
+      const key = this.normalizeUrlKey(normalizedUrl);
+      if (!key || seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      uniqueUrls.push(normalizedUrl);
+    }
+
+    this.ensureDir(this.host.path.dirname(urlsFilePath));
+    const content = uniqueUrls.length > 0 ? `${uniqueUrls.join('\n')}\n` : '';
+    this.host.fs.writeFileSync(urlsFilePath, content, 'utf-8');
   }
 
-  private removeMetadataEntry(
-    scope: RelatedContentScope,
-    projectPath: string,
-    entry: ProjectRelatedFileEntry,
-    sessionId?: string,
-  ): void {
-    const entries = this.readMetadata(scope, projectPath, sessionId)
-      .filter((item) => item.relativePath !== entry.relativePath);
-    this.writeMetadata(scope, projectPath, sessionId, entries);
-  }
-
-  private resolveMetadataPath(
-    scope: RelatedContentScope,
-    projectPath: string,
-    sessionId?: string,
-  ): string | undefined {
-    const rootDir = this.resolveRootDir(scope, projectPath, sessionId);
-    return rootDir
-      ? this.host.path.join(rootDir, RELATED_FILES_METADATA_NAME)
+  private resolveRelatedUrlsFilePath(projectPath: string): string | undefined {
+    const assetsRootDir = this.resolveAssetsRootDir(projectPath);
+    return assetsRootDir
+      ? this.host.path.join(assetsRootDir, RELATED_URLS_FILE_NAME)
       : undefined;
   }
 
-  private resolveRelativeRootDirName(
-    scope: RelatedContentScope,
-    sessionId?: string,
-  ): string {
-    return scope === 'project'
-      ? 'files'
-      : this.host.path.join('.chat_history', 'memory-tool', 'contents', this.normalizeSessionId(sessionId) || 'default');
+  private resolveAssetsRootDir(projectPath: string): string | undefined {
+    const normalizedProjectPath = typeof projectPath === 'string' ? projectPath.trim() : '';
+    if (!normalizedProjectPath) {
+      return undefined;
+    }
+
+    return resolveProjectAssetsRootDir(normalizedProjectPath, this.host.path) ?? undefined;
   }
 
-  private normalizePath(path: string): string {
-    return typeof path === 'string'
-      ? path.trim().replace(/\\/g, '/').toLowerCase()
-      : '';
+  private requireAssetsRootDir(projectPath: string): string {
+    const assetsRootDir = this.resolveAssetsRootDir(projectPath);
+    if (!assetsRootDir) {
+      throw new Error('Project assets directory is unavailable.');
+    }
+
+    return assetsRootDir;
   }
 
-  private normalizeSessionId(sessionId?: string): string {
-    return typeof sessionId === 'string'
-      ? sessionId.trim()
-      : '';
+  private ensureDir(dirPath: string): void {
+    if (!this.host.fs.existsSync(dirPath)) {
+      this.host.fs.mkdirSync(dirPath, { recursive: true });
+    }
   }
 
   private normalizeUrl(value: string): string | undefined {
@@ -628,6 +483,10 @@ export class ProjectRelatedFileStorage {
     }
   }
 
+  private normalizeUrlKey(value: string): string {
+    return value.trim().toLowerCase();
+  }
+
   private buildLinkName(url: string): string {
     try {
       const parsed = new URL(url);
@@ -638,15 +497,8 @@ export class ProjectRelatedFileStorage {
     }
   }
 
-  private formatPromptEntry(entry: ProjectRelatedFileEntry): string {
-    switch (entry.type) {
-      case 'folder':
-        return `- Folder: ${entry.relativePath}`;
-      case 'link':
-        return `- Link: ${entry.name} -> ${entry.absolutePath}`;
-      default:
-        return `- File: ${entry.relativePath}`;
-    }
+  private normalizeRelativeAssetPath(path: string): string {
+    return path.replace(/\\/g, '/').replace(/^\/+/, '').trim();
   }
 }
 
@@ -663,4 +515,40 @@ function readDirEntries(
     isDirectory: () => fs.statSync(`${dirPath}/${name}`).isDirectory(),
     isFile: () => fs.statSync(`${dirPath}/${name}`).isFile(),
   }));
+}
+
+function compareAssetEntries(
+  left: ProjectRelatedFileEntry,
+  right: ProjectRelatedFileEntry,
+): number {
+  if (left.type !== right.type) {
+    return left.type.localeCompare(right.type);
+  }
+  return left.name.localeCompare(right.name);
+}
+
+function withUniqueNameSuffix(name: string, index: number): string {
+  const extensionIndex = name.lastIndexOf('.');
+  if (extensionIndex <= 0) {
+    return `${name}-${index}`;
+  }
+
+  return `${name.slice(0, extensionIndex)}-${index}${name.slice(extensionIndex)}`;
+}
+
+function hashText(value: string): string {
+  return simpleHash(value);
+}
+
+function hashBase64(value: string): string {
+  return simpleHash(value);
+}
+
+function simpleHash(value: string): string {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
 }

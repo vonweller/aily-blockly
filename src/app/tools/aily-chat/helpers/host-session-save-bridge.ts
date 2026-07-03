@@ -62,6 +62,7 @@ import type {
 } from '../core/chat-runtime-host-contract';
 import {
   canRedoSessionCheckpointTimeline,
+  type SessionCheckpointTimelineEntry,
   type SessionCheckpointTimelineState,
 } from './session-checkpoint-timeline-model';
 import {
@@ -246,6 +247,7 @@ export class HostSessionSaveBridge {
     });
     const checkpointSidecars = buildCheckpointSidecars(
       this.ctx.readSessionCheckpointTimelineState?.(sessionId) ?? null,
+      persistedTurnResponses as readonly TurnResponseTurn[],
     );
     const record: LiveHostSessionRecord = {
       sessionId,
@@ -928,7 +930,7 @@ function mergeStableTurnResponsesForSave(
 
   if (currentTurnResponses.length === 0) {
     return previousTurnResponses
-      .filter(turn => turn.response.status !== 'streaming')
+      .filter(isStablePersistableTurnResponse)
       .map(turn => cloneTurnResponse(turn));
   }
 
@@ -937,8 +939,11 @@ function mergeStableTurnResponsesForSave(
   }
 
   const currentTurnsById = new Map(currentTurnResponses.map(turn => [turn.turnId, cloneTurnResponse(turn)] as const));
+  const currentRequestIds = new Set(currentTurnResponses.map(readTurnResponseRequestId).filter(Boolean));
   const missingStableTurnIds = previousTurnResponses
-    .filter(turn => !currentTurnsById.has(turn.turnId) && turn.response.status !== 'streaming')
+    .filter(turn => !currentTurnsById.has(turn.turnId)
+      && !currentRequestIds.has(readTurnResponseRequestId(turn) ?? '')
+      && isStablePersistableTurnResponse(turn))
     .map(turn => turn.turnId);
 
   if (missingStableTurnIds.length === 0) {
@@ -957,7 +962,11 @@ function mergeStableTurnResponsesForSave(
       continue;
     }
 
-    if (turn.response.status === 'streaming') {
+    if (!isStablePersistableTurnResponse(turn)) {
+      continue;
+    }
+
+    if (currentRequestIds.has(readTurnResponseRequestId(turn) ?? '')) {
       continue;
     }
 
@@ -1073,21 +1082,33 @@ function cloneTurnResponse(turn: TurnResponseTurn): TurnResponseTurn {
 
 function buildCheckpointSidecars(
   state: SessionCheckpointTimelineState | null | undefined,
+  canonicalTurnResponses: readonly TurnResponseTurn[] = [],
 ): Pick<HostSessionSidecar, 'checkpointMarker' | 'checkpointRedoBranch'> | undefined {
-  const sessionResource = typeof state?.sessionResource === 'string'
-    ? state.sessionResource.trim()
+  const sidecarState = reconcileCheckpointTimelineForSave(state, canonicalTurnResponses);
+  const sessionResource = typeof sidecarState?.sessionResource === 'string'
+    ? sidecarState.sessionResource.trim()
     : '';
-  if (!sessionResource || typeof state?.currentCheckpointIndex !== 'number' || !Number.isFinite(state.currentCheckpointIndex)) {
+  if (!sessionResource
+    || typeof sidecarState?.currentCheckpointIndex !== 'number'
+    || !Number.isFinite(sidecarState.currentCheckpointIndex)) {
     return undefined;
   }
 
+  const turnResponseCount = Array.isArray(sidecarState.turnResponses) ? sidecarState.turnResponses.length : 0;
+  const checkpointCount = Array.isArray(sidecarState.checkpoints) ? sidecarState.checkpoints.length : 0;
+  const currentCheckpointIndex = normalizeCheckpointSidecarIndex(sidecarState.currentCheckpointIndex, checkpointCount);
+  const currentTurnResponseCount = normalizeCheckpointSidecarTurnResponseCount(
+    sidecarState.currentTurnResponseCount,
+    turnResponseCount,
+  );
+
   const checkpointMarker = {
     sessionResource,
-    currentCheckpointIndex: state.currentCheckpointIndex,
+    currentCheckpointIndex,
+    currentTurnResponseCount,
   };
-  if (!canRedoSessionCheckpointTimeline(state)
-    || !Array.isArray(state.turnResponses)
-    || state.turnResponses.length === 0) {
+
+  if (!checkpointCount || !turnResponseCount) {
     return {
       checkpointMarker,
     };
@@ -1097,10 +1118,148 @@ function buildCheckpointSidecars(
     checkpointMarker,
     checkpointRedoBranch: {
       sessionResource,
-      currentCheckpointIndex: state.currentCheckpointIndex,
-      turnResponses: state.turnResponses.map(turn => cloneTurnResponse(turn) as PersistedHostTurnResponse),
+      currentCheckpointIndex,
+      currentTurnResponseCount,
+      checkpoints: sidecarState.checkpoints.map(checkpoint => cloneCheckpointTimelineEntry(checkpoint)),
+      turnResponses: sidecarState.turnResponses.map(turn => cloneTurnResponse(turn) as PersistedHostTurnResponse),
     },
   };
+}
+
+function reconcileCheckpointTimelineForSave(
+  state: SessionCheckpointTimelineState | null | undefined,
+  canonicalTurnResponses: readonly TurnResponseTurn[],
+): SessionCheckpointTimelineState | null {
+  const sessionResource = typeof state?.sessionResource === 'string'
+    ? state.sessionResource.trim()
+    : '';
+  if (!sessionResource
+    || typeof state?.currentCheckpointIndex !== 'number'
+    || !Number.isFinite(state.currentCheckpointIndex)) {
+    return null;
+  }
+
+  if (canRedoSessionCheckpointTimeline(state) || canonicalTurnResponses.length === 0) {
+    return state;
+  }
+
+  const checkpointsByTurnId = new Map<string, SessionCheckpointTimelineEntry>();
+  const checkpointsByCheckpointId = new Map<string, SessionCheckpointTimelineEntry>();
+  const checkpointsByRequestId = new Map<string, SessionCheckpointTimelineEntry>();
+  for (const checkpoint of state.checkpoints ?? []) {
+    const turnId = normalizeCheckpointSidecarString(checkpoint.turnId);
+    if (turnId && !checkpointsByTurnId.has(turnId)) {
+      checkpointsByTurnId.set(turnId, checkpoint);
+    }
+    const checkpointId = normalizeCheckpointSidecarString(checkpoint.checkpointId);
+    if (checkpointId && !checkpointsByCheckpointId.has(checkpointId)) {
+      checkpointsByCheckpointId.set(checkpointId, checkpoint);
+    }
+    const requestId = normalizeCheckpointSidecarString(checkpoint.requestId);
+    if (requestId && !checkpointsByRequestId.has(requestId)) {
+      checkpointsByRequestId.set(requestId, checkpoint);
+    }
+  }
+
+  const turnResponses = canonicalTurnResponses.map(turn => cloneTurnResponse(turn) as TurnResponseTurn);
+  const checkpoints: SessionCheckpointTimelineEntry[] = [];
+  turnResponses.forEach((turn, turnIndex) => {
+    const requestMetadata = readCheckpointSidecarRequestMetadata(turn);
+    const turnId = normalizeCheckpointSidecarString(turn.turnId);
+    const metadataCheckpointId = normalizeCheckpointSidecarString(requestMetadata?.['checkpointId']);
+    const metadataRequestId = normalizeCheckpointSidecarString(requestMetadata?.['requestId']);
+    const existing = (turnId ? checkpointsByTurnId.get(turnId) : undefined)
+      ?? (metadataCheckpointId ? checkpointsByCheckpointId.get(metadataCheckpointId) : undefined)
+      ?? (metadataRequestId ? checkpointsByRequestId.get(metadataRequestId) : undefined);
+    const checkpointId = metadataCheckpointId
+      || normalizeCheckpointSidecarString(existing?.checkpointId);
+    if (!checkpointId) {
+      return;
+    }
+
+    const requestId = metadataRequestId
+      || normalizeCheckpointSidecarString(existing?.requestId)
+      || turnId
+      || checkpointId;
+    const metadata = existing?.metadata ? cloneCheckpointMetadata(existing.metadata) : undefined;
+    if (metadata) {
+      metadata.turnIndex = turnIndex;
+      if (turnId) {
+        metadata.turnId = turnId;
+      }
+    }
+    checkpoints.push({
+      checkpointId,
+      requestId,
+      ...(turnId ? { turnId } : {}),
+      turnIndex,
+      ...(metadata ? { metadata } : {}),
+    });
+  });
+
+  return {
+    sessionResource,
+    turnResponses,
+    checkpoints,
+    currentCheckpointIndex: checkpoints.length - 1,
+    currentTurnResponseCount: turnResponses.length,
+  };
+}
+
+function readCheckpointSidecarRequestMetadata(turn: TurnResponseTurn): Record<string, unknown> | null {
+  const metadata = turn.request?.metadata;
+  return metadata && typeof metadata === 'object' && !Array.isArray(metadata)
+    ? metadata as Record<string, unknown>
+    : null;
+}
+
+function normalizeCheckpointSidecarString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function normalizeCheckpointSidecarIndex(value: number, checkpointCount: number): number {
+  if (checkpointCount <= 0) {
+    return -1;
+  }
+  return Math.max(-1, Math.min(Math.trunc(value), checkpointCount - 1));
+}
+
+function normalizeCheckpointSidecarTurnResponseCount(value: number, turnResponseCount: number): number {
+  return Math.max(0, Math.min(Math.trunc(value), turnResponseCount));
+}
+
+function cloneCheckpointTimelineEntry(checkpoint: SessionCheckpointTimelineEntry): SessionCheckpointTimelineEntry {
+  return {
+    ...checkpoint,
+    ...(checkpoint.metadata ? { metadata: cloneCheckpointMetadata(checkpoint.metadata) } : {}),
+  };
+}
+
+function cloneCheckpointMetadata<T>(metadata: T): T {
+  if (typeof globalThis.structuredClone === 'function') {
+    return globalThis.structuredClone(metadata) as T;
+  }
+  return JSON.parse(JSON.stringify(metadata)) as T;
+}
+
+function isStablePersistableTurnResponse(turn: TurnResponseTurn): boolean {
+  if (turn.response.status === 'streaming') {
+    return false;
+  }
+
+  const parts = Array.isArray(turn.response.parts) ? turn.response.parts : [];
+  const resultText = typeof turn.response.resultText === 'string' ? turn.response.resultText : '';
+  return !!turn.response.status
+    || parts.length > 0
+    || resultText.length > 0
+    || !!turn.response.continuation;
+}
+
+function readTurnResponseRequestId(turn: TurnResponseTurn | null | undefined): string | null {
+  const requestId = turn?.request?.metadata?.['requestId'];
+  return typeof requestId === 'string' && requestId.trim().length > 0
+    ? requestId.trim()
+    : null;
 }
 
 function sanitizeTransientPersistedResponseStatus(

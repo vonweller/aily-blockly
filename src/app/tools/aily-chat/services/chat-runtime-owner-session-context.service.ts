@@ -38,11 +38,14 @@ export class ChatRuntimeOwnerSessionContextService implements ChatRuntimeOwnerSe
   private readonly runtimeController = inject<ChatRuntimeOwnerRuntimeControllerPort>(CHAT_RUNTIME_OWNER_RUNTIME_CONTROLLER);
 
   get prjPath(): string {
-    return readChatRuntimeWorkspaceEnvironment().projectPath;
+    return this.resolveCurrentSessionProviderFolderPath() ?? readChatRuntimeWorkspaceEnvironment().projectPath;
   }
 
   get prjRootPath(): string {
-    return readChatRuntimeWorkspaceEnvironment().projectRootPath;
+    const workspaceEnvironment = readChatRuntimeWorkspaceEnvironment();
+    return workspaceEnvironment.projectRootPath
+      || this.resolveCurrentSessionProviderFolderPath()
+      || workspaceEnvironment.projectPath;
   }
 
   get currentModel(): any {
@@ -93,6 +96,50 @@ export class ChatRuntimeOwnerSessionContextService implements ChatRuntimeOwnerSe
     const normalizedMode = normalizeChatAgentRuntimeMode(mode, this.currentAgentRuntimeMode);
     const normalizedSource = normalizeChatAgentRuntimeModeSource(source, 'user_selected');
     this.syncSessionEntryTargetRuntimeMode(sessionId, normalizedMode, normalizedSource);
+  }
+
+  updateRuntimeProjectPath(
+    projectPath: string | null | undefined,
+    sessionId?: string | null,
+  ): void {
+    const normalizedProjectPath = this.normalizeProjectPath(projectPath);
+    const targetSessionId = this.normalizeSessionId(sessionId) || this.resolveCurrentRuntimeSessionId();
+    if (!targetSessionId || !normalizedProjectPath) {
+      return;
+    }
+
+    const existingProviderOptions = this.resolveRuntimeSessionProviderOptions(targetSessionId);
+    const providerOptions = normalizeHostSessionProviderOptions({
+      ...existingProviderOptions,
+      folderPath: normalizedProjectPath,
+    });
+    const selectedMode = this.resolveRuntimeSelectedMode(targetSessionId);
+    const runtimeMode = this.currentAgentRuntimeMode;
+    const runtimeModeSource = this.currentAgentRuntimeModeSource;
+    this.runtimeController.projectRuntimeState(targetSessionId, {
+      providerOptions,
+      selectedMode,
+      debugSummary: {
+        providerOptionsPresent: true,
+        selectedModePresent: true,
+      },
+    });
+    this.chatSessionEntryStateService.setSessionEntryTarget({
+      sessionId: targetSessionId,
+      projectPath: normalizedProjectPath,
+      providerOptions,
+      inputState: buildHostSessionCurrentPickerInputState(selectedMode, providerOptions),
+      mode: selectedMode.modeId,
+      agentRuntimeMode: runtimeMode,
+      agentRuntimeModeSource: runtimeModeSource,
+      requestRouting: buildHostSessionCurrentPickerRoutingSummary(
+        selectedMode,
+        undefined,
+        providerOptions.permissionLevel,
+        providerOptions.approvalsReviewer,
+        providerOptions.approvalPolicy,
+      ),
+    }, normalizedProjectPath);
   }
 
   resolveRuntimeSessionProviderOptions(sessionId?: string | null): HostSessionProviderOptions {
@@ -160,6 +207,13 @@ export class ChatRuntimeOwnerSessionContextService implements ChatRuntimeOwnerSe
     const providerOptions = this.resolveRuntimeSessionProviderOptions(targetSessionId);
     const selectedMode = this.resolveRuntimeSelectedMode(targetSessionId);
     const projectPath = providerOptions.folderPath ?? null;
+    this.runtimeController.projectRuntimeState(targetSessionId, {
+      agentRuntimeMode,
+      agentRuntimeModeSource,
+      debugSummary: {
+        agentRuntimeModePresent: true,
+      },
+    });
     this.chatSessionEntryStateService.setSessionEntryTarget({
       sessionId: targetSessionId,
       projectPath,
@@ -182,6 +236,12 @@ export class ChatRuntimeOwnerSessionContextService implements ChatRuntimeOwnerSe
     return typeof sessionId === 'string' ? sessionId.trim() : '';
   }
 
+  private normalizeProjectPath(projectPath: unknown): string {
+    return typeof projectPath === 'string' && projectPath.trim().length > 0
+      ? projectPath.trim()
+      : '';
+  }
+
   private resolveCurrentRuntimeSessionId(): string {
     const sessionIds = this.runtimeController.getSessionIds();
     for (let index = sessionIds.length - 1; index >= 0; index -= 1) {
@@ -198,11 +258,27 @@ export class ChatRuntimeOwnerSessionContextService implements ChatRuntimeOwnerSe
     return sessionId ? this.runtimeController.readRuntimeState(sessionId) : null;
   }
 
+  private resolveCurrentSessionProviderFolderPath(): string | null {
+    const folderPath = this.readCurrentRuntimeState()?.providerOptions?.folderPath;
+    return typeof folderPath === 'string' && folderPath.trim().length > 0
+      ? folderPath.trim()
+      : null;
+  }
+
   private resolveCurrentRuntimeMode(): {
     readonly mode: ChatAgentRuntimeMode;
     readonly source: ChatAgentRuntimeModeSource;
   } {
-    const providerOptions = this.readCurrentRuntimeState()?.providerOptions;
+    const runtimeState = this.readCurrentRuntimeState();
+    const runtimeMode = normalizeChatAgentRuntimeMode(runtimeState?.agentRuntimeMode, 'unbound');
+    if (runtimeMode !== 'unbound') {
+      return {
+        mode: runtimeMode,
+        source: normalizeChatAgentRuntimeModeSource(runtimeState?.agentRuntimeModeSource, 'restored'),
+      };
+    }
+
+    const providerOptions = runtimeState?.providerOptions;
     const resolution = resolveChatAgentRuntimeModeForProject({
       projectPath: providerOptions?.folderPath ?? null,
       fallback: 'unbound',

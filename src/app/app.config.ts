@@ -8,7 +8,9 @@ import { provideAnimations } from '@angular/platform-browser/animations';
 import { NzModalModule } from 'ng-zorro-antd/modal';
 import { authInterceptor } from './interceptors/auth.interceptor';
 import { retryInterceptor } from './interceptors/retry.interceptor';
-import { AILY_CHAT_SHARED_PROVIDERS } from './tools/aily-chat/aily-chat.providers';
+import {
+  AILY_CHAT_SHARED_PROVIDERS,
+} from './tools/aily-chat/aily-chat.providers';
 import { AilyChatHostInitializerService } from './tools/aily-chat/services/aily-chat-host-initializer.service';
 import { BlocklyLiveOperationBridgeService } from './services/blockly-live-operation-bridge.service';
 
@@ -32,6 +34,6 @@ export const appConfig: ApplicationConfig = {
       inject(AilyChatHostInitializerService).ensureInitialized();
       inject(BlocklyLiveOperationBridgeService).ensureInitialized();
     }),
-    ...AILY_CHAT_SHARED_PROVIDERS
+    ...AILY_CHAT_SHARED_PROVIDERS,
   ]
 };

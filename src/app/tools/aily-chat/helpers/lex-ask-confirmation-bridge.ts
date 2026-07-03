@@ -7,6 +7,7 @@ import {
 
 /** Narrow context: only needs lexStream for presenting/resolving confirmations */
 type LexAskConfirmationContext = Pick<IChatCoordination, 'lexStream'>
+  & Pick<IChatCoordination, 'handleToolApproval'>
   & Pick<ISessionAccess, 'sessionId'>
   & Pick<IChatServiceAccess, 'runtimeInteractionHost'>
   & {
@@ -74,19 +75,8 @@ export class LexAskConfirmationBridge {
           approveCombination: request.approveCombination,
           args: request.toolInput,
         });
-
-        this.ctx.lexStream.ui.presentToolCallApproval(normalizedRequest);
-
-        this.resolveAskConfirmation = resolve;
-
-        void this.ctx.runtimeInteractionHost.presentToolApproval(
-          this.resolveInteractionSessionResource(),
-          normalizedRequest,
-        ).then((result) => {
-          this.ctx.lexStream.ui.resolveToolCallApproval(request.toolCallId!, !!result.approved, result.scope);
-          const resolveRef = this.resolveAskConfirmation;
-          this.resolveAskConfirmation = null;
-          resolveRef?.(!!result.approved);
+        void this.ctx.handleToolApproval(normalizedRequest).then((result) => {
+          resolve(!!result.approved);
         });
         return;
       }
@@ -118,27 +108,29 @@ export class LexAskConfirmationBridge {
 
       this.resolveAskConfirmation = resolve;
 
+      const normalizedPresentation = normalizeToolApprovalPresentation({
+        toolName: request.toolName,
+        source: request.source,
+        title: request.title,
+        subtitle: request.subtitle,
+        message: request.message,
+        actions: request.actions,
+        primaryScope: request.primaryScope,
+        allowAutoConfirm: request.allowAutoConfirm,
+        approveCombination: request.approveCombination,
+        args: request.toolInput,
+      });
+
       void this.ctx.runtimeInteractionHost.presentConfirmation(this.resolveInteractionSessionResource(), {
         askId,
         partId: confirmationPartId,
         toolName: request.toolName,
-        title: request.title || '确认操作',
-        subtitle: request.subtitle,
-        message: request.message,
+        title: normalizedPresentation.title,
+        subtitle: normalizedPresentation.subtitle,
+        message: normalizedPresentation.message,
         args: request.toolInput,
-        actions: normalizeToolApprovalPresentation({
-          toolName: request.toolName,
-          source: request.source,
-          title: request.title,
-          subtitle: request.subtitle,
-          message: request.message,
-          actions: request.actions,
-          primaryScope: request.primaryScope,
-          allowAutoConfirm: request.allowAutoConfirm,
-          approveCombination: request.approveCombination,
-          args: request.toolInput,
-        }).actions,
-        primaryScope: request.primaryScope || 'once',
+        actions: normalizedPresentation.actions,
+        primaryScope: normalizedPresentation.primaryScope,
       }).then((result) => {
         this.ctx.lexStream.ui.resolveConfirmation(confirmationPartId, askId, !!result.approved, result.scope);
         const resolveRef = this.resolveAskConfirmation;

@@ -1,17 +1,11 @@
 import { Injectable } from '@angular/core';
 import { Subject } from 'rxjs';
 import { ProjectService } from './project.service';
-import { ActionState } from './ui.service';
-import { NzMessageService } from 'ng-zorro-antd/message';
-import { NoticeService } from '../services/notice.service';
-import { CmdOutput, CmdService } from './cmd.service';
+import { CmdService } from './cmd.service';
 import { CrossPlatformCmdService } from './cross-platform-cmd.service';
 import { ActionService } from './action.service';
 import { ElectronService } from './electron.service';
 import { AilyCodeProCompileService } from './aily-code-pro-compile.service';
-
-import { getDefaultBuildPath, findFile } from '../utils/builder.utils';
-
 
 export interface BuildFinishedEvent {
   success: boolean;
@@ -59,7 +53,11 @@ export class BuilderService {
   /*
    * 开始编译
    */
-  async build() {
+  async build(projectPath?: string) {
+    if (projectPath) {
+      return this.buildFromProjectPath(projectPath);
+    }
+
     try {
       // Pro / code-editor-pro 路由下 Blockly 未挂载，compile-begin 无监听者会一直等反馈；
       // 含 project.aci 时改为直接走磁盘源码 + 同一套 preprocess/compile 脚本。
@@ -112,6 +110,23 @@ export class BuilderService {
     }
   }
 
+  private async buildFromProjectPath(projectPath: string) {
+    const compileResult = await this.ailyCodeProCompile.runCompileFromDisk({ projectPath });
+    const buildResult = compileResult.result;
+    if (!compileResult.success || buildResult?.state === 'error') {
+      const error: any = new Error(buildResult?.text || 'Build failed');
+      error.state = buildResult?.state || 'error';
+      error.text = buildResult?.text || 'Build failed';
+      error.fullStdErr = buildResult?.fullStdErr;
+      error.buildResult = buildResult;
+      this.buildFinishedSubject.next({ success: false, result: buildResult, error });
+      throw error;
+    }
+
+    this.buildFinishedSubject.next({ success: true, result: buildResult });
+    return buildResult;
+  }
+
   /*
    * 取消当前编译过程
    */
@@ -147,9 +162,8 @@ export class BuilderService {
     try {
       const tempPath = projectPath + '/.temp';
       const sketchPath = tempPath + '/sketch';
-      const sketchFilePath = await findFile(sketchPath, '*.ino');
+      const buildPath = this.electronService.pathJoin(projectPath, '.build');
       console.log('清除编译缓存:', sketchPath);
-      const buildPath = await getDefaultBuildPath(sketchFilePath);
       console.log('编译缓存路径:', buildPath);
       await this.crossPlatformCmdService.removeItem(buildPath, true, true);
 

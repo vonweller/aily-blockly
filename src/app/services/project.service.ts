@@ -559,6 +559,7 @@ export class ProjectService {
 
     // 更新当前项目路径和包数据
     this.currentProjectPath = projectPath;
+    void window['ipcRenderer']?.invoke?.('logger-set-project-path', projectPath).catch(() => undefined);
     this.projectActivationSubject.next({
       path: projectPath,
       previousPath: previousProjectPath,
@@ -693,6 +694,7 @@ export class ProjectService {
       }
     }
     this.currentProjectPath = '';
+    void window['ipcRenderer']?.invoke?.('logger-set-project-path', '').catch(() => undefined);
     this.currentPackageData = {
       name: 'aily blockly',
     };
@@ -2514,6 +2516,10 @@ export class ProjectService {
    * @returns 返回构建路径
    */
   async getBuildPath(): Promise<string> {
+    if (this.currentProjectPath) {
+        return window['path'].join(this.currentProjectPath, '.build');
+    }
+
     const root = this.currentProjectPath;
     const aciPath = window['path'].join(root, 'project.aci');
     // 与 child/scripts/aily-code-project.js 中分段规则保持一致

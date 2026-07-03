@@ -229,12 +229,25 @@ export class MemoryManagerDialogComponent {
     }
 
     try {
+      new URL(rawLink);
+    } catch {
+      this.message.error(this.translate.instant('AILY_CHAT.MEMORY_RELATED_INVALID_URL'));
+      this.cdr.markForCheck();
+      return;
+    }
+
+    try {
       const result = this.relatedFileStorage.importLinks(
         context.scope,
         context.projectPath,
         [rawLink],
         context.sessionId,
       );
+      if (result.invalidOriginalPaths.length > 0) {
+        this.message.error(this.translate.instant('AILY_CHAT.MEMORY_RELATED_INVALID_URL'));
+        this.cdr.markForCheck();
+        return;
+      }
       this.refreshRelatedFiles();
       if (result.addedEntries.length === 0) {
         this.message.info(
@@ -367,7 +380,7 @@ export class MemoryManagerDialogComponent {
   }
 
   private refreshRelatedFiles(): void {
-    if (this.state.activeScope !== 'project' && this.state.activeScope !== 'session') {
+    if (this.state.activeScope !== 'project') {
       this.relatedGroups = [];
       this.cdr.markForCheck();
       return;
@@ -401,14 +414,6 @@ export class MemoryManagerDialogComponent {
       return {
         scope: 'project',
         projectPath,
-      };
-    }
-
-    if (this.state.activeScope === 'session') {
-      return {
-        scope: 'session',
-        projectPath,
-        sessionId: navigationItem?.sessionId,
       };
     }
 

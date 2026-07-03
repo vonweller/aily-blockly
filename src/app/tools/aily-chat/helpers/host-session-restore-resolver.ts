@@ -68,13 +68,24 @@ export function resolveHostAuthoritativeLexRestoreSnapshot(
   const mergedActiveSkillNames = hostActiveSkillNames !== undefined
     ? hostActiveSkillNames
     : (hostSnapshot.activeSkillNames?.length ? hostSnapshot.activeSkillNames : storedSnapshot.activeSkillNames);
+  const retainedTurnIds = new Set(
+    Array.isArray(hostSnapshot.turns)
+      ? hostSnapshot.turns
+        .map(turn => typeof turn?.id === 'string' ? turn.id.trim() : '')
+        .filter((turnId): turnId is string => turnId.length > 0)
+      : [],
+  );
+  const sanitizedExecutionNarrative = sanitizeExecutionNarrativeForRetainedTurns(
+    storedSnapshot.executionNarrative,
+    retainedTurnIds,
+  );
 
   return {
     ...hostSnapshot,
     ...(mergedRequestContext ? { requestContext: mergedRequestContext } : {}),
     ...(mergedActiveSkillNames?.length ? { activeSkillNames: [...mergedActiveSkillNames] } : {}),
     ...(storedSnapshot.todos?.length ? { todos: storedSnapshot.todos } : {}),
-    ...(storedSnapshot.executionNarrative?.length ? { executionNarrative: storedSnapshot.executionNarrative } : {}),
+    ...(sanitizedExecutionNarrative.length ? { executionNarrative: sanitizedExecutionNarrative } : {}),
     revision: typeof storedSnapshot.revision === 'number'
       ? storedSnapshot.revision
       : hostSnapshot.revision,
@@ -122,5 +133,29 @@ function applySessionSnapshotRoundsToTurnResponses(
       ...turn,
       rounds: snapshotTurn.rounds?.length ? structuredClone(snapshotTurn.rounds) : (turn.rounds ?? []),
     };
+  });
+}
+
+function sanitizeExecutionNarrativeForRetainedTurns(
+  executionNarrative: SessionSnapshot['executionNarrative'] | undefined,
+  retainedTurnIds: ReadonlySet<string>,
+): NonNullable<SessionSnapshot['executionNarrative']> {
+  if (!Array.isArray(executionNarrative) || executionNarrative.length === 0) {
+    return [];
+  }
+
+  return executionNarrative.filter((entry) => {
+    if (!entry || typeof entry !== 'object') {
+      return false;
+    }
+
+    const payload = 'payload' in entry && entry.payload && typeof entry.payload === 'object'
+      ? entry.payload as Record<string, unknown>
+      : null;
+    const turnId = typeof payload?.['turnId'] === 'string'
+      ? payload['turnId'].trim()
+      : '';
+
+    return !turnId || retainedTurnIds.has(turnId);
   });
 }

@@ -4,6 +4,8 @@ import { AilyHost } from '../core/host';
 import type { ResourceItem } from '../core/chat-types';
 import { getResourcesText as _getResourcesText } from './ui-helpers.service';
 import { pickFileResources, pickFolderResource } from '../helpers/chat-resource-picker';
+import { ProjectService } from '../../../services/project.service';
+import { ProjectRelatedFileStorage } from '../components/memory/project-related-file-storage';
 
 /**
  * 管理 AI 对话的附件资源（文件、文件夹、URL、块上下文）。
@@ -13,71 +15,53 @@ export class ResourceManagerService {
   items: ResourceItem[] = [];
   showAddList = false;
 
-  constructor(private message: NzMessageService) {}
+  constructor(
+    private message: NzMessageService,
+    private projectService: ProjectService,
+  ) {}
 
   toggleAddList(): void {
     this.showAddList = !this.showAddList;
   }
 
   async addFile(): Promise<void> {
-    const resources = await pickFileResources(AilyHost.get().dialog);
-    for (const item of resources) {
-      const exists = this.items.some((resource) => resource.type === 'file' && resource.path === item.path);
-      if (!exists) {
-        this.items.push(item);
-      }
-    }
-    return;
+    await this.addFileResources();
   }
 
   async addFileResources(): Promise<ResourceItem[]> {
     const resources = await pickFileResources(AilyHost.get().dialog);
-    for (const item of resources) {
-      const exists = this.items.some((resource) => resource.type === 'file' && resource.path === item.path);
-      if (!exists) {
-        this.items.push(item);
-      }
-    }
-    return resources;
+    const importedResources = this.importAssetResources(resources);
+    this.pushUniqueResources(importedResources);
+    return importedResources;
   }
 
   async addFolder(): Promise<void> {
-    const item = await pickFolderResource(AilyHost.get().dialog);
-    if (item) {
-      const exists = this.items.some((resource) => resource.type === 'folder' && resource.path === item.path);
-      if (!exists) {
-        this.items.push(item);
-      }
-    }
-    return;
+    await this.addFolderResource();
   }
 
   async addFolderResource(): Promise<ResourceItem | null> {
     const item = await pickFolderResource(AilyHost.get().dialog);
-    if (item) {
-      const exists = this.items.some((resource) => resource.type === 'folder' && resource.path === item.path);
-      if (!exists) {
-        this.items.push(item);
-      }
-    }
-    return item;
+    const importedResources = item ? this.importAssetResources([item]) : [];
+    this.pushUniqueResources(importedResources);
+    return importedResources[0] ?? null;
   }
 
   addUrl(): void {
     const url = prompt('请输入URL地址:');
     if (url && url.trim()) {
-      const trimmed = url.trim();
-      const exists = this.items.some(item => item.type === 'url' && item.url === trimmed);
-      if (!exists) {
-        try {
-          const urlObj = new URL(trimmed);
-          this.items.push({ type: 'url', url: trimmed, name: urlObj.hostname + urlObj.pathname });
-        } catch {
-          this.message.error('无效的URL格式');
-        }
-      } else {
-        this.message.warning('该URL已经存在');
+      const normalizedUrl = normalizeUrl(url.trim());
+      if (!normalizedUrl) {
+        this.message.error('无效的URL格式');
+        return;
       }
+
+      const importedResources = this.importUrlResources([normalizedUrl]);
+      if (importedResources.length === 0) {
+        this.message.warning('该URL已经存在');
+        return;
+      }
+
+      this.pushUniqueResources(importedResources);
     }
   }
 
@@ -125,5 +109,89 @@ export class ResourceManagerService {
   /** 获取资源列表的 LLM 文本描述 */
   getResourcesText(): string {
     return _getResourcesText(this.items);
+  }
+
+  private importAssetResources(resources: readonly ResourceItem[]): ResourceItem[] {
+    const projectPath = this.projectService.currentProjectPath?.trim()
+      || this.projectService.projectRootPath?.trim();
+    if (!projectPath) {
+      return resources.filter((item) => item.type === 'file' || item.type === 'folder');
+    }
+
+    const sourcePaths = resources
+      .filter((item) =>
+        (item.type === 'file' || item.type === 'folder')
+        && typeof item.path === 'string'
+        && item.path.trim().length > 0,
+      )
+      .map((item) => item.path!.trim());
+    if (sourcePaths.length === 0) {
+      return [];
+    }
+
+    const storage = new ProjectRelatedFileStorage(AilyHost.get());
+    const result = storage.importPaths('project', projectPath, sourcePaths);
+    return result.addedEntries
+      .map((entry) => {
+        if (entry.type !== 'file' && entry.type !== 'folder') {
+          return null;
+        }
+
+        return {
+          type: entry.type,
+          path: entry.absolutePath,
+          name: entry.name,
+        } as ResourceItem;
+      })
+      .filter((item): item is ResourceItem => !!item);
+  }
+
+  private importUrlResources(urls: readonly string[]): ResourceItem[] {
+    const projectPath = this.projectService.currentProjectPath?.trim()
+      || this.projectService.projectRootPath?.trim();
+    if (!projectPath) {
+      return [];
+    }
+
+    try {
+      const storage = new ProjectRelatedFileStorage(AilyHost.get());
+      const result = storage.importLinks('project', projectPath, urls);
+      if (result.invalidOriginalPaths.length > 0) {
+        this.message.error('无效的URL格式');
+        return [];
+      }
+      return result.addedEntries.map((entry) => ({
+        type: 'url',
+        url: entry.absolutePath,
+        name: entry.name,
+      }));
+    } catch {
+      this.message.error('无效的URL格式');
+      return [];
+    }
+  }
+
+  private pushUniqueResources(resources: readonly ResourceItem[]): void {
+    for (const item of resources) {
+      const exists = item.type === 'url'
+        ? this.items.some((resource) => resource.type === 'url' && resource.url === item.url)
+        : this.items.some((resource) => resource.type === item.type && resource.path === item.path);
+      if (!exists) {
+        this.items.push(item);
+      }
+    }
+  }
+}
+
+function normalizeUrl(value: string): string | undefined {
+  const trimmed = typeof value === 'string' ? value.trim() : '';
+  if (!trimmed) {
+    return undefined;
+  }
+
+  try {
+    return new URL(trimmed).toString();
+  } catch {
+    return undefined;
   }
 }

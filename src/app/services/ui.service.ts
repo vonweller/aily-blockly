@@ -143,6 +143,21 @@ export class UiService {
     window['subWindow'].open(opt);
   }
 
+  openToolWindow(name: string, options?: { width?: number; height?: number; title?: string }) {
+    const toolWindowPath = this.getToolWindowPath(name);
+    if (!toolWindowPath) {
+      return false;
+    }
+
+    this.openWindow({
+      path: toolWindowPath.replace(/^\/+/, ''),
+      title: options?.title || name,
+      width: options?.width ?? 1200,
+      height: options?.height ?? 800,
+    });
+    return true;
+  }
+
   // 这个方法是给header用的
   turnTool(opt: ToolOpts) {
     if (this.topTool == opt.data) {
@@ -414,16 +429,19 @@ export class UiService {
   }
 
 
-  openFeedback() {
+  openFeedback(data?: any) {
     const modalRef = this.modal.create({
       nzTitle: null,
       nzFooter: null,
       nzClosable: false,
+      nzCentered: true,
+      nzWrapClassName: 'feedback-modal-wrap',
       nzBodyStyle: {
         padding: '0',
       },
       nzContent: FeedbackDialogComponent,
       nzWidth: '520px',
+      nzData: data,
     });
 
     // 处理反馈结果

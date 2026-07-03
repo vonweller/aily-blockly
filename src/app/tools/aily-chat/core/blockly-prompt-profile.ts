@@ -21,7 +21,11 @@
 import type { IPromptProfile, IPromptSection } from 'aily-lex/types/prompt';
 import { PromptLayer } from 'aily-lex/types/prompt';
 import { AilyHost } from './host';
-import { getBlocklyContextSnapshotService } from './blockly-context-snapshot-service';
+import { readChatRuntimeWorkspaceEnvironment } from './chat-runtime-workspace-environment';
+import {
+  getBlocklyContextSnapshotService,
+  type BlocklyContextSnapshotService,
+} from './blockly-context-snapshot-service';
 import {
   appendStandardPromptEnv,
   collectRuntimePromptFileContext,
@@ -95,7 +99,7 @@ When helping users:
 Recommendation & install conventions:
 - When recommending or summarizing a development board in chat, render it as a fenced \`aily-board\` block with a JSON payload like \`{"name":"@aily-project/board-esp32"}\`.
 - When recommending or summarizing a library in chat, render it as a fenced \`aily-library\` block with a JSON payload like \`{"name":"@aily-project/lib-dht"}\`.
-- In both blockly and coder runtimes, install new Aily libraries with \`npm install @aily-project/lib-xxx\`.
+- Install new Aily libraries with \`npm install @aily-project/lib-xxx\`.
 - Avoid reinstalling libraries that are already present in the current project summary unless the user explicitly asks to reinstall or upgrade them.
 
 Reading & editing the program:
@@ -126,11 +130,51 @@ Reading & editing the program:
 
 Tool usage efficiency:
 - The environment section above already contains the project path, board, installed library list, and available readme_ai.md paths. Do NOT call any tool just to obtain this basic information.
+- For web fetching: if a fetch/web fetch call in \`webview_bridge\` mode returns mostly page chrome, placeholders, or missing main body content from a JS-rendered site, automatically retry the same fetch with \`waitMs\` added or increased so the page has time to hydrate before extraction. Start with about 1000-3000ms and increase once if needed. Do not ask the user for confirmation before this retry.
 - Do not re-fetch information you already obtained in a previous turn. Summarize key findings at the end of each response to preserve context across turns.`;
 
 // ---------------------------------------------------------------------------
 // Hardware Safety — blockly-specific safety rules
 // ---------------------------------------------------------------------------
+
+const BLOCKLY_PROJECT_WORKFLOW_SECTION: IPromptSection = {
+  id: 'blockly-project-workflow',
+  layer: PromptLayer.ToolInstructions,
+  priority: 95,
+  cacheable: true,
+  tag: 'projectWorkflow',
+  getContent: () => BLOCKLY_PROJECT_WORKFLOW_PROMPT,
+};
+
+const BLOCKLY_PROJECT_WORKFLOW_PROMPT = `Project planning and creation workflow:
+- If the environment says "No project is currently open.", treat that as the authoritative state. Do not infer an active project, board, or installed libraries from arbitrary directories or search results.
+- If the request is simple and does not require creating a project, answer directly or ask one concise clarification question.
+- If no project is open and the request requires or implies creating a new Blockly project, follow this sequence before any creation/editing action, even for simple features such as LED blink:
+  1. Call load_skill with action="load" and name="blockly-project-planning".
+  2. Use hardware/library discovery tools to search for the required development board and library package names. Do not guess package names and do not ask the user to choose a board before this search.
+  3. Select 2-3 viable board/library combinations when alternatives exist, or explain why only one combination is practical.
+  4. Plan the architecture and workflow for each candidate: board, libraries, wiring/pins, ABS/workspace structure, validation, and safety notes.
+  5. Present the options to the user and ask them to choose or confirm before creating the project.
+- In Plan mode, stop at the option/architecture plan. Do not inspect arbitrary local project files for implementation details when no project is open, and do not create a project, install libraries, or edit workspace files.
+- Do not ask "which development board do you want to use?" as the first response. First run the required skill and board/library discovery, then offer researched options.
+- Ask the user to confirm the selected plan with ask_user before creating a project, installing libraries, or making workspace edits.
+- After the user confirms creation, create or open the project, then continue using the new project path from the refreshed environment/context.`;
+
+const BLOCKLY_ABS_EDITING_WORKFLOW_SECTION: IPromptSection = {
+  id: 'blockly-abs-editing-workflow',
+  layer: PromptLayer.HostDomain,
+  priority: 85,
+  cacheable: true,
+  tag: 'absEditingWorkflow',
+  getContent: () => BLOCKLY_ABS_EDITING_WORKFLOW_PROMPT,
+};
+
+const BLOCKLY_ABS_EDITING_WORKFLOW_PROMPT = `Blockly ABS editing workflow:
+- In Blockly mode, implement visual-program changes by editing ABS/project artifacts, not generated C++ output, unless the user explicitly asks for raw code.
+- Before modifying Blockly code, ensure a project is open. If no project is open, follow the project planning and creation workflow first.
+- For program edits, use the host-owned sync path: syncAbs action="export", read/edit {projectPath}/project.abs, then syncAbs action="import" to apply changes back to the visual workspace.
+- For non-trivial ABS syntax, block argument order, statement inputs, or library block usage, load or consult the abs-syntax-reference skill instead of guessing.
+- After edits, run the available lint/build checks when relevant and fix errors with the smallest ABS change that preserves the user's intended behavior.`;
 
 const BLOCKLY_HARDWARE_SAFETY_PROMPT = `When working with hardware:
 - Always confirm before flashing firmware to a connected board.
@@ -142,6 +186,59 @@ const BLOCKLY_HARDWARE_SAFETY_SECTION = createHardwareSafetySection('blockly-har
 const BLOCKLY_SKILL_COMMAND_SECTION = createSkillCommandSection('blockly-skill-command');
 const BLOCKLY_SKILLS_LISTING_SECTION = createSkillsListingSection('blockly-skills-listing');
 
+export interface BlocklyPromptContextProviderOptions {
+  readonly getHost?: () => ReturnType<typeof AilyHost.get>;
+  readonly contextSnapshotService?: BlocklyContextSnapshotService;
+}
+
+function createBlocklyPromptContextProvider(options: BlocklyPromptContextProviderOptions = {}): NonNullable<IPromptProfile['getContext']> {
+  return async () => {
+    const host = options.getHost?.() ?? AilyHost.get();
+    const workspaceEnvironment = readChatRuntimeWorkspaceEnvironment();
+    const promptProjectPath = workspaceEnvironment.projectPath;
+    const contextSnapshotService = options.contextSnapshotService ?? getBlocklyContextSnapshotService();
+    const envExtra = [...await contextSnapshotService.getSummary({
+      scopes: BLOCKLY_MAIN_AGENT_REQUIRED_CONTEXT.scopes,
+      reason: 'main-agent-prompt',
+      summaryOptions: BLOCKLY_MAIN_AGENT_SUMMARY_OPTIONS,
+    })];
+    console.info('[AilyChat][PromptContext]', {
+      profile: 'blockly',
+      lineCount: envExtra.length,
+      hasBoard: envExtra.some(line => line.startsWith('Current board:')),
+      hasLibraries: envExtra.some(line => line.startsWith('Installed libraries')),
+      projectLine: envExtra.find(line => line.startsWith('Project path:')) ?? null,
+      boardLine: envExtra.find(line => line.startsWith('Current board:')) ?? null,
+    });
+    const fileContext = collectRuntimePromptFileContext(host, ['project.abs', '.temp/sketch/sketch.ino']);
+    const platformType = appendStandardPromptEnv(envExtra, host, fileContext);
+    const projectRelatedContentPrompt = buildProjectRelatedFilesPromptText(
+      'project',
+      promptProjectPath,
+    );
+    if (projectRelatedContentPrompt) {
+      envExtra.push(projectRelatedContentPrompt);
+    }
+
+    return {
+      platform: platformType,
+      sessionDate: new Date().toLocaleDateString(),
+      envExtra,
+      activeFilePath: fileContext.activeFilePath,
+      filePaths: fileContext.filePaths,
+    };
+  };
+}
+
+export function createScopedBlocklyPromptProfile(
+  options: BlocklyPromptContextProviderOptions = {},
+): IPromptProfile {
+  return {
+    ...BLOCKLY_PROMPT_PROFILE,
+    getContext: createBlocklyPromptContextProvider(options),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Profile
 // ---------------------------------------------------------------------------
@@ -152,44 +249,12 @@ export const BLOCKLY_PROMPT_PROFILE: IPromptProfile = {
   sections: [
     BLOCKLY_IDENTITY_SECTION,
     BLOCKLY_DOMAIN_SECTION,
+    BLOCKLY_PROJECT_WORKFLOW_SECTION,
+    BLOCKLY_ABS_EDITING_WORKFLOW_SECTION,
     BLOCKLY_HARDWARE_SAFETY_SECTION,
     BLOCKLY_SKILL_COMMAND_SECTION,
     BLOCKLY_SKILLS_LISTING_SECTION,
   ],
   cacheBreakpoint: PromptLayer.HostDomain,
-  getContext: async () => {
-    const host = AilyHost.get();
-    const contextSnapshotService = getBlocklyContextSnapshotService();
-    const envExtra = [...await contextSnapshotService.getSummary({
-      scopes: BLOCKLY_MAIN_AGENT_REQUIRED_CONTEXT.scopes,
-      reason: 'main-agent-prompt',
-      summaryOptions: BLOCKLY_MAIN_AGENT_SUMMARY_OPTIONS,
-    })];
-    const fileContext = collectRuntimePromptFileContext(host, ['project.abs', '.temp/sketch/sketch.ino']);
-    const platformType = appendStandardPromptEnv(envExtra, host, fileContext);
-    const projectRelatedContentPrompt = buildProjectRelatedFilesPromptText(
-      'project',
-      host.project?.currentProjectPath,
-    );
-    if (projectRelatedContentPrompt) {
-      envExtra.push(projectRelatedContentPrompt);
-    }
-
-    const sessionRelatedContentPrompt = buildProjectRelatedFilesPromptText(
-      'session',
-      host.project?.currentProjectPath,
-      undefined,
-    );
-    if (sessionRelatedContentPrompt) {
-      envExtra.push(sessionRelatedContentPrompt);
-    }
-
-    return {
-      platform: platformType,
-      sessionDate: new Date().toLocaleDateString(),
-      envExtra,
-      activeFilePath: fileContext.activeFilePath,
-      filePaths: fileContext.filePaths,
-    };
-  },
+  getContext: createBlocklyPromptContextProvider(),
 };

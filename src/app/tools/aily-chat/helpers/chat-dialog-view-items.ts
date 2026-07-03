@@ -215,7 +215,7 @@ function attachAssociatedTurns(
 
   return items.map((item, index) => {
     const nextAssociatedTurnId = item.role === 'user'
-      ? (item.turnContext?.turnId ?? item.turnContext?.turnResponse?.turnId ?? item.resolvedTurnId ?? findAssociatedTurnId(items, index))
+      ? (resolveCanonicalItemTurnId(item, turnsById) ?? findAssociatedTurnId(items, index, turnsById))
       : undefined;
     const directTurnId = item.turnContext?.turnId ?? item.resolvedTurnId;
     const directTurn = directTurnId ? turnsById.get(directTurnId) ?? null : null;
@@ -223,7 +223,7 @@ function attachAssociatedTurns(
       ? (turnsById.get(nextAssociatedTurnId) ?? directTurn ?? null)
       : null;
     const linkedTurn = item.turnContext?.turnResponse ?? directTurn ?? actionTurn;
-    const nextTurnId = item.turnContext?.turnId ?? item.resolvedTurnId ?? linkedTurn?.turnId ?? actionTurn?.turnId;
+    const nextTurnId = linkedTurn?.turnId ?? actionTurn?.turnId ?? item.turnContext?.turnId ?? item.resolvedTurnId;
     const requestDisabled = nextTurnId ? disabledRequestTurnIds.has(nextTurnId) : false;
     const nextContent = item.role === 'user' && isBlankDialogContent(item.content) && linkedTurn
       ? getTurnResponseDisplayContent(linkedTurn.request)
@@ -318,12 +318,9 @@ function getDialogItemRevision(turnResponse: TurnResponseTurn | null | undefined
 function findAssociatedTurnId(
   items: readonly InternalChatDialogViewItem[],
   index: number,
+  turnsById: ReadonlyMap<string, TurnResponseTurn>,
 ): string | undefined {
   const item = items[index];
-  if (item.resolvedTurnId) {
-    return item.resolvedTurnId;
-  }
-
   if (item.role !== 'user') {
     return undefined;
   }
@@ -333,9 +330,32 @@ function findAssociatedTurnId(
     if (candidate.role === 'user') {
       break;
     }
-    if (candidate.resolvedTurnId) {
-      return candidate.resolvedTurnId;
+    const candidateTurnId = resolveCanonicalItemTurnId(candidate, turnsById);
+    if (candidateTurnId) {
+      return candidateTurnId;
     }
+  }
+
+  return undefined;
+}
+
+function resolveCanonicalItemTurnId(
+  item: InternalChatDialogViewItem,
+  turnsById: ReadonlyMap<string, TurnResponseTurn>,
+): string | undefined {
+  const responseTurnId = item.turnContext?.turnResponse?.turnId;
+  if (responseTurnId && turnsById.has(responseTurnId)) {
+    return responseTurnId;
+  }
+
+  const contextTurnId = item.turnContext?.turnId;
+  if (contextTurnId && turnsById.has(contextTurnId)) {
+    return contextTurnId;
+  }
+
+  const resolvedTurnId = item.resolvedTurnId;
+  if (resolvedTurnId && turnsById.has(resolvedTurnId)) {
+    return resolvedTurnId;
   }
 
   return undefined;

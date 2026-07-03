@@ -121,6 +121,8 @@ export class ChatRuntimeOwnerContextService implements ChatRuntimeOwnerContextMa
         get currentAgentRuntimeModeSource() { return service.ownerSessionContext.currentAgentRuntimeModeSource; },
         selectAgentRuntimeMode: (mode, source, reason, sessionId) =>
           service.ownerSessionContext.selectAgentRuntimeMode(mode, source, reason, sessionId),
+        updateRuntimeProjectPath: (projectPath, sessionId) =>
+          service.ownerSessionContext.updateRuntimeProjectPath(projectPath, sessionId),
         get sessionTitle() { return service.ownerSessionContext.sessionTitle; },
         currentSessionPath: sessionId => service.ownerSessionContext.currentSessionPath(sessionId),
         currentSessionPermissionMode: sessionId => service.ownerSessionContext.currentSessionPermissionMode(sessionId),
@@ -272,7 +274,7 @@ export class ChatRuntimeOwnerContextService implements ChatRuntimeOwnerContextMa
 
 function createUnboundViewRequestDispatcher() {
   const failClosed = (): never => {
-    throw new Error('[AilyChat][RuntimeOwnerContext] View requests must be emitted through the execution-worker host event boundary.');
+    throw new Error('[AilyChat][RuntimeOwnerContext] View requests must be emitted through the runtime-owner host event boundary.');
   };
   return {
     notify: failClosed,

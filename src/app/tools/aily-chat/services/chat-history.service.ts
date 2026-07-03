@@ -6,8 +6,8 @@
  * - 项目索引：{projectPath}/.chat_history/chat_history_index.json（项目级，仅该项目的条目）
  *   · 项目索引优先：加载时项目级条目覆盖全局同 ID 条目
  *   · 项目索引条目不含冗余的 projectPath / projectName（已隐含于存储路径）
- * - 聊天数据：有项目 → {projectPath}/.chat_history/{sessionId}.json
- *             无项目 → ~/.aily/chat_history/{sessionId}.json
+ * - 聊天数据：有项目 → {projectPath}/.chat_history/{sessionId}.jsonl
+ *             无项目 → ~/.aily/chat_history/{sessionId}.jsonl
  *
  * 持久化策略：关键节点立即保存 + 30s 定时兜底
  * - 每轮对话结束（SSE complete）立即保存
@@ -39,7 +39,7 @@ import {
   type ChatSessionScope,
 } from '../core/chat-session-scope';
 import { SkillRegistry as BlocklySkillRegistry } from '../core/skill-registry';
-import { EditCheckpointService } from './edit-checkpoint.service';
+import { EditCheckpointService, type RequestCheckpointMetadata } from './edit-checkpoint.service';
 import { ChatHistoryIndexStore, type ChatHistoryIndexLoadDiagnostics } from './chat-history-index-store';
 import { buildHostSessionDebugEvents, createHostSessionDebugEventId, type HostSessionDebugEvent } from './host-session-debug-events';
 import {
@@ -55,7 +55,7 @@ import {
 } from './host-session-debug-export';
 import { resolveHostSessionRuntimeAuxiliary } from '../helpers/host-session-runtime-auxiliary';
 import { HostSessionAdoptionBridge } from './host-session-adoption-bridge';
-import { HostSessionPersistenceBridge, type HostSessionDirtyOptions, type HostSessionFlushOptions } from './host-session-persistence-bridge';
+import { HostSessionPersistenceBridge, type HostSessionDirtyOptions, type HostSessionDirtyPolicy, type HostSessionFlushOptions } from './host-session-persistence-bridge';
 import { HostSessionRecordStore } from './host-session-record-store';
 import { ChatService } from './chat.service';
 import { ChatSessionEntryStateService } from './chat-session-entry-state.service';
@@ -85,6 +85,7 @@ import {
   normalizeHostSessionInteractionActionSummary,
   type HostSessionInteractionActionSummary,
 } from '../helpers/host-session-interaction-action';
+import type { HostSessionTurnRuntimeTruth } from '../helpers/host-session-runtime-truth';
 import type { PendingFollowupRequest } from '../helpers/chat-pending-request';
 import {
   type HostSessionSelectedModeResolveOptions,
@@ -158,6 +159,8 @@ export type PersistedHostTurnResponse = Omit<TurnResponseTurn, 'response'> & {
   planPart?: PlanPart;
   /** Latest handoff / restored interaction action associated with this turn. */
   handoffAction?: HostSessionInteractionActionSummary;
+  /** Per-turn runtime/profile truth captured at submit time. */
+  runtimeTruth?: HostSessionTurnRuntimeTruth;
   response: TurnResponseTurn['response'] & PersistedHostResponseData;
 };
 
@@ -168,12 +171,23 @@ export interface HostSessionResponseSidecar {
 export interface HostSessionCheckpointTimelineSidecar {
   sessionResource: string;
   currentCheckpointIndex: number;
+  currentTurnResponseCount?: number;
+  checkpoints?: HostSessionCheckpointTimelineEntrySidecar[];
   turnResponses: PersistedHostTurnResponse[];
+}
+
+export interface HostSessionCheckpointTimelineEntrySidecar {
+  checkpointId: string;
+  requestId: string;
+  turnId?: string;
+  turnIndex: number;
+  metadata?: RequestCheckpointMetadata;
 }
 
 export interface HostSessionCheckpointMarkerSidecar {
   sessionResource: string;
   currentCheckpointIndex: number;
+  currentTurnResponseCount?: number;
 }
 
 export interface HostSessionSidecar {
@@ -374,6 +388,7 @@ export class ChatHistoryService implements OnDestroy {
   private readonly historyListCache = new Map<string, SessionIndexEntry[]>();
   /** 定时兜底保存的 timer ID */
   private autoSaveTimer: any = null;
+  private saveStateFlushTimer: any = null;
 
   // ===== 路径常量 =====
   private readonly INDEX_FILE = 'chat_history_index.json';
@@ -450,7 +465,9 @@ export class ChatHistoryService implements OnDestroy {
 
   ngOnDestroy(): void {
     // 强制保存所有脏数据
-    this.flushAll();
+    this.flushAll({
+      shouldSkipSession: (sessionId, policy) => this.shouldSkipActiveRecoverySnapshot(sessionId, policy),
+    });
     this.stopAutoSave();
   }
 
@@ -573,7 +590,11 @@ export class ChatHistoryService implements OnDestroy {
    * 标记会话数据有变更（用于 dirty 跟踪，30s 兜底保存时使用）
    */
   markDirty(sessionId: string, options?: HostSessionDirtyOptions): void {
+    const policy = options?.policy ?? 'recovery-snapshot';
     this.hostSessionPersistenceBridge.markDirty(sessionId, options);
+    if (policy === 'authoritative') {
+      this.scheduleSaveStateFlush();
+    }
   }
 
   // =========================================================================
@@ -1124,12 +1145,12 @@ export class ChatHistoryService implements OnDestroy {
 
     try {
       if (projectPath) {
-        const filePath = this.joinPath(projectPath, this.PROJECT_CHAT_DIR, `${sessionId}.json`);
+        const filePath = this.joinPath(projectPath, this.PROJECT_CHAT_DIR, `${sessionId}.jsonl`);
         if (this.fileExists(filePath)) {
           AilyHost.get().fs.unlinkSync(filePath);
         }
       } else {
-        const filePath = this.joinPath(this.getGlobalChatDataDir(), `${sessionId}.json`);
+        const filePath = this.joinPath(this.getGlobalChatDataDir(), `${sessionId}.jsonl`);
         if (this.fileExists(filePath)) {
           AilyHost.get().fs.unlinkSync(filePath);
         }
@@ -1141,14 +1162,14 @@ export class ChatHistoryService implements OnDestroy {
     if (!this.hasFs()) return;
 
     if (projectPath) {
-      const filePath = this.joinPath(projectPath, this.PROJECT_CHAT_DIR, `${sessionId}.json`);
+      const filePath = this.joinPath(projectPath, this.PROJECT_CHAT_DIR, `${sessionId}.jsonl`);
       if (this.fileExists(filePath)) {
         AilyHost.get().fs.unlinkSync(filePath);
       }
       return;
     }
 
-    const filePath = this.joinPath(this.getGlobalChatDataDir(), `${sessionId}.json`);
+    const filePath = this.joinPath(this.getGlobalChatDataDir(), `${sessionId}.jsonl`);
     if (this.fileExists(filePath)) {
       AilyHost.get().fs.unlinkSync(filePath);
     }
@@ -1252,6 +1273,34 @@ export class ChatHistoryService implements OnDestroy {
       clearInterval(this.autoSaveTimer);
       this.autoSaveTimer = null;
     }
+    if (this.saveStateFlushTimer) {
+      clearTimeout(this.saveStateFlushTimer);
+      this.saveStateFlushTimer = null;
+    }
+  }
+
+  private scheduleSaveStateFlush(): void {
+    if (this.saveStateFlushTimer) {
+      return;
+    }
+
+    this.saveStateFlushTimer = setTimeout(() => {
+      this.saveStateFlushTimer = null;
+      if (this.hostSessionPersistenceBridge.hasDirtySessions() || this.indexDirty) {
+        this.flushAll({
+          shouldSkipSession: (sessionId, policy) => this.shouldSkipActiveRecoverySnapshot(sessionId, policy),
+        });
+      }
+    }, 1000);
+  }
+
+  private shouldSkipActiveRecoverySnapshot(sessionId: string, policy: HostSessionDirtyPolicy): boolean {
+    const active = this.autoSaveSessionActiveProvider?.(sessionId) === true;
+    if (active && policy === 'recovery-snapshot') {
+      console.log(`[ChatHistory] skip active recovery snapshot: ${sessionId}`);
+      return true;
+    }
+    return false;
   }
 
   // =========================================================================
@@ -1397,7 +1446,7 @@ export class ChatHistoryService implements OnDestroy {
 
       const files = AilyHost.get().fs.readdirSync(chatDir);
       return Array.isArray(files)
-        ? files.filter((file: string) => typeof file === 'string' && file.endsWith('.json') && file !== this.INDEX_FILE).length
+        ? files.filter((file: string) => typeof file === 'string' && file.endsWith('.jsonl')).length
         : 0;
     } catch {
       return 0;
@@ -1616,13 +1665,13 @@ export class ChatHistoryService implements OnDestroy {
 
   private resolveHostRecordFilePath(sessionId: string, projectPath: string | null): string {
     const projectFilePath = projectPath
-      ? this.joinPath(projectPath, this.PROJECT_CHAT_DIR, `${sessionId}.json`)
+      ? this.joinPath(projectPath, this.PROJECT_CHAT_DIR, `${sessionId}.jsonl`)
       : null;
     if (projectFilePath && this.fileExists(projectFilePath)) {
       return projectFilePath;
     }
 
-    return this.joinPath(this.getGlobalChatDataDir(), `${sessionId}.json`);
+    return this.joinPath(this.getGlobalChatDataDir(), `${sessionId}.jsonl`);
   }
 
   private resolveLexSnapshotFilePath(sessionId: string, projectPath: string | null): string {

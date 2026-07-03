@@ -67,6 +67,23 @@ function normalizeResourceRequestPhase(phase) {
     : '';
 }
 
+function normalizeTodoStatus(status) {
+  switch (status) {
+    case 'completed':
+      return 'completed';
+    case 'in-progress':
+    case 'doing':
+    case 'active':
+    case 'running':
+      return 'in-progress';
+    case 'not-started':
+    case 'pending':
+    case 'todo':
+    default:
+      return 'not-started';
+  }
+}
+
 function normalizeOptionalString(value) {
   return typeof value === 'string' && value.trim().length > 0
     ? value.trim()
@@ -102,7 +119,9 @@ class ChatRuntimeHostSessionStore {
     this.viewAttachmentGenerations = new Map();
     this.viewWebContents = new Map();
     this.completionWaiters = new Map();
+    this.activeSubmittedRequests = new Map();
     this.submittedTurnSequence = 0;
+    this.submittedCheckpointSequence = 0;
   }
 
   clearSession(sessionId) {
@@ -116,6 +135,7 @@ class ChatRuntimeHostSessionStore {
     this.viewRequestEvents.delete(normalizedSessionId);
     this.resourceRequestEvents.delete(normalizedSessionId);
     this.sessionInventoryMetadata.delete(normalizedSessionId);
+    this.activeSubmittedRequests.delete(normalizedSessionId);
     this.resolveCompletionWaiters(normalizedSessionId);
     const viewIds = this.sessionViews.get(normalizedSessionId);
     if (viewIds) {
@@ -422,7 +442,7 @@ class ChatRuntimeHostSessionStore {
     return clonePayload(nextState);
   }
 
-  cacheExecutionWorkerReportedSessionState(state) {
+  cacheRuntimeOwnerReportedSessionState(state) {
     const sessionId = normalizeSessionId(state && state.sessionId);
     if (!sessionId || !this.hasHostSession(sessionId)) {
       return null;
@@ -433,31 +453,34 @@ class ChatRuntimeHostSessionStore {
       return null;
     }
 
-    const workerState = clonePayload(state);
-    const workerRequestInProgress = workerState && workerState.requestInProgress === true;
-    const workerTranscriptRevision = Number(workerState && workerState.transcriptRevision) || 0;
+    const ownerState = clonePayload(state);
+    const ownerRequestInProgress = ownerState && ownerState.requestInProgress === true;
+    const ownerTranscriptRevision = Number(ownerState && ownerState.transcriptRevision) || 0;
     const previousTranscriptRevision = Number(previousState && previousState.transcriptRevision) || 0;
-    const transcriptRevision = Math.max(previousTranscriptRevision, workerTranscriptRevision);
+    const transcriptRevision = Math.max(previousTranscriptRevision, ownerTranscriptRevision);
     let nextState;
 
     if (previousState && previousState.requestInProgress === true) {
-      if (workerRequestInProgress) {
+      if (ownerRequestInProgress) {
         const previousActiveTurnId = this.normalizeActiveTurnId(previousState.activeTurnId);
-        const workerActiveTurnId = this.normalizeActiveTurnId(workerState.activeTurnId);
+        const ownerActiveTurnId = this.resolveRuntimeOwnerVisibleTurnId({
+          sessionId,
+          turnId: ownerState.activeTurnId,
+        });
         let nextTranscriptRevision = transcriptRevision;
-        if (previousActiveTurnId && workerActiveTurnId && previousActiveTurnId !== workerActiveTurnId) {
-          const previousTurnHasProgress = this.hasExecutionWorkerTurnObservableProgress(sessionId, previousActiveTurnId);
+        if (previousActiveTurnId && ownerActiveTurnId && previousActiveTurnId !== ownerActiveTurnId) {
+          const previousTurnHasProgress = this.hasRuntimeOwnerTurnObservableProgress(sessionId, previousActiveTurnId);
           const migratedTranscript = previousTurnHasProgress
-            ? this.seedExecutionWorkerReportedActiveTurn({
+            ? this.seedRuntimeOwnerReportedActiveTurn({
               sessionId,
-              turnId: workerActiveTurnId,
+              turnId: ownerActiveTurnId,
               revision: transcriptRevision,
-              workerState,
+              ownerState,
             })
             : this.transcriptBuilder.replaceTurnId({
               sessionId,
               fromTurnId: previousActiveTurnId,
-              toTurnId: workerActiveTurnId,
+              toTurnId: ownerActiveTurnId,
               revision: transcriptRevision,
             });
           nextTranscriptRevision = Math.max(
@@ -467,40 +490,43 @@ class ChatRuntimeHostSessionStore {
         }
         nextState = {
           ...previousState,
-          activeTurnId: workerActiveTurnId || previousActiveTurnId || previousState.activeTurnId || null,
+          activeTurnId: ownerActiveTurnId || previousActiveTurnId || previousState.activeTurnId || null,
           transcriptRevision: nextTranscriptRevision,
-          selectedMode: workerState.selectedMode !== undefined
-            ? workerState.selectedMode ?? null
+          selectedMode: ownerState.selectedMode !== undefined
+            ? ownerState.selectedMode ?? null
             : previousState.selectedMode ?? null,
-          providerOptions: workerState.providerOptions !== undefined
-            ? workerState.providerOptions ?? null
+          providerOptions: ownerState.providerOptions !== undefined
+            ? ownerState.providerOptions ?? null
             : previousState.providerOptions ?? null,
           attachedViewIds: this.readAttachedViewIds(sessionId),
         };
       } else {
         nextState = {
           ...previousState,
-          status: this.normalizeExecutionWorkerSettledStatus(workerState.status),
+          status: this.normalizeRuntimeOwnerSettledStatus(ownerState.status),
           requestInProgress: false,
-          activeTurnId: this.normalizeActiveTurnId(workerState.activeTurnId) || null,
+          activeTurnId: this.normalizeActiveTurnId(ownerState.activeTurnId) || null,
           transcriptRevision,
-          selectedMode: workerState.selectedMode !== undefined
-            ? workerState.selectedMode ?? null
+          selectedMode: ownerState.selectedMode !== undefined
+            ? ownerState.selectedMode ?? null
             : previousState.selectedMode ?? null,
-          providerOptions: workerState.providerOptions !== undefined
-            ? workerState.providerOptions ?? null
+          providerOptions: ownerState.providerOptions !== undefined
+            ? ownerState.providerOptions ?? null
             : previousState.providerOptions ?? null,
           attachedViewIds: this.readAttachedViewIds(sessionId),
         };
       }
     } else {
-      if (workerRequestInProgress) {
-        const workerActiveTurnId = this.normalizeActiveTurnId(workerState.activeTurnId);
-        const seededTranscript = this.seedExecutionWorkerReportedActiveTurn({
+      if (ownerRequestInProgress) {
+        const ownerActiveTurnId = this.resolveRuntimeOwnerVisibleTurnId({
           sessionId,
-          turnId: workerActiveTurnId,
+          turnId: ownerState.activeTurnId,
+        });
+        const seededTranscript = this.seedRuntimeOwnerReportedActiveTurn({
+          sessionId,
+          turnId: ownerActiveTurnId,
           revision: transcriptRevision,
-          workerState,
+          ownerState,
         });
         const nextTranscriptRevision = Math.max(
           transcriptRevision,
@@ -511,28 +537,28 @@ class ChatRuntimeHostSessionStore {
           sessionId,
           status: 'running',
           requestInProgress: true,
-          activeTurnId: workerActiveTurnId || null,
+          activeTurnId: ownerActiveTurnId || null,
           transcriptRevision: nextTranscriptRevision,
-          selectedMode: workerState.selectedMode !== undefined
-            ? workerState.selectedMode ?? null
+          selectedMode: ownerState.selectedMode !== undefined
+            ? ownerState.selectedMode ?? null
             : previousState.selectedMode ?? null,
-          providerOptions: workerState.providerOptions !== undefined
-            ? workerState.providerOptions ?? null
+          providerOptions: ownerState.providerOptions !== undefined
+            ? ownerState.providerOptions ?? null
             : previousState.providerOptions ?? null,
           attachedViewIds: this.readAttachedViewIds(sessionId),
         };
       } else {
       nextState = {
         ...previousState,
-        status: this.normalizeIdleExecutionWorkerStatus(previousState && previousState.status, workerState.status),
+        status: this.normalizeIdleRuntimeOwnerStatus(previousState && previousState.status, ownerState.status),
         requestInProgress: false,
         activeTurnId: null,
         transcriptRevision,
-        selectedMode: workerState.selectedMode !== undefined
-          ? workerState.selectedMode ?? null
+        selectedMode: ownerState.selectedMode !== undefined
+          ? ownerState.selectedMode ?? null
           : previousState.selectedMode ?? null,
-        providerOptions: workerState.providerOptions !== undefined
-          ? workerState.providerOptions ?? null
+        providerOptions: ownerState.providerOptions !== undefined
+          ? ownerState.providerOptions ?? null
           : previousState.providerOptions ?? null,
         attachedViewIds: this.readAttachedViewIds(sessionId),
       };
@@ -542,6 +568,7 @@ class ChatRuntimeHostSessionStore {
     this.sessionStates.set(sessionId, clonePayload(nextState));
     if (nextState.requestInProgress !== true) {
       this.resolveCompletionWaiters(sessionId);
+      this.activeSubmittedRequests.delete(sessionId);
     }
     return clonePayload(nextState);
   }
@@ -550,39 +577,301 @@ class ChatRuntimeHostSessionStore {
     return this.transcriptBuilder.acceptTranscriptSnapshot(transcript);
   }
 
-  cacheExecutionWorkerTurnSnapshot(payload) {
-    const transcript = this.transcriptBuilder.acceptTurnSnapshot({
-      sessionId: payload && payload.sessionId,
-      turnId: payload && payload.turnId,
-      revision: payload && payload.revision,
-      turn: payload && payload.turn,
-    });
-    return transcript
-      ? {
-          kind: 'transcript',
-          sessionId: transcript.sessionId,
-          revision: Number(transcript.revision) || Number(payload && payload.revision) || 0,
-          transcript,
-        }
-      : null;
+  buildTurnTranscriptEvent(transcript, turnId, revisionFallback = 0) {
+    const normalizedTurnId = this.normalizeActiveTurnId(turnId);
+    if (!transcript || !normalizedTurnId) {
+      return null;
+    }
+    const turns = Array.isArray(transcript.turnResponses)
+      ? transcript.turnResponses
+      : [];
+    const turn = turns.find(candidate => this.normalizeActiveTurnId(candidate && candidate.turnId) === normalizedTurnId);
+    if (!turn) {
+      return null;
+    }
+    return {
+      kind: 'turn-transcript',
+      sessionId: transcript.sessionId,
+      turnId: normalizedTurnId,
+      revision: Number(transcript.revision) || Number(revisionFallback) || 0,
+      turn: clonePayload(turn),
+    };
   }
 
-  cacheExecutionWorkerRenderEvent(payload) {
+  cacheRuntimeOwnerTurnSnapshot(payload) {
+    const sessionId = payload && payload.sessionId;
+    const turnId = payload && payload.turnId;
+    const transcript = this.transcriptBuilder.acceptTurnSnapshot({
+      sessionId,
+      turnId,
+      revision: payload && payload.revision,
+      turn: this.retargetRuntimeOwnerTurnSnapshot(payload && payload.turn, turnId),
+    });
+    return this.buildTurnTranscriptEvent(
+      transcript,
+      turnId,
+      payload && payload.revision,
+    );
+  }
+
+  cacheRuntimeOwnerRenderEvent(payload) {
+    const sessionId = normalizeSessionId(payload && payload.sessionId);
+    const renderEvent = payload && payload.renderEvent && typeof payload.renderEvent === 'object'
+      ? payload.renderEvent
+      : null;
     const transcript = this.transcriptBuilder.acceptRenderEvent({
-      sessionId: payload && payload.sessionId,
+      sessionId,
       turnId: payload && payload.turnId,
       revision: payload && payload.revision,
-      request: payload && payload.request,
-      event: payload && payload.renderEvent,
+      request: (payload && payload.request) || this.readActiveSubmittedRequest(sessionId),
+      event: this.retargetRuntimeOwnerRenderEvent(renderEvent, payload && payload.turnId),
     });
-    return transcript
-      ? {
-          kind: 'transcript',
-          sessionId: transcript.sessionId,
-          revision: Number(transcript.revision) || Number(payload && payload.revision) || 0,
-          transcript,
-        }
-      : null;
+    const transcriptEvent = this.buildTurnTranscriptEvent(
+      transcript,
+      payload && payload.turnId,
+      payload && payload.revision,
+    );
+    const interactionEvents = this.cacheInteractionFromRenderEvent({
+      sessionId,
+      revision: Number(payload && payload.revision) || Number(transcript && transcript.revision) || 0,
+      renderEvent,
+    });
+    const todoViewRequestEvents = this.cacheTodoViewRequestFromRenderEvent({
+      sessionId,
+      revision: Number(payload && payload.revision) || Number(transcript && transcript.revision) || 0,
+      renderEvent,
+    });
+    if (interactionEvents.length > 0 || todoViewRequestEvents.length > 0) {
+      return [
+        transcriptEvent,
+        ...interactionEvents,
+        ...todoViewRequestEvents,
+      ].filter(Boolean);
+    }
+    return transcriptEvent;
+  }
+
+  cacheTodoViewRequestFromRenderEvent({ sessionId, revision, renderEvent }) {
+    if (!sessionId || !renderEvent || typeof renderEvent !== 'object') {
+      return [];
+    }
+    if (renderEvent.type !== 'todo_update') {
+      return [];
+    }
+    const items = Array.isArray(renderEvent.items)
+      ? renderEvent.items
+      : [];
+    const normalizedItems = items.map((item, index) => {
+      const record = item && typeof item === 'object' ? item : {};
+      const rawId = record.id;
+      const numericId = typeof rawId === 'number' && Number.isFinite(rawId)
+        ? rawId
+        : typeof rawId === 'string' && rawId.trim().length > 0 && Number.isFinite(Number(rawId.trim()))
+          ? Number(rawId.trim())
+          : index + 1;
+      const title = typeof record.activeForm === 'string' && record.activeForm.trim().length > 0
+        ? record.activeForm.trim()
+        : typeof record.title === 'string' && record.title.trim().length > 0
+          ? record.title.trim()
+          : typeof record.content === 'string' && record.content.trim().length > 0
+            ? record.content.trim()
+            : `Todo ${numericId}`;
+      return {
+        id: numericId,
+        content: title,
+        status: normalizeTodoStatus(record.status),
+        priority: 'medium',
+        updatedAt: Date.now(),
+      };
+    });
+    const event = this.cacheViewRequestEvent({
+      kind: 'view-request',
+      sessionId,
+      revision,
+      request: {
+        id: `todo-state:${sessionId}`,
+        sessionId,
+        kind: 'todo-state',
+        todoState: {
+          items: normalizedItems,
+        },
+      },
+    });
+    return event ? [event] : [];
+  }
+
+  cacheInteractionFromRenderEvent({ sessionId, revision, renderEvent }) {
+    if (!sessionId || !renderEvent || typeof renderEvent !== 'object') {
+      return [];
+    }
+    if (renderEvent.type === 'approval_request') {
+      return this.cacheApprovalRequestInteractionFromRenderEvent({ sessionId, revision, renderEvent });
+    }
+    if (renderEvent.type === 'approval_resolve') {
+      return this.cacheApprovalResolveInteractionFromRenderEvent({ sessionId, revision, renderEvent });
+    }
+    if (renderEvent.type !== 'question_request') {
+      return [];
+    }
+    const requestId = normalizeInteractionId(renderEvent.requestId);
+    if (!requestId) {
+      return [];
+    }
+    const current = this.buildInteractionSnapshot(sessionId);
+    if (!current) {
+      return [];
+    }
+    const partId = `question:${requestId}`;
+    const questions = Array.isArray(renderEvent.questions)
+      ? renderEvent.questions.map(question => {
+          const item = question && typeof question === 'object' ? question : {};
+          return {
+            question: typeof item.question === 'string' ? item.question : '',
+            options: Array.isArray(item.options)
+              ? item.options.map(option => {
+                  const optionItem = option && typeof option === 'object' ? option : {};
+                  return {
+                    label: typeof optionItem.label === 'string' ? optionItem.label : '',
+                    ...(typeof optionItem.description === 'string' ? { description: optionItem.description } : {}),
+                    ...(typeof optionItem.recommended === 'boolean' ? { recommended: optionItem.recommended } : {}),
+                  };
+                })
+              : undefined,
+            allow_freeform: item.allow_freeform === true || item.allowFreeform === true,
+            multi_select: item.multi_select === true || item.multiSelect === true,
+          };
+        })
+      : [];
+    const next = this.nextInteractionResult(current, {
+      question: {
+        sessionId,
+        partId,
+        data: {
+          partId,
+          isHistory: false,
+          questions,
+        },
+      },
+    });
+    const state = this.cacheInteraction(next.snapshot);
+    return [
+      {
+        kind: 'interaction',
+        sessionId,
+        revision: Number(next.snapshot.revision) || Number(revision) || 0,
+        interaction: clonePayload(next.snapshot),
+      },
+      state ? this.buildSessionStateEvent('runtime-status', sessionId) : null,
+    ].filter(Boolean);
+  }
+
+  cacheApprovalRequestInteractionFromRenderEvent({ sessionId, revision, renderEvent }) {
+    const requestId = this.normalizeApprovalInteractionId(renderEvent);
+    if (!requestId) {
+      return [];
+    }
+    const current = this.buildInteractionSnapshot(sessionId);
+    if (!current) {
+      return [];
+    }
+    const queue = Array.isArray(current.confirmationQueue) ? current.confirmationQueue : [];
+    const actions = Array.isArray(renderEvent.actions)
+      ? renderEvent.actions
+        .filter(action => action && typeof action === 'object')
+        .map(action => clonePayload(action))
+      : [];
+    const toolCallId = normalizeInteractionId(renderEvent.toolCallId);
+    const requestPartId = toolCallId || requestId;
+    const confirmation = {
+      sessionId,
+      id: requestId,
+      kind: toolCallId ? 'approval' : 'confirmation',
+      partId: requestPartId,
+      ...(toolCallId ? { toolCallId } : {}),
+      ...(toolCallId ? {} : { askId: requestId }),
+      toolName: typeof renderEvent.toolName === 'string' ? renderEvent.toolName : undefined,
+      data: {
+        kind: toolCallId ? 'approval' : 'confirmation',
+        partId: requestPartId,
+        ...(toolCallId ? { toolCallId } : { askId: requestId }),
+        toolName: typeof renderEvent.toolName === 'string' ? renderEvent.toolName : undefined,
+        title: typeof renderEvent.title === 'string' && renderEvent.title.trim()
+          ? renderEvent.title
+          : '确认操作',
+        ...(typeof renderEvent.subtitle === 'string' ? { subtitle: renderEvent.subtitle } : {}),
+        message: typeof renderEvent.message === 'string' ? renderEvent.message : '',
+        args: renderEvent.input && typeof renderEvent.input === 'object' && !Array.isArray(renderEvent.input)
+          ? clonePayload(renderEvent.input)
+          : {},
+        actions,
+        primaryScope: typeof renderEvent.primaryScope === 'string' ? renderEvent.primaryScope : 'once',
+        ...(typeof renderEvent.description === 'string' ? { description: renderEvent.description } : {}),
+        ...(renderEvent.approveCombination && typeof renderEvent.approveCombination === 'object'
+          ? { approveCombination: clonePayload(renderEvent.approveCombination) }
+          : {}),
+        ...(typeof renderEvent.allowAutoConfirm === 'boolean'
+          ? { allowAutoConfirm: renderEvent.allowAutoConfirm }
+          : {}),
+      },
+    };
+    const nextQueue = queue.filter(entry => normalizeInteractionId(entry && entry.id) !== requestId).concat(confirmation);
+    const next = this.nextInteractionResult(current, {
+      confirmationQueue: nextQueue,
+      activeConfirmationIndex: nextQueue.length - 1,
+    });
+    const state = this.cacheInteraction(next.snapshot);
+    return [
+      {
+        kind: 'interaction',
+        sessionId,
+        revision: Number(next.snapshot.revision) || Number(revision) || 0,
+        interaction: clonePayload(next.snapshot),
+      },
+      state ? this.buildSessionStateEvent('runtime-status', sessionId) : null,
+    ].filter(Boolean);
+  }
+
+  cacheApprovalResolveInteractionFromRenderEvent({ sessionId, revision, renderEvent }) {
+    const requestId = this.normalizeApprovalInteractionId(renderEvent);
+    if (!requestId) {
+      return [];
+    }
+    const current = this.buildInteractionSnapshot(sessionId);
+    if (!current) {
+      return [];
+    }
+    const queue = Array.isArray(current.confirmationQueue) ? current.confirmationQueue : [];
+    const targetIndex = queue.findIndex(entry => normalizeInteractionId(entry && entry.id) === requestId);
+    if (targetIndex < 0) {
+      return [];
+    }
+    const nextQueue = queue.filter((_, index) => index !== targetIndex);
+    const nextIndex = nextQueue.length === 0
+      ? 0
+      : Math.min(this.normalizeConfirmationIndex(current.activeConfirmationIndex, queue.length), nextQueue.length - 1);
+    const next = this.nextInteractionResult(current, {
+      confirmationQueue: nextQueue,
+      activeConfirmationIndex: nextIndex,
+    });
+    const state = this.cacheInteraction(next.snapshot);
+    return [
+      {
+        kind: 'interaction',
+        sessionId,
+        revision: Number(next.snapshot.revision) || Number(revision) || 0,
+        interaction: clonePayload(next.snapshot),
+      },
+      state ? this.buildSessionStateEvent('runtime-status', sessionId) : null,
+    ].filter(Boolean);
+  }
+
+  normalizeApprovalInteractionId(renderEvent) {
+    const toolCallId = normalizeInteractionId(renderEvent && renderEvent.toolCallId);
+    if (toolCallId) {
+      return toolCallId;
+    }
+    const requestId = normalizeInteractionId(renderEvent && renderEvent.requestId);
+    return requestId ? `confirmation:${requestId}` : '';
   }
 
   cacheInteraction(interaction) {
@@ -869,56 +1158,63 @@ class ChatRuntimeHostSessionStore {
     }
   }
 
-  cacheExecutionWorkerEvent(payload) {
+  cacheRuntimeOwnerEvent(payload) {
     if (!payload || typeof payload !== 'object') {
       return null;
     }
     switch (payload.kind) {
       case 'turnProgress':
-        return this.cacheExecutionWorkerTurnProgress(payload);
+        return this.cacheRuntimeOwnerTurnProgress(payload);
       case 'turnInteractionRequested':
-        return this.cacheExecutionWorkerTurnInteractionRequested(payload);
+        return this.cacheRuntimeOwnerTurnInteractionRequested(payload);
       case 'turnError':
-        return this.cacheExecutionWorkerTurnError(payload);
+        return this.cacheRuntimeOwnerTurnError(payload);
       case 'turnCompleted':
-        return this.cacheExecutionWorkerTurnCompleted(payload);
+        return this.cacheRuntimeOwnerTurnCompleted(payload);
       default:
         return null;
     }
   }
 
-  cacheExecutionWorkerTurnProgress(payload) {
+  cacheRuntimeOwnerTurnProgress(payload) {
     const sessionId = normalizeSessionId(payload && payload.sessionId);
     const payloadTurnId = this.normalizeActiveTurnId(payload && payload.turnId);
     const turnSnapshotId = this.readCanonicalTurnSnapshotId(payload && payload.turn);
     const renderEventTurnId = this.readCanonicalRenderEventTurnId(payload && payload.renderEvent);
     const turnId = turnSnapshotId || renderEventTurnId || payloadTurnId;
-    if (!this.isCurrentExecutionWorkerTurn(sessionId, payloadTurnId)
-      && !this.isCurrentExecutionWorkerTurn(sessionId, turnId)) {
-      if (payload && payload.renderEvent && this.acceptExecutionWorkerServiceOwnedResponseProgress({
+    const visibleTurnId = this.resolveRuntimeOwnerVisibleTurnId({
+      sessionId,
+      turnId,
+      request: payload && payload.request,
+      turn: payload && payload.turn,
+    });
+    if (!this.isCurrentRuntimeOwnerTurn(sessionId, payloadTurnId)
+      && !this.isCurrentRuntimeOwnerTurn(sessionId, turnId)
+      && !this.isCurrentRuntimeOwnerTurn(sessionId, visibleTurnId)) {
+      if (payload && payload.renderEvent && this.acceptRuntimeOwnerServiceOwnedResponseProgress({
         sessionId,
-        turnId: renderEventTurnId || turnId,
+        turnId: visibleTurnId || renderEventTurnId || turnId,
         request: payload.request,
         revision: payload.revision,
         renderEvent: payload.renderEvent,
       })) {
-        return this.cacheExecutionWorkerRenderEvent({
+        return this.cacheRuntimeOwnerRenderEvent({
           ...payload,
           sessionId,
-          turnId: renderEventTurnId || turnId,
+          turnId: visibleTurnId || renderEventTurnId || turnId,
         });
       }
-      if (payload && payload.turn && this.acceptExecutionWorkerServiceOwnedResponseProgress({
+      if (payload && payload.turn && this.acceptRuntimeOwnerServiceOwnedResponseProgress({
         sessionId,
-        turnId: turnSnapshotId || turnId,
+        turnId: visibleTurnId || turnSnapshotId || turnId,
         request: payload.request,
         revision: payload.revision,
         turn: payload.turn,
       })) {
-        return this.cacheExecutionWorkerTurnSnapshot({
+        return this.cacheRuntimeOwnerTurnSnapshot({
           ...payload,
           sessionId,
-          turnId: turnSnapshotId || turnId,
+          turnId: visibleTurnId || turnSnapshotId || turnId,
         });
       }
       const event = payload && payload.event;
@@ -927,10 +1223,10 @@ class ChatRuntimeHostSessionStore {
         && event.state
         && event.state.requestInProgress === true
         && this.normalizeActiveTurnId(event.state.activeTurnId) === payloadTurnId) {
-        const state = this.cacheExecutionWorkerReportedSessionState({
+        const state = this.cacheRuntimeOwnerReportedSessionState({
           ...event.state,
           sessionId,
-          activeTurnId: payloadTurnId,
+          activeTurnId: visibleTurnId || payloadTurnId,
           requestInProgress: true,
         });
         return state
@@ -941,34 +1237,34 @@ class ChatRuntimeHostSessionStore {
     }
     if (payload.turn) {
       if (turnSnapshotId && turnSnapshotId !== payloadTurnId) {
-        this.acceptExecutionWorkerServiceOwnedResponseProgress({
+        this.acceptRuntimeOwnerServiceOwnedResponseProgress({
           sessionId,
-          turnId: turnSnapshotId,
+          turnId: visibleTurnId || turnSnapshotId,
           request: payload.request,
           turn: payload.turn,
           revision: payload.revision,
         });
       }
-      return this.cacheExecutionWorkerTurnSnapshot({
+      return this.cacheRuntimeOwnerTurnSnapshot({
         ...payload,
         sessionId,
-        turnId: turnSnapshotId || turnId,
+        turnId: visibleTurnId || turnSnapshotId || turnId,
       });
     }
     if (payload.renderEvent) {
       if (renderEventTurnId && renderEventTurnId !== payloadTurnId) {
-        this.acceptExecutionWorkerServiceOwnedResponseProgress({
+        this.acceptRuntimeOwnerServiceOwnedResponseProgress({
           sessionId,
-          turnId: renderEventTurnId,
+          turnId: visibleTurnId || renderEventTurnId,
           request: payload.request,
           revision: payload.revision,
           renderEvent: payload.renderEvent,
         });
       }
-      return this.cacheExecutionWorkerRenderEvent({
+      return this.cacheRuntimeOwnerRenderEvent({
         ...payload,
         sessionId,
-        turnId: renderEventTurnId || turnId,
+        turnId: visibleTurnId || renderEventTurnId || turnId,
       });
     }
     const event = payload && payload.event;
@@ -981,10 +1277,10 @@ class ChatRuntimeHostSessionStore {
         if (!event.state || event.state.requestInProgress !== true) {
           return null;
         }
-        const state = this.cacheExecutionWorkerReportedSessionState({
+        const state = this.cacheRuntimeOwnerReportedSessionState({
           ...event.state,
           sessionId,
-          activeTurnId: turnId,
+          activeTurnId: visibleTurnId || turnId,
           requestInProgress: true,
         });
         return state
@@ -1096,10 +1392,10 @@ class ChatRuntimeHostSessionStore {
     return clonePayload(normalizedEvent);
   }
 
-  cacheExecutionWorkerTurnInteractionRequested(payload) {
+  cacheRuntimeOwnerTurnInteractionRequested(payload) {
     const sessionId = normalizeSessionId(payload && payload.sessionId);
     const turnId = this.normalizeActiveTurnId(payload && payload.turnId);
-    if (!this.isCurrentExecutionWorkerTurn(sessionId, turnId)) {
+    if (!this.isCurrentRuntimeOwnerTurn(sessionId, turnId)) {
       return null;
     }
     const interaction = payload && payload.interaction && payload.interaction.sessionId === sessionId
@@ -1120,21 +1416,16 @@ class ChatRuntimeHostSessionStore {
     ].filter(Boolean);
   }
 
-  cacheExecutionWorkerTurnError(payload) {
+  cacheRuntimeOwnerTurnError(payload) {
     const sessionId = normalizeSessionId(payload && payload.sessionId);
     const turnId = this.normalizeActiveTurnId(payload && payload.turnId);
-    if (!this.isCurrentExecutionWorkerTurn(sessionId, turnId)) {
+    if (!this.isCurrentRuntimeOwnerTurn(sessionId, turnId)) {
       return null;
     }
     const error = payload && payload.error && typeof payload.error === 'object'
       ? payload.error
       : {};
-    const transcript = this.transcriptBuilder.markTurnFailed({
-      sessionId,
-      turnId,
-      revision: Number(payload.revision) || 0,
-      error,
-    });
+    const transcript = this.markSubmittedTurnFailed(sessionId, error, Number(payload.revision) || 0);
     const failedState = this.failSubmittedTurn(sessionId);
     if (!failedState) {
       return null;
@@ -1146,7 +1437,7 @@ class ChatRuntimeHostSessionStore {
         revision: Number(payload.revision) || Number(failedState.transcriptRevision) || 0,
         error: {
           code: typeof error.code === 'string' ? error.code : undefined,
-          message: typeof error.message === 'string' ? error.message : 'Execution worker turn failed.',
+          message: typeof error.message === 'string' ? error.message : 'Runtime owner turn failed.',
           retryable: typeof error.retryable === 'boolean' ? error.retryable : undefined,
         },
       },
@@ -1163,16 +1454,23 @@ class ChatRuntimeHostSessionStore {
     return events.filter(Boolean);
   }
 
-  cacheExecutionWorkerTurnCompleted(payload) {
+  cacheRuntimeOwnerTurnCompleted(payload) {
     const sessionId = normalizeSessionId(payload && payload.sessionId);
     const payloadTurnId = this.normalizeActiveTurnId(payload && payload.turnId);
     const turnSnapshotId = this.readCanonicalTurnSnapshotId(payload && payload.turn);
     const turnId = turnSnapshotId || payloadTurnId;
-    if (!this.isCurrentExecutionWorkerTurn(sessionId, payloadTurnId)
-      && !this.isCurrentExecutionWorkerTurn(sessionId, turnId)) {
-      if (!(payload && payload.turn && this.acceptExecutionWorkerServiceOwnedResponseProgress({
+    const visibleTurnId = this.resolveRuntimeOwnerVisibleTurnId({
+      sessionId,
+      turnId,
+      request: payload && payload.request,
+      turn: payload && payload.turn,
+    });
+    if (!this.isCurrentRuntimeOwnerTurn(sessionId, payloadTurnId)
+      && !this.isCurrentRuntimeOwnerTurn(sessionId, turnId)
+      && !this.isCurrentRuntimeOwnerTurn(sessionId, visibleTurnId)) {
+      if (!(payload && payload.turn && this.acceptRuntimeOwnerServiceOwnedResponseProgress({
         sessionId,
-        turnId: turnSnapshotId || turnId,
+        turnId: visibleTurnId || turnSnapshotId || turnId,
         request: payload.request,
         revision: payload.revision,
         turn: payload.turn,
@@ -1182,15 +1480,17 @@ class ChatRuntimeHostSessionStore {
     }
     const hasFinalTurn = !!(payload && payload.turn);
     const hasInteraction = !!(payload && payload.interaction && payload.interaction.sessionId === sessionId);
-    if (!hasFinalTurn && !hasInteraction && !this.hasExecutionWorkerTurnObservableProgress(sessionId, turnId)) {
+    if (!hasFinalTurn
+      && !hasInteraction
+      && !this.hasRuntimeOwnerTurnObservableProgress(sessionId, visibleTurnId || turnId)) {
       return null;
     }
     const events = [];
     if (payload.turn) {
-      const transcriptEvent = this.cacheExecutionWorkerTurnSnapshot({
+      const transcriptEvent = this.cacheRuntimeOwnerTurnSnapshot({
         ...payload,
         sessionId,
-        turnId: turnSnapshotId || turnId,
+        turnId: visibleTurnId || turnSnapshotId || turnId,
       });
       if (transcriptEvent) {
         events.push(transcriptEvent);
@@ -1212,12 +1512,12 @@ class ChatRuntimeHostSessionStore {
       Number(payload.state && payload.state.transcriptRevision) || 0,
       events.reduce((maxRevision, event) => Math.max(maxRevision, Number(event && event.revision) || 0), 0),
     );
-    const workerState = payload.state && typeof payload.state === 'object'
+    const ownerState = payload.state && typeof payload.state === 'object'
       ? {
           ...payload.state,
           sessionId,
           requestInProgress: false,
-          activeTurnId: this.normalizeActiveTurnId(payload.state.activeTurnId) || null,
+          activeTurnId: null,
           transcriptRevision,
         }
       : {
@@ -1228,7 +1528,7 @@ class ChatRuntimeHostSessionStore {
           activeTurnId: null,
           transcriptRevision,
         };
-    const state = this.cacheExecutionWorkerReportedSessionState(workerState);
+    const state = this.cacheRuntimeOwnerReportedSessionState(ownerState);
     if (state) {
       events.push(this.buildSessionStateEvent('runtime-status', sessionId));
     }
@@ -1239,13 +1539,13 @@ class ChatRuntimeHostSessionStore {
     switch (method) {
       case 'attachView':
         this.attachView(args && args[0], args && args[1], null, args && args[2]);
-        this.cacheExecutionWorkerReportedSessionState(result);
+        this.cacheRuntimeOwnerReportedSessionState(result);
         return;
       case 'readSessionState':
         this.cacheSessionState(result);
         return;
       case 'submitTurn':
-        this.cacheExecutionWorkerReportedSessionState(result);
+        this.cacheRuntimeOwnerReportedSessionState(result);
         return;
       case 'detachView':
         this.detachView(args && args[0], args && args[1]);
@@ -1279,7 +1579,8 @@ class ChatRuntimeHostSessionStore {
     switch (method) {
       case 'readSubmitReadiness': {
         const state = this.buildSessionState(sessionId);
-        return state && state.requestInProgress === true
+        const activeSubmittedRequestInProgress = this.activeSubmittedRequests.has(sessionId);
+        return (state && state.requestInProgress === true) || activeSubmittedRequestInProgress
           ? {
               sessionId,
               canSubmit: false,
@@ -1321,7 +1622,7 @@ class ChatRuntimeHostSessionStore {
     }
   }
 
-  readExecutionWorkerUnavailableHostCommandResult(method, args) {
+  readRuntimeOwnerUnavailableHostCommandResult(method, args) {
     if (method === 'attachView') {
       return this.attachView(args && args[0], args && args[1], null, args && args[2]);
     }
@@ -1368,16 +1669,27 @@ class ChatRuntimeHostSessionStore {
     if (!sessionId) {
       throw new Error('[AilyChat][RuntimeHost] submitTurn requires a session id.');
     }
-    this.cacheSubmittedTurnInventoryMetadata(sessionId, request);
     const previousState = this.buildSessionState(sessionId);
+    if ((previousState && previousState.requestInProgress === true)
+      || this.activeSubmittedRequests.has(sessionId)) {
+      const error = new Error('[AilyChat][RuntimeHost] Cannot submit a new turn while the service-owned request model is still running.');
+      error.code = 'request_in_progress';
+      error.retryable = true;
+      error.sessionId = sessionId;
+      throw error;
+    }
     const activeTurnId = this.normalizeActiveTurnId(request && request.activeResponseHandle)
       || this.createSubmittedTurnId(sessionId);
+    const submittedRequest = this.buildSubmittedRequestWithStableId(request, activeTurnId);
+    this.cacheSubmittedTurnInventoryMetadata(sessionId, submittedRequest);
+    this.activeSubmittedRequests.set(sessionId, clonePayload(submittedRequest));
     const transcript = this.transcriptBuilder.seedSubmittedTurn({
       sessionId,
       turnId: activeTurnId,
-      request,
+      request: submittedRequest,
       revision: Number(previousState && previousState.transcriptRevision) || 0,
       timestamp: Date.now(),
+      protocolTruncation: request && request.protocolTruncation ? request.protocolTruncation : null,
     });
     const nextState = {
       ...previousState,
@@ -1389,8 +1701,8 @@ class ChatRuntimeHostSessionStore {
       transcriptRevision: transcript
         ? Number(transcript.revision) || 0
         : Number(previousState && previousState.transcriptRevision) || 0,
-      selectedMode: request && request.selectedMode !== undefined
-        ? request.selectedMode ?? null
+      selectedMode: submittedRequest && submittedRequest.selectedMode !== undefined
+        ? submittedRequest.selectedMode ?? null
         : previousState.selectedMode ?? null,
       providerOptions: request && request.providerOptions !== undefined
         ? request.providerOptions ?? null
@@ -1401,6 +1713,39 @@ class ChatRuntimeHostSessionStore {
     };
     this.sessionStates.set(sessionId, clonePayload(nextState));
     return clonePayload(nextState);
+  }
+
+  buildSubmittedRequestWithStableId(request, activeTurnId) {
+    const sourceRequest = request && typeof request === 'object' ? request : {};
+    const normalizedActiveTurnId = this.normalizeActiveTurnId(activeTurnId);
+    const metadata = sourceRequest.metadata && typeof sourceRequest.metadata === 'object'
+      ? clonePayload(sourceRequest.metadata)
+      : {};
+    const requestId = this.normalizeActiveTurnId(metadata.requestId) || normalizedActiveTurnId;
+    if (requestId) {
+      metadata.requestId = requestId;
+    }
+    const checkpointId = this.normalizeActiveTurnId(metadata.checkpointId)
+      || this.createSubmittedCheckpointId(normalizedActiveTurnId || requestId);
+    if (checkpointId) {
+      metadata.checkpointId = checkpointId;
+    }
+    return {
+      ...clonePayload(sourceRequest),
+      ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
+      activeResponseHandle: normalizedActiveTurnId || sourceRequest.activeResponseHandle || null,
+    };
+  }
+
+  createSubmittedCheckpointId(activeTurnId) {
+    const normalizedActiveTurnId = this.normalizeActiveTurnId(activeTurnId);
+    this.submittedCheckpointSequence += 1;
+    const suffix = `${Date.now().toString(36)}-${this.submittedCheckpointSequence.toString(36)}`;
+    if (!normalizedActiveTurnId) {
+      return `cp_${suffix}`;
+    }
+    const safeTurnId = normalizedActiveTurnId.replace(/[^A-Za-z0-9_-]+/g, '_');
+    return `cp_${safeTurnId}_${suffix}`;
   }
 
   createSubmittedTurnId(sessionId) {
@@ -1416,12 +1761,30 @@ class ChatRuntimeHostSessionStore {
     if (!normalizedSessionId || !activeTurnId) {
       return null;
     }
-    return this.transcriptBuilder.markTurnFailed({
+    let transcript = this.transcriptBuilder.markTurnFailed({
       sessionId: normalizedSessionId,
       turnId: activeTurnId,
       revision,
       error,
     });
+    if (transcript) {
+      return transcript;
+    }
+
+    this.transcriptBuilder.seedSubmittedTurn({
+      sessionId: normalizedSessionId,
+      turnId: activeTurnId,
+      request: this.readActiveSubmittedRequest(normalizedSessionId) ?? { sessionId: normalizedSessionId },
+      revision,
+      timestamp: Date.now(),
+    });
+    transcript = this.transcriptBuilder.markTurnFailed({
+      sessionId: normalizedSessionId,
+      turnId: activeTurnId,
+      revision,
+      error,
+    });
+    return transcript;
   }
 
   cacheSubmittedTurnInventoryMetadata(sessionId, request) {
@@ -1473,11 +1836,13 @@ class ChatRuntimeHostSessionStore {
       sessionId: normalizedSessionId,
       status: 'failed',
       requestInProgress: false,
+      activeTurnId: this.normalizeActiveTurnId(previousState.activeTurnId) || previousState.activeTurnId || null,
       attachedViewIds: this.readAttachedViewIds(normalizedSessionId),
       transcriptRevision: this.transcriptBuilder.readTranscriptRevision(normalizedSessionId),
     };
     this.sessionStates.set(normalizedSessionId, clonePayload(nextState));
     this.resolveCompletionWaiters(normalizedSessionId);
+    this.activeSubmittedRequests.delete(normalizedSessionId);
     return clonePayload(nextState);
   }
 
@@ -1493,6 +1858,32 @@ class ChatRuntimeHostSessionStore {
       .filter(Boolean);
   }
 
+  cancelRunningTurn(sessionId, turnId, revision) {
+    const normalizedSessionId = normalizeSessionId(sessionId);
+    const normalizedTurnId = this.normalizeActiveTurnId(turnId);
+    if (!normalizedSessionId || !normalizedTurnId) {
+      return null;
+    }
+    const previousState = this.buildSessionState(normalizedSessionId);
+    const transcript = this.transcriptBuilder.cancelTurn({
+      sessionId: normalizedSessionId,
+      turnId: normalizedTurnId,
+      revision: revision ?? (Number(previousState && previousState.transcriptRevision) || 0),
+      timestamp: Date.now(),
+    });
+    if (!transcript) {
+      return null;
+    }
+    const nextState = {
+      ...previousState,
+      sessionId: normalizedSessionId,
+      transcriptRevision: Number(transcript.revision) || Number(previousState && previousState.transcriptRevision) || 0,
+      attachedViewIds: this.readAttachedViewIds(normalizedSessionId),
+    };
+    this.sessionStates.set(normalizedSessionId, clonePayload(nextState));
+    return clonePayload(transcript);
+  }
+
   stopSession(sessionId) {
     const normalizedSessionId = normalizeSessionId(sessionId);
     if (!normalizedSessionId) {
@@ -1504,10 +1895,12 @@ class ChatRuntimeHostSessionStore {
       sessionId: normalizedSessionId,
       status: 'stopped',
       requestInProgress: false,
+      activeTurnId: null,
       attachedViewIds: this.readAttachedViewIds(normalizedSessionId),
     };
     this.sessionStates.set(normalizedSessionId, clonePayload(nextState));
     this.resolveCompletionWaiters(normalizedSessionId);
+    this.activeSubmittedRequests.delete(normalizedSessionId);
     return clonePayload(nextState);
   }
 
@@ -1526,6 +1919,7 @@ class ChatRuntimeHostSessionStore {
     };
     this.sessionStates.set(normalizedSessionId, clonePayload(disposedState));
     this.resolveCompletionWaiters(normalizedSessionId);
+    this.activeSubmittedRequests.delete(normalizedSessionId);
     this.clearSession(normalizedSessionId);
     return clonePayload(disposedState);
   }
@@ -1567,10 +1961,15 @@ class ChatRuntimeHostSessionStore {
       : '';
   }
 
-  acceptExecutionWorkerServiceOwnedResponseProgress({ sessionId, turnId, request, revision, renderEvent, turn }) {
+  acceptRuntimeOwnerServiceOwnedResponseProgress({ sessionId, turnId, request, revision, renderEvent, turn }) {
     const normalizedSessionId = normalizeSessionId(sessionId);
-    const canonicalTurnId = this.normalizeActiveTurnId(turnId);
-    if (!normalizedSessionId || !canonicalTurnId || !this.hasHostSession(normalizedSessionId)) {
+    const visibleTurnId = this.resolveRuntimeOwnerVisibleTurnId({
+      sessionId: normalizedSessionId,
+      turnId,
+      request,
+      turn,
+    });
+    if (!normalizedSessionId || !visibleTurnId || !this.hasHostSession(normalizedSessionId)) {
       return false;
     }
 
@@ -1584,19 +1983,27 @@ class ChatRuntimeHostSessionStore {
       ? transcript.turnResponses
       : [];
     const existingTurn = turns.find(item =>
-      this.normalizeActiveTurnId(item && item.turnId) === canonicalTurnId);
-    const previousActiveTurnId = this.normalizeActiveTurnId(previousState && previousState.activeTurnId);
-    const isAlreadyCurrent = previousState
-      && previousState.requestInProgress === true
-      && previousActiveTurnId === canonicalTurnId;
-    if (existingTurn && this.turnHasObservableProgress(existingTurn) && !isAlreadyCurrent) {
-      return false;
-    }
-
+      this.normalizeActiveTurnId(item && item.turnId) === visibleTurnId);
     const hasModelProgress = (renderEvent && typeof renderEvent === 'object')
       || this.turnHasObservableProgress(turn);
     if (!hasModelProgress) {
       return false;
+    }
+
+    const effectiveRequest = request || this.readActiveSubmittedRequest(normalizedSessionId);
+    const previousActiveTurnId = this.normalizeActiveTurnId(previousState && previousState.activeTurnId);
+    const isAlreadyCurrent = previousState
+      && previousState.requestInProgress === true
+      && previousActiveTurnId === visibleTurnId;
+    if (existingTurn && this.turnHasObservableProgress(existingTurn) && !isAlreadyCurrent) {
+      const isSettledTurnSnapshotUpdate = this.isSettledRuntimeOwnerTurnSnapshotUpdate({
+        existingTurn,
+        incomingTurn: turn,
+        request: effectiveRequest,
+      });
+      if (!isSettledTurnSnapshotUpdate) {
+        return false;
+      }
     }
 
     let nextTranscriptRevision = Math.max(
@@ -1605,26 +2012,21 @@ class ChatRuntimeHostSessionStore {
       Number(revision) || 0,
     );
     if (!existingTurn) {
-      const requestId = this.readSubmitRequestId(request) || this.readTurnRequestId(turn);
+      const requestId = this.readSubmitRequestId(effectiveRequest) || this.readTurnRequestId(turn);
       const seedTurn = this.findEmptyServiceOwnedResponseSeed({
         transcript,
         preferredTurnId: previousActiveTurnId,
         requestId,
       });
       const seedTurnId = this.normalizeActiveTurnId(seedTurn && seedTurn.turnId);
-      const seededTranscript = seedTurnId
-        ? this.transcriptBuilder.replaceTurnId({
-          sessionId: normalizedSessionId,
-          fromTurnId: seedTurnId,
-          toTurnId: canonicalTurnId,
-          revision,
-        })
+      const seededTranscript = seedTurnId && seedTurnId === visibleTurnId
+        ? transcript
         : this.transcriptBuilder.seedSubmittedTurn({
           sessionId: normalizedSessionId,
-          turnId: canonicalTurnId,
-          request: this.buildExecutionWorkerServiceOwnedResponseRequest({
+          turnId: visibleTurnId,
+          request: this.buildRuntimeOwnerServiceOwnedResponseRequest({
             sessionId: normalizedSessionId,
-            request,
+            request: effectiveRequest,
             turn,
           }),
           revision,
@@ -1643,23 +2045,23 @@ class ChatRuntimeHostSessionStore {
       sessionId: normalizedSessionId,
       status: 'running',
       requestInProgress: true,
-      activeTurnId: canonicalTurnId,
+      activeTurnId: visibleTurnId,
       transcriptRevision: nextTranscriptRevision,
-      selectedMode: request && request.selectedMode !== undefined
-        ? request.selectedMode ?? null
+      selectedMode: effectiveRequest && effectiveRequest.selectedMode !== undefined
+        ? effectiveRequest.selectedMode ?? null
         : previousState && previousState.selectedMode !== undefined ? previousState.selectedMode ?? null : null,
-      providerOptions: request && request.providerOptions !== undefined
-        ? request.providerOptions ?? null
+      providerOptions: effectiveRequest && effectiveRequest.providerOptions !== undefined
+        ? effectiveRequest.providerOptions ?? null
         : previousState && previousState.providerOptions !== undefined ? previousState.providerOptions ?? null : null,
-      currentModel: request && request.currentModel !== undefined
-        ? request.currentModel ?? null
+      currentModel: effectiveRequest && effectiveRequest.currentModel !== undefined
+        ? effectiveRequest.currentModel ?? null
         : previousState && previousState.currentModel !== undefined ? previousState.currentModel ?? null : null,
       attachedViewIds: this.readAttachedViewIds(normalizedSessionId),
     }));
     return true;
   }
 
-  buildExecutionWorkerServiceOwnedResponseRequest({ sessionId, request, turn }) {
+  buildRuntimeOwnerServiceOwnedResponseRequest({ sessionId, request, turn }) {
     const sourceRequest = request && typeof request === 'object' ? request : {};
     const turnRequest = turn && turn.request && typeof turn.request === 'object'
       ? turn.request
@@ -1705,6 +2107,93 @@ class ChatRuntimeHostSessionStore {
       ? request.metadata
       : null;
     return this.normalizeActiveTurnId(metadata && metadata.requestId);
+  }
+
+  isSettledRuntimeOwnerTurnSnapshotUpdate({ existingTurn, incomingTurn, request }) {
+    if (!incomingTurn || typeof incomingTurn !== 'object') {
+      return false;
+    }
+
+    const existingTurnId = this.normalizeActiveTurnId(existingTurn && existingTurn.turnId);
+    const incomingTurnId = this.normalizeActiveTurnId(incomingTurn && incomingTurn.turnId);
+    if (!existingTurnId || existingTurnId !== incomingTurnId) {
+      return false;
+    }
+
+    const existingRequestId = this.readTurnRequestId(existingTurn);
+    const incomingRequestId = this.readSubmitRequestId(request) || this.readTurnRequestId(incomingTurn);
+    if (existingRequestId && incomingRequestId && existingRequestId !== incomingRequestId) {
+      return false;
+    }
+
+    return this.turnHasObservableProgress(incomingTurn);
+  }
+
+  readActiveSubmittedRequest(sessionId) {
+    const normalizedSessionId = normalizeSessionId(sessionId);
+    if (!normalizedSessionId) {
+      return null;
+    }
+    const request = this.activeSubmittedRequests.get(normalizedSessionId);
+    return request ? clonePayload(request) : null;
+  }
+
+  resolveRuntimeOwnerVisibleTurnId({ sessionId, turnId, request, turn }) {
+    const normalizedSessionId = normalizeSessionId(sessionId);
+    const ownerTurnId = this.normalizeActiveTurnId(turnId);
+    if (!normalizedSessionId || !ownerTurnId) {
+      return ownerTurnId;
+    }
+    const state = this.buildSessionState(normalizedSessionId);
+    const activeTurnId = this.normalizeActiveTurnId(state && state.activeTurnId);
+    if (!activeTurnId || state.requestInProgress !== true) {
+      return ownerTurnId;
+    }
+    if (activeTurnId === ownerTurnId) {
+      return activeTurnId;
+    }
+    const activeRequest = this.activeSubmittedRequests.get(normalizedSessionId);
+    if (!activeRequest) {
+      return this.hasRuntimeOwnerTurnObservableProgress(normalizedSessionId, ownerTurnId)
+        ? ownerTurnId
+        : activeTurnId;
+    }
+    const activeRequestId = this.readSubmitRequestId(activeRequest);
+    const ownerRequestId = this.readSubmitRequestId(request) || this.readTurnRequestId(turn);
+    if (!ownerRequestId || !activeRequestId || ownerRequestId === activeRequestId) {
+      return activeTurnId;
+    }
+    return ownerTurnId;
+  }
+
+  retargetRuntimeOwnerTurnSnapshot(turn, visibleTurnId) {
+    const normalizedTurnId = this.normalizeActiveTurnId(visibleTurnId);
+    if (!turn || typeof turn !== 'object' || !normalizedTurnId) {
+      return turn;
+    }
+    const nextTurn = clonePayload(turn);
+    nextTurn.turnId = normalizedTurnId;
+    if (nextTurn.response && typeof nextTurn.response === 'object') {
+      nextTurn.response = {
+        ...nextTurn.response,
+        id: normalizedTurnId,
+      };
+    }
+    return nextTurn;
+  }
+
+  retargetRuntimeOwnerRenderEvent(event, visibleTurnId) {
+    const normalizedTurnId = this.normalizeActiveTurnId(visibleTurnId);
+    if (!event || typeof event !== 'object' || !normalizedTurnId) {
+      return event;
+    }
+    if (this.normalizeActiveTurnId(event.turnId) === normalizedTurnId) {
+      return event;
+    }
+    return {
+      ...clonePayload(event),
+      turnId: normalizedTurnId,
+    };
   }
 
   readCanonicalTurnSnapshotId(turn) {
@@ -1762,7 +2251,7 @@ class ChatRuntimeHostSessionStore {
     return null;
   }
 
-  hasExecutionWorkerTurnObservableProgress(sessionId, turnId) {
+  hasRuntimeOwnerTurnObservableProgress(sessionId, turnId) {
     const normalizedSessionId = normalizeSessionId(sessionId);
     const normalizedTurnId = this.normalizeActiveTurnId(turnId);
     if (!normalizedSessionId || !normalizedTurnId) {
@@ -1775,7 +2264,7 @@ class ChatRuntimeHostSessionStore {
     return this.turnHasObservableProgress(turn);
   }
 
-  seedExecutionWorkerReportedActiveTurn({ sessionId, turnId, revision, workerState }) {
+  seedRuntimeOwnerReportedActiveTurn({ sessionId, turnId, revision, ownerState }) {
     const normalizedSessionId = normalizeSessionId(sessionId);
     const normalizedTurnId = this.normalizeActiveTurnId(turnId);
     if (!normalizedSessionId || !normalizedTurnId) {
@@ -1794,10 +2283,10 @@ class ChatRuntimeHostSessionStore {
       turnId: normalizedTurnId,
       request: {
         sessionId: normalizedSessionId,
-        requestText: typeof workerState?.requestText === 'string' ? workerState.requestText : '',
-        displayText: typeof workerState?.displayText === 'string' ? workerState.displayText : undefined,
-        selectedMode: workerState && workerState.selectedMode !== undefined ? workerState.selectedMode : undefined,
-        providerOptions: workerState && workerState.providerOptions !== undefined ? workerState.providerOptions : undefined,
+        requestText: typeof ownerState?.requestText === 'string' ? ownerState.requestText : '',
+        displayText: typeof ownerState?.displayText === 'string' ? ownerState.displayText : undefined,
+        selectedMode: ownerState && ownerState.selectedMode !== undefined ? ownerState.selectedMode : undefined,
+        providerOptions: ownerState && ownerState.providerOptions !== undefined ? ownerState.providerOptions : undefined,
       },
       revision,
       timestamp: Date.now(),
@@ -1835,7 +2324,7 @@ class ChatRuntimeHostSessionStore {
     return false;
   }
 
-  isCurrentExecutionWorkerTurn(sessionId, turnId) {
+  isCurrentRuntimeOwnerTurn(sessionId, turnId) {
     const normalizedSessionId = normalizeSessionId(sessionId);
     const normalizedTurnId = this.normalizeActiveTurnId(turnId);
     if (!normalizedSessionId || !normalizedTurnId) {
@@ -1855,17 +2344,17 @@ class ChatRuntimeHostSessionStore {
       || status === 'cancelled';
   }
 
-  normalizeExecutionWorkerSettledStatus(status) {
+  normalizeRuntimeOwnerSettledStatus(status) {
     return typeof status === 'string' && status.trim().length > 0
       ? status.trim()
       : 'idle';
   }
 
-  normalizeIdleExecutionWorkerStatus(previousStatus, workerStatus) {
+  normalizeIdleRuntimeOwnerStatus(previousStatus, ownerStatus) {
     if (typeof previousStatus === 'string' && previousStatus.trim().length > 0) {
       return previousStatus;
     }
-    return this.normalizeExecutionWorkerSettledStatus(workerStatus);
+    return this.normalizeRuntimeOwnerSettledStatus(ownerStatus);
   }
 
   buildSessionStateEvent(kind, sessionId) {

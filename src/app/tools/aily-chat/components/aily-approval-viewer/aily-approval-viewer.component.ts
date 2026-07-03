@@ -1,5 +1,6 @@
-import { Component, Input, OnInit } from '@angular/core';
+import { Component, Input, OnInit, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { TranslateService } from '@ngx-translate/core';
 import { AILY_CONFIRMATION_RESULT_EVENT } from '../../helpers/interaction-events';
 
 export interface AilyConfirmationData {
@@ -25,13 +26,15 @@ export interface AilyConfirmationData {
   styleUrls: ['./aily-approval-viewer.component.scss']
 })
 export class AilyConfirmationViewerComponent implements OnInit {
+  private readonly translate = inject(TranslateService);
+
   @Input() data: AilyConfirmationData | null = null;
 
   partId = '';
   askId = '';
   toolCallId = '';
   toolName = '';
-  title = '确认操作';
+  title = '';
   message = '';
   resolved = false;
   approved = false;
@@ -51,7 +54,7 @@ export class AilyConfirmationViewerComponent implements OnInit {
     this.askId = this.data.askId || '';
     this.toolCallId = this.data.toolCallId || '';
     this.toolName = this.data.toolName || '';
-    this.title = this.data.title || '确认操作';
+    this.title = this.data.title || this.translate.instant('AILY_CHAT.PROCESS_APPROVAL_DEFAULT_TITLE');
     this.message = this.data.message || '';
     this.resolved = !!this.data.resolved;
     this.approved = !!this.data.approved;
@@ -72,8 +75,8 @@ export class AilyConfirmationViewerComponent implements OnInit {
     this.approved = false;
     document.dispatchEvent(new CustomEvent(AILY_CONFIRMATION_RESULT_EVENT, {
       detail: this.toolCallId
-        ? { toolCallId: this.toolCallId, approved: false, reason: '用户拒绝执行' }
-        : { askId: this.askId, partId: this.partId, approved: false, reason: '用户拒绝执行' }
+        ? { toolCallId: this.toolCallId, approved: false, reason: this.translate.instant('AILY_CHAT.PROCESS_CONFIRM_REJECT_REASON') }
+        : { askId: this.askId, partId: this.partId, approved: false, reason: this.translate.instant('AILY_CHAT.PROCESS_CONFIRM_REJECT_REASON') }
     }));
   }
 

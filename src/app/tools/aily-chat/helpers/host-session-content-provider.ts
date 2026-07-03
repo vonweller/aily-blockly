@@ -47,6 +47,8 @@ export interface HostSessionContentMetadataSource {
     readonly requestModeId?: unknown;
     readonly customAgentTarget?: unknown;
     readonly permissionLevel?: unknown;
+    readonly approvalsReviewer?: unknown;
+    readonly approvalPolicy?: unknown;
   } | null;
   readonly interactionActionSummary?: HostSessionInteractionActionSummary | null;
   readonly inputState?: {
@@ -108,6 +110,12 @@ export class HostSessionContentProvider {
       ...(isCurrentSession && this.ctx.chatService.currentSessionPermissionLevel
         ? { permissionLevel: this.ctx.chatService.currentSessionPermissionLevel }
         : {}),
+      ...(isCurrentSession && this.ctx.chatService.currentSessionApprovalsReviewer
+        ? { approvalsReviewer: this.ctx.chatService.currentSessionApprovalsReviewer }
+        : {}),
+      ...(isCurrentSession && this.ctx.chatService.currentSessionApprovalPolicy
+        ? { approvalPolicy: this.ctx.chatService.currentSessionApprovalPolicy }
+        : {}),
     });
     const providerOptions = effectiveMetadata
       ? resolveHostSessionProviderOptionsFromInputState(effectiveMetadata.inputState, {
@@ -116,6 +124,12 @@ export class HostSessionContentProvider {
           permissionLevel: typeof effectiveMetadata.requestRouting?.permissionLevel === 'string' && effectiveMetadata.requestRouting.permissionLevel.trim().length > 0
             ? effectiveMetadata.requestRouting.permissionLevel.trim()
             : providerOptionFallback.permissionLevel,
+          approvalsReviewer: effectiveMetadata.requestRouting?.approvalsReviewer === 'auto_review' || effectiveMetadata.requestRouting?.approvalsReviewer === 'user'
+            ? effectiveMetadata.requestRouting.approvalsReviewer
+            : providerOptionFallback.approvalsReviewer,
+          approvalPolicy: effectiveMetadata.requestRouting?.approvalPolicy === 'never' || effectiveMetadata.requestRouting?.approvalPolicy === 'on_request'
+            ? effectiveMetadata.requestRouting.approvalPolicy
+            : providerOptionFallback.approvalPolicy,
         })
       : providerOptionFallback;
     const normalizedProjectPath = effectiveMetadata
