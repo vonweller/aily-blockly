@@ -297,6 +297,7 @@
             "COMPILATION": "컴파일 설정",
             "REPOSITORY": "저장소 설정",
             "DEPENDENCIES": "글로벌 종속성",
+            "AILY_BUILDER": "aily-builder",
             "MCP": "MCP",
             "DEVMODE": "개발자 모드",
             "CACHE": "캐시 관리"
@@ -323,6 +324,13 @@
             "LIBRARY_LIST": "라이브러리 목록",
             "INSTALL": "설치",
             "UNINSTALL": "제거",
+            "AILY_BUILDER_CURRENT_VERSION": "현재 버전",
+            "AILY_BUILDER_UPDATE": "업데이트",
+            "AILY_BUILDER_UNKNOWN": "알 수 없음",
+            "AILY_BUILDER_NOT_INSTALLED": "설치되지 않음",
+            "AILY_BUILDER_UP_TO_DATE": "최신 상태",
+            "AILY_BUILDER_UPDATE_DONE": "aily-builder 업데이트 완료",
+            "AILY_BUILDER_UPDATE_FAILED": "aily-builder 업데이트 실패",
             "OPEN_CACHE_FOLDER": "캐시 폴더 열기"
         },
         "BUTTONS": {

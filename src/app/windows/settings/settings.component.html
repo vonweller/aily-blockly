@@ -169,6 +169,39 @@
               </div>
             </div>
           </div>
+          <!-- aily-builder 设置 -->
+          <div id="SETTINGS.SECTIONS.AILY_BUILDER" class="section">
+            <h2 class="section-title">{{ 'SETTINGS.SECTIONS.AILY_BUILDER' | translate }}</h2>
+            <div class="right-inner">
+              <div class="item">
+                <div>{{ 'SETTINGS.FIELDS.AILY_BUILDER_CURRENT_VERSION' | translate }}:</div>
+                <div class="builder-setting-inline">
+                  <div class="builder-version">
+                  <strong>{{ ailyBuilderStatus?.installedVersion || ('SETTINGS.FIELDS.AILY_BUILDER_NOT_INSTALLED' | translate) }}</strong>
+                  @if (ailyBuilderStatus?.updateAvailable && ailyBuilderStatus?.targetVersion) {
+                  <span class="version">→ {{ ailyBuilderStatus.targetVersion }}</span>
+                  }
+                  </div>
+                  <div class="builder-update-row">
+                    @if (getAilyBuilderStatusText()) {
+                    <span class="builder-status" [ngClass]="{
+                      updating: ailyBuilderUpdating || ailyBuilderStatus?.installing,
+                      warning: ailyBuilderStatus?.updateAvailable || !ailyBuilderStatus?.installed
+                    }">{{ getAilyBuilderStatusText() }}</span>
+                    }
+                    @if (!ailyBuilderStatus?.installed || ailyBuilderStatus?.updateAvailable || ailyBuilderUpdating || ailyBuilderStatus?.installing) {
+                    <button nz-button nzSize="small" [nzLoading]="ailyBuilderUpdating || ailyBuilderStatus?.installing"
+                      [disabled]="ailyBuilderUpdating || ailyBuilderStatus?.installing" (click)="updateAilyBuilder()">
+                      @if (!ailyBuilderUpdating && !ailyBuilderStatus?.installing) {
+                      {{ 'SETTINGS.FIELDS.AILY_BUILDER_UPDATE' | translate }}
+                      }
+                    </button>
+                    }
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
           <!-- 缓存管理 -->
           <div id="SETTINGS.SECTIONS.CACHE" class="section">
             <h2 class="section-title">

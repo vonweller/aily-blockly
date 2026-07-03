@@ -80,6 +80,10 @@ export class SettingsComponent implements OnDestroy {
       name: 'SETTINGS.SECTIONS.DEPENDENCIES',
       icon: 'fa-light fa-layer-group'
     },
+    {
+      name: 'SETTINGS.SECTIONS.AILY_BUILDER',
+      icon: 'fa-light fa-hammer'
+    },
     // {
     //   name: 'SETTINGS.SECTIONS.MCP',
     //   icon: 'fa-light fa-webhook'
@@ -103,6 +107,9 @@ export class SettingsComponent implements OnDestroy {
 
   // 用于跟踪安装/卸载状态
   boardOperations = {};
+  ailyBuilderStatus: any = null;
+  ailyBuilderUpdating = false;
+  private ailyBuilderStatusTimer: ReturnType<typeof setTimeout> | null = null;
 
   // 搜索关键字
   boardSearchKeyword: string = '';
@@ -270,6 +277,7 @@ export class SettingsComponent implements OnDestroy {
   ngOnDestroy() {
     this.scrollElement?.removeEventListener('scroll', this.scrollHandler);
     this.clearScrollEndTimer();
+    this.clearAilyBuilderStatusTimer();
     this._clearCacheSubscription?.unsubscribe();
     if (this._clearCacheLoadingRef) {
       this.message.remove(this._clearCacheLoadingRef);
@@ -285,6 +293,7 @@ export class SettingsComponent implements OnDestroy {
     this.scrollElement = this.scrollContainer?.SimpleBar?.getScrollElement() || null;
     this.scrollElement?.addEventListener('scroll', this.scrollHandler);
     await this.updateBoardList();
+    await this.loadAilyBuilderStatus();
     this.loadCacheStats();
   }
 
@@ -298,6 +307,72 @@ export class SettingsComponent implements OnDestroy {
     this.settingsService.getToolList(this.appdata_path, npmRegistry);
     this.settingsService.getSdkList(this.appdata_path, npmRegistry);
     this.settingsService.getCompilerList(this.appdata_path, npmRegistry);
+  }
+
+  async loadAilyBuilderStatus() {
+    if (!window['builder']?.status) {
+      return;
+    }
+    try {
+      const updateCheck = await window['packageUpdates']?.check?.();
+      this.ailyBuilderStatus = updateCheck?.ailyBuilder || await window['builder'].status();
+      if (this.ailyBuilderStatus?.installing) {
+        this.scheduleAilyBuilderStatusReload();
+      }
+    } catch (error) {
+      console.warn('加载 aily-builder 状态失败:', error);
+      this.ailyBuilderStatus = null;
+    }
+  }
+
+  getAilyBuilderStatusText() {
+    if (!this.ailyBuilderStatus) {
+      return this.translateService.instant('SETTINGS.FIELDS.AILY_BUILDER_UNKNOWN');
+    }
+    if (this.ailyBuilderUpdating || this.ailyBuilderStatus.installing) {
+      return '';
+    }
+    if (!this.ailyBuilderStatus.installed) {
+      return this.translateService.instant('SETTINGS.FIELDS.AILY_BUILDER_NOT_INSTALLED');
+    }
+    if (this.ailyBuilderStatus.updateAvailable) {
+      return '';
+    }
+    return this.translateService.instant('SETTINGS.FIELDS.AILY_BUILDER_UP_TO_DATE');
+  }
+
+  async updateAilyBuilder() {
+    if (!window['builder']?.update || this.ailyBuilderUpdating) {
+      return;
+    }
+
+    const targetVersion = this.ailyBuilderStatus?.targetVersion;
+    this.ailyBuilderUpdating = true;
+    try {
+      await window['builder'].update(targetVersion);
+      await this.loadAilyBuilderStatus();
+      this.message.success(this.translateService.instant('SETTINGS.FIELDS.AILY_BUILDER_UPDATE_DONE'));
+    } catch (error: any) {
+      console.error('aily-builder 更新失败:', error);
+      this.message.error(error?.message || this.translateService.instant('SETTINGS.FIELDS.AILY_BUILDER_UPDATE_FAILED'));
+    } finally {
+      this.ailyBuilderUpdating = false;
+    }
+  }
+
+  private scheduleAilyBuilderStatusReload() {
+    this.clearAilyBuilderStatusTimer();
+    this.ailyBuilderStatusTimer = setTimeout(() => {
+      this.ailyBuilderStatusTimer = null;
+      this.loadAilyBuilderStatus();
+    }, 2000);
+  }
+
+  private clearAilyBuilderStatusTimer() {
+    if (this.ailyBuilderStatusTimer) {
+      clearTimeout(this.ailyBuilderStatusTimer);
+      this.ailyBuilderStatusTimer = null;
+    }
   }
 
   selectLang(lang) {
@@ -314,7 +389,7 @@ export class SettingsComponent implements OnDestroy {
     const element = document.getElementById(item.name);
     if (element && this.scrollElement) {
       this.scrollElement.scrollTo({
-        top: element.offsetTop - 12,
+        top: Math.max(element.offsetTop - 12, 0),
         behavior: 'smooth'
       });
       this.scheduleScrollEnd();

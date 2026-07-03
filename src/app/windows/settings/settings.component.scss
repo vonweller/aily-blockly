@@ -121,6 +121,50 @@ textarea {
   }
 }
 
+.builder-setting-inline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  flex: 1;
+}
+
+.builder-version {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+
+  strong {
+    font-weight: 500;
+    color: var(--aily-text-primary);
+  }
+
+  .version {
+    color: var(--aily-color-primary-alt);
+  }
+}
+
+.builder-update-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+
+  .builder-status {
+    color: var(--aily-text-secondary);
+    white-space: nowrap;
+
+    &.updating {
+      color: var(--aily-color-primary-alt);
+    }
+
+    &.warning {
+      color: var(--aily-text-primary);
+    }
+  }
+}
+
 .right {
   height: 100%; // 确保占满整个高度
 

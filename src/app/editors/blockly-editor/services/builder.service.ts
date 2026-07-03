@@ -262,6 +262,12 @@ export class _BuilderService {
         if (!code) {
           return;
         }
+        try {
+          await this.ensureAilyBuilderReady();
+        } catch (error) {
+          console.warn('aily-builder 未准备完成，跳过本次后台预处理:', error);
+          return;
+        }
         const currentProjectPath = this.projectService.currentProjectPath;
         const ailyBuilderPath = window['path'].getAilyBuilderPath();
         const ailyBuilderCommand = window['path'].getAilyBuilderCommand();
@@ -550,10 +556,18 @@ export class _BuilderService {
     return !!(this.preprocessProcess || this.preprocessStreamId);
   }
 
+  private async ensureAilyBuilderReady(): Promise<void> {
+    if (window['builder']?.ensure) {
+      await window['builder'].ensure();
+    }
+  }
+
   /**
    * 运行预编译脚本（同步等待完成）
    */
   private async runPreprocess(): Promise<void> {
+    await this.ensureAilyBuilderReady();
+
     const currentProjectPath = this.projectService.currentProjectPath;
     const ailyBuilderPath = window['path'].getAilyBuilderPath();
     const ailyBuilderCommand = window['path'].getAilyBuilderCommand();

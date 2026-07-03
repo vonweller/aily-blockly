@@ -21,6 +21,7 @@ export class UpdateService {
   dialogAction = new Subject();
 
   // private updateInfo: any = null;
+  private ailyBuilderUpdateDialogOpen = false;
 
   constructor(
     private electronService: ElectronService,
@@ -80,13 +81,17 @@ export class UpdateService {
     });
     // 应用启动时检查更新
     setTimeout(() => {
-      this.checkForUpdates();
+      this.checkForUpdates(false);
     }, 5000);
+    setTimeout(() => {
+      this.checkPackageUpdates(false);
+    }, 3000);
   }
 
-  checkForUpdates() {
+  checkForUpdates(manual: boolean = false) {
     if (this.electronService.isElectron) {
       window['updater'].checkForUpdates();
+      this.checkPackageUpdates(manual);
     }
   }
 
@@ -122,6 +127,47 @@ export class UpdateService {
   clearSkipVersions() {
     this.configService.data.skippedVersions = [];
     this.configService.save();
+  }
+
+  private async checkPackageUpdates(showOptional: boolean) {
+    if (!window['builder']?.status || !window['builder']?.update) {
+      return;
+    }
+
+    try {
+      const result = await window['packageUpdates']?.check?.();
+      const status = result?.ailyBuilder || await window['builder'].status();
+      const needsUpdate = status && (!status.installed || status.updateAvailable);
+      if (!needsUpdate || this.ailyBuilderUpdateDialogOpen) {
+        return;
+      }
+      if (!status.required && !showOptional) {
+        return;
+      }
+      if (status.required) {
+        await window['builder'].update(status.targetVersion);
+        return;
+      }
+
+      this.ailyBuilderUpdateDialogOpen = true;
+      const modalRef = this.modal.confirm({
+        nzTitle: '发现 aily-builder 更新',
+        nzContent: `发现 aily-builder ${status.targetVersion}，是否现在更新？`,
+        nzOkText: '更新',
+        nzCancelText: '稍后',
+        nzMaskClosable: false,
+        nzBodyStyle: { background: 'var(--aily-bg-primary)' },
+        nzOnOk: async () => {
+          await window['builder'].update(status.targetVersion);
+        }
+      });
+      modalRef.afterClose.subscribe(() => {
+        this.ailyBuilderUpdateDialogOpen = false;
+      });
+    } catch (error) {
+      console.error('检查 aily-builder 更新失败:', error);
+      this.ailyBuilderUpdateDialogOpen = false;
+    }
   }
 
   dialogActionSubscription;
