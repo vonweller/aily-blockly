@@ -64,8 +64,20 @@ import { runChatTodoFocusAction } from './helpers/chat-todo-focus-action';
 import { ChatProcessManagerDialogComponent } from './components/process-manager-dialog/chat-process-manager-dialog.component';
 import { isSessionLifecycleSupersededError, readSessionLifecycleRestoreErrorDetails } from './helpers/session-lifecycle.helper';
 import { openChatProcessWindow } from './helpers/chat-process-window';
+import {
+  buildChildToolProcessSummaries,
+  collapseActiveChildToolServeProcesses,
+  resolveChildToolIdFromProcess,
+  type ChildToolSessionListItem,
+} from './helpers/child-tool-process-summary';
+import { getChildToolConfig } from '../../configs/tool.config';
+import {
+  listPersistedBlocklyCommandSessionSnapshots,
+  listPersistedBlocklyProjectCommandSessionSnapshots,
+} from './helpers/lex-agent-bootstrap';
+import { setChatTranslateService } from './helpers/chat-i18n';
+import { setToolApprovalTranslateService } from './helpers/tool-approval-ui';
 import type { ChatTaskActionDetail } from './helpers/chat-task-action-coordinator';
-import { ProjectRelatedFileStorage } from './components/memory/project-related-file-storage';
 
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { AuthService } from '../../services/auth.service';
@@ -74,7 +86,7 @@ import { AilyEditsViewerComponent } from './components/aily-edits-viewer/aily-ed
 import { TodoUpdateService } from './services/todoUpdate.service';
 import { ArduinoLintService } from './services/arduino-lint.service';
 import { BlocklyService } from '../../editors/blockly-editor/services/blockly.service';
-import { TranslateModule } from '@ngx-translate/core';
+import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { LoginComponent } from '../../components/login/login.component';
 import { NoticeService } from '../../services/notice.service';
 import { AilyChatDebugHomeComponent } from './components/aily-chat-debug-home/aily-chat-debug-home.component';
@@ -106,6 +118,7 @@ import { ChatHistoryService } from './services/chat-history.service';
 import { ChatDebugBrowserService, ChatDebugBrowserViewState } from './services/chat-debug-browser.service';
 import { ChatRuntimeInteractionHostService } from './services/chat-runtime-interaction-host.service';
 import { ThemeService } from '../../services/theme.service';
+import { ToolI18nService } from '../../services/tool-i18n.service';
 import type {
   ChatPaneEntryInfoSurfaceModel,
   ChatPaneSessionPickerSurfaceModel,
@@ -245,6 +258,8 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
   private readonly debugBrowserChangeSubscription: Subscription;
   private readonly sessionViewModelChangeSubscription: Subscription;
   private readonly runtimeProcessSnapshotSubscription: { dispose(): void };
+  private childToolSessionStateCleanup: (() => void) | null = null;
+  private childToolSessions: readonly ChildToolSessionListItem[] = [];
   private runtimeInteractionRevealEffect: { destroy(): void } | null = null;
   private runtimeInteractionRevealTimer: ReturnType<typeof setTimeout> | null = null;
   private lastRuntimeInteractionRevealKey = '';
@@ -280,10 +295,12 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
     private repetitionDetectionService: RepetitionDetectionService,
     private chatHistoryService: ChatHistoryService,
     public debugBrowser: ChatDebugBrowserService,
+    private translate: TranslateService,
     private cdr: ChangeDetectorRef,
     private ngZone: NgZone,
     private builderService: BuilderService,
     private themeService: ThemeService,
+    private toolI18n: ToolI18nService,
     private hostInitializer: AilyChatHostInitializerService,
     public runtimeInteractionHost: ChatRuntimeInteractionHostService,
     public engine: ChatEngineService,
@@ -293,6 +310,8 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
     public menuManager: MenuManagerService,
     public viewState: ChatViewService,
   ) {
+    setChatTranslateService(this.translate);
+    setToolApprovalTranslateService(this.translate);
     ChatPerformanceTracer.increment('entry_open.component_constructor');
     ChatPerformanceTracer.mark('entry_open.component_constructor');
     this.vm = new ChatComponentViewModel({
@@ -322,10 +341,7 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
       if (!snapshot?.sessionId) {
         return;
       }
-      const currentSessionId = this.getCurrentSessionId();
-      if (!currentSessionId || snapshot.sessionId === currentSessionId) {
-        this.cdr.markForCheck();
-      }
+      this.cdr.markForCheck();
     });
     this.sessionViewModelChangeSubscription = this.viewState.sessionViewModelChanged$.subscribe(() => {
       this.syncSessionListDisplayState();
@@ -399,7 +415,7 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
       setInputValue: (value) => {
         this.engine.inputValue = value;
       },
-      isWaiting: () => this.vm.isWaiting,
+      isWaiting: () => this.getCurrentSessionActionState().canStop,
       getEditingPendingKind: () => this.getCurrentPendingFollowupEditKind(),
       navigateInputHistory: (direction, currentValue) => this.navigateInputHistory(direction, currentValue),
       submitCurrentInput: (options) => this.submitCurrentDraftAction(options),
@@ -483,6 +499,10 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
       initializeEngine: () => this.engine.init(this.chatTextarea ?? null),
       detachEngineView: () => this.engine.detachView(),
     });
+    this.childToolSessionStateCleanup = window['childToolSession']?.onStateChanged?.((payload: unknown) => {
+      this.updateChildToolSessions(payload);
+    }) ?? null;
+    void this.refreshChildToolSessions();
   }
 
   shouldShowStopPrimaryAction(): boolean {
@@ -665,6 +685,9 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
   ngOnInit() {
     ChatPerformanceTracer.increment('entry_open.component_ng_on_init');
     ChatPerformanceTracer.mark('entry_open.component_ng_on_init');
+    void this.toolI18n.load('aily-chat').then(() => {
+      this.cdr.markForCheck();
+    });
     this.lifecycleCoordinator.initialize();
     this.ailyChatConfigService.reloadRemoteModelCatalog('chat_view_open');
     this.syncSessionListDisplayState();
@@ -778,13 +801,11 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
   }
 
   async onComposerAddFileRequest(): Promise<void> {
-    const resources = await this.resourceManager.addFileResources();
-    await this.syncSessionRelatedContentFromResources(resources);
+    await this.resourceManager.addFileResources();
   }
 
   async onComposerAddFolderRequest(): Promise<void> {
-    const resource = await this.resourceManager.addFolderResource();
-    await this.syncSessionRelatedContentFromResources(resource ? [resource] : []);
+    await this.resourceManager.addFolderResource();
   }
 
   get sessionPickerSurfaceModel(): ChatPaneSessionPickerSurfaceModel | null {
@@ -797,37 +818,6 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
 
   focusChatInputFromTitleControl(): void {
     this.chatTextarea?.nativeElement?.focus();
-  }
-
-  private async syncSessionRelatedContentFromResources(
-    resources: readonly ResourceItem[],
-  ): Promise<void> {
-    const sessionId = this.vm.sessionId?.trim();
-    const projectPath = this.projectService.currentProjectPath?.trim()
-      || this.projectService.projectRootPath?.trim();
-
-    if (!sessionId || !projectPath) {
-      return;
-    }
-
-    const sourcePaths = resources
-      .filter((item) =>
-        (item.type === 'file' || item.type === 'folder')
-        && typeof item.path === 'string'
-        && item.path.trim().length > 0,
-      )
-      .map((item) => item.path!.trim());
-
-    if (sourcePaths.length === 0) {
-      return;
-    }
-
-    try {
-      const storage = new ProjectRelatedFileStorage(AilyHost.get());
-      storage.importPathReferences('session', projectPath, sourcePaths, sessionId);
-    } catch (error) {
-      console.warn('[AilyChat] 同步会话关联内容失败:', error);
-    }
   }
 
   handleHostHeaderActionRequested(request: ChatHostHeaderActionRequest): void {
@@ -947,6 +937,8 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
     this.debugBrowserChangeSubscription.unsubscribe();
     this.sessionViewModelChangeSubscription.unsubscribe();
     this.runtimeProcessSnapshotSubscription.dispose();
+    this.childToolSessionStateCleanup?.();
+    this.childToolSessionStateCleanup = null;
     this.disconnectDialogContentObserver();
     this.disconnectSessionViewportObserver();
     this.cancelDialogVirtualRafs();
@@ -958,19 +950,24 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
     this.lifecycleCoordinator.detachView();
   }
 
-  shouldShowBackgroundProcessButton(): boolean {
-    return this.getBackgroundRunningProcessCount() > 0;
+  shouldShowProcessEntryButton(): boolean {
+    return this.readVisibleProcessScopeProcesses().some(process => process.removed !== true);
   }
 
-  getBackgroundRunningProcessCount(): number {
-    return this.readCurrentSessionProcesses()
-      .filter(process => process.running === true && process.background === true)
+  getRunningProcessCount(): number {
+    return this.readVisibleProcessScopeProcesses()
+      .filter(process => process.removed !== true && process.running === true)
       .length;
   }
 
   openProcessManagerDialog(): void {
+    const sessionScoped = this.useSessionScopedProcessUi();
     const sessionId = this.getCurrentSessionId();
-    if (!sessionId) {
+    const projectPath = this.resolveCurrentProjectPathForProcessUi();
+    if (sessionScoped && !sessionId) {
+      return;
+    }
+    if (!sessionScoped && !projectPath) {
       return;
     }
 
@@ -978,16 +975,41 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
       nzTitle: null,
       nzFooter: null,
       nzClosable: false,
+      nzCentered: true,
       nzBodyStyle: { padding: '0' },
       nzWidth: 1100,
       nzContent: ChatProcessManagerDialogComponent,
-      nzData: { sessionId },
+      nzData: {
+        ...(sessionId ? { sessionId } : {}),
+        ...(projectPath ? { projectPath } : {}),
+      },
     });
   }
 
-  openProcessWindowForCurrentSession(processId: string, outputSessionId?: string, outputFilePath?: string, command?: string): void {
+  openProcessWindowForCurrentSession(
+    processId: string,
+    outputSessionId?: string,
+    outputFilePath?: string,
+    command?: string,
+    subappName?: string,
+  ): void {
     const sessionId = this.getCurrentSessionId();
     if (!sessionId || !processId) {
+      return;
+    }
+    const toolId = resolveChildToolIdFromProcess({ processId, command, subappName });
+    const resolvedToolId = toolId || resolveChildToolIdFromProcess({
+      processId,
+      command,
+      subappName,
+      outputFilePath,
+      cwd: this.resolveCurrentProjectPathForProcessUi(),
+    });
+    if (resolvedToolId) {
+      const config = getChildToolConfig(resolvedToolId);
+      this.uiService.openToolWindow(resolvedToolId, {
+        title: this.resolveChildToolDisplayName(resolvedToolId, config),
+      });
       return;
     }
     openChatProcessWindow({
@@ -1010,10 +1032,120 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
   private readCurrentSessionProcesses(): readonly ChatRuntimeHostSessionProcessSummary[] {
     const sessionId = this.getCurrentSessionId();
     if (!sessionId) {
-      return [];
+      return this.readActiveChildToolProcesses();
     }
     const snapshot = this.runtimeInteractionHost.readSnapshot(sessionId);
-    return Array.isArray(snapshot.processes) ? snapshot.processes : [];
+    const liveProcesses = Array.isArray(snapshot.processes) ? snapshot.processes : [];
+    const projectPathHint = this.chatHistoryService.findEntry(sessionId)?.projectPath ?? null;
+    const persistedProcesses = listPersistedBlocklyCommandSessionSnapshots(sessionId, projectPathHint);
+    return this.mergeProcessSummaries(
+      [...liveProcesses, ...this.readActiveChildToolProcesses()],
+      persistedProcesses,
+    );
+  }
+
+  private readCurrentProjectProcesses(): readonly ChatRuntimeHostSessionProcessSummary[] {
+    const projectPath = this.resolveCurrentProjectPathForProcessUi();
+    if (!projectPath) {
+      return [];
+    }
+
+    const persistedProcesses = listPersistedBlocklyProjectCommandSessionSnapshots(projectPath);
+    const sessionId = this.getCurrentSessionId();
+    if (!sessionId) {
+      return this.mergeProcessSummaries(this.readActiveChildToolProcesses(), persistedProcesses);
+    }
+
+    const snapshot = this.runtimeInteractionHost.readSnapshot(sessionId);
+    const liveProcesses = Array.isArray(snapshot.processes) ? snapshot.processes : [];
+    return this.mergeProcessSummaries(
+      [...liveProcesses, ...this.readActiveChildToolProcesses()],
+      persistedProcesses,
+    );
+  }
+
+  private readVisibleProcessScopeProcesses(): readonly ChatRuntimeHostSessionProcessSummary[] {
+    if (this.useSessionScopedProcessUi()) {
+      return this.readCurrentSessionProcesses();
+    }
+    return this.readCurrentProjectProcesses();
+  }
+
+  private useSessionScopedProcessUi(): boolean {
+    return this.paneStageSurfaceModel?.showConversation === true;
+  }
+
+  private resolveCurrentProjectPathForProcessUi(): string {
+    const host = AilyHost.get();
+    return host.project.currentProjectPath
+      || host.project.projectRootPath
+      || this.projectService.currentProjectPath
+      || this.projectService.projectRootPath
+      || '';
+  }
+
+  private mergeProcessSummaries(
+    liveProcesses: readonly ChatRuntimeHostSessionProcessSummary[],
+    persistedProcesses: readonly ChatRuntimeHostSessionProcessSummary[],
+  ): readonly ChatRuntimeHostSessionProcessSummary[] {
+    const merged = new Map<string, ChatRuntimeHostSessionProcessSummary>();
+    for (const process of persistedProcesses) {
+      merged.set(process.processId, process);
+    }
+    for (const process of liveProcesses) {
+      const existing = merged.get(process.processId);
+      merged.set(process.processId, existing
+        ? {
+            ...existing,
+            ...process,
+            outputFilePath: process.outputFilePath ?? existing.outputFilePath,
+          }
+        : process);
+    }
+    return collapseActiveChildToolServeProcesses(
+      [...merged.values()].sort((left, right) => right.startedAt - left.startedAt),
+    );
+  }
+
+  private readActiveChildToolProcesses(): readonly ChatRuntimeHostSessionProcessSummary[] {
+    return buildChildToolProcessSummaries(this.childToolSessions, {
+      sessionId: this.getCurrentSessionId(),
+      projectPath: this.resolveCurrentProjectPathForProcessUi(),
+    });
+  }
+
+  private async refreshChildToolSessions(): Promise<void> {
+    try {
+      const sessions = await window['childToolSession']?.list?.();
+      this.updateChildToolSessions(sessions);
+    } catch (error) {
+      console.warn('[AilyChat] Failed to refresh child tool sessions:', error);
+    }
+  }
+
+  private updateChildToolSessions(payload: unknown): void {
+    this.childToolSessions = Array.isArray(payload)
+      ? payload as ChildToolSessionListItem[]
+      : [];
+    this.cdr.markForCheck();
+  }
+
+  private resolveChildToolDisplayName(toolId: string, config = getChildToolConfig(toolId)): string {
+    if (!config) {
+      return toolId;
+    }
+
+    const globalName = this.translate.instant(config.namespace);
+    if (typeof globalName === 'string' && globalName && globalName !== config.namespace) {
+      return globalName;
+    }
+
+    const title = this.translate.instant(config.titleKey);
+    if (typeof title === 'string' && title && title !== config.titleKey) {
+      return title;
+    }
+
+    return toolId;
   }
 
   returnStandaloneSurfaceToMain(): void {

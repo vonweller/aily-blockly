@@ -61,6 +61,7 @@ async function main() {
 
     // 1. 路径准备
     const tempPath = path.join(currentProjectPath, '.temp');
+    const buildPath = path.join(currentProjectPath, '.build');
     const sketchPath = path.join(tempPath, 'sketch');
     const sketchFilePath = path.join(sketchPath, 'sketch.ino');
     // Aily Code： Blockly 生成的入口落在 project.aci.entry（默认 src/main.cpp），与纯 Blockly 的 .temp/sketch 区分
@@ -294,6 +295,7 @@ async function main() {
             '--libraries-path', `"${librariesPath}"`,
             '--sdk-path', `"${fullSdkPath}"`,
             '--tools-path', `"${toolsPath}"`,
+            '--build-path', `"${buildPath}"`,
             '--tool-versions', `"${toolVersions.join(',')}"`,
             '--save-result', `"${preprocessCachePath}"`
         ];
@@ -409,7 +411,7 @@ async function processLibrary(lib, librariesPath, currentProjectPath, za7Path, d
             const sourceZipPath = path.join(currentProjectPath, 'node_modules', lib, 'src.7z');
             if (fs.existsSync(sourceZipPath)) {
                 try {
-                    execSync(`"${za7Path}" x "${sourceZipPath}" -o"${sourcePath}" -y`);
+                    execSync(`"${za7Path}" x "${sourceZipPath}" -o"${path.dirname(sourcePath)}" -y`);
                 } catch (error) {
                     return { targetNames: [], success: false, error: `解压失败: ${error.message}` };
                 }

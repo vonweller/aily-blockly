@@ -6,6 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { isWin32 } = require("./platform");
+const { killRegisteredProcessTree } = require('./process-tree');
 
 // 匹配 PowerShell 提示符: PS D:\path>   以后需要匹配mac os和linux的提示符（陈吕洲 2025.3.4）
 const promptRegexMap = {
@@ -60,41 +61,6 @@ function buildTerminalEnv() {
     env.ZDOTDIR = zdotdir;
   }
   return env;
-}
-
-function killRegisteredProcessTree(pid, label) {
-  if (!pid) {
-    return Promise.resolve(false);
-  }
-
-  return new Promise((resolve) => {
-    const startedAt = Date.now();
-    if (process.platform === 'win32') {
-      exec(`taskkill /PID ${pid} /T /F`, (error, stdout, stderr) => {
-        const success = !error;
-        console.info('[PROC_TRACE][PROCESS_TREE_KILL]', {
-          label,
-          pid,
-          method: 'taskkill',
-          success,
-          durationMs: Date.now() - startedAt,
-          error: error?.message || '',
-          stderr: stderr?.trim?.() || ''
-        });
-        resolve(success);
-      });
-      return;
-    }
-
-    try {
-      process.kill(pid, 'SIGTERM');
-      console.info('[PROC_TRACE][PROCESS_TREE_KILL]', { label, pid, method: 'SIGTERM', success: true, durationMs: Date.now() - startedAt });
-      resolve(true);
-    } catch (error) {
-      console.warn('[PROC_TRACE][PROCESS_TREE_KILL]', { label, pid, method: 'SIGTERM', success: false, durationMs: Date.now() - startedAt, error: error?.message || String(error) });
-      resolve(false);
-    }
-  });
 }
 
 function getActiveTerminals() {

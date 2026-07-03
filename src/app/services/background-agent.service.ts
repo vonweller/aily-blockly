@@ -243,7 +243,7 @@ export class BackgroundAgentService implements OnDestroy {
   // AgentEvent → ProgressEvent 映射
   // =========================================================================
 
-  private _handleAgentEvent(event: import('aily-lex').AgentEvent): void {
+  private _handleAgentEvent(event: import('aily-lex/browser').AgentEvent): void {
     switch (event.type) {
       case 'thinking':
         this.emitProgress('thinking', '正在分析项目...');

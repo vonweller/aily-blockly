@@ -37,6 +37,7 @@ type HostResourceOperationPayload = {
   readonly requestContent?: unknown;
   readonly displayContent?: unknown;
   readonly checkpointId?: unknown;
+  readonly requestId?: unknown;
   readonly requestMetadata?: unknown;
   readonly turnResponses?: unknown;
   readonly retainedTurnResponses?: unknown;
@@ -196,6 +197,7 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
     readonly sessionId: string;
     readonly kind: ChatRuntimeHostResourceOperationRequest['kind'];
     readonly action: ChatRuntimeHostEditTrackingPayload['action'];
+    readonly checkpointMetadata?: unknown;
     readonly forkedTurnResponses?: readonly unknown[] | null;
   }> {
     const sessionId = this.requireSessionId(request, 'edit tracking');
@@ -248,7 +250,21 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
             this.editCheckpointService.publishSummary(summary);
           }
         }
-        break;
+        return {
+          applied: true,
+          sessionId,
+          kind: request.kind,
+          action: payload.action,
+          checkpointMetadata: await this.readFinalizedCheckpointMetadata(payload),
+        };
+      case 'readFinalizedCheckpointMetadata':
+        return {
+          applied: true,
+          sessionId,
+          kind: request.kind,
+          action: payload.action,
+          checkpointMetadata: await this.readFinalizedCheckpointMetadata(payload),
+        };
       case 'restoreFromTurnResponses':
         this.editCheckpointService.clear();
         if (typeof payload.autoSaveEdits === 'boolean') {
@@ -552,9 +568,26 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
         return {
           adapter: 'editTracking',
           action: 'finalizeCurrentTurn',
+          ...(typeof payloadObject.checkpointId === 'string' && payloadObject.checkpointId.trim()
+            ? { checkpointId: payloadObject.checkpointId.trim() }
+            : {}),
+          ...(typeof payloadObject.requestId === 'string' && payloadObject.requestId.trim()
+            ? { requestId: payloadObject.requestId.trim() }
+            : {}),
           ...(typeof payloadObject.autoSaveEdits === 'boolean' ? { autoSaveEdits: payloadObject.autoSaveEdits } : {}),
           ...(typeof payloadObject.requestDiffPreview === 'boolean'
             ? { requestDiffPreview: payloadObject.requestDiffPreview }
+            : {}),
+        };
+      case 'readFinalizedCheckpointMetadata':
+        return {
+          adapter: 'editTracking',
+          action: 'readFinalizedCheckpointMetadata',
+          ...(typeof payloadObject.checkpointId === 'string' && payloadObject.checkpointId.trim()
+            ? { checkpointId: payloadObject.checkpointId.trim() }
+            : {}),
+          ...(typeof payloadObject.requestId === 'string' && payloadObject.requestId.trim()
+            ? { requestId: payloadObject.requestId.trim() }
             : {}),
         };
       case 'restoreFromTurnResponses':
@@ -596,6 +629,23 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
           false,
         );
     }
+  }
+
+  private async readFinalizedCheckpointMetadata(payload: { checkpointId?: string; requestId?: string }): Promise<unknown> {
+    const checkpointId = this.normalizeSessionId(payload.checkpointId);
+    if (checkpointId) {
+      const metadata = await this.editCheckpointService.getSettledRequestCheckpointMetadataByCheckpointId?.(checkpointId);
+      if (metadata) {
+        return metadata;
+      }
+    }
+
+    const requestId = this.normalizeSessionId(payload.requestId);
+    if (requestId) {
+      return await this.editCheckpointService.getSettledRequestCheckpointMetadataByRequestId?.(requestId) ?? null;
+    }
+
+    return null;
   }
 
   private readSyncAbsArgs(request: ChatRuntimeHostResourceOperationRequest): SyncAbsArgs {

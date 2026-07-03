@@ -124,6 +124,7 @@ function reuseStableRenderItems(
     return previousItem.kind === 'group'
       && !nextItem.live
       && previousItem.live === nextItem.live
+      && previousItem.revision === nextItem.revision
       && samePartReferences(previousItem.parts, nextItem.parts)
       ? previousItem
       : nextItem;

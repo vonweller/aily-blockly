@@ -22,8 +22,8 @@ import {
   buildConfirmationPartId,
   type ChatPartScope,
   type StatePart,
+  type SubagentToolCallSnapshot,
   mkSubagentTimelineEntry,
-  mkSubagentToolCall,
   mkTerminal,
   mkToolCall,
   mkState,
@@ -60,10 +60,10 @@ export type RenderEventPartStoreAccess = Pick<
   | 'updateToolCallForHandle'
   | 'patchToolCallForHandle'
   | 'upsertStateForHandle'
+  | 'upsertSubagentForHandle'
   | 'updateConfirmationResultForHandle'
   | 'updateSubagentForHandle'
   | 'upsertTerminalForHandle'
-  | 'materializeFinalMarkdownAsPlanForHandle'
 >;
 
 function hasUsableStoreHandle(
@@ -262,7 +262,12 @@ export class RenderEventPartAdapter {
       }
 
       // ---- State ----
-      case 'state_update':
+      case 'state_update': {
+        const subagentSnapshot = subagentStateUpdateToSnapshot(event);
+        if (subagentSnapshot) {
+          this._store.upsertSubagentForHandle(handle, subagentSnapshot);
+          return true;
+        }
         this._upsertState(handle, event.stateId, {
           state: event.state,
           text: event.text,
@@ -271,6 +276,7 @@ export class RenderEventPartAdapter {
           metadata: event.metadata,
         });
         return true;
+      }
 
       case 'background_task_update':
         this._upsertState(handle, event.stateId, {
@@ -377,7 +383,7 @@ export class RenderEventPartAdapter {
       // ---- Sub-agent ----
       case 'subagent_begin': {
         this._rememberToolOrigin(event.toolCallId, handle);
-        this._store.addPartToHandle(handle, subagentBeginToPart(event));
+        this._store.upsertSubagentForHandle(handle, subagentBeginToSnapshot(event));
         return finish(true);
       }
 
@@ -413,10 +419,7 @@ export class RenderEventPartAdapter {
     this._toolOriginHandles.clear();
   }
 
-  finalize(
-    handle: ChatPartStoreOpaqueHandle | null,
-    options: { readonly materializeFinalMarkdownAsPlan?: boolean } = {},
-  ): void {
+  finalize(handle: ChatPartStoreOpaqueHandle | null): void {
     if (!hasUsableStoreHandle(handle)) {
       this.reset();
       return;
@@ -432,8 +435,6 @@ export class RenderEventPartAdapter {
 
     if (this._planStreamState === 'plan') {
       this._store.completePlanHandle(handle);
-    } else if (options.materializeFinalMarkdownAsPlan === true) {
-      this._store.materializeFinalMarkdownAsPlanForHandle(handle);
     }
 
     this.reset();
@@ -470,7 +471,7 @@ export class RenderEventPartAdapter {
     handle: ChatPartStoreOpaqueHandle,
     event: SubagentActivity,
   ): boolean {
-    const parentHandle = this._findToolCallHandle(event.toolCallId, handle) ?? handle;
+    const parentHandle = this._ensureSubagentParentForActivity(handle, event);
     const scope = subagentActivityScope(event);
     switch (event.activityKind) {
       case 'thinking':
@@ -632,6 +633,20 @@ export class RenderEventPartAdapter {
     );
   }
 
+  private _ensureSubagentParentForActivity(
+    handle: ChatPartStoreOpaqueHandle,
+    event: SubagentActivity,
+  ): ChatPartStoreOpaqueHandle {
+    const existingHandle = this._findToolCallHandle(event.toolCallId, handle);
+    if (existingHandle) {
+      return existingHandle;
+    }
+
+    this._store.upsertSubagentForHandle(handle, subagentActivityParentSnapshot(event));
+    this._rememberToolOrigin(event.toolCallId, handle);
+    return handle;
+  }
+
   private _findToolCallHandle(
     toolCallId: string,
     fallbackHandle: ChatPartStoreOpaqueHandle | null,
@@ -704,7 +719,8 @@ export class RenderEventPartAdapter {
       return;
     }
 
-    const terminal = extractTerminalPart(event.toolCallId, event.result);
+    const terminal = extractTerminalPart(event.toolCallId, event.result)
+      ?? extractTerminalReadPart(event);
     if (!terminal) {
       return;
     }
@@ -1094,8 +1110,113 @@ function extractTerminalPart(toolCallId: string, result: Extract<RenderEvent, { 
   return terminal;
 }
 
+function extractTerminalReadPart(event: Extract<RenderEvent, { type: 'tool_call_end' }>) {
+  if (!isTerminalReadToolName(event.toolName)) {
+    return null;
+  }
+
+  const input = asRecord((event as { input?: unknown }).input);
+  const processId = asString(input?.['processId'])
+    || asString(input?.['outputSessionId'])
+    || asString(input?.['terminalId'])
+    || asString(input?.['id']);
+  if (!processId) {
+    return null;
+  }
+
+  const rawText = extractToolResultText(event.result);
+  const { headers, body } = splitTerminalReadResult(rawText);
+  const output = body.trimEnd();
+  if (!output) {
+    return null;
+  }
+
+  const terminal = mkTerminal('', event.toolCallId, undefined, {
+    processId,
+    outputSessionId: asString(input?.['outputSessionId']) || processId,
+    terminalId: asString(input?.['terminalId']),
+    status: headers.get('status'),
+    bytesTotal: asNumber(headers.get('bytesTotal')),
+    outputUpdateKind: 'snapshot',
+  });
+  terminal.output = output;
+  terminal.stderr = '';
+  terminal.isRunning = headers.get('status') === 'running';
+  return terminal;
+}
+
+function isTerminalReadToolName(toolName: string | undefined): boolean {
+  return toolName === 'command_read'
+    || toolName === 'command_tail'
+    || toolName === 'command_status'
+    || toolName === 'get_terminal_output';
+}
+
+function splitTerminalReadResult(text: string): { headers: Map<string, string>; body: string } {
+  const normalized = text.replace(/\r\n/g, '\n');
+  const separatorIndex = normalized.indexOf('\n\n');
+  const headerText = separatorIndex >= 0 ? normalized.slice(0, separatorIndex) : '';
+  const body = separatorIndex >= 0 ? normalized.slice(separatorIndex + 2) : normalized;
+  const headers = new Map<string, string>();
+
+  for (const line of headerText.split('\n')) {
+    const match = /^([A-Za-z][A-Za-z0-9_-]*)\s*:\s*(.*)$/.exec(line.trim());
+    if (match) {
+      headers.set(match[1], match[2]);
+    }
+  }
+
+  return { headers, body };
+}
+
 function extractToolResultText(result: Extract<RenderEvent, { type: 'tool_call_end' }>['result']): string {
   return collectToolResultText(result);
+}
+
+function subagentStateUpdateToSnapshot(
+  event: Extract<RenderEvent, { type: 'state_update' }>,
+) {
+  if (!event.stateId?.startsWith('subagent:')) {
+    return null;
+  }
+
+  const metadata = event.metadata && typeof event.metadata === 'object' && !Array.isArray(event.metadata)
+    ? event.metadata as Record<string, unknown>
+    : {};
+  const toolCallId = asString(metadata['toolCallId'])
+    || asString(metadata['subAgentInvocationId'])
+    || event.stateId.slice('subagent:'.length);
+  if (!toolCallId) {
+    return null;
+  }
+
+  const agentName = asString(metadata['agentName'])
+    || asString(metadata['name'])
+    || 'Agent';
+  const description = asString(metadata['description'])
+    || event.text
+    || agentName;
+  return {
+    toolCallId,
+    subAgentInvocationId: asString(metadata['subAgentInvocationId']) || toolCallId,
+    agentName,
+    description,
+    state: event.state === 'error' ? 'error' as const : event.state === 'done' ? 'done' as const : 'doing' as const,
+    resultText: asString(metadata['resultText']) || asString(metadata['result']) || '',
+    childItems: [],
+    metadata: {
+      ...metadata,
+      subAgentInvocationId: asString(metadata['subAgentInvocationId']) || toolCallId,
+      toolSpecificData: {
+        ...((metadata['toolSpecificData'] && typeof metadata['toolSpecificData'] === 'object' && !Array.isArray(metadata['toolSpecificData']))
+          ? metadata['toolSpecificData'] as Record<string, unknown>
+          : {}),
+        kind: 'subagent',
+        agentName,
+        description,
+      },
+    },
+  };
 }
 
 function normalizeToolCallProgressUpdate(
@@ -1641,13 +1762,38 @@ function infoNoticeToPart(event: Extract<RenderEvent, { type: 'info_notice' }>) 
   return mkError(event.message, 'info', withChatPartScopeMetadata(undefined, eventScope(event)));
 }
 
-function subagentBeginToPart(event: Extract<RenderEvent, { type: 'subagent_begin' }>) {
-  return mkSubagentToolCall(
-    event.toolCallId,
-    event.agentName,
-    event.description,
-    buildSubagentMetadata(event),
-  );
+function subagentBeginToSnapshot(event: Extract<RenderEvent, { type: 'subagent_begin' }>): SubagentToolCallSnapshot {
+  return {
+    toolCallId: event.toolCallId,
+    subAgentInvocationId: event.subAgentInvocationId || event.toolCallId,
+    agentName: event.agentName,
+    description: event.description,
+    state: 'doing',
+    resultText: '',
+    childItems: [],
+    metadata: buildSubagentMetadata(event),
+  };
+}
+
+function subagentActivityParentSnapshot(event: SubagentActivity): SubagentToolCallSnapshot {
+  const subAgentInvocationId = event.subAgentInvocationId || event.toolCallId;
+  return {
+    toolCallId: event.toolCallId,
+    subAgentInvocationId,
+    agentName: 'Agent',
+    description: 'Subagent',
+    state: 'doing',
+    resultText: '',
+    childItems: [],
+    metadata: buildSubagentMetadata({
+      type: 'subagent_begin',
+      toolCallId: event.toolCallId,
+      subAgentInvocationId,
+      agentName: 'Agent',
+      description: 'Subagent',
+      timestamp: event.timestamp,
+    }),
+  };
 }
 
 function buildSubagentMetadata(

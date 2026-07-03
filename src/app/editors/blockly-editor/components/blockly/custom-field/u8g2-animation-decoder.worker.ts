@@ -402,7 +402,7 @@ async function decodeImageAnimation(request: DecodeRequest): Promise<DecodeResul
     const selectedTrack = decoder.tracks.selectedTrack;
     const trackFrameCount = Number(selectedTrack?.frameCount || 0);
     const sourceFrameCount = Number.isFinite(trackFrameCount) && trackFrameCount > 0
-        ? Math.min(trackFrameCount, options.maxFrames)
+        ? trackFrameCount
         : options.maxFrames;
     const intervalUs = MICROSECONDS_PER_SECOND / options.fps;
     const frames: number[][][] = [];

@@ -17,6 +17,7 @@ import { BlocklyService } from "./blockly.service";
 import { WorkflowService, ProcessState } from '../../../services/workflow.service';
 import { BleOtaProgress, UploaderBleService } from '../../../services/uploader-ble.service';
 import { AppDataResourceLockService } from '../../../services/appdata-resource-lock.service';
+import { appendProjectLog, type ProjectLogLevel } from '../../../utils/project-log.utils';
 
 interface NetworkOtaUploadTarget {
   id?: string;
@@ -28,6 +29,17 @@ interface NetworkOtaUploadTarget {
   uploadPath: string;
   ssl?: boolean;
   timeoutMs?: number;
+}
+
+function mapLogStateToLevel(state?: string): ProjectLogLevel {
+  switch ((state || '').toLowerCase()) {
+    case 'error':
+      return 'ERROR';
+    case 'doing':
+      return 'DEBUG';
+    default:
+      return 'INFO';
+  }
 }
 
 @Injectable()
@@ -145,10 +157,15 @@ export class _UploaderService {
     this.noticeService.update(config);
   }
 
+  private appendUploadLog(message: string, level: ProjectLogLevel = 'INFO'): void {
+    appendProjectLog(this.projectService.currentProjectPath, 'upload', level, message);
+  }
+
   // 添加这个错误处理方法
   private handleUploadError(errorMessage: string, title = this.uploadT('FAILED_TITLE'), details?: string) {
     // console.error("handle errror: ", errorMessage);
     const cleanDetailMessage = (details || errorMessage || '').toString().trim();
+    this.appendUploadLog(cleanDetailMessage || errorMessage, 'ERROR');
     this.noticeService.update({
       title: title,
       text: errorMessage,
@@ -548,9 +565,11 @@ export class _UploaderService {
 
                     if (this.isErrored) {
                       this.logService.update({ "detail": line, "state": "error" });
+                      this.appendUploadLog(line, 'ERROR');
                       return;
                     } else {
                       this.logService.update({ "detail": line });
+                      this.appendUploadLog(line, 'DEBUG');
                     }
 
                     // probe-rs 进度跟踪 (Erasing/Programming/Verifying 三阶段)
@@ -1321,6 +1340,7 @@ export class _UploaderService {
       detail: `[WiFi OTA] ${detail}`,
       state,
     });
+    this.appendUploadLog(`[WiFi OTA] ${detail}`, mapLogStateToLevel(state));
   }
 
   private logBleUpload(detail: string, state?: string) {
@@ -1328,6 +1348,7 @@ export class _UploaderService {
       detail: `[BLE OTA] ${detail}`,
       state,
     });
+    this.appendUploadLog(`[BLE OTA] ${detail}`, mapLogStateToLevel(state));
   }
 
   private uploadT(key: string, params?: Record<string, any>): string {
@@ -1507,12 +1528,14 @@ export class _UploaderService {
 
             if (output.data) {
               console.log('Softdevice 烧录输出:', output.data);
+              this.appendUploadLog(output.data, 'DEBUG');
               const data = output.data;
 
               // 检查是否有错误信息
               if (data.includes('[ERROR]') || data.includes('Error:') || data.includes('error:')) {
                 hasError = true;
                 errorMessage = data;
+                this.appendUploadLog(data, 'ERROR');
               }
 
               // 解析 OpenOCD 烧录进度
@@ -1639,4 +1662,3 @@ export class _UploaderService {
     }
   }
 }
-

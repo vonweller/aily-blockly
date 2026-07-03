@@ -6,6 +6,7 @@ export interface ChatProcessWindowPayload {
   readonly outputSessionId?: string;
   readonly outputFilePath?: string;
   readonly command?: string;
+  readonly windowTitle?: string;
 }
 
 export function buildChatProcessWindowPath(payload: ChatProcessWindowPayload): string {
@@ -21,16 +22,15 @@ export function openChatProcessWindow(payload: ChatProcessWindowPayload): void {
     return;
   }
 
-  const titleSuffix = payload.command?.trim() || normalizedProcessId;
   window['subWindow']?.open?.({
     path: buildChatProcessWindowPath({
       ...payload,
       sessionId: normalizedSessionId,
       processId: normalizedProcessId,
     }),
-    title: `终端执行详情 · ${titleSuffix}`,
-    width: 980,
-    height: 720,
+    title: payload.windowTitle?.trim() || payload.command?.trim() || normalizedProcessId,
+    width: 736,
+    height: 540,
     data: {
       sessionId: normalizedSessionId,
       processId: normalizedProcessId,

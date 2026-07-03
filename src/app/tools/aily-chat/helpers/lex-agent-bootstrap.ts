@@ -8,6 +8,7 @@
 
 import type { IChatCoordination, IChatServiceAccess, IProjectContext, ISessionAccess } from '../core/chat-context';
 import { AilyHost } from '../core/host';
+import { setChatRuntimeWorkspaceEnvironmentOverride } from '../core/chat-runtime-workspace-environment';
 import { isAilyCategoryDebugEnabled } from '../core/chat-debug-flags';
 import {
   normalizeChatSessionPermissionMode,
@@ -15,8 +16,16 @@ import {
 } from '../core/chat-mode';
 import type { ProviderContextManagementSupport } from '../services/aily-chat-config.service';
 import { MAIN_AGENT_TYPE, SCHEMATIC_AGENT_TYPE, normalizeAgentIdentifier } from '../core/agent-identifiers';
-import { BLOCKLY_MAIN_AGENT_REQUIRED_CONTEXT, BLOCKLY_PROMPT_PROFILE } from '../core/blockly-prompt-profile';
-import { CODER_MAIN_AGENT_REQUIRED_CONTEXT, CODER_PROMPT_PROFILE } from '../core/coder-prompt-profile';
+import {
+  BLOCKLY_MAIN_AGENT_REQUIRED_CONTEXT,
+  BLOCKLY_PROMPT_PROFILE,
+  createScopedBlocklyPromptProfile,
+} from '../core/blockly-prompt-profile';
+import {
+  CODER_MAIN_AGENT_REQUIRED_CONTEXT,
+  CODER_PROMPT_PROFILE,
+  createScopedCoderPromptProfile,
+} from '../core/coder-prompt-profile';
 import { UNBOUND_ROUTER_PROMPT_PROFILE, UNBOUND_ROUTER_REQUIRED_CONTEXT } from '../core/unbound-router-prompt-profile';
 import {
   normalizeChatAgentRuntimeMode,
@@ -25,7 +34,11 @@ import {
 } from '../core/chat-agent-runtime-mode';
 import type { ChatRuntimeOwnerScheduler } from '../core/chat-runtime-owner-scheduler';
 import { normalizeGovernanceToolName, toRuntimeGovernanceToolName } from '../core/tool-name-normalizer';
-import { getBlocklyContextSnapshotService } from '../core/blockly-context-snapshot-service';
+import {
+  createBlocklyContextSnapshotService,
+  getBlocklyContextSnapshotService,
+  type BlocklyContextSnapshotService,
+} from '../core/blockly-context-snapshot-service';
 import { BLOCKLY_LEX_DEFERRED_GROUPS, createBlocklyToolProvider } from '../core/blockly-contributed-tools';
 import { createBlocklyAgentProvider } from '../core/blockly-agent-provider';
 import { createBlocklyAgentFileProvider } from '../core/blockly-agent-file-provider';
@@ -96,6 +109,32 @@ import {
   type LexSessionStoredSnapshotState,
   type ResolvedLexSessionRestorePlan,
 } from './host-session-restore-resolver';
+import type { HostSessionSaveTarget } from './host-session-save-bridge';
+import {
+  DEFAULT_PROCESS_LOG_SUBAPP,
+  normalizeProcessLogSubappName,
+  resolveProcessLogProjectDir,
+  resolveProcessLogSubappNameFromCwd,
+  resolveProcessLogStoragePaths,
+  resolveProcessLogSubappNameFromCommand,
+  resolveProcessLogSubappNameFromOutputFilePath,
+} from '../../../utils/project-log.utils';
+
+interface BlocklyLineReadOptions {
+  readonly maxLines?: number;
+  readonly startLine?: number;
+  readonly endLine?: number;
+  readonly filterPattern?: string;
+  readonly timestampFromMs?: number;
+  readonly timestampToMs?: number;
+  readonly signal?: AbortSignal;
+}
+
+interface BlocklyLineReadExtension {
+  head(filePath: string, options?: BlocklyLineReadOptions): Promise<string[]>;
+  tail(filePath: string, options?: BlocklyLineReadOptions): Promise<string[]>;
+  sed(filePath: string, options: BlocklyLineReadOptions): Promise<string[]>;
+}
 
 function isLexBootstrapTraceEnabled(): boolean {
   return isAilyCategoryDebugEnabled('aily.chat.traceLexBootstrap', [
@@ -126,9 +165,7 @@ export interface LexRuntimeApiConfig {
 
 const DEFAULT_INTERACTION_HARD_ROUND_CAP = 200;
 const FAST_SUMMARIZER_PRESET_ID = 'auto-fast';
-const PROJECT_CHAT_DIR = '.chat_history';
-const GLOBAL_CHAT_DATA_DIR = 'chat_history';
-const PROCESS_RECORDS_DIR = 'process';
+const DEFAULT_EXTERNAL_COMMAND_TIMEOUT_MS = 30_000;
 
 type BlocklyExternalTerminal = NonNullable<IExternalHostAPI['terminal']>;
 
@@ -140,6 +177,55 @@ const blocklyCommandSessionListeners = new Set<(sessionId: string, processId: st
 
 export type BlocklyCommandSessionSnapshot = Awaited<ReturnType<NonNullable<BlocklyExternalTerminal['getProcessStatus']>>>;
 export type BlocklyCommandSessionSummary = ReturnType<typeof createBlocklyCommandSessionSummary>;
+interface PersistedBlocklyCommandSessionRecord {
+  readonly processId?: string;
+  readonly sessionId?: string;
+  readonly outputSessionId?: string;
+  readonly command?: string;
+  readonly cwd?: string;
+  readonly status?: string;
+  readonly running?: boolean;
+  readonly exitCode?: number | null;
+  readonly pid?: number | null;
+  readonly startedAt?: number;
+  readonly lastOutputAt?: number | null;
+  readonly completedAt?: number | null;
+  readonly bytesTotal?: number;
+  readonly background?: boolean;
+  readonly subappName?: string | null;
+  readonly outputFilePath?: string | null;
+  readonly removed?: boolean;
+  readonly removedAt?: number | null;
+}
+
+function normalizeBlocklyCommandSessionStatus(
+  status: string | undefined,
+  running: boolean,
+): ExternalTerminalSession['status'] {
+  switch (status) {
+    case 'running':
+      return running ? 'running' : 'cancelled';
+    case 'completed':
+    case 'failed':
+    case 'timeout':
+    case 'cancelled':
+      return status;
+    case 'killed':
+      return 'cancelled';
+    default:
+      return running ? 'running' : 'completed';
+  }
+}
+
+function resolvePersistedBlocklyCommandSessionRunningState(
+  processId: string,
+  persistedRunning: boolean,
+): boolean {
+  if (!persistedRunning || !processId) {
+    return false;
+  }
+  return blocklyCommandSessions.get(processId)?.running === true;
+}
 
 function registerBlocklyCommandSessionController(terminal: BlocklyExternalTerminal | undefined): void {
   if (!terminal) {
@@ -228,6 +314,39 @@ export function listBlocklyCommandSessionSnapshots(sessionId: string): BlocklyCo
     .sort((left, right) => right.startedAt - left.startedAt);
 }
 
+export function listPersistedBlocklyCommandSessionSnapshots(
+  sessionId: string,
+  projectPathHint?: string | null,
+): BlocklyCommandSessionSummary[] {
+  const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+  if (!normalizedSessionId) {
+    return [];
+  }
+
+  return listPersistedBlocklyProjectCommandSessionSnapshots(projectPathHint)
+    .filter(summary => summary.sessionId === normalizedSessionId)
+    .sort((left, right) => right.startedAt - left.startedAt);
+}
+
+export function listPersistedBlocklyProjectCommandSessionSnapshots(
+  projectPathHint?: string | null,
+): BlocklyCommandSessionSummary[] {
+  const host = AilyHost.get();
+  const metadataFileCandidates = resolveBlocklyProjectProcessMetadataFileCandidates(host, projectPathHint);
+  const summaries = new Map<string, BlocklyCommandSessionSummary>();
+
+  for (const filePath of metadataFileCandidates) {
+    const record = readPersistedBlocklyCommandSessionRecord(host, filePath);
+    const summary = record ? createBlocklyCommandSessionSummaryFromPersistedRecord(record) : null;
+    if (!summary) {
+      continue;
+    }
+    summaries.set(summary.processId, summary);
+  }
+
+  return [...summaries.values()].sort((left, right) => right.startedAt - left.startedAt);
+}
+
 export function subscribeBlocklyCommandSessionUpdates(
   listener: (sessionId: string, processId: string) => void,
 ): { dispose(): void } {
@@ -256,8 +375,147 @@ export function setBlocklyCommandSessionBackground(
   }
 
   session.background = background;
+  if (background && session.timer) {
+    clearTimeout(session.timer);
+    session.timer = undefined;
+  }
+  if (background && session.running && session.status !== 'running') {
+    session.status = 'running';
+  }
   persistBlocklyCommandSessionRecord(session);
   notifyBlocklyCommandSessionUpdate(normalizedSessionId, normalizedProcessId);
+}
+
+export function deleteBlocklyCommandSession(
+  processId: string,
+  sessionId?: string,
+): boolean {
+  const normalizedProcessId = typeof processId === 'string' ? processId.trim() : '';
+  if (!normalizedProcessId) {
+    return false;
+  }
+
+  const host = AilyHost.get();
+  const runtimeSession = blocklyCommandSessions.get(normalizedProcessId);
+  const targetSessionId = typeof sessionId === 'string' && sessionId.trim()
+    ? sessionId.trim()
+    : runtimeSession?.sessionId ?? '';
+  let outputFilePath = runtimeSession?.outputFilePath;
+  let metadataFilePath = runtimeSession?.metadataFilePath;
+
+  const persisted = targetSessionId
+    ? listPersistedBlocklyCommandSessionSnapshots(targetSessionId)
+      .find(candidate => candidate.processId === normalizedProcessId)
+    : null;
+
+  if ((!outputFilePath || !metadataFilePath) && targetSessionId) {
+    outputFilePath = outputFilePath || persisted?.outputFilePath;
+    metadataFilePath = metadataFilePath || (
+      persisted?.outputFilePath?.trim()
+        ? persisted.outputFilePath.replace(/\.log$/i, '.json')
+        : undefined
+    );
+  }
+
+  if (runtimeSession) {
+    blocklyCommandSessions.delete(normalizedProcessId);
+    blocklyCommandSessionOwners.delete(normalizedProcessId);
+    const sessionIds = blocklyCommandSessionIdsBySession.get(runtimeSession.sessionId);
+    sessionIds?.delete(normalizedProcessId);
+    if (sessionIds && sessionIds.size === 0) {
+      blocklyCommandSessionIdsBySession.delete(runtimeSession.sessionId);
+    }
+    notifyBlocklyCommandSessionUpdate(runtimeSession.sessionId, normalizedProcessId);
+  } else if (targetSessionId) {
+    notifyBlocklyCommandSessionUpdate(targetSessionId, normalizedProcessId);
+  }
+
+  const removedAt = Date.now();
+  let markedRemoved = false;
+  const normalizedMetadataFilePath = typeof metadataFilePath === 'string' ? metadataFilePath.trim() : '';
+  if (normalizedMetadataFilePath) {
+    const existingRecord = readPersistedBlocklyCommandSessionRecord(host, normalizedMetadataFilePath);
+    if (existingRecord) {
+      try {
+        host.fs.writeFileSync(normalizedMetadataFilePath, JSON.stringify({
+          ...existingRecord,
+          removed: true,
+          removedAt,
+        }, null, 2), 'utf-8');
+        markedRemoved = true;
+      } catch {
+        // best-effort
+      }
+    }
+  }
+
+  if (runtimeSession) {
+    runtimeSession.removed = true;
+    runtimeSession.removedAt = removedAt;
+  }
+
+  return markedRemoved || !!runtimeSession || !!persisted;
+}
+
+export function purgeBlocklyCommandSession(
+  processId: string,
+  sessionId?: string,
+): boolean {
+  const normalizedProcessId = typeof processId === 'string' ? processId.trim() : '';
+  if (!normalizedProcessId) {
+    return false;
+  }
+
+  const host = AilyHost.get();
+  const runtimeSession = blocklyCommandSessions.get(normalizedProcessId);
+  const targetSessionId = typeof sessionId === 'string' && sessionId.trim()
+    ? sessionId.trim()
+    : runtimeSession?.sessionId ?? '';
+  let outputFilePath = runtimeSession?.outputFilePath;
+  let metadataFilePath = runtimeSession?.metadataFilePath;
+
+  const persisted = targetSessionId
+    ? listPersistedBlocklyCommandSessionSnapshots(targetSessionId)
+      .find(candidate => candidate.processId === normalizedProcessId)
+    : null;
+
+  if ((!outputFilePath || !metadataFilePath) && persisted) {
+    outputFilePath = outputFilePath || persisted.outputFilePath;
+    metadataFilePath = metadataFilePath || (
+      persisted.outputFilePath?.trim()
+        ? persisted.outputFilePath.replace(/\.log$/i, '.json')
+        : undefined
+    );
+  }
+
+  if (runtimeSession) {
+    blocklyCommandSessions.delete(normalizedProcessId);
+    blocklyCommandSessionOwners.delete(normalizedProcessId);
+    const sessionIds = blocklyCommandSessionIdsBySession.get(runtimeSession.sessionId);
+    sessionIds?.delete(normalizedProcessId);
+    if (sessionIds && sessionIds.size === 0) {
+      blocklyCommandSessionIdsBySession.delete(runtimeSession.sessionId);
+    }
+    notifyBlocklyCommandSessionUpdate(runtimeSession.sessionId, normalizedProcessId);
+  } else if (targetSessionId) {
+    notifyBlocklyCommandSessionUpdate(targetSessionId, normalizedProcessId);
+  }
+
+  let deletedAny = false;
+  for (const filePath of [outputFilePath, metadataFilePath]) {
+    const normalizedPath = typeof filePath === 'string' ? filePath.trim() : '';
+    if (!normalizedPath || !host.fs?.existsSync?.(normalizedPath)) {
+      continue;
+    }
+    try {
+      host.fs.unlinkSync(normalizedPath);
+      deletedAny = true;
+    } catch {
+      // best-effort
+    }
+  }
+
+  return deletedAny || !!runtimeSession || !!persisted;
 }
 
 interface ResolvePersistedLexSessionOptions {
@@ -290,6 +548,7 @@ export type BootstrapLexAgentContext = Pick<IProjectContext, 'prjPath' | 'prjRoo
     readonly currentSessionApprovalsReviewer?: 'user' | 'auto_review';
     readonly currentSessionApprovalPolicy?: 'on_request' | 'never';
     readonly ownerScheduler?: Pick<ChatRuntimeOwnerScheduler, 'runOutsideOwner'>;
+    buildExecutionSaveTarget?(sessionId: string | null | undefined): HostSessionSaveTarget | null;
     getOrCreateLexPostTurnResources?(
       sessionId: string | null | undefined,
       cwd: string | null | undefined,
@@ -306,6 +565,10 @@ export type BootstrapLexAgentContext = Pick<IProjectContext, 'prjPath' | 'prjRoo
       mode: Exclude<ChatAgentRuntimeMode, 'unbound'>,
       source: ChatAgentRuntimeModeSource,
       reason?: string,
+    ): void | Promise<void>;
+    updateRuntimeProjectPath?(
+      projectPath: string,
+      result?: unknown,
     ): void | Promise<void>;
   };
 
@@ -335,6 +598,47 @@ export function resolveRuntimePromptProfile(runtimeMode: ChatAgentRuntimeMode) {
       return CODER_PROMPT_PROFILE;
     case 'blockly':
       return BLOCKLY_PROMPT_PROFILE;
+    case 'unbound':
+    default:
+      return UNBOUND_ROUTER_PROMPT_PROFILE;
+  }
+}
+
+function createRuntimePromptHost(hostAPI: IExternalHostAPI): ReturnType<typeof AilyHost.get> {
+  const host = AilyHost.get();
+  return {
+    ...host,
+    // VS Code's chat model/tool context is owned by the active request model.
+    // Keep global editor/fs/path services, but bind project/domain state to the
+    // request-scoped hostAPI so prompt context and tool execution agree.
+    project: hostAPI.project ?? host.project,
+    blockly: hostAPI.blockly ?? (host as any).blockly,
+    connectionGraph: hostAPI.connectionGraph ?? host.connectionGraph,
+    schematic: (hostAPI as any).schematic ?? (host as any).schematic,
+    boardSearch: hostAPI.boardSearch ?? (host as any).boardSearch,
+    terminal: hostAPI.terminal ?? host.terminal,
+    auth: hostAPI.auth ?? host.auth,
+    config: host.config ?? hostAPI.config,
+    platform: host.platform ?? hostAPI.platform,
+  } as ReturnType<typeof AilyHost.get>;
+}
+
+function createRuntimeScopedPromptProfile(
+  runtimeMode: ChatAgentRuntimeMode,
+  contextSnapshotService: BlocklyContextSnapshotService,
+  getPromptHost: () => ReturnType<typeof AilyHost.get>,
+) {
+  switch (runtimeMode) {
+    case 'coder':
+      return createScopedCoderPromptProfile({
+        getHost: getPromptHost,
+        contextSnapshotService,
+      });
+    case 'blockly':
+      return createScopedBlocklyPromptProfile({
+        getHost: getPromptHost,
+        contextSnapshotService,
+      });
     case 'unbound':
     default:
       return UNBOUND_ROUTER_PROMPT_PROFILE;
@@ -371,7 +675,7 @@ function resolveDeferredGroupsForRuntime(runtimeMode: ChatAgentRuntimeMode) {
 const LEX_CORE_SAFE_TOOLS = new Set([
   'read_file', 'write_file', 'edit_file', 'multi_edit_file',
   'delete_file', 'list_dir', 'create_directory',
-  'grep_search', 'glob_search',
+  'grep_search', 'glob_search', 'assets_tool',
   'command_exec', 'command_write_stdin', 'command_status', 'command_resize', 'command_stop',
   'command_read', 'command_tail', 'command_search',
   'run_terminal', 'get_terminal_output', 'send_to_terminal', 'kill_terminal', 'agent',
@@ -381,7 +685,7 @@ const LEX_CORE_SAFE_TOOLS = new Set([
   'memory', 'resolve_memory_file_uri',
   'get_context',
   'ask_user',
-  'get_errors',
+  'get_errors', 'log_tool',
   'web_search',
   'tool_search',
   'load_skill',
@@ -735,6 +1039,37 @@ function syncPersistedActiveSkills(
   return missingSkills;
 }
 
+let runtimeOwnerSkillRegistrySignature = '';
+
+function ensureRuntimeOwnerSkillRegistryInitialized(
+  projectRoot: string,
+  configService: Pick<AgentToolConfigAccessor, 'userSkillFolders' | 'projectSkillFolders'> | undefined,
+): void {
+  const normalizedProjectRoot = normalizeRuntimePath(projectRoot);
+  const userSkillFolders = configService?.userSkillFolders ?? [];
+  const projectSkillFolders = configService?.projectSkillFolders ?? [];
+  const signature = JSON.stringify({
+    projectRoot: normalizedProjectRoot,
+    userSkillFolders,
+    projectSkillFolders,
+  });
+  if (runtimeOwnerSkillRegistrySignature === signature && BlocklySkillRegistry.isInitialized) {
+    return;
+  }
+
+  runtimeOwnerSkillRegistrySignature = signature;
+  void BlocklySkillRegistry.initialize(normalizedProjectRoot || undefined, {
+    debugSource: 'bootstrapBlocklyLexAgent',
+    userSkillFolders,
+    projectSkillFolders,
+  }).catch(err => {
+    if (runtimeOwnerSkillRegistrySignature === signature) {
+      runtimeOwnerSkillRegistrySignature = '';
+    }
+    console.warn('[LexBootstrap] runtime owner skill discovery failed', err);
+  });
+}
+
 function resolvePlatformType(type?: string, isWindows?: boolean, isMacOS?: boolean): 'win32' | 'darwin' | 'linux' {
   if (type === 'win32' || type === 'darwin' || type === 'linux') {
     return type;
@@ -836,21 +1171,23 @@ function positionToOffset(lineStarts: readonly number[], contentLength: number, 
 }
 
 interface BlocklyExternalHostApiOptions {
+  readonly cwd?: string;
+  readonly onProjectCreated?: (projectPath: string, result: unknown) => void | Promise<void>;
   readonly createSyncAbsInvocationContext?: () => SyncAbsInvocationContext | undefined;
   readonly sessionId?: string;
 }
 
 const BLOCKLY_WORKSPACE_OVERVIEW_CODE_PREVIEW_LIMIT = 4096;
 
-function createBoundedGeneratedCodeOverview(host: ReturnType<typeof AilyHost.get>): {
+function createBoundedGeneratedCodeOverview(host: ReturnType<typeof AilyHost.get>, projectPath?: string): {
   generatedCode?: string;
   generatedCodePath?: string;
   generatedCodeLength: number;
   generatedCodeTruncated: boolean;
 } {
   const generatedCode = host.editor?.getGeneratedCode?.() || '';
-  const generatedCodePath = host.project?.currentProjectPath && host.path
-    ? host.path.join(host.project.currentProjectPath, '.temp', 'sketch', 'sketch.ino')
+  const generatedCodePath = projectPath && host.path
+    ? host.path.join(projectPath, '.temp', 'sketch', 'sketch.ino')
     : undefined;
   const generatedCodeTruncated = generatedCode.length > BLOCKLY_WORKSPACE_OVERVIEW_CODE_PREVIEW_LIMIT;
   return {
@@ -869,8 +1206,270 @@ export function buildExternalHostAPI(
   const host = AilyHost.get();
   const contextSnapshotService = getBlocklyContextSnapshotService();
   const createSyncAbsInvocationContext = options.createSyncAbsInvocationContext;
+  let createdProjectPath = '';
   (window as { path?: typeof host.path }).path = host.path;
-  const prjPath = () => host.project?.currentProjectPath || host.project?.projectRootPath || '';
+  const runtimeCwd = () => typeof options.cwd === 'string' && options.cwd.trim().length > 0
+    ? (createdProjectPath || options.cwd.trim())
+    : createdProjectPath;
+  const workerProjectRootPath = () => typeof host.project?.projectRootPath === 'string'
+    ? host.project.projectRootPath.trim()
+    : '';
+  const normalizeComparablePath = (value: string) => value.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  const workerProjectPath = () => {
+    const currentProjectPath = typeof host.project?.currentProjectPath === 'string'
+      ? host.project.currentProjectPath.trim()
+      : '';
+    const projectRootPath = workerProjectRootPath();
+    if (!currentProjectPath) {
+      return '';
+    }
+    if (projectRootPath && normalizeComparablePath(currentProjectPath) === normalizeComparablePath(projectRootPath)) {
+      return '';
+    }
+    return currentProjectPath;
+  };
+  const prjPath = () => workerProjectPath() || runtimeCwd();
+  const shouldUseRuntimeProjectFiles = () => !!runtimeCwd() && !workerProjectPath();
+  const joinProjectPath = (...segments: string[]) => host.path?.join
+    ? host.path.join(...segments)
+    : segments.filter(Boolean).join('/');
+  const normalizeProjectCreateDirectoryName = (name: string) => {
+    const normalized = String(name || '').trim().replace(/\s/g, '_');
+    return normalized || 'project';
+  };
+  const projectPathExists = (projectPath: string) => {
+    if (!projectPath) {
+      return false;
+    }
+    if (typeof host.fs?.existsSync === 'function') {
+      if (!host.fs.existsSync(projectPath)) {
+        return false;
+      }
+      if (typeof (host.fs as any)?.isDirectory === 'function') {
+        return !!(host.fs as any).isDirectory(projectPath);
+      }
+      return true;
+    }
+    if (typeof (host.path as any)?.isExists === 'function') {
+      return !!(host.path as any).isExists(projectPath);
+    }
+    return false;
+  };
+  const resolveUniqueProjectCreateName = (basePath: string, requestedName: string) => {
+    const trimmedName = String(requestedName || '').trim() || 'project';
+    const baseDirectoryName = normalizeProjectCreateDirectoryName(trimmedName);
+    if (!basePath || !projectPathExists(joinProjectPath(basePath, baseDirectoryName))) {
+      return trimmedName;
+    }
+
+    const fallbackBaseName = baseDirectoryName
+      .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_')
+      .replace(/_+$/g, '') || 'project';
+    for (let index = 1; index <= 9999; index++) {
+      const candidateName = `${fallbackBaseName}_${index}`;
+      if (!projectPathExists(joinProjectPath(basePath, candidateName))) {
+        return candidateName;
+      }
+    }
+    return `${fallbackBaseName}_${Date.now()}`;
+  };
+  const readJsonFile = <T = any>(filePath: string): T => JSON.parse(host.fs.readFileSync(filePath, 'utf8'));
+  const readRuntimeProjectPackageJson = async () => {
+    const projectPath = prjPath();
+    if (!projectPath) {
+      throw new Error('[AilyChat][ProjectProvider] Cannot read package.json without a host workspace path.');
+    }
+    const packageJsonPath = joinProjectPath(projectPath, 'package.json');
+    if (!host.fs.existsSync(packageJsonPath)) {
+      throw new Error(`[AilyChat][ProjectProvider] package.json not found in host workspace: ${packageJsonPath}`);
+    }
+    return readJsonFile(packageJsonPath);
+  };
+  const resolveBoardModuleFromPackageJson = (packageJson: any): string | undefined => {
+    const dependencyNames = [
+      ...Object.keys(packageJson?.dependencies || {}),
+      ...Object.keys(packageJson?.boardDependencies || {}),
+      ...Object.keys(packageJson?.devDependencies || {}),
+    ];
+    return dependencyNames.find((dep) => dep.startsWith('@aily-project/board-'))
+      ?? dependencyNames.find((dep) => dep.startsWith('@aily-project/coder-'));
+  };
+  const readRuntimeBoardModule = async () => {
+    const packageJson = await readRuntimeProjectPackageJson();
+    const boardModule = resolveBoardModuleFromPackageJson(packageJson);
+    if (!boardModule) {
+      throw new Error('[AilyChat][ProjectProvider] Cannot resolve board module from host workspace package.json.');
+    }
+    return boardModule;
+  };
+  const readRuntimeBoardJson = async () => {
+    const projectPath = prjPath();
+    const boardModule = await readRuntimeBoardModule();
+    const boardJsonPath = joinProjectPath(projectPath, 'node_modules', boardModule, 'board.json');
+    if (!host.fs.existsSync(boardJsonPath)) {
+      throw new Error(`[AilyChat][ProjectProvider] board.json not found in host workspace: ${boardJsonPath}`);
+    }
+    return readJsonFile(boardJsonPath);
+  };
+  const readRuntimeBoardPackageJson = async () => {
+    const projectPath = prjPath();
+    const boardModule = await readRuntimeBoardModule();
+    const boardPackageJsonPath = joinProjectPath(projectPath, 'node_modules', boardModule, 'package.json');
+    if (!host.fs.existsSync(boardPackageJsonPath)) {
+      throw new Error(`[AilyChat][ProjectProvider] board package.json not found in host workspace: ${boardPackageJsonPath}`);
+    }
+    return readJsonFile(boardPackageJsonPath);
+  };
+  const normalizeProjectCreateBasePath = (path?: string) => {
+    const explicitPath = typeof path === 'string' ? path.trim() : '';
+    if (explicitPath) {
+      return explicitPath;
+    }
+
+    const projectRootPath = workerProjectRootPath();
+    if (projectRootPath) {
+      return projectRootPath;
+    }
+
+    const userDocuments = typeof host.path?.getUserDocuments === 'function'
+      ? host.path.getUserDocuments()
+      : '';
+    if (userDocuments) {
+      return joinProjectPath(userDocuments, 'aily-project');
+    }
+
+    const home = typeof host.platform?.homedir === 'function'
+      ? host.platform.homedir()
+      : host.path?.getUserHome?.() ?? '';
+    return home ? joinProjectPath(home, 'aily-project') : '';
+  };
+  const readBoardCandidates = (board: string) => {
+    const normalizedBoard = board.trim();
+    const candidates = new Set<string>();
+    if (normalizedBoard) {
+      candidates.add(normalizedBoard);
+      if (!normalizedBoard.startsWith('@aily-project/')) {
+        candidates.add(`@aily-project/${normalizedBoard}`);
+        candidates.add(`@aily-project/board-${normalizedBoard.replace(/^board-/, '')}`);
+      }
+    }
+    return [...candidates];
+  };
+  const resolveBoardForProjectCreate = (board: string) => {
+    let parsedBoard: Record<string, unknown> | undefined;
+    try {
+      const parsed = JSON.parse(board);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        parsedBoard = parsed as Record<string, unknown>;
+      }
+    } catch {
+      parsedBoard = undefined;
+    }
+
+    if (parsedBoard) {
+      const parsedName = typeof parsedBoard['name'] === 'string' ? parsedBoard['name'].trim() : '';
+      if (parsedName) {
+        return {
+          ...parsedBoard,
+          name: parsedName,
+          nickname: typeof parsedBoard['nickname'] === 'string' ? parsedBoard['nickname'] : parsedName,
+          version: typeof parsedBoard['version'] === 'string' ? parsedBoard['version'] : 'latest',
+        };
+      }
+    }
+
+    const config = host.config as unknown as Record<string, unknown> | undefined;
+    const validateBoard = config && typeof config['validateBoard'] === 'function'
+      ? config['validateBoard'] as (boardName: string) => { exists?: boolean; board?: unknown }
+      : undefined;
+    for (const candidate of readBoardCandidates(board)) {
+      const validation = validateBoard?.call(config, candidate);
+      if (validation?.exists && validation.board && typeof validation.board === 'object') {
+        return validation.board as Record<string, unknown>;
+      }
+    }
+
+    const boardDict = config?.['boardDict'] && typeof config['boardDict'] === 'object'
+      ? config['boardDict'] as Record<string, unknown>
+      : undefined;
+    for (const candidate of readBoardCandidates(board)) {
+      const dictBoard = boardDict?.[candidate];
+      if (dictBoard && typeof dictBoard === 'object') {
+        return dictBoard as Record<string, unknown>;
+      }
+    }
+
+    const boardList = Array.isArray(config?.['boardList'])
+      ? config?.['boardList'] as Record<string, unknown>[]
+      : typeof config?.['getBoardsList'] === 'function'
+        ? (config['getBoardsList'] as () => unknown[]).call(config).filter(item => item && typeof item === 'object') as Record<string, unknown>[]
+        : [];
+    const normalizedCandidates = readBoardCandidates(board).map(candidate => candidate.toLowerCase());
+    const listBoard = boardList.find(item => {
+      const names = [
+        typeof item['name'] === 'string' ? item['name'] : '',
+        typeof item['nickname'] === 'string' ? item['nickname'] : '',
+        typeof item['displayName'] === 'string' ? item['displayName'] : '',
+      ].map(value => value.trim().toLowerCase()).filter(Boolean);
+      return names.some(name => normalizedCandidates.includes(name));
+    });
+    if (listBoard) {
+      return listBoard;
+    }
+
+    throw new Error(`Board not found for project creation: ${board}`);
+  };
+  const createProjectFromLegacyProjectService = typeof (host.project as any)?.projectNew === 'function'
+    ? async (name: string, board: string, path?: string) => {
+        const basePath = normalizeProjectCreateBasePath(path);
+        if (!basePath) {
+          throw new Error('Project creation requires a target project root path.');
+        }
+        const boardInfo = resolveBoardForProjectCreate(board);
+        const boardName = typeof boardInfo['name'] === 'string' ? boardInfo['name'] : board;
+        const boardNickname = typeof boardInfo['nickname'] === 'string'
+          ? boardInfo['nickname']
+          : typeof boardInfo['displayName'] === 'string'
+            ? boardInfo['displayName']
+            : boardName;
+        const boardVersion = typeof boardInfo['version'] === 'string' && boardInfo['version'].trim()
+          ? boardInfo['version'].trim()
+          : 'latest';
+        const devmode = Array.isArray(boardInfo['mode']) && typeof boardInfo['mode'][0] === 'string'
+          ? boardInfo['mode'][0]
+          : typeof boardInfo['mode'] === 'string'
+            ? boardInfo['mode']
+            : undefined;
+        const result = await (host.project as any).projectNew({
+          name,
+          path: basePath,
+          board: {
+            ...boardInfo,
+            name: boardName,
+            nickname: boardNickname,
+            version: boardVersion,
+          },
+          ...(devmode ? { devmode } : {}),
+        }, {
+          activationReason: 'chat-tool-create',
+        });
+        if (result === false) {
+          throw new Error('Project service returned false while creating project.');
+        }
+        (host.config as any)?.recordBoardUsage?.(boardName);
+        const projectPath = joinProjectPath(basePath, name.replace(/\s/g, '_'));
+        return {
+          projectOpened: true,
+          projectPath,
+          projectName: name,
+          board: {
+            name: boardName,
+            nickname: boardNickname,
+            version: boardVersion,
+          },
+        };
+      }
+    : undefined;
   const hasBuilder = typeof host.builder?.build === 'function';
   const hasBoardSearch = !!(
     host.config?.getHardwareCategories
@@ -881,6 +1480,188 @@ export function buildExternalHostAPI(
   const hasBlocklyWorkspace = !!(host.absSync || host.editor || prjPath());
   const hasLibraryAnalysis = !!(host.project && host.fs && prjPath());
   const terminal = createExternalTerminal(host, prjPath, options.sessionId);
+  const projectProvider = host.project ? {
+    get currentProjectPath() {
+      return prjPath();
+    },
+    get projectRootPath() {
+      return host.project?.projectRootPath || '';
+    },
+    get currentBoard() {
+      return host.project?.currentBoard;
+    },
+    get projectName() {
+      return host.project?.projectName;
+    },
+    getProjectInfo: async () => {
+      if (typeof host.project.getProjectInfo === 'function' && (!runtimeCwd() || workerProjectPath())) {
+        const info = await host.project.getProjectInfo();
+        if (info && typeof info === 'object') {
+          const infoRecord = info as Record<string, unknown>;
+          if (!prjPath() && infoRecord['projectOpened'] !== true) {
+            return {
+              ...infoRecord,
+              projectOpened: false,
+            };
+          }
+          return {
+            ...infoRecord,
+            path: typeof infoRecord['path'] === 'string' && infoRecord['path'].trim().length > 0
+              ? infoRecord['path']
+              : prjPath(),
+            board: infoRecord['board'] ?? host.project.currentBoard,
+            name: infoRecord['name'] ?? host.project.projectName,
+          };
+        }
+        return info;
+      }
+
+      try {
+        const legacyResult = await getProjectInfoTool(projectProvider as any, { include_readme: true });
+        if (!legacyResult.is_error) {
+          const legacyInfo = JSON.parse(legacyResult.content);
+          if (legacyInfo?.projectOpened && shouldUseRuntimeProjectFiles()) {
+            return {
+              ...legacyInfo,
+              path: typeof legacyInfo['path'] === 'string' && legacyInfo['path'].trim()
+                ? legacyInfo['path']
+                : legacyInfo['projectPath'] ?? prjPath(),
+              name: host.project.projectName ?? legacyInfo['name'] ?? legacyInfo['projectName'],
+              board: legacyInfo['board'] ?? host.project.currentBoard,
+            };
+          }
+          return legacyInfo;
+        }
+      } catch {
+        // Fall back to the minimal project shape below when legacy discovery is unavailable.
+      }
+
+      if (!prjPath()) {
+        return {
+          projectOpened: false,
+        };
+      }
+      return {
+        projectOpened: true,
+        name: host.project.projectName,
+        path: prjPath(),
+        board: host.project.currentBoard,
+      };
+    },
+    getProjectPath: () => prjPath(),
+    getBoard: () => host.project.currentBoard,
+    createProject: host.project.createProject || createProjectFromLegacyProjectService
+      ? async (name: string, board: string, path?: string) => {
+          const createProject = host.project.createProject ?? createProjectFromLegacyProjectService!;
+          const basePath = normalizeProjectCreateBasePath(path ?? prjPath());
+          const projectName = resolveUniqueProjectCreateName(basePath, name);
+          const result = await createProject(projectName, board, basePath);
+          const resultRecord = result && typeof result === 'object'
+            ? result as Record<string, unknown>
+            : null;
+          const creationSucceeded = result !== false && result !== null && result !== undefined;
+          const projectPath = !creationSucceeded
+            ? ''
+            : typeof resultRecord?.['projectPath'] === 'string'
+            ? resultRecord['projectPath'].trim()
+            : typeof resultRecord?.['path'] === 'string'
+              ? resultRecord['path'].trim()
+              : basePath
+                ? joinProjectPath(basePath, normalizeProjectCreateDirectoryName(projectName))
+                : '';
+          const response = resultRecord
+            ? {
+                ...resultRecord,
+                path: typeof resultRecord['path'] === 'string' && resultRecord['path'].trim()
+                  ? resultRecord['path']
+                  : projectPath,
+                projectPath,
+                projectName: typeof resultRecord['projectName'] === 'string' && resultRecord['projectName'].trim()
+                  ? resultRecord['projectName']
+                  : projectName,
+                ...(projectName !== String(name || '').trim() ? { requestedProjectName: String(name || '').trim() } : {}),
+              }
+            : result;
+          if (projectPath) {
+            createdProjectPath = projectPath;
+            await options.onProjectCreated?.(projectPath, response);
+          }
+          contextSnapshotService.invalidate([
+            'workspaceIdentity',
+            'projectInfo',
+            'boardInfo',
+            'libraryIndex',
+            'libraryReadmeRefs',
+            'workspaceArtifacts',
+            'workspaceState',
+          ], 'project create');
+          return response;
+        }
+      : undefined,
+    reloadProject: host.project.reloadProject
+      ? async () => {
+          const result = await host.project.reloadProject!();
+          contextSnapshotService.invalidate([
+            'projectInfo',
+            'boardInfo',
+            'libraryIndex',
+            'libraryReadmeRefs',
+            'workspaceArtifacts',
+            'workspaceState',
+          ], 'project reload');
+          return result;
+        }
+      : undefined,
+    switchBoard: typeof (host.project as any)?.switchBoard === 'function'
+      ? async (board: string) => {
+          const result = await (host.project as any).switchBoard(board);
+          contextSnapshotService.invalidate([
+            'boardInfo',
+            'libraryIndex',
+            'libraryReadmeRefs',
+            'workspaceArtifacts',
+            'workspaceState',
+          ], 'switch board');
+          return result;
+        }
+      : undefined,
+    getBoardConfig: runtimeCwd() || host.project.getBoardJson
+      ? async () => shouldUseRuntimeProjectFiles() || !host.project.getBoardJson
+          ? readRuntimeBoardJson()
+          : host.project.getBoardJson!()
+      : undefined,
+    getBoardJson: runtimeCwd() || host.project.getBoardJson
+      ? async () => shouldUseRuntimeProjectFiles() || !host.project.getBoardJson
+          ? readRuntimeBoardJson()
+          : host.project.getBoardJson!()
+      : undefined,
+    getBoardModule: runtimeCwd() || host.project.getBoardModule
+      ? async () => shouldUseRuntimeProjectFiles() || !host.project.getBoardModule
+          ? readRuntimeBoardModule()
+          : host.project.getBoardModule!()
+      : undefined,
+    getPackageJson: runtimeCwd() || host.project.getPackageJson
+      ? async () => shouldUseRuntimeProjectFiles() || !host.project.getPackageJson
+          ? readRuntimeProjectPackageJson()
+          : host.project.getPackageJson!()
+      : undefined,
+    getBoardPackageJson: runtimeCwd() || host.project.getBoardPackageJson
+      ? async () => shouldUseRuntimeProjectFiles() || !host.project.getBoardPackageJson
+          ? readRuntimeBoardPackageJson()
+          : host.project.getBoardPackageJson!()
+      : undefined,
+    setBoardConfig: typeof (host.project as any)?.setBoardConfig === 'function'
+      ? async (config: Record<string, unknown>) => {
+          const result = await (host.project as any).setBoardConfig(config);
+          contextSnapshotService.invalidate([
+            'boardInfo',
+            'workspaceArtifacts',
+            'workspaceState',
+          ], 'set board config');
+          return result;
+        }
+      : undefined,
+  } : undefined;
 
   return {
     fs: {
@@ -909,91 +1690,12 @@ export function buildExternalHostAPI(
     fsp: (window as any)?.electronAPI?.fsp,
     terminal,
     platform: {
-        type: resolvePlatformType(host.platform?.type, host.platform?.isWindows, host.platform?.isMacOS),
+      type: resolvePlatformType(host.platform?.type, host.platform?.isWindows, host.platform?.isMacOS),
       cwd: () => prjPath(),
-        homedir: () => host.platform?.homedir?.() ?? host.path.getUserHome(),
+      homedir: () => host.platform?.homedir?.() ?? host.path.getUserHome(),
       env: (key: string) => host.env?.get?.(key),
     },
-    project: host.project ? {
-        getProjectInfo: async () => {
-          if (typeof host.project.getProjectInfo === 'function') {
-            return host.project.getProjectInfo();
-          }
-
-          try {
-            const legacyResult = await getProjectInfoTool(host.project as any, { include_readme: true });
-            if (!legacyResult.is_error) {
-              return JSON.parse(legacyResult.content);
-            }
-          } catch {
-            // Fall back to the minimal project shape below when legacy discovery is unavailable.
-          }
-
-          return {
-            name: host.project.projectName,
-            path: prjPath(),
-            board: host.project.currentBoard,
-          };
-        },
-      getProjectPath: () => host.project.currentProjectPath,
-      getBoard: () => host.project.currentBoard,
-        createProject: host.project.createProject
-          ? async (name: string, board: string, path?: string) => {
-              const result = await host.project.createProject!(name, board, path ?? prjPath());
-              contextSnapshotService.invalidate([
-                'workspaceIdentity',
-                'projectInfo',
-                'boardInfo',
-                'libraryIndex',
-                'libraryReadmeRefs',
-                'workspaceArtifacts',
-                'workspaceState',
-              ], 'project create');
-              return result;
-            }
-          : undefined,
-        reloadProject: host.project.reloadProject
-          ? async () => {
-              const result = await host.project.reloadProject!();
-              contextSnapshotService.invalidate([
-                'projectInfo',
-                'boardInfo',
-                'libraryIndex',
-                'libraryReadmeRefs',
-                'workspaceArtifacts',
-                'workspaceState',
-              ], 'project reload');
-              return result;
-            }
-          : undefined,
-        switchBoard: typeof (host.project as any)?.switchBoard === 'function'
-          ? async (board: string) => {
-              const result = await (host.project as any).switchBoard(board);
-              contextSnapshotService.invalidate([
-                'boardInfo',
-                'libraryIndex',
-                'libraryReadmeRefs',
-                'workspaceArtifacts',
-                'workspaceState',
-              ], 'switch board');
-              return result;
-            }
-          : undefined,
-        getBoardConfig: host.project.getBoardJson
-          ? async () => host.project.getBoardJson!()
-          : undefined,
-        setBoardConfig: typeof (host.project as any)?.setBoardConfig === 'function'
-          ? async (config: Record<string, unknown>) => {
-              const result = await (host.project as any).setBoardConfig(config);
-              contextSnapshotService.invalidate([
-                'boardInfo',
-                'workspaceArtifacts',
-                'workspaceState',
-              ], 'set board config');
-              return result;
-            }
-          : undefined,
-    } : undefined,
+    project: projectProvider,
       builder: hasBuilder ? {
         build: async () => {
           const result = await host.builder.build(prjPath());
@@ -1025,13 +1727,31 @@ export function buildExternalHostAPI(
             ? category
             : String((category as { name?: unknown; id?: unknown })?.name ?? (category as { id?: unknown })?.id ?? ''));
         },
-        getBoardParameters: async () => ({}),
       } : undefined,
-    blockly: hasBlocklyWorkspace || hasLibraryAnalysis ? {
+    blockly: hasBlocklyWorkspace || hasLibraryAnalysis ? ({
+      lintGeneratedCode: typeof (host as any).arduinoLint?.checkSyntax === 'function'
+        ? async (code: string, options?: Record<string, unknown>) => {
+            const projectPath = prjPath();
+            const [packageJson, boardJson, boardPackageJson] = await Promise.all([
+              projectProvider.getPackageJson?.(),
+              projectProvider.getBoardJson?.(),
+              projectProvider.getBoardPackageJson?.(),
+            ]);
+            return (host as any).arduinoLint.checkSyntax(code, {
+              ...options,
+              projectContext: {
+                projectPath,
+                packageJson,
+                boardJson,
+                boardPackageJson,
+              },
+            });
+          }
+        : undefined,
       exportAbs: async () => {
         const result = await syncAbsFileHandler(
           { operation: 'export' },
-          host.project as any,
+          projectProvider as any,
           host.electron as any,
           host.absSync as any,
           createSyncAbsInvocationContext?.(),
@@ -1047,7 +1767,7 @@ export function buildExternalHostAPI(
             operation: 'import',
             pendingAbsContent: typeof content === 'string' ? content : undefined,
           },
-          host.project as any,
+          projectProvider as any,
           host.electron as any,
           host.absSync as any,
           createSyncAbsInvocationContext?.(),
@@ -1060,20 +1780,21 @@ export function buildExternalHostAPI(
       getAbsStatus: async () => {
         const result = await syncAbsFileHandler(
           { operation: 'status' },
-          host.project as any,
+          projectProvider as any,
           host.electron as any,
           host.absSync as any,
           createSyncAbsInvocationContext?.(),
         );
+        const projectPath = prjPath();
         return {
           inSync: !result.is_error,
-          ...(host.project?.currentProjectPath
-            ? { absPath: host.path.join(host.project.currentProjectPath, 'project.abs') }
+          ...(projectPath
+            ? { absPath: host.path.join(projectPath, 'project.abs') }
             : {}),
         };
       },
       getWorkspaceOverview: async () => {
-        const generatedCodeOverview = createBoundedGeneratedCodeOverview(host);
+        const generatedCodeOverview = createBoundedGeneratedCodeOverview(host, prjPath());
         return {
           structure: generatedCodeOverview.generatedCodeLength > 0
             ? 'generated-code-available'
@@ -1085,7 +1806,7 @@ export function buildExternalHostAPI(
       },
       analyzeBlocks: async (libraryId: string) => {
         const result = await analyzeLibraryBlocksTool(
-          host.project as any,
+          projectProvider as any,
           {
             libraryNames: [libraryId],
             mode: 'analysis',
@@ -1096,7 +1817,7 @@ export function buildExternalHostAPI(
         }
         return result.content;
       },
-    } : undefined,
+    } as any) : undefined,
     connectionGraph: host.connectionGraph,
     config: host.config,
       auth: host.auth ? {
@@ -1128,10 +1849,13 @@ export function createBlocklyStandardHostBinding(
       source: ChatAgentRuntimeModeSource,
       reason?: string,
     ) => void | Promise<void>;
+    readonly onProjectCreated?: (projectPath: string, result: unknown) => void | Promise<void>;
     readonly createSyncAbsInvocationContext?: () => SyncAbsInvocationContext | undefined;
   } = {},
 ): BlocklyStandardHostBinding {
   const hostAPI = buildExternalHostAPI({
+    cwd,
+    onProjectCreated: options.onProjectCreated,
     createSyncAbsInvocationContext: options.createSyncAbsInvocationContext,
     sessionId: options.sessionId,
   });
@@ -1176,6 +1900,7 @@ function createBlocklyWebFetchBridgeExtension(): {
   fetchPage(options: {
     url: string;
     signal?: AbortSignal;
+    waitMs?: number;
   }): Promise<{ text: string; status: number; contentType?: string }>;
 } | null {
   const webviewBridge = (window as any)?.electronAPI?.webviewBridge;
@@ -1188,6 +1913,7 @@ function createBlocklyWebFetchBridgeExtension(): {
       const fallback = await webviewBridge.fetchPage({
         url: options.url,
         timeoutMs: 20000,
+        waitAfterLoadMs: options.waitMs,
       });
 
       if (!fallback?.ok) {
@@ -1409,15 +2135,20 @@ export function bootstrapBlocklyLexAgent(
   options: BootstrapLexAgentOptions,
 ): BlocklyLexAgentInstance {
   const { ctx, lex, sessionId, askHandler, metrics } = options;
-  const cwd = resolveLexRuntimeCwd(ctx);
+  const runtimeProviderOptions = resolveLexRuntimeProviderOptions(ctx, sessionId);
+  const cwd = runtimeProviderOptions.cwd;
   const agentRuntimeMode = normalizeChatAgentRuntimeMode(
     options.runtimeMode ?? ctx.currentAgentRuntimeMode,
     cwd ? 'coder' : 'unbound',
   );
-  const promptProfile = resolveRuntimePromptProfile(agentRuntimeMode);
+  const basePromptProfile = resolveRuntimePromptProfile(agentRuntimeMode);
   const requiredContext = resolveRuntimeRequiredContext(agentRuntimeMode);
   const subagentRequiredContext = createSubagentRequiredContext(requiredContext);
   const runtimeSessionId = (sessionId || ctx.sessionId || '').trim();
+  setChatRuntimeWorkspaceEnvironmentOverride({
+    cwd,
+    sessionId: runtimeSessionId,
+  });
   const isRuntimeSessionStale = () => {
     const currentSessionId = (ctx.sessionId || '').trim();
     return runtimeSessionId.length > 0
@@ -1431,19 +2162,26 @@ export function bootstrapBlocklyLexAgent(
       ? <T>(operation: () => Promise<T> | T): Promise<T> | T => ctx.ownerScheduler!.runOutsideOwner(operation)
       : undefined,
   });
+  let runtimeWorkspacePath = cwd || '';
   const { hostAPI, toolProvider, adapter } = createBlocklyStandardHostBinding(cwd, {
     runtimeMode: agentRuntimeMode,
     sessionId: runtimeSessionId,
     onRuntimeModeSelected: ctx.selectAgentRuntimeMode,
+    onProjectCreated: async (projectPath, result) => {
+      runtimeWorkspacePath = projectPath;
+      await ctx.updateRuntimeProjectPath?.(projectPath, result);
+    },
     createSyncAbsInvocationContext,
   });
   attachBlocklyCompatibilityExtensions(adapter);
-  const contextSnapshotService = getBlocklyContextSnapshotService();
+  const getPromptHost = () => createRuntimePromptHost(hostAPI);
+  const contextSnapshotService = createBlocklyContextSnapshotService(getPromptHost);
+  const promptProfile = createRuntimeScopedPromptProfile(agentRuntimeMode, contextSnapshotService, getPromptHost);
   const sessionStorage = createLexSessionStorage(lex, adapter.fs);
   if (isLexBootstrapTraceEnabled()) {
     console.info('[LexBootstrap] agent runtime mode', {
       runtimeMode: agentRuntimeMode,
-      promptHostId: promptProfile.hostId,
+      promptHostId: basePromptProfile.hostId,
       cwd: cwd || null,
     });
   }
@@ -1511,7 +2249,10 @@ export function bootstrapBlocklyLexAgent(
     return toAskUserBridgeResponse(questions, response);
   };
 
+  const lineReadExtension = createBlocklyLineReadExtension();
   const runtimeExtensions: Record<string, unknown> = {
+    syncFs: AilyHost.get().fs,
+    ...(lineReadExtension ? { readline: lineReadExtension } : {}),
     environment: createEnvironmentProviderFromContext(
       contextSnapshotService,
       subagentRequiredContext,
@@ -1544,8 +2285,38 @@ export function bootstrapBlocklyLexAgent(
         })), askUserPresentationContext(opts));
       },
     },
+    planReview: {
+      present: async (review: {
+        readonly id: string;
+        readonly title: string;
+        readonly planUri?: string;
+        readonly content: string;
+        readonly actions: readonly {
+          readonly id: string;
+          readonly label: string;
+          readonly description?: string;
+          readonly default?: boolean;
+          readonly permissionLevel?: 'autopilot';
+        }[];
+        readonly canProvideFeedback: boolean;
+      }) => {
+        const targetSessionId = (
+          runtimeSessionId
+          || ctx.resolveActiveRuntimeSessionId?.()
+          || ctx.sessionId
+          || ''
+        ).trim();
+        if (!targetSessionId) {
+          throw new Error('review_plan requires a runtime session owner.');
+        }
+        return ctx.runtimeInteractionHost.presentPlanReview(targetSessionId, review);
+      },
+    },
     diagnostics: {
       getErrors: async (filePaths?: string[]) => collectDiagnostics(filePaths),
+    },
+    runtimeWorkspaceContext: {
+      getCwd: () => runtimeWorkspacePath || cwd || undefined,
     },
     memoryStorage: createBlocklyMemoryStorageExtension(cwd),
     memoryFeatureConfig: createBlocklyMemoryFeatureConfigExtension(ctx.ailyChatConfigService),
@@ -1638,11 +2409,12 @@ export function bootstrapBlocklyLexAgent(
   // prompt/skill assembly, and AgentExecutor/subagent execution.
   const terminalPolicy = ctx.ailyChatConfigService.getLexTerminalPolicy?.();
   const permissionPolicy = ctx.ailyChatConfigService.getLexPermissionPolicy?.(cwd || ctx.prjRootPath || ctx.prjPath || '');
-  const approvalsReviewer = ctx.currentSessionApprovalsReviewer
+  const approvalsReviewer = runtimeProviderOptions.approvalsReviewer
     ?? ctx.ailyChatConfigService.getLexApprovalsReviewer?.();
-  const approvalPolicy = ctx.currentSessionApprovalPolicy
+  const approvalPolicy = runtimeProviderOptions.approvalPolicy
     ?? ctx.ailyChatConfigService.getLexApprovalPolicy?.();
   const agentFolderProjectRoot = cwd || ctx.prjRootPath || ctx.prjPath;
+  ensureRuntimeOwnerSkillRegistryInitialized(agentFolderProjectRoot, ctx.ailyChatConfigService);
   const projectAgentFileProvider = createBlocklyAgentFileProvider({
     source: 'project',
     projectRootPath: agentFolderProjectRoot,
@@ -1799,7 +2571,7 @@ export function bootstrapBlocklyLexAgent(
       args: request.input,
     }),
     permissionPolicy,
-    permissionMode: normalizeChatSessionPermissionMode(ctx.currentSessionPermissionMode),
+    permissionMode: normalizeChatSessionPermissionMode(runtimeProviderOptions.permissionMode),
     terminalPolicy,
     approvalsReviewer,
     approvalPolicy,
@@ -1836,6 +2608,49 @@ export function bootstrapBlocklyLexAgent(
   attachBlocklyPostCreateExtensions(agent, adapter);
 
   return agent;
+}
+
+function createBlocklyLineReadExtension(): BlocklyLineReadExtension | null {
+  const fsApi = (window as any)?.electronAPI?.fs;
+  if (!fsApi) {
+    return null;
+  }
+  if (typeof fsApi.readHeadLines !== 'function' || typeof fsApi.readTailLines !== 'function' || typeof fsApi.readLineRange !== 'function') {
+    return null;
+  }
+
+  return {
+    head: (filePath: string, options?: BlocklyLineReadOptions) => fsApi.readHeadLines(filePath, options ?? {}),
+    tail: (filePath: string, options?: BlocklyLineReadOptions) => fsApi.readTailLines(filePath, options ?? {}),
+    sed: (filePath: string, options: BlocklyLineReadOptions) => fsApi.readLineRange(filePath, options ?? {}),
+  };
+}
+
+function normalizeRuntimePath(value: unknown): string {
+  return typeof value === 'string' && value.trim().length > 0
+    ? value.trim()
+    : '';
+}
+
+function resolveLexRuntimeProviderOptions(
+  ctx: Pick<BootstrapLexAgentContext, 'buildExecutionSaveTarget' | 'currentSessionPath' | 'currentSessionPermissionMode' | 'currentSessionApprovalsReviewer' | 'currentSessionApprovalPolicy' | 'prjPath' | 'prjRootPath'>,
+  sessionId?: string | null,
+): {
+  readonly cwd: string;
+  readonly permissionMode?: ChatSessionPermissionMode;
+  readonly approvalsReviewer?: 'user' | 'auto_review';
+  readonly approvalPolicy?: 'on_request' | 'never';
+} {
+  const saveTarget = ctx.buildExecutionSaveTarget?.(sessionId);
+  const providerOptions = saveTarget?.providerOptions;
+  const cwd = normalizeRuntimePath(providerOptions?.folderPath) || resolveLexRuntimeCwd(ctx);
+
+  return {
+    cwd,
+    permissionMode: providerOptions?.permissionMode ?? ctx.currentSessionPermissionMode,
+    approvalsReviewer: providerOptions?.approvalsReviewer ?? ctx.currentSessionApprovalsReviewer,
+    approvalPolicy: providerOptions?.approvalPolicy ?? ctx.currentSessionApprovalPolicy,
+  };
 }
 
 function resolveLexRuntimeCwd(ctx: Pick<BootstrapLexAgentContext, 'currentSessionPath' | 'prjPath' | 'prjRootPath'>): string {
@@ -1934,18 +2749,26 @@ function attachBlocklyPostCreateExtensions(
       const seen = new Set<string>();
       const roots: string[] = [];
 
+      const addRoot = (value: unknown): void => {
+        const root = typeof value === 'string' ? value.trim() : '';
+        if (!root || seen.has(root)) {
+          return;
+        }
+
+        seen.add(root);
+        roots.push(root);
+      };
+
+      addRoot(AilyHost.get().project?.currentProjectPath);
+      addRoot(AilyHost.get().project?.projectRootPath);
+
       for (const skill of BlocklySkillRegistry.getAll()) {
         if (skill.origin?.type === 'url') {
           continue;
         }
 
         const baseDir = typeof skill.baseDir === 'string' ? skill.baseDir.trim() : '';
-        if (!baseDir || seen.has(baseDir)) {
-          continue;
-        }
-
-        seen.add(baseDir);
-        roots.push(baseDir);
+        addRoot(baseDir);
       }
 
       return roots;
@@ -2882,6 +3705,12 @@ function createBlocklyCommandSessionSummary(session: ExternalTerminalSession) {
   const outputFilePath = typeof session.outputFilePath === 'string' && session.outputFilePath.trim().length > 0
     ? session.outputFilePath
     : undefined;
+  const subappName = normalizeProcessLogSubappName(
+    session.subappName
+      || resolveProcessLogSubappNameFromOutputFilePath(outputFilePath)
+      || resolveProcessLogSubappNameFromCwd(session.cwd)
+      || resolveProcessLogSubappNameFromCommand(session.command),
+  );
   const lastTimestamp = completedAt ?? Date.now();
   return {
     processId: session.id,
@@ -2899,6 +3728,9 @@ function createBlocklyCommandSessionSummary(session: ExternalTerminalSession) {
     elapsedMs: Math.max(0, lastTimestamp - session.startedAt),
     bytesTotal: byteLength(session.stdout) + byteLength(session.stderr),
     background: session.background === true,
+    subappName,
+    removed: session.removed === true,
+    ...(typeof session.removedAt === 'number' ? { removedAt: session.removedAt } : {}),
     ...(outputFilePath ? { outputFilePath } : {}),
   };
 }
@@ -2936,8 +3768,186 @@ function attachBlocklyCommandSession(session: ExternalTerminalSession): void {
   }
 }
 
-function sanitizeBlocklyCommandSessionFileName(processId: string): string {
-  return processId.replace(/[^a-zA-Z0-9._-]/g, '_');
+function resolveBlocklyProjectProcessMetadataFileCandidates(
+  host: any,
+  projectPathHint?: string | null,
+): string[] {
+  const candidates = new Set<string>();
+  const normalizedProjectPath = typeof projectPathHint === 'string' ? projectPathHint.trim() : '';
+  if (normalizedProjectPath) {
+    collectProjectProcessMetadataFiles(host, normalizedProjectPath, candidates);
+  }
+  const currentProjectPath = host.project?.currentProjectPath || host.project?.projectRootPath || '';
+  if (currentProjectPath) {
+    collectProjectProcessMetadataFiles(host, currentProjectPath, candidates);
+  }
+  return [...candidates];
+}
+
+function collectProjectProcessMetadataFiles(
+  host: any,
+  projectPath: string,
+  candidates: Set<string>,
+): void {
+  const logRootDir = host.path?.join?.(projectPath, '.log');
+  if (!logRootDir || !host.fs?.existsSync?.(logRootDir)) {
+    return;
+  }
+
+  for (const subappEntry of readBlocklyCommandSessionDirEntries(host, logRootDir)) {
+    if (!subappEntry.isDirectory()) {
+      continue;
+    }
+    const subappDirPath = host.path.join(logRootDir, subappEntry.name);
+    for (const dayEntry of readBlocklyCommandSessionDirEntries(host, subappDirPath)) {
+      if (!dayEntry.isDirectory()) {
+        continue;
+      }
+      const dayDirPath = host.path.join(subappDirPath, dayEntry.name);
+      for (const fileEntry of readBlocklyCommandSessionDirEntries(host, dayDirPath)) {
+        if (fileEntry.isFile() && fileEntry.name.endsWith('.json')) {
+          candidates.add(host.path.join(dayDirPath, fileEntry.name));
+        }
+      }
+    }
+  }
+}
+
+function readBlocklyCommandSessionDirEntries(
+  host: any,
+  dirPath: string,
+): Array<{ name: string; isFile(): boolean; isDirectory(): boolean }> {
+  try {
+    if (typeof host.fs?.readDirSync === 'function') {
+      return host.fs.readDirSync(dirPath)
+        .map((entry: { name?: string; isFile?: () => boolean; isDirectory?: () => boolean }) => ({
+          name: String(entry?.name || ''),
+          isFile: () => typeof entry?.isFile === 'function' ? entry.isFile() : true,
+          isDirectory: () => typeof entry?.isDirectory === 'function' ? entry.isDirectory() : false,
+        }))
+        .filter((entry: { name: string }) => !!entry.name);
+    }
+    return (host.fs?.readdirSync?.(dirPath) ?? [])
+      .map((name: string) => ({
+        name: String(name || ''),
+        isFile: () => {
+          try {
+            return host.fs.statSync(host.path.join(dirPath, name)).isFile();
+          } catch {
+            return false;
+          }
+        },
+        isDirectory: () => {
+          try {
+            return host.fs.statSync(host.path.join(dirPath, name)).isDirectory();
+          } catch {
+            return false;
+          }
+        },
+      }))
+      .filter((entry: { name: string }) => !!entry.name);
+  } catch {
+    return [];
+  }
+}
+
+function readPersistedBlocklyCommandSessionRecord(
+  host: any,
+  filePath: string,
+): PersistedBlocklyCommandSessionRecord | null {
+  try {
+    const raw = host.fs?.readFileSync?.(filePath, 'utf-8');
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(String(raw));
+    return parsed && typeof parsed === 'object' ? parsed as PersistedBlocklyCommandSessionRecord : null;
+  } catch {
+    return null;
+  }
+}
+
+function createBlocklyCommandSessionSummaryFromPersistedRecord(
+  record: PersistedBlocklyCommandSessionRecord,
+  requestedSessionId?: string,
+): BlocklyCommandSessionSummary | null {
+  const processId = typeof record.processId === 'string' ? record.processId.trim() : '';
+  const outputSessionId = typeof record.outputSessionId === 'string' ? record.outputSessionId.trim() : processId;
+  if (!processId || !outputSessionId) {
+    return null;
+  }
+
+  const recordSessionId = typeof record.sessionId === 'string' ? record.sessionId.trim() : '';
+  if (!recordSessionId) {
+    return null;
+  }
+  if (requestedSessionId && recordSessionId !== requestedSessionId) {
+    return null;
+  }
+
+  const startedAt = typeof record.startedAt === 'number' && Number.isFinite(record.startedAt)
+    ? record.startedAt
+    : 0;
+  const lastOutputAt = typeof record.lastOutputAt === 'number' && Number.isFinite(record.lastOutputAt)
+    ? record.lastOutputAt
+    : undefined;
+  const completedAt = typeof record.completedAt === 'number' && Number.isFinite(record.completedAt)
+    ? record.completedAt
+    : undefined;
+  const pid = typeof record.pid === 'number' && Number.isFinite(record.pid)
+    ? record.pid
+    : undefined;
+  const exitCode = typeof record.exitCode === 'number' && Number.isFinite(record.exitCode)
+    ? record.exitCode
+    : undefined;
+  const bytesTotal = typeof record.bytesTotal === 'number' && Number.isFinite(record.bytesTotal)
+    ? record.bytesTotal
+    : 0;
+  const sessionId = recordSessionId;
+  const outputFilePath = typeof record.outputFilePath === 'string' && record.outputFilePath.trim()
+    ? record.outputFilePath.trim()
+    : undefined;
+  const subappName = normalizeProcessLogSubappName(
+    typeof record.subappName === 'string' && record.subappName.trim()
+      ? record.subappName.trim()
+      : resolveProcessLogSubappNameFromOutputFilePath(outputFilePath)
+        || resolveProcessLogSubappNameFromCwd(record.cwd)
+        || resolveProcessLogSubappNameFromCommand(record.command),
+  );
+  const removed = record.removed === true;
+  const removedAt = typeof record.removedAt === 'number' && Number.isFinite(record.removedAt)
+    ? record.removedAt
+    : undefined;
+  const running = resolvePersistedBlocklyCommandSessionRunningState(processId, record.running === true);
+  const normalizedStatus = normalizeBlocklyCommandSessionStatus(
+    typeof record.status === 'string' ? record.status : undefined,
+    running,
+  );
+  const lastTimestamp = running
+    ? Date.now()
+    : completedAt ?? lastOutputAt ?? startedAt;
+
+  return {
+    processId,
+    sessionId,
+    outputSessionId,
+    command: typeof record.command === 'string' ? record.command : processId,
+    cwd: typeof record.cwd === 'string' ? record.cwd : '',
+    status: normalizedStatus,
+    running,
+    ...(exitCode !== undefined ? { exitCode } : {}),
+    ...(pid !== undefined ? { pid } : {}),
+    startedAt,
+    ...(lastOutputAt !== undefined ? { lastOutputAt } : {}),
+    ...(completedAt !== undefined ? { completedAt } : {}),
+    elapsedMs: Math.max(0, lastTimestamp - startedAt),
+    bytesTotal,
+    background: record.background === true,
+    subappName,
+    removed,
+    ...(removedAt !== undefined ? { removedAt } : {}),
+    ...(outputFilePath ? { outputFilePath } : {}),
+  };
 }
 
 function appendBlocklyCommandSessionFile(
@@ -2966,30 +3976,25 @@ function appendBlocklyCommandSessionFile(
 
 function resolveBlocklyCommandSessionStoragePaths(
   host: any,
-  cwd: string,
+  projectPathHint: string,
   sessionId: string,
   processId: string,
+  subappName?: string,
 ): { outputFilePath: string; metadataFilePath: string } | null {
   const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
   if (!normalizedSessionId) {
     return null;
   }
 
-  const projectPath = cwd || host.project?.currentProjectPath || host.project?.projectRootPath || '';
-  const appDataPath = host.path?.getAppDataPath?.();
-  if (!projectPath && !appDataPath) {
+  const projectPath = projectPathHint
+    || host.project?.currentProjectPath
+    || host.project?.projectRootPath
+    || '';
+  if (!projectPath) {
     return null;
   }
-  const rootDir = projectPath
-    ? host.path.join(projectPath, PROJECT_CHAT_DIR, normalizedSessionId)
-    : host.path.join(appDataPath, GLOBAL_CHAT_DATA_DIR, normalizedSessionId);
-  const processDir = host.path.join(rootDir, PROCESS_RECORDS_DIR);
-  host.fs.mkdirSync(processDir, { recursive: true });
-  const safeName = sanitizeBlocklyCommandSessionFileName(processId);
-  return {
-    outputFilePath: host.path.join(processDir, `${safeName}.log`),
-    metadataFilePath: host.path.join(processDir, `${safeName}.json`),
-  };
+
+  return resolveProcessLogStoragePaths(projectPath, processId, undefined, subappName);
 }
 
 function persistBlocklyCommandSessionRecord(session: ExternalTerminalSession): void {
@@ -3015,8 +4020,11 @@ function persistBlocklyCommandSessionRecord(session: ExternalTerminalSession): v
     bytesTotal: byteLength(session.stdout) + byteLength(session.stderr),
     stdoutBytes: byteLength(session.stdout),
     stderrBytes: byteLength(session.stderr),
+    subappName: session.subappName ?? null,
     outputFilePath: session.outputFilePath ?? null,
     background: session.background === true,
+    removed: session.removed === true,
+    removedAt: typeof session.removedAt === 'number' ? session.removedAt : null,
     executionKind: session.executionKind,
   };
   try {
@@ -3036,6 +4044,74 @@ function persistBlocklyCommandSessionOutput(
   }
 
   appendBlocklyCommandSessionFile(host, session.outputFilePath, text);
+}
+
+function isManagedChildToolServeCommand(command: string, subappName: string): boolean {
+  const normalizedSubappName = normalizeProcessLogSubappName(subappName);
+  if (!normalizedSubappName || normalizedSubappName === DEFAULT_PROCESS_LOG_SUBAPP) {
+    return false;
+  }
+
+  const normalizedCommand = String(command || '').trim().toLowerCase();
+  if (!normalizedCommand) {
+    return false;
+  }
+
+  const targetsChildTool = normalizedCommand.includes('child/tools/')
+    || normalizedCommand.includes('child\\tools\\');
+  if (!targetsChildTool) {
+    return false;
+  }
+
+  return normalizedCommand.includes(' serve ')
+    || normalizedCommand.includes(' serve --')
+    || normalizedCommand.endsWith(' serve')
+    || normalizedCommand.includes('index.js serve');
+}
+
+function findReusableChildToolServeSession(
+  sessionId: string,
+  subappName: string,
+): ExternalTerminalSession | null {
+  const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+  const normalizedSubappName = normalizeProcessLogSubappName(subappName);
+  if (!normalizedSessionId || !normalizedSubappName || normalizedSubappName === DEFAULT_PROCESS_LOG_SUBAPP) {
+    return null;
+  }
+
+  for (const session of blocklyCommandSessions.values()) {
+    if (!session.running || session.sessionId !== normalizedSessionId) {
+      continue;
+    }
+    if (normalizeProcessLogSubappName(session.subappName) !== normalizedSubappName) {
+      continue;
+    }
+    if (!isManagedChildToolServeCommand(session.command, session.subappName)) {
+      continue;
+    }
+    return session;
+  }
+
+  return null;
+}
+
+function resolveExternalSessionWaitMs(
+  session: ExternalTerminalSession,
+  yieldTimeMs = 1_000,
+): number {
+  const normalizedYieldTimeMs = Math.max(0, Math.min(30_000, yieldTimeMs ?? 0));
+  if (!session.running) {
+    return normalizedYieldTimeMs;
+  }
+
+  if (isManagedChildToolServeCommand(session.command, session.subappName)) {
+    const hasAnyOutput = !!session.stdout || !!session.stderr;
+    if (!hasAnyOutput) {
+      return Math.max(normalizedYieldTimeMs, 2_500);
+    }
+  }
+
+  return normalizedYieldTimeMs;
 }
 
 function createExternalTerminal(host: any, prjPath: () => string, runtimeSessionId?: string): IExternalHostAPI['terminal'] {
@@ -3081,6 +4157,87 @@ function createExternalTerminal(host: any, prjPath: () => string, runtimeSession
     }
     session.readyResolved = true;
     session.resolveReady();
+  };
+
+  const registerManagedChildToolServeSession = async (session: ExternalTerminalSession): Promise<void> => {
+    if (session.childToolSessionRegistered || !isManagedChildToolServeCommand(session.command, session.subappName)) {
+      return;
+    }
+
+    const hostInfo = readManagedChildToolReadyHostInfo(session.stdout);
+    if (!hostInfo?.url) {
+      return;
+    }
+
+    if (typeof hostInfo.pid === 'number' && Number.isFinite(hostInfo.pid)) {
+      session.pid = hostInfo.pid;
+    }
+
+    try {
+      const result = await (window as any)['childToolSession']?.register?.({
+        toolId: session.subappName,
+        hostInfo,
+        streamId: session.id,
+      });
+      if (result?.success) {
+        session.childToolSessionRegistered = true;
+        persistBlocklyCommandSessionRecord(session);
+      }
+    } catch (error) {
+      console.warn('[LexStream] Failed to register managed child tool session:', session.subappName, error);
+    }
+  };
+
+  const promoteExternalSessionToBackground = (session: ExternalTerminalSession): void => {
+    if (session.background || !session.running) {
+      return;
+    }
+    session.background = true;
+    if (session.timer) {
+      clearTimeout(session.timer);
+      session.timer = undefined;
+    }
+    if (session.status !== 'running') {
+      session.status = 'running';
+    }
+    persistBlocklyCommandSessionRecord(session);
+    if (session.sessionId) {
+      notifyBlocklyCommandSessionUpdate(session.sessionId, session.id);
+    }
+  };
+
+  const shouldAutoPromoteExternalSessionToBackground = (session: ExternalTerminalSession): boolean => {
+    if (session.background || !session.running) {
+      return false;
+    }
+
+    const normalizedCommand = session.command.toLowerCase();
+    const serviceLikeCommand = normalizedCommand.includes(' serve ')
+      || normalizedCommand.includes(' serve --')
+      || normalizedCommand.endsWith(' serve')
+      || normalizedCommand.includes(' --host ')
+      || normalizedCommand.includes(' --port ')
+      || normalizedCommand.includes('npm run dev')
+      || normalizedCommand.includes('npm run start')
+      || normalizedCommand.includes('vite')
+      || normalizedCommand.includes('http-server');
+
+    if (!serviceLikeCommand) {
+      return false;
+    }
+
+    const readinessText = `${session.stdout}\n${session.stderr}`.slice(-4096).toLowerCase();
+    return readinessText.includes('"event":"ready"')
+      || readinessText.includes('listening on')
+      || readinessText.includes('server running')
+      || /https?:\/\/127\.0\.0\.1:\d+/.test(readinessText)
+      || /ws:\/\/127\.0\.0\.1:\d+/.test(readinessText);
+  };
+
+  const maybeAutoPromoteExternalSessionToBackground = (session: ExternalTerminalSession): void => {
+    if (shouldAutoPromoteExternalSessionToBackground(session)) {
+      promoteExternalSessionToBackground(session);
+    }
   };
 
   const finalize = (session: ExternalTerminalSession, exitCode: number) => {
@@ -3129,6 +4286,8 @@ function createExternalTerminal(host: any, prjPath: () => string, runtimeSession
             session.lastOutputAt = Date.now();
             persistBlocklyCommandSessionOutput(host, session, data.data ?? '');
             persistBlocklyCommandSessionRecord(session);
+            maybeAutoPromoteExternalSessionToBackground(session);
+            void registerManagedChildToolServeSession(session);
             emitExternalTerminalOutput(session, 'stdout', data.data ?? '');
             settleReady(session);
             break;
@@ -3137,6 +4296,7 @@ function createExternalTerminal(host: any, prjPath: () => string, runtimeSession
             session.lastOutputAt = Date.now();
             persistBlocklyCommandSessionOutput(host, session, data.data ?? '');
             persistBlocklyCommandSessionRecord(session);
+            maybeAutoPromoteExternalSessionToBackground(session);
             emitExternalTerminalOutput(session, 'stderr', data.data ?? '');
             settleReady(session);
             break;
@@ -3177,6 +4337,7 @@ function createExternalTerminal(host: any, prjPath: () => string, runtimeSession
           session.lastOutputAt = Date.now();
           persistBlocklyCommandSessionOutput(host, session, data.data ?? '');
           persistBlocklyCommandSessionRecord(session);
+          maybeAutoPromoteExternalSessionToBackground(session);
           emitExternalTerminalOutput(session, 'stdout', data.data ?? '');
           settleReady(session);
           break;
@@ -3185,6 +4346,7 @@ function createExternalTerminal(host: any, prjPath: () => string, runtimeSession
           session.lastOutputAt = Date.now();
           persistBlocklyCommandSessionOutput(host, session, data.data ?? '');
           persistBlocklyCommandSessionRecord(session);
+          maybeAutoPromoteExternalSessionToBackground(session);
           emitExternalTerminalOutput(session, 'stderr', data.data ?? '');
           settleReady(session);
           break;
@@ -3212,6 +4374,8 @@ function createExternalTerminal(host: any, prjPath: () => string, runtimeSession
       session.lastOutputAt = Date.now();
       persistBlocklyCommandSessionOutput(host, session, text);
       persistBlocklyCommandSessionRecord(session);
+      maybeAutoPromoteExternalSessionToBackground(session);
+      void registerManagedChildToolServeSession(session);
       emitExternalTerminalOutput(session, 'stdout', text);
       settleReady(session);
     });
@@ -3229,6 +4393,7 @@ function createExternalTerminal(host: any, prjPath: () => string, runtimeSession
     cwd?: string;
     timeout?: number;
     env?: Record<string, string>;
+    subappName?: string;
     tty?: boolean;
     streamStdin?: boolean;
     streamStdoutStderr?: boolean;
@@ -3237,16 +4402,31 @@ function createExternalTerminal(host: any, prjPath: () => string, runtimeSession
   }) => {
     const id = opts?.processId?.trim() || `terminal_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     const cwd = opts?.cwd ?? prjPath();
+    const projectPathHint = prjPath();
     const sessionId = typeof runtimeSessionId === 'string' ? runtimeSessionId.trim() : '';
     let resolveReady!: () => void;
     let resolveFinished!: () => void;
-    const storagePaths = resolveBlocklyCommandSessionStoragePaths(host, cwd, sessionId, id);
+    const inferredSubappName = resolveProcessLogSubappNameFromCommand(command);
+    const subappName = normalizeProcessLogSubappName(
+      opts?.subappName || inferredSubappName || resolveProcessLogSubappNameFromCwd(cwd) || DEFAULT_PROCESS_LOG_SUBAPP,
+    );
+    const managedChildToolServeCommand = isManagedChildToolServeCommand(command, subappName);
+    if (managedChildToolServeCommand) {
+      const reusableSession = findReusableChildToolServeSession(sessionId, subappName);
+      if (reusableSession) {
+        reusableSession.outputListener = opts?.onOutput;
+        promoteExternalSessionToBackground(reusableSession);
+        return createSnapshot(reusableSession);
+      }
+    }
+    const storagePaths = resolveBlocklyCommandSessionStoragePaths(host, projectPathHint, sessionId, id, subappName);
     const session: ExternalTerminalSession = {
       id,
       sessionId,
       outputSessionId: id,
       command,
       cwd,
+      subappName,
       stdout: '',
       stderr: '',
       running: true,
@@ -3265,7 +4445,7 @@ function createExternalTerminal(host: any, prjPath: () => string, runtimeSession
       resolveFinished,
       outputListener: opts?.onOutput,
       executionKind: opts?.tty ? 'pty' : 'buffered',
-      background: false,
+      background: managedChildToolServeCommand,
     };
 
     if (opts?.tty) {
@@ -3278,20 +4458,22 @@ function createExternalTerminal(host: any, prjPath: () => string, runtimeSession
       attachRawTerminalSession(session);
     }
 
-    const timeout = opts?.timeout ?? 30_000;
-    session.timer = setTimeout(async () => {
-      if (!session.running) {
-        return;
-      }
-      session.stderr += `${session.stderr ? '\n' : ''}[Process killed: timeout exceeded]`;
-      session.lastOutputAt = Date.now();
-      session.status = 'timeout';
-      emitExternalTerminalOutput(session, 'stderr', '[Process killed: timeout exceeded]');
-      const stopped = await stopExternalSession(session, host);
-      if (stopped && session.running) {
-        finalize(session, session.exitCode ?? 124);
-      }
-    }, timeout);
+    if (!session.background) {
+      const timeout = opts?.timeout ?? DEFAULT_EXTERNAL_COMMAND_TIMEOUT_MS;
+      session.timer = setTimeout(async () => {
+        if (!session.running) {
+          return;
+        }
+        session.stderr += `${session.stderr ? '\n' : ''}[Process killed: timeout exceeded]`;
+        session.lastOutputAt = Date.now();
+        session.status = 'timeout';
+        emitExternalTerminalOutput(session, 'stderr', '[Process killed: timeout exceeded]');
+        const stopped = await stopExternalSession(session, host);
+        if (stopped && session.running) {
+          finalize(session, session.exitCode ?? 124);
+        }
+      }, timeout);
+    }
 
     attachBlocklyCommandSession(session);
     persistBlocklyCommandSessionRecord(session);
@@ -3448,11 +4630,11 @@ function createExternalTerminal(host: any, prjPath: () => string, runtimeSession
       if (!session) {
         return null;
       }
-      session.status = 'killed';
+      session.status = 'cancelled';
       session.stderr += `${session.stderr ? '\n' : ''}[Process stopped by user]`;
       session.lastOutputAt = Date.now();
       emitExternalTerminalOutput(session, 'stderr', '[Process stopped by user]', {
-        status: 'killed',
+        status: 'cancelled',
         running: false,
       });
       const stopped = await stopExternalSession(session, host);
@@ -3503,6 +4685,7 @@ interface ExternalTerminalSession {
   outputSessionId: string;
   command: string;
   cwd: string;
+  subappName: string;
   stdout: string;
   stderr: string;
   running: boolean;
@@ -3515,6 +4698,8 @@ interface ExternalTerminalSession {
   completedAt?: number;
   outputFilePath?: string;
   metadataFilePath?: string;
+  removed?: boolean;
+  removedAt?: number;
   readyResolved: boolean;
   finishedResolved: boolean;
   ready: Promise<void>;
@@ -3541,10 +4726,39 @@ interface ExternalTerminalSession {
   abortCleanup?: () => void;
   executionKind: 'buffered' | 'pty';
   background: boolean;
+  childToolSessionRegistered?: boolean;
 }
 
 function delay(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function readManagedChildToolReadyHostInfo(output: string): {
+  url?: string;
+  origin?: string;
+  wsUrl?: string;
+  shutdownUrl?: string;
+  port?: number;
+  pid?: number;
+} | null {
+  const text = typeof output === 'string' ? output : '';
+  if (!text) {
+    return null;
+  }
+
+  const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    try {
+      const parsed = JSON.parse(lines[index]) as { event?: string; data?: any };
+      if (parsed?.event === 'ready' && parsed.data?.url) {
+        return parsed.data;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
 }
 
 async function waitForExternalSession(
@@ -3557,6 +4771,7 @@ async function waitForExternalSession(
   }
 
   if (session.running && (yieldTimeMs ?? 0) > 0) {
+    const effectiveWaitMs = resolveExternalSessionWaitMs(session, yieldTimeMs);
     let removeAbortListener: (() => void) | undefined;
     const abortPromise = signal
       ? new Promise<void>((resolve) => {
@@ -3567,7 +4782,7 @@ async function waitForExternalSession(
       : undefined;
     await Promise.race([
       session.finished,
-      delay(Math.max(0, Math.min(30_000, yieldTimeMs))),
+      delay(effectiveWaitMs),
       ...(abortPromise ? [abortPromise] : []),
     ]);
     removeAbortListener?.();
@@ -3579,6 +4794,7 @@ async function waitForExternalSession(
     sessionId: session.sessionId,
     command: session.command,
     cwd: session.cwd,
+    subappName: session.subappName,
     stdout: session.stdout,
     stderr: session.stderr,
     running: session.running,

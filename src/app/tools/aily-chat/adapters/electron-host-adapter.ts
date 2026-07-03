@@ -44,6 +44,7 @@ export interface ElectronAdapterDeps {
   cmdService?: any;
   crossPlatformCmdService?: any;
   absAutoSyncService?: any;
+  arduinoLintService?: any;
   electronService?: any;
   uiService?: any;
   onboardingService?: any;
@@ -72,6 +73,71 @@ export function createElectronHostAdapter(deps: ElectronAdapterDeps): IAilyHostA
   }>();
   const getDep = <K extends keyof ElectronAdapterDeps>(key: K): ElectronAdapterDeps[K] => deps[key];
   let cachedHostConfigApiEndpoint: string | null | undefined;
+
+  const normalizeStringValue = (value: unknown): string => typeof value === 'string' && value.trim().length > 0
+    ? value.trim()
+    : '';
+
+  const normalizeComparablePath = (value: unknown): string => normalizeStringValue(value)
+    .replace(/\\/g, '/')
+    .replace(/\/+$/, '')
+    .toLowerCase();
+
+  const resolveActiveProjectPath = (rawProjectService: any): string => {
+    const currentProjectPath = normalizeStringValue(rawProjectService?.currentProjectPath);
+    const projectRootPath = normalizeStringValue(rawProjectService?.projectRootPath);
+    if (!currentProjectPath) {
+      return '';
+    }
+    if (projectRootPath && normalizeComparablePath(currentProjectPath) === normalizeComparablePath(projectRootPath)) {
+      return '';
+    }
+    return currentProjectPath;
+  };
+
+  const resolveProjectPath = (rawProjectService: any): string =>
+    resolveActiveProjectPath(rawProjectService);
+
+  const resolveProjectRootPath = (rawProjectService: any): string =>
+    normalizeStringValue(rawProjectService?.projectRootPath)
+    || resolveProjectPath(rawProjectService);
+
+  const resolveProjectBoardFromPackageData = (packageData: any): string | undefined => {
+    const explicitBoard = normalizeStringValue(packageData?.board);
+    if (explicitBoard) {
+      return explicitBoard;
+    }
+
+    const dependencies = packageData?.dependencies;
+    if (!dependencies || typeof dependencies !== 'object') {
+      return undefined;
+    }
+
+    const boardDependency = Object.keys(dependencies)
+      .find(dependencyName => dependencyName.startsWith('@aily-project/board-'));
+    return boardDependency
+      ? boardDependency.slice('@aily-project/'.length)
+      : undefined;
+  };
+
+  const resolveProjectBoard = (rawProjectService: any): string | undefined => {
+    if (!resolveActiveProjectPath(rawProjectService)) {
+      return undefined;
+    }
+    return resolveProjectBoardFromPackageData(rawProjectService?.currentPackageData)
+      || normalizeStringValue(rawProjectService?.currentBoardConfig?.name)
+      || normalizeStringValue(rawProjectService?.currentBoard)
+      || undefined;
+  };
+
+  const resolveProjectName = (rawProjectService: any): string | undefined => {
+    if (!resolveActiveProjectPath(rawProjectService)) {
+      return undefined;
+    }
+    return normalizeStringValue(rawProjectService?.currentPackageData?.name)
+      || normalizeStringValue(rawProjectService?.projectName)
+      || undefined;
+  };
 
   const readHostConfigApiEndpoint = (): string | null => {
     if (cachedHostConfigApiEndpoint !== undefined) {
@@ -194,6 +260,7 @@ export function createElectronHostAdapter(deps: ElectronAdapterDeps): IAilyHostA
     getUserDocuments: () => getPath()?.getUserDocuments?.() ?? '',
     getUserHome: () => getPath()?.getUserHome?.() ?? '',
     getAilyBuilderPath: () => getPath()?.getAilyBuilderPath?.(),
+    getAilyBuilderCachePath: () => getPath()?.getAilyBuilderCachePath?.(),
     getAilyBuilderBuildPath: () => getPath()?.getAilyBuilderBuildPath?.(),
     getAilyChildPath: () => getPath()?.getAilyChildPath?.(),
     getElectronPath: () => getPath()?.getElectronPath?.(),
@@ -254,11 +321,54 @@ export function createElectronHostAdapter(deps: ElectronAdapterDeps): IAilyHostA
         return undefined;
       }
 
+      if (prop === 'currentProjectPath') {
+        return resolveProjectPath(rawProjectService);
+      }
+      if (prop === 'projectRootPath') {
+        return resolveProjectRootPath(rawProjectService);
+      }
       if (prop === 'currentBoard') {
-        return rawProjectService.currentBoardConfig?.name ?? rawProjectService.currentBoard;
+        return resolveProjectBoard(rawProjectService);
       }
       if (prop === 'projectName') {
-        return rawProjectService.currentPackageData?.name ?? rawProjectService.projectName;
+        return resolveProjectName(rawProjectService);
+      }
+      if (prop === 'getProjectPath') {
+        return () => resolveProjectPath(rawProjectService);
+      }
+      if (prop === 'getBoard') {
+        return () => resolveProjectBoard(rawProjectService);
+      }
+      if (prop === 'getProjectInfo') {
+        return async () => {
+          const activeProjectPath = resolveProjectPath(rawProjectService);
+          if (typeof rawProjectService.getProjectInfo === 'function') {
+            const info = await rawProjectService.getProjectInfo();
+            if (info && typeof info === 'object') {
+              const infoRecord = info as Record<string, unknown>;
+              if (!activeProjectPath && infoRecord['projectOpened'] !== true) {
+                return {
+                  ...infoRecord,
+                  projectOpened: false,
+                };
+              }
+              return {
+                ...infoRecord,
+                path: normalizeStringValue(infoRecord['path']) || activeProjectPath,
+                board: infoRecord['board'] ?? resolveProjectBoard(rawProjectService),
+                name: infoRecord['name'] ?? resolveProjectName(rawProjectService),
+              };
+            }
+            return info;
+          }
+          return {
+            projectOpened: Boolean(activeProjectPath),
+            path: activeProjectPath,
+            rootPath: resolveProjectRootPath(rawProjectService),
+            board: resolveProjectBoard(rawProjectService),
+            name: resolveProjectName(rawProjectService),
+          };
+        };
       }
       if (prop === 'getPackageJsonSync') {
         return () => {
@@ -281,7 +391,22 @@ export function createElectronHostAdapter(deps: ElectronAdapterDeps): IAilyHostA
     },
     has(_target, prop: string | symbol) {
       const rawProjectService = getDep('projectService');
-      return !!rawProjectService && prop in rawProjectService;
+      if (!rawProjectService) {
+        return false;
+      }
+      if ([
+        'currentProjectPath',
+        'projectRootPath',
+        'currentBoard',
+        'projectName',
+        'getProjectPath',
+        'getProjectInfo',
+        'getBoard',
+        'getPackageJsonSync',
+      ].includes(String(prop))) {
+        return true;
+      }
+      return prop in rawProjectService;
     },
   });
 
@@ -336,13 +461,50 @@ export function createElectronHostAdapter(deps: ElectronAdapterDeps): IAilyHostA
   };
 
   // ----- builder -----
-  const builder: IBuildProvider = new Proxy({} as IBuildProvider, {
-    get(_target, prop: string | symbol) {
+  const builder: IBuildProvider = {
+    build: async (projectPath: string) => {
+      if (!projectPath) {
+        return { success: false, output: 'No active project is available for build.' };
+      }
       const builderService = getDep('builderService');
-      const value = builderService?.[prop as keyof typeof builderService];
-      return typeof value === 'function' ? value.bind(builderService) : value;
+      if (!builderService || typeof builderService.build !== 'function') {
+        return { success: false, output: 'Build system is not available.' };
+      }
+
+      try {
+        const result = await builderService.build(projectPath);
+        return {
+          success: result?.state !== 'error' && result?.state !== 'warn',
+          output: result?.text ?? result?.output ?? JSON.stringify(result ?? null),
+        };
+      } catch (error: any) {
+        return {
+          success: false,
+          output: error?.text || error?.message || String(error),
+        };
+      }
     },
-  });
+    upload: async (projectPath: string, port: string) => {
+      const builderService = getDep('builderService');
+      const upload = builderService?.upload;
+      if (typeof upload !== 'function') {
+        return { success: false, output: 'Upload system is not available.' };
+      }
+
+      try {
+        const result = await upload.call(builderService, projectPath, port);
+        return {
+          success: result?.state !== 'error' && result?.state !== 'warn',
+          output: result?.text ?? result?.output ?? JSON.stringify(result ?? null),
+        };
+      } catch (error: any) {
+        return {
+          success: false,
+          output: error?.text || error?.message || String(error),
+        };
+      }
+    },
+  };
 
   // ----- notification -----
   const notification: INotificationProvider = {
@@ -462,6 +624,7 @@ export function createElectronHostAdapter(deps: ElectronAdapterDeps): IAilyHostA
     get notice() { return getDep('noticeService'); },
     get electron() { return getDep('electronService'); },
     get absSync() { return getDep('absAutoSyncService'); },
+    get arduinoLint() { return getDep('arduinoLintService'); },
     get ui() { return getDep('uiService'); },
     get onboarding() { return getDep('onboardingService'); },
   };

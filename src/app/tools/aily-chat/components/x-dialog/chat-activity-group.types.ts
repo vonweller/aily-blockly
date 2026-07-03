@@ -105,6 +105,8 @@ export interface ActivityGroupDisplayItem {
   loadDetail?: () => ActivityLazyDetailData;
   toolbarActions?: readonly ActivityToolbarActionDisplayData[];
   children?: readonly ActivityGroupDisplayChild[];
+  nestedItems?: readonly ActivityGroupDisplayItem[];
+  subagentItems?: readonly ActivityGroupDisplayItem[];
   detailSections?: readonly DetailSectionDescriptor[];
   detailExpanded?: boolean;
   detailKind?: 'invocation' | 'state' | 'subagent';

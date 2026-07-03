@@ -1,9 +1,10 @@
-﻿const { contextBridge, ipcRenderer, shell, safeStorage, webFrame, clipboard } = require("electron");
+const { contextBridge, ipcRenderer, shell, safeStorage, webFrame, clipboard } = require("electron");
 const { SerialPort } = require("serialport");
 const { createThrottledSerialPort, createRawSerialPort, listPorts } = require("./serial");
 const { exec } = require("child_process");
 const { createHash } = require("crypto");
-const { existsSync, statSync } = require("fs");
+const { existsSync, statSync, createReadStream } = require("fs");
+const { createInterface } = require("readline");
 const { isAbsolute } = require("path");
 const { tmpdir } = require("os");
 const nodeFsp = require("node:fs/promises");
@@ -16,10 +17,12 @@ const pathApi = {
   getAilyChildPath: () => process.env.AILY_CHILD_PATH,
   getAppDataPath: () => process.env.AILY_APPDATA_PATH,
   getAilyBuilderPath: () => process.env.AILY_BUILDER_PATH,
+  getAilyBuilderCachePath: () => process.env.AILY_BUILDER_CACHE_PATH,
   getAilyBuilderBuildPath: () => process.env.AILY_BUILDER_BUILD_PATH,
   getUserDocuments: () => require("os").homedir() + `${pt}Documents`,
   isExists: (path) => existsSync(path),
   getElectronPath: () => {
+    // 当 preload.js 从 asar 解包后，将路径重定向到 asar 内部以便 fs 操作正常工作
     if (__dirname.includes('app.asar.unpacked')) {
       return __dirname.replace('app.asar.unpacked', 'app.asar');
     }
@@ -49,6 +52,125 @@ const fspApi = {
   unlink: (...args) => nodeFsp.unlink(...args),
   open: (...args) => nodeFsp.open(...args),
 };
+
+async function readLinesWithMode(filePath, options = {}) {
+  const mode = options?.mode === 'head' || options?.mode === 'sed' ? options.mode : 'tail';
+  const maxLines = Number.isFinite(options?.maxLines) ? Math.max(1, Math.floor(options.maxLines)) : 20;
+  const startLine = Number.isFinite(options?.startLine) ? Math.max(1, Math.floor(options.startLine)) : 1;
+  const endLine = Number.isFinite(options?.endLine) ? Math.max(startLine, Math.floor(options.endLine)) : startLine;
+  const filterPattern = typeof options?.filterPattern === 'string' && options.filterPattern.trim() ? new RegExp(options.filterPattern) : null;
+  const timestampFromMs = Number.isFinite(options?.timestampFromMs) ? Number(options.timestampFromMs) : null;
+  const timestampToMs = Number.isFinite(options?.timestampToMs) ? Number(options.timestampToMs) : null;
+
+  return await new Promise((resolve, reject) => {
+    const input = createReadStream(filePath, { encoding: 'utf8' });
+    const rl = createInterface({
+      input,
+      crlfDelay: Infinity,
+    });
+
+    const headLines = [];
+    const tailLines = [];
+    const sedLines = [];
+    let matchedLineNumber = 0;
+    let settled = false;
+
+    const finalize = (lines) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      resolve(lines);
+    };
+    const fail = (error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+    const cleanup = () => {
+      rl.removeAllListeners();
+      input.removeAllListeners();
+    };
+    const stopEarly = (lines) => {
+      rl.close();
+      input.destroy();
+      finalize(lines);
+    };
+
+    rl.on('line', (line) => {
+      if (filterPattern && !filterPattern.test(line)) {
+        return;
+      }
+      if (!matchesTimestampRange(line, timestampFromMs, timestampToMs)) {
+        return;
+      }
+
+      matchedLineNumber += 1;
+      if (mode === 'head') {
+        headLines.push(line);
+        if (headLines.length >= maxLines) {
+          stopEarly(headLines);
+        }
+        return;
+      }
+
+      if (mode === 'sed') {
+        if (matchedLineNumber >= startLine && matchedLineNumber <= endLine) {
+          sedLines.push(line);
+        }
+        if (matchedLineNumber >= endLine) {
+          stopEarly(sedLines);
+        }
+        return;
+      }
+
+      tailLines.push(line);
+      if (tailLines.length > maxLines) {
+        tailLines.shift();
+      }
+    });
+
+    rl.once('close', () => {
+      if (settled) {
+        return;
+      }
+      finalize(mode === 'head' ? headLines : mode === 'sed' ? sedLines : tailLines);
+    });
+    rl.once('error', fail);
+    input.once('error', fail);
+  });
+}
+
+function matchesTimestampRange(line, timestampFromMs, timestampToMs) {
+  if (timestampFromMs === null && timestampToMs === null) {
+    return true;
+  }
+
+  const timestampMs = extractLeadingTimestampMs(line);
+  if (timestampMs === null) {
+    return false;
+  }
+  if (timestampFromMs !== null && timestampMs < timestampFromMs) {
+    return false;
+  }
+  if (timestampToMs !== null && timestampMs > timestampToMs) {
+    return false;
+  }
+  return true;
+}
+
+function extractLeadingTimestampMs(line) {
+  const match = String(line || '').match(/^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})\]/);
+  if (!match) {
+    return null;
+  }
+  const parsed = Date.parse(match[1].replace(' ', 'T'));
+  return Number.isNaN(parsed) ? null : parsed;
+}
 
 contextBridge.exposeInMainWorld("electronAPI", {
   ipcRenderer: {
@@ -166,24 +288,24 @@ contextBridge.exposeInMainWorld("electronAPI", {
     },
   },
   chatRuntimeHost: {
-    registerExecutionWorker: (executionWorkerId) => ipcRenderer.invoke("aily-chat-runtime-execution-worker-register", { executionWorkerId }),
-    unregisterExecutionWorker: (executionWorkerId) => ipcRenderer.invoke("aily-chat-runtime-execution-worker-unregister", { executionWorkerId }),
+    registerRuntimeOwner: (runtimeOwnerId) => ipcRenderer.invoke("aily-chat-runtime-owner-register", { runtimeOwnerId }),
+    unregisterRuntimeOwner: (runtimeOwnerId) => ipcRenderer.invoke("aily-chat-runtime-owner-unregister", { runtimeOwnerId }),
     registerResourceOperationHandler: (handlerId) => ipcRenderer.invoke("aily-chat-runtime-resource-handler-register", { handlerId }),
     unregisterResourceOperationHandler: (handlerId) => ipcRenderer.invoke("aily-chat-runtime-resource-handler-unregister", { handlerId }),
     call: (method, args) => ipcRenderer.invoke("aily-chat-runtime-host-command", { method, args }),
-    onExecutionWorkerCommand: (callback) => {
+    onRuntimeOwnerCommand: (callback) => {
       const listener = (_event, payload) => callback(payload);
-      ipcRenderer.on("aily-chat-runtime-execution-worker-command", listener);
-      return () => ipcRenderer.removeListener("aily-chat-runtime-execution-worker-command", listener);
+      ipcRenderer.on("aily-chat-runtime-owner-command", listener);
+      return () => ipcRenderer.removeListener("aily-chat-runtime-owner-command", listener);
     },
     onResourceOperationCommand: (callback) => {
       const listener = (_event, payload) => callback(payload);
       ipcRenderer.on("aily-chat-runtime-resource-handler-command", listener);
       return () => ipcRenderer.removeListener("aily-chat-runtime-resource-handler-command", listener);
     },
-    sendExecutionWorkerResponse: (payload) => ipcRenderer.send("aily-chat-runtime-execution-worker-response", payload),
+    sendRuntimeOwnerResponse: (payload) => ipcRenderer.send("aily-chat-runtime-owner-response", payload),
     sendResourceOperationResponse: (payload) => ipcRenderer.send("aily-chat-runtime-resource-handler-response", payload),
-    emitExecutionWorkerEvent: (payload) => ipcRenderer.send("aily-chat-runtime-execution-worker-event", payload),
+    emitRuntimeOwnerEvent: (payload) => ipcRenderer.send("aily-chat-runtime-owner-event", payload),
     onEvent: (callback) => {
       const listener = (_event, payload) => callback(payload);
       ipcRenderer.on("aily-chat-runtime-host-event", listener);
@@ -199,6 +321,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     maximize: () => ipcRenderer.send("window-maximize"),
     isMaximized: () => ipcRenderer.sendSync("window-is-maximized"),
     unmaximize: () => ipcRenderer.send("window-unmaximize"),
+    setSize: (data) => ipcRenderer.invoke("window-set-size", data),
     close: () => ipcRenderer.send("window-close"),
     // 子窗口收回到主窗口事件
     goMain: (data) => ipcRenderer.send("window-go-main", data),
@@ -291,6 +414,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
     release: (toolId) => ipcRenderer.invoke("child-tool-session-release", toolId),
     restart: (toolId) => ipcRenderer.invoke("child-tool-session-restart", toolId),
     unregister: (payload) => ipcRenderer.invoke("child-tool-session-unregister", payload),
+    list: () => ipcRenderer.invoke("child-tool-session-list"),
+    stop: (toolId) => ipcRenderer.invoke("child-tool-session-stop", toolId),
+    onStateChanged: (callback) => {
+      const listener = (_event, payload) => callback(payload);
+      ipcRenderer.on("child-tool-session-state-changed", listener);
+      return () => ipcRenderer.removeListener("child-tool-session-state-changed", listener);
+    },
   },
   codeViewer: {
     publishState: (state) => ipcRenderer.send("blockly-code-viewer-state-update", state),
@@ -357,6 +487,15 @@ contextBridge.exposeInMainWorld("electronAPI", {
     linkSync: (existingPath, newPath) => require("fs").linkSync(existingPath, newPath),
     chmodSync: (path, mode) => require("fs").chmodSync(path, mode),
     appendFileSync: (path, data) => require("fs").appendFileSync(path, data),
+    readHeadLines: async (path, options = {}) => {
+      return await readLinesWithMode(path, { ...options, mode: 'head' });
+    },
+    readTailLines: async (path, options = {}) => {
+      return await readLinesWithMode(path, { ...options, mode: 'tail' });
+    },
+    readLineRange: async (path, options = {}) => {
+      return await readLinesWithMode(path, { ...options, mode: 'sed' });
+    },
     watch: (path, callback, options = {}) => {
       const watcher = require("fs").watch(
         path,
@@ -856,4 +995,3 @@ contextBridge.exposeInMainWorld("electronAPI", {
     readText: () => clipboard.readText(),
   }
 });
-

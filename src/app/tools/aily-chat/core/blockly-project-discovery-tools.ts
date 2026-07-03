@@ -1,14 +1,11 @@
 import type { IToolContribution } from 'aily-lex/browser';
 import type { IExternalHostAPI } from 'aily-lex/host/blockly';
 
-import { AilyHost } from './host';
 import { getBlocklyContextSnapshotService } from './blockly-context-snapshot-service';
-import { buildProjectTool } from '../tools/buildProjectTool';
 import { searchBoardsLibrariesTool } from '../tools/searchBoardsLibrariesTool';
 import { getBoardParametersTool } from '../tools/getBoardParametersTool';
 import { getHardwareCategoriesTool } from '../tools/getHardwareCategoriesTools';
 import { setBoardConfigTool } from '../tools/boardConfigTool';
-import { newProjectTool } from '../tools/createProjectTool';
 import { reloadProjectTool } from '../tools/reloadProjectTool';
 import { switchBoardTool } from '../tools/switchBoardTool';
 import type { EditingTimelineWriter } from '../services/editing-timeline-recording-bridge';
@@ -19,6 +16,93 @@ type RuntimeScopedToolContribution = IToolContribution & {
   readonly toolSet?: string;
   readonly runtimeModes?: readonly string[];
 };
+
+type ExternalProjectServiceView = NonNullable<IExternalHostAPI['project']> & Record<string, unknown>;
+
+interface AskUserExtension {
+  ask(options: {
+    question: string;
+    options?: { label: string; description?: string; recommended?: boolean }[];
+    multiSelect: boolean;
+    allowFreeform?: boolean;
+    signal?: AbortSignal;
+    toolCallId?: string;
+    trace?: unknown;
+  }): Promise<{ answer: string; cancelled: boolean }>;
+}
+
+function readActiveProjectPath(project: NonNullable<IExternalHostAPI['project']>): string {
+  const getProjectPath = project.getProjectPath;
+  if (typeof getProjectPath === 'function') {
+    const projectPath = String(getProjectPath.call(project) ?? '').trim();
+    if (projectPath) {
+      return projectPath;
+    }
+  }
+
+  const projectRecord = project as Record<string, unknown>;
+  return typeof projectRecord['currentProjectPath'] === 'string'
+    ? projectRecord['currentProjectPath'].trim()
+    : '';
+}
+
+function readExternalProjectPath(project: ExternalProjectServiceView | undefined): string {
+  const currentProjectPath = typeof project?.['currentProjectPath'] === 'string' ? project['currentProjectPath'].trim() : '';
+  if (currentProjectPath) {
+    return currentProjectPath;
+  }
+
+  const getProjectPath = project?.['getProjectPath'];
+  if (typeof getProjectPath === 'function') {
+    const projectPath = String(getProjectPath.call(project) ?? '').trim();
+    if (projectPath) {
+      return projectPath;
+    }
+  }
+
+  return typeof project?.['projectRootPath'] === 'string' ? project['projectRootPath'].trim() : '';
+}
+
+function createExternalProjectServiceView(project: NonNullable<IExternalHostAPI['project']>): ExternalProjectServiceView {
+  const source = project as ExternalProjectServiceView;
+  const projectService = Object.create(source) as ExternalProjectServiceView;
+
+  Object.defineProperties(projectService, {
+    currentProjectPath: {
+      enumerable: true,
+      configurable: true,
+      get: () => readExternalProjectPath(source),
+    },
+    projectRootPath: {
+      enumerable: true,
+      configurable: true,
+      get: () => {
+        const rootPath = typeof source['projectRootPath'] === 'string' ? source['projectRootPath'].trim() : '';
+        return rootPath || readExternalProjectPath(source);
+      },
+    },
+  });
+
+  if (typeof source['getBoardJson'] !== 'function' && typeof source.getBoardConfig === 'function') {
+    projectService['getBoardJson'] = () => source.getBoardConfig?.();
+  }
+  if (typeof source['getBoardModule'] !== 'function' && typeof source.getBoard === 'function') {
+    projectService['getBoardModule'] = () => source.getBoard?.();
+  }
+  if (typeof source['currentBoard'] !== 'string' && typeof source.getBoard === 'function') {
+    Object.defineProperty(projectService, 'currentBoard', {
+      enumerable: true,
+      configurable: true,
+      get: () => source.getBoard?.(),
+    });
+  }
+
+  return projectService;
+}
+
+function formatExternalResult(value: unknown): string {
+  return typeof value === 'string' ? value : JSON.stringify(value ?? null, null, 2);
+}
 
 function makeProjectContribution(createDeferred: DeferredFactory): RuntimeScopedToolContribution {
   return {
@@ -32,7 +116,9 @@ function makeProjectContribution(createDeferred: DeferredFactory): RuntimeScoped
 - "get_board_config": Get board compile/upload configuration
 - "set_board_config": Modify board compile/upload configuration
 
-Note: Basic project info (path, board, libraries) is already in the environment section. No need to call this tool for read-only info.`,
+Project creation mutates the workspace and may require host-side user confirmation before execution.
+Before action="create" in a no-project request, the agent must have loaded blockly-project-planning, used board/library discovery to produce researched candidate options, and obtained the user's selected/confirmed option. Do not ask the user to choose a board before discovery, and do not use this tool to skip the candidate-plan workflow.
+Basic project info (path, board, libraries) is already in the environment section. Do not call this tool for read-only info.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -97,7 +183,7 @@ function makeBoardSearchContribution(createDeferred: DeferredFactory): RuntimeSc
     },
     annotations: { readOnly: true },
     runtimeModes: ['unbound', 'coder', 'blockly'],
-    agentScope: ['main', 'SchematicAgent'],
+    agentScope: ['main', 'Plan', 'Explore', 'SchematicAgent'],
     deferred: createDeferred('blockly-library-discovery', '开发板与库搜索只在特定查询场景下需要'),
   };
 }
@@ -183,9 +269,9 @@ export function appendBlocklyDiscoveryContributions(
 
 export function createBlocklyProjectDiscoveryHandlers(): Record<string, InvokeHandler> {
   return {
-    project: async (input, _hostAPI, invocationContext) => {
-      const host = AilyHost.get();
-      if (!host.project) return error('Project management is not available.');
+    project: async (input, hostAPI, invocationContext) => {
+      if (!hostAPI.project) return error('Project management is not available.');
+      const projectService = createExternalProjectServiceView(hostAPI.project);
       const contextSnapshotService = getBlocklyContextSnapshotService();
       const editingTimeline = invocationContext?.host?.getExtension<EditingTimelineWriter>('editingTimeline');
 
@@ -195,23 +281,63 @@ export function createBlocklyProjectDiscoveryHandlers(): Record<string, InvokeHa
           const name = input['name'] as string | undefined;
           const board = input['board'] as string | undefined;
           if (!name || !board) return error('name and board are required for create.');
-          const prjRoot = (host.project as any).projectRootPath || '';
-          const result = await newProjectTool(prjRoot, { name, board, path: input['path'] }, host.project as any, host.config as any);
-          if (!result.is_error) {
+          if (typeof hostAPI.project.createProject !== 'function') {
+            return error('Project creation is not available in the current host context.');
+          }
+          if (!readActiveProjectPath(hostAPI.project)) {
+            const askUser = invocationContext?.host?.getExtension<AskUserExtension>('askUser');
+            if (!askUser?.ask) {
+              return error('Project creation requires user confirmation, but user interaction is not available.');
+            }
+            const confirmation = await askUser.ask({
+              question: `Create project "${name}" for board "${board}" now?`,
+              options: [
+                {
+                  label: 'Create project',
+                  description: 'Create the Blockly project and switch this chat to the new project workspace.',
+                  recommended: true,
+                },
+                {
+                  label: 'Cancel',
+                  description: 'Do not create a project yet.',
+                },
+              ],
+              multiSelect: false,
+              allowFreeform: false,
+              signal: invocationContext?.signal,
+              toolCallId: invocationContext?.toolCallId,
+              trace: invocationContext?.trace,
+            });
+            if (confirmation.cancelled || confirmation.answer !== 'Create project') {
+              return text('Project creation cancelled by user.');
+            }
+          }
+          const result = await hostAPI.project.createProject(name, board, typeof input['path'] === 'string' ? input['path'] : undefined);
+          contextSnapshotService.invalidate([
+            'workspaceIdentity',
+            'projectInfo',
+            'boardInfo',
+            'libraryIndex',
+            'libraryReadmeRefs',
+            'workspaceArtifacts',
+            'workspaceState',
+          ], 'project create');
+          return text(formatExternalResult(result));
+        }
+        case 'reload': {
+          if (typeof hostAPI.project.reloadProject === 'function') {
+            await hostAPI.project.reloadProject();
             contextSnapshotService.invalidate([
-              'workspaceIdentity',
               'projectInfo',
               'boardInfo',
               'libraryIndex',
               'libraryReadmeRefs',
               'workspaceArtifacts',
               'workspaceState',
-            ], 'project create');
+            ], 'project reload');
+            return text('Project reloaded.');
           }
-          return fromToolResult(result);
-        }
-        case 'reload': {
-          const result = await reloadProjectTool(host.project as any, input);
+          const result = await reloadProjectTool(projectService as any, input);
           if (!result.is_error) {
             contextSnapshotService.invalidate([
               'projectInfo',
@@ -227,7 +353,18 @@ export function createBlocklyProjectDiscoveryHandlers(): Record<string, InvokeHa
         case 'switch_board': {
           const board = input['board'] as string | undefined;
           if (!board) return error('board is required for switch_board.');
-          const result = await switchBoardTool(host.project as any, { board_name: board }, {
+          if (typeof hostAPI.project.switchBoard === 'function') {
+            await hostAPI.project.switchBoard(board);
+            contextSnapshotService.invalidate([
+              'boardInfo',
+              'libraryIndex',
+              'libraryReadmeRefs',
+              'workspaceArtifacts',
+              'workspaceState',
+            ], 'switch board');
+            return text(`Switched board to ${board}.`);
+          }
+          const result = await switchBoardTool(projectService, { board_name: board }, {
             turnId: invocationContext?.trace?.turnId,
             toolCallId: invocationContext?.toolCallId,
             timelineWriter: editingTimeline,
@@ -244,7 +381,7 @@ export function createBlocklyProjectDiscoveryHandlers(): Record<string, InvokeHa
           return fromToolResult(result);
         }
         case 'get_board_config':
-          return fromToolResult(await getBoardParametersTool.handler(host.project as any, { parameters: input['parameters'] as any }));
+          return fromToolResult(await getBoardParametersTool.handler(projectService, { parameters: input['parameters'] as any }));
         case 'set_board_config': {
           const config = input['config'] as Record<string, unknown> | undefined;
           const directConfigKey = input['config_key'] as string | undefined;
@@ -263,7 +400,17 @@ export function createBlocklyProjectDiscoveryHandlers(): Record<string, InvokeHa
             return error('set_board_config requires config_key/config_value, or a single-entry config object.');
           }
 
-          const result = await setBoardConfigTool(host.project as any, host.builder as any, {
+          if (typeof hostAPI.project.setBoardConfig === 'function') {
+            await hostAPI.project.setBoardConfig({ [configKey]: configValue });
+            contextSnapshotService.invalidate([
+              'boardInfo',
+              'workspaceArtifacts',
+              'workspaceState',
+            ], 'set board config');
+            return text(`Updated board config ${configKey}.`);
+          }
+
+          const result = await setBoardConfigTool(projectService as any, hostAPI.builder as any, {
             config_key: configKey,
             config_value: configValue,
           }, {
@@ -285,20 +432,16 @@ export function createBlocklyProjectDiscoveryHandlers(): Record<string, InvokeHa
       }
     },
 
-    buildProject: async (_input, _hostAPI) => {
-      const host = AilyHost.get();
-      if (!host.builder) return error('Build system is not available.');
-      const result = await buildProjectTool(
-        host.builder as any,
-        { preprocess_only: false, clear_cache: false },
-        (host.project as any)?.currentProjectPath,
-      );
-      return fromToolResult(result);
+    buildProject: async (_input, hostAPI) => {
+      if (!hostAPI.builder?.build) return error('Build system is not available.');
+      const projectPath = readActiveProjectPath(hostAPI.project);
+      if (!projectPath) return error('No active project is available for build.');
+      const result = await (hostAPI.builder.build as unknown as (projectPath: string) => Promise<unknown>)(projectPath);
+      return text(formatExternalResult(result));
     },
 
-    boardSearch: async (input, _hostAPI) => {
-      const host = AilyHost.get();
-      if (!host.config) return error('Board search is not available.');
+    boardSearch: async (input, hostAPI) => {
+      if (!hostAPI.boardSearch) return error('Board search is not available.');
 
       const action = input['action'] as string;
       switch (action) {
@@ -310,15 +453,12 @@ export function createBlocklyProjectDiscoveryHandlers(): Record<string, InvokeHa
             boards: 'boards', libraries: 'libraries', both: 'both',
           };
           const rawType = (input['type'] as string) || 'both';
-          const result = await searchBoardsLibrariesTool.handler(
-            { query, type: typeMap[rawType] ?? 'both' },
-            host.config as any,
-          );
-          return fromToolResult(result);
+          const result = await hostAPI.boardSearch.search?.(query, typeMap[rawType] ?? 'both');
+          return text(formatExternalResult(result ?? []));
         }
         case 'get_categories': {
           try {
-            const cats = await (host.config as any).getHardwareCategories?.();
+            const cats = await hostAPI.boardSearch.getCategories?.();
             return text(Array.isArray(cats) ? cats.join('\n') : JSON.stringify(cats ?? []));
           } catch {
             return text('[]');
@@ -327,31 +467,40 @@ export function createBlocklyProjectDiscoveryHandlers(): Record<string, InvokeHa
         case 'get_board_parameters': {
           const boardId = input['boardId'] as string | undefined;
           if (!boardId) return error('boardId is required.');
-          return fromToolResult(await getBoardParametersTool.handler(host.project as any, { parameters: boardId }));
+          if (hostAPI.boardSearch.getBoardParameters) {
+            const parameters = await hostAPI.boardSearch.getBoardParameters(boardId);
+            return text(formatExternalResult(parameters));
+          }
+          if (!hostAPI.project) {
+            return error('Board parameters are not available.');
+          }
+          return fromToolResult(await getBoardParametersTool.handler(
+            createExternalProjectServiceView(hostAPI.project),
+            { parameters: boardId },
+          ));
         }
         default:
           return error(`Unknown action: ${action}`);
       }
     },
 
-    search_boards_libraries: async (input, _hostAPI) => {
-      const host = AilyHost.get();
-      if (!host.config) return error('Board/library search is not available.');
-      const result = await searchBoardsLibrariesTool.handler(input as any, host.config as any);
-      return fromToolResult(result);
+    search_boards_libraries: async (input, hostAPI) => {
+      if (!hostAPI.boardSearch?.search) return error('Board/library search is not available.');
+      const query = typeof input['query'] === 'string' ? input['query'] : '';
+      if (!query) return error('query is required.');
+      const result = await hostAPI.boardSearch.search(query, typeof input['type'] === 'string' ? input['type'] : undefined);
+      return text(formatExternalResult(result));
     },
 
-    get_hardware_categories: async (input, _hostAPI) => {
-      const host = AilyHost.get();
-      if (!host.config) return error('Hardware category search is not available.');
-      const result = await getHardwareCategoriesTool.handler(input as any, host.config as any);
-      return fromToolResult(result);
+    get_hardware_categories: async (_input, hostAPI) => {
+      if (!hostAPI.boardSearch?.getCategories) return error('Hardware category search is not available.');
+      const result = await hostAPI.boardSearch.getCategories();
+      return text(formatExternalResult(result));
     },
 
-    get_board_parameters: async (input, _hostAPI) => {
-      const host = AilyHost.get();
-      if (!host.project) return error('Board parameters are not available.');
-      return fromToolResult(await getBoardParametersTool.handler(host.project as any, {
+    get_board_parameters: async (input, hostAPI) => {
+      if (!hostAPI.project) return error('Board parameters are not available.');
+      return fromToolResult(await getBoardParametersTool.handler(createExternalProjectServiceView(hostAPI.project), {
         parameters: input['parameters'] as any,
       }));
     },

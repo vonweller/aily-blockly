@@ -36,9 +36,11 @@ import { type ChatSessionListItem, type MenuPosition } from './menu-manager.serv
 import {
   isPlanChatResolvedMode,
   createPlanChatResolvedMode,
+  normalizeChatSelectedMode,
   resolveChatCurrentMode,
   type ChatResolvedMode,
   type ChatResolvedModeTarget,
+  type ChatSelectedMode,
   type ChatSurfaceModeId,
 } from '../core/chat-mode';
 import { isCustomSessionTitleSource, normalizeChatSessionTitleSource, type ChatSessionDisplayTitle, type ChatSessionTitleSource } from '../core/chat-session-title';
@@ -47,6 +49,7 @@ import { AilyHost } from '../core/host';
 import type { ChatHostHeaderActionContext } from '../core/chat-host-header-actions';
 import type { ChatHostHeaderActionRequest } from '../core/chat-host-header-actions';
 import { isAilyCategoryDebugEnabled } from '../core/chat-debug-flags';
+import { resolveHostSessionSelectedModeFromMetadata } from '../helpers/host-session-input-state';
 import type { ChatSessionTitleActionContext, ChatSessionTitleActionRequest, ChatSessionTitleSurfaceModel } from '../core/chat-session-title-actions';
 import { ChatHostHeaderActionRegistry } from '../helpers/chat-host-header-action-registry';
 import { ChatSessionTitleActionRegistry } from '../helpers/chat-session-title-action-registry';
@@ -488,7 +491,7 @@ export class ChatViewService {
     }
 
     if (!hasConversationContent && !hasActiveCurrentSessionRequest) {
-      if (hasCurrentSessionIdentity) {
+      if (hasCurrentSessionIdentity && !this.isEmptyFreshSessionStartupShell) {
         return 'blank-session';
       }
       return 'entry';
@@ -971,6 +974,33 @@ export class ChatViewService {
       || this.chatService.hasBlankSessionShell === true;
   }
 
+  private get isEmptyFreshSessionStartupShell(): boolean {
+    return this.currentViewSessionResource.length > 0
+      && this.chatService.hasBlankSessionShell !== true
+      && this.currentModelHasNoConversationContent
+      && !this.hasMeaningfulCurrentSessionTitle;
+  }
+
+  private get currentModelHasNoConversationContent(): boolean {
+    const model = this.currentViewModel?.model;
+    if (!model) {
+      return true;
+    }
+
+    const projection = model.hostProjectionState;
+    return !this.hasArrayContent(projection?.turnResponses)
+      && !this.hasArrayContent(projection?.chatList)
+      && !this.hasArrayContent(projection?.dialogItems)
+      && !this.hasArrayContent((projection as { readonly entries?: readonly unknown[] } | null)?.entries)
+      && (!Array.isArray(model.turnResponses) || model.turnResponses.length === 0);
+  }
+
+  private get hasMeaningfulCurrentSessionTitle(): boolean {
+    const sessionId = this.currentViewSessionResource || this.liveCurrentSessionResource;
+    return isMeaningfulSessionTitle(this.chatService.currentSessionTitle, sessionId)
+      || isMeaningfulSessionTitle(this.currentSessionViewItem?.title ?? '', sessionId);
+  }
+
   private get hasActiveCurrentSessionRequest(): boolean {
     const currentSessionResource = this.currentViewSessionResource || this.liveCurrentSessionResource;
     if (!currentSessionResource) {
@@ -1009,23 +1039,53 @@ export class ChatViewService {
     return readNonEmptyString(translated) || 'Aily Chat';
   }
 
+  private resolveVisibleSelectedMode(): ChatSelectedMode {
+    const targetSessionId = this.currentViewSessionResource;
+    const runtimeSelectedMode = targetSessionId
+      ? this.chatSessionRuntimeStore.read(targetSessionId)?.selectedMode
+      : undefined;
+    if (runtimeSelectedMode) {
+      return normalizeChatSelectedMode(runtimeSelectedMode);
+    }
+
+    const currentSessionId = typeof this.chatService.currentSessionId === 'string'
+      ? this.chatService.currentSessionId.trim()
+      : '';
+    if (targetSessionId && targetSessionId !== currentSessionId) {
+      const inputState = this.chatSessionItemsService.sessionItemController.getChatSessionInputState(targetSessionId);
+      return resolveHostSessionSelectedModeFromMetadata({
+        inputState,
+      }, {
+        resolveModeById: (modeId) => this.chatService.findResolvedModeById(modeId),
+        resolveModeByName: (modeName) => this.chatService.findResolvedModeByName(modeName),
+      });
+    }
+
+    return normalizeChatSelectedMode(this.chatService.selectedMode ?? {
+      modeId: this.chatService.currentMode,
+      customAgentTarget: this.chatService.currentCustomAgentTarget,
+    });
+  }
+
   private getCurrentResolvedMode(): ChatResolvedMode {
+    const selectedMode = this.resolveVisibleSelectedMode();
     const currentResolvedMode = this.chatService.currentResolvedMode;
-    if (currentResolvedMode && typeof currentResolvedMode === 'object' && !Array.isArray(currentResolvedMode)) {
+    if (currentResolvedMode
+      && typeof currentResolvedMode === 'object'
+      && !Array.isArray(currentResolvedMode)
+      && currentResolvedMode.kind === selectedMode.modeId
+      && currentResolvedMode.customAgentTarget === selectedMode.customAgentTarget) {
       return currentResolvedMode;
     }
 
-    if (this.chatService.currentMode === 'agent') {
-      const providerBackedMode = this.findAvailableCustomModeByAgentTarget(this.chatService.currentCustomAgentTarget);
+    if (selectedMode.modeId === 'agent') {
+      const providerBackedMode = this.findAvailableCustomModeByAgentTarget(selectedMode.customAgentTarget);
       if (providerBackedMode) {
         return providerBackedMode;
       }
     }
 
-    return resolveChatCurrentMode({
-      modeId: this.chatService.currentMode,
-      customAgentTarget: this.chatService.currentCustomAgentTarget,
-    });
+    return resolveChatCurrentMode(selectedMode);
   }
 
   private findAvailableCustomModeByAgentTarget(agentTarget: string | null | undefined): ChatResolvedMode | undefined {

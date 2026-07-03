@@ -19,7 +19,7 @@ interface BlocklyContextSummaryRequest extends BlocklyContextResolveOptions {
   summaryOptions?: BlocklyContextSummaryOptions;
 }
 
-interface BlocklyContextSnapshotService {
+export interface BlocklyContextSnapshotService {
   getSnapshot(options?: BlocklyContextResolveOptions): Promise<BlocklyContextSnapshot>;
   invalidate(scopes: readonly string[], reason: string): void;
   summarize(snapshot: BlocklyContextSnapshot, options?: BlocklyContextSummaryOptions): readonly string[];
@@ -165,9 +165,12 @@ async function getSchematicOverlaySummaryLines(host: any): Promise<readonly stri
   return lines;
 }
 
-const service: BlocklyContextSnapshotService = {
+export function createBlocklyContextSnapshotService(
+  resolveHost: () => any = () => AilyHost.get(),
+): BlocklyContextSnapshotService {
+  return {
   async getSnapshot(_options?: BlocklyContextResolveOptions): Promise<BlocklyContextSnapshot> {
-    const snapshot = await buildBlocklyContextSnapshot(AilyHost.get(), {
+    const snapshot = await buildBlocklyContextSnapshot(resolveHost(), {
       version: contextSnapshotVersion,
       invalidatedBy: lastInvalidatedReason,
     });
@@ -188,11 +191,14 @@ const service: BlocklyContextSnapshotService = {
     const snapshot = await this.getSnapshot(options);
     const lines = [...this.summarize(snapshot, options?.summaryOptions)];
     if (isSchematicAgentIdentifier(options?.agentType)) {
-      lines.push(...await getSchematicOverlaySummaryLines(AilyHost.get()));
+      lines.push(...await getSchematicOverlaySummaryLines(resolveHost()));
     }
     return lines;
   },
-};
+  };
+}
+
+const service: BlocklyContextSnapshotService = createBlocklyContextSnapshotService();
 
 export function getBlocklyContextSnapshotService(): BlocklyContextSnapshotService {
   return service;

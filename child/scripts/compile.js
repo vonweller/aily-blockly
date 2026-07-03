@@ -63,6 +63,7 @@ async function main() {
     try {
         // 1. 路径准备（Aily Code 编译入口见 project.aci.entry，产物输出到 .aily/build/<framework>）
         const tempPath = path.join(currentProjectPath, '.temp');
+        const buildPath = path.join(currentProjectPath, '.build');
         const sketchPath = path.join(tempPath, 'sketch');
         const sketchFilePath = path.join(sketchPath, 'sketch.ino');
         const isAilyCode = ailyCodeProject.isAilyCodeProjectRoot(currentProjectPath);
@@ -95,6 +96,7 @@ async function main() {
         if (!fs.existsSync(preprocessCachePath)) {
             throw new Error(`未找到预编译缓存: ${preprocessCachePath}，请先运行预处理脚本`);
         }
+        syncPreprocessBuildPath(preprocessCachePath, buildPath);
 
         // 3. 读取板子信息获取boardType
         const boardModulePath = path.join(currentProjectPath, 'node_modules', boardModule);
@@ -134,6 +136,7 @@ async function main() {
             'compile',
             `"${compileSourcePath}"`,
             '--board', `"${boardType}"`,
+            '--build-path', `"${buildPath}"`,
             '--preprocess-result', `"${preprocessCachePath}"`,
         ];
 
@@ -181,3 +184,16 @@ async function main() {
 main().catch(e => {
     exitWithFatalError(e);
 });
+
+function syncPreprocessBuildPath(preprocessCachePath, buildPath) {
+    try {
+        const preprocessResult = JSON.parse(fs.readFileSync(preprocessCachePath, 'utf8'));
+        preprocessResult.envVars = preprocessResult.envVars || {};
+        if (preprocessResult.envVars.BUILD_PATH !== buildPath) {
+            preprocessResult.envVars.BUILD_PATH = buildPath;
+            fs.writeFileSync(preprocessCachePath, JSON.stringify(preprocessResult, null, 2));
+        }
+    } catch (error) {
+        logger.warn(`Failed to update preprocess build path: ${error.message}`);
+    }
+}

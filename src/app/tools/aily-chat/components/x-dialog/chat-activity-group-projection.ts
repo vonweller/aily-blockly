@@ -1,4 +1,4 @@
-import { ChatPart, ConfirmationPart, MarkdownPart, StatePart, TerminalPart, ThinkingPart, ToolCallPart } from '../../core/chat-parts';
+import { ChatPart, ConfirmationPart, MarkdownPart, StatePart, TerminalPart, ThinkingPart, ToolCallPart, getParentToolCallId, getSubAgentInvocationId, isSubagentChildPart } from '../../core/chat-parts';
 import { projectToolCallApprovalDisplayData } from '../../core/tool-call-approval';
 import {
   buildActivityItemsFromDetailSections,
@@ -26,12 +26,16 @@ import {
 } from '../../core/tool-invocation-formatter';
 import {
   isEditSummaryToolName,
+  isInternalDiscoveryToolName,
   isSearchSummaryToolName,
   normalizeReadSideToolName,
 } from '../../core/tool-name-normalizer';
 import { getMarkdownContentWindow } from '../../core/markdown-content-store';
 import { getThinkContentWindow } from '../../core/think-content-store';
+import { isTerminalCancelledState, isTerminalFailureState, resolveTerminalLifecycleState } from '../../core/terminal-status';
 import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
+import { chatI18n } from '../../helpers/chat-i18n';
+import { resolveChildToolIdFromProcess } from '../../helpers/child-tool-process-summary';
 import type {
   ActivityApprovalDisplayData,
   ActivityApprovalSummaryDisplayData,
@@ -433,14 +437,13 @@ export function buildToolActivityDisplayItem(
   const approval = projectToolCallApprovalDisplayData(part);
   const approvalSummary = approval?.resolved ? buildResolvedApprovalSummary(approval) : undefined;
   const pendingApproval = !!approval && !approval.resolved;
+  const preparedDetailSections = getPreparedDetailSections(part);
   const eagerDetailSections = pendingApproval && approval
     ? buildApprovalDetailSections({
         message: approval.message,
         description: approval.description,
       })
-    : approvalSummary
-      ? getPreparedDetailSections(part)
-      : undefined;
+    : preparedDetailSections;
   const detailSections = eagerDetailSections?.length ? eagerDetailSections : undefined;
   const invocationDetail = detailSections
     ? buildInvocationDetailDisplay({
@@ -448,20 +451,6 @@ export function buildToolActivityDisplayItem(
         postConfirmation: !!approvalSummary,
       })
     : undefined;
-  const loadDetail = pendingApproval || approvalSummary
-    ? undefined
-    : () => {
-        const lazySections = getPreparedDetailSections(part);
-        const lazyDetailSections = lazySections?.length ? lazySections : undefined;
-        const lazyInvocationDetail = lazyDetailSections
-          ? buildInvocationDetailDisplay({ detailSections: lazyDetailSections })
-          : undefined;
-        return {
-          detailSections: lazyDetailSections,
-          invocationDetail: lazyInvocationDetail,
-          detailKind: lazyDetailSections?.length ? 'invocation' as const : undefined,
-        };
-      };
   const shell = buildToolActivityShellPresentation({
     state: part.state,
     approval,
@@ -500,11 +489,15 @@ export function buildToolActivityDisplayItem(
     approval,
     approvalSummary,
     invocationDetail,
-    loadDetail,
+    loadDetail: detailSections ? () => ({
+      detailSections,
+      invocationDetail,
+      detailKind: 'invocation',
+    }) : undefined,
     children: undefined,
     detailSections,
     detailExpanded: false,
-    detailKind: detailSections?.length || loadDetail ? 'invocation' : undefined,
+    detailKind: detailSections?.length ? 'invocation' : undefined,
   };
 }
 
@@ -539,8 +532,10 @@ function buildConfirmationLikeActivityDisplayItem(
     ? (approval.approved === false ? 'warn' : 'success')
     : 'warn';
   const pill = approval.resolved
-    ? (approval.approved === false ? '已取消' : '已确认')
-    : '待确认';
+    ? (approval.approved === false
+      ? chatI18n('AILY_CHAT.PROCESS_CONFIRM_RESOLVED_CANCELLED')
+      : chatI18n('AILY_CHAT.PROCESS_CONFIRM_RESOLVED_APPROVED'))
+    : chatI18n('AILY_CHAT.PROCESS_CONFIRM_PENDING');
   const detailSections = buildApprovalDetailSections({
     message: approval.message,
     description: approval.description,
@@ -553,7 +548,7 @@ function buildConfirmationLikeActivityDisplayItem(
     kind: 'activity',
     headerKind: 'tool',
     toolHeader: {
-      title: approval.title,
+      title: approval.title || chatI18n('AILY_CHAT.PROCESS_APPROVAL_DEFAULT_TITLE', undefined, 'Confirm Action'),
       subtitle: approval.subtitle,
       meta,
       pill,
@@ -564,8 +559,8 @@ function buildConfirmationLikeActivityDisplayItem(
       : 'fa-light fa-circle-pause',
     isSpinning: false,
     iconColor: getStateColor(approval.resolved ? (approval.approved === false ? 'warn' : 'done') : 'pending_approval'),
-    kicker: approval.resolved ? undefined : '审批',
-    label: approval.title,
+    kicker: approval.resolved ? undefined : chatI18n('AILY_CHAT.PROCESS_APPROVAL_KICKER'),
+    label: approval.title || chatI18n('AILY_CHAT.PROCESS_APPROVAL_DEFAULT_TITLE', undefined, 'Confirm Action'),
     subtitle: undefined,
     note: undefined,
     headerMeta: undefined,
@@ -589,10 +584,10 @@ function buildApprovalDetailSections(input: {
 
   if (input.message.trim()) {
     sections.push({
-      title: '当前记录',
+      title: chatI18n('AILY_CHAT.PROCESS_APPROVAL_SECTION_CURRENT'),
       rows: [{
         id: 'approval-message',
-        title: '审批说明',
+        title: chatI18n('AILY_CHAT.PROCESS_APPROVAL_DETAIL_TITLE'),
         note: input.message,
       }],
     });
@@ -600,7 +595,7 @@ function buildApprovalDetailSections(input: {
 
   if (input.description?.trim()) {
     sections.push({
-      title: '工具输出',
+      title: chatI18n('AILY_CHAT.PROCESS_APPROVAL_SECTION_OUTPUT'),
       rows: parseApprovalDescriptionRows(input.description),
     });
   }
@@ -720,28 +715,45 @@ export function buildTerminalActivityDisplayItem(
 ): ActivityGroupDisplayItem {
   const detailSections = buildTerminalDetailSections(part);
   const invocationDetail = buildInvocationDetailDisplay({ detailSections });
-  const pill = part.isRunning ? '进行中' : (part.exitCode != null && part.exitCode !== 0 ? '失败' : '');
-  const tone = part.isRunning ? 'info' : (part.exitCode != null && part.exitCode !== 0 ? 'error' : 'neutral');
-  const meta = part.exitCode != null && part.exitCode !== 0 ? `退出码 ${part.exitCode}` : undefined;
+  const terminalState = resolveTerminalLifecycleState(part);
+  const pill = terminalState === 'running'
+    ? chatI18n('AILY_CHAT.PROCESS_STATUS_RUNNING')
+    : terminalState === 'failed'
+      ? chatI18n('AILY_CHAT.PROCESS_STATUS_FAILED')
+      : terminalState === 'cancelled'
+        ? chatI18n('AILY_CHAT.PROCESS_STATUS_CANCELLED')
+        : '';
+  const tone = terminalState === 'running'
+    ? 'info'
+    : terminalState === 'failed'
+      ? 'error'
+      : terminalState === 'cancelled'
+        ? 'warn'
+        : 'neutral';
+  const meta = terminalState !== 'running' && part.exitCode != null ? `退出码 ${part.exitCode}` : undefined;
 
   return {
     id: options?.id || buildChatPartIdentity(part, 0),
     kind: 'activity',
     headerKind: 'tool',
     toolHeader: {
-      title: '运行终端命令',
+      title: chatI18n('AILY_CHAT.PROCESS_TOOL_RUN_COMMAND'),
       subtitle: part.command || undefined,
       meta,
       pill: pill || undefined,
       pillTone: tone,
     },
-    iconClass: part.isRunning
+    iconClass: terminalState === 'running'
       ? 'fa-light fa-spinner-third'
-      : (part.exitCode != null && part.exitCode !== 0 ? 'fa-light fa-circle-xmark' : 'fa-light fa-circle-check'),
-    isSpinning: part.isRunning,
-    iconColor: getStateColor(part.isRunning ? 'doing' : (part.exitCode != null && part.exitCode !== 0 ? 'error' : 'done')),
+      : terminalState === 'failed'
+        ? 'fa-light fa-circle-xmark'
+        : terminalState === 'cancelled'
+          ? 'fa-light fa-circle-minus'
+          : 'fa-light fa-circle-check',
+    isSpinning: terminalState === 'running',
+    iconColor: getStateColor(terminalState === 'running' ? 'doing' : (terminalState === 'failed' ? 'error' : 'done')),
     kicker: undefined,
-    label: '运行终端命令',
+    label: chatI18n('AILY_CHAT.PROCESS_TOOL_RUN_COMMAND'),
     subtitle: undefined,
     note: undefined,
     headerMeta: undefined,
@@ -763,8 +775,8 @@ function buildTerminalToolbarActions(part: TerminalPart): readonly ActivityToolb
     {
       id: 'toggle-output',
       iconClass: 'fa-light fa-chevron-down',
-      label: '显示或隐藏输出',
-      tooltip: '显示或隐藏命令输出',
+      label: chatI18n('AILY_CHAT.PROCESS_ACTION_TOGGLE_OUTPUT'),
+      tooltip: chatI18n('AILY_CHAT.PROCESS_ACTION_TOGGLE_OUTPUT_TOOLTIP'),
     },
   ];
 
@@ -772,8 +784,8 @@ function buildTerminalToolbarActions(part: TerminalPart): readonly ActivityToolb
     actions.push({
       id: 'open-output-file',
       iconClass: 'fa-light fa-arrow-up-right-from-square',
-      label: '打开输出文件',
-      tooltip: '在系统文件管理器中打开输出文件',
+      label: chatI18n('AILY_CHAT.PROCESS_ACTION_OPEN_OUTPUT'),
+      tooltip: chatI18n('AILY_CHAT.PROCESS_ACTION_OPEN_OUTPUT_TOOLTIP'),
       data: { outputFilePath: part.outputFilePath },
     });
   }
@@ -782,6 +794,7 @@ function buildTerminalToolbarActions(part: TerminalPart): readonly ActivityToolb
     const sessionData = {
       processId: part.processId,
       command: part.command,
+      ...(part.cwd ? { cwd: part.cwd } : {}),
       ...(part.outputSessionId ? { outputSessionId: part.outputSessionId } : {}),
       ...(part.outputFilePath ? { outputFilePath: part.outputFilePath } : {}),
     };
@@ -789,29 +802,36 @@ function buildTerminalToolbarActions(part: TerminalPart): readonly ActivityToolb
     actions.push({
       id: 'continue-background',
       iconClass: 'fa-light fa-window-minimize',
-      label: '后端执行',
-      tooltip: '折叠输出并让命令继续在后端执行',
+      label: chatI18n('AILY_CHAT.PROCESS_ACTION_BACKGROUND'),
+      tooltip: chatI18n('AILY_CHAT.PROCESS_ACTION_BACKGROUND_TOOLTIP'),
       data: sessionData,
     });
 
     actions.push({
       id: 'stop-process',
       iconClass: 'fa-light fa-stop',
-      label: '中断',
-      tooltip: '中断正在运行的命令进程',
+      label: chatI18n('AILY_CHAT.PROCESS_ACTION_INTERRUPT'),
+      tooltip: chatI18n('AILY_CHAT.PROCESS_ACTION_INTERRUPT_TOOLTIP'),
       data: sessionData,
     });
   }
 
   if (part.processId) {
+    const childToolId = resolveChildToolIdFromProcess({
+      processId: part.processId,
+      command: part.command,
+      cwd: part.cwd,
+      outputFilePath: part.outputFilePath,
+    });
     actions.push({
       id: 'open-process-window',
       iconClass: 'fa-light fa-square-terminal',
-      label: '打开终端详情',
-      tooltip: '在独立窗口中查看终端执行详情',
+      label: chatI18n(childToolId ? 'AILY_CHAT.PROCESS_ACTION_CONTROL_PANEL' : 'AILY_CHAT.PROCESS_ACTION_OPEN_WINDOW'),
+      tooltip: chatI18n(childToolId ? 'AILY_CHAT.PROCESS_ACTION_CONTROL_PANEL_TOOLTIP' : 'AILY_CHAT.PROCESS_ACTION_OPEN_WINDOW_TOOLTIP'),
       data: {
         processId: part.processId,
         command: part.command,
+        ...(part.cwd ? { cwd: part.cwd } : {}),
         ...(part.outputSessionId ? { outputSessionId: part.outputSessionId } : {}),
         ...(part.outputFilePath ? { outputFilePath: part.outputFilePath } : {}),
       },
@@ -825,7 +845,7 @@ function shouldExpandTerminalOutput(part: TerminalPart): boolean {
   if (part.isRunning) {
     return !!(part.output || part.stderr);
   }
-  if (part.exitCode != null && part.exitCode !== 0) {
+  if (isTerminalFailureState(part) || isTerminalCancelledState(part)) {
     return true;
   }
   return !!(part.output || part.stderr);
@@ -858,14 +878,24 @@ export function buildResolvedApprovalSummary(
   return {
     tone: approved ? 'success' : 'warn',
     statusLabel: isConfirmation
-      ? (approved ? '已确认' : '已取消')
-      : (approved ? '已批准执行' : '已拒绝执行'),
+      ? (approved
+        ? chatI18n('AILY_CHAT.PROCESS_CONFIRM_RESOLVED_APPROVED')
+        : chatI18n('AILY_CHAT.PROCESS_CONFIRM_RESOLVED_CANCELLED'))
+      : (approved
+        ? chatI18n('AILY_CHAT.PROCESS_APPROVAL_RESOLVED_APPROVED')
+        : chatI18n('AILY_CHAT.PROCESS_APPROVAL_RESOLVED_REJECTED')),
     scopeLabel: isConfirmation ? undefined : scopeLabel,
     note: isConfirmation
-      ? (approved ? '该确认请求已被接受。' : '该确认请求已被取消。')
+      ? (approved
+        ? chatI18n('AILY_CHAT.PROCESS_CONFIRM_NOTE_APPROVED')
+        : chatI18n('AILY_CHAT.PROCESS_CONFIRM_NOTE_CANCELLED'))
       : (approved
-        ? (scopeLabel ? `该操作已按${scopeLabel}范围确认，后续执行结果在下方显示。` : '该操作已确认，后续执行结果在下方显示。')
-        : (scopeLabel ? `该操作已被拒绝，确认范围为${scopeLabel}。` : '该操作已被拒绝。')),
+        ? (scopeLabel
+          ? chatI18n('AILY_CHAT.PROCESS_APPROVAL_NOTE_APPROVED_SCOPED', { scope: scopeLabel })
+          : chatI18n('AILY_CHAT.PROCESS_APPROVAL_NOTE_APPROVED'))
+        : (scopeLabel
+          ? chatI18n('AILY_CHAT.PROCESS_APPROVAL_NOTE_REJECTED_SCOPED', { scope: scopeLabel })
+          : chatI18n('AILY_CHAT.PROCESS_APPROVAL_NOTE_REJECTED'))),
   };
 }
 
@@ -1102,7 +1132,8 @@ function buildActivityGroupHeader(parts: readonly ChatPart[]): ActivityGroupHead
 function buildThinkingGroupSummaryTitle(parts: readonly ChatPart[]): { title: string; detail?: string } | undefined {
   const toolSummaries = parts
     .filter((part): part is ToolCallPart => part.type === 'tool_call')
-    .map((part) => buildActivityToolSummaryCandidate(part));
+    .map((part) => buildActivityToolSummaryCandidate(part))
+    .filter((summary) => !isInternalDiscoveryToolSummary(summary));
 
   if (toolSummaries.length === 0) {
     return undefined;
@@ -1123,6 +1154,10 @@ function buildThinkingGroupSummaryTitle(parts: readonly ChatPart[]): { title: st
   }
 
   return splitHeaderSummaryTitle(aggregateTitle);
+}
+
+function isInternalDiscoveryToolSummary(summary: ActivityToolSummaryCandidate): boolean {
+  return isInternalDiscoveryToolName(summary.toolName);
 }
 
 function buildToolOnlyGroupHeader(parts: readonly ChatPart[]): ActivityGroupHeaderDisplayData | undefined {
@@ -1156,7 +1191,7 @@ function buildActivityToolSummaryCandidate(part: ToolCallPart | ConfirmationPart
   if (part.type === 'terminal') {
     return {
       toolName: 'run_in_terminal',
-      label: '运行终端命令',
+      label: normalizeThinkingHeaderText(chatI18n('AILY_CHAT.PROCESS_TOOL_RUN_COMMAND')),
       subtitle: normalizeThinkingHeaderText(part.command),
       rawText: normalizeThinkingHeaderText(part.command),
       args: { command: part.command },
@@ -1270,7 +1305,15 @@ function normalizeThinkingHeaderText(value: string | undefined): string | undefi
   }
 
   const singleLine = value.replace(/\s+/g, ' ').trim();
-  return singleLine || undefined;
+  if (!singleLine) {
+    return undefined;
+  }
+
+  return isChatI18nDisplayKey(singleLine) ? chatI18n(singleLine) : singleLine;
+}
+
+function isChatI18nDisplayKey(value: string): boolean {
+  return /^[A-Z][A-Z0-9]*(?:\.[A-Z0-9_]+)+$/.test(value);
 }
 
 function extractReadTarget(summary: ActivityToolSummaryCandidate): string | undefined {
@@ -1339,9 +1382,18 @@ function buildSubagentGroupHeader(parts: readonly ChatPart[]): ActivityGroupHead
   const latestSubagentPart = parts
     .filter((part): part is ToolCallPart => part.type === 'tool_call' && isSubagentToolCall(part))
     .at(-1);
+  const scopedChildParts = collectSubagentScopedChildParts(parts, latestSubagentPart);
 
   if (!latestSubagentPart) {
-    return undefined;
+    if (scopedChildParts.length === 0) {
+      return undefined;
+    }
+
+    return {
+      kind: 'subagent',
+      title: 'Subagent',
+      detail: buildScopedSubagentHeaderDetail(scopedChildParts) || undefined,
+    };
   }
 
   const toolSpecificData = asRecord(latestSubagentPart.metadata?.['toolSpecificData']);
@@ -1356,7 +1408,9 @@ function buildSubagentGroupHeader(parts: readonly ChatPart[]): ActivityGroupHead
   const prefix = capitalizeHeaderLabel(getSubagentName(latestSubagentPart) || '子代理');
   const detail = normalizeSubagentHeaderDetail(
     prefix,
-    buildSubagentSubtitle(description, childItems, result) || fallbackDetail,
+    buildSubagentSubtitle(description, childItems, result)
+      || buildScopedSubagentHeaderDetail(scopedChildParts)
+      || fallbackDetail,
   );
 
   return {
@@ -1395,11 +1449,12 @@ function getToolLikeActivityState(part: ToolCallPart | ConfirmationPart | Termin
   }
 
   if (part.type === 'terminal') {
-    if (part.isRunning) {
+    const terminalState = resolveTerminalLifecycleState(part);
+    if (terminalState === 'running') {
       return 'doing';
     }
 
-    return part.exitCode != null && part.exitCode !== 0 ? 'error' : 'done';
+    return terminalState === 'failed' ? 'error' : 'done';
   }
 
   return part.state;
@@ -1407,9 +1462,14 @@ function getToolLikeActivityState(part: ToolCallPart | ConfirmationPart | Termin
 
 function buildTerminalDetailSections(part: TerminalPart): readonly DetailSectionDescriptor[] {
   const terminalKey = getTerminalDisplayKey(part);
-  const commandTone: StateDetailRow['tone'] = part.isRunning
+  const terminalState = resolveTerminalLifecycleState(part);
+  const commandTone: StateDetailRow['tone'] = terminalState === 'running'
     ? 'info'
-    : (part.exitCode != null && part.exitCode !== 0 ? 'error' : 'success');
+    : terminalState === 'failed'
+      ? 'error'
+      : terminalState === 'cancelled'
+        ? 'warn'
+        : 'success';
   const metadataRows = buildTerminalMetadataRows(part, terminalKey);
   const rows = [
     {
@@ -1436,7 +1496,7 @@ function buildTerminalDetailSections(part: TerminalPart): readonly DetailSection
       title: 'stderr tail',
       subtitle: formatTerminalTailSubtitle(part, 'stderr'),
       note: part.stderr,
-      tone: 'error' as const,
+      tone: isTerminalFailureState(part) ? 'error' as const : 'warn' as const,
       outputKind: 'terminal-stream' as const,
       outputChannel: 'stderr' as const,
     }] : []),
@@ -1459,9 +1519,9 @@ function buildTerminalMetadataRows(part: TerminalPart, terminalKey: string): Sta
   if (typeof part.bytesTotal === 'number' && Number.isFinite(part.bytesTotal)) {
     rows.push({
       id: `${terminalKey}:bytes`,
-      title: '已记录输出',
+      title: chatI18n('AILY_CHAT.PROCESS_OUTPUT_RECORDED'),
       note: formatTerminalByteCount(part.bytesTotal),
-      trailing: part.outputSessionId ? '可按需读取' : undefined,
+      trailing: part.outputSessionId ? chatI18n('AILY_CHAT.PROCESS_OUTPUT_READ_ON_DEMAND') : undefined,
       tone: 'neutral',
       outputKind: 'default',
     });
@@ -1470,9 +1530,9 @@ function buildTerminalMetadataRows(part: TerminalPart, terminalKey: string): Sta
   if (part.outputFilePath) {
     rows.push({
       id: `${terminalKey}:output-file`,
-      title: '输出文件',
+      title: chatI18n('AILY_CHAT.PROCESS_OUTPUT_FILE'),
       note: part.outputFilePath,
-      trailing: '完整输出',
+      trailing: chatI18n('AILY_CHAT.PROCESS_OUTPUT_FULL'),
       tone: 'neutral',
       outputKind: 'resource',
       outputUri: part.outputFilePath,
@@ -1482,7 +1542,7 @@ function buildTerminalMetadataRows(part: TerminalPart, terminalKey: string): Sta
   if (part.processId || part.outputSessionId) {
     rows.push({
       id: `${terminalKey}:identity`,
-      title: '进程会话',
+      title: chatI18n('AILY_CHAT.PROCESS_SESSION_TITLE'),
       note: [
         part.processId ? `processId=${part.processId}` : undefined,
         part.outputSessionId ? `outputSessionId=${part.outputSessionId}` : undefined,
@@ -1496,12 +1556,12 @@ function buildTerminalMetadataRows(part: TerminalPart, terminalKey: string): Sta
 }
 
 function formatTerminalTailSubtitle(part: TerminalPart, stream: 'stdout' | 'stderr'): string | undefined {
-  const parts: string[] = ['live tail'];
+  const parts: string[] = [chatI18n('AILY_CHAT.PROCESS_TAIL_LIVE')];
   if (typeof part.bytesTotal === 'number' && Number.isFinite(part.bytesTotal)) {
     parts.push(formatTerminalByteCount(part.bytesTotal));
   }
   if (stream === 'stdout' && part.outputFilePath) {
-    parts.push('full output in file');
+    parts.push(chatI18n('AILY_CHAT.PROCESS_OUTPUT_FULL_IN_FILE'));
   }
   return parts.join(' · ');
 }
@@ -1524,21 +1584,24 @@ function formatTerminalByteCount(value: number): string {
 
 function formatTerminalStatusLabel(part: TerminalPart): string {
   if (part.isRunning) {
-    return '运行中';
+    return chatI18n('AILY_CHAT.PROCESS_STATUS_RUNNING');
+  }
+  if (part.status === 'cancelled') {
+    return chatI18n('AILY_CHAT.PROCESS_STATUS_CANCELLED');
   }
   if (part.status === 'killed') {
-    return '已停止';
+    return chatI18n('AILY_CHAT.PROCESS_STATUS_STOPPED');
   }
   if (part.status === 'timeout') {
-    return '已超时';
+    return chatI18n('AILY_CHAT.PROCESS_STATUS_TIMED_OUT');
   }
   if (part.exitCode != null) {
-    return `退出码 ${part.exitCode}`;
+    return `${chatI18n('AILY_CHAT.PROCESS_LABEL_EXIT_CODE')} ${part.exitCode}`;
   }
   if (part.status) {
     return part.status;
   }
-  return '已完成';
+  return chatI18n('AILY_CHAT.PROCESS_STATUS_COMPLETED');
 }
 
 function getTerminalDisplayKey(part: TerminalPart): string {
@@ -1547,12 +1610,12 @@ function getTerminalDisplayKey(part: TerminalPart): string {
 
 function getActivityGroupStateLabel(state: ActivityGroupState): string {
   if (state === 'error') {
-    return '失败';
+    return chatI18n('AILY_CHAT.PROCESS_STATUS_FAILED');
   }
   if (state === 'done') {
-    return '已完成';
+    return chatI18n('AILY_CHAT.PROCESS_STATUS_COMPLETED');
   }
-  return '运行中';
+  return chatI18n('AILY_CHAT.PROCESS_STATUS_RUNNING');
 }
 
 function getToolIconClass(state: ToolCallPart['state']): string {
@@ -1612,7 +1675,7 @@ function getStatePill(state: string): string {
     case 'warn':
       return '警告';
     case 'pending_approval':
-      return '待审批';
+      return chatI18n('AILY_CHAT.PROCESS_APPROVAL_PENDING');
     default:
       return '';
   }
@@ -2259,6 +2322,88 @@ function buildSubagentNarrativeItem(input: {
     pill: '',
     pillTone: 'neutral',
   };
+}
+
+function collectSubagentScopedChildParts(
+  parts: readonly ChatPart[],
+  parent?: ToolCallPart,
+): ChatPart[] {
+  const parentSubAgentInvocationId = parent ? parent.toolCallId : undefined;
+  return parts.filter((part) => {
+    if (part === parent || !isSubagentChildPart(part)) {
+      return false;
+    }
+    if (!parentSubAgentInvocationId) {
+      return true;
+    }
+    return (getSubAgentInvocationId(part) || getParentToolCallId(part)) === parentSubAgentInvocationId;
+  });
+}
+
+function buildScopedSubagentHeaderDetail(parts: readonly ChatPart[]): string {
+  for (let index = parts.length - 1; index >= 0; index -= 1) {
+    const part = parts[index];
+    switch (part.type) {
+      case 'tool_call': {
+        const summary = buildActivityToolSummaryCandidate(part);
+        const text = [summary.label || summary.rawText, summary.subtitle].filter(Boolean).join(' ');
+        if (text.trim()) {
+          return text.trim();
+        }
+        break;
+      }
+      case 'thinking': {
+        const text = normalizeSubagentHeaderText(part.content);
+        if (text) {
+          return text;
+        }
+        break;
+      }
+      case 'markdown': {
+        const text = normalizeSubagentHeaderText(part.content);
+        if (text) {
+          return text;
+        }
+        break;
+      }
+      case 'question': {
+        const text = part.questions.map((question) => question.question).find((question) => question.trim().length > 0);
+        if (text) {
+          return normalizeSubagentHeaderText(text);
+        }
+        break;
+      }
+      case 'confirmation': {
+        const text = normalizeSubagentHeaderText(part.title || part.message);
+        if (text) {
+          return text;
+        }
+        break;
+      }
+      case 'terminal': {
+        const text = normalizeSubagentHeaderText(part.command || part.output || part.stderr || '');
+        if (text) {
+          return text;
+        }
+        break;
+      }
+      case 'state': {
+        const text = normalizeSubagentHeaderText(part.text);
+        if (text) {
+          return text;
+        }
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  return '';
+}
+
+function normalizeSubagentHeaderText(value: string): string {
+  return value.replace(/\s+/g, ' ').trim().slice(0, 120);
 }
 
 function buildSubagentPendingItem(

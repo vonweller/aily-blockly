@@ -183,6 +183,7 @@ const FRAME_EDITOR_MAX_HEIGHT = 320;
 const FRAME_STRIP_RENDER_BATCH_SIZE = 16;
 const FRAME_STRIP_RENDER_BUDGET_MS = 8;
 const DIMENSION_INPUT_DEBOUNCE_MS = 350;
+const PLAYBACK_INPUT_DEBOUNCE_MS = 350;
 const DEFAULT_PIXEL_COLOURS: PixelColours = {
     empty: '#151515',
     filled: '#f4f4f4',
@@ -256,6 +257,7 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
     private sourceRedecodePending = false;
     private sourceRedecodeVersion = 0;
     private dimensionInputTimerId: ReturnType<typeof setTimeout> | null = null;
+    private playbackInputTimerId: ReturnType<typeof setTimeout> | null = null;
     private frameStripRenderFrameId: number | null = null;
     private frameStripRenderVersion = 0;
     private playTestTimerId: ReturnType<typeof setTimeout> | null = null;
@@ -402,6 +404,7 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
 
     override dispose() {
         this.commitDimensionInputChange();
+        this.commitPlaybackInputChange();
         this.stopPlayTest(false);
         this.clearSourceRedecodeTimer();
         this.terminateWorker();
@@ -675,7 +678,8 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
     }
 
     private bindPlaybackInputEvents(input: HTMLInputElement) {
-        this.bindEvent(input, 'change', this.onPlaybackInputChange.bind(this));
+        this.bindEvent(input, 'input', this.schedulePlaybackInputChange.bind(this));
+        this.bindEvent(input, 'change', this.commitPlaybackInputChange.bind(this));
     }
 
     private bindBitmapModeInputEvents(input: HTMLInputElement) {
@@ -735,6 +739,29 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
         }
     }
 
+    private schedulePlaybackInputChange() {
+        this.clearPlaybackInputTimer();
+        if (!this.fpsInput || !this.maxFramesInput) return;
+        if (this.fpsInput.value === '' || this.maxFramesInput.value === '') return;
+
+        this.playbackInputTimerId = setTimeout(() => {
+            this.playbackInputTimerId = null;
+            this.onPlaybackInputChange();
+        }, PLAYBACK_INPUT_DEBOUNCE_MS);
+    }
+
+    private commitPlaybackInputChange() {
+        this.clearPlaybackInputTimer();
+        this.onPlaybackInputChange();
+    }
+
+    private clearPlaybackInputTimer() {
+        if (this.playbackInputTimerId !== null) {
+            clearTimeout(this.playbackInputTimerId);
+            this.playbackInputTimerId = null;
+        }
+    }
+
     private onDimensionInputChange() {
         if (!this.widthInput || !this.heightInput) return;
         if (this.widthInput.value === '' || this.heightInput.value === '') return;
@@ -788,12 +815,16 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
 
         this.closeFrameEditor();
         const currentValue = this.getValue();
+        const nextFrames = currentValue.frames.length > nextMaxFrames
+            ? currentValue.frames.slice(0, nextMaxFrames)
+            : currentValue.frames;
         this.setValue({
             ...currentValue,
             fps: nextFps,
             maxFrames: nextMaxFrames,
+            frames: nextFrames,
         }, false);
-        this.scheduleRedecodeFromSource();
+        this.scheduleRedecodeFromSource(0);
     }
 
     private onBitmapModeInputChange() {
@@ -845,6 +876,9 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
 
         input.value = '';
         this.commitDimensionInputChange();
+        this.commitPlaybackInputChange();
+        this.invalidateSourceRedecode();
+        this.clearSourceRedecodeTimer();
         this.closeFrameEditor(false);
         const width = this.widthInput ? this.clampInput(this.widthInput, this.imgWidth) : this.imgWidth;
         const height = this.heightInput ? this.clampInput(this.heightInput, this.imgHeight) : this.imgHeight;
@@ -919,8 +953,7 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
                         };
                         if (shouldApplyResult()) {
                             this.closeFrameEditor(false);
-                            this.setValue(result, false);
-                            this.setStatus(this.t('STATUS_READY_WITH_COUNT', { frames: result.frames.length }));
+                            this.setValue(result, !this.isDropdownOpen());
                         }
                         resolve();
                         return;
@@ -1967,7 +2000,7 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
         const value = this.getValue();
         if (!this.statusElement) return;
         if (value.frames.length <= 1 && !value.sourceName && !this.hasFramePixels(value.frames)) {
-            this.statusElement.textContent = Blockly.Msg['U8G2_ANIMATION_EMPTY'];
+            this.setStatus(Blockly.Msg['U8G2_ANIMATION_EMPTY']);
             this.statusElement.classList.remove('is-error');
             return;
         }
@@ -1976,7 +2009,7 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
         const modeText = value.dither
             ? Blockly.Msg['U8G2_ANIMATION_LABEL_DITHER']
             : `${Blockly.Msg['U8G2_ANIMATION_LABEL_THRESHOLD']} ${value.threshold}`;
-        this.statusElement.textContent = this.t('STATUS_INFO', {
+        this.setStatus(this.t('STATUS_INFO', {
             sourcePrefix: source,
             frames: value.frames.length,
             width: value.width,
@@ -1984,7 +2017,7 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
             fps: value.fps,
             mode: modeText,
             dataSize: this.formatDataSize(this.getConvertedDataSizeBytes(value)),
-        });
+        }));
         this.statusElement.classList.remove('is-error');
     }
 
@@ -2040,6 +2073,7 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
     private setStatus(message: string, isError = false) {
         if (!this.statusElement) return;
         this.statusElement.textContent = message;
+        this.statusElement.title = message;
         this.statusElement.classList.toggle('is-error', isError);
     }
 
@@ -2218,7 +2252,7 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
 
     private rerenderSourceBlockAfterResize() {
         this.rerenderSourceBlock();
-        if (Blockly.DropDownDiv.getOwner() === this) {
+        if (this.isDropdownOpen()) {
             Blockly.DropDownDiv.showPositionedByField(
                 this,
                 this.dropdownDispose.bind(this),
@@ -2226,13 +2260,16 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
         }
     }
 
+    private isDropdownOpen() {
+        return Blockly.DropDownDiv.getOwner() === this;
+    }
+
     private dropdownDispose() {
         this.commitDimensionInputChange();
+        this.commitPlaybackInputChange();
         this.closeFrameEditor();
         this.stopPlayTest(false);
         this.cancelFrameStripRender();
-        this.clearSourceRedecodeTimer();
-        this.terminateWorker();
 
         if (
             this.getSourceBlock() &&

@@ -62,6 +62,7 @@ export interface IAilyHostAPI {
   readonly cmd?: any;
   /** ABS 自动同步服务（可选） */
   readonly absSync?: any;
+  readonly arduinoLint?: any;
   /** 跨平台命令服务（可选 — createDirectory / linkItem 等） */
   readonly crossPlatformCmd?: any;
   /** 通知服务透传（可选 — update / clear 等完整 NoticeService 透传） */
@@ -158,6 +159,7 @@ export interface IPathUtils {
   getUserDocuments(): string;
   getUserHome(): string;
   getAilyBuilderPath?(): string;
+  getAilyBuilderCachePath?(): string;
   getAilyBuilderBuildPath?(): string;
   getAilyChildPath?(): string;
   getElectronPath?(): string;

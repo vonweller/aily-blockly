@@ -1,6 +1,7 @@
 import { toModelFacingToolName, toRuntimeToolName } from 'aily-lex/browser';
 
 const READ_SIDE_TOOL_NAME_ALIASES = new Map<string, string>([
+  ['build_project', 'buildProject'],
   ['fetch', 'fetch_webpage'],
   ['glob_tool', 'file_search'],
   ['grep_tool', 'grep_search'],
@@ -35,8 +36,12 @@ const TODO_TOOL_NAMES = new Set([
   'todo_write_tool',
 ]);
 
+const INTERNAL_DISCOVERY_TOOL_NAMES = new Set([
+  'tool_search',
+  'search_available_tools',
+]);
+
 const SEARCH_SUMMARY_TOOL_NAMES = new Set([
-  'fetch_webpage',
   'file_search',
   'grep_search',
   'semantic_search',
@@ -121,4 +126,8 @@ export function isTerminalCommandToolName(toolName: string | undefined): boolean
 
 export function isTodoToolName(toolName: string | undefined): boolean {
   return TODO_TOOL_NAMES.has(normalizeReadSideToolName(toolName));
+}
+
+export function isInternalDiscoveryToolName(toolName: string | undefined): boolean {
+  return INTERNAL_DISCOVERY_TOOL_NAMES.has(normalizeReadSideToolName(toolName));
 }

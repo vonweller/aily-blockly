@@ -300,6 +300,12 @@ const args = process.argv.slice(1);
 const serve = args.some((val) => val === "--serve");
 process.env.DEV = serve;
 
+// Angular dev server 会把依赖预构建到 .angular/cache 下；重启后路径可能变化。
+// 开发态若继续复用 Electron 的 HTTP cache，容易命中已失效的旧 chunk URL
+if (serve) {
+  app.commandLine.appendSwitch('disable-http-cache');
+}
+
 // 注册协议处理
 if (process.defaultApp) {
   if (process.argv.length >= 2) {
@@ -1813,15 +1819,18 @@ function loadEnv() {
   if (isWin32) {
     // 设置Windows的环境变量
     process.env.AILY_APPDATA_PATH = conf["appdata_path"]["win32"].replace('%HOMEPATH%', os.homedir());
-    process.env.AILY_BUILDER_BUILD_PATH = path.join(os.homedir(), "AppData", "Local", "aily-builder", "project");
+    process.env.AILY_BUILDER_CACHE_PATH = path.join(os.homedir(), "AppData", "Local", "aily-builder");
+    process.env.AILY_BUILDER_BUILD_PATH = path.join(process.env.AILY_BUILDER_CACHE_PATH, "project");
   } else if (isDarwin) {
     // 设置macOS的环境变量
     process.env.AILY_APPDATA_PATH = conf["appdata_path"]["darwin"].replace('~', os.homedir());
-    process.env.AILY_BUILDER_BUILD_PATH = path.join(os.homedir(), "Library", "aily-builder", "project");
+    process.env.AILY_BUILDER_CACHE_PATH = path.join(os.homedir(), "Library", "aily-builder");
+    process.env.AILY_BUILDER_BUILD_PATH = path.join(process.env.AILY_BUILDER_CACHE_PATH, "project");
   } else {
     // 设置Linux的环境变量
     process.env.AILY_APPDATA_PATH = conf["appdata_path"]["linux"];
-    process.env.AILY_BUILDER_BUILD_PATH = path.join(os.homedir(), ".cache", "aily-builder", "project");
+    process.env.AILY_BUILDER_CACHE_PATH = path.join(os.homedir(), ".cache", "aily-builder");
+    process.env.AILY_BUILDER_BUILD_PATH = path.join(process.env.AILY_BUILDER_CACHE_PATH, "project");
   }
 
   // 确保应用数据目录存在
@@ -1830,6 +1839,14 @@ function loadEnv() {
       fs.mkdirSync(process.env.AILY_APPDATA_PATH, { recursive: true });
     } catch (error) {
       console.error("创建应用数据目录失败:", error);
+    }
+  }
+
+  if (!fs.existsSync(process.env.AILY_BUILDER_CACHE_PATH)) {
+    try {
+      fs.mkdirSync(process.env.AILY_BUILDER_CACHE_PATH, { recursive: true });
+    } catch (error) {
+      console.error("Failed to create aily-builder cache path:", error);
     }
   }
 
@@ -1884,7 +1901,7 @@ function loadEnv() {
   // 读取用户配置文件
   try {
     userConf = JSON.parse(fs.readFileSync(userConfigPath));
-    
+
     // TODO: 下一版删除，统一修正 regions.cn 下所有地址为标准地址
     let needSave = false;
     if (userConf.regions && userConf.regions.cn) {
@@ -1902,7 +1919,7 @@ function loadEnv() {
         }
       }
     }
-    
+
     // 合并配置文件
     Object.assign(conf, userConf);
 
@@ -1941,7 +1958,7 @@ function loadEnv() {
     : (conf.region || officialRegion);
   const regionConfig = conf.regions && conf.regions[currentRegion] ? conf.regions[currentRegion] : conf.regions[officialRegion];
   const zipUrlState = getZipUrlState(conf);
-  
+
   // 当前区域
   process.env.AILY_REGION = currentRegion;
   process.env.AILY_BUILD_FLAVOR = buildFlavor;

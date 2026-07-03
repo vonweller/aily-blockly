@@ -20,32 +20,32 @@ export class ChatRuntimeOwnerSubmittedTurnTitleService implements ChatRuntimeOwn
   private readonly titleRequestService = new ChatTitleRequestService(() => null);
 
   prepareSubmittedTurnTitle(input: ChatRuntimeOwnerSubmittedTurnTitleInput): void {
-    this.applyDefaultSessionTitleIfNeeded(input.displayText, input.sessionId);
-    void this.generateTitleForSubmittedTurn(input.requestText, input.sessionId).catch(error => {
-      console.warn('[AilyChat][RuntimeOwnerTitle] Title generation did not complete:', error);
+    this.scheduleTitleGeneration(() => {
+      void this.generateTitleForSubmittedTurn(input.requestText, input.sessionId).catch(error => {
+        console.warn('[AilyChat][RuntimeOwnerTitle] Title generation did not complete:', error);
+      });
     });
   }
 
-  private applyDefaultSessionTitleIfNeeded(content: string, sessionId: string): void {
-    const targetModel = this.chatSessionModelStore.get(sessionId);
-    const modelTitle = targetModel?.title;
-    const currentTitle = modelTitle?.text ?? '';
-    const currentTitleSource = modelTitle?.source;
-    const normalizedTitle = typeof currentTitle === 'string' ? currentTitle.trim() : '';
-    if (normalizedTitle && currentTitleSource !== 'default-first-request') {
+  private scheduleTitleGeneration(callback: () => void): void {
+    const scheduleAfterFrame = typeof globalThis.requestAnimationFrame === 'function'
+      ? globalThis.requestAnimationFrame.bind(globalThis)
+      : null;
+    const scheduleTimer = typeof globalThis.setTimeout === 'function'
+      ? globalThis.setTimeout.bind(globalThis)
+      : null;
+
+    if (scheduleAfterFrame && scheduleTimer) {
+      scheduleAfterFrame(() => {
+        scheduleTimer(callback, 0);
+      });
       return;
     }
-
-    const firstLine = content.trim().split('\n')[0]?.trim().substring(0, 200) ?? '';
-    const defaultTitle = firstLine || 'New Chat';
-    const candidate = normalizeChatSessionTitleCandidate({
-      text: defaultTitle,
-      source: 'default-first-request',
-    });
-    this.chatSessionModelStore.updateMetadata(sessionId, { title: candidate });
-    void this.persistTitleMetadataThroughHost(sessionId, defaultTitle, { source: 'generated' }).catch(error => {
-      console.error('[AilyChat][RuntimeOwnerTitle] Host default-title persistence failed:', error);
-    });
+    if (scheduleTimer) {
+      scheduleTimer(callback, 0);
+      return;
+    }
+    callback();
   }
 
   private async generateTitleForSubmittedTurn(content: string, sessionId: string): Promise<void> {

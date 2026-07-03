@@ -74,6 +74,22 @@
       white-space: nowrap;
     }
   }
+
+  .acc-process {
+    position: relative;
+    width: 28px;
+    height: 28px;
+    font-size: 14px;
+    color: var(--aily-chat-xdialog-edit-btn-fg, #eee);
+    padding-top: 1px;
+    border-radius: 5px;
+    cursor: pointer;
+
+    &:hover {
+      color: var(--aily-chat-xdialog-edit-resource-name, #fff);
+      background: var(--aily-chat-xdialog-edit-btn-hover-bg, #3f3f3f);
+    }
+  }
 }
 
 :host.acc-host--composer {
@@ -81,6 +97,23 @@
   --acc-toolbar-hover-fg: var(--aily-text-primary, #fff);
 
   .acc-clip {
+    margin-left: 1px;
+    width: 28px;
+    height: 28px;
+    font-size: 14px;
+    color: var(--aily-text-quaternary, #eee);
+    padding-top: 1px;
+    border-radius: 5px;
+    cursor: pointer;
+
+    &:hover {
+      color: var(--acc-toolbar-hover-fg);
+      background: var(--acc-toolbar-hover-bg);
+    }
+  }
+
+  .acc-process {
+    position: relative;
     margin-left: 1px;
     width: 28px;
     height: 28px;
@@ -159,7 +192,30 @@
     &.acc-chip--after-expanded-context {
       margin-left: 5px;
     }
+
+    &.acc-chip--after-process {
+      margin-left: 1px;
+    }
   }
+}
+
+:host .acc-process-badge {
+  position: absolute;
+  top: -3px;
+  right: -4px;
+  min-width: 12px;
+  height: 12px;
+  padding: 0 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #d4380d;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  box-shadow: 0 0 0 2px var(--aily-bg-primary, #fff);
 }
 
 :host.acc-host--edit .acc-chip .acc-mini-tag,
@@ -210,6 +266,11 @@
   width: 28px !important;
   padding: 1px 0 0 !important;
   gap: 0;
+}
+
+:host.acc-host--edit .acc-chip.acc-chip--after-expanded-context.acc-chip--after-process,
+:host.acc-host--composer .acc-chip.acc-chip--after-expanded-context.acc-chip--after-process {
+  margin-left: 1px;
 }
 
 :host.acc-host--edit .acc-chip.acc-chip--after-expanded-context > span,

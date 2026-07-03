@@ -41,11 +41,14 @@ export class ChatContextToolbarComponent {
   @Input() modelChipLabel = '';
   @Input() modelBillingLabel = '';
   @Input() showManageMemory = false;
+  @Input() showProcessButton = false;
+  @Input() runningProcessCount = 0;
 
   @Output() toggleAddList = new EventEmitter<void>();
   @Output() addFile = new EventEmitter<void>();
   @Output() addFolder = new EventEmitter<void>();
   @Output() manageMemory = new EventEmitter<void>();
+  @Output() openProcessManager = new EventEmitter<void>();
   @Output() modeClick = new EventEmitter<MouseEvent>();
   @Output() modelClick = new EventEmitter<MouseEvent>();
 
@@ -132,18 +135,32 @@ export class ChatContextToolbarComponent {
     const selectedCustomAgentTarget = typeof this.selectedMode?.customAgentTarget === 'string'
       ? this.selectedMode.customAgentTarget.trim()
       : '';
+    if (this.hasExplicitSelectedMode) {
+      return selectedCustomAgentTarget || undefined;
+    }
+
     const currentCustomAgentTarget = typeof this.currentCustomAgentTarget === 'string'
       ? this.currentCustomAgentTarget.trim()
       : '';
-    return selectedCustomAgentTarget || currentCustomAgentTarget || undefined;
+    return currentCustomAgentTarget || undefined;
+  }
+
+  private get hasExplicitSelectedMode(): boolean {
+    const selectedModeId = typeof this.selectedMode?.modeId === 'string'
+      ? this.selectedMode.modeId.trim()
+      : '';
+    const selectedCustomAgentTarget = typeof this.selectedMode?.customAgentTarget === 'string'
+      ? this.selectedMode.customAgentTarget.trim()
+      : '';
+    return !!selectedModeId || !!selectedCustomAgentTarget;
   }
 
   get modeTooltipTitle(): string {
-    if (this.currentCustomAgentTarget && this.currentMode === 'agent') {
-      return this.currentCustomAgentTarget;
+    if (this.displayCustomAgentTarget) {
+      return this.displayCustomAgentTarget;
     }
 
-    return this.modeLabelKey ?? '';
+    return this.modePlainLabel ?? this.modeLabelKey ?? '';
   }
 
   onModeClick(event: MouseEvent): void {
@@ -158,5 +175,9 @@ export class ChatContextToolbarComponent {
 
   onManageMemory(): void {
     this.manageMemory.emit();
+  }
+
+  onOpenProcessManager(): void {
+    this.openProcessManager.emit();
   }
 }

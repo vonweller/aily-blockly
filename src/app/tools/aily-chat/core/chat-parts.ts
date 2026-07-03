@@ -114,10 +114,15 @@ export interface QuestionOption {
 
 /** 单个问题定义 */
 export interface QuestionItem {
+  id?: string;
+  header?: string;
   question: string;
   options?: QuestionOption[];
   allow_freeform?: boolean;
   multi_select?: boolean;
+  allowFreeform?: boolean;
+  allowFreeformInput?: boolean;
+  multiSelect?: boolean;
 }
 
 /** 用户提问 Part — 替代 aily-question markdown 代码块 */
@@ -280,7 +285,7 @@ export interface PlanStep {
   status?: 'pending' | 'inProgress' | 'completed';
 }
 
-export interface PlanPart {
+export interface PlanPart extends ChatPartScope {
   type: 'plan';
   partId?: string;
   status: 'streaming' | 'completed' | 'failed';
@@ -333,7 +338,9 @@ export function chatPartScopeOf(part: ChatPart | null | undefined): ChatPartScop
   }
 
   if ('metadata' in part) {
-    return normalizeChatPartScope(asRecord(part.metadata));
+    const metadata = asRecord(part.metadata);
+    return normalizeChatPartScope(metadata)
+      ?? normalizeChatPartScope(asRecord(metadata?.['scope']));
   }
 
   return undefined;
@@ -348,8 +355,13 @@ export function getParentToolCallId(part: ChatPart | null | undefined): string |
 }
 
 export function isSubagentChildPart(part: ChatPart | null | undefined): boolean {
+  if (part?.type === 'tool_call' && isSubagentToolCallMetadata(part.metadata)) {
+    return false;
+  }
+
   const scope = chatPartScopeOf(part);
   return scope?.sourceAgentRole === 'subagent'
+    || typeof scope?.subAgentInvocationId === 'string'
     || typeof scope?.parentToolCallId === 'string';
 }
 
@@ -525,8 +537,11 @@ export function mkPlan(
   text: string,
   status: PlanPart['status'] = 'completed',
   partId = 'plan:proposed',
-  options: Partial<Pick<PlanPart, 'steps' | 'assumptions' | 'verification' | 'source'>> = {},
+  options: Partial<Pick<PlanPart, 'steps' | 'assumptions' | 'verification' | 'source'>> & {
+    readonly scope?: ChatPartScope;
+  } = {},
 ): PlanPart {
+  const scope = normalizeChatPartScope(options.scope);
   return {
     type: 'plan',
     partId,
@@ -536,6 +551,7 @@ export function mkPlan(
     ...(options.assumptions ? { assumptions: options.assumptions } : {}),
     ...(options.verification ? { verification: options.verification } : {}),
     ...(options.source ? { source: options.source } : {}),
+    ...(scope ? scope : {}),
   };
 }
 

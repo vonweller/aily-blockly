@@ -31,16 +31,16 @@ declare global {
         onEvent: (streamId: string, callback: (payload: any) => void) => () => void;
       };
       chatRuntimeHost?: {
-        registerExecutionWorker: (executionWorkerId: string) => Promise<{ ok?: boolean; executionWorkerId?: string }>;
-        unregisterExecutionWorker: (executionWorkerId: string) => Promise<{ ok?: boolean }>;
+        registerRuntimeOwner: (runtimeOwnerId: string) => Promise<{ ok?: boolean; runtimeOwnerId?: string }>;
+        unregisterRuntimeOwner: (runtimeOwnerId: string) => Promise<{ ok?: boolean }>;
         registerResourceOperationHandler: (handlerId: string) => Promise<{ ok?: boolean; handlerId?: string }>;
         unregisterResourceOperationHandler: (handlerId: string) => Promise<{ ok?: boolean }>;
         call: (method: string, args: readonly unknown[]) => Promise<unknown>;
-        onExecutionWorkerCommand: (callback: (payload: unknown) => void) => () => void;
+        onRuntimeOwnerCommand: (callback: (payload: unknown) => void) => () => void;
         onResourceOperationCommand: (callback: (payload: unknown) => void) => () => void;
-        sendExecutionWorkerResponse: (payload: unknown) => void;
+        sendRuntimeOwnerResponse: (payload: unknown) => void;
         sendResourceOperationResponse: (payload: unknown) => void;
-        emitExecutionWorkerEvent: (payload: unknown) => void;
+        emitRuntimeOwnerEvent: (payload: unknown) => void;
         onEvent: (callback: (payload: any) => void) => () => void;
       };
       webviewBridge?: {

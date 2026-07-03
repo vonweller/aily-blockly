@@ -65,7 +65,7 @@ export class AilyConfirmationViewerComponent implements OnChanges {
       askId: this.data.askId || '',
       toolCallId: this.data.toolCallId || '',
       toolName: this.data.toolName || '',
-      title: this.data.title || '确认操作',
+      title: this.data.title || '',
       subtitle: this.data.subtitle || '',
       message: this.data.message || '',
       args: this.data.args,

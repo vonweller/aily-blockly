@@ -20,7 +20,6 @@ import {
   resolveHostSessionInteractionActionSummary,
 } from '../helpers/host-session-interaction-action';
 import type { PlanPart } from '../core/chat-parts';
-import { isLikelyPlanMarkdown } from '../core/chat-parts';
 import {
   type HostSessionSelectedModeResolveOptions,
   normalizeHostSessionInputStateFromMetadata,
@@ -36,12 +35,18 @@ import {
   stripLegacyRuntimeAuxiliaryFromMetadata,
 } from '../helpers/host-session-runtime-auxiliary';
 import {
+  normalizeHostSessionTurnRuntimeTruth,
+  readHostSessionTurnRuntimeTruthFromMetadata,
+} from '../helpers/host-session-runtime-truth';
+import {
   readChatAgentRuntimeModeFromMetadata,
   readChatAgentRuntimeModeSourceFromMetadata,
 } from '../core/chat-agent-runtime-mode';
+import { HostSessionOperationLog } from './host-session-operation-log';
 
 import type {
   HostSessionRecord,
+  HostSessionCheckpointTimelineEntrySidecar,
   HostSessionRuntimeAuxiliary,
   HostSessionSidecar,
   PersistedHostResponseData,
@@ -237,6 +242,8 @@ export interface HostSessionRecordStoreOptions {
  * Keeps host record disk IO and compatibility normalization out of ChatHistoryService.
  */
 export class HostSessionRecordStore {
+  private readonly operationLogs = new Map<string, HostSessionOperationLog>();
+
   constructor(private readonly options: HostSessionRecordStoreOptions) {}
 
   createFullMetadata(metadata: Partial<SessionMetadata> & { sessionId: string }): SessionMetadata {
@@ -366,15 +373,15 @@ export class HostSessionRecordStore {
     if (projectPath) {
       const dir = this.options.joinPath(projectPath, this.options.projectChatDir);
       this.ensureDir(dir);
-      const filePath = this.options.joinPath(dir, `${sessionId}.json`);
-      this.writeFileSync(filePath, JSON.stringify(data, null, 2));
+      const filePath = this.options.joinPath(dir, `${sessionId}.jsonl`);
+      this.writeOperationLog(filePath, data);
       return;
     }
 
     const dir = this.options.getGlobalChatDataDir();
     this.ensureDir(dir);
-    const filePath = this.options.joinPath(dir, `${sessionId}.json`);
-    this.writeFileSync(filePath, JSON.stringify(data, null, 2));
+    const filePath = this.options.joinPath(dir, `${sessionId}.jsonl`);
+    this.writeOperationLog(filePath, data);
   }
 
   read(sessionId: string, projectPath: string | null): HostSessionRecord | null {
@@ -382,9 +389,9 @@ export class HostSessionRecordStore {
 
     const paths: string[] = [];
     if (projectPath) {
-      paths.push(this.options.joinPath(projectPath, this.options.projectChatDir, `${sessionId}.json`));
+      paths.push(this.options.joinPath(projectPath, this.options.projectChatDir, `${sessionId}.jsonl`));
     }
-    paths.push(this.options.joinPath(this.options.getGlobalChatDataDir(), `${sessionId}.json`));
+    paths.push(this.options.joinPath(this.options.getGlobalChatDataDir(), `${sessionId}.jsonl`));
 
     for (const filePath of paths) {
       try {
@@ -393,7 +400,8 @@ export class HostSessionRecordStore {
         }
 
         const content = this.readFileSync(filePath);
-        const parsed = JSON.parse(content);
+        const log = this.getOperationLog(filePath);
+        const parsed = log.read(content);
 
         if (Array.isArray(parsed)) {
           console.warn(`[ChatHistory] 忽略旧版 chatList-only 宿主持久化记录 (${filePath})`);
@@ -471,6 +479,7 @@ export class HostSessionRecordStore {
       requestRouting: _turnRequestRouting,
       planPart: _planPart,
       handoffAction: _handoffAction,
+      runtimeTruth: _runtimeTruth,
       ...turnWithoutEnvelope
     } = turn;
     const {
@@ -498,10 +507,11 @@ export class HostSessionRecordStore {
       : undefined;
     const modeId = requestRouting?.requestModeId ?? requestRouting?.selectedModeId;
     const planPart = this.normalizePersistedTurnPlanPart(turn.planPart)
-      ?? this.findPersistedTurnPlanPart(turn.response.parts)
-      ?? this.synthesizePersistedTurnPlanPartFromMarkdown(turn.response.parts, modeId);
+      ?? this.findPersistedTurnPlanPart(turn.response.parts);
     const handoffAction = normalizeHostSessionInteractionActionSummary(turn.handoffAction)
       ?? this.resolveTurnInteractionActionSummary(turn);
+    const runtimeTruth = normalizeHostSessionTurnRuntimeTruth(turn.runtimeTruth)
+      ?? readHostSessionTurnRuntimeTruthFromMetadata(turn.request?.metadata);
     const responseParts = this.materializeEnvelopePlanPart(
       turn.response.parts.map(part => clonePersistedValue(part)),
       planPart,
@@ -514,6 +524,7 @@ export class HostSessionRecordStore {
       ...(requestRouting ? { requestRouting } : {}),
       ...(planPart ? { planPart } : {}),
       ...(handoffAction ? { handoffAction } : {}),
+      ...(runtimeTruth ? { runtimeTruth } : {}),
       request: {
         ...turn['request'],
         ...(turn.request?.metadata ? { metadata: clonePersistedValue(turn.request.metadata) } : {}),
@@ -585,6 +596,17 @@ export class HostSessionRecordStore {
     if (!part || part['type'] !== 'plan') {
       return undefined;
     }
+    const metadata = isRecord(part['metadata']) ? part['metadata'] : undefined;
+    if (
+      part['sourceAgentRole'] === 'subagent'
+      || typeof part['subAgentInvocationId'] === 'string'
+      || typeof part['parentToolCallId'] === 'string'
+      || metadata?.['sourceAgentRole'] === 'subagent'
+      || typeof metadata?.['subAgentInvocationId'] === 'string'
+      || typeof metadata?.['parentToolCallId'] === 'string'
+    ) {
+      return undefined;
+    }
 
     const status = part['status'] === 'streaming' || part['status'] === 'completed' || part['status'] === 'failed'
       ? part['status']
@@ -614,48 +636,6 @@ export class HostSessionRecordStore {
       if (planPart) {
         return planPart;
       }
-    }
-
-    return undefined;
-  }
-
-  private synthesizePersistedTurnPlanPartFromMarkdown(
-    parts: readonly TurnResponseTurn['response']['parts'][number][],
-    modeId: string | undefined,
-  ): PlanPart | undefined {
-    if (modeId !== 'plan') {
-      return undefined;
-    }
-
-    for (let index = parts.length - 1; index >= 0; index -= 1) {
-      const part = parts[index];
-      if (!isRecord(part) || part['type'] !== 'markdown') {
-        continue;
-      }
-      const metadata = isRecord(part['metadata']) ? part['metadata'] : undefined;
-      if (
-        part['sourceAgentRole'] === 'subagent'
-        || typeof part['subAgentInvocationId'] === 'string'
-        || typeof part['parentToolCallId'] === 'string'
-        || metadata?.['sourceAgentRole'] === 'subagent'
-        || typeof metadata?.['subAgentInvocationId'] === 'string'
-        || typeof metadata?.['parentToolCallId'] === 'string'
-      ) {
-        continue;
-      }
-
-      const text = typeof part['content'] === 'string' ? part['content'].trim() : '';
-      if (!isLikelyPlanMarkdown(text)) {
-        continue;
-      }
-
-      return {
-        type: 'plan',
-        partId: 'plan:fallback',
-        status: 'completed',
-        text,
-        source: 'summary',
-      };
     }
 
     return undefined;
@@ -709,32 +689,47 @@ export class HostSessionRecordStore {
     const compatMessages = Array.isArray(sidecar?.response?.compatMessages)
       ? [...sidecar.response.compatMessages]
       : undefined;
-    const checkpointMarker = sidecar?.checkpointMarker;
-    const checkpointMarkerSessionResource = typeof checkpointMarker?.sessionResource === 'string'
-      ? checkpointMarker.sessionResource.trim()
-      : '';
-    const normalizedCheckpointMarker = checkpointMarkerSessionResource
-      && typeof checkpointMarker?.currentCheckpointIndex === 'number'
-      && Number.isFinite(checkpointMarker.currentCheckpointIndex)
-      ? {
-          sessionResource: checkpointMarkerSessionResource,
-          currentCheckpointIndex: Math.trunc(checkpointMarker.currentCheckpointIndex),
-        }
-      : undefined;
-
     const checkpointTimeline = sidecar?.checkpointRedoBranch ?? sidecar?.checkpointTimeline;
     const checkpointTimelineSessionResource = typeof checkpointTimeline?.sessionResource === 'string'
       ? checkpointTimeline.sessionResource.trim()
       : '';
     const checkpointTimelineTurnResponses = this.normalizeTurnResponses(checkpointTimeline?.turnResponses);
+    const checkpointTimelineEntries = this.normalizeCheckpointTimelineEntries(checkpointTimeline?.checkpoints);
     const normalizedCheckpointTimeline = checkpointTimelineSessionResource
       && checkpointTimelineTurnResponses?.length
       && typeof checkpointTimeline?.currentCheckpointIndex === 'number'
       && Number.isFinite(checkpointTimeline.currentCheckpointIndex)
       ? {
           sessionResource: checkpointTimelineSessionResource,
-          currentCheckpointIndex: Math.trunc(checkpointTimeline.currentCheckpointIndex),
+          currentCheckpointIndex: this.normalizeCheckpointIndex(
+            checkpointTimeline.currentCheckpointIndex,
+            checkpointTimelineEntries?.length ?? checkpointTimelineTurnResponses.length,
+          ),
+          ...(typeof checkpointTimeline.currentTurnResponseCount === 'number' && Number.isFinite(checkpointTimeline.currentTurnResponseCount)
+            ? { currentTurnResponseCount: this.normalizeTurnResponseCount(checkpointTimeline.currentTurnResponseCount, checkpointTimelineTurnResponses.length) }
+            : {}),
+          ...(checkpointTimelineEntries?.length ? { checkpoints: checkpointTimelineEntries } : {}),
           turnResponses: checkpointTimelineTurnResponses,
+        }
+      : undefined;
+
+    const checkpointMarker = sidecar?.checkpointMarker;
+    const checkpointMarkerSessionResource = typeof checkpointMarker?.sessionResource === 'string'
+      ? checkpointMarker.sessionResource.trim()
+      : '';
+    const markerCheckpointCount = normalizedCheckpointTimeline?.checkpoints?.length
+      ?? normalizedCheckpointTimeline?.turnResponses.length
+      ?? 0;
+    const markerTurnResponseCount = normalizedCheckpointTimeline?.turnResponses.length ?? 0;
+    const normalizedCheckpointMarker = checkpointMarkerSessionResource
+      && typeof checkpointMarker?.currentCheckpointIndex === 'number'
+      && Number.isFinite(checkpointMarker.currentCheckpointIndex)
+      ? {
+          sessionResource: checkpointMarkerSessionResource,
+          currentCheckpointIndex: this.normalizeCheckpointIndex(checkpointMarker.currentCheckpointIndex, markerCheckpointCount),
+          ...(typeof checkpointMarker.currentTurnResponseCount === 'number' && Number.isFinite(checkpointMarker.currentTurnResponseCount)
+            ? { currentTurnResponseCount: this.normalizeTurnResponseCount(checkpointMarker.currentTurnResponseCount, markerTurnResponseCount) }
+            : {}),
         }
       : undefined;
 
@@ -753,6 +748,50 @@ export class HostSessionRecordStore {
       ...(normalizedCheckpointMarker ? { checkpointMarker: normalizedCheckpointMarker } : {}),
       ...(normalizedCheckpointTimeline ? { checkpointRedoBranch: normalizedCheckpointTimeline } : {}),
     };
+  }
+
+  private normalizeCheckpointTimelineEntries(value: unknown): HostSessionCheckpointTimelineEntrySidecar[] | undefined {
+    if (!Array.isArray(value)) {
+      return undefined;
+    }
+
+    const entries = value
+      .map((entry): HostSessionCheckpointTimelineEntrySidecar | null => {
+        if (!isRecord(entry)) {
+          return null;
+        }
+        const checkpointId = typeof entry['checkpointId'] === 'string' ? entry['checkpointId'].trim() : '';
+        const requestId = typeof entry['requestId'] === 'string' ? entry['requestId'].trim() : '';
+        const turnId = typeof entry['turnId'] === 'string' ? entry['turnId'].trim() : '';
+        const turnIndex = typeof entry['turnIndex'] === 'number' && Number.isFinite(entry['turnIndex'])
+          ? Math.max(0, Math.trunc(entry['turnIndex']))
+          : -1;
+        if (!checkpointId || !requestId || turnIndex < 0) {
+          return null;
+        }
+        return {
+          checkpointId,
+          requestId,
+          ...(turnId ? { turnId } : {}),
+          turnIndex,
+          ...(isRecord(entry['metadata'])
+            ? { metadata: clonePersistedValue(entry['metadata']) as unknown as HostSessionCheckpointTimelineEntrySidecar['metadata'] }
+            : {}),
+        };
+      })
+      .filter((entry): entry is HostSessionCheckpointTimelineEntrySidecar => !!entry);
+    return entries.length > 0 ? entries : undefined;
+  }
+
+  private normalizeCheckpointIndex(value: number, checkpointCount: number): number {
+    if (checkpointCount <= 0) {
+      return -1;
+    }
+    return Math.max(-1, Math.min(Math.trunc(value), checkpointCount - 1));
+  }
+
+  private normalizeTurnResponseCount(value: number, turnResponseCount: number): number {
+    return Math.max(0, Math.min(Math.trunc(value), turnResponseCount));
   }
 
   private normalizeMetadata(raw: any, sessionId: string, projectPath: string | null): SessionMetadata {
@@ -877,9 +916,46 @@ export class HostSessionRecordStore {
     AilyHost.get().fs.writeFileSync(path, content, 'utf-8');
   }
 
+  private appendFileSync(path: string, content: string): void {
+    AilyHost.get().fs.appendFileSync(path, content);
+  }
+
   private ensureDir(dirPath: string): void {
     if (!this.fileExists(dirPath)) {
       AilyHost.get().fs.mkdirSync(dirPath, { recursive: true });
     }
+  }
+
+  private writeOperationLog(filePath: string, data: HostSessionRecord): void {
+    const log = this.getOperationLog(filePath);
+    if (!this.fileExists(filePath)) {
+      const content = log.createInitial(data);
+      this.writeFileSync(filePath, content);
+      return;
+    }
+
+    const result = log.write(data);
+    if (!result.data) {
+      return;
+    }
+
+    if (result.op === 'replace') {
+      this.writeFileSync(filePath, result.data);
+    } else {
+      this.appendFileSync(filePath, result.data);
+    }
+    log.confirmWrite();
+  }
+
+  private getOperationLog(filePath: string): HostSessionOperationLog {
+    let log = this.operationLogs.get(filePath);
+    if (!log) {
+      log = new HostSessionOperationLog();
+      if (this.fileExists(filePath)) {
+        log.read(this.readFileSync(filePath));
+      }
+      this.operationLogs.set(filePath, log);
+    }
+    return log;
   }
 }

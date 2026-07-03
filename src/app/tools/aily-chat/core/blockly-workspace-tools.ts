@@ -21,6 +21,7 @@ type RuntimeScopedToolContribution = IToolContribution & {
   readonly toolSet?: string;
   readonly runtimeModes?: readonly string[];
   readonly requiredCapabilities?: readonly string[];
+  isConcurrencySafe?(input: unknown): boolean;
 };
 
 function createLintCodeFingerprint(code: string): string {
@@ -33,12 +34,11 @@ function createLintCodeFingerprint(code: string): string {
   return (hash >>> 0).toString(16).padStart(8, '0');
 }
 
-function getLintSketchFileDebugInfo(host: ReturnType<typeof AilyHost.get>): {
+function getLintSketchFileDebugInfo(host: ReturnType<typeof AilyHost.get>, projectPath: string): {
   sketchFilePath?: string;
   exists: boolean;
   modifiedAt?: string;
 } {
-  const projectPath = host.project?.currentProjectPath;
   if (!projectPath || !host.path || !host.fs) {
     return { exists: false };
   }
@@ -60,13 +60,34 @@ function getLintSketchFileDebugInfo(host: ReturnType<typeof AilyHost.get>): {
   }
 }
 
-function resolveLintSourceCode(host: ReturnType<typeof AilyHost.get>): string {
+function readHostAPIProjectPath(hostAPI: IExternalHostAPI): string {
+  const project = hostAPI.project as (NonNullable<IExternalHostAPI['project']> & Record<string, unknown>) | undefined;
+  const currentProjectPath = typeof project?.['currentProjectPath'] === 'string'
+    ? project['currentProjectPath'].trim()
+    : '';
+  if (currentProjectPath) {
+    return currentProjectPath;
+  }
+
+  const getProjectPath = project?.['getProjectPath'];
+  if (typeof getProjectPath === 'function') {
+    const projectPath = String(getProjectPath.call(project) ?? '').trim();
+    if (projectPath) {
+      return projectPath;
+    }
+  }
+
+  return typeof project?.['projectRootPath'] === 'string'
+    ? project['projectRootPath'].trim()
+    : '';
+}
+
+function resolveLintSourceCode(host: ReturnType<typeof AilyHost.get>, projectPath: string): string {
   const inMemoryCode = host.editor?.getGeneratedCode?.() || '';
   if (inMemoryCode.trim()) {
     return inMemoryCode;
   }
 
-  const projectPath = host.project?.currentProjectPath;
   if (!projectPath || !host.fs || !host.path) {
     return '';
   }
@@ -84,13 +105,13 @@ function resolveLintSourceCode(host: ReturnType<typeof AilyHost.get>): string {
   }
 }
 
-function resolveLintSource(host: ReturnType<typeof AilyHost.get>): {
+function resolveLintSource(host: ReturnType<typeof AilyHost.get>, projectPath = ''): {
   generatedCode: string;
   inMemoryCode: string;
   source: 'editor-memory' | 'project-sketch-file' | 'none';
   sketchDebugInfo: ReturnType<typeof getLintSketchFileDebugInfo>;
 } {
-  const sketchDebugInfo = getLintSketchFileDebugInfo(host);
+  const sketchDebugInfo = getLintSketchFileDebugInfo(host, projectPath);
   const inMemoryCode = host.editor?.getGeneratedCode?.() || '';
   if (inMemoryCode.trim()) {
     return {
@@ -104,7 +125,7 @@ function resolveLintSource(host: ReturnType<typeof AilyHost.get>): {
   const generatedCode = resolveLintSourceCode({
     ...host,
     editor: undefined,
-  } as ReturnType<typeof AilyHost.get>);
+  } as ReturnType<typeof AilyHost.get>, projectPath);
   return {
     generatedCode,
     inMemoryCode,
@@ -199,6 +220,7 @@ function makeAnalyzeLibraryContribution(createDeferred: DeferredFactory): Runtim
       required: ['libraryId'],
     },
     annotations: { readOnly: true },
+    isConcurrencySafe: () => false,
     runtimeModes: ['blockly'],
     requiredCapabilities: ['runtime:blockly'],
     agentScope: ['main'],
@@ -227,9 +249,10 @@ export function createBlocklyWorkspaceHandlers(
   const syncAbsHandler = overrides?.syncAbsHandler ?? syncAbsFileHandler;
 
   return {
-    syncAbs: async (input, _hostAPI, invocationContext) => {
+    syncAbs: async (input, hostAPI, invocationContext) => {
       const host = AilyHost.get();
       if (!host.absSync && !host.editor) return error('ABS editor is not available in this environment.');
+      if (!hostAPI.project) return error('Project context is not available for ABS sync.');
       const editingTimeline = invocationContext?.host?.getExtension<EditingTimelineWriter>('editingTimeline');
       const forwardedEditorOperationEvents = invocationContext?.host?.getExtension<EditorOperationEventSink>('editorOperationEvents');
       const hostExecutionBoundary = invocationContext?.host?.getExtension<HostExecutionBoundary>('hostExecutionBoundary');
@@ -243,7 +266,7 @@ export function createBlocklyWorkspaceHandlers(
           operation: input['action'] as 'export' | 'import' | 'status',
           pendingAbsContent: typeof input['content'] === 'string' ? input['content'] : undefined,
         },
-        host.project as any,
+        hostAPI.project as any,
         host.electron as any,
         host.absSync as any,
         {
@@ -259,13 +282,11 @@ export function createBlocklyWorkspaceHandlers(
       return fromToolResult(result);
     },
 
-    lint: async (_input, _hostAPI, invocationContext) => {
+    lint: async (_input, hostAPI, invocationContext) => {
       try {
-        const globalScope = typeof window !== 'undefined'
-          ? (window as any)
-          : (globalThis as typeof globalThis & Record<string, unknown>);
-        const arduinoLintService = globalScope['arduinoLintService'];
-        if (!arduinoLintService) return error('Arduino lint service is not available.');
+        const lintGeneratedCode = (hostAPI.blockly as { lintGeneratedCode?: (code: string, options?: Record<string, unknown>) => Promise<any> } | undefined)
+          ?.lintGeneratedCode;
+        if (typeof lintGeneratedCode !== 'function') return error('Arduino lint service is not available.');
 
         const host = AilyHost.get();
         const hostExecutionBoundary = invocationContext?.host?.getExtension<HostExecutionBoundary>('hostExecutionBoundary');
@@ -281,12 +302,13 @@ export function createBlocklyWorkspaceHandlers(
           'Run Blockly generated-code lint',
           async reportProgress => {
             await reportProgress({ summary: 'Resolving generated code', progress: 0.2 });
+            const projectPath = readHostAPIProjectPath(hostAPI);
             const {
               generatedCode,
               inMemoryCode,
               source,
               sketchDebugInfo,
-            } = resolveLintSource(host);
+            } = resolveLintSource(host, projectPath);
             if (isBlocklyWorkspaceTraceEnabled()) {
               console.info('[BlocklyLintTool] lint source resolved', {
                 source,
@@ -303,7 +325,7 @@ export function createBlocklyWorkspaceHandlers(
 
             await reportProgress({ summary: 'Running lint', progress: 0.7 });
             const startTime = Date.now();
-            const result = await arduinoLintService.checkSyntax(generatedCode, {
+            const result = await lintGeneratedCode(generatedCode, {
               mode: 'ast-grep',
               format: 'json',
             });
@@ -346,10 +368,13 @@ export function createBlocklyWorkspaceHandlers(
       }
     },
 
-    analyzeLibrary: async (input, _hostAPI) => {
-      const host = AilyHost.get();
+    analyzeLibrary: async (input, hostAPI) => {
+      const project = hostAPI.project;
+      if (!project) {
+        return error('Project context is not available for library analysis.');
+      }
       const result = await analyzeLibraryBlocksTool(
-        host.project as any,
+        project as any,
         {
           libraryNames: [input['libraryId'] as string],
           mode: (input['mode'] as 'auto' | 'readme_ref' | 'analysis' | undefined) ?? 'auto',

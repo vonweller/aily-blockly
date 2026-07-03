@@ -165,16 +165,22 @@ export class ChatSubscriptionCoordinator {
 
   private async handleProjectScopeActivated(
     projectPath: string,
-    previousProjectPath: string | null | undefined,
+    _previousProjectPath: string | null | undefined,
     reason?: string,
   ): Promise<void> {
     const rootPath = AilyHost.get().project.projectRootPath;
     if (!this.isProjectPath(projectPath, rootPath)) {
-      this.handleGlobalScopeActivated();
+      if (!this.ctx.prjPath) {
+        return;
+      }
+      await this.handleGlobalScopeActivated();
       return;
     }
 
-    const previousPath = previousProjectPath || this.ctx.prjPath || null;
+    if (this.ctx.prjPath === projectPath && reason !== 'chat-tool-create') {
+      return;
+    }
+
     this.ctx.prjPath = projectPath;
     this.ctx.prjRootPath = rootPath;
     this.ctx.chatHistoryService.reloadProjectIndex(projectPath);
@@ -185,7 +191,8 @@ export class ChatSubscriptionCoordinator {
 
     if (!adopted) {
       if (this.ctx.isLoggedIn) {
-        await this.ctx.session.loadLatestProjectSession(projectPath, previousPath);
+        await this.ctx.session.detachCurrentSessionSurface();
+        this.ctx.session.enterBlankSessionShell({ projectPath });
       } else {
         this.ctx.chatService.currentSessionPath = projectPath;
       }
@@ -205,7 +212,8 @@ export class ChatSubscriptionCoordinator {
     this.ctx.prjRootPath = AilyHost.get().project.projectRootPath;
 
     if (this.ctx.isLoggedIn) {
-      await this.ctx.session.loadLatestGlobalSession();
+      await this.ctx.session.detachCurrentSessionSurface();
+      this.ctx.session.enterBlankSessionShell({ projectPath: null });
     } else {
       this.ctx.session.enterBlankSessionShell({ projectPath: null });
     }

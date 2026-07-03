@@ -11,7 +11,7 @@ export class ChatRuntimeHostBootstrapService {
   private readonly runtimeOwnerEndpoint = inject(CHAT_RUNTIME_OWNER_ENDPOINT);
   private registrationPromise: Promise<void> | null = null;
 
-  async startHostExecutionWorker(): Promise<void> {
+  async startHostRuntimeOwner(): Promise<void> {
     if (this.registrationPromise) {
       return this.registrationPromise;
     }
@@ -19,7 +19,7 @@ export class ChatRuntimeHostBootstrapService {
     this.hostInitializer.ensureInitialized();
     await this.projectService.ensureProjectRootPath();
 
-    this.registrationPromise = this.runtimeOwnerEndpoint.startElectronHostExecutionWorker()
+    this.registrationPromise = this.runtimeOwnerEndpoint.startElectronHostRuntimeOwner()
       .finally(() => {
         this.registrationPromise = null;
       });

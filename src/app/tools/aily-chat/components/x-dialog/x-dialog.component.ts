@@ -48,6 +48,7 @@ import {
   getTurnResponseResponseText,
 } from '../../core/turn-response-stream-contract';
 import { buildRenderableProgressParts, type RenderableChatPart } from './chat-render-parts';
+import { isInternalDiscoveryToolName, isTerminalSessionToolName } from '../../core/tool-name-normalizer';
 import type { HostResponseVoteDirection } from '../../helpers/host-turn-response-state';
 import { ChatRuntimeInteractionHostService } from '../../services/chat-runtime-interaction-host.service';
 import type { WorkspaceCheckpointPresentationMode } from '../../services/edit-checkpoint.service';
@@ -283,9 +284,10 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
     this._effectiveProgressMessagesSource = progressMessages;
     this._effectivePartsDoing = doing;
     this._effectivePartsRevisionKey = revisionKey;
+    const visibleItemParts = filterTerminalOwnedToolCalls(itemParts.filter(isVisibleResponsePart));
     this._effectivePartsCache = [
-      ...itemParts,
-      ...buildRenderableProgressParts(response, itemParts, doing, this.hasActiveConfirmationCarousel),
+      ...visibleItemParts,
+      ...buildRenderableProgressParts(response, visibleItemParts, doing, this.hasActiveConfirmationCarousel),
     ];
     return this._effectivePartsCache;
   }
@@ -653,7 +655,8 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
       return;
     }
 
-    const hostClipboard = AilyHost.get().clipboard;
+    const host = getOptionalAilyHost();
+    const hostClipboard = host?.clipboard;
     const electronClipboard = (window as any)['electronAPI']?.clipboard ?? (window as any)['clipboard'];
 
     try {
@@ -679,7 +682,7 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
       throw new Error('No clipboard writer available');
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      AilyHost.get().log?.warn?.(`[AilyChat] Copy response failed: ${message}`);
+      host?.log?.warn?.(`[AilyChat] Copy response failed: ${message}`);
     }
   }
 
@@ -1193,6 +1196,10 @@ function buildTerminalPartRevisionKey(part: TurnResponsePart, index: number): st
     part.partId ?? '',
     part.processId ?? '',
     part.outputSessionId ?? '',
+    part.terminalId ?? '',
+    part.toolCallId ?? '',
+    Array.isArray(part.sourceToolCallIds) ? part.sourceToolCallIds.join(',') : '',
+    part.command ?? '',
     part.status ?? '',
     part.isRunning ? 'running' : 'idle',
     part.exitCode ?? '',
@@ -1209,13 +1216,18 @@ function readChatPartStableRevision(part: ChatPart): string {
     case 'thinking':
       return String(part.content?.length ?? 0);
     case 'tool_call':
-      return [part.partId ?? '', part.toolCallId ?? '', part.state ?? '', part.text ?? '', part.args ?? ''].join(':');
+      return [part.partId ?? '', part.toolCallId ?? '', part.state ?? '', part.text ?? '', stableJson(part.args ?? null)].join(':');
     case 'state':
       return [part.stateId ?? '', part.state ?? '', part.text ?? '', part.progress ?? ''].join(':');
     case 'error':
       return [part.message ?? '', part.severity ?? ''].join(':');
     case 'question':
-      return [part.partId ?? '', part.questions?.length ?? 0, part.answers ? 'answered' : 'open'].join(':');
+      return [
+        part.partId ?? '',
+        stableJson(part.questions ?? []),
+        stableJson(part.answers ?? null),
+        part.isHistory ? 'history' : 'live',
+      ].join(':');
     case 'confirmation':
       return [part.partId ?? '', part.askId ?? '', part.resolved ? 'resolved' : 'pending'].join(':');
     case 'terminal':
@@ -1224,5 +1236,103 @@ function readChatPartStableRevision(part: ChatPart): string {
       return [part.partId ?? '', part.status ?? '', part.text?.length ?? 0].join(':');
     default:
       return '';
+  }
+}
+
+function isVisibleResponsePart(part: ChatPart): boolean {
+  if (part.type === 'tool_call' && isInternalDiscoveryToolName(part.toolName)) {
+    return false;
+  }
+
+  if (part.type !== 'markdown' && part.type !== 'thinking') {
+    return true;
+  }
+
+  const content = typeof part.content === 'string' ? part.content : '';
+  return content.trim().length > 0;
+}
+
+function filterTerminalOwnedToolCalls(parts: readonly ChatPart[]): ChatPart[] {
+  const terminalOwners = collectTerminalPartOwners(parts);
+  if (terminalOwners.toolCallIds.size === 0 && terminalOwners.sessionIds.size === 0) {
+    return [...parts];
+  }
+
+  return parts.filter(part => {
+    if (part.type !== 'tool_call' || !isTerminalSessionToolName(part.toolName)) {
+      return true;
+    }
+
+    if (terminalOwners.toolCallIds.has(part.toolCallId)) {
+      return false;
+    }
+
+    const args = toObjectRecord(part.args);
+    const metadata = toObjectRecord(part.metadata);
+    const sessionIds = [
+      readString(args?.['processId']),
+      readString(args?.['outputSessionId']),
+      readString(args?.['terminalId']),
+      readString(args?.['id']),
+      readString(metadata?.['processId']),
+      readString(metadata?.['outputSessionId']),
+      readString(metadata?.['terminalId']),
+      readString(metadata?.['id']),
+    ].filter((value): value is string => !!value);
+
+    return !sessionIds.some(sessionId => terminalOwners.sessionIds.has(sessionId));
+  });
+}
+
+function collectTerminalPartOwners(parts: readonly ChatPart[]): { toolCallIds: Set<string>; sessionIds: Set<string> } {
+  const toolCallIds = new Set<string>();
+  const sessionIds = new Set<string>();
+
+  for (const part of parts) {
+    if (part.type !== 'terminal') {
+      continue;
+    }
+
+    if (part.toolCallId) {
+      toolCallIds.add(part.toolCallId);
+    }
+    for (const sourceToolCallId of part.sourceToolCallIds ?? []) {
+      if (sourceToolCallId) {
+        toolCallIds.add(sourceToolCallId);
+      }
+    }
+    for (const sessionId of [part.processId, part.outputSessionId, part.terminalId]) {
+      if (sessionId) {
+        sessionIds.add(sessionId);
+      }
+    }
+  }
+
+  return { toolCallIds, sessionIds };
+}
+
+function toObjectRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function readString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function getOptionalAilyHost(): ReturnType<typeof AilyHost.get> | null {
+  try {
+    return AilyHost.get();
+  } catch {
+    return null;
+  }
+}
+
+function stableJson(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? '';
+  } catch {
+    return String(value ?? '');
   }
 }

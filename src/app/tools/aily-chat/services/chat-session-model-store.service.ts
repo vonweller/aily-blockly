@@ -15,6 +15,7 @@ import type { PendingFollowupRequest } from '../helpers/chat-pending-request';
 import {
   canRedoSessionCheckpointTimeline,
   cloneSessionCheckpointTimelineState,
+  createSessionCheckpointTimelineState,
   getSessionCheckpointHiddenTurnResponses,
   spliceSessionCheckpointTimelineForwardBranch,
   type SessionCheckpointTimelineState,
@@ -191,26 +192,42 @@ export class ChatSessionModel {
   replaceTurnResponses(turnResponses: readonly TurnResponseTurn[] | null | undefined): readonly TurnResponseTurn[] {
     const previousTurnIds = this.turnResponsesValue.map(turn => turn.turnId);
     const existingTurnsById = new Map(this.turnResponsesValue.map(turn => [turn.turnId, turn]));
+    const existingTurnsByRequestId = buildRequestIdTurnMap(this.turnResponsesValue);
     this.turnResponsesValue = Array.isArray(turnResponses)
-      ? turnResponses.map(turnResponse => mergeTurnResponseWithExistingRequest(existingTurnsById.get(turnResponse.turnId), turnResponse))
+      ? coalesceTurnResponsesByRequestId(turnResponses.map(turnResponse => mergeTurnResponseWithExistingRequest(
+        existingTurnsById.get(turnResponse.turnId)
+          ?? existingTurnsByRequestId.get(readTurnResponseRequestId(turnResponse) ?? ''),
+        turnResponse,
+      )))
       : [];
     this.syncCanonicalResponsePartStore(this.turnResponsesValue, previousTurnIds);
+    this.syncCheckpointTimelineWithCanonicalTurnResponses();
     return this.getTurnResponses();
   }
 
   appendOrReplaceTurnResponse(turnResponse: TurnResponseTurn): readonly TurnResponseTurn[] {
     const existingIndex = this.turnResponsesValue.findIndex(turn => turn.turnId === turnResponse.turnId);
+    const requestId = readTurnResponseRequestId(turnResponse);
+    const existingRequestIndex = existingIndex < 0 && requestId
+      ? this.turnResponsesValue.findIndex(turn => readTurnResponseRequestId(turn) === requestId)
+      : -1;
+    const targetIndex = existingIndex >= 0 ? existingIndex : existingRequestIndex;
     const clonedTurnResponse = mergeTurnResponseWithExistingRequest(
-      existingIndex >= 0 ? this.turnResponsesValue[existingIndex] : undefined,
+      targetIndex >= 0 ? this.turnResponsesValue[targetIndex] : undefined,
       turnResponse,
     );
-    if (existingIndex >= 0) {
-      this.turnResponsesValue.splice(existingIndex, 1, clonedTurnResponse);
+    if (targetIndex >= 0) {
+      const previousTurnId = this.turnResponsesValue[targetIndex]?.turnId;
+      this.turnResponsesValue.splice(targetIndex, 1, clonedTurnResponse);
+      const clearTurnIds = previousTurnId && previousTurnId !== clonedTurnResponse.turnId
+        ? [previousTurnId]
+        : [];
+      this.syncCanonicalResponsePartStore([clonedTurnResponse], clearTurnIds);
     } else {
       this.turnResponsesValue.push(clonedTurnResponse);
+      this.syncCanonicalResponsePartStore([clonedTurnResponse]);
     }
-
-    this.syncCanonicalResponsePartStore([clonedTurnResponse]);
+    this.syncCheckpointTimelineWithCanonicalTurnResponses();
     return this.getTurnResponses();
   }
 
@@ -228,6 +245,7 @@ export class ChatSessionModel {
     const removedTurnIds = this.turnResponsesValue.slice(turnIndex + 1).map(turn => turn.turnId);
     this.turnResponsesValue = this.turnResponsesValue.slice(0, turnIndex + 1);
     this.syncCanonicalResponsePartStore(this.turnResponsesValue.slice(turnIndex), removedTurnIds);
+    this.syncCheckpointTimelineWithCanonicalTurnResponses();
     return this.getTurnResponses();
   }
 
@@ -413,6 +431,20 @@ export class ChatSessionModel {
       this.partStore.replacePartsForResponse(turnId, turnResponsePartsToChatParts(turn?.response?.parts));
     }
   }
+
+  private syncCheckpointTimelineWithCanonicalTurnResponses(): void {
+    if (canRedoSessionCheckpointTimeline(this.checkpointTimelineState)) {
+      return;
+    }
+
+    const nextTimeline = createSessionCheckpointTimelineState({
+      sessionResource: this.sessionResource,
+      turnResponses: this.turnResponsesValue,
+    });
+    this.checkpointTimelineState = nextTimeline.checkpoints.length > 0
+      ? nextTimeline
+      : null;
+  }
 }
 
 function cloneTurnResponses(turnResponses: readonly TurnResponseTurn[] | null | undefined): TurnResponseTurn[] {
@@ -459,8 +491,8 @@ function mergeTurnResponseWithExistingRequest(
     && !isBlankRequestText(existingRequest.content);
   const shouldPreserveDisplayContent = isBlankRequestText(nextRequest.displayContent)
     && !isBlankRequestText(existingRequest.displayContent);
-  const shouldPreserveMetadata = nextRequest.metadata === undefined
-    && existingRequest.metadata !== undefined;
+  const mergedMetadata = mergeRequestMetadata(existingRequest.metadata, nextRequest.metadata);
+  const shouldPreserveMetadata = mergedMetadata !== nextRequest.metadata;
 
   if (!shouldPreserveContent && !shouldPreserveDisplayContent && !shouldPreserveMetadata) {
     return clonedNextTurn;
@@ -472,9 +504,62 @@ function mergeTurnResponseWithExistingRequest(
       ...nextRequest,
       ...(shouldPreserveContent ? { content: existingRequest.content } : {}),
       ...(shouldPreserveDisplayContent ? { displayContent: existingRequest.displayContent } : {}),
-      ...(shouldPreserveMetadata ? { metadata: cloneRequestMetadata(existingRequest.metadata) } : {}),
+      ...(shouldPreserveMetadata ? { metadata: mergedMetadata } : {}),
     },
   };
+}
+
+function coalesceTurnResponsesByRequestId(turnResponses: readonly TurnResponseTurn[]): TurnResponseTurn[] {
+  const coalesced: TurnResponseTurn[] = [];
+  const indexesByRequestId = new Map<string, number>();
+  for (const turn of turnResponses) {
+    const requestId = readTurnResponseRequestId(turn);
+    const existingIndex = requestId ? indexesByRequestId.get(requestId) : undefined;
+    if (existingIndex === undefined) {
+      if (requestId) {
+        indexesByRequestId.set(requestId, coalesced.length);
+      }
+      coalesced.push(turn);
+      continue;
+    }
+
+    coalesced[existingIndex] = mergeTurnResponseWithExistingRequest(coalesced[existingIndex], turn);
+  }
+  return coalesced;
+}
+
+function buildRequestIdTurnMap(turnResponses: readonly TurnResponseTurn[]): Map<string, TurnResponseTurn> {
+  const turnsByRequestId = new Map<string, TurnResponseTurn>();
+  for (const turn of turnResponses) {
+    const requestId = readTurnResponseRequestId(turn);
+    if (requestId) {
+      turnsByRequestId.set(requestId, turn);
+    }
+  }
+  return turnsByRequestId;
+}
+
+function readTurnResponseRequestId(turn: TurnResponseTurn | null | undefined): string | null {
+  const requestId = turn?.request?.metadata?.['requestId'];
+  return typeof requestId === 'string' && requestId.trim().length > 0
+    ? requestId.trim()
+    : null;
+}
+
+function mergeRequestMetadata(
+  existingMetadata: TurnResponseTurn['request']['metadata'],
+  nextMetadata: TurnResponseTurn['request']['metadata'],
+): TurnResponseTurn['request']['metadata'] {
+  if (existingMetadata === undefined) {
+    return cloneRequestMetadata(nextMetadata);
+  }
+  if (nextMetadata === undefined) {
+    return cloneRequestMetadata(existingMetadata);
+  }
+  return {
+    ...(cloneRequestMetadata(existingMetadata) as Record<string, unknown>),
+    ...(cloneRequestMetadata(nextMetadata) as Record<string, unknown>),
+  } as TurnResponseTurn['request']['metadata'];
 }
 
 function cloneTurnRequest(request: TurnResponseTurn['request']): TurnResponseTurn['request'] {

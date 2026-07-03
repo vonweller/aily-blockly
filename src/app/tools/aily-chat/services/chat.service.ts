@@ -735,25 +735,32 @@ export class ChatService {
     const config = AilyHost.get().config;
     const persistedMode = config.data?.aiChatMode;
     const persistedCustomAgentTarget = normalizeAgentIdentifier(config.data?.aiChatCustomAgentTarget);
-    if (persistedMode !== undefined) {
-      const normalizedMode = normalizeChatSurfaceModeId(persistedMode);
-      if (normalizedMode === 'agent' && persistedCustomAgentTarget) {
-        this.setSelectedMode({
-          modeId: 'agent',
-          customAgentTarget: persistedCustomAgentTarget,
-        }, { persist: false });
-      } else {
-        this.setChatMode(normalizedMode, false);
-      }
+    const normalizedMode = persistedMode !== undefined
+      ? normalizeChatSurfaceModeId(persistedMode)
+      : DEFAULT_CHAT_SELECTED_MODE.modeId;
 
-      if (config.data && (persistedMode !== normalizedMode || config.data.aiChatCustomAgentTarget !== persistedCustomAgentTarget)) {
-        config.data.aiChatMode = normalizedMode;
-        config.data.aiChatCustomAgentTarget = normalizedMode === 'agent'
-          ? persistedCustomAgentTarget || undefined
-          : undefined;
-        config.save?.();
-      }
+    if (normalizedMode === 'agent' && persistedCustomAgentTarget) {
+      this.setSelectedMode({
+        modeId: 'agent',
+        customAgentTarget: persistedCustomAgentTarget,
+      }, { persist: false });
+    } else {
+      this.setChatMode(normalizedMode, false);
     }
+
+    if (persistedMode !== undefined
+      && config.data
+      && (persistedMode !== normalizedMode || config.data.aiChatCustomAgentTarget !== persistedCustomAgentTarget)) {
+      config.data.aiChatMode = normalizedMode;
+      config.data.aiChatCustomAgentTarget = normalizedMode === 'agent'
+        ? persistedCustomAgentTarget || undefined
+        : undefined;
+      config.save?.();
+    }
+  }
+
+  resetChatModeToPersistedSelection(): void {
+    this.loadChatMode();
   }
 
   private loadRateLimitAutoSwitchToAuto(): void {
@@ -1003,9 +1010,12 @@ export class ChatService {
     const approvalsReviewer = normalizeChatSessionApprovalsReviewer(providerOptions?.approvalsReviewer)
       ?? this.currentSessionApprovalsReviewer
       ?? this.ailyChatConfigService.getLexApprovalsReviewer?.();
-    const approvalPolicy = normalizeChatSessionApprovalPolicy(providerOptions?.approvalPolicy)
+    const normalizedApprovalPolicy = normalizeChatSessionApprovalPolicy(providerOptions?.approvalPolicy)
       ?? this.currentSessionApprovalPolicy
       ?? this.ailyChatConfigService.getLexApprovalPolicy?.();
+    const approvalPolicy = permissionMode === 'bypassPermissions'
+      ? 'never'
+      : normalizedApprovalPolicy;
 
     this.currentSessionPath = folderPath;
     this.currentSessionPermissionMode = permissionMode;
@@ -1062,12 +1072,19 @@ export class ChatService {
   private normalizeProviderOptionsInput(
     providerOptions?: ChatServiceSessionProviderOptions | null,
   ): { folderPath?: string; permissionMode?: ChatSessionPermissionMode; permissionLevel?: string; approvalsReviewer?: 'user' | 'auto_review'; approvalPolicy?: 'on_request' | 'never' } {
+    const permissionMode = providerOptions?.permissionMode !== undefined
+      ? normalizeChatSessionPermissionMode(providerOptions.permissionMode, DEFAULT_CHAT_SESSION_PERMISSION_MODE)
+      : undefined;
+    const approvalPolicy = providerOptions?.approvalPolicy !== undefined
+      ? normalizeChatSessionApprovalPolicy(providerOptions.approvalPolicy)
+      : undefined;
+
     return {
       ...(typeof providerOptions?.folderPath === 'string'
         ? { folderPath: providerOptions.folderPath.trim() }
         : {}),
-      ...(providerOptions?.permissionMode !== undefined
-        ? { permissionMode: normalizeChatSessionPermissionMode(providerOptions.permissionMode, DEFAULT_CHAT_SESSION_PERMISSION_MODE) }
+      ...(permissionMode !== undefined
+        ? { permissionMode }
         : {}),
       ...(providerOptions?.permissionLevel !== undefined
         ? { permissionLevel: normalizeChatSessionPermissionLevel(providerOptions.permissionLevel) }
@@ -1075,8 +1092,10 @@ export class ChatService {
       ...(providerOptions?.approvalsReviewer !== undefined
         ? { approvalsReviewer: normalizeChatSessionApprovalsReviewer(providerOptions.approvalsReviewer) }
         : {}),
-      ...(providerOptions?.approvalPolicy !== undefined
-        ? { approvalPolicy: normalizeChatSessionApprovalPolicy(providerOptions.approvalPolicy) }
+      ...((permissionMode === 'bypassPermissions'
+        ? 'never'
+        : approvalPolicy) !== undefined
+        ? { approvalPolicy: permissionMode === 'bypassPermissions' ? 'never' : approvalPolicy }
         : {}),
     };
   }

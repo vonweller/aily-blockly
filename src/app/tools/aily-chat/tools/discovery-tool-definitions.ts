@@ -419,6 +419,7 @@ Query and return specific content (for detailed info)
         description: `获取网页内容和API数据。支持HTTP/HTTPS请求。
 - 内容超过限制字符时自动截断，截断时会提示剩余字符数
 - 支持分页读取：当内容被截断时，可用 startIndex 从截断位置继续读取
+- 如果在 webview_bridge 模式下抓到的是站点外壳、占位内容或网页正文缺失，尤其是 JS 渲染页面，应自动添加或增大 waitMs 后直接重试，不需要用户确认
 如需搜索信息请优先使用 web_search 工具。`,
         input_schema: {
             type: 'object',
@@ -444,6 +445,15 @@ Query and return specific content (for detailed info)
                     type: 'number',
                     description: '请求超时时间（毫秒）',
                     default: 30000
+                },
+                choice: {
+                    type: 'string',
+                    description: '可选抓取策略。留空时自动选择；若网页正文依赖 JS 渲染，可显式使用 webview_bridge。若 webview_bridge 结果仍缺少正文，应自动增大 waitMs 重试',
+                    enum: ['webview_bridge', 'jina', 'direct_fetch']
+                },
+                waitMs: {
+                    type: 'number',
+                    description: '仅在 webview_bridge 下生效。页面 load 后额外等待的毫秒数；适用于正文未及时渲染出来的页面。建议从 1000-3000ms 开始，正文缺失时可自动增大后重试'
                 },
                 startIndex: {
                     type: 'number',

@@ -1,5 +1,7 @@
 import { Injectable, OnDestroy } from '@angular/core';
 import { ChildToolConfig, getChildToolConfig } from '../configs/tool.config';
+import { ProjectService } from './project.service';
+import { appendProjectLog, type ProjectLogLevel } from '../utils/project-log.utils';
 
 export interface ChildToolHostInfo {
   url: string;
@@ -35,6 +37,10 @@ interface ChildToolSession {
 export class ChildToolProcessService implements OnDestroy {
   private sessions = new Map<string, ChildToolSession>();
   private readonly releaseGraceMs = 15000;
+
+  constructor(
+    private projectService: ProjectService,
+  ) {}
 
   async acquire(toolId: string): Promise<ChildToolHostInfo> {
     const config = this.requireConfig(toolId);
@@ -418,10 +424,12 @@ export class ChildToolProcessService implements OnDestroy {
 
   private log(config: ChildToolConfig, stage: string, details?: any): void {
     console.info(`[child-tool:${config.id}] ${stage}`, details ?? '');
+    this.appendChildToolLog(config.id, `${stage} ${this.stringifyLogDetails(details)}`, stage === 'stdout' ? 'DEBUG' : 'INFO');
   }
 
   private logError(config: ChildToolConfig, stage: string, details?: any): void {
     console.error(`[child-tool:${config.id}] ${stage}`, details ?? '');
+    this.appendChildToolLog(config.id, `${stage} ${this.stringifyLogDetails(details)}`, 'ERROR');
   }
 
   private sanitizeHostInfo(info: ChildToolHostInfo | any): any {
@@ -457,5 +465,23 @@ export class ChildToolProcessService implements OnDestroy {
   private tailText(value: string, maxLength = 4000): string {
     const text = String(value || '');
     return text.length > maxLength ? `...${text.slice(-maxLength)}` : text;
+  }
+
+  private appendChildToolLog(source: string, message: string, level: ProjectLogLevel): void {
+    appendProjectLog(this.projectService.currentProjectPath, source, level, message);
+  }
+
+  private stringifyLogDetails(details: any): string {
+    if (details == null || details === '') {
+      return '';
+    }
+    if (typeof details === 'string') {
+      return details;
+    }
+    try {
+      return JSON.stringify(details);
+    } catch {
+      return String(details);
+    }
   }
 }

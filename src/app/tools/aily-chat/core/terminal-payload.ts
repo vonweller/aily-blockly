@@ -21,22 +21,25 @@ const EMPTY_STDERR_MARKER = '(terminal stderr completed with no output)';
 export function parseTerminalPayload(text: string): ParsedTerminalPayload | null {
   try {
     const data = JSON.parse(text);
-    const status = asString(data.status);
+    if (!isTerminalPayloadRecord(data)) {
+      return null;
+    }
+    const status = asString(data['status']);
     return {
-      command: asString(data.command) || '',
-      output: cleanTerminalStream(asString(data.output) ?? asString(data.stdout) ?? '', EMPTY_STDOUT_MARKER),
-      stderr: cleanTerminalStream(asString(data.stderr) ?? '', EMPTY_STDERR_MARKER),
-      exitCode: data.exit_code ?? data.exitCode,
+      command: asString(data['command']) || '',
+      output: cleanTerminalStream(asString(data['output']) ?? asString(data['stdout']) ?? '', EMPTY_STDOUT_MARKER),
+      stderr: cleanTerminalStream(asString(data['stderr']) ?? '', EMPTY_STDERR_MARKER),
+      exitCode: asNumber(data['exit_code']) ?? asNumber(data['exitCode']),
       isRunning: status === 'running',
-      toolCallId: asString(data.toolCallId),
-      terminalId: asString(data.terminalId),
-      processId: asString(data.processId) || asString(data.id),
-      outputSessionId: asString(data.outputSessionId),
-      outputFilePath: asString(data.outputFilePath),
-      cwd: asString(data.cwd),
+      toolCallId: asString(data['toolCallId']),
+      terminalId: asString(data['terminalId']),
+      processId: asString(data['processId']) || asString(data['id']),
+      outputSessionId: asString(data['outputSessionId']),
+      outputFilePath: asString(data['outputFilePath']),
+      cwd: asString(data['cwd']),
       status,
-      bytesTotal: asNumber(data.bytesTotal),
-      lastOutputAt: asString(data.lastOutputAt),
+      bytesTotal: asNumber(data['bytesTotal']),
+      lastOutputAt: asString(data['lastOutputAt']),
     };
   } catch {
     const lines = text.split(/\r?\n/);
@@ -95,6 +98,30 @@ export function parseTerminalPayload(text: string): ParsedTerminalPayload | null
       lastOutputAt: headers.get('lastoutputat'),
     };
   }
+}
+
+function isTerminalPayloadRecord(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+  const hasCommand = hasOwn(record, 'command') && asString(record['command']) !== undefined;
+  const hasTerminalIdentity = hasOwn(record, 'terminalId')
+    || hasOwn(record, 'processId')
+    || hasOwn(record, 'outputSessionId')
+    || hasOwn(record, 'outputFilePath');
+  const hasTerminalStream = hasOwn(record, 'stdout') || hasOwn(record, 'stderr');
+  const hasTerminalOutputMetadata = hasOwn(record, 'bytesTotal') || hasOwn(record, 'lastOutputAt');
+
+  return hasCommand
+    || hasTerminalIdentity
+    || hasTerminalStream
+    || (hasTerminalOutputMetadata && (hasCommand || hasTerminalIdentity || hasTerminalStream));
+}
+
+function hasOwn(record: Record<string, unknown>, field: string): boolean {
+  return Object.prototype.hasOwnProperty.call(record, field);
 }
 
 function cleanTerminalStream(value: string, emptyMarker: string): string {

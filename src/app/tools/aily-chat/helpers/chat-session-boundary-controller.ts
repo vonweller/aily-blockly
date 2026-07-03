@@ -1,6 +1,9 @@
-import type { DialogTurnContext } from '../core/user-turn-action-target';
+import type { TurnResponseTurn } from 'aily-lex/browser';
+import {
+  buildDialogTurnContext,
+  type DialogTurnContext,
+} from '../core/user-turn-action-target';
 import type {
-  RequestCheckpointMetadata,
   WorkspaceCheckpointAvailabilityDetail,
   WorkspaceCheckpointPresentationMode,
 } from '../services/edit-checkpoint.service';
@@ -27,7 +30,6 @@ export interface ChatSessionBoundaryUnavailableReason {
     | 'session-unavailable'
     | 'workspace-checkpoint-unavailable'
     | 'checkpoint-unavailable'
-    | 'checkpoint-metadata-incomplete'
     | 'checkpoint-session-mismatch';
   readonly checkpointId?: string;
   readonly workspaceCheckpointDetail?: WorkspaceCheckpointAvailabilityDetail;
@@ -38,10 +40,10 @@ export interface ChatSessionBoundaryControllerContext {
   warnBoundaryRewriteBlocked?(action: ChatSessionBoundaryBlockedAction): void;
   readCurrentSessionResource?(): string | null | undefined;
   readSessionCheckpointTimelineState?(sessionResource: string): SessionCheckpointTimelineState | null | undefined;
+  readSessionTurnResponses?(sessionResource: string): readonly TurnResponseTurn[];
   getWorkspaceCheckpointPresentationMode?(): WorkspaceCheckpointPresentationMode;
   ensureWorkspaceCheckpointPresentationMode?(): Promise<WorkspaceCheckpointPresentationMode> | WorkspaceCheckpointPresentationMode;
   getWorkspaceCheckpointAvailabilityDetail?(): WorkspaceCheckpointAvailabilityDetail | null | undefined;
-  getRequestCheckpointMetadataByCheckpointId?(checkpointId: string): RequestCheckpointMetadata | null | undefined;
   warnBoundaryActionUnavailable?(reason: ChatSessionBoundaryUnavailableReason): void;
   logBoundaryDiagnostic?(message: string): void;
 }
@@ -76,20 +78,22 @@ export class ChatSessionBoundaryController implements ChatSessionBoundaryActionC
     if (this.isBoundaryRewriteBlocked('restoreCheckpoint')) {
       return false;
     }
-    if (!await this.canRunRestoreCheckpointBoundary(target)) {
+    const resolved = await this.resolveRestoreCheckpointBoundary(target);
+    if (!resolved) {
       return false;
     }
-    return await this.editActions.restoreToCheckpoint(target);
+    return await this.editActions.restoreToCheckpoint(resolved.target);
   }
 
   async forkSession(target: DialogTurnContext): Promise<boolean | void> {
     if (this.isBoundaryRewriteBlocked('forkSession')) {
       return false;
     }
-    if (!await this.canRunForkBoundary(target)) {
+    const resolved = await this.resolveForkBoundary(target);
+    if (!resolved) {
       return false;
     }
-    return await this.editActions.forkSessionFromTurn(target);
+    return await this.editActions.forkSessionFromTurn(resolved.target);
   }
 
   private isBoundaryRewriteBlocked(action: ChatSessionBoundaryBlockedAction): boolean {
@@ -117,53 +121,57 @@ export class ChatSessionBoundaryController implements ChatSessionBoundaryActionC
     }
 
     const nextCheckpoint = timelineState!.checkpoints[timelineState!.currentCheckpointIndex + 1];
-    return this.hasCompleteCheckpointMetadata(
+    return this.hasTimelineCheckpointBoundary(
       'redoCheckpoint',
       sessionResource,
       nextCheckpoint?.checkpointId,
     );
   }
 
-  private async canRunRestoreCheckpointBoundary(target: DialogTurnContext): Promise<boolean> {
+  private async resolveRestoreCheckpointBoundary(
+    target: DialogTurnContext,
+  ): Promise<{ checkpointId: string; target: DialogTurnContext } | null> {
     const sessionResource = this.resolveCurrentSessionResource();
     if (!sessionResource) {
-      return this.blockUnavailable({ action: 'restoreCheckpoint', reason: 'session-unavailable' });
+      this.blockUnavailable({ action: 'restoreCheckpoint', reason: 'session-unavailable' });
+      return null;
     }
 
     if (!await this.isWorkspaceCheckpointAvailable('restoreCheckpoint')) {
-      return false;
+      return null;
     }
 
-    const checkpointId = this.resolveTargetCheckpointId(sessionResource, target);
-    return this.hasCompleteCheckpointMetadata('restoreCheckpoint', sessionResource, checkpointId);
+    const resolved = this.resolveTargetCheckpoint(sessionResource, target);
+    if (!this.hasTimelineCheckpointBoundary('restoreCheckpoint', sessionResource, resolved?.checkpointId)) {
+      return null;
+    }
+
+    return resolved;
   }
 
-  private async canRunForkBoundary(target: DialogTurnContext): Promise<boolean> {
+  private async resolveForkBoundary(
+    target: DialogTurnContext,
+  ): Promise<{ checkpointId: string | null; target: DialogTurnContext } | null> {
     const sessionResource = this.resolveCurrentSessionResource();
     if (!sessionResource) {
-      return this.blockUnavailable({ action: 'forkSession', reason: 'session-unavailable' });
+      this.blockUnavailable({ action: 'forkSession', reason: 'session-unavailable' });
+      return null;
     }
 
     if (!await this.isWorkspaceCheckpointAvailable('forkSession')) {
-      return false;
+      return null;
     }
 
     const timelineState = this.ctx.readSessionCheckpointTimelineState?.(sessionResource) ?? null;
-    const targetTurnId = normalizeString(target.turnId);
+    const resolved = this.resolveTargetCheckpoint(sessionResource, target);
+    const resolvedTarget = resolved?.target ?? target;
+    const targetTurnId = normalizeString(resolvedTarget.turnId);
     const targetIndex = timelineState?.turnResponses.findIndex(turn => normalizeString(turn.turnId) === targetTurnId) ?? -1;
     if (!timelineState || targetIndex < 0) {
-      return true;
+      return { checkpointId: resolved?.checkpointId ?? null, target: resolvedTarget };
     }
 
-    const retainedCheckpointIds = timelineState.checkpoints
-      .filter(checkpoint => checkpoint.turnIndex < targetIndex)
-      .map(checkpoint => checkpoint.checkpointId);
-    for (const checkpointId of retainedCheckpointIds) {
-      if (!this.hasCompleteCheckpointMetadata('forkSession', sessionResource, checkpointId)) {
-        return false;
-      }
-    }
-    return true;
+    return { checkpointId: resolved?.checkpointId ?? null, target: resolvedTarget };
   }
 
   private async isWorkspaceCheckpointAvailable(action: ChatSessionBoundaryUnavailableAction): Promise<boolean> {
@@ -182,7 +190,7 @@ export class ChatSessionBoundaryController implements ChatSessionBoundaryActionC
     });
   }
 
-  private hasCompleteCheckpointMetadata(
+  private hasTimelineCheckpointBoundary(
     action: ChatSessionBoundaryUnavailableAction,
     sessionResource: string,
     checkpointId: string | null | undefined,
@@ -192,16 +200,8 @@ export class ChatSessionBoundaryController implements ChatSessionBoundaryActionC
       return this.blockUnavailable({ action, reason: 'checkpoint-unavailable' });
     }
 
-    const metadata = this.ctx.getRequestCheckpointMetadataByCheckpointId?.(normalizedCheckpointId) ?? null;
-    if (!metadata) {
-      return this.blockUnavailable({
-        action,
-        reason: 'checkpoint-metadata-incomplete',
-        checkpointId: normalizedCheckpointId,
-      });
-    }
-
-    if (normalizeString(metadata.sessionResource) !== sessionResource) {
+    const timelineState = this.ctx.readSessionCheckpointTimelineState?.(sessionResource) ?? null;
+    if (normalizeString(timelineState?.sessionResource) !== sessionResource) {
       return this.blockUnavailable({
         action,
         reason: 'checkpoint-session-mismatch',
@@ -209,30 +209,56 @@ export class ChatSessionBoundaryController implements ChatSessionBoundaryActionC
       });
     }
 
-    if (!normalizeString(metadata.checkpointRef) || !normalizeString(metadata.checkpointNamespace)) {
-      return this.blockUnavailable({
-        action,
-        reason: 'checkpoint-metadata-incomplete',
-        checkpointId: normalizedCheckpointId,
-      });
+    if (!findTimelineCheckpointByCheckpointId(timelineState, normalizedCheckpointId)) {
+      return this.blockUnavailable({ action, reason: 'checkpoint-unavailable', checkpointId: normalizedCheckpointId });
     }
 
     return true;
   }
 
-  private resolveTargetCheckpointId(
+  private resolveTargetCheckpoint(
     sessionResource: string,
     target: DialogTurnContext,
-  ): string | null {
+  ): { checkpointId: string; target: DialogTurnContext } | null {
+    const timelineState = this.ctx.readSessionCheckpointTimelineState?.(sessionResource) ?? null;
+    const turnResponses = timelineState?.turnResponses?.length
+      ? timelineState.turnResponses
+      : this.ctx.readSessionTurnResponses?.(sessionResource) ?? [];
     const checkpointIdFromTarget = readCheckpointIdFromTarget(target);
-    if (checkpointIdFromTarget) {
-      return checkpointIdFromTarget;
+    const targetTurnId = normalizeString(target.turnId);
+    const checkpoint = checkpointIdFromTarget
+      ? findTimelineCheckpointByCheckpointId(timelineState, checkpointIdFromTarget)
+      : findTimelineCheckpointByTurnId(timelineState, targetTurnId);
+    const checkpointId = checkpointIdFromTarget
+      || normalizeString(checkpoint?.checkpointId)
+      || findTurnCheckpointId(turnResponses, targetTurnId);
+    if (!checkpointId) {
+      this.ctx.logBoundaryDiagnostic?.(
+        `target-checkpoint-missing; session=${sessionResource}; targetTurnId=${targetTurnId || 'none'}; `
+        + `targetCheckpointId=${checkpointIdFromTarget || 'none'}; `
+        + `timeline=${summarizeCheckpointTimeline(timelineState)}; `
+        + `turns=${summarizeCheckpointTurnResponses(turnResponses)}`,
+      );
+      return null;
     }
 
-    const timelineState = this.ctx.readSessionCheckpointTimelineState?.(sessionResource) ?? null;
-    const targetTurnId = normalizeString(target.turnId);
-    const checkpoint = timelineState?.checkpoints.find(entry => isCheckpointForTurn(entry, targetTurnId));
-    return checkpoint?.checkpointId ?? null;
+    const canonicalTurn = findCanonicalCheckpointTurn(turnResponses, {
+      checkpointId,
+      requestId: checkpoint?.requestId,
+      turnId: checkpoint?.turnId ?? targetTurnId,
+    });
+    const canonicalTarget = canonicalTurn
+      ? buildDialogTurnContext({
+          turnResponse: canonicalTurn,
+          requestDisabled: target.requestDisabled,
+          requestContent: target.requestContent ?? canonicalTurn.request?.content,
+          displayContent: target.displayContent
+            ?? canonicalTurn.request?.displayContent
+            ?? canonicalTurn.request?.content,
+        }) ?? target
+      : target;
+
+    return { checkpointId, target: canonicalTarget };
   }
 
   private resolveCurrentSessionResource(): string {
@@ -261,10 +287,100 @@ function readCheckpointIdFromTarget(target: DialogTurnContext | null | undefined
   return normalizeString(checkpointId);
 }
 
+function findTimelineCheckpointByCheckpointId(
+  state: SessionCheckpointTimelineState | null | undefined,
+  checkpointId: string,
+): SessionCheckpointTimelineEntry | undefined {
+  const normalizedCheckpointId = normalizeString(checkpointId);
+  return normalizedCheckpointId
+    ? state?.checkpoints.find(entry => normalizeString(entry.checkpointId) === normalizedCheckpointId)
+    : undefined;
+}
+
+function findTimelineCheckpointByTurnId(
+  state: SessionCheckpointTimelineState | null | undefined,
+  turnId: string,
+): SessionCheckpointTimelineEntry | undefined {
+  const normalizedTurnId = normalizeString(turnId);
+  return normalizedTurnId
+    ? state?.checkpoints.find(entry => isCheckpointForTurn(entry, normalizedTurnId))
+    : undefined;
+}
+
 function isCheckpointForTurn(entry: SessionCheckpointTimelineEntry, turnId: string): boolean {
   return !!turnId && normalizeString(entry.turnId) === turnId;
 }
 
+function findTurnCheckpointId(
+  turnResponses: readonly TurnResponseTurn[],
+  turnId: string,
+): string | null {
+  const normalizedTurnId = normalizeString(turnId);
+  if (!normalizedTurnId) {
+    return null;
+  }
+  const turn = turnResponses.find(candidate => normalizeString(candidate.turnId) === normalizedTurnId);
+  return normalizeString(turn?.request?.metadata?.checkpointId);
+}
+
+function findCanonicalCheckpointTurn(
+  turnResponses: readonly TurnResponseTurn[],
+  identity: {
+    readonly checkpointId?: string | null;
+    readonly requestId?: string | null;
+    readonly turnId?: string | null;
+  },
+): TurnResponseTurn | undefined {
+  const checkpointId = normalizeString(identity.checkpointId);
+  if (checkpointId) {
+    const turn = turnResponses.find(candidate => normalizeString(candidate.request?.metadata?.checkpointId) === checkpointId);
+    if (turn) {
+      return turn;
+    }
+  }
+
+  const turnId = normalizeString(identity.turnId);
+  if (turnId) {
+    const turn = turnResponses.find(candidate => normalizeString(candidate.turnId) === turnId);
+    if (turn) {
+      return turn;
+    }
+  }
+
+  const requestId = normalizeString(identity.requestId);
+  if (requestId) {
+    return turnResponses.find(candidate => normalizeString(candidate.request?.metadata?.['requestId']) === requestId);
+  }
+
+  return undefined;
+}
+
 function normalizeString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function summarizeCheckpointTimeline(state: SessionCheckpointTimelineState | null | undefined): string {
+  if (!state) {
+    return '<none>';
+  }
+  const checkpointSummary = state.checkpoints
+    .map(checkpoint => [
+      checkpoint.turnIndex,
+      checkpoint.turnId ?? '<no-turn>',
+      checkpoint.requestId || '<no-request>',
+      checkpoint.checkpointId || '<no-checkpoint>',
+    ].join(':'))
+    .join(',');
+  return `current=${state.currentCheckpointIndex}/${state.currentTurnResponseCount}; checkpoints=[${checkpointSummary}]`;
+}
+
+function summarizeCheckpointTurnResponses(turnResponses: readonly TurnResponseTurn[]): string {
+  return turnResponses
+    .map((turn, index) => [
+      index,
+      turn.turnId || '<no-turn>',
+      normalizeString(turn.request?.metadata?.['requestId']) || '<no-request>',
+      normalizeString(turn.request?.metadata?.['checkpointId']) || '<no-checkpoint>',
+    ].join(':'))
+    .join(',');
 }

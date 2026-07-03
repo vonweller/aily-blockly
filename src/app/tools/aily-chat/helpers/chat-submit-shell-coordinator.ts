@@ -31,6 +31,8 @@ type ConfirmPendingRequestsResult = 'keep' | 'remove' | false;
 const REQUEST_STATE_TRACE_PREFIX = '[AilyChat][RequestStateTrace]';
 
 export class ChatSubmitShellCoordinator {
+  private readonly inFlightSubmitSessionIds = new Set<string>();
+
   constructor(
     private readonly deps: {
       scrollManager: ScrollManagerLike;
@@ -60,14 +62,29 @@ export class ChatSubmitShellCoordinator {
     state: 'idle' | 'running',
     extra?: Record<string, unknown>,
   ): void {
-    console.info(REQUEST_STATE_TRACE_PREFIX, {
+    const sessionId = this.deps.getSessionId() || null;
+    const payload = {
       phase: 'submit-dispatch',
       action,
-      sessionId: this.deps.getSessionId() || null,
+      sessionId,
       requestId: null,
       state,
       ...(extra ?? {}),
-    });
+    };
+    console.info(REQUEST_STATE_TRACE_PREFIX, payload);
+    console.info(
+      '[AilyChat][RequestStateTraceScalar]',
+      [
+        'phase=submit-dispatch',
+        `action=${action}`,
+        `sessionId=${String(payload.sessionId ?? '<none>')}`,
+        `state=${state}`,
+        `queueKind=${String(payload['queueKind'] ?? '<none>')}`,
+        `hasPendingRequests=${String(payload['hasPendingRequests'] ?? '<none>')}`,
+        `pendingCount=${String(payload['pendingCount'] ?? '<none>')}`,
+        `textLength=${String(payload['textLength'] ?? '<none>')}`,
+      ].join(' '),
+    );
   }
 
   async sendOrQueueDraft(options?: SubmitInputOptionsLike): Promise<boolean> {
@@ -108,8 +125,8 @@ export class ChatSubmitShellCoordinator {
       return this.queuePreparedInput(text, targetSessionId, options?.queueKind ?? 'queued', 'running');
     }
 
-    if (options?.queueKind) {
-      return this.queuePreparedInput(text, targetSessionId, options.queueKind, 'idle');
+    if (this.inFlightSubmitSessionIds.has(targetSessionId)) {
+      return false;
     }
 
     if (this.deps.hasPendingRequests?.(targetSessionId)) {
@@ -128,11 +145,16 @@ export class ChatSubmitShellCoordinator {
       textLength: text.length,
       hasPendingRequests: this.deps.hasPendingRequests?.(targetSessionId) === true,
     });
-    await this.deps.send(text, targetSessionId);
-    this.deps.inputNotice.handleMessageSubmitted?.();
-    this.deps.resourceManager.mergePathsTo(this.deps.getSessionAllowedPaths());
-    this.deps.resourceManager.items = [];
-    return true;
+    this.inFlightSubmitSessionIds.add(targetSessionId);
+    try {
+      await this.deps.send(text, targetSessionId);
+      this.deps.inputNotice.handleMessageSubmitted?.();
+      this.deps.resourceManager.mergePathsTo(this.deps.getSessionAllowedPaths());
+      this.deps.resourceManager.items = [];
+      return true;
+    } finally {
+      this.inFlightSubmitSessionIds.delete(targetSessionId);
+    }
   }
 
   private async queuePreparedInput(

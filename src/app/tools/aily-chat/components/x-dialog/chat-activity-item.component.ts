@@ -1,5 +1,6 @@
-import { ChangeDetectionStrategy, ChangeDetectorRef, Component, Input, OnChanges, SimpleChanges, inject } from '@angular/core';
+import { ChangeDetectionStrategy, ChangeDetectorRef, Component, Input, OnChanges, SimpleChanges, forwardRef, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { XMarkdownComponent } from 'ngx-x-markdown';
 import type { ComponentMap } from 'ngx-x-markdown';
 
@@ -28,6 +29,9 @@ import {
 } from './x-aily-state-viewer/activity-detail-items';
 import { getBlocklyArtifactReferenceLabel, resolveBlocklyArtifactReferenceTarget } from '../../helpers/chat-artifact-reference';
 import { openChatProcessWindow } from '../../helpers/chat-process-window';
+import { resolveChildToolIdFromProcess } from '../../helpers/child-tool-process-summary';
+import { getChildToolConfig } from '../../../../configs/tool.config';
+import { resolveTerminalLifecycleState } from '../../core/terminal-status';
 import {
   ChatRuntimeInteractionHostService,
   type RuntimeCommandSessionActionResult,
@@ -38,7 +42,7 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
 @Component({
   selector: 'aily-chat-activity-item',
   standalone: true,
-  imports: [CommonModule, XMarkdownComponent, XAilyConfirmationViewerComponent, ChatTerminalPartComponent, XAilyThinkViewerComponent, AilyMarkdownExternalLinksDirective],
+  imports: [CommonModule, TranslateModule, XMarkdownComponent, XAilyConfirmationViewerComponent, ChatTerminalPartComponent, XAilyThinkViewerComponent, AilyMarkdownExternalLinksDirective, forwardRef(() => ChatActivityItemComponent)],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div
@@ -78,9 +82,9 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
             @if (isToolHeader()) {
               <div class="cag-item-tool-title">
                 <div class="cag-item-tool-title-main">
-                  <span class="cag-item-tool-title-label">{{ item.toolHeader?.title || item.label }}</span>
+                  <span class="cag-item-tool-title-label">{{ (item.toolHeader?.title || item.label) | translate }}</span>
                   @if (item.toolHeader?.subtitle) {
-                    <small class="cag-item-tool-title-subtitle">{{ item.toolHeader?.subtitle }}</small>
+                    <small class="cag-item-tool-title-subtitle">{{ item.toolHeader?.subtitle | translate }}</small>
                   }
                 </div>
                 <span class="cag-item-tool-title-side">
@@ -91,8 +95,8 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
                           type="button"
                           class="cag-item-toolbar-button"
                           [disabled]="isToolbarActionDisabled(action)"
-                          [attr.title]="action.tooltip || action.label"
-                          [attr.aria-label]="action.label"
+                          [attr.title]="(action.tooltip || action.label) | translate"
+                          [attr.aria-label]="action.label | translate"
                           (click)="handleToolbarAction(action, $event)">
                           <i [class]="action.iconClass"></i>
                         </button>
@@ -103,7 +107,7 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
                     <span class="cag-item-head-meta">{{ item.toolHeader?.meta }}</span>
                   }
                   @if (item.toolHeader?.pill) {
-                    <span class="cag-item-pill" [attr.data-tone]="item.toolHeader?.pillTone">{{ item.toolHeader?.pill }}</span>
+                    <span class="cag-item-pill" [attr.data-tone]="item.toolHeader?.pillTone">{{ item.toolHeader?.pill | translate }}</span>
                   }
                   @if (hasDetailContent()) {
                     <span class="cag-item-chevron-wrap" aria-hidden="true">
@@ -114,13 +118,13 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
               </div>
             } @else {
               <div class="cag-item-head">
-                <span class="cag-item-label">{{ item.label }}</span>
+                <span class="cag-item-label">{{ item.label | translate }}</span>
                 <span class="cag-item-head-trailing">
                   @if (item.headerMeta) {
                     <span class="cag-item-head-meta">{{ item.headerMeta }}</span>
                   }
                   @if (item.pill) {
-                    <span class="cag-item-pill" [attr.data-tone]="item.pillTone">{{ item.pill }}</span>
+                    <span class="cag-item-pill" [attr.data-tone]="item.pillTone">{{ item.pill | translate }}</span>
                   }
                   @if (hasDetailContent()) {
                     <span class="cag-item-chevron-wrap" aria-hidden="true">
@@ -207,6 +211,32 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
             </div>
           }
 
+          @if (item.nestedItems?.length) {
+            <div class="cag-item-nested-list">
+              @for (nestedItem of item.nestedItems; track nestedItem.id; let nestedFirst = $first; let nestedLast = $last; let nestedCount = $count) {
+                <aily-chat-activity-item
+                  [item]="nestedItem"
+                  [sessionId]="sessionId"
+                  [first]="nestedFirst"
+                  [last]="nestedLast"
+                  [only]="nestedCount === 1" />
+              }
+            </div>
+          }
+
+          @if (item.subagentItems?.length) {
+            <div class="cag-subagent-owned-list" data-subagent-owned-list="true">
+              @for (subagentItem of item.subagentItems; track subagentItem.id; let subagentFirst = $first; let subagentLast = $last; let subagentCount = $count) {
+                <aily-chat-activity-item
+                  [item]="subagentItem"
+                  [sessionId]="sessionId"
+                  [first]="subagentFirst"
+                  [last]="subagentLast"
+                  [only]="subagentCount === 1" />
+              }
+            </div>
+          }
+
           @if (hasDetailContent() && detailExpanded) {
             <div class="cag-item-detail-body" [attr.data-detail-kind]="item.detailKind || 'state'">
               @if (item.instructionMetadata) {
@@ -242,14 +272,14 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
                   @for (section of getInstructionProjection().sections; track section.title) {
                     <div class="cag-item-detail-section">
                       @if (section.title) {
-                        <div class="cag-item-detail-section-title">{{ section.title }}</div>
+                        <div class="cag-item-detail-section-title">{{ section.title | translate }}</div>
                       }
                       @for (row of section.rows; track row.id) {
                         <div class="cag-item-detail-row" [attr.data-tone]="row.tone || 'neutral'">
                           <div class="cag-item-detail-row-head">
-                            <span class="cag-item-detail-row-title">{{ row.title }}</span>
+                            <span class="cag-item-detail-row-title">{{ row.title | translate }}</span>
                             @if (row.trailing) {
-                              <span class="cag-item-detail-row-pill" [attr.data-tone]="row.tone || 'neutral'">{{ row.trailing }}</span>
+                              <span class="cag-item-detail-row-pill" [attr.data-tone]="row.tone || 'neutral'">{{ row.trailing | translate }}</span>
                             }
                           </div>
                           @if (row.subtitle) {
@@ -1087,6 +1117,51 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
     .cag-item-child-note {
       margin-top: 3px;
       min-width: 0;
+    }
+
+    .cag-item-nested-list {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      margin-top: 5px;
+      margin-left: 8px;
+      min-width: 0;
+    }
+
+    .cag-item-nested-list::before {
+      content: '';
+      position: absolute;
+      left: -8px;
+      top: 2px;
+      bottom: 2px;
+      border-left: 1px solid var(--chat-border-dim, rgba(255,255,255,0.06));
+      pointer-events: none;
+    }
+
+    .cag-subagent-owned-list {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      margin-top: 6px;
+      margin-left: 10px;
+      padding-left: 8px;
+      min-width: 0;
+      border-left: 1px solid color-mix(in srgb, var(--chat-info, #75beff) 36%, transparent);
+    }
+
+    .cag-subagent-owned-list::before {
+      content: 'subagent';
+      align-self: flex-start;
+      margin: 0 0 2px -1px;
+      padding: 1px 5px;
+      border-radius: 4px;
+      font-size: 10px;
+      line-height: 1.2;
+      color: var(--chat-info, #75beff);
+      background: color-mix(in srgb, var(--chat-info, #75beff) 10%, transparent);
+      border: 1px solid color-mix(in srgb, var(--chat-info, #75beff) 18%, transparent);
     }
 
     .cag-item-detail-body {
@@ -2182,6 +2257,7 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
   `],
 })
 export class ChatActivityItemComponent implements OnChanges {
+  private readonly translate = inject(TranslateService);
   @Input({ required: true }) item!: ActivityGroupDisplayItem;
   @Input() sessionId = '';
   @Input() first = false;
@@ -2462,20 +2538,39 @@ export class ChatActivityItemComponent implements OnChanges {
     const exitCode = typeof snapshot?.exitCode === 'number' ? snapshot.exitCode : 130;
     const status = snapshot?.status || 'killed';
     const stopped = !running;
+    const terminalState = resolveTerminalLifecycleState({ running, exitCode, status });
 
     this.item = {
       ...this.item,
       isSpinning: running,
-      iconClass: running
+      iconClass: terminalState === 'running'
         ? this.item.iconClass
-        : (exitCode && exitCode !== 0 ? 'fa-light fa-circle-xmark' : 'fa-light fa-circle-check'),
-      iconColor: running ? this.item.iconColor : (exitCode && exitCode !== 0 ? '#d4380d' : '#389e0d'),
+        : terminalState === 'failed'
+          ? 'fa-light fa-circle-xmark'
+          : terminalState === 'cancelled'
+            ? 'fa-light fa-circle-minus'
+            : 'fa-light fa-circle-check',
+      iconColor: running
+        ? this.item.iconColor
+        : terminalState === 'failed'
+          ? '#d4380d'
+          : terminalState === 'cancelled'
+            ? '#d89614'
+            : '#389e0d',
       toolHeader: this.item.toolHeader
         ? {
             ...this.item.toolHeader,
             meta: stopped && exitCode != null ? `退出码 ${exitCode}` : this.item.toolHeader.meta,
-            pill: stopped ? (status === 'killed' ? '已停止' : this.item.toolHeader.pill) : this.item.toolHeader.pill,
-            pillTone: stopped ? (status === 'killed' ? 'warn' : this.item.toolHeader.pillTone) : this.item.toolHeader.pillTone,
+            pill: stopped
+              ? (terminalState === 'cancelled'
+                  ? '已取消'
+                  : (status === 'killed' ? '已停止' : this.item.toolHeader.pill))
+              : this.item.toolHeader.pill,
+            pillTone: stopped
+              ? (terminalState === 'failed'
+                  ? 'error'
+                  : (terminalState === 'cancelled' || status === 'killed' ? 'warn' : this.item.toolHeader.pillTone))
+              : this.item.toolHeader.pillTone,
           }
         : this.item.toolHeader,
       toolbarActions: this.item.toolbarActions?.filter(toolbarAction =>
@@ -2508,6 +2603,21 @@ export class ChatActivityItemComponent implements OnChanges {
       return;
     }
 
+    const command = typeof action.data?.['command'] === 'string'
+      ? action.data['command']
+      : undefined;
+    const toolId = resolveChildToolIdFromProcess({
+      processId,
+      command,
+      cwd: typeof action.data?.['cwd'] === 'string' ? action.data['cwd'] : undefined,
+      outputFilePath: typeof action.data?.['outputFilePath'] === 'string' ? action.data['outputFilePath'] : undefined,
+      subappName: typeof action.data?.['subappName'] === 'string' ? action.data['subappName'] : undefined,
+    });
+    if (toolId) {
+      AilyHost.get().ui?.openToolWindow?.(toolId, { title: this.resolveChildToolDisplayName(toolId) });
+      return;
+    }
+
     openChatProcessWindow({
       sessionId: this.sessionId,
       processId,
@@ -2517,10 +2627,27 @@ export class ChatActivityItemComponent implements OnChanges {
       outputFilePath: typeof action.data?.['outputFilePath'] === 'string'
         ? action.data['outputFilePath']
         : undefined,
-      command: typeof action.data?.['command'] === 'string'
-        ? action.data['command']
-        : undefined,
+      command,
     });
+  }
+
+  private resolveChildToolDisplayName(toolId: string): string {
+    const config = getChildToolConfig(toolId);
+    if (!config) {
+      return toolId;
+    }
+
+    const globalName = this.translate.instant(config.namespace);
+    if (typeof globalName === 'string' && globalName && globalName !== config.namespace) {
+      return globalName;
+    }
+
+    const title = this.translate.instant(config.titleKey);
+    if (typeof title === 'string' && title && title !== config.titleKey) {
+      return title;
+    }
+
+    return toolId;
   }
 
   hasDetailContent(): boolean {
@@ -2798,6 +2925,12 @@ function countActivityItemMarkdownSurfaces(item: ActivityGroupDisplayItem, detai
     if (child.content) {
       count += 1;
     }
+  }
+  for (const nestedItem of item.nestedItems || []) {
+    count += countActivityItemMarkdownSurfaces(nestedItem, detailExpanded);
+  }
+  for (const subagentItem of item.subagentItems || []) {
+    count += countActivityItemMarkdownSurfaces(subagentItem, detailExpanded);
   }
 
   if (!detailExpanded) {

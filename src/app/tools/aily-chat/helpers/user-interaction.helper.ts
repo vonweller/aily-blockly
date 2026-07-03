@@ -15,6 +15,7 @@ import {
   normalizeReadSideToolName,
 } from '../core/tool-name-normalizer';
 import { AilyHost } from '../core/host';
+import { chatI18n } from './chat-i18n';
 import { normalizeToolApprovalRequest } from './tool-approval-ui';
 import type { ToolApprovalRequest, ToolApprovalResult, ToolApprovalScope } from './tool-approval-ui';
 import type { AskUserQuestion, AskUserFullResponse, AskUserAnswer, AskUserPresentationContext } from '../core/ask-user';
@@ -39,6 +40,15 @@ type UserInteractionContext = Pick<IChatCoordination, 'lexStream'>
     readCurrentViewSessionResource?(): string | null | undefined;
     readonly toolApprovalPolicy: UserInteractionToolApprovalPolicy;
   };
+
+interface ApprovalSessionState {
+  readonly approvedTools: Set<string>;
+  readonly approvedTerminalCommands: Set<string>;
+  readonly approvedApprovalCombinations: Set<string>;
+  allowAllTerminalCommands: boolean;
+}
+
+const approvalSessionStates = new Map<string, ApprovalSessionState>();
 
 function isTerminalApprovalTool(toolName: string): boolean {
   return isTerminalCommandToolName(toolName);
@@ -93,6 +103,22 @@ function matchesTerminalPermissionList(command: string, rules: readonly string[]
   return rules.some((rule) => matchesTerminalPermissionRule(command, rule));
 }
 
+function getOrCreateApprovalSessionState(sessionId: string): ApprovalSessionState {
+  const existing = approvalSessionStates.get(sessionId);
+  if (existing) {
+    return existing;
+  }
+
+  const created: ApprovalSessionState = {
+    approvedTools: new Set<string>(),
+    approvedTerminalCommands: new Set<string>(),
+    approvedApprovalCombinations: new Set<string>(),
+    allowAllTerminalCommands: false,
+  };
+  approvalSessionStates.set(sessionId, created);
+  return created;
+}
+
 export class UserInteractionHelper {
   // ==================== 内部状态 ====================
 
@@ -107,10 +133,6 @@ export class UserInteractionHelper {
   _resolveToolApproval: ((result: ToolApprovalResult) => void) | null = null;
 
   private _approvalSessionId: string | null = null;
-  private readonly _sessionApprovedTools = new Set<string>();
-  private readonly _sessionApprovedTerminalCommands = new Set<string>();
-  private readonly _sessionApprovedApprovalCombinations = new Set<string>();
-  private _sessionAllowAllTerminalCommands = false;
 
   constructor(private ctx: UserInteractionContext) {}
 
@@ -149,13 +171,13 @@ export class UserInteractionHelper {
     this._askUserQuestions = null;
     this._askUserQuestionPartId = null;
     this._resolveToolApproval = null;
-    this.resetApprovalSessionState();
+    this.clearApprovalSessionState();
   }
 
   /** 显式重置当前运行中的 session 级审批缓存。 */
   resetApprovalState(): void {
     this._resolveToolApproval = null;
-    this.resetApprovalSessionState();
+    this.clearApprovalSessionState();
   }
 
   // ==================== ask_user 交互处理 ====================
@@ -259,20 +281,27 @@ export class UserInteractionHelper {
 
   private ensureApprovalSessionState(): void {
     const sessionId = this.resolveInteractionSessionResource();
-    if (this._approvalSessionId === sessionId) {
-      return;
+    if (this._approvalSessionId !== sessionId) {
+      this._approvalSessionId = sessionId;
     }
 
-    this.resetApprovalSessionState();
-    this._approvalSessionId = sessionId;
+    getOrCreateApprovalSessionState(sessionId);
   }
 
-  private resetApprovalSessionState(): void {
+  private clearApprovalSessionState(): void {
+    if (this._approvalSessionId) {
+      approvalSessionStates.delete(this._approvalSessionId);
+    }
     this._approvalSessionId = null;
-    this._sessionApprovedTools.clear();
-    this._sessionApprovedTerminalCommands.clear();
-    this._sessionApprovedApprovalCombinations.clear();
-    this._sessionAllowAllTerminalCommands = false;
+  }
+
+  private readApprovalSessionState(): ApprovalSessionState {
+    const sessionId = this._approvalSessionId;
+    if (!sessionId) {
+      throw new Error('Approval session state is unavailable before initialization.');
+    }
+
+    return getOrCreateApprovalSessionState(sessionId);
   }
 
   private shouldAutoApprove(request: ToolApprovalRequest): boolean {
@@ -287,9 +316,10 @@ export class UserInteractionHelper {
     const combinationKey = typeof request.approveCombination?.key === 'string'
       ? request.approveCombination.key.trim()
       : '';
+    const approvalSessionState = this.readApprovalSessionState();
 
     if (combinationKey) {
-      if (this._sessionApprovedApprovalCombinations.has(combinationKey)) {
+      if (approvalSessionState.approvedApprovalCombinations.has(combinationKey)) {
         return true;
       }
 
@@ -299,7 +329,7 @@ export class UserInteractionHelper {
     }
 
     if (isTerminalApprovalTool(toolName)) {
-      if (this._sessionAllowAllTerminalCommands) {
+      if (approvalSessionState.allowAllTerminalCommands) {
         return true;
       }
 
@@ -308,14 +338,14 @@ export class UserInteractionHelper {
         return false;
       }
 
-      if (matchesTerminalPermissionList(command, [...this._sessionApprovedTerminalCommands])) {
+      if (matchesTerminalPermissionList(command, [...approvalSessionState.approvedTerminalCommands])) {
         return true;
       }
 
       return matchesTerminalPermissionList(command, this.ctx.toolApprovalPolicy.terminalAllowList ?? []);
     }
 
-    return this._sessionApprovedTools.has(toolName)
+    return approvalSessionState.approvedTools.has(toolName)
       || this.ctx.toolApprovalPolicy.hasWorkspaceToolApprovalRule(this.ctx.getCurrentProjectPath(), toolName);
   }
 
@@ -329,6 +359,7 @@ export class UserInteractionHelper {
       ? request.approveCombination.key.trim()
       : '';
     const isCombinationApproval = !!combinationKey && actionId?.startsWith('combination:');
+    const approvalSessionState = this.readApprovalSessionState();
 
     if (normalizedScope === 'once') {
       return;
@@ -336,7 +367,7 @@ export class UserInteractionHelper {
 
     if (isCombinationApproval) {
       if (normalizedScope === 'session') {
-        this._sessionApprovedApprovalCombinations.add(combinationKey);
+        approvalSessionState.approvedApprovalCombinations.add(combinationKey);
         return;
       }
 
@@ -350,7 +381,7 @@ export class UserInteractionHelper {
     if (isTerminalApprovalTool(toolName)) {
       const command = normalizeTerminalCommand(input['command']);
       if (normalizedScope === 'session-all-terminal') {
-        this._sessionAllowAllTerminalCommands = true;
+        approvalSessionState.allowAllTerminalCommands = true;
         return;
       }
 
@@ -359,7 +390,7 @@ export class UserInteractionHelper {
       }
 
       const exactRule = buildExactTerminalRule(command);
-      this._sessionApprovedTerminalCommands.add(exactRule);
+      approvalSessionState.approvedTerminalCommands.add(exactRule);
 
       if (normalizedScope === 'workspace') {
         const currentAllowList = this.ctx.toolApprovalPolicy.terminalAllowList ?? [];
@@ -372,7 +403,7 @@ export class UserInteractionHelper {
     }
 
     if (normalizedScope === 'session') {
-      this._sessionApprovedTools.add(toolName);
+      approvalSessionState.approvedTools.add(toolName);
       return;
     }
 
@@ -386,17 +417,37 @@ export class UserInteractionHelper {
    * 工具审批的 UI 层回调。
    */
   private _handleToolApproval(request: ToolApprovalRequest): Promise<ToolApprovalResult> {
-    this.ctx.lexStream.ui.presentToolCallApproval(request);
     const sessionResource = this.resolveInteractionSessionResource();
+    this.presentToolApprovalInTranscript(request);
     return this.ctx.runtimeInteractionHost.presentToolApproval(sessionResource, request).then((result) => {
-      this.ctx.lexStream.ui.resolveToolCallApproval(request.toolCallId, !!result.approved, result.scope);
+      this.resolveToolApprovalInTranscript(request.toolCallId, !!result.approved, result.scope);
       return {
         approved: !!result.approved,
-        reason: result.reason || (result.approved ? undefined : '用户拒绝执行'),
+        reason: result.reason || (result.approved ? undefined : chatI18n('AILY_CHAT.PROCESS_CONFIRM_REJECT_REASON')),
         scope: result.scope || 'once',
         actionId: typeof result.actionId === 'string' ? result.actionId : undefined,
       };
     });
+  }
+
+  private presentToolApprovalInTranscript(request: ToolApprovalRequest): void {
+    try {
+      this.ctx.lexStream.ui.presentToolCallApproval(request);
+    } catch (err) {
+      console.warn('[AilyChat][Approval] transcript projection failed; runtime host approval remains active.', err);
+    }
+  }
+
+  private resolveToolApprovalInTranscript(
+    toolCallId: string,
+    approved: boolean,
+    scope: ToolApprovalScope | undefined,
+  ): void {
+    try {
+      this.ctx.lexStream.ui.resolveToolCallApproval(toolCallId, approved, scope);
+    } catch (err) {
+      console.warn('[AilyChat][Approval] transcript resolution failed; runtime host approval was resolved.', err);
+    }
   }
 
   /**
@@ -419,7 +470,7 @@ export class UserInteractionHelper {
       toolCallId,
       {
         approved: false,
-        reason: reason || '用户拒绝执行',
+        reason: reason || chatI18n('AILY_CHAT.PROCESS_CONFIRM_REJECT_REASON'),
       },
     );
   }
