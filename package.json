@@ -98,7 +98,11 @@
       "extraResources": [
         {
           "from": "child/windows",
-          "to": "child"
+          "to": "child",
+          "filter": [
+            "**/*",
+            "!aily-builder-*.7z"
+          ]
         }
       ]
     },
@@ -116,7 +120,11 @@
       "extraResources": [
         {
           "from": "child/macos",
-          "to": "child"
+          "to": "child",
+          "filter": [
+            "**/*",
+            "!aily-builder-*.7z"
+          ]
         }
       ]
     },

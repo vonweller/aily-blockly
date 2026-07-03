@@ -20,6 +20,11 @@ if (isWin32) {
 }
 
 const PROTOCOL = "abis";
+const AILY_BUILDER_DEFAULT_VERSION = process.env.AILY_BUILDER_VERSION || "1.2.4";
+const AILY_BUILDER_PLATFORM_PACKAGES = {
+  "darwin-arm64": "@aily-project/aily-builder-darwin-arm64",
+  "win32-x64": "@aily-project/aily-builder-win32-x64",
+};
 
 // OAuth实例管理
 const OAUTH_STATE_FILE = 'oauth-instances.json';
@@ -768,6 +773,126 @@ function buildZipUrls(conf = {}) {
 }
 let isRendererReady = false;
 
+function isAilyBuilderInstallComplete(targetPath) {
+  const requiredFiles = [
+    path.join(targetPath, "index.js"),
+    path.join(targetPath, "node_modules/tree-sitter/build/Release/tree_sitter_runtime_binding.node"),
+    path.join(targetPath, "node_modules/tree-sitter-cpp/build/Release/tree_sitter_cpp_binding.node"),
+  ];
+  return requiredFiles.every((filePath) => fs.existsSync(filePath));
+}
+
+function getAilyBuilderPackageName() {
+  const platformKey = `${process.platform}-${process.arch}`;
+  return process.env.AILY_BUILDER_PACKAGE || AILY_BUILDER_PLATFORM_PACKAGES[platformKey] || "";
+}
+
+function getNpmAilyBuilderPath() {
+  const prefix = process.env.AILY_NPM_PREFIX || process.env.AILY_APPDATA_PATH;
+  const packageName = getAilyBuilderPackageName();
+  if (!prefix || !packageName) {
+    return null;
+  }
+  return path.join(prefix, "node_modules", ...packageName.split("/"));
+}
+
+function resolveAilyBuilderPath(childPath) {
+  const npmBuilderPath = getNpmAilyBuilderPath();
+  if (npmBuilderPath && isAilyBuilderInstallComplete(npmBuilderPath)) {
+    return npmBuilderPath;
+  }
+
+  const bundledBuilderPath = path.join(childPath, "aily-builder");
+  if (isAilyBuilderInstallComplete(bundledBuilderPath)) {
+    return bundledBuilderPath;
+  }
+
+  return npmBuilderPath || bundledBuilderPath;
+}
+
+function getNpmExecutablePath(childPath) {
+  if (isWin32) {
+    const npmCmdPath = path.join(childPath, "node", "npm.cmd");
+    return fs.existsSync(npmCmdPath) ? npmCmdPath : "npm";
+  }
+
+  const npmPath = path.join(childPath, "node", "bin", "npm");
+  return fs.existsSync(npmPath) ? npmPath : "npm";
+}
+
+function installAilyBuilderFromNpm(childPath, version = AILY_BUILDER_DEFAULT_VERSION) {
+  const targetPath = getNpmAilyBuilderPath();
+  if (!targetPath) {
+    return {
+      ok: false,
+      path: "",
+      error: `当前平台暂不支持 npm 版 aily-builder: ${process.platform}-${process.arch}`,
+    };
+  }
+
+  const packageName = getAilyBuilderPackageName();
+  const spec = `${packageName}@${version || AILY_BUILDER_DEFAULT_VERSION}`;
+  const npmPath = getNpmExecutablePath(childPath);
+  const npmArgs = ["install", spec, "--save-exact", "--prefix", process.env.AILY_NPM_PREFIX];
+  if (process.env.AILY_NPM_REGISTRY) {
+    npmArgs.push("--registry", process.env.AILY_NPM_REGISTRY);
+  }
+  const result = require("child_process").spawnSync(
+    npmPath,
+    npmArgs,
+    {
+      env: process.env,
+      encoding: "utf8",
+      windowsHide: true,
+      maxBuffer: 10 * 1024 * 1024,
+    }
+  );
+
+  if (result.error) {
+    return { ok: false, path: targetPath, error: result.error.message };
+  }
+
+  if (result.status !== 0) {
+    return {
+      ok: false,
+      path: targetPath,
+      error: result.stderr || result.stdout || `npm install exited with ${result.status}`,
+    };
+  }
+
+  const ok = isAilyBuilderInstallComplete(targetPath);
+  return {
+    ok,
+    path: targetPath,
+    error: ok ? "" : `${spec} 安装完成但缺少 aily-builder 关键文件`,
+  };
+}
+
+function ensureAilyBuilderFromNpm(childPath) {
+  const npmBuilderPath = getNpmAilyBuilderPath();
+  if (npmBuilderPath && isAilyBuilderInstallComplete(npmBuilderPath)) {
+    process.env.AILY_BUILDER_PATH = npmBuilderPath;
+    return { ok: true, path: npmBuilderPath, installed: false };
+  }
+
+  const packageName = getAilyBuilderPackageName();
+  console.warn(`未找到可用的 aily-builder，准备从 npm 安装: ${packageName}@${AILY_BUILDER_DEFAULT_VERSION}`);
+  const installResult = installAilyBuilderFromNpm(childPath);
+  if (installResult.ok) {
+    process.env.AILY_BUILDER_PATH = installResult.path;
+    console.log(`aily-builder npm 安装完成: ${installResult.path}`);
+    return { ok: true, path: installResult.path, installed: true };
+  }
+
+  const fallbackPath = resolveAilyBuilderPath(childPath);
+  process.env.AILY_BUILDER_PATH = fallbackPath;
+  console.error(`aily-builder npm 安装失败: ${installResult.error}`);
+  return {
+    ...installResult,
+    path: fallbackPath,
+  };
+}
+
 // 监听渲染进程就绪事件
 ipcMain.on('renderer-ready', () => {
   console.log('渲染进程已就绪');
@@ -1027,15 +1152,6 @@ function installChildEnv(childPath, options) {
     }
   }
 
-  function isAilyBuilderInstallComplete(targetPath) {
-    const requiredFiles = [
-      path.join(targetPath, "index.js"),
-      path.join(targetPath, "node_modules/tree-sitter/build/Release/tree_sitter_runtime_binding.node"),
-      path.join(targetPath, "node_modules/tree-sitter-cpp/build/Release/tree_sitter_cpp_binding.node"),
-    ];
-    return requiredFiles.every((filePath) => fs.existsSync(filePath));
-  }
-
   const z7Path = ensure7z();
   const sourceDir = path.join(childPath, serve ? platformDir : "");
 
@@ -1055,6 +1171,15 @@ function installChildEnv(childPath, options) {
     const archivePath =
       findLatestVersionFile(sourceDir, pkg.name) ||
       findLatestVersionFile(path.join(childPath, platformDir), pkg.name);
+    if (pkg.name === "aily-builder") {
+      const npmBuilderPath = getNpmAilyBuilderPath();
+      if (npmBuilderPath && isAilyBuilderInstallComplete(npmBuilderPath)) {
+        continue;
+      }
+      if (!archivePath && !isAilyBuilderInstallComplete(targetPath)) {
+        continue;
+      }
+    }
     if (z7Path) {
       extract7zPackage(z7Path, archivePath, targetPath, pkg.name, validators[pkg.name]);
     } else {
@@ -1260,7 +1385,7 @@ function applyChildToolEnv(childPath) {
     customPath = appendPathSegment(customPath, '/bin');
   }
 
-  const ailyBuilderPath = path.join(childPath, "aily-builder");
+  const ailyBuilderPath = resolveAilyBuilderPath(childPath);
   const ninjaPath = path.join(ailyBuilderPath, "ninja");
   const probeRsDir = path.join(childPath, "probe-rs");
   const z7Path = path.join(childPath, isWin32 ? "7za.exe" : "7zz");
@@ -1508,12 +1633,22 @@ function loadEnv() {
 
   process.env.AILY_PROJECT_PATH = conf["project_path"];
 
-  // macOS 生产/开发均走异步自解压，完成后再次覆盖 child 环境变量；Windows 生产包由 NSIS 预解压
-  if (isDarwin || serve) {
-    applyChildToolEnv(childPath);
-    setImmediate(() => runInstallEnv(childPath));
+  // macOS 生产/开发均走异步自解压，完成后再次覆盖 child 环境变量；Windows 生产包由 NSIS 预解压。
+  // 如果没有可用的 aily-builder，则同步准备 child/node 后从 npm 安装，避免窗口启动后拿到无效路径。
+  if (isAilyBuilderInstallComplete(resolveAilyBuilderPath(childPath))) {
+    if (isDarwin || serve) {
+      applyChildToolEnv(childPath);
+      setImmediate(() => {
+        runInstallEnv(childPath);
+        ensureAilyBuilderFromNpm(childPath);
+      });
+    } else {
+      runInstallEnv(childPath);
+      ensureAilyBuilderFromNpm(childPath);
+    }
   } else {
     runInstallEnv(childPath);
+    ensureAilyBuilderFromNpm(childPath);
   }
 
   // 当前系统语言
@@ -2423,6 +2558,24 @@ ipcMain.handle("env-set", (event, data) => {
 ipcMain.handle("env-get", (event, key) => {
   return process.env[key];
 })
+
+ipcMain.handle("aily-builder-update", async (event, { version = AILY_BUILDER_DEFAULT_VERSION } = {}) => {
+  const childPath = process.env.AILY_CHILD_PATH;
+  if (!childPath) {
+    throw new Error("AILY_CHILD_PATH 未设置");
+  }
+
+  const result = installAilyBuilderFromNpm(childPath, version);
+  if (!result.ok) {
+    throw new Error(result.error || "aily-builder npm 安装失败");
+  }
+
+  process.env.AILY_BUILDER_PATH = result.path;
+  return {
+    path: result.path,
+    version,
+  };
+});
 
 // 移动文件到回收站
 ipcMain.handle("move-to-trash", async (event, filePath) => {

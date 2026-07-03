@@ -205,6 +205,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     },
   },
   builder: {
+    update: (version = "1.2.4") => ipcRenderer.invoke("aily-builder-update", { version }),
     init: (data) => {
       return new Promise((resolve, reject) => {
         ipcRenderer
