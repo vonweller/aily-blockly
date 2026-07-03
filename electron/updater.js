@@ -9,6 +9,8 @@ let cancellationToken = null;
 let checkedUpdateInfoAndProvider = null;
 let downloadMirrorFallbackInProgress = false;
 let activeDownloadAttempt = null;
+let forcedUpdateManifestSourceApplied = false;
+let cachedPackagedBuildFlavor;
 
 function logUpdater(message, data) {
   const text = data === undefined
@@ -57,6 +59,132 @@ function loadMergedConfig() {
   }
 
   return config;
+}
+
+function normalizeBuildFlavor(flavor) {
+  return String(flavor || '').trim().toLowerCase() === 'global' ? 'global' : 'cn';
+}
+
+function getPackagedBuildFlavor() {
+  if (cachedPackagedBuildFlavor !== undefined) {
+    return cachedPackagedBuildFlavor;
+  }
+
+  const candidatePaths = [];
+  try {
+    candidatePaths.push(path.join(app.getAppPath(), 'package.json'));
+  } catch (error) {
+    // ignore before app is fully ready
+  }
+  candidatePaths.push(path.join(__dirname, '..', 'package.json'));
+
+  for (const packageJsonPath of candidatePaths) {
+    try {
+      if (!packageJsonPath || !fs.existsSync(packageJsonPath)) {
+        continue;
+      }
+
+      const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+      cachedPackagedBuildFlavor = packageJson.ailyBuildFlavor;
+      return cachedPackagedBuildFlavor;
+    } catch (error) {
+      console.warn('读取构建版型失败:', error.message || error);
+    }
+  }
+
+  cachedPackagedBuildFlavor = null;
+  return cachedPackagedBuildFlavor;
+}
+
+function getCurrentBuildFlavor(config) {
+  return normalizeBuildFlavor(process.env.AILY_BUILD_FLAVOR || getPackagedBuildFlavor() || config.build_flavor);
+}
+
+function isChinaTimezone() {
+  try {
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return (
+      timezone === 'Asia/Shanghai' ||
+      timezone === 'Asia/Chongqing' ||
+      timezone === 'Asia/Urumqi' ||
+      timezone === 'Asia/Harbin'
+    );
+  } catch {
+    return new Date().getTimezoneOffset() === -480;
+  }
+}
+
+function isSimplifiedChineseLanguage(config) {
+  const rawLanguage = String(
+    config.selectedLanguage ||
+    config.lang ||
+    app.getLocale() ||
+    ''
+  ).trim();
+  const normalizedLanguage = rawLanguage.replace('-', '_').toLowerCase();
+
+  return normalizedLanguage === 'zh_cn';
+}
+
+function getForcedUpdateManifestSource() {
+  const config = loadMergedConfig();
+
+  if (getCurrentBuildFlavor(config) === 'cn') {
+    return null;
+  }
+
+  if (!isChinaTimezone() || !isSimplifiedChineseLanguage(config)) {
+    return null;
+  }
+
+  const updaterUrl = config.regions && config.regions.cn && config.regions.cn.updater;
+  if (typeof updaterUrl !== 'string' || updaterUrl.trim() === '') {
+    return null;
+  }
+
+  return {
+    provider: 'generic',
+    url: updaterUrl.trim().replace(/\/+$/, ''),
+    reason: 'china-timezone-and-zh-cn-language',
+  };
+}
+
+async function applyUpdateManifestSourceBeforeCheck() {
+  const source = getForcedUpdateManifestSource();
+  if (source) {
+    autoUpdater.setFeedURL({
+      provider: source.provider,
+      url: source.url,
+    });
+    forcedUpdateManifestSourceApplied = true;
+    logUpdater('forced update manifest source', {
+      reason: source.reason,
+      url: joinUrl(source.url, getChannelFileName()),
+    });
+
+    return source;
+  }
+
+  if (forcedUpdateManifestSourceApplied) {
+    try {
+      const config = normalizePublishConfig(await autoUpdater.configOnDisk.value);
+      if (config && config.url) {
+        autoUpdater.setFeedURL(config);
+        logUpdater('restored packaged update manifest source', {
+          provider: config.provider || 'generic',
+          url: joinUrl(config.url, getChannelFileName()),
+        });
+      }
+    } catch (error) {
+      logUpdater('failed to restore packaged update manifest source', {
+        error: serializeError(error),
+      });
+    } finally {
+      forcedUpdateManifestSourceApplied = false;
+    }
+  }
+
+  return null;
 }
 
 function getDownloadMirrorSources() {
@@ -479,6 +607,7 @@ function registerUpdaterHandlers(mainWindow) {
 
   // 添加IPC处理程序，允许从渲染进程手动检查更新
   ipcMain.handle('check-for-updates', async () => {
+    await applyUpdateManifestSourceBeforeCheck();
     await logDefaultUpdateCheckUrl();
     const result = await autoUpdater.checkForUpdates();
     // console.log('检查更新结果:', result);

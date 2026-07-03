@@ -1,4 +1,4 @@
-import { AfterViewInit, Component, ElementRef, Injector, OnDestroy, OnInit, ViewChild } from '@angular/core';
+import { AfterViewInit, Component, ElementRef, Injector, NgZone, OnDestroy, OnInit, ViewChild } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { NzModalService } from 'ng-zorro-antd/modal';
@@ -14,6 +14,7 @@ import { ThemeService } from '../../../../services/theme.service';
 import { UiService } from '../../../../services/ui.service';
 import { WorkflowService, ProcessState } from '../../../../services/workflow.service';
 import { ImageViewerComponent } from '../../../../components/image-viewer/image-viewer.component';
+import { BackgroundAgentService } from '../../../../services/background-agent.service';
 
 @Component({
   selector: 'app-dev-tool',
@@ -38,6 +39,7 @@ export class DevToolComponent implements OnInit, AfterViewInit, OnDestroy {
   offsetX = 0;
   offsetY = 0;
   positionReady = false;
+  isViewportAdjusting = false;
 
   boardPackagePath = '';
   isReloading = false;
@@ -45,6 +47,8 @@ export class DevToolComponent implements OnInit, AfterViewInit, OnDestroy {
   private _autoSave = true;
   private loadBoardInfoTimer: ReturnType<typeof setTimeout> | null = null;
   private chatServicePromise?: Promise<any>;
+  private viewportAdjustTimer: ReturnType<typeof setTimeout> | null = null;
+  private resizeAnimationFrame: number | null = null;
 
   get autoSave(): boolean {
     return this._autoSave;
@@ -73,10 +77,13 @@ export class DevToolComponent implements OnInit, AfterViewInit, OnDestroy {
     private translate: TranslateService,
     private authService: AuthService,
     private themeService: ThemeService,
-    private injector: Injector
+    private backgroundAgent: BackgroundAgentService,
+    private injector: Injector,
+    private ngZone: NgZone
   ) { }
 
   ngOnInit() {
+    void this.backgroundAgent;
     const devmode = this.ensureDevModeConfig();
     this._autoSave = devmode.autoSave ?? true;
     this.loadBoardInfo();
@@ -84,15 +91,29 @@ export class DevToolComponent implements OnInit, AfterViewInit, OnDestroy {
 
   ngAfterViewInit() {
     setTimeout(() => this.centerAtBottom(), 0);
+    this.ngZone.runOutsideAngular(() => {
+      window.addEventListener('resize', this.onViewportResize);
+    });
   }
 
   ngOnDestroy() {
     document.removeEventListener('mousemove', this.onDrag);
     document.removeEventListener('mouseup', this.onDragEnd);
+    window.removeEventListener('resize', this.onViewportResize);
 
     if (this.loadBoardInfoTimer) {
       clearTimeout(this.loadBoardInfoTimer);
       this.loadBoardInfoTimer = null;
+    }
+
+    if (this.viewportAdjustTimer) {
+      clearTimeout(this.viewportAdjustTimer);
+      this.viewportAdjustTimer = null;
+    }
+
+    if (this.resizeAnimationFrame !== null) {
+      window.cancelAnimationFrame(this.resizeAnimationFrame);
+      this.resizeAnimationFrame = null;
     }
   }
 
@@ -114,16 +135,7 @@ export class DevToolComponent implements OnInit, AfterViewInit, OnDestroy {
     this.currentX = event.clientX - this.dragStartX;
     this.currentY = window.innerHeight - event.clientY + (this.dragStartY - this.offsetY);
 
-    const topExclusionZone = 70;
-    const componentHeight = 40;
-    const componentWidth = this.devtoolBox?.nativeElement.offsetWidth || 360;
-
-    const maxX = window.innerWidth - componentWidth;
-    const minY = 1;
-    const maxY = window.innerHeight - topExclusionZone - componentHeight;
-
-    this.currentX = Math.max(0, Math.min(this.currentX, maxX));
-    this.currentY = Math.max(minY, Math.min(this.currentY, maxY));
+    this.clampToViewport();
   }
 
   onDragEnd = () => {
@@ -134,10 +146,80 @@ export class DevToolComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   private centerAtBottom() {
-    const componentWidth = this.devtoolBox?.nativeElement.offsetWidth || 360;
-    this.currentX = Math.max(0, Math.round((window.innerWidth - componentWidth) / 2));
-    this.currentY = 1;
+    const bounds = this.getViewportBounds();
+    this.currentX = Math.round(bounds.maxX / 2);
+    this.currentY = bounds.minY;
     this.positionReady = true;
+  }
+
+  private onViewportResize = () => {
+    if (!this.positionReady) return;
+    if (this.resizeAnimationFrame !== null) return;
+
+    this.resizeAnimationFrame = window.requestAnimationFrame(() => {
+      this.resizeAnimationFrame = null;
+      const clampedPosition = this.getClampedPosition();
+
+      if (clampedPosition.x === this.currentX && clampedPosition.y === this.currentY) {
+        return;
+      }
+
+      this.ngZone.run(() => {
+        this.currentX = clampedPosition.x;
+        this.currentY = clampedPosition.y;
+        this.markViewportAdjusting();
+      });
+    });
+  }
+
+  private clampToViewport(): boolean {
+    const originalX = this.currentX;
+    const originalY = this.currentY;
+    const clampedPosition = this.getClampedPosition();
+
+    this.currentX = clampedPosition.x;
+    this.currentY = clampedPosition.y;
+
+    return this.currentX !== originalX || this.currentY !== originalY;
+  }
+
+  private getClampedPosition(): { x: number; y: number } {
+    const bounds = this.getViewportBounds();
+
+    return {
+      x: this.clamp(this.currentX, 0, bounds.maxX),
+      y: this.clamp(this.currentY, bounds.minY, bounds.maxY)
+    };
+  }
+
+  private getViewportBounds(): { maxX: number; minY: number; maxY: number } {
+    const topExclusionZone = 70;
+    const minY = 1;
+    const componentWidth = this.devtoolBox?.nativeElement.offsetWidth || 360;
+    const componentHeight = this.devtoolBox?.nativeElement.offsetHeight || 40;
+
+    return {
+      maxX: Math.max(0, window.innerWidth - componentWidth),
+      minY,
+      maxY: Math.max(minY, window.innerHeight - topExclusionZone - componentHeight)
+    };
+  }
+
+  private clamp(value: number, min: number, max: number): number {
+    return Math.max(min, Math.min(value, max));
+  }
+
+  private markViewportAdjusting() {
+    this.isViewportAdjusting = true;
+
+    if (this.viewportAdjustTimer) {
+      clearTimeout(this.viewportAdjustTimer);
+    }
+
+    this.viewportAdjustTimer = setTimeout(() => {
+      this.isViewportAdjusting = false;
+      this.viewportAdjustTimer = null;
+    }, 120);
   }
 
   async reload() {
