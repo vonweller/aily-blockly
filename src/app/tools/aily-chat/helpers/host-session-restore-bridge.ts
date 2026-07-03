@@ -102,6 +102,13 @@ function readInteractionPendingRecord(
   return pending && typeof pending === 'object' ? pending : undefined;
 }
 
+function isRuntimeHostOwnedRestorePlanError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  return message.includes('[AilyChat][RuntimeHost]')
+    && message.includes('session.resolveRestorePlan')
+    && message.includes('Renderer views must use ChatRuntimeHost');
+}
+
 function resolveRestoredSessionTitle(sessionContent?: HostSessionContent | null): { text: string; source: ChatSessionTitleSource } {
   const persistedTitle = typeof sessionContent?.title === 'string'
     ? sessionContent.title.trim()
@@ -438,15 +445,41 @@ export class HostSessionRestoreBridge {
         sanitizedHostRecord,
       );
     } catch (error) {
+      if (isRuntimeHostOwnedRestorePlanError(error)) {
+        restorePlan = {
+          snapshot: null,
+          turnResponses: [...(sanitizedHostRecord.turnResponses ?? [])],
+          diagnostics: {
+            sessionId: targetSessionId,
+            storedSnapshotState: 'missing',
+            storedSnapshotError: error instanceof Error ? error.message : String(error ?? ''),
+          },
+        };
+      } else {
+        if (!isCurrent()) {
+          return;
+        }
+        throw this.createRestoreFailure(
+          'restore-plan-resolution-failed',
+          targetSessionId,
+          null,
+          error,
+        );
+      }
+    }
+
+    if (!restorePlan) {
       if (!isCurrent()) {
         return;
       }
-      throw this.createRestoreFailure(
-        'restore-plan-resolution-failed',
-        targetSessionId,
-        null,
-        error,
-      );
+      restorePlan = {
+        snapshot: null,
+        turnResponses: [...(sanitizedHostRecord.turnResponses ?? [])],
+        diagnostics: {
+          sessionId: targetSessionId,
+          storedSnapshotState: 'missing',
+        },
+      };
     }
 
     try {

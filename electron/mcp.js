@@ -4,11 +4,40 @@
 
 const { Client } = require("@modelcontextprotocol/sdk/client/index.js");
 const { StdioClientTransport } = require("@modelcontextprotocol/sdk/client/stdio.js");
-const { ipcMain } = require("electron");
+const { app, ipcMain } = require("electron");
+const fs = require("fs");
+const path = require("path");
 
 const ServerNameToClientMap = new Map();
 const toolToServerName = new Map();
 
+function resolveMcpArgs(args) {
+    if (!Array.isArray(args)) {
+        return [];
+    }
+
+    const rootCandidates = [
+        process.cwd(),
+        app.getAppPath && app.getAppPath(),
+        process.resourcesPath && path.join(process.resourcesPath, "app"),
+        process.resourcesPath,
+    ].filter(Boolean);
+
+    return args.map((arg) => {
+        if (typeof arg !== "string" || !arg || path.isAbsolute(arg)) {
+            return arg;
+        }
+
+        for (const root of rootCandidates) {
+            const candidate = path.resolve(root, arg);
+            if (fs.existsSync(candidate)) {
+                return candidate;
+            }
+        }
+
+        return arg;
+    });
+}
 
 // 设置IPC处理器
 function registerMCPHandlers() {
@@ -27,7 +56,7 @@ function registerMCPHandlers() {
 
             const mcpTransport = new StdioClientTransport({
                 command,
-                args,
+                args: resolveMcpArgs(args),
             });
 
             // console.log("mcpTransport: ", mcpTransport);

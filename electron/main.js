@@ -9,6 +9,7 @@ const { app, BrowserWindow, ipcMain, dialog, screen, shell, Menu } = require("el
 
 const { isWin32, isDarwin, isLinux } = require("./platform");
 const projectLock = require("./project-lock");
+const { startCliBridge } = require("./cli-bridge");
 const ORIGINAL_PROCESS_PATH = process.env.PATH || process.env.Path || "";
 
 // 设置应用名称，用于 Windows 系统通知显示
@@ -892,6 +893,142 @@ let mainWindow;
 let userConf;
 let isProcessCleanupInProgress = false;
 let hasProcessCleanupCompleted = false;
+
+// === CLI Bridge：供外部 CLI 通过本地回环接口驱动主程序（附加能力） ===
+let cliBridge = null;
+
+/** 导航主窗口到指定 hash（复用 dev/prod 既有加载方式） */
+function navigateMainWindowHash(targetHash) {
+  if (!mainWindow || !mainWindow.webContents || mainWindow.isDestroyed()) {
+    return false;
+  }
+  if (serve) {
+    mainWindow.loadURL(`http://localhost:4200/${targetHash}`);
+  } else {
+    mainWindow.loadFile(`renderer/index.html`, { hash: targetHash });
+  }
+  try {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+    mainWindow.show();
+  } catch (_) {
+    /* ignore */
+  }
+  return true;
+}
+
+/** 从当前窗口 URL 中解析正在打开的项目路径（反映 GUI 打开的项目） */
+function getOpenedProjectPathFromWindow() {
+  try {
+    const currentUrl = mainWindow && mainWindow.webContents ? mainWindow.webContents.getURL() : '';
+    const m = currentUrl.match(/[?&]path=([^&]+)/);
+    return m ? decodeURIComponent(m[1]) : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function requestMainWindow(channel, responseChannel, payload, timeoutMs = 12000) {
+  return new Promise((resolve) => {
+    if (!mainWindow || !mainWindow.webContents || mainWindow.isDestroyed()) {
+      resolve({ ok: false, message: '主窗口不可用' });
+      return;
+    }
+    if (!isRendererReady) {
+      resolve({ ok: false, message: '渲染进程尚未就绪' });
+      return;
+    }
+
+    const requestId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const timer = setTimeout(() => {
+      ipcMain.removeListener(responseChannel, listener);
+      resolve({ ok: false, message: '等待渲染进程响应超时' });
+    }, timeoutMs);
+
+    const listener = (_event, message) => {
+      if (!message || message.requestId !== requestId) {
+        return;
+      }
+      clearTimeout(timer);
+      ipcMain.removeListener(responseChannel, listener);
+      resolve(message);
+    };
+
+    ipcMain.on(responseChannel, listener);
+    mainWindow.webContents.send(channel, { ...payload, requestId });
+  });
+}
+
+/** 处理来自 CLI 的命令（open/close/reload/refresh） */
+async function handleCliBridgeCommand(action, payload) {
+  const requestedPath = payload && typeof payload.path === 'string' ? payload.path : '';
+  switch (action) {
+    case 'open': {
+      if (!requestedPath) return { ok: false, message: '缺少 path 参数' };
+      if (!fs.existsSync(requestedPath)) return { ok: false, message: `项目目录不存在: ${requestedPath}` };
+      const dir = path.resolve(requestedPath);
+      const ok = navigateMainWindowHash(`#/main/blockly-editor?path=${encodeURIComponent(dir)}`);
+      return { ok, message: ok ? `已打开项目: ${dir}` : '主窗口不可用', project: ok ? dir : null };
+    }
+    case 'reload':
+    case 'refresh': {
+      const dir = requestedPath ? path.resolve(requestedPath) : getOpenedProjectPathFromWindow();
+      if (!dir) return { ok: false, message: '当前没有打开的项目,且未提供 path' };
+      if (!fs.existsSync(dir)) return { ok: false, message: `项目目录不存在: ${dir}` };
+      const ok = navigateMainWindowHash(`#/main/blockly-editor?path=${encodeURIComponent(dir)}`);
+      return { ok, message: ok ? `已重载项目(刷新库/积木): ${dir}` : '主窗口不可用', project: ok ? dir : null };
+    }
+    case 'close': {
+      const ok = navigateMainWindowHash(`#/main/guide`);
+      return { ok, message: ok ? '已关闭当前项目' : '主窗口不可用', project: null };
+    }
+    case 'blockly-live-operation': {
+      const dir = requestedPath ? path.resolve(requestedPath) : getOpenedProjectPathFromWindow();
+      const operation = payload && payload.operation;
+      if (!dir && operation !== 'search_boards_libraries' && operation !== 'project_create') return { ok: false, message: '当前没有打开的项目,且未提供 path' };
+      const liveOperationTimeoutMs = operation === 'project_build'
+        ? 620000
+        : operation === 'project_create'
+          ? 300000
+          : operation === 'abs_apply'
+            ? 120000
+            : 12000;
+      const result = await requestMainWindow(
+        'cli-bridge:blockly-live-operation',
+        'cli-bridge:blockly-live-operation:response',
+        {
+          path: dir || '',
+          operation,
+          params: payload && payload.params,
+        },
+        liveOperationTimeoutMs,
+      );
+      return result && typeof result === 'object' ? result : { ok: false, message: '渲染进程返回了无效结果' };
+    }
+    default:
+      return { ok: false, message: `未知命令: ${action}` };
+  }
+}
+
+function getCliBridgeStatus() {
+  return {
+    pid: process.pid,
+    project: getOpenedProjectPathFromWindow(),
+    serve: !!serve,
+  };
+}
+
+function startCliBridgeIfPossible() {
+  if (cliBridge) return;
+  try {
+    cliBridge = startCliBridge({
+      handleCommand: handleCliBridgeCommand,
+      getStatus: getCliBridgeStatus,
+    });
+  } catch (e) {
+    console.error('启动 CLI bridge 失败:', e);
+  }
+}
 const DEFAULT_BUILD_FLAVOR = 'cn';
 const BUILD_FLAVOR_TO_OFFICIAL_REGION = {
   cn: 'cn',
@@ -2457,6 +2594,18 @@ app.on("ready", async () => {
 
   // 创建主窗口
   createWindow();
+
+  // 启动 CLI bridge（供外部 CLI 驱动打开/关闭/重载项目）
+  startCliBridgeIfPossible();
+});
+
+// 退出时关闭 CLI bridge 并清理发现文件
+app.on('before-quit', () => {
+  try {
+    if (cliBridge) cliBridge.close();
+  } catch (_) {
+    /* ignore */
+  }
 });
 
 // === Web Serial API 支持 ===

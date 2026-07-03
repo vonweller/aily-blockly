@@ -10,6 +10,7 @@ import { authInterceptor } from './interceptors/auth.interceptor';
 import { retryInterceptor } from './interceptors/retry.interceptor';
 import { AILY_CHAT_SHARED_PROVIDERS } from './tools/aily-chat/aily-chat.providers';
 import { AilyChatHostInitializerService } from './tools/aily-chat/services/aily-chat-host-initializer.service';
+import { BlocklyLiveOperationBridgeService } from './services/blockly-live-operation-bridge.service';
 
 export const appConfig: ApplicationConfig = {
   providers: [
@@ -29,6 +30,7 @@ export const appConfig: ApplicationConfig = {
     importProvidersFrom(NzModalModule),
     provideAppInitializer(() => {
       inject(AilyChatHostInitializerService).ensureInitialized();
+      inject(BlocklyLiveOperationBridgeService).ensureInitialized();
     }),
     ...AILY_CHAT_SHARED_PROVIDERS
   ]
