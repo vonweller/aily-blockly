@@ -1,4 +1,5 @@
 import { parseTerminalPayload } from '../../../core/terminal-payload';
+import { isTerminalFailureState, resolveTerminalLifecycleState } from '../../../core/terminal-status';
 import type { ToolResultContentPart } from '../../../core/tool-result-content';
 import { isReadFileToolName } from '../../../core/tool-name-normalizer';
 import { buildToolInvocationDisplaySummary } from '../../../core/tool-invocation-formatter';
@@ -2313,6 +2314,8 @@ function buildTerminalOutputRowsFromContent(input: {
     if (part.type === 'terminal_command') {
       const exitCode = typeof part['exitCode'] === 'number' ? part['exitCode'] : undefined;
       const isRunning = part['isRunning'] === true;
+      const status = typeof part['status'] === 'string' ? part['status'] : undefined;
+      const terminalState = resolveTerminalLifecycleState({ exitCode, isRunning, status });
       const terminalId = firstDisplayString(part['processId'], part['outputSessionId'], part['terminalId']);
       const cwd = typeof part['cwd'] === 'string' ? part['cwd'] : undefined;
       return [{
@@ -2321,7 +2324,7 @@ function buildTerminalOutputRowsFromContent(input: {
         subtitle: [...baseSubtitle, terminalId ? `${chatI18n('AILY_CHAT.PROCESS_TERMINAL_ID_PREFIX')} ${terminalId}` : '', cwd || ''].filter(Boolean).join(' · ') || undefined,
         note: summary && summary !== text ? summary : undefined,
         trailing: isRunning ? chatI18n('AILY_CHAT.PROCESS_STATUS_RUNNING') : (typeof exitCode === 'number' ? `${chatI18n('AILY_CHAT.PROCESS_LABEL_EXIT_CODE')} ${exitCode}` : (phase ? formatNarrativePhase(phase) : undefined)),
-        tone: isRunning ? 'info' : (typeof exitCode === 'number' && exitCode !== 0 ? 'error' : toneFromNarrativePhase(phase)),
+        tone: terminalState === 'running' ? 'info' : (terminalState === 'failed' ? 'error' : (terminalState === 'cancelled' ? 'warn' : toneFromNarrativePhase(phase))),
         outputKind: 'terminal-command',
       }];
     }
@@ -2340,12 +2343,13 @@ function buildTerminalOutputRowsFromContent(input: {
 
     if (part.type === 'terminal_stderr') {
       const exitCode = typeof part['exitCode'] === 'number' ? part['exitCode'] : undefined;
+      const status = typeof part['status'] === 'string' ? part['status'] : undefined;
       return [{
         id: `${recordId}:output:stderr`,
         title: chatI18n('AILY_CHAT.PROCESS_OUTPUT_STDERR'),
         subtitle: baseSubtitle.join(' · ') || undefined,
         note: text,
-        tone: typeof exitCode === 'number' && exitCode !== 0 ? 'error' : 'warn',
+        tone: isTerminalFailureState({ exitCode, status }) ? 'error' : 'warn',
         outputKind: 'terminal-stream',
         outputChannel: 'stderr',
       }];
@@ -2386,13 +2390,14 @@ function buildTerminalOutputRows(input: {
     terminal.cwd || '',
   ].filter(Boolean).join(' · ');
   const stderr = normalizeTerminalStream(terminal.stderr);
-  const commandTone: StateTone = terminal.isRunning
+  const terminalState = resolveTerminalLifecycleState(terminal);
+  const commandTone: StateTone = terminalState === 'running'
     ? 'info'
-    : (typeof terminal.exitCode === 'number' && terminal.exitCode !== 0)
-        ? 'error'
-        : stderr
-            ? 'warn'
-            : toneFromNarrativePhase(phase);
+    : terminalState === 'failed'
+      ? 'error'
+      : stderr || terminalState === 'cancelled'
+        ? 'warn'
+        : toneFromNarrativePhase(phase);
 
   rows.push({
     id: `${recordId}:output:command`,
@@ -2424,7 +2429,7 @@ function buildTerminalOutputRows(input: {
       title: chatI18n('AILY_CHAT.PROCESS_OUTPUT_STDERR'),
       subtitle: baseSubtitle.join(' · ') || undefined,
       note: stderr,
-      tone: typeof terminal.exitCode === 'number' && terminal.exitCode !== 0 ? 'error' : 'warn',
+      tone: isTerminalFailureState(terminal) ? 'error' : 'warn',
       outputKind: 'terminal-stream',
       outputChannel: 'stderr',
     });

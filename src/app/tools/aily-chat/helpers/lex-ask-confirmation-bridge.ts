@@ -7,6 +7,7 @@ import {
 
 /** Narrow context: only needs lexStream for presenting/resolving confirmations */
 type LexAskConfirmationContext = Pick<IChatCoordination, 'lexStream'>
+  & Pick<IChatCoordination, 'handleToolApproval'>
   & Pick<ISessionAccess, 'sessionId'>
   & Pick<IChatServiceAccess, 'runtimeInteractionHost'>
   & {
@@ -74,19 +75,8 @@ export class LexAskConfirmationBridge {
           approveCombination: request.approveCombination,
           args: request.toolInput,
         });
-
-        this.presentToolApprovalInTranscript(normalizedRequest);
-
-        this.resolveAskConfirmation = resolve;
-
-        void this.ctx.runtimeInteractionHost.presentToolApproval(
-          this.resolveInteractionSessionResource(),
-          normalizedRequest,
-        ).then((result) => {
-          this.resolveToolApprovalInTranscript(request.toolCallId!, !!result.approved, result.scope);
-          const resolveRef = this.resolveAskConfirmation;
-          this.resolveAskConfirmation = null;
-          resolveRef?.(!!result.approved);
+        void this.ctx.handleToolApproval(normalizedRequest).then((result) => {
+          resolve(!!result.approved);
         });
         return;
       }
@@ -148,25 +138,5 @@ export class LexAskConfirmationBridge {
         resolveRef?.(!!result.approved);
       });
     });
-  }
-
-  private presentToolApprovalInTranscript(request: ReturnType<typeof normalizeToolApprovalRequest>): void {
-    try {
-      this.ctx.lexStream.ui.presentToolCallApproval(request);
-    } catch (err) {
-      console.warn('[AilyChat][Approval] transcript projection failed; runtime host approval remains active.', err);
-    }
-  }
-
-  private resolveToolApprovalInTranscript(
-    toolCallId: string,
-    approved: boolean,
-    scope: ToolApprovalPresentation['primaryScope'] | undefined,
-  ): void {
-    try {
-      this.ctx.lexStream.ui.resolveToolCallApproval(toolCallId, approved, scope);
-    } catch (err) {
-      console.warn('[AilyChat][Approval] transcript resolution failed; runtime host approval was resolved.', err);
-    }
   }
 }

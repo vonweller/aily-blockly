@@ -270,15 +270,21 @@ export class ChatRuntimeInteractionHostService implements ChatRuntimeOwnerIntera
   ): Promise<RuntimeCommandSessionActionResult> {
     const remoteResolver = this.remoteResolvers.get(this.normalizeSessionId(sessionId));
     if (remoteResolver) {
-      const snapshot = await remoteResolver({
-        sessionId,
-        kind: 'commandSession.action',
-        payload: { request },
-      });
-      const result = (snapshot as unknown as { commandSessionActionResult?: RuntimeCommandSessionActionResult } | null)
-        ?.commandSessionActionResult;
-      if (result) {
-        return result;
+      try {
+        const snapshot = await remoteResolver({
+          sessionId,
+          kind: 'commandSession.action',
+          payload: { request },
+        });
+        const result = (snapshot as unknown as { commandSessionActionResult?: RuntimeCommandSessionActionResult } | null)
+          ?.commandSessionActionResult;
+        if (result) {
+          return result;
+        }
+      } catch (error) {
+        if (!this.isStaleCommandSessionActionError(error)) {
+          throw error;
+        }
       }
     }
 
@@ -958,5 +964,11 @@ export class ChatRuntimeInteractionHostService implements ChatRuntimeOwnerIntera
       throw new Error('[AilyChat][InteractionHost] Missing session id.');
     }
     return normalizedSessionId;
+  }
+
+  private isStaleCommandSessionActionError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error ?? '');
+    return message.includes('Stale commandSession.action request')
+      || message.includes('no pending command session');
   }
 }

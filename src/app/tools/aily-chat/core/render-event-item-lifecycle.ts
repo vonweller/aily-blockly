@@ -2,6 +2,7 @@ import type { RenderEvent } from 'aily-lex/browser';
 import { appendMarkdownContent, getMarkdownContentLength, storeMarkdownContent } from './markdown-content-store';
 import { appendThinkContent, getThinkContentLength, storeThinkContent } from './think-content-store';
 import { parseTerminalPayload, type ParsedTerminalPayload } from './terminal-payload';
+import { resolveTerminalLifecycleState } from './terminal-status';
 import { extractRawToolResultPayloadText } from './tool-result-content';
 import { ProposedPlanParser, type ProposedPlanSegment } from './proposed-plan-parser';
 import type { QuestionItem, ToolCallPart } from './chat-parts';
@@ -643,11 +644,14 @@ export class RenderEventItemLifecycleNormalizer {
       this.deltaFor(itemId, 'terminal', timestamp, 'update', event.type, summarizeTerminalPayload(terminal), terminalPayload(event, terminal)),
     ];
     if (!terminal.isRunning) {
+      const terminalState = resolveTerminalLifecycleState(terminal);
       output.push(this.completeItem(
         itemId,
         'terminal',
         timestamp,
-        event.state === 'error' || (typeof terminal.exitCode === 'number' && terminal.exitCode !== 0) ? 'failed' : 'completed',
+        terminalState === 'cancelled'
+          ? 'cancelled'
+          : (event.state === 'error' || terminalState === 'failed' ? 'failed' : 'completed'),
         event.type,
       ));
     }

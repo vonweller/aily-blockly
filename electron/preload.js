@@ -414,6 +414,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
     release: (toolId) => ipcRenderer.invoke("child-tool-session-release", toolId),
     restart: (toolId) => ipcRenderer.invoke("child-tool-session-restart", toolId),
     unregister: (payload) => ipcRenderer.invoke("child-tool-session-unregister", payload),
+    list: () => ipcRenderer.invoke("child-tool-session-list"),
+    stop: (toolId) => ipcRenderer.invoke("child-tool-session-stop", toolId),
+    onStateChanged: (callback) => {
+      const listener = (_event, payload) => callback(payload);
+      ipcRenderer.on("child-tool-session-state-changed", listener);
+      return () => ipcRenderer.removeListener("child-tool-session-state-changed", listener);
+    },
   },
   codeViewer: {
     publishState: (state) => ipcRenderer.send("blockly-code-viewer-state-update", state),
