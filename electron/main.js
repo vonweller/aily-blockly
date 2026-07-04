@@ -790,6 +790,7 @@ function buildZipUrls(conf = {}) {
   return JSON.stringify(getZipUrlState(conf).urls);
 }
 let isRendererReady = false;
+let pendingAilyBuilderFooterState = null;
 
 function isAilyBuilderInstallComplete(targetPath) {
   if (!targetPath) {
@@ -1109,13 +1110,108 @@ function getNpmExecutablePath(childPath) {
 let ailyBuilderInstallPromise = null;
 let ailyBuilderInstallKey = null;
 
-function installAilyBuilderFromNpm(childPath, version = AILY_BUILDER_DEFAULT_VERSION) {
+function sendAilyBuilderFooterState(state) {
+  if (!isRendererReady || !mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) {
+    pendingAilyBuilderFooterState = state;
+    return;
+  }
+  mainWindow.webContents.send("state-update", state);
+  pendingAilyBuilderFooterState = null;
+}
+
+function getAilyBuilderDisplayName(channel = getAilyBuilderChannel()) {
+  return normalizeAilyBuilderChannel(channel) === "next" ? "aily-builder-next" : "aily-builder";
+}
+
+function getAilyBuilderFooterLang() {
+  const locale = String(process.env.AILY_SYSTEM_LANG || app.getLocale() || "").toLowerCase();
+  return locale.startsWith("zh") ? "zh" : "en";
+}
+
+function getAilyBuilderDisplayLabel(options = {}) {
+  const name = options.name || getAilyBuilderDisplayName(options.channel);
+  return options.version ? `${name}@${options.version}` : name;
+}
+
+function formatAilyBuilderFooterText(phase, options = {}) {
+  const label = getAilyBuilderDisplayLabel(options);
+  const lang = getAilyBuilderFooterLang();
+  const messages = {
+    zh: {
+      checking: `正在检查 ${label} 更新...`,
+      available: `发现 ${label}，准备后台更新...`,
+      installing: `正在后台安装 ${label}...`,
+      updated: `${label} 更新完成`,
+      installed: `${label} 安装完成`,
+      failed: `${label} 更新失败，继续使用当前版本`,
+      default: `${label} 状态更新中...`,
+    },
+    en: {
+      checking: `Checking ${label} updates...`,
+      available: `${label} update found, preparing background update...`,
+      installing: `Installing ${label} in the background...`,
+      updated: `${label} update complete`,
+      installed: `${label} installation complete`,
+      failed: `${label} update failed, continuing with the current version`,
+      default: `${label} status updating...`,
+    },
+  };
+  const langMessages = messages[lang] || messages.en;
+  switch (phase) {
+    case "checking":
+      return langMessages.checking;
+    case "available":
+      return langMessages.available;
+    case "installing":
+      return langMessages.installing;
+    case "updated":
+      return langMessages.updated;
+    case "installed":
+      return langMessages.installed;
+    case "failed":
+      return langMessages.failed;
+    default:
+      return langMessages.default;
+  }
+}
+
+function formatAilyBuilderNextConfigMissingText() {
+  return getAilyBuilderFooterLang() === "zh"
+    ? "未获取到 aily-builder-next 更新配置"
+    : "aily-builder-next update config was not found";
+}
+
+function notifyAilyBuilderFooter(phase, options = {}) {
+  const stateByPhase = {
+    failed: "warn",
+    updated: "done",
+    installed: "done",
+  };
+  sendAilyBuilderFooterState({
+    state: stateByPhase[phase] || "doing",
+    text: formatAilyBuilderFooterText(phase, options),
+    timeout: options.timeout ?? (phase === "updated" || phase === "installed" ? 5000 : 300000),
+  });
+}
+
+function createAilyBuilderInstallOptions(options = {}) {
+  return {
+    notifyFooter: options.notifyFooter !== false,
+    reason: options.reason || "update",
+  };
+}
+
+function installAilyBuilderFromNpm(childPath, version = AILY_BUILDER_DEFAULT_VERSION, options = {}) {
+  const installOptions = createAilyBuilderInstallOptions(options);
   const targetChannel = getAilyBuilderChannel();
   const targetVersion = normalizeAilyBuilderVersion(version);
   const targetInstallKey = `${targetChannel}:${targetVersion}`;
   const targetPrefix = getAilyBuilderVersionPrefix(targetVersion);
   const targetPath = getNpmAilyBuilderPath(targetVersion);
   if (!targetPath) {
+    if (installOptions.notifyFooter) {
+      notifyAilyBuilderFooter("failed", { channel: targetChannel, version: targetVersion, timeout: 10000 });
+    }
     return Promise.resolve({
       ok: false,
       path: "",
@@ -1124,6 +1220,13 @@ function installAilyBuilderFromNpm(childPath, version = AILY_BUILDER_DEFAULT_VER
   }
 
   if (targetChannel === "next" && !ailyBuilderUpdateConfigLoaded) {
+    if (installOptions.notifyFooter) {
+      sendAilyBuilderFooterState({
+        state: "warn",
+        text: formatAilyBuilderNextConfigMissingText(),
+        timeout: 10000,
+      });
+    }
     return Promise.resolve({
       ok: false,
       path: targetPath,
@@ -1140,7 +1243,7 @@ function installAilyBuilderFromNpm(childPath, version = AILY_BUILDER_DEFAULT_VER
     if (ailyBuilderInstallKey === targetInstallKey) {
       return ailyBuilderInstallPromise;
     }
-    return ailyBuilderInstallPromise.then(() => installAilyBuilderFromNpm(childPath, targetVersion));
+    return ailyBuilderInstallPromise.then(() => installAilyBuilderFromNpm(childPath, targetVersion, installOptions));
   }
 
   const packageName = getAilyBuilderPackageName();
@@ -1153,6 +1256,9 @@ function installAilyBuilderFromNpm(childPath, version = AILY_BUILDER_DEFAULT_VER
   }
 
   ailyBuilderInstallKey = targetInstallKey;
+  if (installOptions.notifyFooter) {
+    notifyAilyBuilderFooter("installing", { channel: targetChannel, version: targetVersion });
+  }
   ailyBuilderInstallPromise = new Promise((resolve) => {
     const child = require("child_process").spawn(npmPath, npmArgs, {
       env: process.env,
@@ -1169,10 +1275,16 @@ function installAilyBuilderFromNpm(childPath, version = AILY_BUILDER_DEFAULT_VER
       stderr += chunk.toString();
     });
     child.on("error", (error) => {
+      if (installOptions.notifyFooter) {
+        notifyAilyBuilderFooter("failed", { channel: targetChannel, version: targetVersion, timeout: 10000 });
+      }
       resolve({ ok: false, path: targetPath, error: error.message });
     });
     child.on("close", (code) => {
       if (code !== 0) {
+        if (installOptions.notifyFooter) {
+          notifyAilyBuilderFooter("failed", { channel: targetChannel, version: targetVersion, timeout: 10000 });
+        }
         resolve({
           ok: false,
           path: targetPath,
@@ -1184,6 +1296,16 @@ function installAilyBuilderFromNpm(childPath, version = AILY_BUILDER_DEFAULT_VER
       const ok = isAilyBuilderInstallComplete(targetPath);
       if (ok) {
         writeCurrentAilyBuilderInfo(targetVersion);
+      }
+      if (installOptions.notifyFooter) {
+        const successPhase = installOptions.reason === "channel-switch" || installOptions.reason === "install"
+          ? "installed"
+          : "updated";
+        notifyAilyBuilderFooter(ok ? successPhase : "failed", {
+          channel: targetChannel,
+          version: targetVersion,
+          timeout: ok ? 5000 : 10000,
+        });
       }
       resolve({
         ok,
@@ -1201,7 +1323,8 @@ function installAilyBuilderFromNpm(childPath, version = AILY_BUILDER_DEFAULT_VER
   return ailyBuilderInstallPromise;
 }
 
-function ensureAilyBuilderFromNpm(childPath) {
+function ensureAilyBuilderFromNpm(childPath, options = {}) {
+  const installOptions = createAilyBuilderInstallOptions(options);
   const targetVersion = getAilyBuilderTargetVersion();
   const currentInfo = readCurrentAilyBuilderInfo();
   const currentVersion = currentInfo?.version || null;
@@ -1214,7 +1337,7 @@ function ensureAilyBuilderFromNpm(childPath) {
     applyAilyBuilderCommandEnv(childPath);
     if (currentIsOlder) {
       console.warn(`aily-builder 可用版本 ${currentVersion} 低于目标版本 ${targetVersion}，后台更新`);
-      installAilyBuilderFromNpm(childPath, targetVersion).then((installResult) => {
+      installAilyBuilderFromNpm(childPath, targetVersion, installOptions).then((installResult) => {
         if (installResult.ok) {
           applyAilyBuilderCommandEnv(childPath);
           console.log(`aily-builder npm 后台更新完成: ${installResult.path}`);
@@ -1231,7 +1354,10 @@ function ensureAilyBuilderFromNpm(childPath) {
   applyAilyBuilderCommandEnv(childPath);
 
   console.warn(`未找到可用的 aily-builder，后台从 npm 安装: ${packageName}@${targetVersion}`);
-  installAilyBuilderFromNpm(childPath, targetVersion).then((installResult) => {
+  installAilyBuilderFromNpm(childPath, targetVersion, {
+    ...installOptions,
+    reason: installOptions.reason === "update" ? "install" : installOptions.reason,
+  }).then((installResult) => {
     if (installResult.ok) {
       applyAilyBuilderCommandEnv(childPath);
       console.log(`aily-builder npm 后台安装完成: ${installResult.path}`);
@@ -1448,6 +1574,14 @@ async function checkPackageUpdatesFromManifest() {
       applyAilyBuilderUpdateConfig(entry);
       const status = getAilyBuilderStatus(childPath);
       result.ailyBuilder = status;
+      if (status.updateAvailable) {
+        notifyAilyBuilderFooter("available", {
+          channel: status.channel,
+          version: status.targetVersion,
+          name: status.key,
+          timeout: 10000,
+        });
+      }
       result.packages.push({
         key: status.key,
         platform: getPackageUpdatePlatformKey(),
@@ -1472,6 +1606,12 @@ async function checkPackageUpdatesFromManifest() {
 ipcMain.on('renderer-ready', () => {
   console.log('渲染进程已就绪');
   isRendererReady = true;
+
+  if (pendingAilyBuilderFooterState) {
+    const state = pendingAilyBuilderFooterState;
+    pendingAilyBuilderFooterState = null;
+    sendAilyBuilderFooterState(state);
+  }
 
   // 检查是否有待处理的OAuth回调
   if (global.pendingOAuthCallback) {
@@ -3173,7 +3313,7 @@ ipcMain.handle("aily-builder-channel-set", async (event, { channel, install } = 
   setAilyBuilderChannel(channel);
   await checkPackageUpdatesFromManifest();
   if (install) {
-    ensureAilyBuilderFromNpm(childPath);
+    ensureAilyBuilderFromNpm(childPath, { reason: "channel-switch" });
   }
   applyAilyBuilderCommandEnv(childPath);
   return getAilyBuilderStatus(childPath);
@@ -3212,7 +3352,7 @@ ipcMain.handle("aily-builder-update", async (event, { version } = {}) => {
     throw new Error("AILY_CHILD_PATH 未设置");
   }
 
-  const result = await installAilyBuilderFromNpm(childPath, version || getAilyBuilderTargetVersion());
+  const result = await installAilyBuilderFromNpm(childPath, version || getAilyBuilderTargetVersion(), { reason: "manual" });
   if (!result.ok) {
     throw new Error(result.error || "aily-builder npm 安装失败");
   }
