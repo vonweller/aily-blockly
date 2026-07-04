@@ -1,4 +1,4 @@
-import type { RenderEvent, TurnResponseTurn } from 'aily-lex/browser';
+import type { RenderEvent, TurnResponsePart, TurnResponseStatus, TurnResponseTurn } from 'aily-lex/browser';
 
 import type {
   ChatAgentRuntimeMode,
@@ -14,6 +14,7 @@ export type ChatRuntimeHostEventKind =
   | 'session-state'
   | 'transcript'
   | 'turn-transcript'
+  | 'part-transcript'
   | 'runtime-status'
   | 'interaction'
   | 'view-request'
@@ -112,6 +113,18 @@ export interface ChatRuntimeHostRerunReadiness {
   readonly activeRequestInProgress: boolean;
   readonly staleGateCleared: boolean;
   readonly state: ChatRuntimeHostSessionState | null;
+}
+
+export interface ChatRuntimeHostPrewarmRequest {
+  readonly sessionId: ChatRuntimeHostSessionId;
+  readonly providerOptions?: HostSessionProviderOptions | null;
+  readonly agentRuntimeMode?: ChatAgentRuntimeMode | null;
+  readonly currentModel?: ChatRuntimeHostModelSelectionSnapshot | null;
+}
+
+export interface ChatRuntimeHostPrewarmResult {
+  readonly sessionId: ChatRuntimeHostSessionId;
+  readonly ensured: boolean;
 }
 
 export interface ChatRuntimeHostInteractionSnapshot {
@@ -223,6 +236,14 @@ export interface ChatRuntimeHostTurnTranscriptEvent extends ChatRuntimeHostEvent
   readonly turn: TurnResponseTurn;
 }
 
+export interface ChatRuntimeHostPartTranscriptEvent extends ChatRuntimeHostEventBase {
+  readonly kind: 'part-transcript';
+  readonly turnId: string;
+  readonly parts: readonly TurnResponsePart[];
+  readonly turn?: TurnResponseTurn;
+  readonly status?: TurnResponseStatus;
+}
+
 export interface ChatRuntimeHostSessionStateEvent extends ChatRuntimeHostEventBase {
   readonly kind: 'session-state' | 'runtime-status';
   readonly state: ChatRuntimeHostSessionState;
@@ -246,7 +267,13 @@ export type ChatRuntimeHostResourceRequestKind =
   | 'file-write'
   | 'file-edit'
   | 'workspace-mutation'
+  | 'project-info'
+  | 'project-build'
+  | 'project-lint'
+  | 'blockly-workspace'
+  | 'connection-graph'
   | 'edit-tracking'
+  | 'session-title'
   | 'save-current-session'
   | 'history-persistence';
 
@@ -402,13 +429,67 @@ export interface ChatRuntimeHostSessionPersistencePayload {
   readonly liveHostSessionRecord?: unknown;
 }
 
+export interface ChatRuntimeHostProjectInfoPayload {
+  readonly adapter: 'project';
+  readonly action:
+    | 'getProjectInfo'
+    | 'getPackageJson'
+    | 'getBoardJson'
+    | 'getBoardModule'
+    | 'getBoardPackageJson';
+}
+
+export interface ChatRuntimeHostProjectBuildPayload {
+  readonly adapter: 'builder';
+  readonly action: 'build' | 'upload';
+  readonly projectPath: string;
+  readonly port?: string;
+}
+
+export interface ChatRuntimeHostProjectLintPayload {
+  readonly adapter: 'arduinoLint';
+  readonly action: 'checkSyntax';
+  readonly code: string;
+  readonly options?: Readonly<Record<string, unknown>>;
+}
+
+export interface ChatRuntimeHostBlocklyWorkspacePayload {
+  readonly adapter: 'blockly';
+  readonly action:
+    | 'getWorkspaceXml'
+    | 'loadWorkspace'
+    | 'getGeneratedCode'
+    | 'reloadAbiJson'
+    | 'getBlockDefinitions';
+  readonly xml?: string;
+}
+
+export interface ChatRuntimeHostConnectionGraphPayload {
+  readonly adapter: 'connectionGraph';
+  readonly action:
+    | 'generateConnectionGraph'
+    | 'getPinmapSummary'
+    | 'validateConnectionGraph'
+    | 'getSensorPinmapCatalog'
+    | 'generatePinmap'
+    | 'savePinmap'
+    | 'getCurrentSchematic'
+    | 'applySchematic';
+  readonly args?: unknown;
+}
+
 export type ChatRuntimeHostResourceOperationPayload =
   | ChatRuntimeHostAbsSessionStartExportPayload
   | ChatRuntimeHostEditCheckpointCommitPayload
   | ChatRuntimeHostEditCheckpointSettlePayload
   | ChatRuntimeHostEditTrackingPayload
   | ChatRuntimeHostSyncAbsPayload
-  | ChatRuntimeHostSessionPersistencePayload;
+  | ChatRuntimeHostSessionPersistencePayload
+  | ChatRuntimeHostProjectInfoPayload
+  | ChatRuntimeHostProjectBuildPayload
+  | ChatRuntimeHostProjectLintPayload
+  | ChatRuntimeHostBlocklyWorkspacePayload
+  | ChatRuntimeHostConnectionGraphPayload;
 
 export interface ChatRuntimeHostResourceOperationRequest {
   readonly id?: string;
@@ -440,6 +521,7 @@ export interface ChatRuntimeHostErrorEvent extends ChatRuntimeHostEventBase {
 export type ChatRuntimeHostEvent =
   | ChatRuntimeHostTranscriptEvent
   | ChatRuntimeHostTurnTranscriptEvent
+  | ChatRuntimeHostPartTranscriptEvent
   | ChatRuntimeHostSessionStateEvent
   | ChatRuntimeHostInteractionEvent
   | ChatRuntimeHostViewRequestEvent
@@ -460,10 +542,13 @@ export interface ChatRuntimeHostEventSubscription {
 }
 
 export type ChatRuntimeOwnerExecutorCommandMethod =
+  | 'prewarmRuntime'
   | 'startTurn'
   | 'stopTurn'
   | 'disposeSessionResources'
   | 'resolveInteraction';
+
+export interface ChatRuntimeOwnerExecutorPrewarmRuntimeCommand extends ChatRuntimeHostPrewarmRequest {}
 
 export interface ChatRuntimeOwnerExecutorStartTurnExecutionContext {
   readonly selectedMode?: ChatSelectedMode | null;
@@ -498,6 +583,10 @@ export interface ChatRuntimeOwnerExecutorResolveInteractionCommand {
 }
 
 export type ChatRuntimeOwnerExecutorCommand =
+  | {
+      readonly method: 'prewarmRuntime';
+      readonly payload: ChatRuntimeOwnerExecutorPrewarmRuntimeCommand;
+    }
   | {
       readonly method: 'startTurn';
       readonly payload: ChatRuntimeOwnerExecutorStartTurnCommand;
@@ -566,6 +655,7 @@ export type ChatRuntimeOwnerExecutorEvent =
   | ChatRuntimeOwnerExecutorTurnCompletedEvent;
 
 export interface ChatRuntimeOwnerExecutor {
+  prewarmRuntime(command: ChatRuntimeOwnerExecutorPrewarmRuntimeCommand): Promise<ChatRuntimeHostPrewarmResult>;
   startTurn(command: ChatRuntimeOwnerExecutorStartTurnCommand): Promise<ChatRuntimeHostSessionState>;
   stopTurn(command: ChatRuntimeOwnerExecutorStopTurnCommand): Promise<void>;
   disposeSessionResources(command: ChatRuntimeOwnerExecutorDisposeSessionResourcesCommand): Promise<void>;
@@ -584,6 +674,7 @@ export interface ChatRuntimeHost {
     options: ChatRuntimeHostAttachViewOptions,
   ): Promise<ChatRuntimeHostSessionState>;
   detachView(viewId: ChatRuntimeHostViewId): Promise<void>;
+  prewarmRuntime(request: ChatRuntimeHostPrewarmRequest): Promise<ChatRuntimeHostPrewarmResult>;
   submitTurn(request: ChatRuntimeHostSubmitRequest): Promise<ChatRuntimeHostSessionState>;
   readSubmitReadiness(sessionId: ChatRuntimeHostSessionId): Promise<ChatRuntimeHostSubmitReadiness>;
   ensureSessionCanRerun(sessionId: ChatRuntimeHostSessionId): Promise<ChatRuntimeHostRerunReadiness>;

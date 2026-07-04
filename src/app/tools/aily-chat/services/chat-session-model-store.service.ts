@@ -24,7 +24,7 @@ import {
   normalizeHostSessionProviderOptions,
   type HostSessionProviderOptions,
 } from '../helpers/host-session-input-state';
-import { turnResponsePartToChatParts } from '../core/turn-response-part-mapper';
+import { turnResponsePartsToDisplayChatParts } from '../core/turn-response-part-mapper';
 import {
   ChatSessionRuntimeStoreService,
   type ChatSessionRuntimeChangeOptions,
@@ -67,6 +67,10 @@ export interface ChatSessionModelMetadataPatch {
 export interface ChatSessionTurnOwnerPolicyOptions {
   readonly allowForkedTurns?: boolean;
   readonly source?: string;
+}
+
+interface ChatSessionTurnResponseMutationOptions {
+  readonly syncPartStore?: boolean;
 }
 
 export type ChatSessionModelStoreChangeKind = 'created' | 'updated' | 'disposed';
@@ -189,6 +193,15 @@ export class ChatSessionModel {
     return cloneTurnResponses(this.turnResponsesValue);
   }
 
+  /**
+   * Hot-path read-only view for host projection. This intentionally preserves
+   * array identity so projection caches can behave like VS Code's service-owned
+   * response model instead of rebuilding from cloned transcripts on every read.
+   */
+  peekTurnResponsesForProjection(): readonly TurnResponseTurn[] {
+    return this.turnResponsesValue;
+  }
+
   replaceTurnResponses(turnResponses: readonly TurnResponseTurn[] | null | undefined): readonly TurnResponseTurn[] {
     const previousTurnIds = this.turnResponsesValue.map(turn => turn.turnId);
     const existingTurnsById = new Map(this.turnResponsesValue.map(turn => [turn.turnId, turn]));
@@ -205,7 +218,10 @@ export class ChatSessionModel {
     return this.getTurnResponses();
   }
 
-  appendOrReplaceTurnResponse(turnResponse: TurnResponseTurn): readonly TurnResponseTurn[] {
+  appendOrReplaceTurnResponse(
+    turnResponse: TurnResponseTurn,
+    options?: ChatSessionTurnResponseMutationOptions,
+  ): readonly TurnResponseTurn[] {
     const existingIndex = this.turnResponsesValue.findIndex(turn => turn.turnId === turnResponse.turnId);
     const requestId = readTurnResponseRequestId(turnResponse);
     const existingRequestIndex = existingIndex < 0 && requestId
@@ -222,13 +238,33 @@ export class ChatSessionModel {
       const clearTurnIds = previousTurnId && previousTurnId !== clonedTurnResponse.turnId
         ? [previousTurnId]
         : [];
-      this.syncCanonicalResponsePartStore([clonedTurnResponse], clearTurnIds);
+      if (options?.syncPartStore !== false) {
+        this.syncCanonicalResponsePartStore([clonedTurnResponse], clearTurnIds);
+      }
     } else {
       this.turnResponsesValue.push(clonedTurnResponse);
-      this.syncCanonicalResponsePartStore([clonedTurnResponse]);
+      if (options?.syncPartStore !== false) {
+        this.syncCanonicalResponsePartStore([clonedTurnResponse]);
+      }
     }
     this.syncCheckpointTimelineWithCanonicalTurnResponses();
     return this.getTurnResponses();
+  }
+
+  upsertTurnResponseParts(
+    turnId: string | null | undefined,
+    parts: TurnResponseTurn['response']['parts'] | null | undefined,
+  ): boolean {
+    const normalizedTurnId = normalizeChatSessionResource(turnId);
+    if (!normalizedTurnId || !Array.isArray(parts) || parts.length === 0) {
+      return false;
+    }
+
+    let changed = false;
+    for (const part of turnResponsePartsToChatParts(parts)) {
+      changed = this.partStore.upsertPartForResponse(normalizedTurnId, part) || changed;
+    }
+    return changed;
   }
 
   removeTurnResponsesAfter(turnId: string | null | undefined): readonly TurnResponseTurn[] {
@@ -464,9 +500,7 @@ function cloneTurnResponse(turnResponse: TurnResponseTurn): TurnResponseTurn {
 function turnResponsePartsToChatParts(
   parts: TurnResponseTurn['response']['parts'] | null | undefined,
 ) {
-  return Array.isArray(parts)
-    ? parts.flatMap(part => turnResponsePartToChatParts(part))
-    : [];
+  return turnResponsePartsToDisplayChatParts(parts);
 }
 
 function mergeTurnResponseWithExistingRequest(
@@ -770,6 +804,50 @@ export class ChatSessionModelStoreService {
     }
 
     const nextTurnResponses = model.appendOrReplaceTurnResponse(turnResponse);
+    this.changedSubject.next({ sessionResource: model.sessionResource, kind: 'updated' });
+    return nextTurnResponses;
+  }
+
+  appendOrReplaceTurnResponseDelta(
+    sessionResource: string | null | undefined,
+    turnResponse: TurnResponseTurn,
+    parts: TurnResponseTurn['response']['parts'] | null | undefined,
+    ownerPolicy?: ChatSessionTurnOwnerPolicyOptions,
+  ): readonly TurnResponseTurn[] | null {
+    const model = this.get(sessionResource);
+    if (!model) {
+      return null;
+    }
+
+    const ownerDiagnostics = buildSessionTurnOwnerDiagnostics(model.sessionResource, [turnResponse]);
+    if (ownerDiagnostics.mismatchCount > 0) {
+      const blocked = hasBlockingIncomingOwnerMismatch(
+        model.sessionResource,
+        [turnResponse],
+        model.turnResponses,
+        ownerPolicy,
+      );
+      console.warn(blocked
+        ? '[ChatSessionModelStore][blocked-owner-mismatch]'
+        : '[ChatSessionModelStore][owner-mismatch]', {
+        phase: 'appendOrReplaceTurnResponseDelta',
+        sessionResource: model.sessionResource,
+        mismatchCount: ownerDiagnostics.mismatchCount,
+        mismatchedOwners: ownerDiagnostics.mismatchedOwners,
+        mismatchedTurnIds: ownerDiagnostics.mismatchedTurnIds.slice(0, 5),
+        firstTurnId: ownerDiagnostics.firstTurnId,
+        firstRequestPreview: ownerDiagnostics.firstRequestPreview,
+        source: ownerPolicy?.source ?? null,
+      });
+      if (blocked) {
+        return null;
+      }
+    }
+
+    const nextTurnResponses = model.appendOrReplaceTurnResponse(turnResponse, {
+      syncPartStore: false,
+    });
+    model.upsertTurnResponseParts(turnResponse.turnId, parts);
     this.changedSubject.next({ sessionResource: model.sessionResource, kind: 'updated' });
     return nextTurnResponses;
   }

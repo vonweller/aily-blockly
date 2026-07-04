@@ -13,8 +13,10 @@ import {
   createHostSessionProviderOptionsKey,
   type HostSessionProviderOptions,
 } from '../helpers/host-session-input-state';
+import { isAilyCategoryDebugEnabled } from '../core/chat-debug-flags';
 import { createSessionCheckpointTimelineState } from '../helpers/session-checkpoint-timeline-model';
 import { ChatSessionModelStoreService } from './chat-session-model-store.service';
+import { ChatPerformanceTracer } from './chat-perf-tracer';
 import type { RequestCheckpointMetadata } from './edit-checkpoint.service';
 import {
   CHAT_RUNTIME_OWNER_RUNTIME_CONTROLLER,
@@ -30,6 +32,13 @@ import {
   type ChatRuntimeOwnerTurnStartupEditLifecyclePort,
 } from './chat-runtime-owner-ports';
 import { projectRuntimeStateToRuntimeController } from '../helpers/chat-runtime-owner-projection';
+
+function shouldTraceApprovalRuntimeBoundary(): boolean {
+  return isAilyCategoryDebugEnabled('aily.chat.traceApprovalRuntime', [
+    '__AILY_CHAT_TRACE_APPROVAL_RUNTIME__',
+    'AILY_CHAT_TRACE_APPROVAL_RUNTIME',
+  ]);
+}
 
 @Injectable()
 export class ChatRuntimeOwnerSubmittedTurnLifecycleService implements ChatRuntimeOwnerSubmittedTurnLifecyclePort {
@@ -62,12 +71,37 @@ export class ChatRuntimeOwnerSubmittedTurnLifecycleService implements ChatRuntim
 
     const startedAt = Date.now();
     const ensureAgentStartedAt = Date.now();
+    if (shouldTraceApprovalRuntimeBoundary()) {
+      console.info('[AilyChat][ApprovalRuntimeBoundary]', {
+        phase: 'prepare-enter',
+        sessionId: targetSessionId,
+        requestTextLength: typeof request.requestText === 'string' ? request.requestText.length : 0,
+        permissionMode: request.providerOptions?.permissionMode ?? null,
+        permissionProfile: request.providerOptions?.permissionProfile ?? null,
+        approvalsReviewer: request.providerOptions?.approvalsReviewer ?? null,
+        approvalPolicy: request.providerOptions?.approvalPolicy ?? null,
+        agentRuntimeMode: request.agentRuntimeMode ?? null,
+        activeResponseHandle: request.activeResponseHandle ?? null,
+      });
+    }
     await this.ensureRuntimeAgentForSession(targetSessionId, owner, request);
     const ensureAgentMs = Date.now() - ensureAgentStartedAt;
+    ChatPerformanceTracer.recordDuration(
+      'submitted_turn_ensure_agent',
+      ensureAgentMs,
+      `session=${targetSessionId}`,
+      { slowThresholdMs: 24, counterPrefix: 'submitted_turn.ensure_agent' },
+    );
 
     const hydrateStartedAt = Date.now();
     const hydratedTurnCount = await this.syncExistingTurnResponses(targetSessionId, owner, request.activeResponseHandle);
     const hydrateMs = Date.now() - hydrateStartedAt;
+    ChatPerformanceTracer.recordDuration(
+      'submitted_turn_hydrate_history',
+      hydrateMs,
+      `session=${targetSessionId},turns=${hydratedTurnCount}`,
+      { slowThresholdMs: 24, counterPrefix: 'submitted_turn.hydrate_history' },
+    );
 
     const displayText = request.displayText ?? request.requestText;
     const titleDispatchStartedAt = Date.now();
@@ -77,13 +111,27 @@ export class ChatRuntimeOwnerSubmittedTurnLifecycleService implements ChatRuntim
       displayText,
       owner,
     });
+    const titleDispatchMs = Date.now() - titleDispatchStartedAt;
+    ChatPerformanceTracer.recordDuration(
+      'submitted_turn_title_dispatch',
+      titleDispatchMs,
+      `session=${targetSessionId}`,
+      { slowThresholdMs: 16, counterPrefix: 'submitted_turn.title_dispatch' },
+    );
+    const elapsedMs = Date.now() - startedAt;
+    ChatPerformanceTracer.recordDuration(
+      'submitted_turn_prepare_total',
+      elapsedMs,
+      `session=${targetSessionId},ensureAgentMs=${ensureAgentMs},hydrateMs=${hydrateMs},titleDispatchMs=${titleDispatchMs}`,
+      { slowThresholdMs: 32, counterPrefix: 'submitted_turn.prepare_total' },
+    );
     this.logSubmittedTurnStartupLatency({
       sessionId: targetSessionId,
       hydratedTurnCount,
       hydrateMs,
       ensureAgentMs,
-      titleDispatchMs: Date.now() - titleDispatchStartedAt,
-      elapsedMs: Date.now() - startedAt,
+      titleDispatchMs,
+      elapsedMs,
     });
   }
 
@@ -249,11 +297,38 @@ export class ChatRuntimeOwnerSubmittedTurnLifecycleService implements ChatRuntim
       agentRuntimeMode,
       this.ownerSessionContext.currentModel,
     );
+    const hadAgentBeforeEnsure = !!owner.agent.getAgent?.(sessionId) || !!owner.agent.getHandle?.(sessionId);
+    if (shouldTraceApprovalRuntimeBoundary()) {
+      console.info('[AilyChat][ApprovalRuntimeBoundary]', {
+        phase: 'ensure-agent-enter',
+        sessionId,
+        providerOptionsKey,
+        hadAgentBeforeEnsure,
+        permissionMode: providerOptions.permissionMode,
+        permissionProfile: providerOptions.permissionProfile,
+        approvalsReviewer: providerOptions.approvalsReviewer ?? null,
+        approvalPolicy: providerOptions.approvalPolicy ?? null,
+        agentRuntimeMode,
+      });
+    }
     const ensured = await owner.agent.ensureAgent(sessionId, providerOptionsKey);
+    const hasHandleAfterEnsure = !!owner.agent.getHandle?.(sessionId);
+    const hasAgentAfterEnsure = !!owner.agent.getAgent?.(sessionId);
+    if (shouldTraceApprovalRuntimeBoundary()) {
+      console.info('[AilyChat][ApprovalRuntimeBoundary]', {
+        phase: 'ensure-agent-result',
+        sessionId,
+        providerOptionsKey,
+        ensured,
+        hadAgentBeforeEnsure,
+        hasHandleAfterEnsure,
+        hasAgentAfterEnsure,
+      });
+    }
     if (!ensured) {
       throw new Error(`[AilyChat][RuntimeOwnerLifecycle] Failed to initialize Lex agent for session ${sessionId}.`);
     }
-    if (owner.agent.getHandle?.(sessionId) || owner.agent.getAgent?.(sessionId)) {
+    if (hasHandleAfterEnsure || hasAgentAfterEnsure) {
       return;
     }
     throw new Error(`[AilyChat][RuntimeOwnerLifecycle] Lex agent is unavailable after initialization for session ${sessionId}.`);

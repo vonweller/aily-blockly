@@ -11,6 +11,8 @@
 import {
   Component,
   Input,
+  Output,
+  EventEmitter,
   OnChanges,
   SimpleChanges,
   ChangeDetectionStrategy,
@@ -43,6 +45,7 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
           [sessionId]="sessionId"
           [turnResponse]="turnResponse"
           [detailProjectionEnabled]="detailProjectionEnabled"
+          (contentDelta)="contentDelta.emit()"
         />
       } @else {
         <!-- 独立 Part：路由至专用 viewer -->
@@ -69,6 +72,7 @@ export class ChatMessagePartsComponent implements OnChanges {
   @Input() sessionId = '';
   @Input() turnResponse: TurnResponseTurn | null = null;
   @Input() detailProjectionEnabled = true;
+  @Output() contentDelta = new EventEmitter<void>();
 
   renderItems: ChatRenderItem[] = [];
 
@@ -121,29 +125,13 @@ function reuseStableRenderItems(
       return nextItem;
     }
 
-    return previousItem.kind === 'group'
-      && !nextItem.live
-      && previousItem.live === nextItem.live
-      && previousItem.revision === nextItem.revision
-      && samePartReferences(previousItem.parts, nextItem.parts)
-      ? previousItem
-      : nextItem;
-  });
-}
-
-function samePartReferences(
-  previousParts: readonly RenderableChatPart[],
-  nextParts: readonly RenderableChatPart[],
-): boolean {
-  if (previousParts.length !== nextParts.length) {
-    return false;
-  }
-
-  for (let index = 0; index < previousParts.length; index += 1) {
-    if (previousParts[index] !== nextParts[index]) {
-      return false;
+    if (previousItem.kind !== 'group') {
+      return nextItem;
     }
-  }
 
-  return true;
+    previousItem.parts = nextItem.parts;
+    previousItem.revision = nextItem.revision;
+    previousItem.live = nextItem.live;
+    return previousItem;
+  });
 }

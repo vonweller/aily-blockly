@@ -413,6 +413,7 @@ export class ChatMessagePartItemComponent implements OnChanges, OnDestroy {
   private markdownPollTimer: ReturnType<typeof setInterval> | null = null;
   private activeMarkdownContentRef = '';
   private activeMarkdownContentLength = -1;
+  private activeMarkdownPartIdentity = '';
   readonly markdownDisplayContent = signal('');
   planActionBusy = false;
 
@@ -420,7 +421,8 @@ export class ChatMessagePartItemComponent implements OnChanges, OnDestroy {
     if (changes['doing']) {
       this.streamingConfig.set({
         hasNextChunk: this.doing,
-        enableAnimation: this.doing,
+        enableAnimation: false,
+        buffering: this.doing ? 'off' : 'paragraph',
       });
     }
 
@@ -589,68 +591,76 @@ export class ChatMessagePartItemComponent implements OnChanges, OnDestroy {
   }
 
   private syncMarkdownDisplayContent(): void {
+    const surface = ChatPerformanceTracer.enterSurface(
+      'markdown_render',
+      `doing=${this.doing},part=${this.part?.type ?? 'unknown'}`,
+    );
     const startedAt = performance.now();
-    const markdown = this.part?.type === 'markdown' ? this.part as MarkdownPart : null;
-    const liveStreamingRef = !!markdown?.contentRef && this.doing;
-    let rawContent = '';
-    let nextLength = 0;
+    try {
+      const markdown = this.part?.type === 'markdown' ? this.part as MarkdownPart : null;
+      const liveStreamingRef = !!markdown?.contentRef && this.doing;
+      const markdownIdentity = this.getMarkdownPartIdentity(markdown);
+      let rawContent = '';
+      let nextLength = 0;
 
-    if (markdown) {
-      if (markdown.contentRef) {
-        if (liveStreamingRef && this.activeMarkdownContentRef === markdown.contentRef && this.markdownDisplayContent().length > 0) {
-          this.activeMarkdownContentLength = typeof markdown.contentLength === 'number'
-            ? markdown.contentLength
-            : this.activeMarkdownContentLength;
-          return;
-        }
-
-        if (liveStreamingRef) {
-          rawContent = readStoredMarkdownContentWindow(
-            markdown.contentRef,
-            LIVE_MARKDOWN_RENDER_WINDOW_CHARS,
-            LIVE_MARKDOWN_OMITTED_MARKER,
-          );
+      if (markdown) {
+        if (markdown.contentRef) {
+          if (liveStreamingRef) {
+            rawContent = readStoredMarkdownContentWindow(
+              markdown.contentRef,
+              LIVE_MARKDOWN_RENDER_WINDOW_CHARS,
+              LIVE_MARKDOWN_OMITTED_MARKER,
+            );
+          } else {
+            rawContent = readStoredMarkdownContent(markdown.contentRef);
+          }
+          if (typeof markdown.contentLength === 'number') {
+            nextLength = markdown.contentLength;
+          } else {
+            nextLength = readStoredMarkdownContentLength(markdown.contentRef);
+          }
         } else {
-          rawContent = readStoredMarkdownContent(markdown.contentRef);
-        }
-        if (typeof markdown.contentLength === 'number') {
-          nextLength = markdown.contentLength;
-        } else {
-          nextLength = readStoredMarkdownContentLength(markdown.contentRef);
-        }
-      } else {
-        rawContent = markdown.content;
-        if (typeof markdown.contentLength === 'number') {
-          nextLength = markdown.contentLength;
-        } else {
-          nextLength = rawContent.length;
+          rawContent = markdown.content;
+          if (typeof markdown.contentLength === 'number') {
+            nextLength = markdown.contentLength;
+          } else {
+            nextLength = rawContent.length;
+          }
         }
       }
-    }
 
-    let nextContent = rawContent;
-    if (!markdown?.contentRef || !liveStreamingRef) {
-      nextContent = this.selectMarkdownDisplayContent(rawContent, false);
-    }
+      let nextContent = rawContent;
+      if (!markdown?.contentRef || !liveStreamingRef) {
+        nextContent = this.selectMarkdownDisplayContent(rawContent, false);
+      }
 
-    if (
-      this.markdownDisplayContent() === nextContent
-      && this.activeMarkdownContentRef === (markdown?.contentRef || '')
-      && this.activeMarkdownContentLength === nextLength
-    ) {
-      return;
-    }
+      if (
+        this.markdownDisplayContent() === nextContent
+        && this.activeMarkdownContentRef === (markdown?.contentRef || '')
+        && this.activeMarkdownPartIdentity === markdownIdentity
+        && this.activeMarkdownContentLength === nextLength
+      ) {
+        return;
+      }
 
-    this.activeMarkdownContentRef = markdown?.contentRef || '';
-    this.activeMarkdownContentLength = nextLength;
-    this.markdownDisplayContent.set(nextContent);
-    this.markdownChunkCache = null;
-    ChatPerformanceTracer.recordDuration(
-      'markdown_display_sync',
-      performance.now() - startedAt,
-      `raw=${rawContent.length},visible=${nextContent.length},ref=${!!markdown?.contentRef},doing=${this.doing}`,
-      { slowThresholdMs: 8 },
-    );
+      if (!this.commitMarkdownDisplayContent({
+        content: nextContent,
+        rawLength: nextLength,
+        contentRef: markdown?.contentRef || '',
+        partIdentity: markdownIdentity,
+        live: this.doing,
+      })) {
+        return;
+      }
+      ChatPerformanceTracer.recordDuration(
+        'markdown_display_sync',
+        performance.now() - startedAt,
+        `raw=${rawContent.length},visible=${nextContent.length},ref=${!!markdown?.contentRef},doing=${this.doing}`,
+        { slowThresholdMs: 8 },
+      );
+    } finally {
+      surface.dispose();
+    }
   }
 
   private syncMarkdownPolling(): void {
@@ -682,17 +692,29 @@ export class ChatMessagePartItemComponent implements OnChanges, OnDestroy {
         }
 
         this.ngZone.run(() => {
+          const surface = ChatPerformanceTracer.enterSurface('markdown_render', `poll:${contentRef}`);
           const updateStartedAt = performance.now();
-          this.activeMarkdownContentLength = rawLength;
-          this.markdownDisplayContent.set(nextContent);
-          this.markdownChunkCache = null;
-          this.cdr.markForCheck();
-          ChatPerformanceTracer.recordDuration(
-            'markdown_poll_update',
-            performance.now() - updateStartedAt,
-            `raw=${rawLength},visible=${nextContent.length}`,
-            { slowThresholdMs: 8 },
-          );
+          try {
+            const committed = this.commitMarkdownDisplayContent({
+              content: nextContent,
+              rawLength,
+              contentRef,
+              partIdentity: this.activeMarkdownPartIdentity,
+              live: true,
+            });
+            if (!committed) {
+              return;
+            }
+            this.cdr.markForCheck();
+            ChatPerformanceTracer.recordDuration(
+              'markdown_poll_update',
+              performance.now() - updateStartedAt,
+              `raw=${rawLength},visible=${nextContent.length}`,
+              { slowThresholdMs: 8 },
+            );
+          } finally {
+            surface.dispose();
+          }
         });
       }, LIVE_MARKDOWN_POLL_INTERVAL_MS);
     });
@@ -714,6 +736,49 @@ export class ChatMessagePartItemComponent implements OnChanges, OnDestroy {
 
     const tailLength = Math.max(0, LIVE_MARKDOWN_RENDER_WINDOW_CHARS - LIVE_MARKDOWN_OMITTED_MARKER.length);
     return `${LIVE_MARKDOWN_OMITTED_MARKER}${content.slice(-tailLength)}`;
+  }
+
+  private commitMarkdownDisplayContent(input: {
+    content: string;
+    rawLength: number;
+    contentRef: string;
+    partIdentity: string;
+    live: boolean;
+  }): boolean {
+    const samePart = this.activeMarkdownPartIdentity === input.partIdentity;
+    const sameRef = this.activeMarkdownContentRef === input.contentRef;
+    const currentContent = this.markdownDisplayContent();
+
+    if (input.live && samePart && sameRef && currentContent) {
+      if (input.rawLength >= 0 && this.activeMarkdownContentLength >= 0 && input.rawLength < this.activeMarkdownContentLength) {
+        return false;
+      }
+
+      if (input.content.length < currentContent.length && !this.isLiveMarkdownWindowShift(currentContent, input.content)) {
+        return false;
+      }
+    }
+
+    this.activeMarkdownContentRef = input.contentRef;
+    this.activeMarkdownPartIdentity = input.partIdentity;
+    this.activeMarkdownContentLength = input.rawLength;
+    this.markdownDisplayContent.set(input.content);
+    this.markdownChunkCache = null;
+    return true;
+  }
+
+  private isLiveMarkdownWindowShift(currentContent: string, nextContent: string): boolean {
+    return currentContent.startsWith(LIVE_MARKDOWN_OMITTED_MARKER)
+      && nextContent.startsWith(LIVE_MARKDOWN_OMITTED_MARKER)
+      && nextContent.length >= LIVE_MARKDOWN_OMITTED_MARKER.length;
+  }
+
+  private getMarkdownPartIdentity(markdown: MarkdownPart | null): string {
+    if (!markdown) {
+      return '';
+    }
+
+    return markdown.partId || markdown.contentRef || `${markdown.sourceAgentRole || 'main'}:${markdown.sequence ?? ''}:markdown`;
   }
 
   getStateData(): {

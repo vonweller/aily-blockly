@@ -88,7 +88,11 @@ import type { ChatSessionItemsService } from '../services/chat-session-items.ser
 import { ChatSessionEntryCoordinator } from './chat-session-entry-coordinator';
 import { ChatPerformanceTracer } from '../services/chat-perf-tracer';
 import { createRequiredSessionResourceModel } from './required-session-resource-model';
-import type { ChatRuntimeHostEditTrackingPayload } from '../core/chat-runtime-host-contract';
+import type {
+  ChatRuntimeHostEditTrackingPayload,
+  ChatRuntimeHostPrewarmRequest,
+  ChatRuntimeHostPrewarmResult,
+} from '../core/chat-runtime-host-contract';
 
 type LexInteractionAction = NonNullable<import('aily-lex/browser').TurnRequest['metadata']>['interactionAction'];
 
@@ -160,6 +164,7 @@ type SessionLifecycleContext = ChatViewWriteBridgeContext
       state: import('./session-checkpoint-timeline-model').SessionCheckpointTimelineState | null | undefined,
     ): void;
     hasSessionRuntimeHandle?(sessionId?: string | null): boolean;
+    prewarmRuntimeExecutor?(request: ChatRuntimeHostPrewarmRequest): Promise<ChatRuntimeHostPrewarmResult>;
     projectRestoredRuntimeAuxiliary?(sessionId: string, auxiliary: HostSessionRecord['auxiliary'] | null | undefined): void;
     detachSessionRuntimeView?(sessionId?: string | null): boolean;
     attachSessionView?(sessionId?: string | null): Promise<void>;
@@ -610,16 +615,22 @@ export class SessionLifecycleHelper {
       return { kind: 'failed', reason: 'checkpoint-metadata' };
     }
 
-    const providerOptionsKey = createHostSessionProviderOptionsKey(input.forkedProviderOptions);
     let ready = false;
     try {
-      ready = await this.ctx.lexStream.agent.ensureAgent(input.forkedSessionId, providerOptionsKey, { activate: false });
+      if (typeof this.ctx.prewarmRuntimeExecutor !== 'function') {
+        return { kind: 'failed', reason: 'agent' };
+      }
+      const result = await this.ctx.prewarmRuntimeExecutor({
+        sessionId: input.forkedSessionId,
+        providerOptions: input.forkedProviderOptions,
+        agentRuntimeMode: this.ctx.currentAgentRuntimeMode,
+        currentModel: this.ctx.currentModel ?? null,
+      });
+      ready = result.ensured === true;
     } catch (error) {
-      this.ctx.lexStream.agent.dispose(input.forkedSessionId);
       return { kind: 'failed', reason: 'agent', error };
     }
     if (!ready) {
-      this.ctx.lexStream.agent.dispose(input.forkedSessionId);
       return { kind: 'failed', reason: 'agent' };
     }
 
@@ -1127,7 +1138,7 @@ export class SessionLifecycleHelper {
     const pendingSessionId = this.createSessionId();
     const providerOptions = this.resolveCurrentProjectProviderOptions();
     const agentRuntimeMode = this.applyAgentRuntimeMode(providerOptions);
-    this.applySessionProviderOptions(providerOptions);
+    const canonicalProviderOptions = this.ctx.chatService.applySessionProviderOptions(providerOptions);
     const freshSelectedMode = this.resolveCurrentSelectedModeForFreshSession();
     this.setActiveSessionId(pendingSessionId);
     this.acquireSessionModel({
@@ -1135,13 +1146,13 @@ export class SessionLifecycleHelper {
       title: { text: '', source: 'empty' },
       projectPath: this.ctx.chatService.currentSessionPath || null,
       sessionType: DEFAULT_CHAT_SESSION_TYPE,
-      inputState: { providerOptions, selectedMode: freshSelectedMode },
+      inputState: { providerOptions: canonicalProviderOptions, selectedMode: freshSelectedMode },
     });
     this.ctx.attachSessionViewModel?.(pendingSessionId);
     this.ctx.markVisibleSessionProjectionOwner?.(pendingSessionId);
     applyCurrentSessionTitle(this.ctx.chatService, { text: '', source: 'empty' });
     this.applySessionType(DEFAULT_CHAT_SESSION_TYPE);
-    this.applySessionProviderOptions(providerOptions);
+    this.applySessionProviderOptions(canonicalProviderOptions);
     this.hostSessionItemController.createNewChatSessionItem(pendingSessionId, {
       projectPath: this.ctx.chatService.currentSessionPath || null,
       agentRuntimeMode,
@@ -1155,6 +1166,7 @@ export class SessionLifecycleHelper {
     });
 
     this.initializeMcpInBackground('startSession');
+    this.scheduleRuntimeExecutorPrewarm(pendingSessionId, canonicalProviderOptions, agentRuntimeMode);
 
     if (!this.isVisibleSessionStartupOwner(pendingSessionId)) {
       return pendingSessionId;
@@ -1163,6 +1175,88 @@ export class SessionLifecycleHelper {
 
     this.ctx.isSessionStarting = false;
     return pendingSessionId;
+  }
+
+  private scheduleRuntimeExecutorPrewarm(
+    sessionId: string,
+    providerOptions: HostSessionProviderOptions,
+    agentRuntimeMode: ChatAgentRuntimeMode,
+  ): void {
+    const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!targetSessionId || this.ctx.hasSessionRuntimeHandle?.(targetSessionId) === true) {
+      return;
+    }
+
+    const startPrewarm = () => {
+      const startedAt = performance.now();
+      ChatPerformanceTracer.increment('runtime_executor.prewarm.started');
+      const prewarmRuntime = this.ctx.prewarmRuntimeExecutor;
+      if (typeof prewarmRuntime !== 'function') {
+        ChatPerformanceTracer.increment('runtime_executor.prewarm.unavailable');
+        return;
+      }
+      void prewarmRuntime({
+        sessionId: targetSessionId,
+        providerOptions,
+        agentRuntimeMode,
+        currentModel: this.ctx.currentModel ?? null,
+      })
+        .then(result => {
+          const ensured = result?.ensured === true;
+          ChatPerformanceTracer.increment(ensured
+            ? 'runtime_executor.prewarm.ensured'
+            : 'runtime_executor.prewarm.unavailable');
+          ChatPerformanceTracer.recordDuration(
+            'runtime_executor_prewarm',
+            performance.now() - startedAt,
+            `session=${targetSessionId},ensured=${ensured}`,
+            { slowThresholdMs: 24, counterPrefix: 'runtime_executor.prewarm.duration' },
+          );
+        })
+        .catch(error => {
+          ChatPerformanceTracer.increment('runtime_executor.prewarm.failed');
+          ChatPerformanceTracer.recordDuration(
+            'runtime_executor_prewarm',
+            performance.now() - startedAt,
+            `session=${targetSessionId},error=${error instanceof Error ? error.message : String(error)}`,
+            { slowThresholdMs: 24, counterPrefix: 'runtime_executor.prewarm.duration' },
+          );
+          if (isAilyCategoryDebugEnabled('aily.chat.traceRuntimeExecutorPrewarm', [
+            '__AILY_CHAT_TRACE_RUNTIME_EXECUTOR_PREWARM__',
+            'AILY_CHAT_TRACE_RUNTIME_EXECUTOR_PREWARM',
+          ])) {
+            console.warn('[AilyChat][RuntimeExecutorPrewarm] failed', {
+              sessionId: targetSessionId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        });
+    };
+
+    const runtimeGlobal = globalThis as typeof globalThis & {
+      requestAnimationFrame?: (callback: FrameRequestCallback) => number;
+      requestIdleCallback?: (callback: IdleRequestCallback, options?: IdleRequestOptions) => number;
+    };
+    const scheduleWhenIdle = typeof runtimeGlobal.requestIdleCallback === 'function'
+      ? runtimeGlobal.requestIdleCallback.bind(runtimeGlobal)
+      : null;
+    if (scheduleWhenIdle) {
+      scheduleWhenIdle(() => {
+        setTimeout(startPrewarm, 0);
+      }, { timeout: 1200 });
+      return;
+    }
+    const scheduleAfterPaint = typeof runtimeGlobal.requestAnimationFrame === 'function'
+      ? runtimeGlobal.requestAnimationFrame.bind(runtimeGlobal)
+      : null;
+    if (scheduleAfterPaint) {
+      scheduleAfterPaint(() => {
+        setTimeout(startPrewarm, 0);
+      });
+      return;
+    }
+
+    setTimeout(startPrewarm, 0);
   }
 
   private isVisibleSessionStartupOwner(sessionId: string): boolean {
@@ -2563,6 +2657,7 @@ export class SessionLifecycleHelper {
     return {
       folderPath: chatSessionScopeProjectPath(scope),
       permissionMode: this.ctx.chatService.currentSessionPermissionMode,
+      permissionProfile: this.ctx.chatService.currentSessionPermissionProfile,
       ...(this.ctx.chatService.currentSessionPermissionLevel
         ? { permissionLevel: this.ctx.chatService.currentSessionPermissionLevel }
         : {}),
@@ -2579,6 +2674,7 @@ export class SessionLifecycleHelper {
     return {
       folderPath: this.ctx.chatService.currentSessionPath || null,
       permissionMode: this.ctx.chatService.currentSessionPermissionMode,
+      permissionProfile: this.ctx.chatService.currentSessionPermissionProfile,
       ...(this.ctx.chatService.currentSessionPermissionLevel
         ? { permissionLevel: this.ctx.chatService.currentSessionPermissionLevel }
         : {}),

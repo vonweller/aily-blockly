@@ -12,6 +12,7 @@ const RESOURCE_HANDLER_RESPONSE_CHANNEL = 'aily-chat-runtime-resource-handler-re
 const {
   ChatRuntimeHostSessionStore,
   HOST_SESSION_STORE_MISS,
+  clonePayload,
   isUsableWebContents,
   normalizeSessionId,
 } = require('./chat-runtime-host-session-store');
@@ -37,6 +38,7 @@ const channels = {
 const ALLOWED_METHODS = new Set([
   'attachView',
   'detachView',
+  'prewarmRuntime',
   'submitTurn',
   'readSubmitReadiness',
   'ensureSessionCanRerun',
@@ -49,6 +51,19 @@ const ALLOWED_METHODS = new Set([
   'runWorkspaceFinalizeBoundaryProbe',
   'readInteractionSnapshot',
   'resolveInteraction',
+  'recordResourceRequest',
+  'requestResourceOperation',
+]);
+
+const EXECUTION_HOST_ALLOWED_METHODS = new Set([
+  'readSubmitReadiness',
+  'ensureSessionCanRerun',
+  'readSessionState',
+  'readSessionInventory',
+  'readTranscript',
+  'awaitRequestCompletion',
+  'runWorkspaceFinalizeBoundaryProbe',
+  'readInteractionSnapshot',
   'recordResourceRequest',
   'requestResourceOperation',
 ]);
@@ -165,6 +180,25 @@ function summarizeCanonicalHostEvent(event) {
   };
 }
 
+function summarizeInteraction(interaction) {
+  const confirmationQueue = Array.isArray(interaction?.confirmationQueue)
+    ? interaction.confirmationQueue
+    : [];
+  const activeConfirmation = confirmationQueue[
+    Math.max(0, Math.min(Number(interaction?.activeConfirmationIndex) || 0, confirmationQueue.length - 1))
+  ];
+  return {
+    sessionId: typeof interaction?.sessionId === 'string' ? interaction.sessionId : undefined,
+    revision: Number(interaction?.revision) || 0,
+    hasQuestion: !!interaction?.question,
+    confirmationCount: confirmationQueue.length,
+    activeConfirmationId: typeof activeConfirmation?.id === 'string' ? activeConfirmation.id : undefined,
+    activeToolCallId: typeof activeConfirmation?.toolCallId === 'string' ? activeConfirmation.toolCallId : undefined,
+    activeToolName: typeof activeConfirmation?.toolName === 'string' ? activeConfirmation.toolName : undefined,
+    hasPlanReview: !!interaction?.activePlanReview,
+  };
+}
+
 class ChatRuntimeHostProcessService {
   constructor(options = {}) {
     if (!options.BrowserWindow) {
@@ -198,16 +232,20 @@ class ChatRuntimeHostProcessService {
     this.runtimeOwnerController.setHostWindow(mainWindow);
   }
 
-  setRuntimeOwnerWindow(runtimeOwnerWindow) {
-    this.runtimeOwnerController.setRuntimeOwnerWindow(runtimeOwnerWindow);
-  }
-
   async handleRuntimeOwnerRegister(event, payload = {}) {
     return this.runtimeOwnerController.handleRuntimeOwnerRegister(event, payload);
   }
 
   async handleRuntimeOwnerUnregister(event, payload = {}) {
     return this.runtimeOwnerController.handleRuntimeOwnerUnregister(event, payload);
+  }
+
+  registerRuntimeOwnerTransport(transport = {}) {
+    return this.runtimeOwnerController.registerRuntimeOwnerTransport(transport);
+  }
+
+  clearRuntimeOwnerTransport(ownerKey) {
+    this.runtimeOwnerController.clearRuntimeOwnerIfMatches(ownerKey);
   }
 
   async handleResourceOperationHandlerRegister(event, payload = {}) {
@@ -257,6 +295,9 @@ class ChatRuntimeHostProcessService {
     if (method === 'detachView') {
       return this.handleDetachView(args);
     }
+    if (method === 'prewarmRuntime') {
+      return this.handlePrewarmRuntime(args);
+    }
     if (method === 'stopTurn') {
       return this.handleStopTurn(args);
     }
@@ -290,6 +331,41 @@ class ChatRuntimeHostProcessService {
     throw new Error(`[AilyChat][RuntimeHost] Host command is not implemented by the host service: ${method}.`);
   }
 
+  async handleExecutionHostCommand(payload = {}) {
+    const method = typeof payload.method === 'string' ? payload.method : '';
+    if (!EXECUTION_HOST_ALLOWED_METHODS.has(method)) {
+      throw new Error(`[AilyChat][RuntimeHost] Unsupported execution-host method: ${method || '<missing>'}`);
+    }
+
+    const args = Array.isArray(payload.args) ? payload.args : [];
+    if (method === 'recordResourceRequest') {
+      return this.handleRecordResourceRequest(args);
+    }
+    if (method === 'requestResourceOperation') {
+      return this.handleRequestResourceOperation(args);
+    }
+    if (method === 'runWorkspaceFinalizeBoundaryProbe') {
+      return Promise.resolve();
+    }
+
+    const hostResult = this.hostSessionStore.readHostCommandResult(method, args);
+    if (hostResult !== HOST_SESSION_STORE_MISS) {
+      return hostResult;
+    }
+    const runtimeOwnerUnavailableHostResult = this.hostSessionStore.readRuntimeOwnerUnavailableHostCommandResult(method, args);
+    if (runtimeOwnerUnavailableHostResult !== HOST_SESSION_STORE_MISS) {
+      return runtimeOwnerUnavailableHostResult;
+    }
+    throw new Error(`[AilyChat][RuntimeHost] Execution-host command is not implemented by the host service: ${method}.`);
+  }
+
+  async handleExecutionHostResourceOperation(payload = {}) {
+    const request = payload && payload.request && typeof payload.request === 'object'
+      ? payload.request
+      : payload;
+    return this.handleRequestResourceOperation([clonePayload(request)]);
+  }
+
   handleAttachView(event, args) {
     const state = this.hostSessionStore.attachView(args && args[0], args && args[1], event && event.sender, args && args[2]);
     // attachView is a request/response command for the attaching renderer. The
@@ -310,9 +386,38 @@ class ChatRuntimeHostProcessService {
     return undefined;
   }
 
+  async handlePrewarmRuntime(args) {
+    const request = args && args[0] && typeof args[0] === 'object' ? args[0] : {};
+    const sessionId = normalizeSessionId(request && request.sessionId);
+    if (!sessionId) {
+      throw new Error('[AilyChat][RuntimeHost] prewarmRuntime requires a session id.');
+    }
+    if (!this.runtimeOwnerController.hasUsableRuntimeOwner()) {
+      return { sessionId, ensured: false };
+    }
+    const result = await this.runtimeOwnerController.dispatchCommand('prewarmRuntime', [{
+      ...request,
+      sessionId,
+    }]);
+    return result && typeof result === 'object'
+      ? result
+      : { sessionId, ensured: !!result };
+  }
+
   async handleSubmitTurn(args) {
     const request = args && args[0];
     const runningState = this.hostSessionStore.beginSubmittedTurn(request);
+    console.warn('[AilyChat][RuntimeHostSubmitBoundary]', JSON.stringify({
+      phase: 'begin-submitted-turn',
+      sessionId: runningState.sessionId,
+      activeTurnId: runningState.activeTurnId,
+      hasRuntimeOwner: this.runtimeOwnerController.hasUsableRuntimeOwner(),
+      requestTextLength: measureTextLength(request && request.requestText),
+      approvalPolicy: request && request.providerOptions ? request.providerOptions.approvalPolicy : undefined,
+      approvalsReviewer: request && request.providerOptions ? request.providerOptions.approvalsReviewer : undefined,
+      permissionMode: request && request.providerOptions ? request.providerOptions.permissionMode : undefined,
+      permissionProfile: request && request.providerOptions ? request.providerOptions.permissionProfile : undefined,
+    }));
     this.replayTranscriptForAttachedSession(runningState.sessionId);
     this.broadcastSessionState('runtime-status', runningState);
     const submittedRequest = this.hostSessionStore.readActiveSubmittedRequest(runningState.sessionId) || request;
@@ -644,9 +749,34 @@ class ChatRuntimeHostProcessService {
 
   dispatchRuntimeOwnerCommandIfAvailable(method, args, sessionId, options = {}) {
     if (!this.runtimeOwnerController.hasUsableRuntimeOwner()) {
+      console.warn('[AilyChat][RuntimeHostOwnerDispatch]', JSON.stringify({
+        phase: 'missing-owner',
+        method,
+        sessionId,
+      }));
       return false;
     }
+    const owner = typeof this.runtimeOwnerController.snapshotRuntimeOwner === 'function'
+      ? this.runtimeOwnerController.snapshotRuntimeOwner()
+      : null;
+    console.warn('[AilyChat][RuntimeHostOwnerDispatch]', JSON.stringify({
+      phase: 'dispatch',
+      method,
+      sessionId,
+      activeTurnId: args && args[0] && args[0].turnId,
+      owner,
+    }));
     this.runtimeOwnerController.dispatchCommand(method, args)
+      .then(result => {
+        console.warn('[AilyChat][RuntimeHostOwnerDispatch]', JSON.stringify({
+          phase: 'result',
+          method,
+          sessionId,
+          owner,
+          resultStatus: result && result.status,
+          requestInProgress: result && result.requestInProgress,
+        }));
+      })
       .catch(error => {
         console.error('[AilyChat][RuntimeHost] Runtime owner command dispatch failed:', {
           method,
@@ -685,6 +815,14 @@ class ChatRuntimeHostProcessService {
     }
   }
 
+  handleRuntimeOwnerTransportResponse(payload = {}) {
+    try {
+      this.runtimeOwnerController.handleRuntimeOwnerTransportResponse(payload);
+    } catch (error) {
+      console.warn('[AilyChat][RuntimeHost] Ignored runtime owner transport response:', error.message);
+    }
+  }
+
   handleRuntimeOwnerLost(error) {
     const failedStates = this.hostSessionStore.failRunningTurns();
     for (const failedState of failedStates) {
@@ -696,12 +834,39 @@ class ChatRuntimeHostProcessService {
   handleRuntimeOwnerEvent(event, payload = {}) {
     try {
       this.runtimeOwnerController.assertRegisteredRuntimeOwnerSender(event);
+      this.handleRuntimeOwnerTransportEvent(payload);
+    } catch (error) {
+      console.warn('[AilyChat][RuntimeHost] Ignored runtime owner event:', error.message);
+    }
+  }
+
+  handleRuntimeOwnerTransportEvent(payload = {}) {
+    try {
       const shouldTraceRuntimeOwnerEvents = isRuntimeOwnerTraceEnabled();
+      if (payload && (payload.kind === 'turnInteractionRequested' || payload.interaction)) {
+        console.warn('[AilyChat][RuntimeHostInteractionBoundary]', JSON.stringify({
+          phase: 'owner-event-in',
+          ownerKind: typeof payload.kind === 'string' ? payload.kind : undefined,
+          sessionId: typeof payload.sessionId === 'string' ? payload.sessionId : undefined,
+          turnId: typeof payload.turnId === 'string' ? payload.turnId : undefined,
+          interaction: summarizeInteraction(payload.interaction),
+        }));
+      }
       if (shouldTraceRuntimeOwnerEvents) {
         console.log('[AilyChat][RuntimeOwnerEventIn]', JSON.stringify(summarizeRuntimeOwnerPayload(payload)));
       }
       const canonicalEvents = this.hostSessionStore.cacheRuntimeOwnerEvent(payload);
       const eventList = Array.isArray(canonicalEvents) ? canonicalEvents : [canonicalEvents];
+      for (const canonicalEvent of eventList) {
+        if (canonicalEvent && canonicalEvent.kind === 'interaction') {
+          console.warn('[AilyChat][RuntimeHostInteractionBoundary]', JSON.stringify({
+            phase: 'canonical-interaction',
+            sessionId: canonicalEvent.sessionId,
+            revision: Number(canonicalEvent.revision) || 0,
+            interaction: summarizeInteraction(canonicalEvent.interaction),
+          }));
+        }
+      }
       if (shouldTraceRuntimeOwnerEvents) {
         console.log('[AilyChat][RuntimeOwnerEventOut]', JSON.stringify({
           sourceKind: typeof payload?.kind === 'string' ? payload.kind : undefined,
@@ -717,7 +882,7 @@ class ChatRuntimeHostProcessService {
         }
       }
     } catch (error) {
-      console.warn('[AilyChat][RuntimeHost] Ignored runtime owner event:', error.message);
+      console.warn('[AilyChat][RuntimeHost] Ignored runtime owner transport event:', error.message);
     }
   }
 
@@ -774,7 +939,16 @@ class ChatRuntimeHostProcessService {
     if (!sessionId) {
       return;
     }
-    for (const webContents of this.hostSessionStore.readAttachedViewWebContents(sessionId)) {
+    const attachedViews = this.hostSessionStore.readAttachedViewWebContents(sessionId);
+    if (payload && payload.kind === 'interaction') {
+      console.warn('[AilyChat][RuntimeHostInteractionBoundary]', JSON.stringify({
+        phase: 'broadcast-attached-views',
+        sessionId,
+        attachedViewCount: attachedViews.length,
+        interaction: summarizeInteraction(payload.interaction),
+      }));
+    }
+    for (const webContents of attachedViews) {
       try {
         webContents.send(HOST_EVENT_CHANNEL, payload);
       } catch (error) {
@@ -838,6 +1012,7 @@ class ChatRuntimeHostProcessService {
     switch (payload.kind) {
       case 'transcript':
       case 'turn-transcript':
+      case 'part-transcript':
       case 'interaction':
       case 'view-request':
       case 'resource-request':

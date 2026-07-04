@@ -210,6 +210,8 @@ export interface TerminalPart extends ChatPartScope {
   lastOutputAt?: string;
   /** 输出更新语义：delta 追加，snapshot 替换当前窗口。 */
   outputUpdateKind?: 'delta' | 'snapshot';
+  /** Lightweight invocation metadata, including approval state for terminal tools. */
+  metadata?: Record<string, unknown>;
 }
 
 export interface TerminalPartOptions extends ChatPartScope {
@@ -223,6 +225,7 @@ export interface TerminalPartOptions extends ChatPartScope {
   lastOutputAt?: string;
   sourceToolCallIds?: string[];
   outputUpdateKind?: 'delta' | 'snapshot';
+  metadata?: Record<string, unknown>;
 }
 
 /**
@@ -529,6 +532,7 @@ export function mkTerminal(
     ...(typeof options.bytesTotal === 'number' ? { bytesTotal: options.bytesTotal } : {}),
     ...(options.lastOutputAt ? { lastOutputAt: options.lastOutputAt } : {}),
     ...(options.outputUpdateKind ? { outputUpdateKind: options.outputUpdateKind } : {}),
+    ...(options.metadata ? { metadata: options.metadata } : {}),
     ...scope,
   };
 }

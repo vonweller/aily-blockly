@@ -4,7 +4,6 @@ const { requestWindowAttention } = require('./window-attention');
 const { killCmdProcess, getActiveCmdProcesses } = require('./cmd');
 const {
     registerChatRuntimeHostIpc,
-    setChatRuntimeOwnerWindow,
 } = require('./chat-runtime-host');
 const { exec, execSync } = require('child_process');
 const path = require('path');
@@ -163,10 +162,6 @@ function isChildToolSessionAlive(session) {
 let subWindowPool = [];
 /** @type {boolean} */
 let subWindowReplenishScheduled = false;
-/** @type {import('electron').BrowserWindow | null} */
-let chatRuntimeOwnerWindow = null;
-/** @type {NodeJS.Timeout | null} */
-let chatRuntimeOwnerRestartTimer = null;
 
 function scheduleReplenishSubWindowPool(loadBasePage) {
     if (applicationIsQuitting) {
@@ -248,68 +243,6 @@ function replenishSubWindowPool(loadBasePage) {
  * @param {import('electron').BrowserWindow} win
  * @param {(wc: import('electron').WebContents) => void} loadBasePage
  */
-function loadChatRuntimeOwnerWindow(win) {
-    if (!win || win.isDestroyed()) {
-        return;
-    }
-    if (isDevServeSubWindow()) {
-        win.loadURL('http://localhost:4200/#/aily-chat-runtime-owner');
-    } else {
-        win.loadFile('renderer/index.html', { hash: '#/aily-chat-runtime-owner' });
-    }
-}
-
-function scheduleChatRuntimeOwnerWindowRestart(mainWindow) {
-    if (applicationIsQuitting || chatRuntimeOwnerRestartTimer) {
-        return;
-    }
-    chatRuntimeOwnerRestartTimer = setTimeout(() => {
-        chatRuntimeOwnerRestartTimer = null;
-        startChatRuntimeOwnerWindow(mainWindow);
-    }, 500);
-}
-
-function startChatRuntimeOwnerWindow(mainWindow) {
-    if (applicationIsQuitting) {
-        return;
-    }
-    if (chatRuntimeOwnerWindow && !chatRuntimeOwnerWindow.isDestroyed()) {
-        return;
-    }
-    try {
-        const runtimeOwnerWindow = new BrowserWindow({
-            frame: false,
-            show: false,
-            opacity: 0,
-            backgroundColor: getSubWindowBackgroundColor(),
-            skipTaskbar: true,
-            autoHideMenuBar: true,
-            width: 800,
-            height: 600,
-            webPreferences: getSubWindowWebPreferences(),
-        });
-        chatRuntimeOwnerWindow = runtimeOwnerWindow;
-        setChatRuntimeOwnerWindow(runtimeOwnerWindow);
-        runtimeOwnerWindow.once('closed', () => {
-            if (chatRuntimeOwnerWindow === runtimeOwnerWindow) {
-                chatRuntimeOwnerWindow = null;
-                setChatRuntimeOwnerWindow(null);
-                scheduleChatRuntimeOwnerWindowRestart(mainWindow);
-            }
-        });
-        runtimeOwnerWindow.webContents.once('render-process-gone', (_event, details = {}) => {
-            console.warn('[AilyChat][RuntimeOwnerWindow] render process gone:', details.reason || 'unknown');
-            if (!runtimeOwnerWindow.isDestroyed()) {
-                runtimeOwnerWindow.close();
-            }
-        });
-        loadChatRuntimeOwnerWindow(runtimeOwnerWindow);
-    } catch (error) {
-        console.error('[AilyChat][RuntimeOwnerWindow] Failed to start runtime owner window:', error.message);
-        scheduleChatRuntimeOwnerWindowRestart(mainWindow);
-    }
-}
-
 function removePoolHandlersFromWin(win, loadBasePage) {
     const h = win.__subWindowPoolClosedHandler;
     if (typeof h === 'function') {
@@ -406,7 +339,6 @@ function terminateAilyProcess() {
 
 function registerWindowHandlers(mainWindow) {
     registerChatRuntimeHostIpc(mainWindow);
-    startChatRuntimeOwnerWindow(mainWindow);
 
     // 添加一个映射来存储已打开的窗�?
     const openWindows = new Map();

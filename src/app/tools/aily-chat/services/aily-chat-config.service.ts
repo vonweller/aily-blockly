@@ -431,6 +431,12 @@ const DEFAULT_CONFIG: AilyChatConfig = {
 })
 export class AilyChatConfigService {
     private config: AilyChatConfig = { ...DEFAULT_CONFIG };
+    private readonly sessionToolApprovalStates = new Map<string, {
+        toolNames: Set<string>;
+        terminalRules: Set<string>;
+        combinationKeys: Set<string>;
+        allowAllTerminalCommands: boolean;
+    }>();
     private configFileName = 'aily-chat-config.json';
     private readonly clientVersion = packageJson.version;
     private loaded = false;
@@ -912,6 +918,72 @@ export class AilyChatConfigService {
         return normalizePermissionRuleInputs(this.config.workspacePermissionRules?.[normalizedProjectPath]);
     }
 
+    hasSessionToolApprovalRule(sessionResource: string | null | undefined, toolName: string): boolean {
+        const normalizedToolName = normalizeApprovalStateKey(toolName);
+        return !!normalizedToolName
+            && this.readSessionToolApprovalState(sessionResource)?.toolNames.has(normalizedToolName) === true;
+    }
+
+    addSessionToolApprovalRule(sessionResource: string | null | undefined, toolName: string): boolean {
+        const normalizedToolName = normalizeApprovalStateKey(toolName);
+        if (!normalizedToolName) {
+            return false;
+        }
+
+        const state = this.ensureSessionToolApprovalState(sessionResource);
+        const beforeSize = state.toolNames.size;
+        state.toolNames.add(normalizedToolName);
+        return state.toolNames.size !== beforeSize;
+    }
+
+    getSessionTerminalApprovalRules(sessionResource: string | null | undefined): string[] {
+        return [...(this.readSessionToolApprovalState(sessionResource)?.terminalRules ?? [])];
+    }
+
+    addSessionTerminalApprovalRule(sessionResource: string | null | undefined, rule: string): boolean {
+        const normalizedRule = normalizeApprovalStateKey(rule);
+        if (!normalizedRule) {
+            return false;
+        }
+
+        const state = this.ensureSessionToolApprovalState(sessionResource);
+        const beforeSize = state.terminalRules.size;
+        state.terminalRules.add(normalizedRule);
+        return state.terminalRules.size !== beforeSize;
+    }
+
+    hasSessionToolApprovalCombinationKey(
+        sessionResource: string | null | undefined,
+        combinationKey: string,
+    ): boolean {
+        const normalizedKey = normalizeApprovalStateKey(combinationKey);
+        return !!normalizedKey
+            && this.readSessionToolApprovalState(sessionResource)?.combinationKeys.has(normalizedKey) === true;
+    }
+
+    addSessionToolApprovalCombinationKey(
+        sessionResource: string | null | undefined,
+        combinationKey: string,
+    ): boolean {
+        const normalizedKey = normalizeApprovalStateKey(combinationKey);
+        if (!normalizedKey) {
+            return false;
+        }
+
+        const state = this.ensureSessionToolApprovalState(sessionResource);
+        const beforeSize = state.combinationKeys.size;
+        state.combinationKeys.add(normalizedKey);
+        return state.combinationKeys.size !== beforeSize;
+    }
+
+    isSessionTerminalAutoApprovalEnabled(sessionResource: string | null | undefined): boolean {
+        return this.readSessionToolApprovalState(sessionResource)?.allowAllTerminalCommands === true;
+    }
+
+    setSessionTerminalAutoApproval(sessionResource: string | null | undefined, enabled: boolean): void {
+        this.ensureSessionToolApprovalState(sessionResource).allowAllTerminalCommands = enabled === true;
+    }
+
     hasWorkspaceToolApprovalRule(projectPath: string | null | undefined, toolName: string): boolean {
         const normalizedToolName = normalizeGovernanceToolName(toolName);
         if (!normalizedToolName) {
@@ -973,6 +1045,44 @@ export class AilyChatConfigService {
             [normalizedProjectPath]: [...existing, normalizedKey],
         };
         return true;
+    }
+
+    private readSessionToolApprovalState(sessionResource: string | null | undefined): {
+        toolNames: Set<string>;
+        terminalRules: Set<string>;
+        combinationKeys: Set<string>;
+        allowAllTerminalCommands: boolean;
+    } | undefined {
+        const normalizedSessionResource = normalizeApprovalStateKey(sessionResource);
+        return normalizedSessionResource
+            ? this.sessionToolApprovalStates.get(normalizedSessionResource)
+            : undefined;
+    }
+
+    private ensureSessionToolApprovalState(sessionResource: string | null | undefined): {
+        toolNames: Set<string>;
+        terminalRules: Set<string>;
+        combinationKeys: Set<string>;
+        allowAllTerminalCommands: boolean;
+    } {
+        const normalizedSessionResource = normalizeApprovalStateKey(sessionResource);
+        if (!normalizedSessionResource) {
+            throw new Error('[AilyChat][Config] session approval requires a session resource.');
+        }
+
+        const existing = this.sessionToolApprovalStates.get(normalizedSessionResource);
+        if (existing) {
+            return existing;
+        }
+
+        const created = {
+            toolNames: new Set<string>(),
+            terminalRules: new Set<string>(),
+            combinationKeys: new Set<string>(),
+            allowAllTerminalCommands: false,
+        };
+        this.sessionToolApprovalStates.set(normalizedSessionResource, created);
+        return created;
     }
 
     getLexPermissionPolicy(projectPath: string | null | undefined): PermissionPolicy | undefined {
@@ -2663,6 +2773,10 @@ export class AilyChatConfigService {
         this.config.projectSkillFolders = normalizeSkillFolderPaths(this.config.projectSkillFolders);
         this.config.hiddenCustomAgentTargets = normalizeCustomAgentTargets(this.config.hiddenCustomAgentTargets);
     }
+}
+
+function normalizeApprovalStateKey(value: string | null | undefined): string {
+    return typeof value === 'string' ? value.trim() : '';
 }
 
 function normalizeConfiguredToolNames(value: readonly string[] | undefined): string[] {
