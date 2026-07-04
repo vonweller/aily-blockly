@@ -85,6 +85,7 @@ export const API = {
   // github oauth
   get githubBrowserAuthorize() { return `${getServerUrl()}/api/v1/oauth/github/browser-authorize`; },
   get githubTokenExchange() { return `${getServerUrl()}/api/v1/oauth/github/token-exchange`; },
+  get githubBind() { return `${getServerUrl()}/api/v1/oauth/github/bind`; },
   // wechat oauth
   get wechatQrcode() { return `${getServerUrl()}/api/v1/oauth/wechat/qrcode`; },
   get wechatCheck() { return `${getServerUrl()}/api/v1/oauth/wechat/check`; },

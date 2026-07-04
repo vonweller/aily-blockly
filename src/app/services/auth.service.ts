@@ -1,6 +1,6 @@
 import { Injectable, inject, ApplicationRef } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { BehaviorSubject, Observable, Subject, throwError, from } from 'rxjs';
+import { BehaviorSubject, Observable, Subject, throwError, from, firstValueFrom } from 'rxjs';
 import { catchError, map, switchMap } from 'rxjs/operators';
 import { API } from '../configs/api.config';
 import { ElectronService } from './electron.service';
@@ -43,6 +43,8 @@ export interface LoginResponse {
   };
 }
 
+export type GitHubOAuthPurpose = 'login' | 'bind';
+
 export interface RegisterRequest {
   username: string;
   password: string;
@@ -84,6 +86,8 @@ export class AuthService {
   // 用户信息
   private userInfoSubject = new BehaviorSubject<any>(null);
   public userInfo$ = this.userInfoSubject.asObservable();
+  private githubBindCompletedSubject = new Subject<any>();
+  public githubBindCompleted$ = this.githubBindCompletedSubject.asObservable();
 
   // 登录弹窗显示状态
   showUser = new BehaviorSubject<any>(null);
@@ -270,17 +274,26 @@ export class AuthService {
     });
   }
 
-  async refreshMe() {
+  async refreshCurrentUser(): Promise<any | null> {
     // 先检查是否有 token，没有 token 就不发起请求
     const token = await this.getToken2();
     if (!token) {
-      return;
+      return null;
     }
-    return this.http.get<CommonResponse>(API.me).subscribe( (res) => {
-      if (res.status === 200 && res.data) {
-        this.userInfoSubject.next(res.data);
-      };
-    });
+    const res = await firstValueFrom(this.http.get<CommonResponse>(API.me));
+    if (res.status === 200 && res.data) {
+      this.userInfoSubject.next(res.data);
+      return res.data;
+    }
+    return null;
+  }
+
+  async refreshMe() {
+    await this.refreshCurrentUser();
+  }
+
+  hasGithubBinding(user: any = this.currentUser): boolean {
+    return user?.github?.bound === true;
   }
 
   /**
@@ -712,8 +725,16 @@ export class AuthService {
    * 启动 GitHub OAuth 流程
    */
   startGitHubOAuth(inviteCode?: string): Observable<{ authorization_url: string; state: string }> {
+    return this.startGitHubOAuthForPurpose('login', inviteCode);
+  }
+
+  startGitHubBindOAuth(): Observable<{ authorization_url: string; state: string }> {
+    return this.startGitHubOAuthForPurpose('bind');
+  }
+
+  private startGitHubOAuthForPurpose(purpose: GitHubOAuthPurpose, inviteCode?: string): Observable<{ authorization_url: string; state: string }> {
     // 生成并存储 state 参数
-    const state = this.generateOAuthState();
+    const state = this.generateOAuthState(purpose);
 
     const requestData: any = {
       redirect_uri: 'abis://auth/callback',
@@ -750,18 +771,18 @@ export class AuthService {
   /**
    * GitHub OAuth 状态管理
    */
-  private oauthState: { state: string; timestamp: number } | null = null;
+  private oauthState: { state: string; timestamp: number; purpose: GitHubOAuthPurpose } | null = null;
   private readonly OAUTH_TIMEOUT = 5 * 60 * 1000; // 5分钟超时
 
   /**
    * 生成并存储 OAuth state
    */
-  generateOAuthState(): string {
+  generateOAuthState(purpose: GitHubOAuthPurpose = 'login'): string {
     const state = Math.random().toString(36).substring(2) + Date.now().toString(36);
-    this.oauthState = { state, timestamp: Date.now() };
+    this.oauthState = { state, timestamp: Date.now(), purpose };
 
     // 同时保存到文件系统（用于跨实例共享）
-    this.saveOAuthStateToFile(state);
+    this.saveOAuthStateToFile(state, purpose);
 
     return state;
   }
@@ -769,7 +790,7 @@ export class AuthService {
   /**
    * 保存 OAuth state 到文件
    */
-  private async saveOAuthStateToFile(state: string): Promise<void> {
+  private async saveOAuthStateToFile(state: string, purpose: GitHubOAuthPurpose): Promise<void> {
     try {
       if (this.electronService.isElectron && (window as any).electronAPI?.path && (window as any).electronAPI?.fs) {
         // 使用共享的AppData路径（不使用实例隔离的路径）
@@ -778,7 +799,8 @@ export class AuthService {
 
         const stateData = {
           state,
-          timestamp: Date.now()
+          timestamp: Date.now(),
+          purpose,
         };
 
         // 确保目录存在
@@ -798,7 +820,7 @@ export class AuthService {
   /**
    * 从文件读取 OAuth state
    */
-  private async loadOAuthStateFromFile(): Promise<{ state: string; timestamp: number } | null> {
+  private async loadOAuthStateFromFile(): Promise<{ state: string; timestamp: number; purpose?: GitHubOAuthPurpose } | null> {
     try {
       if (this.electronService.isElectron && (window as any).electronAPI?.path && (window as any).electronAPI?.fs) {
         const originalAppDataPath = await this.getOriginalAppDataPath();
@@ -816,6 +838,19 @@ export class AuthService {
       console.error('从文件加载OAuth状态失败:', error);
       return null;
     }
+  }
+
+  private async getOAuthPurpose(state: string): Promise<GitHubOAuthPurpose> {
+    if (this.oauthState?.state === state) {
+      return this.oauthState.purpose || 'login';
+    }
+
+    const fileState = await this.loadOAuthStateFromFile();
+    if (fileState?.state === state && (fileState.purpose === 'bind' || fileState.purpose === 'login')) {
+      return fileState.purpose;
+    }
+
+    return 'login';
   }
 
   /**
@@ -925,6 +960,23 @@ export class AuthService {
     );
   }
 
+  bindGitHubAccount(code: string, state: string): Observable<any> {
+    return this.http.post<CommonResponse>(API.githubBind, {
+      code,
+      state,
+      device_id: 'pc',
+      client_type: 'electron',
+    }).pipe(
+      map(response => {
+        if (response.status === 200) {
+          return response.data || {};
+        }
+        throw response;
+      }),
+      catchError(this.handleError)
+    );
+  }
+
   /**
    * 处理协议回调
    */
@@ -933,7 +985,7 @@ export class AuthService {
     state?: string;
     error?: string;
     error_description?: string;
-  }): Promise<{ success: boolean; data?: any; error?: string; message?: string; errorCode?: string | null; errorArgs?: Record<string, unknown> }> {
+  }): Promise<{ success: boolean; data?: any; error?: string; message?: string; errorCode?: string | null; errorArgs?: Record<string, unknown>; purpose?: GitHubOAuthPurpose }> {
     try {
       // 检查是否有错误
       if (callbackData.error) {
@@ -965,6 +1017,20 @@ export class AuthService {
         };
       }
 
+      const purpose = await this.getOAuthPurpose(callbackData.state);
+
+      if (purpose === 'bind') {
+        const bindData = await this.bindGitHubAccount(callbackData.code, callbackData.state).toPromise();
+        this.clearOAuthState();
+        const user = await this.refreshCurrentUser();
+        this.githubBindCompletedSubject.next(user);
+        return {
+          success: true,
+          data: bindData,
+          purpose: 'bind',
+        };
+      }
+
       // 交换 token
       const tokenData = await this.exchangeGitHubToken(callbackData.code, callbackData.state).toPromise();
 
@@ -989,7 +1055,8 @@ export class AuthService {
 
       return {
         success: true,
-        data: tokenData
+        data: tokenData,
+        purpose: 'login',
       };
 
     } catch (error) {

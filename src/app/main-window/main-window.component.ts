@@ -188,7 +188,7 @@ export class MainWindowComponent implements OnDestroy {
           const result = await this.authService.handleOAuthCallback(callbackData);
 
           if (result.success) {
-            this.message.success('GitHub 登录成功');
+            this.message.success(result.purpose === 'bind' ? 'GitHub 绑定成功' : 'GitHub 登录成功');
           } else {
             let errorMessage = 'GitHub 登录超时，请重试';
 

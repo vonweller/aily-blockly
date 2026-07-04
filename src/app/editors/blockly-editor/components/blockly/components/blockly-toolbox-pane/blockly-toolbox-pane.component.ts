@@ -1,6 +1,6 @@
 import { CommonModule } from '@angular/common';
 import { AfterViewInit, ChangeDetectionStrategy, ChangeDetectorRef, Component, ElementRef, EventEmitter, HostBinding, NgZone, OnDestroy, OnInit, Output } from '@angular/core';
-import { Subject, combineLatest } from 'rxjs';
+import { Subject, combineLatest, firstValueFrom } from 'rxjs';
 import { takeUntil } from 'rxjs/operators';
 import {
   BLOCKLY_TOOLBOX_SEARCH_KEY,
@@ -15,7 +15,10 @@ import { ProjectService } from '../../../../../../services/project.service';
 import { CmdService } from '../../../../../../services/cmd.service';
 import { WorkflowService } from '../../../../../../services/workflow.service';
 import { UiService } from '../../../../../../services/ui.service';
+import { LibrarySubmissionApiError, LibrarySubmissionService } from '../../../../../../services/library-submission.service';
+import { AuthService } from '../../../../../../services/auth.service';
 import { NzMessageService } from 'ng-zorro-antd/message';
+import { NzModalService } from 'ng-zorro-antd/modal';
 import Sortable, { SortableEvent } from 'sortablejs';
 
 interface ToolboxContextMenuAction {
@@ -67,6 +70,15 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
       disabled: (item) => !item.libraryName,
       visible: (item) => !item.isLocalLibrary,
     },
+    // 上传本地库并提交 PR
+    {
+      name: 'MENU.UPLOAD_LIBRARY',
+      action: 'upload-library',
+      icon: 'fa-light fa-cloud-arrow-up',
+      handler: (item) => this.uploadLibrary(item),
+      disabled: (item) => !item.libraryName || !item.libraryPath || this.uploadingLibraryNames.has(item.libraryName),
+      visible: (item) => item.isLocalLibrary === true,
+    },
     // 移除该库
     {
       name: 'LIB_MANAGER.REMOVE',
@@ -79,6 +91,7 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
 
   private destroy$ = new Subject<void>();
   private removingLibraryNames = new Set<string>();
+  private uploadingLibraryNames = new Set<string>();
   private sortableInstances = new Map<HTMLElement, Sortable>();
   private sortableSyncTimer: ReturnType<typeof setTimeout> | null = null;
   private hoverSuppressPointerMoveHandler: ((event: PointerEvent) => void) | null = null;
@@ -109,7 +122,10 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
     private cmdService: CmdService,
     private workflowService: WorkflowService,
     private uiService: UiService,
+    private librarySubmissionService: LibrarySubmissionService,
+    private authService: AuthService,
     private message: NzMessageService,
+    private modal: NzModalService,
     private translate: TranslateService,
     private elementRef: ElementRef<HTMLElement>,
   ) { }
@@ -440,6 +456,120 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
         name: libraryName,
       }),
     });
+  }
+
+  private async uploadLibrary(item: BlocklyToolboxFacadeItem) {
+    const libraryName = item.libraryName;
+    const libraryPath = item.libraryPath;
+    if (!libraryName || !libraryPath || this.uploadingLibraryNames.has(libraryName)) {
+      return;
+    }
+
+    if (!await this.ensureLibrarySubmissionReady()) {
+      return;
+    }
+
+    this.uploadingLibraryNames.add(libraryName);
+    const loadingMessageId = this.message.loading(`${this.getLibraryDisplayName(item)} 上传中...`, { nzDuration: 0 }).messageId;
+
+    try {
+      const response = await firstValueFrom(this.librarySubmissionService.submitLocalLibraryByRef({
+        name: libraryName,
+        path: libraryPath,
+        source: 'declared',
+      }));
+      this.message.remove(loadingMessageId);
+
+      const prUrl = response.data?.pr_url;
+      const mode = response.data?.mode === 'update' ? '更新' : '新增';
+      this.message.success(`${this.getLibraryDisplayName(item)} 已提交${mode} PR`, { nzDuration: 5000 });
+
+      if (prUrl) {
+        this.electronService.openUrl(prUrl);
+      }
+    } catch (error) {
+      this.message.remove(loadingMessageId);
+      const errorMessage = this.getLibrarySubmissionErrorMessage(error);
+      this.message.error(`${this.getLibraryDisplayName(item)} 上传失败: ${errorMessage}`, { nzDuration: 7000 });
+    } finally {
+      this.uploadingLibraryNames.delete(libraryName);
+      this.cdr.markForCheck();
+    }
+  }
+
+  private async ensureLibrarySubmissionReady(): Promise<boolean> {
+    const isLoggedIn = await this.authService.checkAndSyncAuthStatus();
+    if (!isLoggedIn) {
+      this.promptLoginForLibrarySubmission();
+      return false;
+    }
+
+    const currentUser = await this.authService.refreshCurrentUser();
+    if (this.authService.hasGithubBinding(currentUser)) {
+      return true;
+    }
+
+    return this.promptGithubBindForLibrarySubmission();
+  }
+
+  private promptLoginForLibrarySubmission() {
+    this.modal.confirm({
+      nzTitle: '登录后上传库',
+      nzContent: '上传库会使用你的 GitHub 账号向官方库仓库提交 PR。请先登录并绑定 GitHub。',
+      nzOkText: '打开用户中心',
+      nzCancelText: '取消',
+      nzOnOk: () => this.uiService.openTool('user-center'),
+    });
+  }
+
+  private promptGithubBindForLibrarySubmission(): Promise<boolean> {
+    return new Promise((resolve) => {
+      this.modal.confirm({
+        nzTitle: '绑定 GitHub 后上传库',
+        nzContent: '上传库需要使用你的 GitHub 账号提交 PR。授权完成后会自动继续本次上传。',
+        nzOkText: '绑定 GitHub',
+        nzCancelText: '取消',
+        nzOnOk: () => {
+          this.startGithubBindForLibrarySubmission(resolve);
+        },
+        nzOnCancel: () => resolve(false),
+      });
+    });
+  }
+
+  private startGithubBindForLibrarySubmission(resolve: (ready: boolean) => void) {
+    const timer = setTimeout(() => {
+      subscription.unsubscribe();
+      resolve(false);
+    }, 5 * 60 * 1000);
+
+    const subscription = this.authService.githubBindCompleted$.subscribe(() => {
+      clearTimeout(timer);
+      subscription.unsubscribe();
+      resolve(true);
+    });
+
+    this.authService.startGitHubBindOAuth().subscribe({
+      next: (response) => {
+        this.electronService.openUrl(response.authorization_url);
+        this.message.info('请在浏览器中完成 GitHub 授权，授权完成后会自动继续上传');
+      },
+      error: (error) => {
+        clearTimeout(timer);
+        subscription.unsubscribe();
+        resolve(false);
+        this.message.error(this.getErrorMessage(error, '启动 GitHub 绑定失败'));
+      },
+    });
+  }
+
+  private getLibrarySubmissionErrorMessage(error: unknown): string {
+    const apiError = error as Partial<LibrarySubmissionApiError>;
+    const message = apiError.message || this.getErrorMessage(error, '库提交失败');
+    if (apiError.status === 401 || apiError.status === 403) {
+      return `${message}，请重新绑定 GitHub 并确认授权权限`;
+    }
+    return message;
   }
 
   private async removeLibrary(item: BlocklyToolboxFacadeItem) {
