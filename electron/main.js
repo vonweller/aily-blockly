@@ -21,14 +21,28 @@ if (isWin32) {
 
 const PROTOCOL = "abis";
 const AILY_BUILDER_DEFAULT_VERSION = process.env.AILY_BUILDER_VERSION || "1.2.4";
-const AILY_BUILDER_PLATFORM_PACKAGES = {
-  "darwin-arm64": "@aily-project/aily-builder-darwin-arm64",
-  "win32-x64": "@aily-project/aily-builder-win32-x64",
+const AILY_BUILDER_CHANNELS = {
+  stable: {
+    key: "aily-builder",
+    platformPackages: {
+      "darwin-arm64": "@aily-project/aily-builder-darwin-arm64",
+      "win32-x64": "@aily-project/aily-builder-win32-x64",
+    },
+  },
+  next: {
+    key: "aily-builder-next",
+    platformPackages: {
+      "darwin-arm64": "@aily-project/aily-builder-next-darwin-arm64",
+      "win32-x64": "@aily-project/aily-builder-next-win32-x64",
+    },
+  },
 };
 const PACKAGE_UPDATES_DEFAULT_MANIFEST = "package-updates.json";
 let ailyBuilderTargetVersion = AILY_BUILDER_DEFAULT_VERSION;
 let ailyBuilderUpdateRequired = false;
 let packageUpdatesManifestUrl = "";
+let ailyBuilderChannel = "stable";
+let ailyBuilderUpdateConfigLoaded = true;
 
 // OAuth实例管理
 const OAUTH_STATE_FILE = 'oauth-instances.json';
@@ -811,9 +825,38 @@ function applyAilyBuilderCommandEnv(childPath) {
   process.env.AILY_BUILDER_COMMAND = resolveAilyBuilderCommand(childPath);
 }
 
+function normalizeAilyBuilderChannel(channel) {
+  return channel === "next" ? "next" : "stable";
+}
+
+function getAilyBuilderChannel() {
+  return normalizeAilyBuilderChannel(process.env.AILY_BUILDER_CHANNEL || ailyBuilderChannel);
+}
+
+function getAilyBuilderChannelConfig(channel = getAilyBuilderChannel()) {
+  return AILY_BUILDER_CHANNELS[normalizeAilyBuilderChannel(channel)] || AILY_BUILDER_CHANNELS.stable;
+}
+
+function setAilyBuilderChannel(channel) {
+  ailyBuilderChannel = normalizeAilyBuilderChannel(channel);
+  process.env.AILY_BUILDER_CHANNEL = ailyBuilderChannel;
+  delete process.env.AILY_BUILDER_PACKAGE;
+  ailyBuilderTargetVersion = normalizeAilyBuilderVersion(AILY_BUILDER_DEFAULT_VERSION);
+  process.env.AILY_BUILDER_TARGET_VERSION = ailyBuilderTargetVersion;
+  ailyBuilderUpdateRequired = false;
+  process.env.AILY_BUILDER_REQUIRED = "false";
+  ailyBuilderUpdateConfigLoaded = ailyBuilderChannel === "stable";
+  return ailyBuilderChannel;
+}
+
+function getAilyBuilderUpdateKey(channel = getAilyBuilderChannel()) {
+  return getAilyBuilderChannelConfig(channel).key;
+}
+
 function getAilyBuilderPackageName() {
   const platformKey = `${process.platform}-${process.arch}`;
-  return process.env.AILY_BUILDER_PACKAGE || AILY_BUILDER_PLATFORM_PACKAGES[platformKey] || "";
+  const channelConfig = getAilyBuilderChannelConfig();
+  return process.env.AILY_BUILDER_PACKAGE || channelConfig.platformPackages[platformKey] || "";
 }
 
 function normalizeAilyBuilderVersion(version) {
@@ -841,18 +884,48 @@ function getAilyBuilderTargetVersion() {
   return normalizeAilyBuilderVersion(process.env.AILY_BUILDER_TARGET_VERSION || ailyBuilderTargetVersion);
 }
 
+function getManagedPackagesRoot() {
+  const prefix = process.env.AILY_NPM_PREFIX || process.env.AILY_APPDATA_PATH;
+  return prefix ? path.join(prefix, "packages") : null;
+}
+
 function getAilyBuilderStoreRoot() {
+  const root = getManagedPackagesRoot();
+  return root ? path.join(root, "aily-builder") : null;
+}
+
+function getLegacyAilyBuilderStoreRoot() {
   const prefix = process.env.AILY_NPM_PREFIX || process.env.AILY_APPDATA_PATH;
   return prefix ? path.join(prefix, "aily-builder") : null;
 }
 
-function getAilyBuilderVersionsRoot() {
+function getAilyBuilderChannelRoot(channel = getAilyBuilderChannel()) {
   const root = getAilyBuilderStoreRoot();
+  return root ? path.join(root, "channels", normalizeAilyBuilderChannel(channel)) : null;
+}
+
+function getLegacyAilyBuilderChannelRoot(channel = getAilyBuilderChannel()) {
+  const root = getLegacyAilyBuilderStoreRoot();
+  return root ? path.join(root, "channels", normalizeAilyBuilderChannel(channel)) : null;
+}
+
+function getAilyBuilderVersionsRoot() {
+  const root = getAilyBuilderChannelRoot();
   return root ? path.join(root, "versions") : null;
 }
 
 function getAilyBuilderCurrentFile() {
-  const root = getAilyBuilderStoreRoot();
+  const root = getAilyBuilderChannelRoot();
+  return root ? path.join(root, "current.json") : null;
+}
+
+function getLegacyAilyBuilderChannelCurrentFile() {
+  const root = getLegacyAilyBuilderChannelRoot();
+  return root ? path.join(root, "current.json") : null;
+}
+
+function getLegacyAilyBuilderCurrentFile() {
+  const root = getLegacyAilyBuilderStoreRoot();
   return root ? path.join(root, "current.json") : null;
 }
 
@@ -908,10 +981,19 @@ function getInstalledAilyBuilderVersion(packagePath) {
   return packageJson && typeof packageJson.version === "string" ? packageJson.version : null;
 }
 
-function readCurrentAilyBuilderInfo() {
-  const currentFile = getAilyBuilderCurrentFile();
+function readCurrentAilyBuilderInfoFromFile(currentFile, allowMissingChannel = false) {
   const current = readJsonFile(currentFile);
   if (!current || !current.version || !current.prefix || !current.path) {
+    return null;
+  }
+  if (current.channel && normalizeAilyBuilderChannel(current.channel) !== getAilyBuilderChannel()) {
+    return null;
+  }
+  if (!current.channel && !allowMissingChannel) {
+    return null;
+  }
+  const packageName = getAilyBuilderPackageName();
+  if (current.packageName && packageName && current.packageName !== packageName) {
     return null;
   }
   if (!isAilyBuilderInstallComplete(current.path)) {
@@ -920,12 +1002,45 @@ function readCurrentAilyBuilderInfo() {
   return current;
 }
 
+function getAilyBuilderCurrentFileCandidates() {
+  const candidates = [];
+  const currentFile = getAilyBuilderCurrentFile();
+  if (currentFile) {
+    candidates.push({ file: currentFile, allowMissingChannel: false });
+  }
+
+  const legacyChannelCurrentFile = getLegacyAilyBuilderChannelCurrentFile();
+  if (legacyChannelCurrentFile) {
+    candidates.push({ file: legacyChannelCurrentFile, allowMissingChannel: false });
+  }
+
+  if (getAilyBuilderChannel() === "stable") {
+    const legacyCurrentFile = getLegacyAilyBuilderCurrentFile();
+    if (legacyCurrentFile) {
+      candidates.push({ file: legacyCurrentFile, allowMissingChannel: true });
+    }
+  }
+
+  return candidates;
+}
+
+function readCurrentAilyBuilderInfo() {
+  for (const candidate of getAilyBuilderCurrentFileCandidates()) {
+    const current = readCurrentAilyBuilderInfoFromFile(candidate.file, candidate.allowMissingChannel);
+    if (current) {
+      return current;
+    }
+  }
+  return null;
+}
+
 function getCurrentAilyBuilderPrefix() {
   const current = readCurrentAilyBuilderInfo();
   return current ? current.prefix : null;
 }
 
 function writeCurrentAilyBuilderInfo(version) {
+  const channel = getAilyBuilderChannel();
   const packageName = getAilyBuilderPackageName();
   const prefix = getAilyBuilderVersionPrefix(version);
   const packagePath = getNpmAilyBuilderPath(version);
@@ -935,6 +1050,7 @@ function writeCurrentAilyBuilderInfo(version) {
   }
   fs.mkdirSync(path.dirname(currentFile), { recursive: true });
   fs.writeFileSync(currentFile, JSON.stringify({
+    channel,
     version: normalizeAilyBuilderVersion(version),
     packageName,
     prefix,
@@ -949,12 +1065,12 @@ function resolveAilyBuilderPath(childPath) {
     return npmBuilderPath;
   }
 
-  const legacyNpmBuilderPath = getLegacyNpmAilyBuilderPath();
+  const legacyNpmBuilderPath = getAilyBuilderChannel() === "stable" ? getLegacyNpmAilyBuilderPath() : null;
   if (legacyNpmBuilderPath && isAilyBuilderInstallComplete(legacyNpmBuilderPath)) {
     return legacyNpmBuilderPath;
   }
 
-  const bundledBuilderPath = path.join(childPath, "aily-builder");
+  const bundledBuilderPath = getAilyBuilderChannel() === "stable" ? path.join(childPath, "aily-builder") : null;
   if (isAilyBuilderInstallComplete(bundledBuilderPath)) {
     return bundledBuilderPath;
   }
@@ -967,12 +1083,12 @@ function resolveAilyBuilderCommand(childPath) {
     return "aily-builder";
   }
 
-  const legacyNpmBuilderPath = getLegacyNpmAilyBuilderPath();
+  const legacyNpmBuilderPath = getAilyBuilderChannel() === "stable" ? getLegacyNpmAilyBuilderPath() : null;
   if (legacyNpmBuilderPath && isAilyBuilderInstallComplete(legacyNpmBuilderPath)) {
     return `node "${path.join(legacyNpmBuilderPath, "index.js")}"`;
   }
 
-  const bundledBuilderPath = path.join(childPath, "aily-builder");
+  const bundledBuilderPath = getAilyBuilderChannel() === "stable" ? path.join(childPath, "aily-builder") : null;
   if (isAilyBuilderInstallComplete(bundledBuilderPath)) {
     return `node "${path.join(bundledBuilderPath, "index.js")}"`;
   }
@@ -991,10 +1107,12 @@ function getNpmExecutablePath(childPath) {
 }
 
 let ailyBuilderInstallPromise = null;
-let ailyBuilderInstallVersion = null;
+let ailyBuilderInstallKey = null;
 
 function installAilyBuilderFromNpm(childPath, version = AILY_BUILDER_DEFAULT_VERSION) {
+  const targetChannel = getAilyBuilderChannel();
   const targetVersion = normalizeAilyBuilderVersion(version);
+  const targetInstallKey = `${targetChannel}:${targetVersion}`;
   const targetPrefix = getAilyBuilderVersionPrefix(targetVersion);
   const targetPath = getNpmAilyBuilderPath(targetVersion);
   if (!targetPath) {
@@ -1005,13 +1123,21 @@ function installAilyBuilderFromNpm(childPath, version = AILY_BUILDER_DEFAULT_VER
     });
   }
 
+  if (targetChannel === "next" && !ailyBuilderUpdateConfigLoaded) {
+    return Promise.resolve({
+      ok: false,
+      path: targetPath,
+      error: "未获取到 aily-builder-next 更新配置，无法安装 next 版本",
+    });
+  }
+
   if (isAilyBuilderInstallComplete(targetPath)) {
     writeCurrentAilyBuilderInfo(targetVersion);
     return Promise.resolve({ ok: true, path: targetPath, version: targetVersion, installed: false });
   }
 
   if (ailyBuilderInstallPromise) {
-    if (ailyBuilderInstallVersion === targetVersion) {
+    if (ailyBuilderInstallKey === targetInstallKey) {
       return ailyBuilderInstallPromise;
     }
     return ailyBuilderInstallPromise.then(() => installAilyBuilderFromNpm(childPath, targetVersion));
@@ -1026,7 +1152,7 @@ function installAilyBuilderFromNpm(childPath, version = AILY_BUILDER_DEFAULT_VER
     npmArgs.push("--registry", process.env.AILY_NPM_REGISTRY);
   }
 
-  ailyBuilderInstallVersion = targetVersion;
+  ailyBuilderInstallKey = targetInstallKey;
   ailyBuilderInstallPromise = new Promise((resolve) => {
     const child = require("child_process").spawn(npmPath, npmArgs, {
       env: process.env,
@@ -1069,7 +1195,7 @@ function installAilyBuilderFromNpm(childPath, version = AILY_BUILDER_DEFAULT_VER
     });
   }).finally(() => {
     ailyBuilderInstallPromise = null;
-    ailyBuilderInstallVersion = null;
+    ailyBuilderInstallKey = null;
   });
 
   return ailyBuilderInstallPromise;
@@ -1132,7 +1258,15 @@ async function waitForAilyBuilderFromNpm(childPath, version = AILY_BUILDER_DEFAU
     return { ok: true, path: currentInfo.path, version: currentInfo.version, installed: false };
   }
 
-  const legacyNpmBuilderPath = getLegacyNpmAilyBuilderPath();
+  if (getAilyBuilderChannel() === "next" && !ailyBuilderUpdateConfigLoaded) {
+    return {
+      ok: false,
+      path: "",
+      error: "未获取到 aily-builder-next 更新配置，无法安装 next 版本",
+    };
+  }
+
+  const legacyNpmBuilderPath = getAilyBuilderChannel() === "stable" ? getLegacyNpmAilyBuilderPath() : null;
   if (isAilyBuilderInstallComplete(legacyNpmBuilderPath) && !ailyBuilderUpdateRequired) {
     applyAilyBuilderCommandEnv(childPath);
     return {
@@ -1143,7 +1277,7 @@ async function waitForAilyBuilderFromNpm(childPath, version = AILY_BUILDER_DEFAU
     };
   }
 
-  const bundledBuilderPath = path.join(childPath, "aily-builder");
+  const bundledBuilderPath = getAilyBuilderChannel() === "stable" ? path.join(childPath, "aily-builder") : null;
   if (isAilyBuilderInstallComplete(bundledBuilderPath) && !ailyBuilderUpdateRequired) {
     applyAilyBuilderCommandEnv(childPath);
     return { ok: true, path: bundledBuilderPath, installed: false };
@@ -1157,11 +1291,13 @@ async function waitForAilyBuilderFromNpm(childPath, version = AILY_BUILDER_DEFAU
 }
 
 function getAilyBuilderStatus(childPath) {
+  const channel = getAilyBuilderChannel();
   const targetVersion = getAilyBuilderTargetVersion();
   const currentInfo = readCurrentAilyBuilderInfo();
-  const legacyPath = getLegacyNpmAilyBuilderPath();
-  const bundledPath = path.join(childPath, "aily-builder");
+  const legacyPath = channel === "stable" ? getLegacyNpmAilyBuilderPath() : null;
+  const bundledPath = channel === "stable" ? path.join(childPath, "aily-builder") : null;
   const activePath = resolveAilyBuilderPath(childPath);
+  const installed = isAilyBuilderInstallComplete(activePath);
   const activeVersion =
     currentInfo?.version ||
     (isAilyBuilderInstallComplete(legacyPath) ? getInstalledAilyBuilderVersion(legacyPath) : null) ||
@@ -1169,15 +1305,22 @@ function getAilyBuilderStatus(childPath) {
   const updateAvailable = !!activeVersion && compareSemver(activeVersion, targetVersion) < 0;
 
   return {
-    installed: isAilyBuilderInstallComplete(activePath),
+    channel,
+    key: getAilyBuilderUpdateKey(channel),
+    packageName: getAilyBuilderPackageName(),
+    installed,
     installedVersion: activeVersion,
     targetVersion,
     required: ailyBuilderUpdateRequired,
     updateAvailable,
     installing: !!ailyBuilderInstallPromise,
-    installingVersion: ailyBuilderInstallVersion,
+    installingKey: ailyBuilderInstallKey,
     path: activePath,
     command: process.env.AILY_BUILDER_COMMAND || resolveAilyBuilderCommand(childPath),
+    configLoaded: ailyBuilderUpdateConfigLoaded,
+    error: channel === "next" && !ailyBuilderUpdateConfigLoaded && !installed
+      ? "未获取到 aily-builder-next 更新配置"
+      : "",
   };
 }
 
@@ -1221,6 +1364,7 @@ function applyAilyBuilderUpdateConfig(config = {}) {
     ailyBuilderUpdateRequired = config.required;
     process.env.AILY_BUILDER_REQUIRED = ailyBuilderUpdateRequired ? "true" : "false";
   }
+  ailyBuilderUpdateConfigLoaded = true;
 }
 
 function getPackageUpdatePlatformKey() {
@@ -1256,7 +1400,7 @@ function isAilyBuilderUpdateEntry(entry = {}) {
     Object.prototype.hasOwnProperty.call(entry, platformKey) ||
     (entry.npmPackages && Object.prototype.hasOwnProperty.call(entry.npmPackages, platformKey));
   const packageName = getAilyBuilderPackageFromUpdateEntry(entry);
-  return key === "aily-builder" && (!hasExplicitPlatformPackage || !!packageName);
+  return key === getAilyBuilderUpdateKey() && (!hasExplicitPlatformPackage || !!packageName);
 }
 
 async function fetchPackageUpdatesManifest() {
@@ -1305,7 +1449,7 @@ async function checkPackageUpdatesFromManifest() {
       const status = getAilyBuilderStatus(childPath);
       result.ailyBuilder = status;
       result.packages.push({
-        key: "aily-builder",
+        key: status.key,
         platform: getPackageUpdatePlatformKey(),
         npmPackage: getAilyBuilderPackageName(),
         status,
@@ -1316,7 +1460,7 @@ async function checkPackageUpdatesFromManifest() {
   if (!result.ailyBuilder) {
     result.ailyBuilder = getAilyBuilderStatus(childPath);
     result.packages.push({
-      key: "aily-builder",
+      key: result.ailyBuilder.key,
       status: result.ailyBuilder,
     });
   }
@@ -1819,7 +1963,7 @@ function applyChildToolEnv(childPath) {
 
   const ailyBuilderPath = resolveAilyBuilderPath(childPath);
   const npmAilyBuilderBinPath = getNpmAilyBuilderBinPath();
-  const ninjaPath = path.join(ailyBuilderPath, "ninja");
+  const ninjaPath = isAilyBuilderInstallComplete(ailyBuilderPath) ? path.join(ailyBuilderPath, "ninja") : "";
   const probeRsDir = path.join(childPath, "probe-rs");
   const z7Path = path.join(childPath, isWin32 ? "7za.exe" : "7zz");
   const rgPath = path.join(childPath, isWin32 ? "rg.exe" : "rg");
@@ -2069,12 +2213,14 @@ function loadEnv() {
 
   process.env.AILY_PROJECT_PATH = conf["project_path"];
   const ailyBuilderConfig = conf.ailyBuilder || conf.aily_builder || {};
+  setAilyBuilderChannel(conf.labs?.ailyBuilderNext ? "next" : "stable");
   ailyBuilderTargetVersion = normalizeAilyBuilderVersion(
     process.env.AILY_BUILDER_VERSION || ailyBuilderConfig.version || AILY_BUILDER_DEFAULT_VERSION
   );
   ailyBuilderUpdateRequired = process.env.AILY_BUILDER_REQUIRED === "true" || ailyBuilderConfig.required === true;
   process.env.AILY_BUILDER_TARGET_VERSION = ailyBuilderTargetVersion;
   process.env.AILY_BUILDER_REQUIRED = ailyBuilderUpdateRequired ? "true" : "false";
+  ailyBuilderUpdateConfigLoaded = getAilyBuilderChannel() === "stable";
   const packageUpdatesConfig = conf.packageUpdates || conf.package_updates || {};
   const packageUpdatesManifest = process.env.AILY_PACKAGE_UPDATES_MANIFEST || packageUpdatesConfig.manifest || PACKAGE_UPDATES_DEFAULT_MANIFEST;
   packageUpdatesManifestUrl = process.env.AILY_PACKAGE_UPDATES_MANIFEST_URL ||
@@ -3016,6 +3162,25 @@ ipcMain.handle("aily-builder-status", async () => {
     throw new Error("AILY_CHILD_PATH 未设置");
   }
   return getAilyBuilderStatus(childPath);
+});
+
+ipcMain.handle("aily-builder-channel-set", async (event, { channel, install } = {}) => {
+  const childPath = process.env.AILY_CHILD_PATH;
+  if (!childPath) {
+    throw new Error("AILY_CHILD_PATH 未设置");
+  }
+
+  setAilyBuilderChannel(channel);
+  await checkPackageUpdatesFromManifest();
+  if (install) {
+    ensureAilyBuilderFromNpm(childPath);
+  }
+  applyAilyBuilderCommandEnv(childPath);
+  return getAilyBuilderStatus(childPath);
+});
+
+ipcMain.handle("aily-builder-channel-get", async () => {
+  return getAilyBuilderChannel();
 });
 
 ipcMain.handle("package-updates-check", async () => {

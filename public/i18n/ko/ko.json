@@ -300,7 +300,8 @@
             "AILY_BUILDER": "aily-builder",
             "MCP": "MCP",
             "DEVMODE": "개발자 모드",
-            "CACHE": "캐시 관리"
+            "CACHE": "캐시 관리",
+            "LABS": "실험실"
         },
         "FIELDS": {
             "PROJECT_FOLDER": "프로젝트 폴더",
@@ -331,6 +332,8 @@
             "AILY_BUILDER_UP_TO_DATE": "최신 상태",
             "AILY_BUILDER_UPDATE_DONE": "aily-builder 업데이트 완료",
             "AILY_BUILDER_UPDATE_FAILED": "aily-builder 업데이트 실패",
+            "AILY_BUILDER_NEXT_VERSION": "aily-builder-next",
+            "AILY_BUILDER_NEXT_VERSION_DESC": "마법을 켜고 대형 라이브러리를 100% 더 빠르게 컴파일합니다.",
             "OPEN_CACHE_FOLDER": "캐시 폴더 열기"
         },
         "BUTTONS": {

@@ -137,7 +137,7 @@ export class UpdateService {
     try {
       const result = await window['packageUpdates']?.check?.();
       const status = result?.ailyBuilder || await window['builder'].status();
-      const needsUpdate = status && (!status.installed || status.updateAvailable);
+      const needsUpdate = status && !status.error && (!status.installed || status.updateAvailable);
       if (!needsUpdate || this.ailyBuilderUpdateDialogOpen) {
         return;
       }
@@ -150,9 +150,10 @@ export class UpdateService {
       }
 
       this.ailyBuilderUpdateDialogOpen = true;
+      const builderLabel = status.packageName || status.key || 'aily-builder';
       const modalRef = this.modal.confirm({
-        nzTitle: '发现 aily-builder 更新',
-        nzContent: `发现 aily-builder ${status.targetVersion}，是否现在更新？`,
+        nzTitle: `发现 ${builderLabel} 更新`,
+        nzContent: `发现 ${builderLabel} ${status.targetVersion}，是否现在更新？`,
         nzOkText: '更新',
         nzCancelText: '稍后',
         nzMaskClosable: false,

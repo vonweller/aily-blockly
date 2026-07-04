@@ -177,7 +177,7 @@
                 <div>{{ 'SETTINGS.FIELDS.AILY_BUILDER_CURRENT_VERSION' | translate }}:</div>
                 <div class="builder-setting-inline">
                   <div class="builder-version">
-                  <strong>{{ ailyBuilderStatus?.installedVersion || ('SETTINGS.FIELDS.AILY_BUILDER_NOT_INSTALLED' | translate) }}</strong>
+                  <strong>{{ getAilyBuilderDisplayName() }}</strong>
                   @if (ailyBuilderStatus?.updateAvailable && ailyBuilderStatus?.targetVersion) {
                   <span class="version">→ {{ ailyBuilderStatus.targetVersion }}</span>
                   }
@@ -189,7 +189,7 @@
                       warning: ailyBuilderStatus?.updateAvailable || !ailyBuilderStatus?.installed
                     }">{{ getAilyBuilderStatusText() }}</span>
                     }
-                    @if (!ailyBuilderStatus?.installed || ailyBuilderStatus?.updateAvailable || ailyBuilderUpdating || ailyBuilderStatus?.installing) {
+                    @if (!ailyBuilderStatus?.error && (!ailyBuilderStatus?.installed || ailyBuilderStatus?.updateAvailable || ailyBuilderUpdating || ailyBuilderStatus?.installing)) {
                     <button nz-button nzSize="small" [nzLoading]="ailyBuilderUpdating || ailyBuilderStatus?.installing"
                       [disabled]="ailyBuilderUpdating || ailyBuilderStatus?.installing" (click)="updateAilyBuilder()">
                       @if (!ailyBuilderUpdating && !ailyBuilderStatus?.installing) {
@@ -230,6 +230,20 @@
                   <button nz-button nzSize="small" [disabled]="cacheClearing" [nzLoading]="cacheClearing === '90'"
                     (click)="clearCache('90')">{{ 'SETTINGS.FIELDS.CACHE_THREE_MONTHS' | translate }}</button>
                 </div>
+              </div>
+            </div>
+          </div>
+          <!-- 实验室设置 -->
+          <div id="SETTINGS.SECTIONS.LABS" class="section">
+            <h2 class="section-title">{{ 'SETTINGS.SECTIONS.LABS' | translate }}</h2>
+            <div class="right-inner">
+              <div class="lab-feature-card">
+                <div class="lab-feature-content">
+                  <div class="lab-feature-title">{{ 'SETTINGS.FIELDS.AILY_BUILDER_NEXT_VERSION' | translate }}</div>
+                  <div class="lab-feature-desc">{{ 'SETTINGS.FIELDS.AILY_BUILDER_NEXT_VERSION_DESC' | translate }}</div>
+                </div>
+                <nz-switch [(ngModel)]="labsConfig.ailyBuilderNext" [nzLoading]="ailyBuilderChannelSwitching"
+                  (ngModelChange)="onAilyBuilderNextChange($event)"></nz-switch>
               </div>
             </div>
           </div>

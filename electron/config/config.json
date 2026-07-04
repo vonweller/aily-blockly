@@ -87,5 +87,8 @@
   "devmode": false,
   "blockly": {
     "renderer": "thrasos"
+  },
+  "labs": {
+    "ailyBuilderNext": false
   }
 }

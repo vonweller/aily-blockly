@@ -300,7 +300,8 @@
             "AILY_BUILDER": "aily-builder",
             "MCP": "MCP",
             "DEVMODE": "وضع المطور",
-            "CACHE": "إدارة ذاكرة التخزين المؤقتة"
+            "CACHE": "إدارة ذاكرة التخزين المؤقتة",
+            "LABS": "المختبرات"
         },
         "FIELDS": {
             "PROJECT_FOLDER": "مجلد المشروع",
@@ -331,6 +332,8 @@
             "AILY_BUILDER_UP_TO_DATE": "محدث",
             "AILY_BUILDER_UPDATE_DONE": "تم تحديث aily-builder",
             "AILY_BUILDER_UPDATE_FAILED": "فشل تحديث aily-builder",
+            "AILY_BUILDER_NEXT_VERSION": "aily-builder-next",
+            "AILY_BUILDER_NEXT_VERSION_DESC": "فعّل السحر. تجميع المكتبات الكبيرة أسرع بنسبة 100%.",
             "OPEN_CACHE_FOLDER": "فتح مجلد التخزين المؤقت",
             "CLEAR_CACHE": "مسح ذاكرة التخزين المؤقتة",
             "CACHE_SIZE": "حجم ذاكرة التخزين المؤقتة",

@@ -300,7 +300,8 @@
             "AILY_BUILDER": "aily-builder",
             "MCP": "MCP",
             "DEVMODE": "Режим разработчика",
-            "CACHE": "Управление кэшем"
+            "CACHE": "Управление кэшем",
+            "LABS": "Лаборатория"
         },
         "FIELDS": {
             "PROJECT_FOLDER": "Папка проекта",
@@ -331,6 +332,8 @@
             "AILY_BUILDER_UP_TO_DATE": "Актуальная версия",
             "AILY_BUILDER_UPDATE_DONE": "aily-builder обновлен",
             "AILY_BUILDER_UPDATE_FAILED": "Не удалось обновить aily-builder",
+            "AILY_BUILDER_NEXT_VERSION": "aily-builder-next",
+            "AILY_BUILDER_NEXT_VERSION_DESC": "Включите магию. Компиляция больших библиотек на 100% быстрее.",
             "OPEN_CACHE_FOLDER": "Открыть папку кэша",
             "CLEAR_CACHE": "Очистить кэш",
             "CACHE_SIZE": "Размер кэша",

@@ -300,7 +300,8 @@
             "AILY_BUILDER": "aily-builder",
             "MCP": "MCP",
             "DEVMODE": "Modo Desarrollador",
-            "CACHE": "Gestión de caché"
+            "CACHE": "Gestión de caché",
+            "LABS": "Laboratorios"
         },
         "FIELDS": {
             "PROJECT_FOLDER": "Carpeta de Proyecto",
@@ -331,6 +332,8 @@
             "AILY_BUILDER_UP_TO_DATE": "Actualizado",
             "AILY_BUILDER_UPDATE_DONE": "aily-builder actualizado",
             "AILY_BUILDER_UPDATE_FAILED": "Error al actualizar aily-builder",
+            "AILY_BUILDER_NEXT_VERSION": "aily-builder-next",
+            "AILY_BUILDER_NEXT_VERSION_DESC": "Activa la magia. Compila bibliotecas grandes un 100% más rápido.",
             "OPEN_CACHE_FOLDER": "Abrir carpeta de caché",
             "CLEAR_CACHE": "Limpiar caché",
             "CACHE_SIZE": "Tamaño de caché",

@@ -336,7 +336,8 @@
             "AILY_BUILDER": "aily-builder",
             "MCP": "MCP",
             "DEVMODE": "Developer Mode",
-            "CACHE": "Cache Management"
+            "CACHE": "Cache Management",
+            "LABS": "Labs"
         },
         "FIELDS": {
             "PROJECT_FOLDER": "Project Folder",
@@ -368,6 +369,8 @@
             "AILY_BUILDER_UP_TO_DATE": "Up to date",
             "AILY_BUILDER_UPDATE_DONE": "aily-builder updated",
             "AILY_BUILDER_UPDATE_FAILED": "aily-builder update failed",
+            "AILY_BUILDER_NEXT_VERSION": "aily-builder-next",
+            "AILY_BUILDER_NEXT_VERSION_DESC": "Turn on magic. Compile large libraries 100% faster.",
             "OPEN_CACHE_FOLDER": "Open cache folder",
             "CLEAR_CACHE": "Clear Cache",
             "CACHE_SIZE": "Cache Size",

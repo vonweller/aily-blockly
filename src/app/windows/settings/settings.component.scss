@@ -134,10 +134,12 @@ textarea {
   align-items: center;
   gap: 6px;
   min-height: 24px;
+  min-width: 0;
 
   strong {
     font-weight: 500;
     color: var(--aily-text-primary);
+    word-break: break-all;
   }
 
   .version {
@@ -238,6 +240,38 @@ ngx-simplebar {
       }
     }
   }
+}
+
+.lab-feature-card {
+  min-height: 72px;
+  border-radius: 8px;
+  padding: 14px 20px;
+  background: var(--aily-bg-tertiary);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.lab-feature-content {
+  min-width: 0;
+}
+
+.lab-feature-title {
+  color: var(--aily-text-primary);
+  font-size: 14px;
+  line-height: 22px;
+  white-space: nowrap;
+}
+
+.lab-feature-desc {
+  color: var(--aily-text-secondary);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.lab-feature-card nz-switch {
+  flex-shrink: 0;
 }
 
 .item {

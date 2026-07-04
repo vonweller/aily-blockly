@@ -300,7 +300,8 @@
             "AILY_BUILDER": "aily-builder",
             "MCP": "MCP",
             "DEVMODE": "開發者模式",
-            "CACHE": "緩存管理"
+            "CACHE": "緩存管理",
+            "LABS": "實驗室"
         },
         "FIELDS": {
             "PROJECT_FOLDER": "專案資料夾",
@@ -331,6 +332,8 @@
             "AILY_BUILDER_UP_TO_DATE": "已是最新",
             "AILY_BUILDER_UPDATE_DONE": "aily-builder 更新完成",
             "AILY_BUILDER_UPDATE_FAILED": "aily-builder 更新失敗",
+            "AILY_BUILDER_NEXT_VERSION": "aily-builder-next",
+            "AILY_BUILDER_NEXT_VERSION_DESC": "開啟魔法，編譯大型庫速度提升100%",
             "OPEN_CACHE_FOLDER": "開啟緩存資料夾",
             "CLEAR_CACHE": "清除緩存",
             "CACHE_SIZE": "緩存大小",

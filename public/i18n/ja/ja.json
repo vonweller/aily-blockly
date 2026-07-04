@@ -300,7 +300,8 @@
             "AILY_BUILDER": "aily-builder",
             "MCP": "MCP",
             "DEVMODE": "開発者モード",
-            "CACHE": "キャッシュ管理"
+            "CACHE": "キャッシュ管理",
+            "LABS": "ラボ"
         },
         "FIELDS": {
             "PROJECT_FOLDER": "プロジェクトフォルダ",
@@ -331,6 +332,8 @@
             "AILY_BUILDER_UP_TO_DATE": "最新です",
             "AILY_BUILDER_UPDATE_DONE": "aily-builder を更新しました",
             "AILY_BUILDER_UPDATE_FAILED": "aily-builder の更新に失敗しました",
+            "AILY_BUILDER_NEXT_VERSION": "aily-builder-next",
+            "AILY_BUILDER_NEXT_VERSION_DESC": "魔法をオンにして、大規模ライブラリのコンパイル速度を100%向上します。",
             "OPEN_CACHE_FOLDER": "キャッシュフォルダーを開く",
             "CLEAR_CACHE": "キャッシュをクリア",
             "CACHE_SIZE": "キャッシュサイズ",

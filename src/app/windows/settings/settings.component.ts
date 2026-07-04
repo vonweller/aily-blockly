@@ -92,6 +92,10 @@ export class SettingsComponent implements OnDestroy {
       name: 'SETTINGS.SECTIONS.CACHE',
       icon: 'fa-light fa-broom'
     },
+    {
+      name: 'SETTINGS.SECTIONS.LABS',
+      icon: 'fa-light fa-flask'
+    },
     // {
     //   name: 'SETTINGS.SECTIONS.DEVMODE',
     //   icon: 'fa-light fa-gear-code'
@@ -109,7 +113,9 @@ export class SettingsComponent implements OnDestroy {
   boardOperations = {};
   ailyBuilderStatus: any = null;
   ailyBuilderUpdating = false;
+  ailyBuilderChannelSwitching = false;
   private ailyBuilderStatusTimer: ReturnType<typeof setTimeout> | null = null;
+  private initialAilyBuilderNext = false;
 
   // 搜索关键字
   boardSearchKeyword: string = '';
@@ -255,6 +261,13 @@ export class SettingsComponent implements OnDestroy {
     return this.configService.data;
   }
 
+  get labsConfig() {
+    if (!this.configData.labs) {
+      this.configData.labs = {};
+    }
+    return this.configData.labs;
+  }
+
   appdata_path: string
 
   mcpServiceList = []
@@ -293,6 +306,8 @@ export class SettingsComponent implements OnDestroy {
     this.scrollElement = this.scrollContainer?.SimpleBar?.getScrollElement() || null;
     this.scrollElement?.addEventListener('scroll', this.scrollHandler);
     await this.updateBoardList();
+    this.initialAilyBuilderNext = !!this.labsConfig.ailyBuilderNext;
+    await this.syncAilyBuilderChannel();
     await this.loadAilyBuilderStatus();
     this.loadCacheStats();
   }
@@ -332,6 +347,9 @@ export class SettingsComponent implements OnDestroy {
     if (this.ailyBuilderUpdating || this.ailyBuilderStatus.installing) {
       return '';
     }
+    if (this.ailyBuilderStatus.error) {
+      return this.ailyBuilderStatus.error;
+    }
     if (!this.ailyBuilderStatus.installed) {
       return this.translateService.instant('SETTINGS.FIELDS.AILY_BUILDER_NOT_INSTALLED');
     }
@@ -339,6 +357,17 @@ export class SettingsComponent implements OnDestroy {
       return '';
     }
     return this.translateService.instant('SETTINGS.FIELDS.AILY_BUILDER_UP_TO_DATE');
+  }
+
+  getAilyBuilderDisplayName() {
+    const status = this.ailyBuilderStatus;
+    if (!status) {
+      return this.translateService.instant('SETTINGS.FIELDS.AILY_BUILDER_UNKNOWN');
+    }
+
+    const name = status.channel === 'next' ? 'next' : 'stable';
+    const version = status.installedVersion || status.targetVersion;
+    return version ? `${name} @ ${version}` : name;
   }
 
   async updateAilyBuilder() {
@@ -357,6 +386,29 @@ export class SettingsComponent implements OnDestroy {
       this.message.error(error?.message || this.translateService.instant('SETTINGS.FIELDS.AILY_BUILDER_UPDATE_FAILED'));
     } finally {
       this.ailyBuilderUpdating = false;
+    }
+  }
+
+  async onAilyBuilderNextChange(enabled: boolean) {
+    this.labsConfig.ailyBuilderNext = enabled;
+    await this.syncAilyBuilderChannel();
+  }
+
+  private async syncAilyBuilderChannel(options: { install?: boolean } = {}) {
+    if (!window['builder']?.setChannel || this.ailyBuilderChannelSwitching) {
+      return;
+    }
+
+    this.ailyBuilderChannelSwitching = true;
+    try {
+      const channel = this.labsConfig.ailyBuilderNext ? 'next' : 'stable';
+      this.ailyBuilderStatus = await window['builder'].setChannel(channel, options);
+      await this.loadAilyBuilderStatus();
+    } catch (error: any) {
+      console.error('aily-builder channel 切换失败:', error);
+      this.message.error(error?.message || this.translateService.instant('SETTINGS.FIELDS.AILY_BUILDER_UPDATE_FAILED'));
+    } finally {
+      this.ailyBuilderChannelSwitching = false;
     }
   }
 
@@ -443,7 +495,11 @@ export class SettingsComponent implements OnDestroy {
     }
   }
 
-  cancel() {
+  async cancel() {
+    if (this.labsConfig.ailyBuilderNext !== this.initialAilyBuilderNext) {
+      this.labsConfig.ailyBuilderNext = this.initialAilyBuilderNext;
+      await this.syncAilyBuilderChannel();
+    }
     this.uiService.closeWindow();
   }
 
@@ -451,6 +507,8 @@ export class SettingsComponent implements OnDestroy {
     await this.configService.applyResourceSourceRuntimeSelection();
     // 保存到config.json，如有需要立即加载的，再加载
     await this.configService.save();
+    await this.syncAilyBuilderChannel({ install: true });
+    this.initialAilyBuilderNext = !!this.labsConfig.ailyBuilderNext;
     window['ipcRenderer'].send('setting-changed', { action: 'devmode-changed', data: this.configData.devmode });
     // 保存完毕后关闭窗口
     this.uiService.closeWindow();
