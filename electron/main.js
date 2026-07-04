@@ -1181,6 +1181,29 @@ function formatAilyBuilderNextConfigMissingText() {
     : "aily-builder-next update config was not found";
 }
 
+function limitLogText(text, maxLength = 12000) {
+  const value = String(text || "");
+  if (value.length <= maxLength) {
+    return value;
+  }
+  return `${value.slice(0, maxLength)}\n... truncated ${value.length - maxLength} chars`;
+}
+
+function logAilyBuilderInstallEvent(event, data = {}, state = "doing") {
+  const detail = `[AILY_BUILDER_INSTALL_${event}] ${JSON.stringify(data, null, 2)}`;
+  if (state === "error") {
+    console.error(detail);
+  } else if (state === "warn") {
+    console.warn(detail);
+  } else {
+    console.info(detail);
+  }
+}
+
+function quoteWindowsShellPath(filePath) {
+  return `"${String(filePath).replace(/"/g, '""')}"`;
+}
+
 function notifyAilyBuilderFooter(phase, options = {}) {
   const stateByPhase = {
     failed: "warn",
@@ -1249,6 +1272,7 @@ function installAilyBuilderFromNpm(childPath, version = AILY_BUILDER_DEFAULT_VER
   const packageName = getAilyBuilderPackageName();
   const spec = `${packageName}@${targetVersion}`;
   const npmPath = getNpmExecutablePath(childPath);
+  const npmCommand = isWin32 ? quoteWindowsShellPath(npmPath) : npmPath;
   fs.mkdirSync(targetPrefix, { recursive: true });
   const npmArgs = ["install", spec, "--save-exact", "--prefix", targetPrefix];
   if (process.env.AILY_NPM_REGISTRY) {
@@ -1260,7 +1284,28 @@ function installAilyBuilderFromNpm(childPath, version = AILY_BUILDER_DEFAULT_VER
     notifyAilyBuilderFooter("installing", { channel: targetChannel, version: targetVersion });
   }
   ailyBuilderInstallPromise = new Promise((resolve) => {
-    const child = require("child_process").spawn(npmPath, npmArgs, {
+    logAilyBuilderInstallEvent("START", {
+      channel: targetChannel,
+      version: targetVersion,
+      packageName,
+      spec,
+      npmPath,
+      npmCommand,
+      npmArgs,
+      targetPrefix,
+      targetPath,
+      childPath,
+      reason: installOptions.reason,
+      env: {
+        AILY_NPM_REGISTRY: process.env.AILY_NPM_REGISTRY || "",
+        AILY_APPDATA_PATH: process.env.AILY_APPDATA_PATH || "",
+        AILY_CHILD_PATH: process.env.AILY_CHILD_PATH || "",
+        PATH: process.env.PATH || "",
+        SystemRoot: process.env.SystemRoot || "",
+        ComSpec: process.env.ComSpec || "",
+      },
+    });
+    const child = require("child_process").spawn(npmCommand, npmArgs, {
       env: process.env,
       shell: isWin32,
       windowsHide: true,
@@ -1269,18 +1314,40 @@ function installAilyBuilderFromNpm(childPath, version = AILY_BUILDER_DEFAULT_VER
     let stdout = "";
     let stderr = "";
     child.stdout?.on("data", (chunk) => {
-      stdout += chunk.toString();
+      const text = chunk.toString();
+      stdout += text;
     });
     child.stderr?.on("data", (chunk) => {
-      stderr += chunk.toString();
+      const text = chunk.toString();
+      stderr += text;
     });
     child.on("error", (error) => {
       if (installOptions.notifyFooter) {
         notifyAilyBuilderFooter("failed", { channel: targetChannel, version: targetVersion, timeout: 10000 });
       }
+      logAilyBuilderInstallEvent("SPAWN_ERROR", {
+        channel: targetChannel,
+        version: targetVersion,
+        npmPath,
+        npmCommand,
+        npmArgs,
+        error: error?.message || String(error),
+        stack: error?.stack || "",
+      }, "error");
       resolve({ ok: false, path: targetPath, error: error.message });
     });
     child.on("close", (code) => {
+      logAilyBuilderInstallEvent(code === 0 ? "CLOSE" : "CLOSE_ERROR", {
+        channel: targetChannel,
+        version: targetVersion,
+        code,
+        npmPath,
+        npmCommand,
+        npmArgs,
+        targetPath,
+        stdout: limitLogText(stdout),
+        stderr: limitLogText(stderr),
+      }, code === 0 ? "doing" : "error");
       if (code !== 0) {
         if (installOptions.notifyFooter) {
           notifyAilyBuilderFooter("failed", { channel: targetChannel, version: targetVersion, timeout: 10000 });
@@ -1296,6 +1363,21 @@ function installAilyBuilderFromNpm(childPath, version = AILY_BUILDER_DEFAULT_VER
       const ok = isAilyBuilderInstallComplete(targetPath);
       if (ok) {
         writeCurrentAilyBuilderInfo(targetVersion);
+      }
+      if (!ok) {
+        logAilyBuilderInstallEvent("VALIDATION_FAILED", {
+          channel: targetChannel,
+          version: targetVersion,
+          targetPath,
+          requiredFiles: [
+            path.join(targetPath, "index.js"),
+            path.join(targetPath, "node_modules/tree-sitter/build/Release/tree_sitter_runtime_binding.node"),
+            path.join(targetPath, "node_modules/tree-sitter-cpp/build/Release/tree_sitter_cpp_binding.node"),
+          ].map((filePath) => ({
+            path: filePath,
+            exists: fs.existsSync(filePath),
+          })),
+        }, "error");
       }
       if (installOptions.notifyFooter) {
         const successPhase = installOptions.reason === "channel-switch" || installOptions.reason === "install"
