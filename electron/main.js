@@ -1529,6 +1529,26 @@ function isAilyBuilderUpdateEntry(entry = {}) {
   return key === getAilyBuilderUpdateKey() && (!hasExplicitPlatformPackage || !!packageName);
 }
 
+function shouldInstallRequiredAilyBuilderUpdate(status) {
+  return !!status &&
+    !status.error &&
+    status.required &&
+    !status.installing &&
+    (!status.installed || status.updateAvailable);
+}
+
+function installRequiredAilyBuilderUpdate(childPath, status) {
+  const reason = status.installed ? "update" : "install";
+  installAilyBuilderFromNpm(childPath, status.targetVersion, { reason }).then((installResult) => {
+    if (installResult.ok) {
+      applyAilyBuilderCommandEnv(childPath);
+      console.log(`required ${status.key} 更新完成: ${installResult.path}`);
+      return;
+    }
+    console.error(`required ${status.key} 更新失败: ${installResult.error}`);
+  });
+}
+
 async function fetchPackageUpdatesManifest() {
   if (!packageUpdatesManifestUrl || typeof fetch !== "function") {
     return null;
@@ -1581,6 +1601,9 @@ async function checkPackageUpdatesFromManifest() {
           name: status.key,
           timeout: 10000,
         });
+      }
+      if (shouldInstallRequiredAilyBuilderUpdate(status)) {
+        installRequiredAilyBuilderUpdate(childPath, status);
       }
       result.packages.push({
         key: status.key,
