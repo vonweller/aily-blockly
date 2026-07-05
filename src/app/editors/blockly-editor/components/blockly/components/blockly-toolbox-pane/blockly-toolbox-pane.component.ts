@@ -1,5 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { AfterViewInit, ChangeDetectionStrategy, ChangeDetectorRef, Component, ElementRef, EventEmitter, HostBinding, NgZone, OnDestroy, OnInit, Output } from '@angular/core';
+import { AfterViewInit, ChangeDetectionStrategy, ChangeDetectorRef, Component, ElementRef, EventEmitter, HostBinding, NgZone, OnDestroy, OnInit, Output, TemplateRef, ViewChild } from '@angular/core';
 import { Subject, combineLatest, firstValueFrom } from 'rxjs';
 import { takeUntil } from 'rxjs/operators';
 import {
@@ -98,6 +98,10 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
   private dragSorting = false;
   private lastDragEndAt = 0;
   private readonly toolboxOrderPackageKey = 'blocklyToolboxOrder';
+  lastSubmittedLibraryDisplayName = '';
+
+  @ViewChild('librarySubmissionSuccessTpl')
+  private librarySubmissionSuccessTpl?: TemplateRef<void>;
 
   @HostBinding('class.toolbox-pane--sorting')
   get isSortingVisualActive(): boolean {
@@ -473,7 +477,7 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
       this.uploadingLibraryNames.add(libraryName);
       const accepted = await this.submitLibraryWithExistingConfirmation(item);
       if (accepted) {
-        this.message.success(`${this.getLibraryDisplayName(item)} 提交已受理，系统将自动创建 PR。你可以稍后在用户中心查看提交状态。`, { nzDuration: 7000 });
+        this.showLibrarySubmissionSuccessMessage(item);
       }
     } catch (error) {
       const errorMessage = this.getLibrarySubmissionErrorMessage(error);
@@ -514,6 +518,48 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
     } finally {
       this.message.remove(loadingMessageId);
     }
+  }
+
+  private showLibrarySubmissionSuccessMessage(item: BlocklyToolboxFacadeItem): void {
+    this.lastSubmittedLibraryDisplayName = this.getLibraryDisplayName(item);
+    const content = this.librarySubmissionSuccessTpl
+      ?? `${this.getLibraryDisplayName(item)} 提交已受理，系统将自动创建 PR。你可以稍后在用户中心查看提交状态。`;
+    this.message.success(content, { nzDuration: 8000 });
+  }
+
+  openLibrarySubmissionsInUserCenter(event?: MouseEvent): void {
+    event?.preventDefault();
+    event?.stopPropagation();
+
+    if (!this.authService.isLoggedIn) {
+      this.uiService.openTool('user-center');
+      return;
+    }
+
+    const loadingMessage = this.message.loading('正在打开用户中心...', { nzDuration: 0 });
+    this.authService.generateSSOToken('/user/library-submissions')
+      .pipe(takeUntil(this.destroy$))
+      .subscribe({
+        next: (response) => {
+          if (loadingMessage.messageId) {
+            this.message.remove(loadingMessage.messageId);
+          }
+          if (response?.target_url) {
+            this.electronService.openUrl(response.target_url);
+            return;
+          }
+          this.uiService.openTool('user-center');
+          this.message.warning('已打开用户中心，可在库提交记录页查看');
+        },
+        error: (error) => {
+          if (loadingMessage.messageId) {
+            this.message.remove(loadingMessage.messageId);
+          }
+          console.error('打开库提交记录失败:', error);
+          this.uiService.openTool('user-center');
+          this.message.error('库提交记录页打开失败，已为你打开用户中心');
+        },
+      });
   }
 
   private isExistingLibrarySubmissionError(error: unknown): boolean {
