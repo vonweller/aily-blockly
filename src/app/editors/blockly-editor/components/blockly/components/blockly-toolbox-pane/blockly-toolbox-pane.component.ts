@@ -469,32 +469,72 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
       return;
     }
 
-    this.uploadingLibraryNames.add(libraryName);
-    const loadingMessageId = this.message.loading(`${this.getLibraryDisplayName(item)} 上传中...`, { nzDuration: 0 }).messageId;
-
     try {
-      const response = await firstValueFrom(this.librarySubmissionService.submitLocalLibraryByRef({
-        name: libraryName,
-        path: libraryPath,
-        source: 'declared',
-      }));
-      this.message.remove(loadingMessageId);
-
-      const prUrl = response.data?.pr_url;
-      const mode = response.data?.mode === 'update' ? '更新' : '新增';
-      this.message.success(`${this.getLibraryDisplayName(item)} 已提交${mode} PR`, { nzDuration: 5000 });
-
-      if (prUrl) {
-        this.electronService.openUrl(prUrl);
+      this.uploadingLibraryNames.add(libraryName);
+      const accepted = await this.submitLibraryWithExistingConfirmation(item);
+      if (accepted) {
+        this.message.success(`${this.getLibraryDisplayName(item)} 提交已受理，系统将自动创建 PR。你可以稍后在用户中心查看提交状态。`, { nzDuration: 7000 });
       }
     } catch (error) {
-      this.message.remove(loadingMessageId);
       const errorMessage = this.getLibrarySubmissionErrorMessage(error);
       this.message.error(`${this.getLibraryDisplayName(item)} 上传失败: ${errorMessage}`, { nzDuration: 7000 });
     } finally {
       this.uploadingLibraryNames.delete(libraryName);
       this.cdr.markForCheck();
     }
+  }
+
+  private async submitLibraryWithExistingConfirmation(item: BlocklyToolboxFacadeItem): Promise<boolean> {
+    try {
+      await this.submitLibraryRequest(item, false);
+      return true;
+    } catch (error) {
+      if (!this.isExistingLibrarySubmissionError(error)) {
+        throw error;
+      }
+
+      const confirmed = await this.confirmExistingLibrarySubmission(item, error);
+      if (!confirmed) {
+        return false;
+      }
+
+      await this.submitLibraryRequest(item, true);
+      return true;
+    }
+  }
+
+  private async submitLibraryRequest(item: BlocklyToolboxFacadeItem, confirmExisting: boolean): Promise<void> {
+    const loadingMessageId = this.message.loading(`${this.getLibraryDisplayName(item)} 正在提交...`, { nzDuration: 0 }).messageId;
+    try {
+      await firstValueFrom(this.librarySubmissionService.submitLocalLibraryByRef({
+        name: item.libraryName || '',
+        path: item.libraryPath || '',
+        source: 'declared',
+      }, confirmExisting));
+    } finally {
+      this.message.remove(loadingMessageId);
+    }
+  }
+
+  private isExistingLibrarySubmissionError(error: unknown): boolean {
+    const apiError = error as Partial<LibrarySubmissionApiError>;
+    return apiError.status === 409 && apiError.errorCode === 'library_submission_already_submitted';
+  }
+
+  private confirmExistingLibrarySubmission(item: BlocklyToolboxFacadeItem, error: unknown): Promise<boolean> {
+    const apiError = error as Partial<LibrarySubmissionApiError>;
+    const prNumber = apiError.submission?.pr_number;
+    const extra = prNumber ? `当前提交记录 PR #${prNumber}。` : '当前已有提交记录。';
+    return new Promise((resolve) => {
+      this.modal.confirm({
+        nzTitle: '该库已经提交过',
+        nzContent: `${extra}继续提交会更新这条提交记录，并由后台重新创建或更新 PR。`,
+        nzOkText: '继续提交',
+        nzCancelText: '取消',
+        nzOnOk: () => resolve(true),
+        nzOnCancel: () => resolve(false),
+      });
+    });
   }
 
   private async ensureLibrarySubmissionReady(): Promise<boolean> {

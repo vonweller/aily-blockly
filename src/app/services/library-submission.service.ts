@@ -13,6 +13,7 @@ import { extractApiErrorDetails, ApiErrorDetails } from '../utils/api-error.util
 
 export interface LibrarySubmissionPayload {
   package: BlocklyLibrarySubmissionPackage;
+  confirmExisting?: boolean;
 }
 
 export interface LibrarySubmissionResult {
@@ -39,6 +40,7 @@ export interface LibrarySubmissionResponse {
 export interface LibrarySubmissionApiError extends ApiErrorDetails {
   status?: number;
   raw: unknown;
+  submission?: LibrarySubmissionResult;
 }
 
 @Injectable({
@@ -50,18 +52,21 @@ export class LibrarySubmissionService {
     private blocklyLibraryPackageService: BlocklyLibraryPackageService,
   ) { }
 
-  submitLocalLibrary(projectPath: string, packageName: string): Observable<LibrarySubmissionResponse> {
+  submitLocalLibrary(projectPath: string, packageName: string, confirmExisting = false): Observable<LibrarySubmissionResponse> {
     const bundle = this.blocklyLibraryPackageService.readLibrarySubmissionPackage(projectPath, packageName);
-    return this.submitBundle(bundle);
+    return this.submitBundle(bundle, confirmExisting);
   }
 
-  submitLocalLibraryByRef(ref: BlocklyLibraryPackageRef): Observable<LibrarySubmissionResponse> {
+  submitLocalLibraryByRef(ref: BlocklyLibraryPackageRef, confirmExisting = false): Observable<LibrarySubmissionResponse> {
     const bundle = this.blocklyLibraryPackageService.readLibrarySubmissionPackageByRef(ref);
-    return this.submitBundle(bundle);
+    return this.submitBundle(bundle, confirmExisting);
   }
 
-  submitBundle(bundle: BlocklyLibrarySubmissionBundle): Observable<LibrarySubmissionResponse> {
+  submitBundle(bundle: BlocklyLibrarySubmissionBundle, confirmExisting = false): Observable<LibrarySubmissionResponse> {
     const payload: LibrarySubmissionPayload = { package: bundle.package };
+    if (confirmExisting) {
+      payload.confirmExisting = true;
+    }
     if (bundle.srcArchivePath) {
       return this.submitMultipart(payload, bundle.srcArchivePath);
     }
@@ -87,13 +92,35 @@ export class LibrarySubmissionService {
   }
 
   private handleError(error: HttpErrorResponse | unknown): Observable<never> {
-    const source = error instanceof HttpErrorResponse ? (error.error ?? error) : error;
+    const source = this.getApiErrorPayload(error);
     const details = extractApiErrorDetails(source, '库提交失败');
     const normalized: LibrarySubmissionApiError = {
       ...details,
       status: error instanceof HttpErrorResponse ? error.status : undefined,
       raw: error,
+      submission: this.getSubmissionFromErrorPayload(source),
     };
     return throwError(() => normalized);
+  }
+
+  private getApiErrorPayload(error: HttpErrorResponse | unknown): unknown {
+    if (!(error instanceof HttpErrorResponse)) {
+      return error;
+    }
+    const body = error.error;
+    if (body && typeof body === 'object' && !Array.isArray(body) && body['detail']) {
+      return body['detail'];
+    }
+    return body ?? error;
+  }
+
+  private getSubmissionFromErrorPayload(source: unknown): LibrarySubmissionResult | undefined {
+    if (!source || typeof source !== 'object' || Array.isArray(source)) {
+      return undefined;
+    }
+    const submission = source['submission'];
+    return submission && typeof submission === 'object' && !Array.isArray(submission)
+      ? submission as LibrarySubmissionResult
+      : undefined;
   }
 }
