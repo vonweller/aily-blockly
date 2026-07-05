@@ -525,10 +525,13 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
     const apiError = error as Partial<LibrarySubmissionApiError>;
     const prNumber = apiError.submission?.pr_number;
     const extra = prNumber ? `当前提交记录 PR #${prNumber}。` : '当前已有提交记录。';
+    const actionText = apiError.sameContent
+      ? '本次内容与已有提交一致，继续后不会重复创建新 PR。'
+      : '继续提交会更新这条提交记录，并由后台重新创建或更新 PR。';
     return new Promise((resolve) => {
       this.modal.confirm({
         nzTitle: '该库已经提交过',
-        nzContent: `${extra}继续提交会更新这条提交记录，并由后台重新创建或更新 PR。`,
+        nzContent: `${extra}${actionText}`,
         nzOkText: '继续提交',
         nzCancelText: '取消',
         nzOnOk: () => resolve(true),

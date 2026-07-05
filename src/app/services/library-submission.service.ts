@@ -41,6 +41,7 @@ export interface LibrarySubmissionApiError extends ApiErrorDetails {
   status?: number;
   raw: unknown;
   submission?: LibrarySubmissionResult;
+  sameContent?: boolean;
 }
 
 @Injectable({
@@ -99,6 +100,7 @@ export class LibrarySubmissionService {
       status: error instanceof HttpErrorResponse ? error.status : undefined,
       raw: error,
       submission: this.getSubmissionFromErrorPayload(source),
+      sameContent: this.getSameContentFromErrorPayload(source),
     };
     return throwError(() => normalized);
   }
@@ -122,5 +124,13 @@ export class LibrarySubmissionService {
     return submission && typeof submission === 'object' && !Array.isArray(submission)
       ? submission as LibrarySubmissionResult
       : undefined;
+  }
+
+  private getSameContentFromErrorPayload(source: unknown): boolean | undefined {
+    if (!source || typeof source !== 'object' || Array.isArray(source)) {
+      return undefined;
+    }
+    const value = source['same_content'] ?? source['sameContent'];
+    return typeof value === 'boolean' ? value : undefined;
   }
 }
