@@ -12,9 +12,6 @@ import {
 } from '../core/electron-chat-runtime-host-transport';
 import { ElectronService } from '../../../services/electron.service';
 import { ProjectService } from '../../../services/project.service';
-import { BuilderService } from '../../../services/builder.service';
-import { ConnectionGraphService } from '../../../services/connection-graph.service';
-import { BlocklyService } from '../../../editors/blockly-editor/services/blockly.service';
 import {
   runSyncAbsFileConcreteHandler,
   type SyncAbsArgs,
@@ -22,10 +19,6 @@ import {
 import { AbsAutoSyncService } from './abs-auto-sync.service';
 import { ChatHistoryService, type LiveHostSessionRecord } from './chat-history.service';
 import { EditCheckpointService } from './edit-checkpoint.service';
-import { ArduinoLintService } from './arduino-lint.service';
-import { AilyHost } from '../core/host';
-import { AilyChatConfigService } from './aily-chat-config.service';
-import { ChatRuntimeOwnerSubmittedTurnTitleService } from './chat-runtime-owner-submitted-turn-title.service';
 
 type HostResourceOperationPayload = {
   readonly adapter?: unknown;
@@ -55,11 +48,6 @@ type HostResourceOperationPayload = {
   readonly paths?: unknown;
   readonly filePath?: unknown;
   readonly editType?: unknown;
-  readonly code?: unknown;
-  readonly options?: unknown;
-  readonly xml?: unknown;
-  readonly port?: unknown;
-  readonly requestText?: unknown;
 };
 
 class HostResourceOperationError extends Error {
@@ -83,12 +71,6 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
     private readonly editCheckpointService: EditCheckpointService,
     private readonly projectService: ProjectService,
     private readonly electronService: ElectronService,
-    private readonly builderService: BuilderService,
-    private readonly arduinoLintService: ArduinoLintService,
-    private readonly blocklyService: BlocklyService,
-    private readonly connectionGraphService: ConnectionGraphService,
-    private readonly chatConfigService: AilyChatConfigService,
-    private readonly submittedTurnTitleService: ChatRuntimeOwnerSubmittedTurnTitleService,
   ) {}
 
   start(): Promise<void> {
@@ -135,18 +117,6 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
       case 'file-write':
       case 'workspace-mutation':
         return this.runSyncAbsResourceOperation(request);
-      case 'project-info':
-        return this.runProjectInfoOperation(request);
-      case 'project-build':
-        return this.runProjectBuildOperation(request);
-      case 'project-lint':
-        return this.runProjectLintOperation(request);
-      case 'blockly-workspace':
-        return this.runBlocklyWorkspaceOperation(request);
-      case 'connection-graph':
-        return this.runConnectionGraphOperation(request);
-      case 'session-title':
-        return this.prepareSubmittedTurnTitle(request);
       case 'save-current-session':
       case 'history-persistence':
         return this.persistHostSessionRecord(request);
@@ -157,34 +127,6 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
           false,
         );
     }
-  }
-
-  private prepareSubmittedTurnTitle(request: ChatRuntimeHostResourceOperationRequest): {
-    readonly scheduled: true;
-    readonly sessionId: string;
-    readonly kind: ChatRuntimeHostResourceOperationRequest['kind'];
-  } {
-    const sessionId = this.requireSessionId(request, 'submitted turn title');
-    const payload = this.requirePayloadAdapter(request.payload, 'chatTitle', 'submitted turn title');
-    const requestText = this.normalizeSessionId(payload.requestText ?? payload.requestContent);
-    if (!requestText) {
-      throw new HostResourceOperationError(
-        '[AilyChat][RuntimeHost] submitted turn title requires request text.',
-        'resource_operation_payload_missing',
-        false,
-      );
-    }
-    const displayText = this.normalizeSessionId(payload.displayContent) || requestText;
-    this.submittedTurnTitleService.prepareSubmittedTurnTitle({
-      sessionId,
-      requestText,
-      displayText,
-    });
-    return {
-      scheduled: true,
-      sessionId,
-      kind: request.kind,
-    };
   }
 
   private scheduleSessionStartAbsExport(request: ChatRuntimeHostResourceOperationRequest): {
@@ -393,222 +335,6 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
     return result;
   }
 
-  private async runProjectInfoOperation(request: ChatRuntimeHostResourceOperationRequest): Promise<unknown> {
-    this.requireSessionId(request, 'project info');
-    const payload = this.requirePayloadAdapter(request.payload, 'project', 'project info');
-    const projectService = this.projectService as unknown as Record<string, unknown>;
-    switch (payload.action) {
-      case 'getProjectInfo':
-        return this.withRuntimeConfigSnapshot(typeof projectService['getProjectInfo'] === 'function'
-          ? await projectService['getProjectInfo'].call(this.projectService)
-          : {
-              projectOpened: Boolean(this.normalizeSessionId(this.projectService.currentProjectPath)),
-              path: this.normalizeSessionId(this.projectService.currentProjectPath),
-              rootPath: this.normalizeSessionId(this.projectService.projectRootPath),
-            });
-      case 'getPackageJson':
-        return typeof this.projectService.getPackageJson === 'function'
-          ? await this.projectService.getPackageJson()
-          : this.projectService.currentPackageData ?? null;
-      case 'getBoardJson':
-        return typeof this.projectService.getBoardJson === 'function'
-          ? await this.projectService.getBoardJson()
-          : null;
-      case 'getBoardModule':
-        return typeof this.projectService.getBoardModule === 'function'
-          ? await this.projectService.getBoardModule()
-          : null;
-      case 'getBoardPackageJson':
-        return typeof this.projectService.getBoardPackageJson === 'function'
-          ? await this.projectService.getBoardPackageJson()
-          : null;
-      default:
-        throw new HostResourceOperationError(
-          `[AilyChat][RuntimeHost] Unsupported project info action: ${String(payload.action || '<missing>')}.`,
-          'resource_operation_payload_invalid',
-          false,
-        );
-    }
-  }
-
-  private async withRuntimeConfigSnapshot(projectInfo: unknown): Promise<unknown> {
-    const base = projectInfo && typeof projectInfo === 'object'
-      ? { ...(projectInfo as Record<string, unknown>) }
-      : {};
-    return {
-      ...base,
-      runtimeConfig: await this.buildRuntimeConfigSnapshot(),
-    };
-  }
-
-  private async buildRuntimeConfigSnapshot(): Promise<{
-    readonly apiEndpoint: string;
-    readonly authToken: string;
-    readonly isLoggedIn: boolean;
-    readonly userId: string | null;
-    readonly maxRequests: number;
-  }> {
-    if (!AilyHost.isInitialized()) {
-      return {
-        apiEndpoint: '',
-        authToken: '',
-        isLoggedIn: false,
-        userId: null,
-        maxRequests: this.normalizeMaxRequests(this.chatConfigService.maxRequests),
-      };
-    }
-
-    const host = AilyHost.get();
-    const auth = host.auth;
-    const token = typeof auth?.getToken === 'function'
-      ? await auth.getToken()
-      : auth?.token ?? '';
-    const snapshot = typeof auth?.getSnapshot === 'function' ? auth.getSnapshot() : null;
-    const userInfo = auth?.userInfo ?? (snapshot && typeof snapshot === 'object' ? (snapshot as { userInfo?: unknown }).userInfo : null);
-    const userId = userInfo && typeof userInfo === 'object'
-      ? this.normalizeSessionId((userInfo as { id?: unknown }).id)
-      : '';
-    return {
-      apiEndpoint: this.normalizeSessionId(host.config?.apiEndpoint),
-      authToken: this.normalizeSessionId(token),
-      isLoggedIn: Boolean(auth?.isLoggedIn),
-      userId: userId || null,
-      maxRequests: this.normalizeMaxRequests(this.chatConfigService.maxRequests),
-    };
-  }
-
-  private normalizeMaxRequests(value: unknown): number {
-    if (typeof value !== 'number' || !Number.isFinite(value)) {
-      return 200;
-    }
-    return Math.max(1, Math.min(200, Math.trunc(value)));
-  }
-
-  private async runProjectBuildOperation(request: ChatRuntimeHostResourceOperationRequest): Promise<unknown> {
-    this.requireSessionId(request, 'project build');
-    const payload = this.requirePayloadAdapter(request.payload, 'builder', 'project build');
-    const projectPath = this.normalizeSessionId(payload.projectPath);
-    if (!projectPath) {
-      throw new HostResourceOperationError(
-        '[AilyChat][RuntimeHost] project build requires projectPath.',
-        'resource_operation_payload_invalid',
-        false,
-      );
-    }
-
-    if (payload.action === 'build') {
-      return await this.builderService.build(projectPath);
-    }
-    if (payload.action === 'upload') {
-      const upload = (this.builderService as unknown as {
-        upload?: (projectPath: string, port?: string) => Promise<unknown>;
-      }).upload;
-      if (typeof upload !== 'function') {
-        throw new HostResourceOperationError(
-          '[AilyChat][RuntimeHost] project upload is not available.',
-          'resource_operation_unavailable',
-          false,
-        );
-      }
-      return await upload.call(this.builderService, projectPath, this.normalizeSessionId(payload.port));
-    }
-    throw new HostResourceOperationError(
-      `[AilyChat][RuntimeHost] Unsupported project build action: ${String(payload.action || '<missing>')}.`,
-      'resource_operation_payload_invalid',
-      false,
-    );
-  }
-
-  private async runProjectLintOperation(request: ChatRuntimeHostResourceOperationRequest): Promise<unknown> {
-    this.requireSessionId(request, 'project lint');
-    const payload = this.requirePayloadAdapter(request.payload, 'arduinoLint', 'project lint');
-    if (payload.action !== 'checkSyntax') {
-      throw new HostResourceOperationError(
-        `[AilyChat][RuntimeHost] Unsupported project lint action: ${String(payload.action || '<missing>')}.`,
-        'resource_operation_payload_invalid',
-        false,
-      );
-    }
-    const code = typeof payload.code === 'string' ? payload.code : '';
-    if (!code.trim()) {
-      throw new HostResourceOperationError(
-        '[AilyChat][RuntimeHost] project lint requires source code.',
-        'resource_operation_payload_invalid',
-        false,
-      );
-    }
-    const options = payload.options && typeof payload.options === 'object'
-      ? payload.options as Record<string, unknown>
-      : {};
-    return await this.arduinoLintService.checkSyntax(code, options as never);
-  }
-
-  private async runBlocklyWorkspaceOperation(request: ChatRuntimeHostResourceOperationRequest): Promise<unknown> {
-    this.requireSessionId(request, 'Blockly workspace');
-    const payload = this.requirePayloadAdapter(request.payload, 'blockly', 'Blockly workspace');
-    const blocklyService = this.blocklyService as unknown as Record<string, unknown>;
-    switch (payload.action) {
-      case 'getWorkspaceXml':
-        return typeof blocklyService['getWorkspaceXml'] === 'function'
-          ? blocklyService['getWorkspaceXml'].call(this.blocklyService)
-          : undefined;
-      case 'loadWorkspace':
-        return typeof blocklyService['loadWorkspace'] === 'function'
-          ? blocklyService['loadWorkspace'].call(this.blocklyService, typeof payload.xml === 'string' ? payload.xml : '')
-          : undefined;
-      case 'getGeneratedCode':
-        return typeof blocklyService['getGeneratedCode'] === 'function'
-          ? blocklyService['getGeneratedCode'].call(this.blocklyService)
-          : undefined;
-      case 'reloadAbiJson':
-        return typeof blocklyService['reloadAbiJson'] === 'function'
-          ? blocklyService['reloadAbiJson'].call(this.blocklyService)
-          : undefined;
-      case 'getBlockDefinitions':
-        return typeof blocklyService['getBlockDefinitions'] === 'function'
-          ? blocklyService['getBlockDefinitions'].call(this.blocklyService)
-          : undefined;
-      default:
-        throw new HostResourceOperationError(
-          `[AilyChat][RuntimeHost] Unsupported Blockly workspace action: ${String(payload.action || '<missing>')}.`,
-          'resource_operation_payload_invalid',
-          false,
-        );
-    }
-  }
-
-  private async runConnectionGraphOperation(request: ChatRuntimeHostResourceOperationRequest): Promise<unknown> {
-    this.requireSessionId(request, 'connection graph');
-    const payload = this.requirePayloadAdapter(request.payload, 'connectionGraph', 'connection graph');
-    const action = typeof payload.action === 'string' ? payload.action : '';
-    const allowedActions = new Set([
-      'generateConnectionGraph',
-      'getPinmapSummary',
-      'validateConnectionGraph',
-      'getSensorPinmapCatalog',
-      'generatePinmap',
-      'savePinmap',
-      'getCurrentSchematic',
-      'applySchematic',
-    ]);
-    if (!allowedActions.has(action)) {
-      throw new HostResourceOperationError(
-        `[AilyChat][RuntimeHost] Unsupported connection graph action: ${String(payload.action || '<missing>')}.`,
-        'resource_operation_payload_invalid',
-        false,
-      );
-    }
-    const handler = (this.connectionGraphService as unknown as Record<string, unknown>)[action];
-    if (typeof handler !== 'function') {
-      throw new HostResourceOperationError(
-        `[AilyChat][RuntimeHost] Connection graph action is unavailable: ${action}.`,
-        'resource_operation_unavailable',
-        false,
-      );
-    }
-    return await Promise.resolve(handler.call(this.connectionGraphService, payload.args));
-  }
-
   private persistHostSessionRecord(request: ChatRuntimeHostResourceOperationRequest): {
     readonly saved: true;
     readonly sessionId: string;
@@ -686,30 +412,6 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
 
   private normalizeSessionId(sessionId: unknown): string {
     return typeof sessionId === 'string' ? sessionId.trim() : '';
-  }
-
-  private requirePayloadAdapter(
-    payload: unknown,
-    adapter: string,
-    operation: string,
-  ): HostResourceOperationPayload {
-    if (!payload || typeof payload !== 'object') {
-      throw new HostResourceOperationError(
-        `[AilyChat][RuntimeHost] ${operation} requires a payload.`,
-        'resource_operation_payload_missing',
-        false,
-      );
-    }
-
-    const payloadObject = payload as HostResourceOperationPayload;
-    if (payloadObject.adapter !== adapter) {
-      throw new HostResourceOperationError(
-        `[AilyChat][RuntimeHost] ${operation} payload must use adapter=${adapter}.`,
-        'resource_operation_payload_invalid',
-        false,
-      );
-    }
-    return payloadObject;
   }
 
   private normalizeNullableString(value: unknown): string | null {

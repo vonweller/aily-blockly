@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, ChangeDetectorRef, Component, EventEmitter, Input, OnChanges, Output, SimpleChanges, forwardRef, inject } from '@angular/core';
+import { ChangeDetectionStrategy, ChangeDetectorRef, Component, Input, OnChanges, SimpleChanges, forwardRef, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { XMarkdownComponent } from 'ngx-x-markdown';
@@ -9,7 +9,7 @@ import { AilyChatCodeComponent } from './aily-chat-code.component';
 import { ChatTerminalPartComponent } from './chat-terminal-part/chat-terminal-part.component';
 import { XAilyThinkViewerComponent } from './x-aily-think-viewer/x-aily-think-viewer.component';
 import { AilyMarkdownExternalLinksDirective } from '../../directives/aily-markdown-external-links.directive';
-import type { ActivityGroupDisplayItem, ActivityToolbarActionDisplayData, ActivityToolHeaderDisplayData } from './chat-activity-group.types';
+import type { ActivityGroupDisplayItem, ActivityToolbarActionDisplayData } from './chat-activity-group.types';
 import { XAilyConfirmationViewerComponent } from './x-aily-confirmation-viewer/x-aily-confirmation-viewer.component';
 import {
   getDiffDisplayLines,
@@ -63,7 +63,7 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
       <div class="cag-item-body">
         @if (item.kind === 'thinking') {
           <div class="cag-item-thinking-content">
-            <x-aily-think-viewer [data]="getThinkingViewerData()" [embedded]="true" (contentDelta)="emitContentDelta()" />
+            <x-aily-think-viewer [data]="getThinkingViewerData()" [embedded]="true" />
           </div>
         } @else {
           <div
@@ -82,9 +82,9 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
             @if (isToolHeader()) {
               <div class="cag-item-tool-title">
                 <div class="cag-item-tool-title-main">
-                  <span class="cag-item-tool-title-label">{{ (stableToolHeader?.title || item.label) | translate }}</span>
-                  @if (stableToolHeader?.subtitle) {
-                    <small class="cag-item-tool-title-subtitle">{{ stableToolHeader?.subtitle | translate }}</small>
+                  <span class="cag-item-tool-title-label">{{ (item.toolHeader?.title || item.label) | translate }}</span>
+                  @if (item.toolHeader?.subtitle) {
+                    <small class="cag-item-tool-title-subtitle">{{ item.toolHeader?.subtitle | translate }}</small>
                   }
                 </div>
                 <span class="cag-item-tool-title-side">
@@ -103,11 +103,11 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
                       }
                     </span>
                   }
-                  @if (stableToolHeader?.meta) {
-                    <span class="cag-item-head-meta">{{ stableToolHeader?.meta }}</span>
+                  @if (item.toolHeader?.meta) {
+                    <span class="cag-item-head-meta">{{ item.toolHeader?.meta }}</span>
                   }
-                  @if (stableToolHeader?.pill) {
-                    <span class="cag-item-pill" [attr.data-tone]="stableToolHeader?.pillTone">{{ stableToolHeader?.pill | translate }}</span>
+                  @if (item.toolHeader?.pill) {
+                    <span class="cag-item-pill" [attr.data-tone]="item.toolHeader?.pillTone">{{ item.toolHeader?.pill | translate }}</span>
                   }
                   @if (hasDetailContent()) {
                     <span class="cag-item-chevron-wrap" aria-hidden="true">
@@ -219,8 +219,7 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
                   [sessionId]="sessionId"
                   [first]="nestedFirst"
                   [last]="nestedLast"
-                  [only]="nestedCount === 1"
-                  (contentDelta)="emitContentDelta()" />
+                  [only]="nestedCount === 1" />
               }
             </div>
           }
@@ -233,8 +232,7 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
                   [sessionId]="sessionId"
                   [first]="subagentFirst"
                   [last]="subagentLast"
-                  [only]="subagentCount === 1"
-                  (contentDelta)="emitContentDelta()" />
+                  [only]="subagentCount === 1" />
               }
             </div>
           }
@@ -447,8 +445,7 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
                                   [hasOutput]="hasTerminalOutput(group)"
                                   [output]="getTerminalOutputText(group)"
                                   [actions]="getTerminalToolbarActions()"
-                                  (actionSelected)="handleTerminalToolbarAction($event)"
-                                  (contentDelta)="emitContentDelta()" />
+                                  (actionSelected)="handleTerminalToolbarAction($event)" />
                               } @else {
                                 @for (row of group.rows; track row.id) {
                                 <div class="cag-item-invocation-output" [attr.data-tone]="row.tone || 'neutral'" [attr.data-output-kind]="row.outputKind || 'default'">
@@ -2266,19 +2263,12 @@ export class ChatActivityItemComponent implements OnChanges {
   @Input() first = false;
   @Input() last = false;
   @Input() only = false;
-  @Output() contentDelta = new EventEmitter<void>();
 
   readonly componentMap: ComponentMap = { code: AilyChatCodeComponent };
   private readonly runtimeInteractionHost = inject(ChatRuntimeInteractionHostService, { optional: true });
   private readonly cdr = inject(ChangeDetectorRef);
 
   detailExpanded = false;
-  stableToolHeader: ActivityToolHeaderDisplayData | null = null;
-  private stableToolHeaderItemId = '';
-
-  emitContentDelta(): void {
-    this.contentDelta.emit();
-  }
 
   shouldRenderInlineApproval(): boolean {
     return !!this.item?.approval && (this.item.approval.resolved === true || this.hasActiveInlineApproval());
@@ -2338,12 +2328,6 @@ export class ChatActivityItemComponent implements OnChanges {
   selectedInstructionFilter: InstructionDiagnosticFilter = 'all';
   private readonly collapsedDiffHunks = new Set<string>();
   private lastAutoDetailExpanded = false;
-  private thinkingViewerDataCacheKey = '';
-  private thinkingViewerDataCache: {
-    content?: string;
-    ref?: string;
-    isComplete?: boolean;
-  } | null = null;
 
   ngOnChanges(changes: SimpleChanges): void {
     if (changes['item']) {
@@ -2364,7 +2348,6 @@ export class ChatActivityItemComponent implements OnChanges {
         this.ensureLazyDetailLoaded();
       }
 
-      this.syncStableToolHeader(isSameItem);
       this.lastAutoDetailExpanded = nextAutoDetailExpanded;
       this.selectedInstructionFilter = 'all';
       const markdownSurfaceCount = countActivityItemMarkdownSurfaces(this.item, this.detailExpanded);
@@ -2386,59 +2369,23 @@ export class ChatActivityItemComponent implements OnChanges {
     return !!this.item.toolHeader || this.item.headerKind === 'tool';
   }
 
-  private syncStableToolHeader(isSameItem: boolean): void {
-    const nextHeader = this.item.toolHeader;
-    if (!nextHeader) {
-      this.stableToolHeader = null;
-      this.stableToolHeaderItemId = '';
-      return;
-    }
-
-    if (!isSameItem || this.stableToolHeaderItemId !== this.item.id || !this.stableToolHeader) {
-      this.stableToolHeader = { ...nextHeader };
-      this.stableToolHeaderItemId = this.item.id;
-      return;
-    }
-
-    this.stableToolHeader = {
-      title: nextHeader.title || this.stableToolHeader.title,
-      subtitle: nextHeader.subtitle || this.stableToolHeader.subtitle,
-      meta: nextHeader.meta || this.stableToolHeader.meta,
-      pill: nextHeader.pill,
-      pillTone: nextHeader.pillTone,
-    };
-  }
-
   getThinkingViewerData(): {
     content?: string;
     ref?: string;
     isComplete?: boolean;
   } {
     const thinking = this.item.thinking;
-    const cacheKey = [
-      this.item.id,
-      thinking?.ref ?? '',
-      thinking?.content ?? this.item.note ?? '',
-      thinking?.isComplete ?? !this.item.isSpinning,
-    ].join('\u0000');
-    if (this.thinkingViewerDataCacheKey === cacheKey && this.thinkingViewerDataCache) {
-      return this.thinkingViewerDataCache;
-    }
-
-    this.thinkingViewerDataCacheKey = cacheKey;
     if (thinking?.ref) {
-      this.thinkingViewerDataCache = {
+      return {
         ref: thinking.ref,
         isComplete: thinking.isComplete,
       };
-      return this.thinkingViewerDataCache;
     }
 
-    this.thinkingViewerDataCache = {
+    return {
       content: thinking?.content ?? this.item.note ?? '',
       isComplete: thinking?.isComplete ?? !this.item.isSpinning,
     };
-    return this.thinkingViewerDataCache;
   }
 
   shouldRenderHeaderToolbar(): boolean {

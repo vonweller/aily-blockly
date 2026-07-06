@@ -18,14 +18,11 @@ import type { LiveHostSessionRecord } from '../services/chat-history.service';
 import { countHostRecordMessages } from '../services/chat-history.service';
 import type {
   HostSessionRecord,
-  HostSessionSidecar,
   ImportedDebugSessionRecord,
-  PersistedHostTurnResponse,
 } from '../services/chat-history.service';
 import type {
   ChatSessionModelCreateProps,
   ChatSessionModelReference,
-  ChatSessionRequestListTransactionResult,
 } from '../services/chat-session-model-store.service';
 import type { ChatSessionViewModel } from '../services/chat-session-view-model-store.service';
 import type { ChatSessionRuntimeState } from '../services/chat-session-runtime-store.service';
@@ -91,12 +88,7 @@ import type { ChatSessionItemsService } from '../services/chat-session-items.ser
 import { ChatSessionEntryCoordinator } from './chat-session-entry-coordinator';
 import { ChatPerformanceTracer } from '../services/chat-perf-tracer';
 import { createRequiredSessionResourceModel } from './required-session-resource-model';
-import type {
-  ChatRuntimeHostEditTrackingPayload,
-  ChatRuntimeHostPrewarmRequest,
-  ChatRuntimeHostPrewarmResult,
-} from '../core/chat-runtime-host-contract';
-import { createSessionCheckpointTimelineState } from './session-checkpoint-timeline-model';
+import type { ChatRuntimeHostEditTrackingPayload } from '../core/chat-runtime-host-contract';
 
 type LexInteractionAction = NonNullable<import('aily-lex/browser').TurnRequest['metadata']>['interactionAction'];
 
@@ -161,14 +153,13 @@ type SessionLifecycleContext = ChatViewWriteBridgeContext
     buildExecutionSaveTarget?(sessionId: string | null | undefined): HostSessionSaveTarget | null;
     getDevelopmentModePreferenceRuntimeMode?(): ChatAgentRuntimeMode | undefined;
     readSessionTurnResponses?(sessionId?: string | null): readonly TurnResponseTurn[];
-    prepareForkPrefixRequestListTransaction?(
-      sessionId: string | null | undefined,
-      turnId: string | null | undefined,
-    ): ChatSessionRequestListTransactionResult | null;
     readSessionRuntimeState?(sessionId?: string | null): Readonly<ChatSessionRuntimeState> | undefined;
     readSessionCheckpointTimelineState?(sessionId?: string | null): import('./session-checkpoint-timeline-model').SessionCheckpointTimelineState | null;
+    replaceSessionCheckpointTimelineState?(
+      sessionId: string,
+      state: import('./session-checkpoint-timeline-model').SessionCheckpointTimelineState | null | undefined,
+    ): void;
     hasSessionRuntimeHandle?(sessionId?: string | null): boolean;
-    prewarmRuntimeExecutor?(request: ChatRuntimeHostPrewarmRequest): Promise<ChatRuntimeHostPrewarmResult>;
     projectRestoredRuntimeAuxiliary?(sessionId: string, auxiliary: HostSessionRecord['auxiliary'] | null | undefined): void;
     detachSessionRuntimeView?(sessionId?: string | null): boolean;
     attachSessionView?(sessionId?: string | null): Promise<void>;
@@ -439,32 +430,18 @@ export class SessionLifecycleHelper {
       return false;
     }
 
-    const forkPrefixTransaction = this.ctx.prepareForkPrefixRequestListTransaction?.(
-      sourceSessionId,
-      options.turnId,
-    ) ?? null;
-    if (!forkPrefixTransaction) {
-      this.ctx.message.info('Cannot fork because the request-list transaction is unavailable.');
-      return false;
-    }
     const sourceRecord = this.resolveForkSourceRecord(sourceSessionId);
     const sourceTurnResponses = sourceRecord?.turnResponses ?? [];
-    const sourceRetainedTurnResponses = [...forkPrefixTransaction.effects.hostProjection.turnResponses];
-    if (sourceRetainedTurnResponses.length === 0) {
-      this.ctx.message.info('无法在第一轮请求之前分叉会话');
+    const targetTurnIndex = sourceTurnResponses.findIndex(turn => turn['turnId'] === options.turnId);
+    if (targetTurnIndex < 0) {
+      this.ctx.message.info('未找到该请求对应的会话边界');
       return false;
     }
 
-    if (forkPrefixTransaction) {
-      console.info('[AilyChat][RequestListBranchTrace]', {
-        phase: 'fork-prefix-prepare',
-        sourceSessionId,
-        requestListRevision: forkPrefixTransaction.revision ?? null,
-        forkBoundaryTurnId: forkPrefixTransaction.forkBoundaryTurnId ?? options.turnId,
-        retainedTurnIds: forkPrefixTransaction.retainedTurnIds ?? summarizeTurnResponseIds(sourceRetainedTurnResponses),
-        discardedTurnIds: forkPrefixTransaction.discardedTurnIds ?? [],
-        canonicalPrefixTurnIds: summarizeTurnResponseIds(sourceRetainedTurnResponses),
-      });
+    const sourceRetainedTurnResponses = sourceTurnResponses.slice(0, targetTurnIndex);
+    if (sourceRetainedTurnResponses.length === 0) {
+      this.ctx.message.info('无法在第一轮请求之前分叉会话');
+      return false;
     }
 
     this.saveCurrentSession();
@@ -544,18 +521,15 @@ export class SessionLifecycleHelper {
       forkedBeforeTurnId: options.turnId,
       forkedRetainedTurnCount: retainedTurnResponses.length,
     };
-    const forkedSidecar = this.buildForkCheckpointSidecar(forkedSessionId, retainedTurnResponses);
     const forkedRecord: HostSessionRecord = {
       metadata: forkedMetadata,
       ...(retainedTurnResponses.length > 0 ? { turnResponses: retainedTurnResponses } : {}),
-      ...(forkedSidecar ? { sidecar: forkedSidecar } : {}),
     };
 
     const persistedForkedRecord: LiveHostSessionRecord = {
       sessionId: forkedSessionId,
       metadata: forkedMetadata,
       turnResponses: retainedTurnResponses,
-      ...(forkedSidecar ? { sidecar: forkedSidecar } : {}),
     };
     try {
       await this.persistForkedSessionRecordThroughHost(persistedForkedRecord);
@@ -570,46 +544,6 @@ export class SessionLifecycleHelper {
     this.ctx.scrollManager.scrollToBottom();
 
     return true;
-  }
-
-  private buildForkCheckpointSidecar(
-    forkedSessionId: string,
-    retainedTurnResponses: readonly TurnResponseTurn[],
-  ): HostSessionSidecar | undefined {
-    const sessionResource = typeof forkedSessionId === 'string' ? forkedSessionId.trim() : '';
-    if (!sessionResource) {
-      return undefined;
-    }
-
-    const timeline = createSessionCheckpointTimelineState({
-      sessionResource,
-      turnResponses: retainedTurnResponses,
-    });
-    const checkpointMarker = {
-      sessionResource,
-      currentCheckpointIndex: timeline.currentCheckpointIndex,
-      currentTurnResponseCount: timeline.currentTurnResponseCount,
-    };
-    if (!timeline.checkpoints.length || !timeline.turnResponses.length) {
-      return { checkpointMarker };
-    }
-
-    return {
-      checkpointMarker,
-      checkpointRedoBranch: {
-        sessionResource,
-        currentCheckpointIndex: timeline.currentCheckpointIndex,
-        currentTurnResponseCount: timeline.currentTurnResponseCount,
-        checkpoints: timeline.checkpoints.map(checkpoint => ({
-          checkpointId: checkpoint.checkpointId,
-          requestId: checkpoint.requestId,
-          ...(checkpoint.turnId ? { turnId: checkpoint.turnId } : {}),
-          turnIndex: checkpoint.turnIndex,
-          ...(checkpoint.metadata ? { metadata: checkpoint.metadata } : {}),
-        })),
-        turnResponses: timeline.turnResponses as PersistedHostTurnResponse[],
-      },
-    };
   }
 
   private async persistForkedSessionRecordThroughHost(record: LiveHostSessionRecord): Promise<void> {
@@ -676,22 +610,16 @@ export class SessionLifecycleHelper {
       return { kind: 'failed', reason: 'checkpoint-metadata' };
     }
 
+    const providerOptionsKey = createHostSessionProviderOptionsKey(input.forkedProviderOptions);
     let ready = false;
     try {
-      if (typeof this.ctx.prewarmRuntimeExecutor !== 'function') {
-        return { kind: 'failed', reason: 'agent' };
-      }
-      const result = await this.ctx.prewarmRuntimeExecutor({
-        sessionId: input.forkedSessionId,
-        providerOptions: input.forkedProviderOptions,
-        agentRuntimeMode: this.ctx.currentAgentRuntimeMode,
-        currentModel: this.ctx.currentModel ?? null,
-      });
-      ready = result.ensured === true;
+      ready = await this.ctx.lexStream.agent.ensureAgent(input.forkedSessionId, providerOptionsKey, { activate: false });
     } catch (error) {
+      this.ctx.lexStream.agent.dispose(input.forkedSessionId);
       return { kind: 'failed', reason: 'agent', error };
     }
     if (!ready) {
+      this.ctx.lexStream.agent.dispose(input.forkedSessionId);
       return { kind: 'failed', reason: 'agent' };
     }
 
@@ -1199,7 +1127,7 @@ export class SessionLifecycleHelper {
     const pendingSessionId = this.createSessionId();
     const providerOptions = this.resolveCurrentProjectProviderOptions();
     const agentRuntimeMode = this.applyAgentRuntimeMode(providerOptions);
-    const canonicalProviderOptions = this.ctx.chatService.applySessionProviderOptions(providerOptions);
+    this.applySessionProviderOptions(providerOptions);
     const freshSelectedMode = this.resolveCurrentSelectedModeForFreshSession();
     this.setActiveSessionId(pendingSessionId);
     this.acquireSessionModel({
@@ -1207,13 +1135,13 @@ export class SessionLifecycleHelper {
       title: { text: '', source: 'empty' },
       projectPath: this.ctx.chatService.currentSessionPath || null,
       sessionType: DEFAULT_CHAT_SESSION_TYPE,
-      inputState: { providerOptions: canonicalProviderOptions, selectedMode: freshSelectedMode },
+      inputState: { providerOptions, selectedMode: freshSelectedMode },
     });
     this.ctx.attachSessionViewModel?.(pendingSessionId);
     this.ctx.markVisibleSessionProjectionOwner?.(pendingSessionId);
     applyCurrentSessionTitle(this.ctx.chatService, { text: '', source: 'empty' });
     this.applySessionType(DEFAULT_CHAT_SESSION_TYPE);
-    this.applySessionProviderOptions(canonicalProviderOptions);
+    this.applySessionProviderOptions(providerOptions);
     this.hostSessionItemController.createNewChatSessionItem(pendingSessionId, {
       projectPath: this.ctx.chatService.currentSessionPath || null,
       agentRuntimeMode,
@@ -1227,7 +1155,6 @@ export class SessionLifecycleHelper {
     });
 
     this.initializeMcpInBackground('startSession');
-    this.scheduleRuntimeExecutorPrewarm(pendingSessionId, canonicalProviderOptions, agentRuntimeMode);
 
     if (!this.isVisibleSessionStartupOwner(pendingSessionId)) {
       return pendingSessionId;
@@ -1236,88 +1163,6 @@ export class SessionLifecycleHelper {
 
     this.ctx.isSessionStarting = false;
     return pendingSessionId;
-  }
-
-  private scheduleRuntimeExecutorPrewarm(
-    sessionId: string,
-    providerOptions: HostSessionProviderOptions,
-    agentRuntimeMode: ChatAgentRuntimeMode,
-  ): void {
-    const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
-    if (!targetSessionId || this.ctx.hasSessionRuntimeHandle?.(targetSessionId) === true) {
-      return;
-    }
-
-    const startPrewarm = () => {
-      const startedAt = performance.now();
-      ChatPerformanceTracer.increment('runtime_executor.prewarm.started');
-      const prewarmRuntime = this.ctx.prewarmRuntimeExecutor;
-      if (typeof prewarmRuntime !== 'function') {
-        ChatPerformanceTracer.increment('runtime_executor.prewarm.unavailable');
-        return;
-      }
-      void prewarmRuntime({
-        sessionId: targetSessionId,
-        providerOptions,
-        agentRuntimeMode,
-        currentModel: this.ctx.currentModel ?? null,
-      })
-        .then(result => {
-          const ensured = result?.ensured === true;
-          ChatPerformanceTracer.increment(ensured
-            ? 'runtime_executor.prewarm.ensured'
-            : 'runtime_executor.prewarm.unavailable');
-          ChatPerformanceTracer.recordDuration(
-            'runtime_executor_prewarm',
-            performance.now() - startedAt,
-            `session=${targetSessionId},ensured=${ensured}`,
-            { slowThresholdMs: 24, counterPrefix: 'runtime_executor.prewarm.duration' },
-          );
-        })
-        .catch(error => {
-          ChatPerformanceTracer.increment('runtime_executor.prewarm.failed');
-          ChatPerformanceTracer.recordDuration(
-            'runtime_executor_prewarm',
-            performance.now() - startedAt,
-            `session=${targetSessionId},error=${error instanceof Error ? error.message : String(error)}`,
-            { slowThresholdMs: 24, counterPrefix: 'runtime_executor.prewarm.duration' },
-          );
-          if (isAilyCategoryDebugEnabled('aily.chat.traceRuntimeExecutorPrewarm', [
-            '__AILY_CHAT_TRACE_RUNTIME_EXECUTOR_PREWARM__',
-            'AILY_CHAT_TRACE_RUNTIME_EXECUTOR_PREWARM',
-          ])) {
-            console.warn('[AilyChat][RuntimeExecutorPrewarm] failed', {
-              sessionId: targetSessionId,
-              error: error instanceof Error ? error.message : String(error),
-            });
-          }
-        });
-    };
-
-    const runtimeGlobal = globalThis as typeof globalThis & {
-      requestAnimationFrame?: (callback: FrameRequestCallback) => number;
-      requestIdleCallback?: (callback: IdleRequestCallback, options?: IdleRequestOptions) => number;
-    };
-    const scheduleWhenIdle = typeof runtimeGlobal.requestIdleCallback === 'function'
-      ? runtimeGlobal.requestIdleCallback.bind(runtimeGlobal)
-      : null;
-    if (scheduleWhenIdle) {
-      scheduleWhenIdle(() => {
-        setTimeout(startPrewarm, 0);
-      }, { timeout: 1200 });
-      return;
-    }
-    const scheduleAfterPaint = typeof runtimeGlobal.requestAnimationFrame === 'function'
-      ? runtimeGlobal.requestAnimationFrame.bind(runtimeGlobal)
-      : null;
-    if (scheduleAfterPaint) {
-      scheduleAfterPaint(() => {
-        setTimeout(startPrewarm, 0);
-      });
-      return;
-    }
-
-    setTimeout(startPrewarm, 0);
   }
 
   private isVisibleSessionStartupOwner(sessionId: string): boolean {
@@ -2738,7 +2583,6 @@ export class SessionLifecycleHelper {
     return {
       folderPath: chatSessionScopeProjectPath(scope),
       permissionMode: this.ctx.chatService.currentSessionPermissionMode,
-      permissionProfile: this.ctx.chatService.currentSessionPermissionProfile,
       ...(this.ctx.chatService.currentSessionPermissionLevel
         ? { permissionLevel: this.ctx.chatService.currentSessionPermissionLevel }
         : {}),
@@ -2764,7 +2608,6 @@ export class SessionLifecycleHelper {
     return {
       folderPath: this.ctx.chatService.currentSessionPath || null,
       permissionMode: this.ctx.chatService.currentSessionPermissionMode,
-      permissionProfile: this.ctx.chatService.currentSessionPermissionProfile,
       ...(this.ctx.chatService.currentSessionPermissionLevel
         ? { permissionLevel: this.ctx.chatService.currentSessionPermissionLevel }
         : {}),
@@ -2869,12 +2712,6 @@ function deriveDefaultTitleFromTurnResponses(
   }
 
   return '';
-}
-
-function summarizeTurnResponseIds(turnResponses: readonly TurnResponseTurn[] | null | undefined): readonly string[] {
-  return (Array.isArray(turnResponses) ? turnResponses : [])
-    .map(turn => typeof turn?.turnId === 'string' ? turn.turnId.trim() : '')
-    .filter(Boolean);
 }
 
 function deriveDefaultTitleFromRequest(request: unknown): string {

@@ -13,13 +13,8 @@ import {
   createHostSessionProviderOptionsKey,
   type HostSessionProviderOptions,
 } from '../helpers/host-session-input-state';
-import { isAilyCategoryDebugEnabled } from '../core/chat-debug-flags';
-import {
-  createSessionCheckpointTimelineState,
-  type SessionCheckpointTimelineState,
-} from '../helpers/session-checkpoint-timeline-model';
+import { createSessionCheckpointTimelineState } from '../helpers/session-checkpoint-timeline-model';
 import { ChatSessionModelStoreService } from './chat-session-model-store.service';
-import { ChatPerformanceTracer } from './chat-perf-tracer';
 import type { RequestCheckpointMetadata } from './edit-checkpoint.service';
 import {
   CHAT_RUNTIME_OWNER_RUNTIME_CONTROLLER,
@@ -35,20 +30,6 @@ import {
   type ChatRuntimeOwnerTurnStartupEditLifecyclePort,
 } from './chat-runtime-owner-ports';
 import { projectRuntimeStateToRuntimeController } from '../helpers/chat-runtime-owner-projection';
-
-function shouldTraceApprovalRuntimeBoundary(): boolean {
-  return isAilyCategoryDebugEnabled('aily.chat.traceApprovalRuntime', [
-    '__AILY_CHAT_TRACE_APPROVAL_RUNTIME__',
-    'AILY_CHAT_TRACE_APPROVAL_RUNTIME',
-  ]);
-}
-
-function shouldTraceRequestListBranchBoundary(): boolean {
-  return isAilyCategoryDebugEnabled('aily.chat.traceRequestListBranch', [
-    '__AILY_CHAT_TRACE_REQUEST_LIST_BRANCH__',
-    'AILY_CHAT_TRACE_REQUEST_LIST_BRANCH',
-  ]);
-}
 
 @Injectable()
 export class ChatRuntimeOwnerSubmittedTurnLifecycleService implements ChatRuntimeOwnerSubmittedTurnLifecyclePort {
@@ -81,37 +62,12 @@ export class ChatRuntimeOwnerSubmittedTurnLifecycleService implements ChatRuntim
 
     const startedAt = Date.now();
     const ensureAgentStartedAt = Date.now();
-    if (shouldTraceApprovalRuntimeBoundary()) {
-      console.info('[AilyChat][ApprovalRuntimeBoundary]', {
-        phase: 'prepare-enter',
-        sessionId: targetSessionId,
-        requestTextLength: typeof request.requestText === 'string' ? request.requestText.length : 0,
-        permissionMode: request.providerOptions?.permissionMode ?? null,
-        permissionProfile: request.providerOptions?.permissionProfile ?? null,
-        approvalsReviewer: request.providerOptions?.approvalsReviewer ?? null,
-        approvalPolicy: request.providerOptions?.approvalPolicy ?? null,
-        agentRuntimeMode: request.agentRuntimeMode ?? null,
-        activeResponseHandle: request.activeResponseHandle ?? null,
-      });
-    }
     await this.ensureRuntimeAgentForSession(targetSessionId, owner, request);
     const ensureAgentMs = Date.now() - ensureAgentStartedAt;
-    ChatPerformanceTracer.recordDuration(
-      'submitted_turn_ensure_agent',
-      ensureAgentMs,
-      `session=${targetSessionId}`,
-      { slowThresholdMs: 24, counterPrefix: 'submitted_turn.ensure_agent' },
-    );
 
     const hydrateStartedAt = Date.now();
     const hydratedTurnCount = await this.syncExistingTurnResponses(targetSessionId, owner, request.activeResponseHandle);
     const hydrateMs = Date.now() - hydrateStartedAt;
-    ChatPerformanceTracer.recordDuration(
-      'submitted_turn_hydrate_history',
-      hydrateMs,
-      `session=${targetSessionId},turns=${hydratedTurnCount}`,
-      { slowThresholdMs: 24, counterPrefix: 'submitted_turn.hydrate_history' },
-    );
 
     const displayText = request.displayText ?? request.requestText;
     const titleDispatchStartedAt = Date.now();
@@ -121,27 +77,13 @@ export class ChatRuntimeOwnerSubmittedTurnLifecycleService implements ChatRuntim
       displayText,
       owner,
     });
-    const titleDispatchMs = Date.now() - titleDispatchStartedAt;
-    ChatPerformanceTracer.recordDuration(
-      'submitted_turn_title_dispatch',
-      titleDispatchMs,
-      `session=${targetSessionId}`,
-      { slowThresholdMs: 16, counterPrefix: 'submitted_turn.title_dispatch' },
-    );
-    const elapsedMs = Date.now() - startedAt;
-    ChatPerformanceTracer.recordDuration(
-      'submitted_turn_prepare_total',
-      elapsedMs,
-      `session=${targetSessionId},ensureAgentMs=${ensureAgentMs},hydrateMs=${hydrateMs},titleDispatchMs=${titleDispatchMs}`,
-      { slowThresholdMs: 32, counterPrefix: 'submitted_turn.prepare_total' },
-    );
     this.logSubmittedTurnStartupLatency({
       sessionId: targetSessionId,
       hydratedTurnCount,
       hydrateMs,
       ensureAgentMs,
-      titleDispatchMs,
-      elapsedMs,
+      titleDispatchMs: Date.now() - titleDispatchStartedAt,
+      elapsedMs: Date.now() - startedAt,
     });
   }
 
@@ -189,6 +131,8 @@ export class ChatRuntimeOwnerSubmittedTurnLifecycleService implements ChatRuntim
       this.writeCheckpointMetadataToTurnResponse(turn, metadata);
       this.indexCheckpointMetadata(metadata, metadataByCheckpointId, metadataByRequestId, metadataByTurnId);
     }));
+    this.ownerSessionModel.replaceTurnResponses(sessionId, hydratedTurnResponses, { source: 'checkpoint-metadata-settle' });
+
     const checkpointTimelineState = createSessionCheckpointTimelineState({
       sessionResource: sessionId,
       turnResponses: hydratedTurnResponses,
@@ -196,14 +140,7 @@ export class ChatRuntimeOwnerSubmittedTurnLifecycleService implements ChatRuntim
       metadataByRequestId,
       metadataByTurnId,
     });
-    const transaction = this.chatSessionModelStore.settleCheckpointMetadataTransaction(
-      sessionId,
-      hydratedTurnResponses,
-      checkpointTimelineState as SessionCheckpointTimelineState,
-    );
-    if (!transaction) {
-      throw new Error(`[AilyChat][RuntimeOwnerLifecycle] Failed to settle checkpoint metadata transaction for ${sessionId}`);
-    }
+    model.replaceCheckpointTimelineState(checkpointTimelineState);
   }
 
   private buildCheckpointMetadataLookup(turn: unknown): {
@@ -312,38 +249,11 @@ export class ChatRuntimeOwnerSubmittedTurnLifecycleService implements ChatRuntim
       agentRuntimeMode,
       this.ownerSessionContext.currentModel,
     );
-    const hadAgentBeforeEnsure = !!owner.agent.getAgent?.(sessionId) || !!owner.agent.getHandle?.(sessionId);
-    if (shouldTraceApprovalRuntimeBoundary()) {
-      console.info('[AilyChat][ApprovalRuntimeBoundary]', {
-        phase: 'ensure-agent-enter',
-        sessionId,
-        providerOptionsKey,
-        hadAgentBeforeEnsure,
-        permissionMode: providerOptions.permissionMode,
-        permissionProfile: providerOptions.permissionProfile,
-        approvalsReviewer: providerOptions.approvalsReviewer ?? null,
-        approvalPolicy: providerOptions.approvalPolicy ?? null,
-        agentRuntimeMode,
-      });
-    }
     const ensured = await owner.agent.ensureAgent(sessionId, providerOptionsKey);
-    const hasHandleAfterEnsure = !!owner.agent.getHandle?.(sessionId);
-    const hasAgentAfterEnsure = !!owner.agent.getAgent?.(sessionId);
-    if (shouldTraceApprovalRuntimeBoundary()) {
-      console.info('[AilyChat][ApprovalRuntimeBoundary]', {
-        phase: 'ensure-agent-result',
-        sessionId,
-        providerOptionsKey,
-        ensured,
-        hadAgentBeforeEnsure,
-        hasHandleAfterEnsure,
-        hasAgentAfterEnsure,
-      });
-    }
     if (!ensured) {
       throw new Error(`[AilyChat][RuntimeOwnerLifecycle] Failed to initialize Lex agent for session ${sessionId}.`);
     }
-    if (hasHandleAfterEnsure || hasAgentAfterEnsure) {
+    if (owner.agent.getHandle?.(sessionId) || owner.agent.getAgent?.(sessionId)) {
       return;
     }
     throw new Error(`[AilyChat][RuntimeOwnerLifecycle] Lex agent is unavailable after initialization for session ${sessionId}.`);
@@ -407,13 +317,6 @@ export class ChatRuntimeOwnerSubmittedTurnLifecycleService implements ChatRuntim
 
     const liveSnapshot = owner.session.snapshot(sessionId);
     if (this.isLiveSessionAlignedWithHistory(liveSnapshot, sessionId, historyTurnResponses)) {
-      this.traceSubmittedTurnHistorySync({
-        phase: 'submitted-turn-history-aligned',
-        sessionId,
-        activeTurnId,
-        historyTurnResponses,
-        liveSnapshot,
-      });
       owner.hydrateTurnResponses?.(sessionId, historyTurnResponses, {
         visibility: 'detached',
       });
@@ -422,37 +325,14 @@ export class ChatRuntimeOwnerSubmittedTurnLifecycleService implements ChatRuntim
 
     const restorePlan = await owner.session.resolveRestorePlan(sessionId, historyTurnResponses);
     if (!restorePlan?.snapshot) {
-      this.traceSubmittedTurnHistorySync({
-        phase: 'submitted-turn-history-restore-missing',
-        sessionId,
-        activeTurnId,
-        historyTurnResponses,
-        liveSnapshot,
-      });
       throw new Error(`[AilyChat][SubmittedTurnLifecycle] Missing Lex session snapshot for restored history: session=${sessionId}, turns=${historyTurnResponses.length}`);
     }
 
     const restored = owner.session.restoreResolvedSnapshot(restorePlan.snapshot, sessionId);
     if (!restored) {
-      this.traceSubmittedTurnHistorySync({
-        phase: 'submitted-turn-history-restore-failed',
-        sessionId,
-        activeTurnId,
-        historyTurnResponses,
-        liveSnapshot,
-        restorePlanTurnResponses: restorePlan.turnResponses,
-      });
       throw new Error(`[AilyChat][SubmittedTurnLifecycle] Failed to restore Lex session snapshot before submitting turn: session=${sessionId}, turns=${historyTurnResponses.length}`);
     }
 
-    this.traceSubmittedTurnHistorySync({
-      phase: 'submitted-turn-history-restored',
-      sessionId,
-      activeTurnId,
-      historyTurnResponses,
-      liveSnapshot,
-      restorePlanTurnResponses: restorePlan.turnResponses,
-    });
     owner.hydrateTurnResponses?.(sessionId, restorePlan.turnResponses, {
       visibility: 'detached',
     });
@@ -483,52 +363,6 @@ export class ChatRuntimeOwnerSubmittedTurnLifecycleService implements ChatRuntim
     }
 
     return true;
-  }
-
-  private traceSubmittedTurnHistorySync(input: {
-    readonly phase:
-      | 'submitted-turn-history-aligned'
-      | 'submitted-turn-history-restored'
-      | 'submitted-turn-history-restore-failed'
-      | 'submitted-turn-history-restore-missing';
-    readonly sessionId: string;
-    readonly activeTurnId: string;
-    readonly historyTurnResponses: readonly TurnResponseTurn[];
-    readonly liveSnapshot: SessionSnapshot | null | undefined;
-    readonly restorePlanTurnResponses?: readonly TurnResponseTurn[] | null;
-  }): void {
-    if (input.phase === 'submitted-turn-history-aligned' && !shouldTraceRequestListBranchBoundary()) {
-      return;
-    }
-
-    const model = this.chatSessionModelStore.get(input.sessionId) as {
-      readonly requestListRevision?: number;
-    } | undefined;
-    console.info('[AilyChat][RequestListBranchTrace]', {
-      phase: input.phase,
-      sessionId: input.sessionId,
-      requestListRevision: typeof model?.requestListRevision === 'number'
-        ? model.requestListRevision
-        : null,
-      activeTurnId: input.activeTurnId || null,
-      canonicalHistoryTurnIds: this.summarizeTurnResponseIds(input.historyTurnResponses),
-      liveSnapshotTurnIds: this.summarizeSnapshotTurnIds(input.liveSnapshot),
-      restorePlanTurnIds: this.summarizeTurnResponseIds(input.restorePlanTurnResponses),
-    });
-  }
-
-  private summarizeTurnResponseIds(
-    turnResponses: readonly TurnResponseTurn[] | null | undefined,
-  ): readonly string[] {
-    return (Array.isArray(turnResponses) ? turnResponses : [])
-      .map(turn => this.normalizeSessionId(turn?.turnId))
-      .filter(Boolean);
-  }
-
-  private summarizeSnapshotTurnIds(snapshot: SessionSnapshot | null | undefined): readonly string[] {
-    return (Array.isArray(snapshot?.turns) ? snapshot.turns : [])
-      .map(turn => this.normalizeSessionId(turn?.id))
-      .filter(Boolean);
   }
 
   private logSubmittedTurnStartupLatency(input: {

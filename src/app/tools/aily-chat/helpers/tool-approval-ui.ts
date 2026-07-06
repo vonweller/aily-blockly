@@ -16,7 +16,6 @@ import {
 } from '../core/tool-name-normalizer';
 
 export interface ToolApprovalRequest {
-  approvalTraceId?: string;
   toolCallId: string;
   toolName: string;
   title: string;
@@ -335,9 +334,6 @@ export function normalizeToolApprovalPresentation(input: {
 
 export function normalizeToolApprovalRequest(input: ToolApprovalRequest): ToolApprovalRequest {
   const normalizedToolName = normalizeReadSideToolName(input.toolName);
-  const approvalTraceId = typeof input.approvalTraceId === 'string' && input.approvalTraceId.trim()
-    ? input.approvalTraceId.trim()
-    : `approval-${input.toolCallId}`;
   const normalized = normalizeToolApprovalPresentation({
     toolName: normalizedToolName,
     source: input.source,
@@ -353,7 +349,6 @@ export function normalizeToolApprovalRequest(input: ToolApprovalRequest): ToolAp
 
   return {
     ...input,
-    approvalTraceId,
     toolName: normalizedToolName,
     title: normalized.title,
     subtitle: normalized.subtitle,

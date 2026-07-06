@@ -186,9 +186,6 @@ export interface IChatCoordination {
   handleToolApproval(
     request: import('../helpers/tool-approval-ui').ToolApprovalRequest,
   ): Promise<{ approved: true } | { approved: false; reason?: string }>;
-  checkToolApprovalPreflight(
-    request: import('../helpers/tool-approval-ui').ToolApprovalRequest,
-  ): Promise<{ approved: true } | { approved: false; reason?: string }>;
 }
 
 // ---------------------------------------------------------------------------

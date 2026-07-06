@@ -79,10 +79,6 @@ export class ChatRuntimeOwnerSessionContextService implements ChatRuntimeOwnerSe
     return this.resolveRuntimeSessionProviderOptions(sessionId).permissionMode;
   }
 
-  currentSessionPermissionProfile(sessionId?: string | null): HostSessionProviderOptions['permissionProfile'] {
-    return this.resolveRuntimeSessionProviderOptions(sessionId).permissionProfile;
-  }
-
   currentSessionApprovalsReviewer(sessionId?: string | null): HostSessionProviderOptions['approvalsReviewer'] {
     return this.resolveRuntimeSessionProviderOptions(sessionId).approvalsReviewer;
   }

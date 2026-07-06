@@ -25,14 +25,6 @@ import { AILY_CHAT_ONBOARDING_CONFIG } from '../../../configs/onboarding.config'
 export interface UserInteractionToolApprovalPolicy {
   terminalAllowList: string[];
   save(): boolean | void;
-  hasSessionToolApprovalRule(sessionResource: string | null | undefined, toolName: string): boolean;
-  addSessionToolApprovalRule(sessionResource: string | null | undefined, toolName: string): boolean;
-  getSessionTerminalApprovalRules(sessionResource: string | null | undefined): string[];
-  addSessionTerminalApprovalRule(sessionResource: string | null | undefined, rule: string): boolean;
-  hasSessionToolApprovalCombinationKey(sessionResource: string | null | undefined, combinationKey: string): boolean;
-  addSessionToolApprovalCombinationKey(sessionResource: string | null | undefined, combinationKey: string): boolean;
-  isSessionTerminalAutoApprovalEnabled(sessionResource: string | null | undefined): boolean;
-  setSessionTerminalAutoApproval(sessionResource: string | null | undefined, enabled: boolean): void;
   hasWorkspaceToolApprovalRule(projectPath: string | null | undefined, toolName: string): boolean;
   addWorkspaceToolApprovalRule(projectPath: string | null | undefined, toolName: string): boolean;
   hasWorkspaceToolApprovalCombinationKey(projectPath: string | null | undefined, combinationKey: string): boolean;
@@ -49,15 +41,14 @@ type UserInteractionContext = Pick<IChatCoordination, 'lexStream'>
     readonly toolApprovalPolicy: UserInteractionToolApprovalPolicy;
   };
 
-interface ToolAutoApprovalEvaluation {
-  readonly approved: boolean;
-  readonly reason: string;
-  readonly sessionResource: string;
-  readonly toolName: string;
-  readonly command?: string;
-  readonly allowAutoConfirm: boolean;
-  readonly combinationKey?: string;
+interface ApprovalSessionState {
+  readonly approvedTools: Set<string>;
+  readonly approvedTerminalCommands: Set<string>;
+  readonly approvedApprovalCombinations: Set<string>;
+  allowAllTerminalCommands: boolean;
 }
+
+const approvalSessionStates = new Map<string, ApprovalSessionState>();
 
 function isTerminalApprovalTool(toolName: string): boolean {
   return isTerminalCommandToolName(toolName);
@@ -112,6 +103,22 @@ function matchesTerminalPermissionList(command: string, rules: readonly string[]
   return rules.some((rule) => matchesTerminalPermissionRule(command, rule));
 }
 
+function getOrCreateApprovalSessionState(sessionId: string): ApprovalSessionState {
+  const existing = approvalSessionStates.get(sessionId);
+  if (existing) {
+    return existing;
+  }
+
+  const created: ApprovalSessionState = {
+    approvedTools: new Set<string>(),
+    approvedTerminalCommands: new Set<string>(),
+    approvedApprovalCombinations: new Set<string>(),
+    allowAllTerminalCommands: false,
+  };
+  approvalSessionStates.set(sessionId, created);
+  return created;
+}
+
 export class UserInteractionHelper {
   // ==================== 内部状态 ====================
 
@@ -124,6 +131,8 @@ export class UserInteractionHelper {
 
   /** 工具审批 Promise resolve 回调（等待用户在聊天界面确认） */
   _resolveToolApproval: ((result: ToolApprovalResult) => void) | null = null;
+
+  private _approvalSessionId: string | null = null;
 
   constructor(private ctx: UserInteractionContext) {}
 
@@ -162,11 +171,13 @@ export class UserInteractionHelper {
     this._askUserQuestions = null;
     this._askUserQuestionPartId = null;
     this._resolveToolApproval = null;
+    this.clearApprovalSessionState();
   }
 
   /** 显式重置当前运行中的 session 级审批缓存。 */
   resetApprovalState(): void {
     this._resolveToolApproval = null;
+    this.clearApprovalSessionState();
   }
 
   // ==================== ask_user 交互处理 ====================
@@ -254,20 +265,12 @@ export class UserInteractionHelper {
         ? request.args as Record<string, unknown>
         : {},
     });
-    const autoApproval = this.evaluateAutoApproval(normalizedRequest);
-    this.logToolApprovalTrace('handle-auto-check', normalizedRequest, autoApproval);
-    if (autoApproval.approved) {
-      this.logToolApprovalTrace('handle-auto-approved', normalizedRequest, autoApproval);
+    this.ensureApprovalSessionState();
+    if (this.shouldAutoApprove(normalizedRequest)) {
       return { approved: true };
     }
 
-    this.logToolApprovalTrace('ui-request', normalizedRequest, autoApproval);
     const result = await this._handleToolApproval(normalizedRequest);
-    this.logToolApprovalTrace('ui-result', normalizedRequest, autoApproval, {
-      approved: result.approved,
-      scope: result.scope,
-      actionId: result.actionId,
-    });
     if (result.approved) {
       this.rememberApproval(normalizedRequest, result.scope ?? 'once', result.actionId);
     }
@@ -276,134 +279,77 @@ export class UserInteractionHelper {
       : { approved: false, reason: result.reason };
   }
 
-  async checkToolApprovalPreflight(
-    request: ToolApprovalRequest,
-  ): Promise<{ approved: true } | { approved: false; reason?: string }> {
-    const normalizedRequest = normalizeToolApprovalRequest({
-      ...request,
-      args: request.args && typeof request.args === 'object'
-        ? request.args as Record<string, unknown>
-        : {},
-    });
-    const autoApproval = this.evaluateAutoApproval(normalizedRequest, { ignoreAllowAutoConfirm: true });
-    this.logToolApprovalTrace('preflight', normalizedRequest, autoApproval);
-    return autoApproval.approved
-      ? { approved: true }
-      : { approved: false, reason: autoApproval.reason };
+  private ensureApprovalSessionState(): void {
+    const sessionId = this.resolveInteractionSessionResource();
+    if (this._approvalSessionId !== sessionId) {
+      this._approvalSessionId = sessionId;
+    }
+
+    getOrCreateApprovalSessionState(sessionId);
   }
 
-  private evaluateAutoApproval(
-    request: ToolApprovalRequest,
-    options?: { ignoreAllowAutoConfirm?: boolean },
-  ): ToolAutoApprovalEvaluation {
-    const sessionResource = this.resolveInteractionSessionResource();
+  private clearApprovalSessionState(): void {
+    if (this._approvalSessionId) {
+      approvalSessionStates.delete(this._approvalSessionId);
+    }
+    this._approvalSessionId = null;
+  }
+
+  private readApprovalSessionState(): ApprovalSessionState {
+    const sessionId = this._approvalSessionId;
+    if (!sessionId) {
+      throw new Error('Approval session state is unavailable before initialization.');
+    }
+
+    return getOrCreateApprovalSessionState(sessionId);
+  }
+
+  private shouldAutoApprove(request: ToolApprovalRequest): boolean {
+    if (request.allowAutoConfirm === false) {
+      return false;
+    }
+
     const toolName = normalizeReadSideToolName(request.toolName);
     const input = request.args && typeof request.args === 'object'
       ? request.args as Record<string, unknown>
       : {};
-    const command = normalizeTerminalCommand(input['command']);
     const combinationKey = typeof request.approveCombination?.key === 'string'
       ? request.approveCombination.key.trim()
       : '';
-    const base = {
-      sessionResource,
-      toolName,
-      ...(command ? { command } : {}),
-      allowAutoConfirm: request.allowAutoConfirm !== false,
-      ...(combinationKey ? { combinationKey } : {}),
-    };
-
-    if (request.allowAutoConfirm === false && options?.ignoreAllowAutoConfirm !== true) {
-      return {
-        ...base,
-        approved: false,
-        reason: 'allowAutoConfirm=false',
-      };
-    }
+    const approvalSessionState = this.readApprovalSessionState();
 
     if (combinationKey) {
-      if (this.ctx.toolApprovalPolicy.hasSessionToolApprovalCombinationKey(sessionResource, combinationKey)) {
-        return {
-          ...base,
-          approved: true,
-          reason: 'session-combination',
-        };
+      if (approvalSessionState.approvedApprovalCombinations.has(combinationKey)) {
+        return true;
       }
 
       if (this.ctx.toolApprovalPolicy.hasWorkspaceToolApprovalCombinationKey(this.ctx.getCurrentProjectPath(), combinationKey)) {
-        return {
-          ...base,
-          approved: true,
-          reason: 'workspace-combination',
-        };
+        return true;
       }
     }
 
     if (isTerminalApprovalTool(toolName)) {
-      if (this.ctx.toolApprovalPolicy.isSessionTerminalAutoApprovalEnabled(sessionResource)) {
-        return {
-          ...base,
-          approved: true,
-          reason: 'session-all-terminal',
-        };
+      if (approvalSessionState.allowAllTerminalCommands) {
+        return true;
       }
 
+      const command = normalizeTerminalCommand(input['command']);
       if (!command) {
-        return {
-          ...base,
-          approved: false,
-          reason: 'missing-terminal-command',
-        };
+        return false;
       }
 
-      if (matchesTerminalPermissionList(command, this.ctx.toolApprovalPolicy.getSessionTerminalApprovalRules(sessionResource))) {
-        return {
-          ...base,
-          approved: true,
-          reason: 'session-terminal-command',
-        };
+      if (matchesTerminalPermissionList(command, [...approvalSessionState.approvedTerminalCommands])) {
+        return true;
       }
 
-      if (matchesTerminalPermissionList(command, this.ctx.toolApprovalPolicy.terminalAllowList ?? [])) {
-        return {
-          ...base,
-          approved: true,
-          reason: 'workspace-terminal-allow-list',
-        };
-      }
-
-      return {
-        ...base,
-        approved: false,
-        reason: 'no-terminal-rule',
-      };
+      return matchesTerminalPermissionList(command, this.ctx.toolApprovalPolicy.terminalAllowList ?? []);
     }
 
-    if (this.ctx.toolApprovalPolicy.hasSessionToolApprovalRule(sessionResource, toolName)) {
-      return {
-        ...base,
-        approved: true,
-        reason: 'session-tool',
-      };
-    }
-
-    if (this.ctx.toolApprovalPolicy.hasWorkspaceToolApprovalRule(this.ctx.getCurrentProjectPath(), toolName)) {
-      return {
-        ...base,
-        approved: true,
-        reason: 'workspace-tool',
-      };
-    }
-
-    return {
-      ...base,
-      approved: false,
-      reason: 'no-tool-rule',
-    };
+    return approvalSessionState.approvedTools.has(toolName)
+      || this.ctx.toolApprovalPolicy.hasWorkspaceToolApprovalRule(this.ctx.getCurrentProjectPath(), toolName);
   }
 
   private rememberApproval(request: ToolApprovalRequest, scope: ToolApprovalScope, actionId?: string): void {
-    const sessionResource = this.resolveInteractionSessionResource();
     const toolName = normalizeReadSideToolName(request.toolName);
     const input = request.args && typeof request.args === 'object'
       ? request.args as Record<string, unknown>
@@ -413,6 +359,7 @@ export class UserInteractionHelper {
       ? request.approveCombination.key.trim()
       : '';
     const isCombinationApproval = !!combinationKey && actionId?.startsWith('combination:');
+    const approvalSessionState = this.readApprovalSessionState();
 
     if (normalizedScope === 'once') {
       return;
@@ -420,15 +367,7 @@ export class UserInteractionHelper {
 
     if (isCombinationApproval) {
       if (normalizedScope === 'session') {
-        this.ctx.toolApprovalPolicy.addSessionToolApprovalCombinationKey(sessionResource, combinationKey);
-        this.logToolApprovalTrace('remember', request, undefined, {
-          sessionResource,
-          toolName,
-          scope: normalizedScope,
-          actionId,
-          remembered: 'session-combination',
-          combinationKey,
-        });
+        approvalSessionState.approvedApprovalCombinations.add(combinationKey);
         return;
       }
 
@@ -436,29 +375,13 @@ export class UserInteractionHelper {
         && this.ctx.toolApprovalPolicy.addWorkspaceToolApprovalCombinationKey(this.ctx.getCurrentProjectPath(), combinationKey)) {
         this.ctx.toolApprovalPolicy.save();
       }
-      this.logToolApprovalTrace('remember', request, undefined, {
-        sessionResource,
-        toolName,
-        scope: normalizedScope,
-        actionId,
-        remembered: 'workspace-combination',
-        combinationKey,
-      });
       return;
     }
 
     if (isTerminalApprovalTool(toolName)) {
       const command = normalizeTerminalCommand(input['command']);
       if (normalizedScope === 'session-all-terminal') {
-        this.ctx.toolApprovalPolicy.setSessionTerminalAutoApproval(sessionResource, true);
-        this.logToolApprovalTrace('remember', request, undefined, {
-          sessionResource,
-          toolName,
-          command,
-          scope: normalizedScope,
-          actionId,
-          remembered: 'session-all-terminal',
-        });
+        approvalSessionState.allowAllTerminalCommands = true;
         return;
       }
 
@@ -467,16 +390,7 @@ export class UserInteractionHelper {
       }
 
       const exactRule = buildExactTerminalRule(command);
-      this.ctx.toolApprovalPolicy.addSessionTerminalApprovalRule(sessionResource, exactRule);
-      this.logToolApprovalTrace('remember', request, undefined, {
-        sessionResource,
-        toolName,
-        command,
-        exactRule,
-        scope: normalizedScope,
-        actionId,
-        remembered: 'session-terminal-command',
-      });
+      approvalSessionState.approvedTerminalCommands.add(exactRule);
 
       if (normalizedScope === 'workspace') {
         const currentAllowList = this.ctx.toolApprovalPolicy.terminalAllowList ?? [];
@@ -484,68 +398,19 @@ export class UserInteractionHelper {
           this.ctx.toolApprovalPolicy.terminalAllowList = [...currentAllowList, exactRule];
           this.ctx.toolApprovalPolicy.save();
         }
-        this.logToolApprovalTrace('remember', request, undefined, {
-          sessionResource,
-          toolName,
-          command,
-          exactRule,
-          scope: normalizedScope,
-          actionId,
-          remembered: 'workspace-terminal-command',
-        });
       }
       return;
     }
 
     if (normalizedScope === 'session') {
-      this.ctx.toolApprovalPolicy.addSessionToolApprovalRule(sessionResource, toolName);
-      this.logToolApprovalTrace('remember', request, undefined, {
-        sessionResource,
-        toolName,
-        scope: normalizedScope,
-        actionId,
-        remembered: 'session-tool',
-      });
+      approvalSessionState.approvedTools.add(toolName);
       return;
     }
 
     if (normalizedScope === 'workspace'
       && this.ctx.toolApprovalPolicy.addWorkspaceToolApprovalRule(this.ctx.getCurrentProjectPath(), toolName)) {
       this.ctx.toolApprovalPolicy.save();
-      this.logToolApprovalTrace('remember', request, undefined, {
-        sessionResource,
-        toolName,
-        scope: normalizedScope,
-        actionId,
-        remembered: 'workspace-tool',
-      });
     }
-  }
-
-  private logToolApprovalTrace(
-    phase: string,
-    request: ToolApprovalRequest,
-    evaluation?: ToolAutoApprovalEvaluation,
-    extra?: Record<string, unknown>,
-  ): void {
-    const input = request.args && typeof request.args === 'object'
-      ? request.args as Record<string, unknown>
-      : {};
-    const normalizedToolName = normalizeReadSideToolName(request.toolName);
-    console.info('[AilyChat][ToolApprovalTrace]', {
-      approvalTraceId: request.approvalTraceId,
-      phase,
-      toolCallId: request.toolCallId,
-      rawToolName: request.toolName,
-      normalizedToolName,
-      sessionResource: evaluation?.sessionResource ?? extra?.['sessionResource'],
-      command: evaluation?.command ?? normalizeTerminalCommand(input['command']),
-      allowAutoConfirm: evaluation?.allowAutoConfirm ?? request.allowAutoConfirm !== false,
-      approved: evaluation?.approved,
-      reason: evaluation?.reason,
-      combinationKey: evaluation?.combinationKey,
-      ...extra,
-    });
   }
 
   /**
@@ -553,16 +418,9 @@ export class UserInteractionHelper {
    */
   private _handleToolApproval(request: ToolApprovalRequest): Promise<ToolApprovalResult> {
     const sessionResource = this.resolveInteractionSessionResource();
-    this.logToolApprovalTrace('host-ui-request', request, undefined, {
-      sessionResource,
-    });
+    this.presentToolApprovalInTranscript(request);
     return this.ctx.runtimeInteractionHost.presentToolApproval(sessionResource, request).then((result) => {
-      this.logToolApprovalTrace('host-ui-result', request, undefined, {
-        sessionResource,
-        approved: !!result.approved,
-        scope: result.scope,
-        actionId: typeof result.actionId === 'string' ? result.actionId : undefined,
-      });
+      this.resolveToolApprovalInTranscript(request.toolCallId, !!result.approved, result.scope);
       return {
         approved: !!result.approved,
         reason: result.reason || (result.approved ? undefined : chatI18n('AILY_CHAT.PROCESS_CONFIRM_REJECT_REASON')),
@@ -570,6 +428,26 @@ export class UserInteractionHelper {
         actionId: typeof result.actionId === 'string' ? result.actionId : undefined,
       };
     });
+  }
+
+  private presentToolApprovalInTranscript(request: ToolApprovalRequest): void {
+    try {
+      this.ctx.lexStream.ui.presentToolCallApproval(request);
+    } catch (err) {
+      console.warn('[AilyChat][Approval] transcript projection failed; runtime host approval remains active.', err);
+    }
+  }
+
+  private resolveToolApprovalInTranscript(
+    toolCallId: string,
+    approved: boolean,
+    scope: ToolApprovalScope | undefined,
+  ): void {
+    try {
+      this.ctx.lexStream.ui.resolveToolCallApproval(toolCallId, approved, scope);
+    } catch (err) {
+      console.warn('[AilyChat][Approval] transcript resolution failed; runtime host approval was resolved.', err);
+    }
   }
 
   /**

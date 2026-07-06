@@ -292,7 +292,6 @@ export class ChatTerminalPartComponent implements OnChanges, AfterViewChecked, O
   @Input() actions: readonly ActivityToolbarActionDisplayData[] = [];
 
   @Output() actionSelected = new EventEmitter<ActivityToolbarActionDisplayData>();
-  @Output() contentDelta = new EventEmitter<void>();
 
   @ViewChild('outputContainer') outputContainer?: ElementRef<HTMLElement>;
 
@@ -302,7 +301,6 @@ export class ChatTerminalPartComponent implements OnChanges, AfterViewChecked, O
   ngOnChanges(changes: SimpleChanges): void {
     if (changes['output'] || changes['hasOutput']) {
       this.shouldAutoScroll = true;
-      this.contentDelta.emit();
     }
   }
 
@@ -339,7 +337,6 @@ export class ChatTerminalPartComponent implements OnChanges, AfterViewChecked, O
     this.scrollFrameId = globalThis.requestAnimationFrame(() => {
       this.scrollFrameId = null;
       this.scrollToBottom();
-      this.contentDelta.emit();
     });
   }
 

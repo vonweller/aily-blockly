@@ -198,8 +198,7 @@
             (editModelToggle)="switchShellCoordinator.toggleModelMenu($event.event, vm.modelMenuItems)"
             (editAddFile)="editResourceShellCoordinator.addFile($event)"
             (editAddFolder)="editResourceShellCoordinator.addFolder($event)"
-            (taskAction)="handleDialogTaskAction($event)"
-            (contentDelta)="handleDialogContentDelta()">
+            (taskAction)="handleDialogTaskAction($event)">
           </aily-x-dialog>
           </div>
           }
@@ -273,7 +272,7 @@
       </div>
       }
       <div class="s-box">
-        <aily-chat-input-part-host #inputPartHostElement [sessionId]="vm.sessionId" (todoFocusToggleRequested)="handleTodoFocusToggleShortcut()">
+        <aily-chat-input-part-host [sessionId]="vm.sessionId" (todoFocusToggleRequested)="handleTodoFocusToggleShortcut()">
         @if(vm.chatInputNotice$ | async; as chatInputNotice) {
         <div inputPartWidget class="chat-input-notification-container has-notification">
           <div

@@ -40,8 +40,6 @@ interface LexTurnAccess {
 interface LexTurnManagerAccess {
   readonly revision: number;
   readonly activeTurn?: {
-    readonly id: string;
-    readonly index: number;
     readonly request: {
       readonly metadata?: LexTurnRequestMetadata;
     };
@@ -160,13 +158,15 @@ export class LexTurnSessionBridge implements ITurnDataSource {
   getCurrentTurnId(): string | undefined {
     const agent = this.getAgent();
     if (!agent) return undefined;
-    return agent.turnManager.activeTurn?.id;
+    const turns = agent.turnManager.turns.get();
+    return turns[turns.length - 1]?.id;
   }
 
   getCurrentTurnIndex(): number | undefined {
     const agent = this.getAgent();
     if (!agent) return undefined;
-    const index = agent.turnManager.activeTurn?.index;
+    const turns = agent.turnManager.turns.get();
+    const index = turns[turns.length - 1]?.index;
     return typeof index === 'number' && Number.isFinite(index) ? index : undefined;
   }
 

@@ -229,7 +229,7 @@ type HostSessionRecordLike = {
 };
 
 type HostSessionItemControllerContext = {
-  readonly chatService: Pick<ChatService, 'currentSessionId' | 'currentSessionPath' | 'currentSessionType' | 'currentSessionPermissionMode' | 'currentSessionPermissionProfile' | 'currentSessionPermissionLevel' | 'currentSessionApprovalsReviewer' | 'currentSessionApprovalPolicy' | 'currentSessionTitle' | 'currentAgentRuntimeMode' | 'currentAgentRuntimeModeSource' | 'currentResolvedMode' | 'selectedMode' | 'findResolvedModeById' | 'findResolvedModeByName' | 'sessionInputStateChanged$' | 'sessionProviderOptionsChanged$' | 'buildCurrentSessionProviderOptionGroups' | 'buildNewSessionProviderOptionGroups'>
+  readonly chatService: Pick<ChatService, 'currentSessionId' | 'currentSessionPath' | 'currentSessionType' | 'currentSessionPermissionMode' | 'currentSessionPermissionLevel' | 'currentSessionApprovalsReviewer' | 'currentSessionApprovalPolicy' | 'currentSessionTitle' | 'currentAgentRuntimeMode' | 'currentAgentRuntimeModeSource' | 'currentResolvedMode' | 'selectedMode' | 'findResolvedModeById' | 'findResolvedModeByName' | 'sessionInputStateChanged$' | 'sessionProviderOptionsChanged$' | 'buildCurrentSessionProviderOptionGroups' | 'buildNewSessionProviderOptionGroups'>
     & Partial<Pick<ChatService, 'currentSessionTitleSource'>>
     & Partial<Pick<ChatService, 'sessionDisplayTitleChanged$' | 'sessionDurableTitleChanged$' | 'sessionTitleChanged$'>>;
   readonly chatHistoryService: Pick<ChatHistoryService, 'getHistoryList' | 'findEntry' | 'loadHostRecord' | 'updateTitle' | 'deleteSession'> & Partial<Pick<ChatHistoryService, 'hostSessionChanged$'>>;
@@ -909,7 +909,6 @@ export class HostSessionItemController {
       return {
         folderPath: this.ctx.chatService.currentSessionPath || (projectPathHint ?? null),
         permissionMode: this.ctx.chatService.currentSessionPermissionMode,
-        permissionProfile: this.ctx.chatService.currentSessionPermissionProfile,
         ...(this.ctx.chatService.currentSessionPermissionLevel
           ? { permissionLevel: this.ctx.chatService.currentSessionPermissionLevel }
           : {}),

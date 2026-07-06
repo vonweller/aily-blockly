@@ -2,7 +2,8 @@ import type { RenderEvent } from 'aily-lex/browser';
 import { appendMarkdownContent, getMarkdownContentLength, storeMarkdownContent } from './markdown-content-store';
 import { appendThinkContent, getThinkContentLength, storeThinkContent } from './think-content-store';
 import { parseTerminalPayload, type ParsedTerminalPayload } from './terminal-payload';
-import { collectToolResultText, extractRawToolResultPayloadText } from './tool-result-content';
+import { resolveTerminalLifecycleState } from './terminal-status';
+import { extractRawToolResultPayloadText } from './tool-result-content';
 import { ProposedPlanParser, type ProposedPlanSegment } from './proposed-plan-parser';
 import type { QuestionItem, ToolCallPart } from './chat-parts';
 import { normalizeChatErrorNotice } from './chat-error-notice-normalizer';
@@ -250,12 +251,6 @@ export class RenderEventItemLifecycleNormalizer {
         return output;
 
       case 'tool_call_progress':
-        {
-          const terminalEvents = this.terminalItemsForToolProgress(event, timestamp);
-          if (terminalEvents.length > 0) {
-            return terminalEvents;
-          }
-        }
         output.push(...this.ensureItem(toolItemId(event), 'tool', event, timestamp));
         output.push(this.deltaFor(
           toolItemId(event),
@@ -266,17 +261,13 @@ export class RenderEventItemLifecycleNormalizer {
           summarizeToolProgress(event),
           toolProgressPayload(event),
         ));
+        output.push(...this.terminalItemsForToolProgress(event, timestamp));
         return output;
 
       case 'tool_call_end':
-        {
-          const terminalEvents = this.terminalItemForToolResult(event, timestamp);
-          if (terminalEvents.length > 0) {
-            return terminalEvents;
-          }
-        }
         output.push(...this.ensureItem(toolItemId(event), 'tool', event, timestamp));
         output.push(this.deltaFor(toolItemId(event), 'tool', timestamp, 'update', event.type, event.resultText, toolEndPayload(event)));
+        output.push(...this.terminalItemForToolResult(event, timestamp));
         output.push(this.completeItem(toolItemId(event), 'tool', timestamp, event.state === 'error' ? 'failed' : 'completed', event.type));
         return output;
 
@@ -319,12 +310,6 @@ export class RenderEventItemLifecycleNormalizer {
         return output;
 
       case 'approval_request': {
-        if (hasToolCallId(event)) {
-          const id = toolScopedItemId(event, event.toolCallId);
-          output.push(...this.ensureItem(id, 'tool', event, timestamp));
-          output.push(this.deltaFor(id, 'tool', timestamp, 'update', event.type, event.message || event.title || event.toolName, confirmationPayload(event)));
-          return output;
-        }
         const id = approvalItemId(event);
         output.push(...this.ensureItem(id, 'confirmation', event, timestamp));
         output.push(this.deltaFor(id, 'confirmation', timestamp, 'update', event.type, event.message || event.title || event.toolName, confirmationPayload(event)));
@@ -332,15 +317,6 @@ export class RenderEventItemLifecycleNormalizer {
       }
 
       case 'approval_resolve': {
-        if (hasToolCallId(event)) {
-          const id = toolScopedItemId(event, event.toolCallId);
-          output.push(...this.ensureItem(id, 'tool', event, timestamp));
-          output.push(this.deltaFor(id, 'tool', timestamp, 'update', event.type, undefined, confirmationResolvePayload(event)));
-          if (event.result !== 'approved') {
-            output.push(this.completeItem(id, 'tool', timestamp, 'cancelled', event.type));
-          }
-          return output;
-        }
         const id = approvalItemId(event);
         output.push(...this.ensureItem(id, 'confirmation', event, timestamp));
         output.push(this.deltaFor(id, 'confirmation', timestamp, 'update', event.type, undefined, confirmationResolvePayload(event)));
@@ -408,9 +384,9 @@ export class RenderEventItemLifecycleNormalizer {
 
       case 'approval_auto_review_start': {
         if (typeof event.toolCallId === 'string' && event.toolCallId.trim().length > 0) {
-          const id = toolScopedItemId(event, event.toolCallId);
-          output.push(...this.ensureItem(id, 'tool', event, timestamp));
-          output.push(this.deltaFor(id, 'tool', timestamp, 'update', event.type, event.reason, autoReviewStartPayload(event, event.toolCallId)));
+          const id = autoReviewItemId(event.toolCallId);
+          output.push(...this.ensureItem(id, 'confirmation', event, timestamp));
+          output.push(this.deltaFor(id, 'confirmation', timestamp, 'update', event.type, event.reason, autoReviewStartPayload(event, event.toolCallId)));
           return output;
         }
         output.push(...this.ensureItem(`metadata:${event.type}`, 'metadata', event, timestamp));
@@ -420,12 +396,9 @@ export class RenderEventItemLifecycleNormalizer {
 
       case 'approval_auto_review_complete': {
         if (typeof event.toolCallId === 'string' && event.toolCallId.trim().length > 0) {
-          const id = toolScopedItemId(event, event.toolCallId);
-          output.push(...this.ensureItem(id, 'tool', event, timestamp));
-          output.push(this.deltaFor(id, 'tool', timestamp, 'update', event.type, event.rationale, autoReviewCompletePayload(event, event.toolCallId)));
-          if (event.status !== 'approved') {
-            output.push(this.completeItem(id, 'tool', timestamp, 'failed', event.type));
-          }
+          const id = autoReviewItemId(event.toolCallId);
+          output.push(...this.ensureItem(id, 'confirmation', event, timestamp));
+          output.push(this.deltaFor(id, 'confirmation', timestamp, 'update', event.type, event.rationale, autoReviewCompletePayload(event, event.toolCallId)));
           return output;
         }
         output.push(...this.ensureItem(`metadata:${event.type}`, 'metadata', event, timestamp));
@@ -660,8 +633,7 @@ export class RenderEventItemLifecycleNormalizer {
     timestamp: number,
   ): CanonicalRenderLifecycleEvent[] {
     const terminal = parseTerminalPayload(event.resultText)
-      ?? parseTerminalPayload(extractRawToolResultPayloadText(event.result))
-      ?? terminalSessionPayloadFromToolResult(event);
+      ?? parseTerminalPayload(extractRawToolResultPayloadText(event.result));
     if (!terminal) {
       return [];
     }
@@ -672,11 +644,14 @@ export class RenderEventItemLifecycleNormalizer {
       this.deltaFor(itemId, 'terminal', timestamp, 'update', event.type, summarizeTerminalPayload(terminal), terminalPayload(event, terminal)),
     ];
     if (!terminal.isRunning) {
+      const terminalState = resolveTerminalLifecycleState(terminal);
       output.push(this.completeItem(
         itemId,
         'terminal',
         timestamp,
-        event.state === 'error' || (typeof terminal.exitCode === 'number' && terminal.exitCode !== 0) ? 'failed' : 'completed',
+        terminalState === 'cancelled'
+          ? 'cancelled'
+          : (event.state === 'error' || terminalState === 'failed' ? 'failed' : 'completed'),
         event.type,
       ));
     }
@@ -693,7 +668,7 @@ export class RenderEventItemLifecycleNormalizer {
     }
 
     const itemId = terminalItemId(event.toolCallId, payload.terminal);
-    const output: CanonicalRenderLifecycleEvent[] = [
+    return [
       ...this.ensureItem(itemId, 'terminal', event, timestamp),
       this.deltaFor(
         itemId,
@@ -705,16 +680,6 @@ export class RenderEventItemLifecycleNormalizer {
         payload,
       ),
     ];
-    if (!payload.terminal.isRunning) {
-      output.push(this.completeItem(
-        itemId,
-        'terminal',
-        timestamp,
-        terminalPayloadCompletionStatus(payload.terminal),
-        event.type,
-      ));
-    }
-    return output;
   }
 
   private ensureSubagentParentForActivity(
@@ -896,10 +861,6 @@ function toolItemId(event: Extract<RenderEvent, { type: 'tool_call_begin' | 'too
   return `${scopeKey(event)}:tool:${event.toolCallId}`;
 }
 
-function toolScopedItemId(event: RenderEvent, toolCallId: string): string {
-  return `${scopeKey(event)}:tool:${toolCallId}`;
-}
-
 function terminalItemId(toolCallId: string, terminal: ParsedTerminalPayload): string {
   const identity = terminal.outputSessionId || terminal.processId || terminal.terminalId || toolCallId;
   return `terminal:${identity || 'unknown'}`;
@@ -907,10 +868,6 @@ function terminalItemId(toolCallId: string, terminal: ParsedTerminalPayload): st
 
 function approvalItemId(event: Extract<RenderEvent, { type: 'approval_request' | 'approval_resolve' }>): string {
   return `${scopeKey(event)}:approval:${event.toolCallId || event.requestId || 'unknown'}`;
-}
-
-function hasToolCallId<T extends { readonly toolCallId?: string }>(event: T): event is T & { readonly toolCallId: string } {
-  return typeof event.toolCallId === 'string' && event.toolCallId.trim().length > 0;
 }
 
 function summarizeQuestionRequest(event: Extract<RenderEvent, { type: 'question_request' }>): string {
@@ -1354,7 +1311,6 @@ function autoReviewCompletePayload(
   toolCallId: string,
 ): CanonicalRenderItemStructuredPayload {
   const approved = event.status === 'approved';
-  const decisionSource = (event as { readonly decisionSource?: string }).decisionSource ?? 'auto_review';
   return {
     type: 'confirmation',
     askId: event.reviewId || toolCallId,
@@ -1370,7 +1326,7 @@ function autoReviewCompletePayload(
     reviewStatus: event.status,
     reviewRiskLevel: event.riskLevel,
     reviewCompletedAt: event.timestamp,
-    decisionSource,
+    decisionSource: 'auto_review',
   };
 }
 
@@ -1384,119 +1340,6 @@ function terminalPayload(
     terminal,
     outputUpdateKind: 'snapshot',
   };
-}
-
-function terminalPayloadCompletionStatus(terminal: ParsedTerminalPayload): CanonicalRenderItemStatus {
-  if (terminal.status === 'cancelled' || terminal.status === 'killed') {
-    return 'cancelled';
-  }
-  if (terminal.status === 'failed'
-    || terminal.status === 'timeout'
-    || (typeof terminal.exitCode === 'number' && terminal.exitCode !== 0)) {
-    return 'failed';
-  }
-  return 'completed';
-}
-
-function terminalSessionPayloadFromToolResult(
-  event: Extract<RenderEvent, { type: 'tool_call_end' }>,
-): ParsedTerminalPayload | null {
-  if (!isTerminalSessionResultToolName(event.toolName)) {
-    return null;
-  }
-
-  const input = asRecord((event as { input?: unknown }).input);
-  const rawText = collectToolResultText(event.result) || event.resultText || '';
-  const { headers, body } = splitTerminalReadResult(rawText);
-  const header = (...keys: readonly string[]): string | undefined => {
-    for (const key of keys) {
-      const value = asString(headers.get(key)) || asString(headers.get(key.toLowerCase()));
-      if (value) {
-        return value;
-      }
-    }
-    return undefined;
-  };
-  const processId = asString(input?.['processId'])
-    || asString(input?.['outputSessionId'])
-    || asString(input?.['terminalId'])
-    || asString(input?.['id'])
-    || header('processId')
-    || header('outputSessionId')
-    || header('terminalId')
-    || header('id');
-  if (!processId) {
-    return null;
-  }
-
-  const output = body.trimEnd();
-  if (!output && headers.size === 0) {
-    return null;
-  }
-
-  return {
-    command: asString(input?.['command']) || header('command') || '',
-    output,
-    stderr: '',
-    isRunning: header('status') === 'running',
-    processId,
-    outputSessionId: asString(input?.['outputSessionId']) || header('outputSessionId') || processId,
-    terminalId: asString(input?.['terminalId']) || header('terminalId'),
-    outputFilePath: header('outputFilePath'),
-    cwd: asString(input?.['cwd']) || header('cwd'),
-    status: header('status'),
-    bytesTotal: asNumber(header('bytesTotal')),
-  };
-}
-
-function isTerminalSessionResultToolName(toolName: string | undefined): boolean {
-  return toolName === 'command_read'
-    || toolName === 'command_tail'
-    || toolName === 'command_status'
-    || toolName === 'get_terminal_output'
-    || toolName === 'command_exec'
-    || toolName === 'run_in_terminal';
-}
-
-function splitTerminalReadResult(text: string): { headers: Map<string, string>; body: string } {
-  const normalized = text.replace(/\r\n/g, '\n');
-  const separatorIndex = normalized.indexOf('\n\n');
-  let headerText = separatorIndex >= 0 ? normalized.slice(0, separatorIndex) : '';
-  let body = separatorIndex >= 0 ? normalized.slice(separatorIndex + 2) : normalized;
-  const headers = new Map<string, string>();
-
-  const parseHeaderLines = (value: string): boolean => {
-    const lines = value.split('\n').map(line => line.trim()).filter(Boolean);
-    if (lines.length === 0) {
-      return false;
-    }
-    const parsed: [string, string][] = [];
-    for (const line of lines) {
-      const match = /^([A-Za-z][A-Za-z0-9_-]*)\s*:\s*(.*)$/.exec(line);
-      if (!match) {
-        return false;
-      }
-      parsed.push([match[1], match[2]]);
-    }
-    for (const [key, value] of parsed) {
-      headers.set(key, value);
-    }
-    return true;
-  };
-
-  if (separatorIndex < 0 && parseHeaderLines(normalized)) {
-    headerText = normalized;
-    body = '';
-  }
-
-  for (const line of headerText.split('\n')) {
-    const match = /^([A-Za-z][A-Za-z0-9_-]*)\s*:\s*(.*)$/.exec(line.trim());
-    if (match) {
-      headers.set(match[1], match[2]);
-    }
-  }
-
-  return { headers, body };
 }
 
 function terminalPayloadFromToolProgress(
@@ -1825,12 +1668,6 @@ function boundedRecord(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : undefined;
-}
-
 function boundedString(value: string | undefined, maxChars: number): { text: string; omitted: boolean } {
   const text = value || '';
   if (text.length <= maxChars) {
@@ -1844,6 +1681,10 @@ function boundedString(value: string | undefined, maxChars: number): { text: str
 
 function subagentItemId(toolCallId: string, subAgentInvocationId?: string): string {
   return `subagent:${subAgentInvocationId || toolCallId}`;
+}
+
+function autoReviewItemId(toolCallId: string): string {
+  return `main:root:root:approval:${toolCallId}`;
 }
 
 function subagentActivityItemId(event: Extract<RenderEvent, { type: 'subagent_activity' }>): string {

@@ -2,7 +2,7 @@ import type { TurnResponseTurn } from 'aily-lex/browser';
 
 import type { ChatPart } from '../core/chat-parts';
 import type { ChatMessage } from '../core/chat-types';
-import { turnResponsePartsToDisplayChatParts } from '../core/turn-response-part-mapper';
+import { turnResponsePartToChatParts } from '../core/turn-response-part-mapper';
 import {
   buildDialogTurnContext,
   type DialogTurnContext,
@@ -300,7 +300,7 @@ function getDialogItemParts(
     return [];
   }
 
-  return turnResponsePartsToDisplayChatParts(turnResponse.response.parts);
+  return turnResponse.response.parts.flatMap(part => turnResponsePartToChatParts(part));
 }
 
 function getDialogItemRevision(turnResponse: TurnResponseTurn | null | undefined): number {

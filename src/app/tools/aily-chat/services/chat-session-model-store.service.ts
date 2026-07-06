@@ -9,7 +9,6 @@ import {
   normalizeChatSessionType,
   type ChatSelectedMode,
 } from '../core/chat-mode';
-import type { ChatRuntimeHostProtocolTruncation } from '../core/chat-runtime-host-contract';
 import type { ChatSessionTitleSource } from '../core/chat-session-title';
 import type { HostTurnResponseState } from '../helpers/host-turn-response-state';
 import type { PendingFollowupRequest } from '../helpers/chat-pending-request';
@@ -18,18 +17,14 @@ import {
   cloneSessionCheckpointTimelineState,
   createSessionCheckpointTimelineState,
   getSessionCheckpointHiddenTurnResponses,
-  getSessionCheckpointVisibleTurnResponses,
-  redoSessionCheckpointTimeline,
-  restoreSessionCheckpointTimelineToCheckpoint,
   spliceSessionCheckpointTimelineForwardBranch,
   type SessionCheckpointTimelineState,
 } from '../helpers/session-checkpoint-timeline-model';
-import { commitSessionCheckpointForwardBranch } from '../helpers/session-checkpoint-branch-commit';
 import {
   normalizeHostSessionProviderOptions,
   type HostSessionProviderOptions,
 } from '../helpers/host-session-input-state';
-import { turnResponsePartsToDisplayChatParts } from '../core/turn-response-part-mapper';
+import { turnResponsePartToChatParts } from '../core/turn-response-part-mapper';
 import {
   ChatSessionRuntimeStoreService,
   type ChatSessionRuntimeChangeOptions,
@@ -72,86 +67,6 @@ export interface ChatSessionModelMetadataPatch {
 export interface ChatSessionTurnOwnerPolicyOptions {
   readonly allowForkedTurns?: boolean;
   readonly source?: string;
-}
-
-export interface ChatSessionRequestListTransactionResult {
-  readonly kind:
-    | 'commitRestoredCheckpointForwardBranch'
-    | 'restoreCheckpoint'
-    | 'rollbackCheckpointRestore'
-    | 'redoCheckpoint'
-    | 'rollbackCheckpointRedo'
-    | 'forkPrefix'
-    | 'removeFromTurn'
-    | 'replaceAll'
-    | 'appendCompletedTurn'
-    | 'appendTransientTurn'
-    | 'settleCheckpointMetadata';
-  readonly sessionResource: ChatSessionResource;
-  readonly revision: number;
-  readonly turnResponses: readonly TurnResponseTurn[];
-  readonly checkpointTimelineState: SessionCheckpointTimelineState;
-  readonly discardedTurnResponses?: readonly TurnResponseTurn[];
-  readonly retainedTurnIds: readonly string[];
-  readonly discardedTurnIds?: readonly string[];
-  readonly previousTurnResponses?: readonly TurnResponseTurn[];
-  readonly previousCheckpointTimelineState?: SessionCheckpointTimelineState | null;
-  readonly restoredTurnIds?: readonly string[];
-  readonly forkBoundaryTurnId?: string;
-  readonly removeFromTurnId?: string;
-  readonly appendedTurnId?: string;
-  readonly transient?: boolean;
-  readonly checkpointId?: string;
-  readonly protocolTruncation?: ChatRuntimeHostProtocolTruncation | null;
-  readonly effects: ChatSessionRequestListTransactionEffects;
-}
-
-export interface ChatSessionRequestListTransactionEffects {
-  readonly executionHost: {
-    readonly hydrateTurnResponses: readonly TurnResponseTurn[];
-    readonly protocolTruncation: ChatRuntimeHostProtocolTruncation | null;
-  };
-  readonly hostProjection: {
-    readonly turnResponses: readonly TurnResponseTurn[];
-  };
-  readonly persistence: {
-    readonly turnResponses: readonly TurnResponseTurn[];
-  };
-}
-
-export interface ChatSessionPreparedRedoTransaction {
-  readonly kind: 'redoCheckpoint';
-  readonly sessionResource: ChatSessionResource;
-  readonly turnResponses: readonly TurnResponseTurn[];
-  readonly checkpointTimelineState: SessionCheckpointTimelineState;
-  readonly previousTurnResponses: readonly TurnResponseTurn[];
-  readonly previousCheckpointTimelineState: SessionCheckpointTimelineState;
-  readonly retainedTurnIds: readonly string[];
-  readonly restoredTurnIds: readonly string[];
-}
-
-interface ChatSessionTurnResponseMutationOptions {
-  readonly syncPartStore?: boolean;
-}
-
-function withRequestListTransactionEffects(
-  result: Omit<ChatSessionRequestListTransactionResult, 'effects'>,
-): ChatSessionRequestListTransactionResult {
-  return {
-    ...result,
-    effects: {
-      executionHost: {
-        hydrateTurnResponses: result.turnResponses,
-        protocolTruncation: result.protocolTruncation ?? null,
-      },
-      hostProjection: {
-        turnResponses: result.turnResponses,
-      },
-      persistence: {
-        turnResponses: result.turnResponses,
-      },
-    },
-  };
 }
 
 export type ChatSessionModelStoreChangeKind = 'created' | 'updated' | 'disposed';
@@ -205,7 +120,6 @@ export class ChatSessionModel {
   private sessionTypeState: string;
   private inputStateValue: ChatSessionModelInputState;
   private turnResponsesValue: TurnResponseTurn[] = [];
-  private requestListRevisionValue = 0;
   private pendingFollowupQueue: PendingFollowupRequest[] = [];
   private checkpointTimelineState: SessionCheckpointTimelineState | null = null;
 
@@ -267,25 +181,12 @@ export class ChatSessionModel {
     return this.getTurnResponses();
   }
 
-  get requestListRevision(): number {
-    return this.requestListRevisionValue;
-  }
-
   get hostProjectionState(): HostTurnResponseState | null {
     return this.runtimeState?.hostProjectionState ?? null;
   }
 
   getTurnResponses(): readonly TurnResponseTurn[] {
     return cloneTurnResponses(this.turnResponsesValue);
-  }
-
-  /**
-   * Hot-path read-only view for host projection. This intentionally preserves
-   * array identity so projection caches can behave like VS Code's service-owned
-   * response model instead of rebuilding from cloned transcripts on every read.
-   */
-  peekTurnResponsesForProjection(): readonly TurnResponseTurn[] {
-    return this.turnResponsesValue;
   }
 
   replaceTurnResponses(turnResponses: readonly TurnResponseTurn[] | null | undefined): readonly TurnResponseTurn[] {
@@ -301,55 +202,10 @@ export class ChatSessionModel {
       : [];
     this.syncCanonicalResponsePartStore(this.turnResponsesValue, previousTurnIds);
     this.syncCheckpointTimelineWithCanonicalTurnResponses();
-    this.bumpRequestListRevision();
     return this.getTurnResponses();
   }
 
-  replaceAllTurnResponsesTransaction(
-    turnResponses: readonly TurnResponseTurn[] | null | undefined,
-  ): ChatSessionRequestListTransactionResult | null {
-    if (!Array.isArray(turnResponses)) {
-      return null;
-    }
-
-    const previousTurnResponses = cloneTurnResponses(this.turnResponsesValue);
-    const previousCheckpointTimelineState = this.getCheckpointTimelineState();
-    const nextTurnResponses = this.replaceTurnResponses(turnResponses);
-    const checkpointTimelineState = this.getCheckpointTimelineState()
-      ?? createSessionCheckpointTimelineState({
-        sessionResource: this.sessionResource,
-        turnResponses: nextTurnResponses,
-      });
-    const retainedTurnIds = nextTurnResponses
-      .map(turn => normalizeChatSessionResource(turn.turnId))
-      .filter((candidate): candidate is string => candidate.length > 0);
-    const retainedTurnIdSet = new Set(retainedTurnIds);
-    const discardedTurnResponses = cloneTurnResponses(previousTurnResponses.filter(turn => {
-      const turnId = normalizeChatSessionResource(turn.turnId);
-      return turnId.length > 0 && !retainedTurnIdSet.has(turnId);
-    }));
-    const discardedTurnIds = discardedTurnResponses
-      .map(turn => normalizeChatSessionResource(turn.turnId))
-      .filter((candidate): candidate is string => candidate.length > 0);
-
-    return withRequestListTransactionEffects({
-      kind: 'replaceAll',
-      sessionResource: this.sessionResource,
-      revision: this.requestListRevision,
-      turnResponses: nextTurnResponses,
-      checkpointTimelineState,
-      previousTurnResponses,
-      previousCheckpointTimelineState,
-      retainedTurnIds,
-      discardedTurnResponses,
-      discardedTurnIds,
-    });
-  }
-
-  appendOrReplaceTurnResponse(
-    turnResponse: TurnResponseTurn,
-    options?: ChatSessionTurnResponseMutationOptions,
-  ): readonly TurnResponseTurn[] {
+  appendOrReplaceTurnResponse(turnResponse: TurnResponseTurn): readonly TurnResponseTurn[] {
     const existingIndex = this.turnResponsesValue.findIndex(turn => turn.turnId === turnResponse.turnId);
     const requestId = readTurnResponseRequestId(turnResponse);
     const existingRequestIndex = existingIndex < 0 && requestId
@@ -366,122 +222,13 @@ export class ChatSessionModel {
       const clearTurnIds = previousTurnId && previousTurnId !== clonedTurnResponse.turnId
         ? [previousTurnId]
         : [];
-      if (options?.syncPartStore !== false) {
-        this.syncCanonicalResponsePartStore([clonedTurnResponse], clearTurnIds);
-      }
+      this.syncCanonicalResponsePartStore([clonedTurnResponse], clearTurnIds);
     } else {
       this.turnResponsesValue.push(clonedTurnResponse);
-      if (options?.syncPartStore !== false) {
-        this.syncCanonicalResponsePartStore([clonedTurnResponse]);
-      }
+      this.syncCanonicalResponsePartStore([clonedTurnResponse]);
     }
     this.syncCheckpointTimelineWithCanonicalTurnResponses();
-    this.bumpRequestListRevision();
     return this.getTurnResponses();
-  }
-
-  appendTurnTransaction(
-    turnResponse: TurnResponseTurn | null | undefined,
-    kind: 'appendCompletedTurn' | 'appendTransientTurn',
-  ): ChatSessionRequestListTransactionResult | null {
-    if (!turnResponse) {
-      return null;
-    }
-
-    const previousTurnResponses = cloneTurnResponses(this.turnResponsesValue);
-    const previousCheckpointTimelineState = this.getCheckpointTimelineState();
-    const nextTurnResponses = this.appendOrReplaceTurnResponse(turnResponse, {
-      syncPartStore: kind !== 'appendTransientTurn',
-    });
-    if (kind === 'appendTransientTurn') {
-      this.upsertTurnResponseParts(turnResponse.turnId, turnResponse.response?.parts);
-    }
-    const checkpointTimelineState = this.getCheckpointTimelineState()
-      ?? createSessionCheckpointTimelineState({
-        sessionResource: this.sessionResource,
-        turnResponses: nextTurnResponses,
-      });
-    const appendedTurnId = normalizeChatSessionResource(turnResponse.turnId);
-
-    return withRequestListTransactionEffects({
-      kind,
-      sessionResource: this.sessionResource,
-      revision: this.requestListRevision,
-      turnResponses: nextTurnResponses,
-      checkpointTimelineState,
-      previousTurnResponses,
-      previousCheckpointTimelineState,
-      retainedTurnIds: nextTurnResponses
-        .map(turn => normalizeChatSessionResource(turn.turnId))
-        .filter((candidate): candidate is string => candidate.length > 0),
-      discardedTurnIds: [],
-      ...(appendedTurnId ? { appendedTurnId } : {}),
-      transient: kind === 'appendTransientTurn',
-    });
-  }
-
-  settleCheckpointMetadataTransaction(
-    turnResponses: readonly TurnResponseTurn[] | null | undefined,
-    checkpointTimelineState: SessionCheckpointTimelineState | null | undefined,
-  ): ChatSessionRequestListTransactionResult | null {
-    if (!Array.isArray(turnResponses)) {
-      return null;
-    }
-
-    const previousTurnResponses = cloneTurnResponses(this.turnResponsesValue);
-    const previousCheckpointTimelineState = this.getCheckpointTimelineState();
-    const nextTurnResponses = this.replaceTurnResponses(turnResponses);
-    const nextCheckpointTimelineState = cloneSessionCheckpointTimelineState(checkpointTimelineState);
-    this.checkpointTimelineState = nextCheckpointTimelineState?.sessionResource === this.sessionResource
-      ? nextCheckpointTimelineState
-      : createSessionCheckpointTimelineState({
-        sessionResource: this.sessionResource,
-        turnResponses: nextTurnResponses,
-      });
-    const committedCheckpointTimelineState = this.getCheckpointTimelineState()
-      ?? createSessionCheckpointTimelineState({
-        sessionResource: this.sessionResource,
-        turnResponses: nextTurnResponses,
-      });
-    const retainedTurnIds = nextTurnResponses
-      .map(turn => normalizeChatSessionResource(turn.turnId))
-      .filter((candidate): candidate is string => candidate.length > 0);
-    const retainedTurnIdSet = new Set(retainedTurnIds);
-    const discardedTurnResponses = cloneTurnResponses(previousTurnResponses.filter(turn => {
-      const turnId = normalizeChatSessionResource(turn.turnId);
-      return turnId.length > 0 && !retainedTurnIdSet.has(turnId);
-    }));
-
-    return withRequestListTransactionEffects({
-      kind: 'settleCheckpointMetadata',
-      sessionResource: this.sessionResource,
-      revision: this.requestListRevision,
-      turnResponses: nextTurnResponses,
-      checkpointTimelineState: committedCheckpointTimelineState,
-      previousTurnResponses,
-      previousCheckpointTimelineState,
-      retainedTurnIds,
-      discardedTurnResponses,
-      discardedTurnIds: discardedTurnResponses
-        .map(turn => normalizeChatSessionResource(turn.turnId))
-        .filter((candidate): candidate is string => candidate.length > 0),
-    });
-  }
-
-  upsertTurnResponseParts(
-    turnId: string | null | undefined,
-    parts: TurnResponseTurn['response']['parts'] | null | undefined,
-  ): boolean {
-    const normalizedTurnId = normalizeChatSessionResource(turnId);
-    if (!normalizedTurnId || !Array.isArray(parts) || parts.length === 0) {
-      return false;
-    }
-
-    let changed = false;
-    for (const part of turnResponsePartsToChatParts(parts)) {
-      changed = this.partStore.upsertPartForResponse(normalizedTurnId, part) || changed;
-    }
-    return changed;
   }
 
   removeTurnResponsesAfter(turnId: string | null | undefined): readonly TurnResponseTurn[] {
@@ -499,7 +246,6 @@ export class ChatSessionModel {
     this.turnResponsesValue = this.turnResponsesValue.slice(0, turnIndex + 1);
     this.syncCanonicalResponsePartStore(this.turnResponsesValue.slice(turnIndex), removedTurnIds);
     this.syncCheckpointTimelineWithCanonicalTurnResponses();
-    this.bumpRequestListRevision();
     return this.getTurnResponses();
   }
 
@@ -535,321 +281,6 @@ export class ChatSessionModel {
 
     this.checkpointTimelineState = spliceSessionCheckpointTimelineForwardBranch(this.checkpointTimelineState);
     return this.getCheckpointTimelineState();
-  }
-
-  commitRestoredCheckpointForwardBranch(): ChatSessionRequestListTransactionResult | null {
-    const committedBranch = commitSessionCheckpointForwardBranch(this.checkpointTimelineState);
-    if (!committedBranch) {
-      return null;
-    }
-
-    const nextTurnResponses = this.replaceTurnResponses(committedBranch.turnResponses);
-    this.checkpointTimelineState = cloneSessionCheckpointTimelineState(committedBranch.checkpointTimelineState);
-    const checkpointTimelineState = this.getCheckpointTimelineState();
-    if (!checkpointTimelineState) {
-      return null;
-    }
-    const retainedTurnIds = nextTurnResponses
-      .map(turn => normalizeChatSessionResource(turn.turnId))
-      .filter((turnId): turnId is string => turnId.length > 0);
-    const discardedTurnIds = committedBranch.discardedTurnResponses
-      .map(turn => normalizeChatSessionResource(turn.turnId))
-      .filter((turnId): turnId is string => turnId.length > 0);
-
-    return withRequestListTransactionEffects({
-      kind: 'commitRestoredCheckpointForwardBranch',
-      sessionResource: this.sessionResource,
-      revision: this.requestListRevision,
-      turnResponses: nextTurnResponses,
-      checkpointTimelineState,
-      discardedTurnResponses: cloneTurnResponses(committedBranch.discardedTurnResponses),
-      retainedTurnIds,
-      discardedTurnIds,
-      protocolTruncation: buildRequestListProtocolTruncation(retainedTurnIds, discardedTurnIds),
-    });
-  }
-
-  commitCheckpointRestoreTransaction(
-    checkpointId: string | null | undefined,
-  ): ChatSessionRequestListTransactionResult | null {
-    const normalizedCheckpointId = normalizeChatSessionResource(checkpointId);
-    if (!normalizedCheckpointId) {
-      return null;
-    }
-
-    const previousTurnResponses = cloneTurnResponses(this.turnResponsesValue);
-    const previousCheckpointTimelineState = this.getCheckpointTimelineState();
-    const fullTimelineState = createSessionCheckpointTimelineState({
-      sessionResource: this.sessionResource,
-      turnResponses: previousTurnResponses,
-    });
-    const checkpointTimelineState = restoreSessionCheckpointTimelineToCheckpoint(
-      fullTimelineState,
-      normalizedCheckpointId,
-    );
-    if (!checkpointTimelineState) {
-      return null;
-    }
-
-    const retainedTurnResponses = getSessionCheckpointVisibleTurnResponses(checkpointTimelineState);
-    const nextTurnResponses = this.replaceTurnResponses(retainedTurnResponses);
-    this.checkpointTimelineState = cloneSessionCheckpointTimelineState(checkpointTimelineState);
-    const committedCheckpointTimelineState = this.getCheckpointTimelineState();
-    if (!committedCheckpointTimelineState) {
-      return null;
-    }
-
-    const retainedTurnIds = nextTurnResponses
-      .map(turn => normalizeChatSessionResource(turn.turnId))
-      .filter((turnId): turnId is string => turnId.length > 0);
-    const retainedTurnIdSet = new Set(retainedTurnIds);
-    const discardedTurnResponses = cloneTurnResponses(previousTurnResponses.filter(turn => {
-      const turnId = normalizeChatSessionResource(turn.turnId);
-      return !turnId || !retainedTurnIdSet.has(turnId);
-    }));
-    const discardedTurnIds = discardedTurnResponses
-      .map(turn => normalizeChatSessionResource(turn.turnId))
-      .filter((turnId): turnId is string => turnId.length > 0);
-
-    return withRequestListTransactionEffects({
-      kind: 'restoreCheckpoint',
-      sessionResource: this.sessionResource,
-      revision: this.requestListRevision,
-      checkpointId: normalizedCheckpointId,
-      turnResponses: nextTurnResponses,
-      checkpointTimelineState: committedCheckpointTimelineState,
-      discardedTurnResponses,
-      previousTurnResponses,
-      previousCheckpointTimelineState,
-      retainedTurnIds,
-      discardedTurnIds,
-      protocolTruncation: buildRequestListProtocolTruncation(retainedTurnIds, discardedTurnIds),
-    });
-  }
-
-  rollbackCheckpointRestoreTransaction(
-    committed: ChatSessionRequestListTransactionResult | null | undefined,
-  ): ChatSessionRequestListTransactionResult | null {
-    if (
-      !committed
-      || committed.sessionResource !== this.sessionResource
-      || committed.kind !== 'restoreCheckpoint'
-      || !committed.previousTurnResponses
-    ) {
-      return null;
-    }
-
-    const nextTurnResponses = this.replaceTurnResponses(committed.previousTurnResponses);
-    this.checkpointTimelineState = cloneSessionCheckpointTimelineState(
-      committed.previousCheckpointTimelineState ?? null,
-    ) ?? createSessionCheckpointTimelineState({
-      sessionResource: this.sessionResource,
-      turnResponses: nextTurnResponses,
-    });
-    const checkpointTimelineState = this.getCheckpointTimelineState();
-    if (!checkpointTimelineState) {
-      return null;
-    }
-
-    return withRequestListTransactionEffects({
-      kind: 'rollbackCheckpointRestore',
-      sessionResource: this.sessionResource,
-      revision: this.requestListRevision,
-      checkpointId: committed.checkpointId,
-      turnResponses: nextTurnResponses,
-      checkpointTimelineState,
-      previousTurnResponses: cloneTurnResponses(committed.turnResponses),
-      previousCheckpointTimelineState: cloneSessionCheckpointTimelineState(committed.checkpointTimelineState),
-      retainedTurnIds: nextTurnResponses
-        .map(turn => normalizeChatSessionResource(turn.turnId))
-        .filter((turnId): turnId is string => turnId.length > 0),
-      discardedTurnIds: [],
-    });
-  }
-
-  prepareCheckpointRedoTransaction(): ChatSessionPreparedRedoTransaction | null {
-    if (!canRedoSessionCheckpointTimeline(this.checkpointTimelineState)) {
-      return null;
-    }
-
-    const previousCheckpointTimelineState = cloneSessionCheckpointTimelineState(this.checkpointTimelineState);
-    if (!previousCheckpointTimelineState) {
-      return null;
-    }
-
-    const checkpointTimelineState = redoSessionCheckpointTimeline(previousCheckpointTimelineState);
-    const turnResponses = getSessionCheckpointVisibleTurnResponses(checkpointTimelineState);
-    const previousTurnResponses = getSessionCheckpointVisibleTurnResponses(previousCheckpointTimelineState);
-    const previousTurnIds = previousTurnResponses
-      .map(turn => normalizeChatSessionResource(turn.turnId))
-      .filter((turnId): turnId is string => turnId.length > 0);
-    const nextTurnIds = turnResponses
-      .map(turn => normalizeChatSessionResource(turn.turnId))
-      .filter((turnId): turnId is string => turnId.length > 0);
-
-    return {
-      kind: 'redoCheckpoint',
-      sessionResource: this.sessionResource,
-      turnResponses,
-      checkpointTimelineState,
-      previousTurnResponses,
-      previousCheckpointTimelineState,
-      retainedTurnIds: nextTurnIds,
-      restoredTurnIds: nextTurnIds.filter(turnId => !previousTurnIds.includes(turnId)),
-    };
-  }
-
-  commitCheckpointRedoTransaction(
-    prepared: ChatSessionPreparedRedoTransaction | null | undefined,
-  ): ChatSessionRequestListTransactionResult | null {
-    if (!prepared || prepared.sessionResource !== this.sessionResource) {
-      return null;
-    }
-
-    const nextTurnResponses = this.replaceTurnResponses(prepared.turnResponses);
-    this.checkpointTimelineState = cloneSessionCheckpointTimelineState(prepared.checkpointTimelineState);
-    const checkpointTimelineState = this.getCheckpointTimelineState();
-    if (!checkpointTimelineState) {
-      return null;
-    }
-
-    return withRequestListTransactionEffects({
-      kind: 'redoCheckpoint',
-      sessionResource: this.sessionResource,
-      revision: this.requestListRevision,
-      turnResponses: nextTurnResponses,
-      checkpointTimelineState,
-      previousTurnResponses: cloneTurnResponses(prepared.previousTurnResponses),
-      previousCheckpointTimelineState: cloneSessionCheckpointTimelineState(prepared.previousCheckpointTimelineState),
-      retainedTurnIds: nextTurnResponses
-        .map(turn => normalizeChatSessionResource(turn.turnId))
-        .filter((turnId): turnId is string => turnId.length > 0),
-      restoredTurnIds: prepared.restoredTurnIds,
-    });
-  }
-
-  rollbackCheckpointRedoTransaction(
-    prepared: ChatSessionPreparedRedoTransaction | null | undefined,
-  ): ChatSessionRequestListTransactionResult | null {
-    if (!prepared || prepared.sessionResource !== this.sessionResource) {
-      return null;
-    }
-
-    const nextTurnResponses = this.replaceTurnResponses(prepared.previousTurnResponses);
-    this.checkpointTimelineState = cloneSessionCheckpointTimelineState(prepared.previousCheckpointTimelineState);
-    const checkpointTimelineState = this.getCheckpointTimelineState();
-    if (!checkpointTimelineState) {
-      return null;
-    }
-
-    return withRequestListTransactionEffects({
-      kind: 'rollbackCheckpointRedo',
-      sessionResource: this.sessionResource,
-      revision: this.requestListRevision,
-      turnResponses: nextTurnResponses,
-      checkpointTimelineState,
-      previousTurnResponses: cloneTurnResponses(prepared.turnResponses),
-      previousCheckpointTimelineState: cloneSessionCheckpointTimelineState(prepared.checkpointTimelineState),
-      retainedTurnIds: nextTurnResponses
-        .map(turn => normalizeChatSessionResource(turn.turnId))
-        .filter((turnId): turnId is string => turnId.length > 0),
-      restoredTurnIds: [],
-    });
-  }
-
-  removeFromTurnTransaction(
-    turnId: string | null | undefined,
-  ): ChatSessionRequestListTransactionResult | null {
-    const targetTurnId = normalizeChatSessionResource(turnId);
-    if (!targetTurnId) {
-      return null;
-    }
-
-    const previousTurnResponses = cloneTurnResponses(this.turnResponsesValue);
-    const previousCheckpointTimelineState = this.getCheckpointTimelineState();
-    const checkpointTimelineState = this.getCheckpointTimelineState();
-    const canonicalTurnResponses = checkpointTimelineState
-      ? getSessionCheckpointVisibleTurnResponses(checkpointTimelineState)
-      : previousTurnResponses;
-    const targetIndex = canonicalTurnResponses.findIndex(turn =>
-      normalizeChatSessionResource(turn.turnId) === targetTurnId
-    );
-    if (targetIndex < 0) {
-      return null;
-    }
-
-    const retainedTurnResponses = canonicalTurnResponses.slice(0, targetIndex);
-    const discardedTurnResponses = cloneTurnResponses(canonicalTurnResponses.slice(targetIndex));
-    const nextTurnResponses = this.replaceTurnResponses(retainedTurnResponses);
-    const committedCheckpointTimelineState = this.getCheckpointTimelineState()
-      ?? createSessionCheckpointTimelineState({
-        sessionResource: this.sessionResource,
-        turnResponses: nextTurnResponses,
-      });
-    const retainedTurnIds = nextTurnResponses
-      .map(turn => normalizeChatSessionResource(turn.turnId))
-      .filter((candidate): candidate is string => candidate.length > 0);
-    const discardedTurnIds = discardedTurnResponses
-      .map(turn => normalizeChatSessionResource(turn.turnId))
-      .filter((candidate): candidate is string => candidate.length > 0);
-
-    return withRequestListTransactionEffects({
-      kind: 'removeFromTurn',
-      sessionResource: this.sessionResource,
-      revision: this.requestListRevision,
-      turnResponses: nextTurnResponses,
-      checkpointTimelineState: committedCheckpointTimelineState,
-      discardedTurnResponses,
-      previousTurnResponses,
-      previousCheckpointTimelineState,
-      retainedTurnIds,
-      discardedTurnIds,
-      removeFromTurnId: targetTurnId,
-      protocolTruncation: buildRequestListProtocolTruncation(retainedTurnIds, discardedTurnIds, targetTurnId),
-    });
-  }
-
-  prepareForkPrefixBeforeTurn(
-    turnId: string | null | undefined,
-  ): ChatSessionRequestListTransactionResult | null {
-    const boundaryTurnId = normalizeChatSessionResource(turnId);
-    if (!boundaryTurnId) {
-      return null;
-    }
-
-    const checkpointTimelineState = this.getCheckpointTimelineState();
-    if (!checkpointTimelineState) {
-      return null;
-    }
-
-    const canonicalVisibleTurnResponses = getSessionCheckpointVisibleTurnResponses(checkpointTimelineState);
-    const boundaryIndex = canonicalVisibleTurnResponses.findIndex(turn =>
-      normalizeChatSessionResource(turn.turnId) === boundaryTurnId
-    );
-    if (boundaryIndex < 0) {
-      return null;
-    }
-
-    const retainedTurnResponses = cloneTurnResponses(canonicalVisibleTurnResponses.slice(0, boundaryIndex));
-    const discardedTurnResponses = cloneTurnResponses(canonicalVisibleTurnResponses.slice(boundaryIndex));
-    const retainedTurnIds = retainedTurnResponses
-      .map(turn => normalizeChatSessionResource(turn.turnId))
-      .filter((candidate): candidate is string => candidate.length > 0);
-    const discardedTurnIds = discardedTurnResponses
-      .map(turn => normalizeChatSessionResource(turn.turnId))
-      .filter((candidate): candidate is string => candidate.length > 0);
-
-    return withRequestListTransactionEffects({
-      kind: 'forkPrefix',
-      sessionResource: this.sessionResource,
-      revision: this.requestListRevision,
-      turnResponses: retainedTurnResponses,
-      checkpointTimelineState,
-      discardedTurnResponses,
-      retainedTurnIds,
-      discardedTurnIds,
-      forkBoundaryTurnId: boundaryTurnId,
-    });
   }
 
   getPendingFollowupRequests(): readonly PendingFollowupRequest[] {
@@ -1002,10 +433,7 @@ export class ChatSessionModel {
   }
 
   private syncCheckpointTimelineWithCanonicalTurnResponses(): void {
-    if (
-      canRedoSessionCheckpointTimeline(this.checkpointTimelineState)
-      && isCanonicalCheckpointTimelinePrefix(this.checkpointTimelineState, this.turnResponsesValue)
-    ) {
+    if (canRedoSessionCheckpointTimeline(this.checkpointTimelineState)) {
       return;
     }
 
@@ -1016,10 +444,6 @@ export class ChatSessionModel {
     this.checkpointTimelineState = nextTimeline.checkpoints.length > 0
       ? nextTimeline
       : null;
-  }
-
-  private bumpRequestListRevision(): void {
-    this.requestListRevisionValue += 1;
   }
 }
 
@@ -1040,95 +464,9 @@ function cloneTurnResponse(turnResponse: TurnResponseTurn): TurnResponseTurn {
 function turnResponsePartsToChatParts(
   parts: TurnResponseTurn['response']['parts'] | null | undefined,
 ) {
-  return turnResponsePartsToDisplayChatParts(parts);
-}
-
-function buildRequestListProtocolTruncation(
-  retainedTurnIds: readonly string[],
-  discardedTurnIds: readonly string[],
-  preferredRemoveFromTurnId?: string | null,
-): ChatRuntimeHostProtocolTruncation | null {
-  const normalizedRetainedTurnIds = retainedTurnIds
-    .map(turnId => normalizeChatSessionResource(turnId))
-    .filter((turnId): turnId is string => turnId.length > 0);
-  const normalizedDiscardedTurnIds = discardedTurnIds
-    .map(turnId => normalizeChatSessionResource(turnId))
-    .filter((turnId): turnId is string => turnId.length > 0);
-  const removeFromTurnId = normalizeChatSessionResource(preferredRemoveFromTurnId)
-    || normalizedDiscardedTurnIds[0]
-    || '';
-  if (removeFromTurnId) {
-    return {
-      kind: 'removeFrom',
-      turnId: removeFromTurnId,
-      retainedTurnIds: normalizedRetainedTurnIds,
-      discardedTurnIds: normalizedDiscardedTurnIds,
-    };
-  }
-
-  if (normalizedRetainedTurnIds.length === 0 && normalizedDiscardedTurnIds.length > 0) {
-    return {
-      kind: 'clear',
-      retainedTurnIds: normalizedRetainedTurnIds,
-      discardedTurnIds: normalizedDiscardedTurnIds,
-    };
-  }
-
-  return null;
-}
-
-function isCanonicalCheckpointTimelinePrefix(
-  state: SessionCheckpointTimelineState | null,
-  turnResponses: readonly TurnResponseTurn[],
-): boolean {
-  if (!state) {
-    return false;
-  }
-
-  if (turnResponses.length > state.turnResponses.length) {
-    if (
-      isTurnResponseIdPrefix(turnResponses, state.turnResponses)
-      && turnResponses.slice(state.turnResponses.length).every(isUncheckpointedTransientTurnResponse)
-    ) {
-      return true;
-    }
-
-    const visibleTurnResponses = getSessionCheckpointVisibleTurnResponses(state);
-    return isTurnResponseIdPrefix(turnResponses, visibleTurnResponses)
-      && turnResponses.slice(visibleTurnResponses.length).every(isUncheckpointedTransientTurnResponse);
-  }
-
-  if (isTurnResponseIdPrefix(state.turnResponses, turnResponses)) {
-    return true;
-  }
-
-  const visibleTurnResponses = getSessionCheckpointVisibleTurnResponses(state);
-  return isTurnResponseIdPrefix(turnResponses, visibleTurnResponses)
-    && turnResponses.slice(visibleTurnResponses.length).every(isUncheckpointedTransientTurnResponse);
-}
-
-function isTurnResponseIdPrefix(
-  turnResponses: readonly TurnResponseTurn[],
-  prefixTurnResponses: readonly TurnResponseTurn[],
-): boolean {
-  if (prefixTurnResponses.length > turnResponses.length) {
-    return false;
-  }
-  return prefixTurnResponses.every((turnResponse, index) => {
-    const canonicalTurnId = normalizeChatSessionResource(turnResponse.turnId);
-    const candidateTurnId = normalizeChatSessionResource(turnResponses[index]?.turnId);
-    return canonicalTurnId.length > 0 && canonicalTurnId === candidateTurnId;
-  });
-}
-
-function isUncheckpointedTransientTurnResponse(turnResponse: TurnResponseTurn): boolean {
-  const metadata = turnResponse?.request && typeof turnResponse.request === 'object'
-    ? (turnResponse.request as { metadata?: Record<string, unknown> }).metadata
-    : undefined;
-  const checkpointId = typeof metadata?.['checkpointId'] === 'string'
-    ? metadata['checkpointId'].trim()
-    : '';
-  return checkpointId.length === 0;
+  return Array.isArray(parts)
+    ? parts.flatMap(part => turnResponsePartToChatParts(part))
+    : [];
 }
 
 function mergeTurnResponseWithExistingRequest(
@@ -1361,14 +699,6 @@ export class ChatSessionModelStoreService {
     turnResponses: readonly TurnResponseTurn[] | null | undefined,
     ownerPolicy?: ChatSessionTurnOwnerPolicyOptions,
   ): readonly TurnResponseTurn[] | null {
-    return this.replaceAllTurnResponsesTransaction(sessionResource, turnResponses, ownerPolicy)?.turnResponses ?? null;
-  }
-
-  replaceAllTurnResponsesTransaction(
-    sessionResource: string | null | undefined,
-    turnResponses: readonly TurnResponseTurn[] | null | undefined,
-    ownerPolicy?: ChatSessionTurnOwnerPolicyOptions,
-  ): ChatSessionRequestListTransactionResult | null {
     const model = this.get(sessionResource);
     if (!model || !Array.isArray(turnResponses)) {
       return null;
@@ -1399,11 +729,9 @@ export class ChatSessionModelStoreService {
       }
     }
 
-    const result = model.replaceAllTurnResponsesTransaction(turnResponses);
-    if (result) {
-      this.changedSubject.next({ sessionResource: model.sessionResource, kind: 'updated' });
-    }
-    return result;
+    const nextTurnResponses = model.replaceTurnResponses(turnResponses);
+    this.changedSubject.next({ sessionResource: model.sessionResource, kind: 'updated' });
+    return nextTurnResponses;
   }
 
   appendOrReplaceTurnResponse(
@@ -1441,220 +769,9 @@ export class ChatSessionModelStoreService {
       }
     }
 
-    const status = turnResponse.response?.status;
-    const result = model.appendTurnTransaction(
-      turnResponse,
-      typeof status === 'string' && status !== 'streaming'
-        ? 'appendCompletedTurn'
-        : 'appendTransientTurn',
-    );
-    if (result) {
-      this.changedSubject.next({ sessionResource: model.sessionResource, kind: 'updated' });
-    }
-    return result?.turnResponses ?? null;
-  }
-
-  appendCompletedTurnTransaction(
-    sessionResource: string | null | undefined,
-    turnResponse: TurnResponseTurn,
-  ): ChatSessionRequestListTransactionResult | null {
-    const model = this.get(sessionResource);
-    if (!model) {
-      return null;
-    }
-
-    const result = model.appendTurnTransaction(turnResponse, 'appendCompletedTurn');
-    if (result) {
-      this.changedSubject.next({ sessionResource: model.sessionResource, kind: 'updated' });
-    }
-    return result;
-  }
-
-  appendTransientTurnTransaction(
-    sessionResource: string | null | undefined,
-    turnResponse: TurnResponseTurn,
-  ): ChatSessionRequestListTransactionResult | null {
-    const model = this.get(sessionResource);
-    if (!model) {
-      return null;
-    }
-
-    const result = model.appendTurnTransaction(turnResponse, 'appendTransientTurn');
-    if (result) {
-      this.changedSubject.next({ sessionResource: model.sessionResource, kind: 'updated' });
-    }
-    return result;
-  }
-
-  settleCheckpointMetadataTransaction(
-    sessionResource: string | null | undefined,
-    turnResponses: readonly TurnResponseTurn[] | null | undefined,
-    checkpointTimelineState: SessionCheckpointTimelineState | null | undefined,
-  ): ChatSessionRequestListTransactionResult | null {
-    const model = this.get(sessionResource);
-    if (!model) {
-      return null;
-    }
-
-    const result = model.settleCheckpointMetadataTransaction(turnResponses, checkpointTimelineState);
-    if (result) {
-      this.changedSubject.next({ sessionResource: model.sessionResource, kind: 'updated' });
-    }
-    return result;
-  }
-
-  appendOrReplaceTurnResponseDelta(
-    sessionResource: string | null | undefined,
-    turnResponse: TurnResponseTurn,
-    parts: TurnResponseTurn['response']['parts'] | null | undefined,
-    ownerPolicy?: ChatSessionTurnOwnerPolicyOptions,
-  ): readonly TurnResponseTurn[] | null {
-    const model = this.get(sessionResource);
-    if (!model) {
-      return null;
-    }
-
-    const ownerDiagnostics = buildSessionTurnOwnerDiagnostics(model.sessionResource, [turnResponse]);
-    if (ownerDiagnostics.mismatchCount > 0) {
-      const blocked = hasBlockingIncomingOwnerMismatch(
-        model.sessionResource,
-        [turnResponse],
-        model.turnResponses,
-        ownerPolicy,
-      );
-      console.warn(blocked
-        ? '[ChatSessionModelStore][blocked-owner-mismatch]'
-        : '[ChatSessionModelStore][owner-mismatch]', {
-        phase: 'appendOrReplaceTurnResponseDelta',
-        sessionResource: model.sessionResource,
-        mismatchCount: ownerDiagnostics.mismatchCount,
-        mismatchedOwners: ownerDiagnostics.mismatchedOwners,
-        mismatchedTurnIds: ownerDiagnostics.mismatchedTurnIds.slice(0, 5),
-        firstTurnId: ownerDiagnostics.firstTurnId,
-        firstRequestPreview: ownerDiagnostics.firstRequestPreview,
-        source: ownerPolicy?.source ?? null,
-      });
-      if (blocked) {
-        return null;
-      }
-    }
-
-    const nextTurnResponses = model.appendOrReplaceTurnResponse(turnResponse, {
-      syncPartStore: false,
-    });
-    model.upsertTurnResponseParts(turnResponse.turnId, parts);
+    const nextTurnResponses = model.appendOrReplaceTurnResponse(turnResponse);
     this.changedSubject.next({ sessionResource: model.sessionResource, kind: 'updated' });
     return nextTurnResponses;
-  }
-
-  commitRestoredCheckpointForwardBranch(
-    sessionResource: string | null | undefined,
-  ): ChatSessionRequestListTransactionResult | null {
-    const model = this.get(sessionResource);
-    if (!model) {
-      return null;
-    }
-
-    const result = model.commitRestoredCheckpointForwardBranch();
-    if (result) {
-      this.changedSubject.next({ sessionResource: model.sessionResource, kind: 'updated' });
-    }
-    return result;
-  }
-
-  commitCheckpointRestoreTransaction(
-    sessionResource: string | null | undefined,
-    checkpointId: string | null | undefined,
-  ): ChatSessionRequestListTransactionResult | null {
-    const model = this.get(sessionResource);
-    if (!model) {
-      return null;
-    }
-
-    const result = model.commitCheckpointRestoreTransaction(checkpointId);
-    if (result) {
-      this.changedSubject.next({ sessionResource: model.sessionResource, kind: 'updated' });
-    }
-    return result;
-  }
-
-  rollbackCheckpointRestoreTransaction(
-    sessionResource: string | null | undefined,
-    committed: ChatSessionRequestListTransactionResult | null | undefined,
-  ): ChatSessionRequestListTransactionResult | null {
-    const model = this.get(sessionResource);
-    if (!model) {
-      return null;
-    }
-
-    const result = model.rollbackCheckpointRestoreTransaction(committed);
-    if (result) {
-      this.changedSubject.next({ sessionResource: model.sessionResource, kind: 'updated' });
-    }
-    return result;
-  }
-
-  prepareCheckpointRedoTransaction(
-    sessionResource: string | null | undefined,
-  ): ChatSessionPreparedRedoTransaction | null {
-    const model = this.get(sessionResource);
-    return model?.prepareCheckpointRedoTransaction() ?? null;
-  }
-
-  commitCheckpointRedoTransaction(
-    sessionResource: string | null | undefined,
-    prepared: ChatSessionPreparedRedoTransaction | null | undefined,
-  ): ChatSessionRequestListTransactionResult | null {
-    const model = this.get(sessionResource);
-    if (!model) {
-      return null;
-    }
-
-    const result = model.commitCheckpointRedoTransaction(prepared);
-    if (result) {
-      this.changedSubject.next({ sessionResource: model.sessionResource, kind: 'updated' });
-    }
-    return result;
-  }
-
-  rollbackCheckpointRedoTransaction(
-    sessionResource: string | null | undefined,
-    prepared: ChatSessionPreparedRedoTransaction | null | undefined,
-  ): ChatSessionRequestListTransactionResult | null {
-    const model = this.get(sessionResource);
-    if (!model) {
-      return null;
-    }
-
-    const result = model.rollbackCheckpointRedoTransaction(prepared);
-    if (result) {
-      this.changedSubject.next({ sessionResource: model.sessionResource, kind: 'updated' });
-    }
-    return result;
-  }
-
-  removeFromTurnTransaction(
-    sessionResource: string | null | undefined,
-    turnId: string | null | undefined,
-  ): ChatSessionRequestListTransactionResult | null {
-    const model = this.get(sessionResource);
-    if (!model) {
-      return null;
-    }
-
-    const result = model.removeFromTurnTransaction(turnId);
-    if (result) {
-      this.changedSubject.next({ sessionResource: model.sessionResource, kind: 'updated' });
-    }
-    return result;
-  }
-
-  prepareForkPrefixBeforeTurn(
-    sessionResource: string | null | undefined,
-    turnId: string | null | undefined,
-  ): ChatSessionRequestListTransactionResult | null {
-    const model = this.get(sessionResource);
-    return model?.prepareForkPrefixBeforeTurn(turnId) ?? null;
   }
 
   applyRuntimeState(

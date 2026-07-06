@@ -2,7 +2,8 @@ import type { TurnResponsePart, TurnResponseStatus, TurnResponseTurn } from 'ail
 
 import type { ChatPart } from './chat-parts';
 import {
-  turnResponsePartsToDisplayChatParts,
+  hydrateQuestionAnswersFromAskUserToolMetadata,
+  turnResponsePartToChatParts,
 } from './turn-response-part-mapper';
 import {
   buildTurnResponseAssistantMessageProjection,
@@ -191,7 +192,7 @@ export class ChatVisibleTranscriptModel {
       role: 'aily',
       turnId: existing.turnId,
       status: existing.status,
-      contentPreview: collectChatPartAssistantPreview(nextParts, existing.contentPreview),
+      contentPreview: existing.contentPreview,
       parts: nextParts,
       turnResponse: existing.turnResponse,
       turnContext: existing.turnContext,
@@ -312,7 +313,7 @@ export class ChatVisibleTranscriptModel {
 
     const item = freezeItem({
       ...props,
-      parts: freezeChatParts(props.parts),
+      parts: cloneChatParts(props.parts),
       revision: (existingRecord?.item.revision ?? 0) + 1,
     });
     this.records.set(props.id, { item, signature });
@@ -332,11 +333,8 @@ export class ChatVisibleTranscriptModel {
 }
 
 function mergeChatParts(existing: readonly ChatPart[], incoming: readonly ChatPart[]): readonly ChatPart[] {
-  let merged = [...existing];
+  const merged = [...existing];
   for (const part of incoming) {
-    if (part.type === 'terminal') {
-      merged = removeTerminalOwnedInvocationParts(merged, part);
-    }
     const key = getChatPartStableKey(part);
     const existingIndex = key
       ? merged.findIndex(candidate => getChatPartStableKey(candidate) === key)
@@ -350,35 +348,9 @@ function mergeChatParts(existing: readonly ChatPart[], incoming: readonly ChatPa
   return merged;
 }
 
-function removeTerminalOwnedInvocationParts(parts: readonly ChatPart[], terminal: Extract<ChatPart, { type: 'terminal' }>): ChatPart[] {
-  const toolCallIds = new Set<string>([
-    terminal.toolCallId,
-    ...(Array.isArray(terminal.sourceToolCallIds) ? terminal.sourceToolCallIds : []),
-  ].filter((value): value is string => !!value));
-  if (toolCallIds.size === 0) {
-    return [...parts];
-  }
-  return parts.filter(part => {
-    if (part.type === 'tool_call' && toolCallIds.has(part.toolCallId)) {
-      return false;
-    }
-    if (part.type === 'confirmation' && (toolCallIds.has(part.askId) || (part.partId && toolCallIds.has(part.partId.replace(/^confirmation:/, ''))))) {
-      return false;
-    }
-    return true;
-  });
-}
-
-function collectChatPartAssistantPreview(parts: readonly ChatPart[], fallback: string): string {
-  const content = parts
-    .filter((part): part is Extract<ChatPart, { type: 'markdown' }> => part.type === 'markdown' && part.sourceAgentRole !== 'subagent')
-    .map(part => part.content)
-    .join('');
-  return content || fallback;
-}
-
 function turnResponsePartsToChatParts(parts: readonly TurnResponsePart[]): readonly ChatPart[] {
-  return turnResponsePartsToDisplayChatParts(parts);
+  return hydrateQuestionAnswersFromAskUserToolMetadata(parts)
+    .flatMap(part => turnResponsePartToChatParts(part));
 }
 
 function getChatPartStableKey(part: ChatPart): string | undefined {
@@ -400,168 +372,32 @@ function getChatPartStableKey(part: ChatPart): string | undefined {
 }
 
 function createItemSignature(item: Omit<ChatVisibleTranscriptItem, 'revision'>): string {
-  const responseModel = item.turnResponse?.responseModel;
-  return [
-    item.id,
-    item.kind,
-    item.role,
-    item.turnId,
-    item.status,
-    item.contentPreview,
-    item.turnResponse?.response.status ?? '',
-    item.turnResponse?.updatedAt ?? '',
-    stableSmallJson(item.turnResponse?.request?.metadata ?? null),
-    responseModel?.modelName ?? '',
-    responseModel?.modelBillingLabel ?? '',
-    responseModel?.modelRouting ?? '',
-    item.parts.map(createPartRevisionSignature).join('\u001e'),
-  ].join('\u001f');
-}
-
-function createPartRevisionSignature(part: ChatPart): string {
-  const scope = readPartScopeSignature(part);
-  switch (part.type) {
-    case 'markdown':
-    case 'thinking':
-      return [
-        part.type,
-        scope,
-        part.partId ?? '',
-        part.contentRef ?? '',
-        part.contentLength ?? part.content?.length ?? 0,
-        sampleTextRevision(part.content),
-        part.type === 'thinking' ? (part.isComplete ? 'complete' : 'streaming') : '',
-      ].join(':');
-    case 'tool_call':
-      return [
-        part.type,
-        scope,
-        part.partId ?? '',
-        part.toolCallId,
-        part.toolName,
-        part.state,
-        part.text,
-        stableSmallJson(part.args ?? null),
-      ].join(':');
-    case 'state':
-      return [
-        part.type,
-        scope,
-        part.stateId,
-        part.kind ?? '',
-        part.state,
-        part.progress ?? '',
-        part.text,
-      ].join(':');
-    case 'error':
-      return [
-        part.type,
-        scope,
-        part.partId ?? '',
-        part.severity ?? '',
-        part.message,
-      ].join(':');
-    case 'question':
-      return [
-        part.type,
-        scope,
-        part.partId ?? '',
-        stableSmallJson(part.questions ?? []),
-        stableSmallJson(part.answers ?? null),
-        part.isHistory ? 'history' : 'live',
-      ].join(':');
-    case 'confirmation':
-      return [
-        part.type,
-        scope,
-        part.partId ?? '',
-        part.askId,
-        part.resolved ? 'resolved' : 'pending',
-        part.result ?? '',
-        part.scope ?? '',
-      ].join(':');
-    case 'terminal':
-      return [
-        part.type,
-        scope,
-        part.partId ?? '',
-        part.toolCallId ?? '',
-        Array.isArray(part.sourceToolCallIds) ? part.sourceToolCallIds.join(',') : '',
-        part.processId ?? '',
-        part.outputSessionId ?? '',
-        part.terminalId ?? '',
-        part.command,
-        part.status ?? '',
-        part.isRunning ? 'running' : 'idle',
-        part.exitCode ?? '',
-        part.bytesTotal ?? '',
-        part.lastOutputAt ?? '',
-        part.output?.length ?? 0,
-        sampleTextRevision(part.output),
-        part.stderr?.length ?? 0,
-        sampleTextRevision(part.stderr ?? ''),
-      ].join(':');
-    case 'plan':
-      return [
-        part.type,
-        scope,
-        part.partId ?? '',
-        part.status,
-        part.source ?? '',
-        part.text?.length ?? 0,
-        sampleTextRevision(part.text),
-        stableSmallJson(part.steps ?? null),
-      ].join(':');
-  }
-}
-
-function readPartScopeSignature(part: ChatPart): string {
-  const scoped = part as {
-    sourceAgentRole?: string;
-    subAgentInvocationId?: string;
-    parentToolCallId?: string;
-    sequence?: number;
-  };
-  return [
-    scoped.sourceAgentRole ?? '',
-    scoped.subAgentInvocationId ?? '',
-    scoped.parentToolCallId ?? '',
-    scoped.sequence ?? '',
-  ].join(':');
-}
-
-function sampleTextRevision(value: string | null | undefined): string {
-  if (!value) {
-    return '';
-  }
-  const prefix = value.slice(0, 48);
-  const suffix = value.length > 96 ? value.slice(-48) : '';
-  return `${prefix}\u001d${suffix}`;
-}
-
-function stableSmallJson(value: unknown): string {
-  if (value === null || typeof value !== 'object') {
-    return String(value ?? '');
-  }
-  try {
-    return JSON.stringify(value, (_key, nested) => {
-      if (!nested || typeof nested !== 'object' || Array.isArray(nested)) {
-        return nested;
+  return JSON.stringify({
+    id: item.id,
+    kind: item.kind,
+    role: item.role,
+    turnId: item.turnId,
+    status: item.status,
+    contentPreview: item.contentPreview,
+    turnResponseStatus: item.turnResponse?.response.status,
+    turnResponseUpdatedAt: item.turnResponse?.updatedAt,
+    requestMetadata: item.turnResponse?.request?.metadata,
+    responseModel: item.turnResponse?.responseModel
+      ? {
+        modelName: item.turnResponse.responseModel.modelName,
+        modelBillingLabel: item.turnResponse.responseModel.modelBillingLabel,
+        modelRouting: item.turnResponse.responseModel.modelRouting,
       }
-      return Object.keys(nested as Record<string, unknown>)
-        .sort()
-        .reduce<Record<string, unknown>>((acc, key) => {
-          acc[key] = (nested as Record<string, unknown>)[key];
-          return acc;
-        }, {});
-    });
-  } catch {
-    return '';
-  }
+      : undefined,
+    parts: item.parts.map(part => ({
+      key: getChatPartStableKey(part),
+      value: part,
+    })),
+  });
 }
 
-function freezeChatParts(parts: readonly ChatPart[]): readonly ChatPart[] {
-  return Object.freeze([...parts]);
+function cloneChatParts(parts: readonly ChatPart[]): readonly ChatPart[] {
+  return Object.freeze(parts.map(cloneChatPart));
 }
 
 function cloneChatPart(part: ChatPart): ChatPart {
@@ -571,7 +407,7 @@ function cloneChatPart(part: ChatPart): ChatPart {
 function freezeItem(item: ChatVisibleTranscriptItem): ChatVisibleTranscriptItem {
   return Object.freeze({
     ...item,
-    parts: freezeChatParts(item.parts),
+    parts: cloneChatParts(item.parts),
   });
 }
 

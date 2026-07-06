@@ -12,9 +12,7 @@ import { setChatRuntimeWorkspaceEnvironmentOverride } from '../core/chat-runtime
 import { isAilyCategoryDebugEnabled } from '../core/chat-debug-flags';
 import {
   normalizeChatSessionPermissionMode,
-  normalizeChatSessionPermissionProfile,
   type ChatSessionPermissionMode,
-  type ChatSessionPermissionProfile,
 } from '../core/chat-mode';
 import type { ProviderContextManagementSupport } from '../services/aily-chat-config.service';
 import { MAIN_AGENT_TYPE, SCHEMATIC_AGENT_TYPE, normalizeAgentIdentifier } from '../core/agent-identifiers';
@@ -540,14 +538,13 @@ interface BootstrapLexAgentOptions {
 export type BootstrapLexAgentContext = Pick<IProjectContext, 'prjPath' | 'prjRootPath' | 'currentModel' | 'currentAgentRuntimeMode' | 'currentAgentRuntimeModeSource'>
   & Pick<ISessionAccess, 'sessionId'>
   & Pick<IChatServiceAccess, 'ailyChatConfigService' | 'mcpService' | 'runtimeInteractionHost'>
-  & Pick<IChatCoordination, 'handleToolApproval' | 'checkToolApprovalPreflight' | 'lexStream' | 'syncSessionCustomizationContentProvider' | 'syncSessionCustomizationProvider' | 'syncSessionCustomizationProviders' | 'syncSessionProviderOptionsSource' | 'syncSessionProviderOptionsSources'>
+  & Pick<IChatCoordination, 'handleToolApproval' | 'lexStream' | 'syncSessionCustomizationContentProvider' | 'syncSessionCustomizationProvider' | 'syncSessionCustomizationProviders' | 'syncSessionProviderOptionsSource' | 'syncSessionProviderOptionsSources'>
   & {
     readonly editTracking: {
       recordAdditionalRepositoryRootCandidates(paths: readonly string[] | undefined | null): void;
     };
     readonly currentSessionPath?: string | null;
     readonly currentSessionPermissionMode?: ChatSessionPermissionMode;
-    readonly currentSessionPermissionProfile?: ChatSessionPermissionProfile;
     readonly currentSessionApprovalsReviewer?: 'user' | 'auto_review';
     readonly currentSessionApprovalPolicy?: 'on_request' | 'never';
     readonly ownerScheduler?: Pick<ChatRuntimeOwnerScheduler, 'runOutsideOwner'>;
@@ -2416,46 +2413,6 @@ export function bootstrapBlocklyLexAgent(
     ?? ctx.ailyChatConfigService.getLexApprovalsReviewer?.();
   const approvalPolicy = runtimeProviderOptions.approvalPolicy
     ?? ctx.ailyChatConfigService.getLexApprovalPolicy?.();
-  console.debug('[AilyChat][LexApprovalConfig]', {
-    sessionId: sessionId || ctx.sessionId,
-    permissionMode: normalizeChatSessionPermissionMode(runtimeProviderOptions.permissionMode),
-    permissionProfile: normalizeChatSessionPermissionProfile(runtimeProviderOptions.permissionProfile),
-    approvalsReviewer: approvalsReviewer ?? null,
-    approvalPolicy: approvalPolicy ?? null,
-    strictAutoReview: approvalsReviewer === 'auto_review',
-  });
-  const logApprovalBridge = (
-    phase: string,
-    request: {
-      approvalTraceId?: unknown;
-      toolCallId?: unknown;
-      toolName?: unknown;
-      input?: unknown;
-      actions?: unknown;
-      primaryScope?: unknown;
-      allowAutoConfirm?: unknown;
-    },
-    extra?: Record<string, unknown>,
-  ) => {
-    const input = request.input && typeof request.input === 'object'
-      ? request.input as Record<string, unknown>
-      : {};
-    const command = typeof input['command'] === 'string' ? input['command'] : undefined;
-    console.debug('[AilyChat][LexApprovalBridge]', {
-      phase,
-      sessionId: sessionId || ctx.sessionId,
-      approvalTraceId: request.approvalTraceId,
-      toolCallId: request.toolCallId,
-      toolName: request.toolName,
-      command,
-      actionCount: Array.isArray(request.actions) ? request.actions.length : 0,
-      primaryScope: request.primaryScope,
-      allowAutoConfirm: request.allowAutoConfirm,
-      approvalsReviewer: approvalsReviewer ?? null,
-      approvalPolicy: approvalPolicy ?? null,
-      ...extra,
-    });
-  };
   const agentFolderProjectRoot = cwd || ctx.prjRootPath || ctx.prjPath;
   ensureRuntimeOwnerSkillRegistryInitialized(agentFolderProjectRoot, ctx.ailyChatConfigService);
   const projectAgentFileProvider = createBlocklyAgentFileProvider({
@@ -2600,63 +2557,21 @@ export function bootstrapBlocklyLexAgent(
     skillProvider: new BlocklySkillProvider(),
     agentProvider: runtimeAgentProvider,
     slashCommandProvider: createBlocklySlashCommandProvider(sessionId),
-    approvalHandler: async request => {
-      logApprovalBridge('handler-enter', request);
-      try {
-        const result = await ctx.handleToolApproval({
-          approvalTraceId: request.approvalTraceId,
-          toolCallId: request.toolCallId,
-          toolName: request.toolName,
-          title: request.title || '',
-          subtitle: request.subtitle,
-          message: request.message || '',
-          source: request.source,
-          actions: request.actions,
-          primaryScope: request.primaryScope,
-          allowAutoConfirm: request.allowAutoConfirm,
-          approveCombination: request.approveCombination,
-          args: request.input,
-        });
-        logApprovalBridge('handler-result', request, result);
-        return result;
-      } catch (error) {
-        logApprovalBridge('handler-error', request, {
-          error: error instanceof Error ? error.message : String(error),
-          stack: error instanceof Error ? error.stack : undefined,
-        });
-        throw error;
-      }
-    },
-    approvalPreflightHandler: async request => {
-      logApprovalBridge('preflight-enter', request);
-      try {
-        const result = await ctx.checkToolApprovalPreflight({
-          approvalTraceId: request.approvalTraceId,
-          toolCallId: request.toolCallId,
-          toolName: request.toolName,
-          title: request.title || '',
-          subtitle: request.subtitle,
-          message: request.message || '',
-          source: request.source,
-          actions: request.actions,
-          primaryScope: request.primaryScope,
-          allowAutoConfirm: request.allowAutoConfirm,
-          approveCombination: request.approveCombination,
-          args: request.input,
-        });
-        logApprovalBridge('preflight-result', request, result);
-        return result;
-      } catch (error) {
-        logApprovalBridge('preflight-error', request, {
-          error: error instanceof Error ? error.message : String(error),
-          stack: error instanceof Error ? error.stack : undefined,
-        });
-        throw error;
-      }
-    },
+    approvalHandler: async request => ctx.handleToolApproval({
+      toolCallId: request.toolCallId,
+      toolName: request.toolName,
+      title: request.title || '',
+      subtitle: request.subtitle,
+      message: request.message || '',
+      source: request.source,
+      actions: request.actions,
+      primaryScope: request.primaryScope,
+      allowAutoConfirm: request.allowAutoConfirm,
+      approveCombination: request.approveCombination,
+      args: request.input,
+    }),
     permissionPolicy,
     permissionMode: normalizeChatSessionPermissionMode(runtimeProviderOptions.permissionMode),
-    permissionProfile: normalizeChatSessionPermissionProfile(runtimeProviderOptions.permissionProfile),
     terminalPolicy,
     approvalsReviewer,
     approvalPolicy,
@@ -2718,12 +2633,11 @@ function normalizeRuntimePath(value: unknown): string {
 }
 
 function resolveLexRuntimeProviderOptions(
-  ctx: Pick<BootstrapLexAgentContext, 'buildExecutionSaveTarget' | 'currentSessionPath' | 'currentSessionPermissionMode' | 'currentSessionPermissionProfile' | 'currentSessionApprovalsReviewer' | 'currentSessionApprovalPolicy' | 'prjPath' | 'prjRootPath'>,
+  ctx: Pick<BootstrapLexAgentContext, 'buildExecutionSaveTarget' | 'currentSessionPath' | 'currentSessionPermissionMode' | 'currentSessionApprovalsReviewer' | 'currentSessionApprovalPolicy' | 'prjPath' | 'prjRootPath'>,
   sessionId?: string | null,
 ): {
   readonly cwd: string;
   readonly permissionMode?: ChatSessionPermissionMode;
-  readonly permissionProfile?: ChatSessionPermissionProfile;
   readonly approvalsReviewer?: 'user' | 'auto_review';
   readonly approvalPolicy?: 'on_request' | 'never';
 } {
@@ -2734,7 +2648,6 @@ function resolveLexRuntimeProviderOptions(
   return {
     cwd,
     permissionMode: providerOptions?.permissionMode ?? ctx.currentSessionPermissionMode,
-    permissionProfile: providerOptions?.permissionProfile ?? ctx.currentSessionPermissionProfile,
     approvalsReviewer: providerOptions?.approvalsReviewer ?? ctx.currentSessionApprovalsReviewer,
     approvalPolicy: providerOptions?.approvalPolicy ?? ctx.currentSessionApprovalPolicy,
   };
@@ -3715,19 +3628,19 @@ function checkNpmUninstallSafety(command: string): string | null {
         }
       }
     } catch (e) {
-      console.warn('[LexStream] npm uninstall 安全检查失�?', libPackageName, e);
+      console.warn('[LexStream] npm uninstall 安全检查失败:', libPackageName, e);
     }
   }
 
   if (libsInUse.length > 0) {
-    return `无法卸载以下库，因为项目代码正在使用它们�?{libsInUse.join(', ')}。请先删除相关代码块后再尝试卸载。`;
+    return `无法卸载以下库，因为项目代码正在使用它们：${libsInUse.join(', ')}。请先删除相关代码块后再尝试卸载。`;
   }
 
   for (const libPackageName of uniqueLibs) {
     try {
       host.blockly.unloadLibrary(libPackageName, projectPath);
     } catch (e: any) {
-      console.warn('[LexStream] 库卸载失�?', libPackageName, e);
+      console.warn('[LexStream] 库卸载失败:', libPackageName, e);
     }
   }
   return null;
@@ -3766,7 +3679,7 @@ async function loadNpmLibraries(command: string): Promise<void> {
         const pkgJson = JSON.parse(host.fs.readFileSync(pkgJsonPath, 'utf-8'));
         if (pkgJson?.name) libsToLoad.push(pkgJson.name);
       } catch (e) {
-        console.warn('[LexStream] 读取本地�?package.json 失败:', token, e);
+        console.warn('[LexStream] 读取本地包 package.json 失败:', token, e);
       }
     }
   }
@@ -3776,10 +3689,10 @@ async function loadNpmLibraries(command: string): Promise<void> {
     try {
       await host.blockly.loadLibrary(libPackageName, projectPath);
       if (isLexBootstrapTraceEnabled()) {
-        console.log('[LexStream] npm 库加载成�?', libPackageName);
+        console.log('[LexStream] npm 库加载成功:', libPackageName);
       }
     } catch (e: any) {
-      console.warn('[LexStream] npm 库加载失�?', libPackageName, e);
+      console.warn('[LexStream] npm 库加载失败:', libPackageName, e);
     }
   }
 }

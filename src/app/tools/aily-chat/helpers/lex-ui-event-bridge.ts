@@ -170,7 +170,6 @@ export class LexUiEventBridge {
   presentToolCallApproval(request: ToolApprovalRequest): string {
     const event = {
       type: 'approval_request',
-      approvalTraceId: request.approvalTraceId,
       toolCallId: request.toolCallId,
       toolName: request.toolName,
       input: request.args ?? {},
@@ -202,11 +201,9 @@ export class LexUiEventBridge {
     toolCallId: string,
     approved: boolean,
     scope?: ConfirmationPart['scope'],
-    approvalTraceId?: string,
   ): void {
     const event = {
       type: 'approval_resolve',
-      approvalTraceId,
       toolCallId,
       result: approved ? 'approved' : 'rejected',
       scope,

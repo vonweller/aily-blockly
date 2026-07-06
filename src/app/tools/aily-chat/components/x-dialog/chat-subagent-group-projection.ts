@@ -2,7 +2,6 @@ import { ChatPart, getParentToolCallId, getSubAgentInvocationId, isSubagentChild
 import { isProgressMessageDisplayPart, type RenderableChatPart } from './chat-render-parts';
 import {
   buildActivityGroupIdentity,
-  buildSubagentActivityGroupIdentity,
   buildChatPartIdentity,
   isSubagentToolCall,
 } from './chat-activity-group-projection';
@@ -12,7 +11,6 @@ import {
   isTerminalSessionToolName,
   normalizeReadSideToolName,
 } from '../../core/tool-name-normalizer';
-import { storeThinkContent } from '../../core/think-content-store';
 
 export interface PartRenderItem {
   kind: 'part';
@@ -149,7 +147,7 @@ function buildBaseRenderItems(parts: readonly RenderableChatPart[]): ChatRenderI
       const groupParts = [chatPart];
       const item: ActivityGroupRenderItem = {
         kind: 'group',
-        id: buildSubagentActivityGroupIdentity(subagentId),
+        id: buildActivityGroupIdentity(groupParts, index),
         parts: groupParts,
         revision: buildActivityGroupRevision(groupParts),
         live: false,
@@ -166,12 +164,13 @@ function buildBaseRenderItems(parts: readonly RenderableChatPart[]): ChatRenderI
       group.parts.push(chatPart);
     }
 
+    group.item.id = buildActivityGroupIdentity(group.parts, group.startIndex);
     group.item.revision = buildActivityGroupRevision(group.parts);
     return true;
   };
 
   for (let index = 0; index < parts.length; index += 1) {
-    const part = normalizePartForProjection(parts[index], index);
+    const part = parts[index];
     if (isIgnorablePart(part)) {
       continue;
     }
@@ -216,27 +215,6 @@ function buildBaseRenderItems(parts: readonly RenderableChatPart[]): ChatRenderI
 
   flushBuffer();
   return items;
-}
-
-function normalizePartForProjection(part: RenderableChatPart, index: number): RenderableChatPart {
-  if (part.type !== 'thinking' || part.isComplete || part.contentRef || !part.content) {
-    return part;
-  }
-
-  const contentRef = [
-    'render-thinking',
-    part.sourceAgentRole ?? 'main',
-    part.subAgentInvocationId ?? 'root',
-    part.parentToolCallId ?? 'root',
-    part.partId || buildChatPartIdentity(part, index),
-  ].join(':');
-  storeThinkContent(contentRef, part.content);
-  return {
-    ...part,
-    content: '',
-    contentRef,
-    contentLength: part.contentLength ?? part.content.length,
-  };
 }
 
 function collectTerminalOwnedToolCallIds(parts: readonly RenderableChatPart[]): Set<string> {
@@ -451,14 +429,14 @@ function buildActivityGroupRevision(parts: readonly ChatPart[]): string {
 }
 
 function buildActivityPartRevision(part: ChatPart, index: number): string {
-  const base = `${buildChatPartIdentity(part, index)}:${part.type}`;
+  const base = `${index}:${buildChatPartIdentity(part, index)}:${part.type}`;
   switch (part.type) {
     case 'thinking':
       return [
         base,
         part.partId ?? '',
         part.contentRef ?? '',
-        contentProgressKey(part),
+        part.contentLength ?? part.content.length,
         part.isComplete ? 'complete' : 'running',
       ].join(':');
     case 'tool_call':
@@ -468,6 +446,9 @@ function buildActivityPartRevision(part: ChatPart, index: number): string {
         part.toolCallId,
         part.toolName,
         part.state,
+        fingerprintText(part.text),
+        fingerprintJson(part.args),
+        fingerprintJson(part.metadata),
         part.sourceAgentRole ?? '',
         part.subAgentInvocationId ?? '',
         part.parentToolCallId ?? '',
@@ -480,6 +461,8 @@ function buildActivityPartRevision(part: ChatPart, index: number): string {
         part.resolved ? 'resolved' : 'pending',
         part.result ?? '',
         part.scope ?? '',
+        fingerprintText(part.message),
+        fingerprintJson(part.metadata),
       ].join(':');
     case 'terminal':
       return [
@@ -495,6 +478,8 @@ function buildActivityPartRevision(part: ChatPart, index: number): string {
         part.exitCode ?? '',
         part.cwd ?? '',
         fingerprintText(part.command),
+        fingerprintText(part.output),
+        fingerprintText(part.stderr),
       ].join(':');
     case 'state':
       return [
@@ -502,25 +487,30 @@ function buildActivityPartRevision(part: ChatPart, index: number): string {
         part.stateId,
         part.kind,
         part.state,
+        fingerprintText(part.text),
+        fingerprintJson(part.metadata),
       ].join(':');
     case 'markdown':
       return [
         base,
         part.partId ?? '',
         part.contentRef ?? '',
-        contentProgressKey(part),
+        part.contentLength ?? part.content.length,
       ].join(':');
     default:
       return base;
   }
 }
 
-function contentProgressKey(part: { readonly content?: string; readonly contentLength?: number }): string {
-  const length = part.contentLength ?? part.content?.length ?? 0;
-  if (!part.content || part.content.length === 0) {
-    return String(length);
+function fingerprintJson(value: unknown): string {
+  if (value == null) {
+    return '';
   }
-  return `${length}:${fingerprintText(part.content)}`;
+  try {
+    return fingerprintText(JSON.stringify(value));
+  } catch {
+    return fingerprintText(String(value));
+  }
 }
 
 function fingerprintText(value: unknown): string {

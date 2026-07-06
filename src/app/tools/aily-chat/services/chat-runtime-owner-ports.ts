@@ -153,7 +153,6 @@ export interface ChatRuntimeOwnerToolApprovalInput {
 
 export interface ChatRuntimeOwnerToolApprovalPort {
   handleToolApproval(input: ChatRuntimeOwnerToolApprovalInput): Promise<{ approved: true } | { approved: false; reason?: string }>;
-  checkToolApprovalPreflight(input: ChatRuntimeOwnerToolApprovalInput): Promise<{ approved: true } | { approved: false; reason?: string }>;
 }
 
 export type ChatRuntimeOwnerToolApprovalPolicyPort = UserInteractionToolApprovalPolicy;
@@ -169,7 +168,7 @@ export interface ChatRuntimeOwnerSubmittedTurnTitleInput {
   readonly sessionId: string;
   readonly requestText: string;
   readonly displayText: string;
-  readonly owner?: LexOwnerFacade;
+  readonly owner: LexOwnerFacade;
 }
 
 export interface ChatRuntimeOwnerSubmittedTurnTitlePort {
@@ -215,7 +214,6 @@ export interface ChatRuntimeOwnerSessionContextPort {
   readonly currentSessionId: string;
   currentSessionPath(sessionId?: string | null): string | null;
   currentSessionPermissionMode(sessionId?: string | null): HostSessionProviderOptions['permissionMode'];
-  currentSessionPermissionProfile(sessionId?: string | null): HostSessionProviderOptions['permissionProfile'];
   currentSessionApprovalsReviewer(sessionId?: string | null): HostSessionProviderOptions['approvalsReviewer'];
   currentSessionApprovalPolicy(sessionId?: string | null): HostSessionProviderOptions['approvalPolicy'];
   selectAgentRuntimeMode(

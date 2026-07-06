@@ -1,8 +1,6 @@
 import {
   Component,
   Input,
-  Output,
-  EventEmitter,
   ViewChild,
   ElementRef,
   AfterViewChecked,
@@ -18,6 +16,7 @@ import {
 import { CommonModule } from '@angular/common';
 import { XMarkdownComponent } from 'ngx-x-markdown';
 import type { ComponentMap, StreamingOption } from 'ngx-x-markdown';
+import { getClosingTagsForOpenBlocks } from '../../../services/content-sanitizer.service';
 import {
   getThinkContent,
   getThinkContentLength,
@@ -28,7 +27,6 @@ import { AilyChatCodeComponent } from '../aily-chat-code.component';
 import { AilyMarkdownExternalLinksDirective } from '../../../directives/aily-markdown-external-links.directive';
 
 const LIVE_THINK_RENDER_WINDOW_CHARS = 48 * 1024;
-const EMBEDDED_LIVE_THINK_RENDER_WINDOW_CHARS = 12 * 1024;
 const LIVE_THINK_OMITTED_MARKER = '[earlier reasoning omitted from live view]\n\n';
 
 @Component({
@@ -178,12 +176,6 @@ const LIVE_THINK_OMITTED_MARKER = '[earlier reasoning omitted from live view]\n\
         padding-top: 0;
         margin-top: 0;
       }
-      .ac-think.embedded.streaming .ac-think-body {
-        max-height: 160px;
-        overflow-y: auto;
-        overflow-x: hidden;
-        scrollbar-gutter: stable;
-      }
 
       .ac-think.embedded .ac-think-body::before {
         content: none;
@@ -296,7 +288,6 @@ export class XAilyThinkViewerComponent implements AfterViewChecked, OnChanges, O
     v?: number;
   } | null = null;
   @Input() embedded = false;
-  @Output() contentDelta = new EventEmitter<void>();
   @ViewChild('thinkBody') thinkBodyRef?: ElementRef<HTMLElement>;
 
   thinkContent = '';
@@ -369,12 +360,6 @@ export class XAilyThinkViewerComponent implements AfterViewChecked, OnChanges, O
 
   ngOnChanges(changes: SimpleChanges): void {
     if (!changes['data'] || !this.data) return;
-    const isStreaming = this.data.isComplete === false;
-    this.streamingConfig.set({
-      hasNextChunk: isStreaming,
-      enableAnimation: false,
-      buffering: isStreaming ? 'off' : 'paragraph',
-    });
 
     const prevData = changes['data'].previousValue as { isComplete?: boolean } | null | undefined;
     const prevStreaming = prevData && prevData.isComplete === false;
@@ -385,6 +370,15 @@ export class XAilyThinkViewerComponent implements AfterViewChecked, OnChanges, O
     }
 
     const contentRef = this.data.ref || '';
+    const liveStreamingRef = !!contentRef && this.data.isComplete === false;
+    if (liveStreamingRef && this._activeContentRef === contentRef && this.markdownContent().length > 0) {
+      this.thinkExpanded = true;
+      this.shouldScrollThink = !this.embedded;
+      this._startPhraseRotation();
+      this._startPolling();
+      return;
+    }
+
     this._activeContentRef = contentRef;
 
     // 获取原始内容
@@ -393,7 +387,7 @@ export class XAilyThinkViewerComponent implements AfterViewChecked, OnChanges, O
     if (contentRef) {
       rawLength = getThinkContentLength(contentRef);
       if (this.data.isComplete === false || this.embedded) {
-        raw = getThinkContentWindow(contentRef, this.getRenderWindowLimit(), LIVE_THINK_OMITTED_MARKER);
+        raw = getThinkContentWindow(contentRef, LIVE_THINK_RENDER_WINDOW_CHARS, LIVE_THINK_OMITTED_MARKER);
       } else {
         raw = getThinkContent(contentRef);
       }
@@ -409,11 +403,12 @@ export class XAilyThinkViewerComponent implements AfterViewChecked, OnChanges, O
     if (!rawLength) {
       rawLength = raw.length;
     }
-    const renderWindowLimit = this.getRenderWindowLimit();
-    if (this.embedded && raw.length > renderWindowLimit) {
-      const tailLength = Math.max(0, renderWindowLimit - LIVE_THINK_OMITTED_MARKER.length);
+    if (this.embedded && raw.length > LIVE_THINK_RENDER_WINDOW_CHARS) {
+      const tailLength = Math.max(0, LIVE_THINK_RENDER_WINDOW_CHARS - LIVE_THINK_OMITTED_MARKER.length);
       raw = `${LIVE_THINK_OMITTED_MARKER}${raw.slice(-tailLength)}`;
     }
+
+    this.thinkContent = raw;
 
     // 提取标题（每次内容更新时尝试）
     if (!this._extractedTitle && raw.length > 10) {
@@ -441,7 +436,7 @@ export class XAilyThinkViewerComponent implements AfterViewChecked, OnChanges, O
 
     if (!this.data.isComplete) {
       this.thinkExpanded = true;
-      this.shouldScrollThink = this.shouldAutoScrollThinkBody();
+      this.shouldScrollThink = !this.embedded;
       this._scheduleRender(raw, rawLength);
       this._startPhraseRotation();
       // 启动轮询：v 字段已移除，x-markdown 不再驱动 ngOnChanges，需自行拉取 store
@@ -520,13 +515,14 @@ export class XAilyThinkViewerComponent implements AfterViewChecked, OnChanges, O
         const rawLength = getThinkContentLength(this.data.ref);
         const raw = getThinkContentWindow(
           this.data.ref,
-          this.getRenderWindowLimit(),
+          LIVE_THINK_RENDER_WINDOW_CHARS,
           LIVE_THINK_OMITTED_MARKER,
         );
         if (raw && (rawLength !== this._lastRenderedRawLen || raw !== this.thinkContent)) {
           this.ngZone.run(() => {
             const updateStartedAt = performance.now();
-            this.shouldScrollThink = this.shouldAutoScrollThinkBody();
+            this.thinkContent = raw;
+            this.shouldScrollThink = !this.embedded;
             this._scheduleRender(raw, rawLength);
             this.cdr.markForCheck();
             ChatPerformanceTracer.recordDuration(
@@ -550,65 +546,30 @@ export class XAilyThinkViewerComponent implements AfterViewChecked, OnChanges, O
   }
 
   private _renderNow(raw: string, isFinal: boolean, rawLength = raw.length): void {
-    const surface = ChatPerformanceTracer.enterSurface(
-      'thinking_render',
-      `raw=${rawLength},final=${isFinal},embedded=${this.embedded}`,
-    );
     const renderStartedAt = performance.now();
-    try {
-      if (!raw) {
-        this.markdownContent.set('');
-        this.thinkContent = '';
-        this._lastRenderedRawLen = 0;
-        ChatPerformanceTracer.recordDuration('thinking_render_commit', performance.now() - renderStartedAt, 'empty', {
-          slowThresholdMs: 8,
-        });
-        return;
-      }
-
-      if (!this.commitThinkingContent(raw, rawLength, isFinal)) {
-        return;
-      }
-
-      const displayContent = raw;
-      this.markdownContent.set(displayContent);
-      this.contentDelta.emit();
-      ChatPerformanceTracer.recordDuration(
-        'thinking_render_commit',
-        performance.now() - renderStartedAt,
-        `raw=${rawLength},visible=${raw.length},display=${displayContent.length},final=${isFinal},embedded=${this.embedded}`,
-        { slowThresholdMs: 8 },
-      );
-    } finally {
-      surface.dispose();
-    }
-  }
-
-  private commitThinkingContent(raw: string, rawLength: number, isFinal: boolean): boolean {
-    if (!isFinal && rawLength < this._lastRenderedRawLen) {
-      return false;
+    if (!raw) {
+      this.markdownContent.set('');
+      this._lastRenderedRawLen = 0;
+      ChatPerformanceTracer.recordDuration('thinking_render_commit', performance.now() - renderStartedAt, 'empty', {
+        slowThresholdMs: 8,
+      });
+      return;
     }
 
-    if (!isFinal && raw.length < this.thinkContent.length && !this.isLiveThinkWindowShift(this.thinkContent, raw)) {
-      return false;
-    }
-
-    if (raw === this.thinkContent && rawLength === this._lastRenderedRawLen) {
-      return false;
-    }
-
-    this.thinkContent = raw;
+    // 非完成状态：追加闭合标签（修复流式过程中的 markdown 截断）
+    const displayContent = isFinal ? raw : raw + getClosingTagsForOpenBlocks(raw);
+    this.markdownContent.set(displayContent);
     this._lastRenderedRawLen = rawLength;
-    return true;
-  }
-
-  private isLiveThinkWindowShift(currentContent: string, nextContent: string): boolean {
-    return currentContent.startsWith(LIVE_THINK_OMITTED_MARKER)
-      && nextContent.startsWith(LIVE_THINK_OMITTED_MARKER)
-      && nextContent.length >= LIVE_THINK_OMITTED_MARKER.length;
+    ChatPerformanceTracer.recordDuration(
+      'thinking_render_commit',
+      performance.now() - renderStartedAt,
+      `raw=${rawLength},visible=${raw.length},display=${displayContent.length},final=${isFinal},embedded=${this.embedded}`,
+      { slowThresholdMs: 8 },
+    );
   }
 
   onThinkBodyScroll(event: Event): void {
+    if (this.embedded) return;
     const el = event.target as HTMLElement | null;
     if (!el) return;
     const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
@@ -616,6 +577,7 @@ export class XAilyThinkViewerComponent implements AfterViewChecked, OnChanges, O
   }
 
   ngAfterViewChecked(): void {
+    if (this.embedded) return;
     if (this.shouldScrollThink && this.thinkBodyRef?.nativeElement) {
       const el = this.thinkBodyRef.nativeElement;
       if (this.thinkStickToBottom) {
@@ -623,16 +585,6 @@ export class XAilyThinkViewerComponent implements AfterViewChecked, OnChanges, O
       }
       this.shouldScrollThink = false;
     }
-  }
-
-  private getRenderWindowLimit(): number {
-    return this.embedded && this.data?.isComplete === false
-      ? EMBEDDED_LIVE_THINK_RENDER_WINDOW_CHARS
-      : LIVE_THINK_RENDER_WINDOW_CHARS;
-  }
-
-  private shouldAutoScrollThinkBody(): boolean {
-    return !this.embedded || this.data?.isComplete === false;
   }
 
   ngOnDestroy(): void {

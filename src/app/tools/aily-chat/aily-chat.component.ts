@@ -207,10 +207,6 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
     this.observeSessionViewport(ref?.nativeElement ?? null);
   }
   @ViewChild(ChatInputPartHostComponent) inputPartHost?: ChatInputPartHostComponent;
-  @ViewChild('inputPartHostElement', { read: ElementRef })
-  set inputPartHostElement(ref: ElementRef<HTMLElement> | undefined) {
-    this.observeInputPart(ref?.nativeElement ?? null);
-  }
   @ViewChild('dialogsContent')
   set dialogsContent(ref: ElementRef<HTMLElement> | undefined) {
     this.observeDialogContent(ref?.nativeElement ?? null);
@@ -239,10 +235,8 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
   private readonly lifecycleCoordinator: ChatComponentLifecycleCoordinator;
   private dialogsResizeObserver: ResizeObserver | null = null;
   private sessionViewportResizeObserver: ResizeObserver | null = null;
-  private inputPartResizeObserver: ResizeObserver | null = null;
   private observedDialogsElement: HTMLElement | null = null;
   private observedSessionViewportElement: HTMLElement | null = null;
-  private observedInputPartElement: HTMLElement | null = null;
   private readonly rememberedFullAccessSessions = new Set<string>();
   private readonly inputHistoryNavigator = new ChatInputHistoryNavigator([], entries => this.persistInputHistoryEntries(entries));
   private inputHistoryStorageKey: string | null = null;
@@ -256,12 +250,9 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
   private dialogVirtualEndIndex = Number.POSITIVE_INFINITY;
   private dialogVirtualRefreshRaf: number | null = null;
   private dialogVirtualMeasureRaf: number | null = null;
-  private dialogContentDeltaRaf: number | null = null;
   private dialogBottomFollowRaf: number | null = null;
   private dialogBottomFollowRequestId = 0;
   private syncViewRefreshRaf: number | null = null;
-  private rendererStreamingSamplerActive = false;
-  private rendererStreamingSamplerStopTimer: ReturnType<typeof setTimeout> | null = null;
   public dialogVirtualTopSpacerHeight = 0;
   public dialogVirtualBottomSpacerHeight = 0;
   private readonly debugBrowserChangeSubscription: Subscription;
@@ -337,10 +328,7 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
       engine: this.engine,
       viewState: this.viewState,
       readRenderingDiagnostics: () => this.readRenderingDiagnostics(),
-      readPerformanceDiagnostics: () => ({
-        ...ChatPerformanceTracer.snapshotPerformanceState(),
-        rendererStreamingBudget: ChatPerformanceTracer.snapshotRendererStreamingBudget(),
-      }),
+      readPerformanceDiagnostics: () => ChatPerformanceTracer.snapshotPerformanceState(),
       runWorkspaceFinalizeBoundaryProbe: () => this.engine.runE2eWorkspaceFinalizeBoundaryProbe(),
     });
     this.engine.setPaneSessionCommandHandlers({
@@ -396,7 +384,7 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
     this.requestController = new ChatRequestController({
       sendNow: (text, sessionId) => this.engine.submitUserText(text, { clearInput: true, sessionId }),
       queue: (text, sessionId, options) => this.engine.queueFollowupMessage(text, sessionId, options),
-      stop: (sessionId) => this.engine.stopAndWait(sessionId),
+      stop: (sessionId) => this.engine.stop(sessionId),
       getPending: (sessionId) => this.engine.getPendingFollowupRequests?.(sessionId) ?? [],
       hasPending: (sessionId) => this.engine.hasPendingFollowupRequests?.(sessionId) === true,
       clearPending: (sessionId) => this.engine.clearPendingFollowupRequests?.(sessionId),
@@ -953,28 +941,13 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
     this.childToolSessionStateCleanup = null;
     this.disconnectDialogContentObserver();
     this.disconnectSessionViewportObserver();
-    this.disconnectInputPartObserver();
     this.cancelDialogVirtualRafs();
-    this.cancelDialogContentDeltaRaf();
     this.cancelSyncViewRefreshRaf();
-    this.stopRendererStreamingPerformanceSampler();
     this.runtimeInteractionRevealEffect?.destroy();
     this.runtimeInteractionRevealEffect = null;
     this.cancelRuntimeInteractionReveal();
     this.scrollManager.setRevealHostDelegate?.(null);
     this.lifecycleCoordinator.detachView();
-  }
-
-  private stopRendererStreamingPerformanceSampler(): void {
-    if (this.rendererStreamingSamplerStopTimer !== null) {
-      clearTimeout(this.rendererStreamingSamplerStopTimer);
-      this.rendererStreamingSamplerStopTimer = null;
-    }
-    if (!this.rendererStreamingSamplerActive) {
-      return;
-    }
-    this.rendererStreamingSamplerActive = false;
-    ChatPerformanceTracer.stopEventLoopLagSampler();
   }
 
   shouldShowProcessEntryButton(): boolean {
@@ -1258,8 +1231,8 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
   }
 
   get permissionMenuItems(): IMenuItem[] {
-    const isFullAccess = this.engine.currentSessionPermissionProfile === 'danger-full-access';
-    const isAutoReview = !isFullAccess && this.engine.currentSessionApprovalsReviewer === 'auto_review';
+    const isAutoReview = this.engine.currentSessionApprovalsReviewer === 'auto_review';
+    const isFullAccess = this.engine.currentSessionPermissionMode === 'bypassPermissions';
     const isDefault = !isAutoReview && !isFullAccess;
 
     return [
@@ -1289,7 +1262,7 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
   }
 
   get permissionButtonIconClass(): string {
-    if (this.engine.currentSessionPermissionProfile === 'danger-full-access') {
+    if (this.engine.currentSessionPermissionMode === 'bypassPermissions') {
       return 'fa-light fa-triangle-exclamation';
     }
 
@@ -1339,13 +1312,13 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
       return;
     }
 
-    const sessionId = this.resolvePermissionTargetSessionId();
     if (action !== 'permission-full-access') {
-      this.engine.applyComposerPermissionPreset(action, sessionId || undefined);
+      this.engine.applyComposerPermissionPreset(action);
       this.notifyPermissionPresetApplied(action);
       return;
     }
 
+    const sessionId = this.resolvePermissionTargetSessionId();
     if (sessionId && this.rememberedFullAccessSessions.has(sessionId)) {
       this.engine.applyComposerPermissionPreset(action, sessionId);
       this.notifyPermissionPresetApplied(action);
@@ -1633,37 +1606,9 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
   }
 
   ngAfterViewChecked(): void {
-    this.syncRendererStreamingPerformanceSampler();
     if (this.shouldUseDialogVirtualization(this.vm.dialogItems)) {
       this.scheduleDialogWindowMeasurement();
     }
-  }
-
-  private syncRendererStreamingPerformanceSampler(): void {
-    const hasStreamingDialog = this.vm.dialogItems.some(item => item.doing);
-    if (hasStreamingDialog) {
-      if (this.rendererStreamingSamplerStopTimer !== null) {
-        clearTimeout(this.rendererStreamingSamplerStopTimer);
-        this.rendererStreamingSamplerStopTimer = null;
-      }
-      if (!this.rendererStreamingSamplerActive) {
-        this.rendererStreamingSamplerActive = true;
-        ChatPerformanceTracer.startEventLoopLagSampler({ intervalMs: 100, thresholdMs: 24, enableTrace: false });
-        ChatPerformanceTracer.mark('renderer_streaming_sampler.start');
-      }
-      return;
-    }
-
-    if (!this.rendererStreamingSamplerActive || this.rendererStreamingSamplerStopTimer !== null) {
-      return;
-    }
-
-    this.rendererStreamingSamplerStopTimer = setTimeout(() => {
-      this.rendererStreamingSamplerStopTimer = null;
-      this.rendererStreamingSamplerActive = false;
-      ChatPerformanceTracer.mark('renderer_streaming_sampler.stop');
-      ChatPerformanceTracer.stopEventLoopLagSampler();
-    }, 1000);
   }
 
   get renderedDialogItems(): readonly ChatVisibleTranscriptDialogItem[] {
@@ -1710,49 +1655,6 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
   handleConversationScroll(): void {
     this.scrollManager.checkUserScroll();
     this.scheduleDialogWindowRefresh();
-  }
-
-  handleDialogContentDelta(): void {
-    if (this.dialogContentDeltaRaf !== null) {
-      return;
-    }
-
-    const flush = () => {
-      ChatPerformanceTracer.runWithSurface('renderer_content_delta', () => {
-        const startedAt = performance.now();
-        this.dialogContentDeltaRaf = null;
-        this.scheduleDialogWindowMeasurement();
-        this.scheduleDialogWindowRefresh();
-        ChatPerformanceTracer.runWithSurface('renderer_scroll', () => {
-          this.scrollManager.handleContentHeightChange();
-        }, 'conversation_content_delta');
-        ChatPerformanceTracer.recordDuration(
-          'dialog_content_delta_flush',
-          performance.now() - startedAt,
-          'conversation',
-          { slowThresholdMs: 8 },
-        );
-      }, 'conversation');
-    };
-
-    if (typeof globalThis.requestAnimationFrame === 'function') {
-      this.dialogContentDeltaRaf = globalThis.requestAnimationFrame(flush);
-      return;
-    }
-
-    this.dialogContentDeltaRaf = setTimeout(flush, 16) as unknown as number;
-  }
-
-  private cancelDialogContentDeltaRaf(): void {
-    if (this.dialogContentDeltaRaf === null) {
-      return;
-    }
-    if (typeof globalThis.cancelAnimationFrame === 'function') {
-      globalThis.cancelAnimationFrame(this.dialogContentDeltaRaf);
-    } else {
-      clearTimeout(this.dialogContentDeltaRaf as unknown as ReturnType<typeof setTimeout>);
-    }
-    this.dialogContentDeltaRaf = null;
   }
 
   resumeConversationAutoScroll(event?: Event): void {
@@ -2515,47 +2417,6 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
     this.sessionViewportResizeObserver.observe(element);
   }
 
-  private observeInputPart(element: HTMLElement | null): void {
-    if (this.observedInputPartElement === element) {
-      return;
-    }
-
-    this.disconnectInputPartObserver();
-    this.observedInputPartElement = element;
-
-    if (!element || typeof ResizeObserver === 'undefined') {
-      return;
-    }
-
-    let lastHeight = element.getBoundingClientRect().height;
-    this.inputPartResizeObserver = new ResizeObserver((entries) => {
-      const nextHeight = entries[0]?.contentRect?.height ?? element.getBoundingClientRect().height;
-      if (Math.abs(nextHeight - lastHeight) < 1) {
-        return;
-      }
-
-      lastHeight = nextHeight;
-      this.ngZone.run(() => this.handleInputPartHeightChanged());
-    });
-    this.inputPartResizeObserver.observe(element);
-  }
-
-  private handleInputPartHeightChanged(): void {
-    this.scheduleDialogWindowMeasurement();
-    this.scheduleDialogWindowRefresh();
-
-    if (!this.scrollManager.scrollLock) {
-      this.scrollManager.handleContentHeightChange();
-      this.cdr.markForCheck();
-      return;
-    }
-
-    this.prepareDialogBottomReveal();
-    this.scrollManager.resumeFollowBottom('auto');
-    this.scheduleDialogBottomFollowConfirmation();
-    this.cdr.markForCheck();
-  }
-
   private disconnectSessionViewportObserver(): void {
     this.sessionViewportResizeObserver?.disconnect();
     this.sessionViewportResizeObserver = null;
@@ -2574,12 +2435,6 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
     this.dialogsResizeObserver?.disconnect();
     this.dialogsResizeObserver = null;
     this.observedDialogsElement = null;
-  }
-
-  private disconnectInputPartObserver(): void {
-    this.inputPartResizeObserver?.disconnect();
-    this.inputPartResizeObserver = null;
-    this.observedInputPartElement = null;
   }
 
   private cancelDialogVirtualRafs(): void {

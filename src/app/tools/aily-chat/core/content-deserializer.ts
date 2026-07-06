@@ -251,7 +251,6 @@ export function deserializeContentToParts(content: string): ChatPart[] {
             status: data.status,
             bytesTotal: data.bytesTotal,
             lastOutputAt: data.lastOutputAt,
-            metadata: data.metadata && typeof data.metadata === 'object' ? data.metadata : undefined,
           });
           tp.output = data.output || '';
           tp.stderr = data.stderr || '';

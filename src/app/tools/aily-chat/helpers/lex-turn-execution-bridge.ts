@@ -4,7 +4,7 @@ import { ChatPerformanceTracer } from '../services/chat-perf-tracer';
 import type { RenderEvent, SessionSnapshot, TurnRequest, TurnResponseStatus, TurnResponseTurn } from 'aily-lex/browser';
 import type { LexTurnDraft } from './lex-message-lifecycle-bridge';
 import type { HostSessionSaveTarget } from './host-session-save-bridge';
-import { createBrowserFrameBudget, yieldToBrowserFrame, yieldToBrowserTask } from '../tools/browserTaskScheduler';
+import { yieldToBrowserTask } from '../tools/browserTaskScheduler';
 import {
   terminalTranscriptProjection,
   type ChatRuntimeTurnResponseSyncOptions,
@@ -167,48 +167,6 @@ function hasAuthoritativeExecutionTurnResponses(turnResponses: readonly TurnResp
   });
 }
 
-function hasPendingToolResultResponse(turnResponses: readonly TurnResponseTurn[] | null | undefined): boolean {
-  if (!Array.isArray(turnResponses) || turnResponses.length === 0) {
-    return false;
-  }
-
-  return turnResponses.some(turn => {
-    const response = turn?.response;
-    if (!response) {
-      return false;
-    }
-    if (hasPendingToolResultContinuation(response.continuation)) {
-      return true;
-    }
-    if (!Array.isArray(response.parts)) {
-      return false;
-    }
-    return response.parts.some(part => {
-      const record = part as unknown as Record<string, unknown>;
-      if (record['type'] !== 'tool_call') {
-        return false;
-      }
-      const state = record['state'];
-      return state === 'doing' || state === 'pending_approval';
-    });
-  });
-}
-
-function hasPendingToolResultContinuation(continuation: unknown): boolean {
-  if (!continuation || typeof continuation !== 'object' || Array.isArray(continuation)) {
-    return false;
-  }
-  const record = continuation as Record<string, unknown>;
-  if (record['stopReason'] === 'TOOL_CALLS' || record['status'] === 'waiting_tool_results') {
-    return true;
-  }
-  const pendingState = record['pendingState'];
-  if (!pendingState || typeof pendingState !== 'object' || Array.isArray(pendingState)) {
-    return false;
-  }
-  return (pendingState as Record<string, unknown>)['kind'] === 'tool_results';
-}
-
 function selectAuthoritativeExecutionTurnResponses(
   canonicalTurnResponses: readonly TurnResponseTurn[] | null | undefined,
   sinkTurnResponses: readonly TurnResponseTurn[] | null | undefined,
@@ -243,19 +201,6 @@ async function yieldOutsideOwner(ctx: Pick<LexTurnExecutionContext, 'ownerSchedu
   ChatPerformanceTracer.recordDuration('turn_yield', performance.now() - startedAt, label, {
     slowThresholdMs: 24,
   });
-}
-
-async function yieldFrameOutsideOwner(ctx: Pick<LexTurnExecutionContext, 'ownerScheduler'>): Promise<void> {
-  try {
-    if (typeof ctx.ownerScheduler?.runOutsideOwner === 'function') {
-      await ctx.ownerScheduler.runOutsideOwner(() => yieldToBrowserFrame());
-      return;
-    }
-  } catch {
-    // Fall through to the unpatched browser frame scheduler if a lightweight test zone mock throws.
-  }
-
-  await yieldToBrowserFrame();
 }
 
 /**
@@ -479,20 +424,6 @@ export class LexTurnExecutionBridge {
     const fallbackStatus = this.ctx.isCancelled ? 'cancelled' : 'completed';
     try {
       const finalRenderEventSink = state.detachedRenderEventBridge ?? this._renderEventBridge;
-      const preFinalizationSaveTarget = this.buildExecutionSaveTarget(state, {
-        includeTurnResponses: true,
-      });
-      if (!this.ctx.isCancelled && this.hasPendingToolResults(state, finalRenderEventSink, preFinalizationSaveTarget)) {
-        console.info('[AilyChat][TurnExecutionInvariant] skip terminal finalize while waiting for tool results', {
-          sessionId: state.sessionId,
-          sink: state.detachedRenderEventBridge ? 'detached' : 'visible',
-          turnCount: preFinalizationSaveTarget?.turnResponses?.length ?? finalRenderEventSink?.turnResponses?.length ?? null,
-        });
-        if (state.usedRenderEventStream || state.detachedRenderEventBridge) {
-          this.syncExecutionRuntimeState(state, finalRenderEventSink);
-        }
-        return;
-      }
       if (finalRenderEventSink?.finalizeCurrentTurn) {
         const finalized = finalRenderEventSink.finalizeCurrentTurn(fallbackStatus);
         traceBackgroundSessionExecution('finalize-render-turn-fallback', {
@@ -522,17 +453,6 @@ export class LexTurnExecutionBridge {
         this.clearAbortController(state.sessionId);
       }
     }
-  }
-
-  private hasPendingToolResults(
-    state: LexTurnExecutionRunState,
-    renderEventSink: RenderEventSink | null | undefined,
-    saveTarget: HostSessionSaveTarget | null,
-  ): boolean {
-    const canonicalTurnResponses = this.readExecutionTurnResponses?.(state.sessionId);
-    return hasPendingToolResultResponse(saveTarget?.turnResponses)
-      || hasPendingToolResultResponse(renderEventSink?.turnResponses)
-      || hasPendingToolResultResponse(canonicalTurnResponses);
   }
 
   private buildExecutionSaveTarget(
@@ -630,11 +550,7 @@ export class LexTurnExecutionBridge {
       sessionId: state.sessionId,
       hasDetachedSink: !!state.detachedRenderEventBridge,
     });
-    const renderFrameBudget = createBrowserFrameBudget({
-      budgetMs: 32,
-      maxContinuousMs: 96,
-      yield: () => yieldFrameOutsideOwner(this.ctx),
-    });
+    let lastYieldTime = 0;
     let eventCount = 0;
     let acceptedEventCount = 0;
     let ignoredCrossSessionCancel = false;
@@ -679,7 +595,11 @@ export class LexTurnExecutionBridge {
       if (!routedEvents.some(routedEvent => this.shouldYieldForRenderEvent(routedEvent.type))) {
         continue;
       }
-      await renderFrameBudget.checkpoint('render');
+      const now = performance.now();
+      if (now - lastYieldTime >= 16) {
+        await yieldOutsideOwner(this.ctx, 'render');
+        lastYieldTime = performance.now();
+      }
     }
     traceBackgroundSessionExecution('consume-render-events-end', {
       sessionId: state.sessionId,
@@ -1101,11 +1021,7 @@ export class LexTurnExecutionBridge {
     userMessage: string,
     signal: AbortSignal,
   ): Promise<number> {
-    const renderFrameBudget = createBrowserFrameBudget({
-      budgetMs: 32,
-      maxContinuousMs: 96,
-      yield: () => yieldFrameOutsideOwner(this.ctx),
-    });
+    let lastYieldTime = 0;
     let eventCount = 0;
     for await (const event of agent.chat(userMessage, signal, {
       yieldRequested: () => this.isExecutionYieldRequested(state),
@@ -1123,7 +1039,11 @@ export class LexTurnExecutionBridge {
         continue;
       }
 
-      await renderFrameBudget.checkpoint('legacy');
+      const now = performance.now();
+      if (now - lastYieldTime >= 16) {
+        await yieldOutsideOwner(this.ctx, 'legacy');
+        lastYieldTime = performance.now();
+      }
     }
     return eventCount;
   }
@@ -1179,15 +1099,9 @@ export class LexTurnExecutionBridge {
 
     const startedAt = performance.now();
     const canonicalTurnResponses = this.readExecutionTurnResponses?.(executionSessionId);
-    const sinkTurnResponses = renderEventSink?.turnResponses;
-    let turnResponses: readonly TurnResponseTurn[] | undefined;
-    if (hasPendingToolResultResponse(sinkTurnResponses)) {
-      turnResponses = selectAuthoritativeExecutionTurnResponses(sinkTurnResponses, canonicalTurnResponses);
-    } else if (renderEventSink && renderEventSink === state.detachedRenderEventBridge) {
-      turnResponses = selectAuthoritativeExecutionTurnResponses(sinkTurnResponses, canonicalTurnResponses);
-    } else {
-      turnResponses = selectAuthoritativeExecutionTurnResponses(canonicalTurnResponses, sinkTurnResponses);
-    }
+    const turnResponses = renderEventSink && renderEventSink === state.detachedRenderEventBridge
+      ? selectAuthoritativeExecutionTurnResponses(renderEventSink.turnResponses, canonicalTurnResponses)
+      : selectAuthoritativeExecutionTurnResponses(canonicalTurnResponses, renderEventSink?.turnResponses);
     this.syncExecutionRuntimeTurnResponses?.(
       executionSessionId,
       turnResponses,

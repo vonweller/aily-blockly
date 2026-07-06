@@ -116,14 +116,6 @@ export class LexRenderProjectionSync {
             `canonical:plan:${event.itemId}`,
             event.status === 'failed' ? 'failed' : 'completed',
           ) || changed;
-        } else if (event.itemKind === 'terminal') {
-          const terminalIdentity = parseLifecycleTerminalIdentity(event.itemId);
-          if (terminalIdentity) {
-            changed = this.ctx.partStore.patchTerminalForHandle(handle, terminalIdentity, {
-              isRunning: false,
-              status: event.status === 'failed' ? 'failed' : event.status === 'cancelled' ? 'killed' : 'completed',
-            }) || changed;
-          }
         }
         continue;
       }
@@ -287,23 +279,6 @@ function parseLifecycleConfirmationPartId(itemId: string): string | null {
   }
 
   return null;
-}
-
-function parseLifecycleTerminalIdentity(itemId: string): { partId: string; processId?: string; outputSessionId?: string; terminalId?: string } | null {
-  const trimmed = itemId.trim();
-  if (!trimmed.startsWith('terminal:')) {
-    return null;
-  }
-  const sessionId = trimmed.slice('terminal:'.length).trim();
-  if (!sessionId) {
-    return null;
-  }
-  return {
-    partId: `canonical:terminal:${trimmed}`,
-    processId: sessionId,
-    outputSessionId: sessionId,
-    terminalId: sessionId,
-  };
 }
 
 function toToolCallState(status: CanonicalRenderItemStatus): 'done' | 'warn' | 'error' {
