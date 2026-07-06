@@ -127,6 +127,20 @@ export class BlocklyLibraryPackageService {
     );
   }
 
+  updateLibraryPackageJsonMetadata(ref: BlocklyLibraryPackageRef, metadataPatch: Record<string, unknown>): void {
+    const paths = this.getPackagePaths(ref.path);
+    const packageJson = this.readJsonFile(paths.packageJson, 'package.json');
+    const { name: _ignoredName, ...safePatch } = metadataPatch || {};
+
+    this.electronService.writeFile(
+      paths.packageJson,
+      `${JSON.stringify({
+        ...packageJson,
+        ...safePatch,
+      }, null, 2)}\n`,
+    );
+  }
+
   async scanInstalledLibraries(projectPath: string): Promise<BlocklyInstalledLibraryPackage[]> {
     const nodeModulesPath = this.electronService.pathJoin(projectPath, 'node_modules');
     if (!this.pathExists(nodeModulesPath)) {
@@ -228,8 +242,8 @@ export class BlocklyLibraryPackageService {
     }
 
     const paths = snapshot.paths;
-    const readme = this.readRequiredTextFile(paths.readme, 'readme.md');
-    const readmeAi = this.readRequiredTextFile(paths.readmeAi, 'readme_ai.md');
+    const readme = this.readOptionalTextFile(paths.readme);
+    const readmeAi = this.readOptionalTextFile(paths.readmeAi);
     const generatorJs = this.readRequiredTextFile(paths.generatorJs, 'generator.js');
     const i18n = this.readJsonDirectory(paths.i18nDir);
     const pinmaps = this.readJsonDirectory(paths.pinmapsDir);
@@ -383,6 +397,18 @@ export class BlocklyLibraryPackageService {
       return content;
     } catch (error) {
       throw new Error(`${fileName} 不合规: 读取失败 (${filePath})，${this.formatError(error)}`);
+    }
+  }
+
+  private readOptionalTextFile(filePath: string): string {
+    if (!this.pathExists(filePath)) {
+      return '';
+    }
+
+    try {
+      return this.electronService.readFile(filePath) || '';
+    } catch {
+      return '';
     }
   }
 

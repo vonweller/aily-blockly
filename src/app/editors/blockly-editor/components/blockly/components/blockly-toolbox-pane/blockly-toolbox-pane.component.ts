@@ -7,6 +7,7 @@ import {
   BlocklyService,
   BlocklyToolboxFacadeItem,
 } from '../../../../services/blockly.service';
+import { BlocklyLibraryPackageService } from '../../../../../../services/blockly-library-package.service';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { MenuComponent } from '../../../../../../components/menu/menu.component';
 import { IMenuItem } from '../../../../../../configs/menu.config';
@@ -19,6 +20,11 @@ import { LibrarySubmissionApiError, LibrarySubmissionService } from '../../../..
 import { AuthService } from '../../../../../../services/auth.service';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { NzModalService } from 'ng-zorro-antd/modal';
+import {
+  LibraryPublishDialogComponent,
+  LibraryPublishDialogResult,
+  LibraryPublishSubmitResult,
+} from '../../../../../../components/library-publish-dialog/library-publish-dialog.component';
 import Sortable, { SortableEvent } from 'sortablejs';
 
 interface ToolboxContextMenuAction {
@@ -70,7 +76,7 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
       disabled: (item) => !item.libraryName,
       visible: (item) => !item.isLocalLibrary,
     },
-    // 上传本地库并提交 PR
+    // 发布本地库并提交 PR
     {
       name: 'MENU.UPLOAD_LIBRARY',
       action: 'upload-library',
@@ -127,6 +133,7 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
     private workflowService: WorkflowService,
     private uiService: UiService,
     private librarySubmissionService: LibrarySubmissionService,
+    private blocklyLibraryPackageService: BlocklyLibraryPackageService,
     private authService: AuthService,
     private message: NzMessageService,
     private modal: NzModalService,
@@ -475,24 +482,96 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
 
     try {
       this.uploadingLibraryNames.add(libraryName);
-      const accepted = await this.submitLibraryWithExistingConfirmation(item);
-      if (accepted) {
-        this.showLibrarySubmissionSuccessMessage(item);
-      }
+      await this.openLibraryPublishDialog(item);
     } catch (error) {
       const errorMessage = this.getLibrarySubmissionErrorMessage(error);
-      this.message.error(`${this.getLibraryDisplayName(item)} 上传失败: ${errorMessage}`, { nzDuration: 7000 });
+      this.message.error(`${this.getLibraryDisplayName(item)} 发布失败: ${errorMessage}`, { nzDuration: 7000 });
     } finally {
       this.uploadingLibraryNames.delete(libraryName);
       this.cdr.markForCheck();
     }
   }
 
-  private async submitLibraryWithExistingConfirmation(item: BlocklyToolboxFacadeItem): Promise<boolean> {
+  private openLibraryPublishDialog(
+    item: BlocklyToolboxFacadeItem,
+    initialPackageJsonPatch?: Record<string, unknown>,
+    packageNameConflictMessage = '',
+    packageNameConflictValue = '',
+  ): Promise<void> {
+    return new Promise((resolve) => {
+      const modalRef = this.modal.create({
+        nzTitle: null,
+        nzFooter: null,
+        nzClosable: false,
+        nzBodyStyle: { padding: '0', maxHeight: 'calc(100vh - 80px)', overflow: 'hidden' },
+        nzStyle: { top: '24px' },
+        nzWidth: '640px',
+        nzContent: LibraryPublishDialogComponent,
+        nzData: {
+          ref: {
+            name: item.libraryName || '',
+            path: item.libraryPath || '',
+            source: 'declared',
+          },
+          displayName: this.getLibraryDisplayName(item),
+          initialPackageJsonPatch,
+          packageNameConflictMessage,
+          packageNameConflictValue,
+          submitPublish: (result: LibraryPublishDialogResult) => this.submitPublishFromDialog(item, result),
+        },
+      });
+
+      modalRef.afterClose.subscribe(() => resolve());
+    });
+  }
+
+  private async submitPublishFromDialog(item: BlocklyToolboxFacadeItem, publishResult: LibraryPublishDialogResult): Promise<LibraryPublishSubmitResult> {
     try {
-      await this.submitLibraryRequest(item, false);
+      const accepted = await this.submitLibraryWithExistingConfirmation(item, publishResult.packageJsonPatch);
+      if (!accepted) {
+        return { success: false };
+      }
+
+      if (publishResult.saveToLocalPackageJson) {
+        this.saveLibraryMetadataToLocalPackage(item, publishResult.localPackageJsonPatch);
+      }
+      this.showLibrarySubmissionSuccessMessage(item, publishResult.packageJsonPatch);
+      return { success: true };
+    } catch (error) {
+      if (!this.isPackageNameUnavailableError(error)) {
+        throw error;
+      }
+
+      const packageName = String(publishResult.packageJsonPatch['name'] || '').trim();
+      return {
+        success: false,
+        packageNameConflictValue: packageName,
+        packageNameConflictMessage: this.getPackageNameUnavailableMessage(error, packageName),
+      };
+    }
+  }
+
+  private saveLibraryMetadataToLocalPackage(item: BlocklyToolboxFacadeItem, localPackageJsonPatch: Record<string, unknown>): void {
+    try {
+      this.blocklyLibraryPackageService.updateLibraryPackageJsonMetadata({
+        name: item.libraryName || '',
+        path: item.libraryPath || '',
+        source: 'declared',
+      }, localPackageJsonPatch);
+    } catch (error) {
+      throw new Error(`本地库元信息保存失败: ${error instanceof Error ? error.message : error}`);
+    }
+  }
+
+  private async submitLibraryWithExistingConfirmation(item: BlocklyToolboxFacadeItem, packageJsonPatch: Record<string, unknown>): Promise<boolean> {
+    try {
+      await this.submitLibraryRequest(item, false, packageJsonPatch);
       return true;
     } catch (error) {
+      if (this.isPackageNameUnavailableError(error)) {
+        throw error;
+      }
+
       if (!this.isExistingLibrarySubmissionError(error)) {
         throw error;
       }
@@ -502,26 +581,73 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
         return false;
       }
 
-      await this.submitLibraryRequest(item, true);
+      await this.submitLibraryRequest(item, true, packageJsonPatch);
       return true;
     }
   }
 
-  private async submitLibraryRequest(item: BlocklyToolboxFacadeItem, confirmExisting: boolean): Promise<void> {
-    const loadingMessageId = this.message.loading(`${this.getLibraryDisplayName(item)} 正在提交...`, { nzDuration: 0 }).messageId;
+  private isPackageNameUnavailableError(error: unknown): boolean {
+    const apiError = error as Partial<LibrarySubmissionApiError>;
+    const message = (apiError.message || '').toLowerCase();
+    const messageIndicatesNameUnavailable =
+      /already exists|already submitted|pending submission|name conflict|same name|package name|another user|other user|not your|not owned|已存在|已提交|待审核|待处理|同名|占用|其他用户|别人|不是本人|非本人|不属于你/.test(message);
+
+    if (messageIndicatesNameUnavailable) {
+      return true;
+    }
+
+    if (apiError.status !== 409 && apiError.status !== 400 && apiError.status !== 422) {
+      return false;
+    }
+
+    const conflictCodes = new Set([
+      'library_already_exists',
+      'library_name_already_exists',
+      'library_package_name_exists',
+      'library_package_name_conflict',
+      'library_submission_name_conflict',
+      'library_submission_package_name_conflict',
+      'library_submission_already_exists',
+      'library_submission_package_already_exists',
+      'library_submission_pending',
+      'library_submitted_by_other_user',
+      'library_submission_submitted_by_other_user',
+      'library_submission_not_owner',
+      'library_submission_not_owned_by_current_user',
+    ]);
+
+    if (apiError.errorCode && conflictCodes.has(apiError.errorCode)) {
+      return true;
+    }
+
+    return apiError.errorCode === 'library_submission_already_submitted' && !apiError.submission;
+  }
+
+  private getPackageNameUnavailableMessage(error: unknown, packageName: string): string {
+    const baseMessage = packageName
+      ? `库名 ${packageName} 已被其他用户发布或占用，请修改库名后再发布。`
+      : '该库名已被其他用户发布或占用，请修改库名后再发布。';
+
+    return baseMessage;
+  }
+
+  private async submitLibraryRequest(item: BlocklyToolboxFacadeItem, confirmExisting: boolean, packageJsonPatch: Record<string, unknown>): Promise<void> {
+    const loadingMessage = this.message.loading(`${this.getLibraryDisplayName(item)} 正在提交...`, { nzDuration: 0 });
     try {
       await firstValueFrom(this.librarySubmissionService.submitLocalLibraryByRef({
         name: item.libraryName || '',
         path: item.libraryPath || '',
         source: 'declared',
-      }, confirmExisting));
+      }, confirmExisting, packageJsonPatch));
     } finally {
-      this.message.remove(loadingMessageId);
+      if (loadingMessage.messageId) {
+        this.message.remove(loadingMessage.messageId);
+      }
     }
   }
 
-  private showLibrarySubmissionSuccessMessage(item: BlocklyToolboxFacadeItem): void {
-    this.lastSubmittedLibraryDisplayName = this.getLibraryDisplayName(item);
+  private showLibrarySubmissionSuccessMessage(item: BlocklyToolboxFacadeItem, packageJsonPatch?: Record<string, unknown>): void {
+    this.lastSubmittedLibraryDisplayName = String(packageJsonPatch?.['nickname'] || packageJsonPatch?.['name'] || this.getLibraryDisplayName(item));
     const content = this.librarySubmissionSuccessTpl
       ?? `${this.getLibraryDisplayName(item)} 提交已受理，系统将自动创建 PR。你可以稍后在用户中心查看提交状态。`;
     this.message.success(content, { nzDuration: 8000 });
@@ -564,7 +690,9 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
 
   private isExistingLibrarySubmissionError(error: unknown): boolean {
     const apiError = error as Partial<LibrarySubmissionApiError>;
-    return apiError.status === 409 && apiError.errorCode === 'library_submission_already_submitted';
+    return apiError.status === 409
+      && apiError.errorCode === 'library_submission_already_submitted'
+      && !!apiError.submission;
   }
 
   private confirmExistingLibrarySubmission(item: BlocklyToolboxFacadeItem, error: unknown): Promise<boolean> {

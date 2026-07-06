@@ -53,13 +53,15 @@ export class LibrarySubmissionService {
     private blocklyLibraryPackageService: BlocklyLibraryPackageService,
   ) { }
 
-  submitLocalLibrary(projectPath: string, packageName: string, confirmExisting = false): Observable<LibrarySubmissionResponse> {
+  submitLocalLibrary(projectPath: string, packageName: string, confirmExisting = false, packageJsonPatch?: Record<string, unknown>): Observable<LibrarySubmissionResponse> {
     const bundle = this.blocklyLibraryPackageService.readLibrarySubmissionPackage(projectPath, packageName);
+    this.applyPackageJsonPatch(bundle, packageJsonPatch);
     return this.submitBundle(bundle, confirmExisting);
   }
 
-  submitLocalLibraryByRef(ref: BlocklyLibraryPackageRef, confirmExisting = false): Observable<LibrarySubmissionResponse> {
+  submitLocalLibraryByRef(ref: BlocklyLibraryPackageRef, confirmExisting = false, packageJsonPatch?: Record<string, unknown>): Observable<LibrarySubmissionResponse> {
     const bundle = this.blocklyLibraryPackageService.readLibrarySubmissionPackageByRef(ref);
+    this.applyPackageJsonPatch(bundle, packageJsonPatch);
     return this.submitBundle(bundle, confirmExisting);
   }
 
@@ -103,6 +105,17 @@ export class LibrarySubmissionService {
       sameContent: this.getSameContentFromErrorPayload(source),
     };
     return throwError(() => normalized);
+  }
+
+  private applyPackageJsonPatch(bundle: BlocklyLibrarySubmissionBundle, packageJsonPatch?: Record<string, unknown>): void {
+    if (!packageJsonPatch || typeof packageJsonPatch !== 'object') {
+      return;
+    }
+
+    bundle.package.packageJson = {
+      ...bundle.package.packageJson,
+      ...packageJsonPatch,
+    };
   }
 
   private getApiErrorPayload(error: HttpErrorResponse | unknown): unknown {
