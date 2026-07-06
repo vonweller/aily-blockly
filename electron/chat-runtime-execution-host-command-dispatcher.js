@@ -408,6 +408,7 @@ function createProtocolSafeJsonReplacer() {
 function createErrorPayload(error) {
   return {
     message: error && error.message ? error.message : String(error || 'Unknown execution host error'),
+    name: error && typeof error.name === 'string' ? error.name : 'Error',
     code: error && typeof error.code === 'string' ? error.code : 'execution_host_runtime_failed',
     retryable: error && typeof error.retryable === 'boolean' ? error.retryable : false,
   };

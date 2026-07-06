@@ -67,6 +67,26 @@ function shouldTraceRuntimeOwnerBoundary(): boolean {
   ]);
 }
 
+type ChatRuntimeOwnerStopTerminalizationResult = 'terminalized' | 'already-idle' | 'stale';
+
+interface ChatRuntimeOwnerSubmittedTurnCompletion {
+  readonly turnId: string;
+  readonly promise: Promise<void>;
+}
+
+function createRuntimeOwnerAbortError(message: string): Error {
+  const error = new Error(message);
+  error.name = 'AbortError';
+  (error as Error & { code?: string }).code = 'ABORT_ERR';
+  return error;
+}
+
+function isRuntimeOwnerAbortError(error: unknown): boolean {
+  return error instanceof Error
+    && (error.name === 'AbortError'
+      || /aborted|cancelled|canceled|stopped by host/i.test(error.message));
+}
+
 /**
  * Owns the live chat runtime boundary.
  *
@@ -105,6 +125,11 @@ export class ChatRuntimeOwnerService implements ChatRuntimeOwnerExecutor, ChatRu
   private readonly transcriptRevisions = new Map<ChatRuntimeHostSessionId, number>();
   private readonly submittedTurnIdAliases = new Map<ChatRuntimeHostSessionId, Map<string, string>>();
   private readonly lastPublishedServiceOwnedResponseTurns = new Map<ChatRuntimeHostSessionId, TurnResponseTurn>();
+  private readonly runningSubmittedTurnCompletions = new Map<
+    ChatRuntimeHostSessionId,
+    ChatRuntimeOwnerSubmittedTurnCompletion
+  >();
+  private readonly cancelledSubmittedTurnIds = new Map<ChatRuntimeHostSessionId, Set<string>>();
   private viewRequestSeed = 0;
   private liveTranscriptFlushScheduled = false;
 
@@ -280,15 +305,20 @@ export class ChatRuntimeOwnerService implements ChatRuntimeOwnerExecutor, ChatRu
       });
     }
     let observedExecutionFailure = false;
-    void (async () => {
+    const activeTurnId = this.normalizeSubmittedTurnId(options.activeResponseHandle) || '';
+    let completionRecord: ChatRuntimeOwnerSubmittedTurnCompletion;
+    const completionPromise = (async () => {
       let completedSuccessfully = false;
       try {
+        this.throwIfSubmittedTurnCancelled(options.request.sessionId, activeTurnId);
         await this.prepareSubmittedTurn(options.request, options.owner);
+        this.throwIfSubmittedTurnCancelled(options.request.sessionId, activeTurnId);
         this.applySubmittedTurnProtocolTruncation(
           options.request.sessionId,
           options.request.protocolTruncation ?? null,
           options.owner,
         );
+        this.throwIfSubmittedTurnCancelled(options.request.sessionId, activeTurnId);
         const beginResult = options.owner.turn.begin(
           options.request.requestText,
           options.displayText,
@@ -312,6 +342,7 @@ export class ChatRuntimeOwnerService implements ChatRuntimeOwnerExecutor, ChatRu
         this.emitServiceOwnedTurnProgress(options.request.sessionId, seededTurn);
         this.emitSessionState(options.request.sessionId, 'runtime-status');
         this.scheduleSubmittedTurnStartupResourceSettle(options.request.sessionId);
+        this.throwIfSubmittedTurnCancelled(options.request.sessionId, activeTurnId);
         await options.owner.turn.run(options.request.requestText, options.displayText, {
           turnId: this.normalizeSubmittedTurnId(options.activeResponseHandle) || undefined,
           sessionId: options.request.sessionId,
@@ -319,7 +350,9 @@ export class ChatRuntimeOwnerService implements ChatRuntimeOwnerExecutor, ChatRu
         completedSuccessfully = true;
       } catch (error) {
         observedExecutionFailure = true;
-        this.emitRuntimeTurnError(options.request.sessionId, options.activeResponseHandle, error);
+        if (!isRuntimeOwnerAbortError(error)) {
+          this.emitRuntimeTurnError(options.request.sessionId, options.activeResponseHandle, error);
+        }
       }
       if (completedSuccessfully) {
         await this.completeSubmittedTurnEffects(options.request.sessionId);
@@ -327,7 +360,9 @@ export class ChatRuntimeOwnerService implements ChatRuntimeOwnerExecutor, ChatRu
     })()
       .catch(error => {
         observedExecutionFailure = true;
-        this.emitRuntimeTurnError(options.request.sessionId, options.activeResponseHandle, error);
+        if (!isRuntimeOwnerAbortError(error)) {
+          this.emitRuntimeTurnError(options.request.sessionId, options.activeResponseHandle, error);
+        }
       })
       .finally(() => {
         const terminalTurn = this.publishTerminalSessionModelTranscript(options.request.sessionId);
@@ -364,7 +399,19 @@ export class ChatRuntimeOwnerService implements ChatRuntimeOwnerExecutor, ChatRu
         }
         this.emitSessionState(options.request.sessionId, 'runtime-status', state);
         options.releaseOwnerScope();
+        this.clearSubmittedTurnCancellation(options.request.sessionId, activeTurnId);
+        if (this.runningSubmittedTurnCompletions.get(options.request.sessionId) === completionRecord) {
+          this.runningSubmittedTurnCompletions.delete(options.request.sessionId);
+        }
       });
+    completionRecord = {
+      turnId: activeTurnId,
+      promise: completionPromise,
+    };
+    if (activeTurnId) {
+      this.runningSubmittedTurnCompletions.set(options.request.sessionId, completionRecord);
+    }
+    void completionPromise;
   }
 
   private async prepareSubmittedTurn(
@@ -1151,23 +1198,107 @@ export class ChatRuntimeOwnerService implements ChatRuntimeOwnerExecutor, ChatRu
   async stopTurn(command: ChatRuntimeOwnerExecutorStopTurnCommand): Promise<void> {
     const normalizedSessionId = this.normalizeSessionId(command?.sessionId);
     const owner = this.readOwner();
+    let terminalization: ChatRuntimeOwnerStopTerminalizationResult = 'already-idle';
     try {
+      this.markSubmittedTurnCancelled(normalizedSessionId, command?.turnId);
       owner.agent.stop(normalizedSessionId);
+      await this.waitForSubmittedTurnCompletion(normalizedSessionId, command?.turnId);
     } finally {
-      this.terminalizeStoppedOwnerTurn(owner, command?.turnId);
-      this.publishStoppedSessionModelTranscript(normalizedSessionId, command?.turnId);
+      terminalization = this.terminalizeStoppedOwnerTurn(owner, command?.turnId);
+      if (terminalization !== 'stale') {
+        this.publishStoppedSessionModelTranscript(normalizedSessionId, command?.turnId);
+      }
+    }
+    if (terminalization === 'stale') {
+      this.emitSessionState(normalizedSessionId, 'runtime-status');
+      return;
     }
     this.runtimeController.stopSession(normalizedSessionId);
     this.emitTranscript(normalizedSessionId);
     this.emitSessionState(normalizedSessionId, 'runtime-status');
   }
 
-  private terminalizeStoppedOwnerTurn(owner: LexOwnerFacade, commandTurnId: string | null | undefined): void {
+  private markSubmittedTurnCancelled(
+    sessionId: ChatRuntimeHostSessionId,
+    turnId: string | null | undefined,
+  ): void {
+    const normalizedTurnId = this.normalizeSubmittedTurnId(turnId);
+    if (!sessionId || !normalizedTurnId) {
+      return;
+    }
+    let turnIds = this.cancelledSubmittedTurnIds.get(sessionId);
+    if (!turnIds) {
+      turnIds = new Set<string>();
+      this.cancelledSubmittedTurnIds.set(sessionId, turnIds);
+    }
+    turnIds.add(normalizedTurnId);
+  }
+
+  private clearSubmittedTurnCancellation(
+    sessionId: ChatRuntimeHostSessionId,
+    turnId: string | null | undefined,
+  ): void {
+    const normalizedTurnId = this.normalizeSubmittedTurnId(turnId);
+    const turnIds = this.cancelledSubmittedTurnIds.get(sessionId);
+    if (!turnIds || !normalizedTurnId) {
+      return;
+    }
+    turnIds.delete(normalizedTurnId);
+    if (turnIds.size === 0) {
+      this.cancelledSubmittedTurnIds.delete(sessionId);
+    }
+  }
+
+  private throwIfSubmittedTurnCancelled(
+    sessionId: ChatRuntimeHostSessionId,
+    turnId: string | null | undefined,
+  ): void {
+    const normalizedTurnId = this.normalizeSubmittedTurnId(turnId);
+    if (!normalizedTurnId) {
+      return;
+    }
+    if (!this.cancelledSubmittedTurnIds.get(sessionId)?.has(normalizedTurnId)) {
+      return;
+    }
+    throw createRuntimeOwnerAbortError('[AilyChat][RuntimeOwner] Turn stopped by host.');
+  }
+
+  private async waitForSubmittedTurnCompletion(
+    sessionId: ChatRuntimeHostSessionId,
+    turnId: string | null | undefined,
+  ): Promise<void> {
+    const normalizedTurnId = this.normalizeSubmittedTurnId(turnId);
+    const completion = this.runningSubmittedTurnCompletions.get(sessionId);
+    if (!completion || (normalizedTurnId && completion.turnId !== normalizedTurnId)) {
+      return;
+    }
+
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+    const timeout = new Promise<void>(resolve => {
+      timeoutHandle = setTimeout(() => {
+        console.warn('[AilyChat][RuntimeOwner] stopTurn timed out waiting for submitted turn completion', {
+          sessionId,
+          turnId: normalizedTurnId || completion.turnId,
+        });
+        resolve();
+      }, 15_000);
+    });
+
+    await Promise.race([completion.promise, timeout]);
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
+  }
+
+  private terminalizeStoppedOwnerTurn(
+    owner: LexOwnerFacade,
+    commandTurnId: string | null | undefined,
+  ): ChatRuntimeOwnerStopTerminalizationResult {
     const currentTurnId = typeof owner.turns.currentId === 'function'
       ? owner.turns.currentId()
       : null;
     if (!currentTurnId) {
-      return;
+      return 'already-idle';
     }
 
     const normalizedCommandTurnId = typeof commandTurnId === 'string' ? commandTurnId.trim() : '';
@@ -1176,20 +1307,23 @@ export class ChatRuntimeOwnerService implements ChatRuntimeOwnerExecutor, ChatRu
         targetTurnId: normalizedCommandTurnId,
         activeTurnId: currentTurnId,
       });
+      return 'stale';
     }
 
     try {
       owner.turns.fail();
-      return;
+      return 'terminalized';
     } catch (error) {
       console.warn('[AilyChat][RuntimeOwner] stopTurn failed to mark active turn as failed; discarding incomplete turn', error);
     }
 
     try {
       owner.turns.discardIncomplete();
+      return 'terminalized';
     } catch (error) {
       console.warn('[AilyChat][RuntimeOwner] stopTurn failed to discard active turn', error);
     }
+    return 'terminalized';
   }
 
   async disposeSessionResources(

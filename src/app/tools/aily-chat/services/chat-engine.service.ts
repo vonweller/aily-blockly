@@ -43,9 +43,7 @@ import {
   type RuntimePlanReviewDecision,
 } from './chat-runtime-interaction-host.service';
 import {
-  appendOrReplaceSessionModelTurnResponseInStore,
   readSessionModelTurnResponses,
-  replaceSessionModelTurnResponsesInStore,
 } from './chat-session-model-turn-responses';
 import { ChatRuntimeViewMirrorProjectionService } from './chat-runtime-view-mirror-projection.service';
 import { ChatPendingFollowupQueueService } from './chat-pending-followup-queue.service';
@@ -129,6 +127,7 @@ import {
   ChatSessionModelStoreService,
   type ChatSessionModel,
   type ChatSessionModelMetadataPatch,
+  type ChatSessionRequestListTransactionResult,
   type ChatSessionTurnOwnerPolicyOptions,
 } from './chat-session-model-store.service';
 import {
@@ -392,7 +391,6 @@ import {
   getSessionCheckpointVisibleTurnResponses,
   type SessionCheckpointTimelineState,
 } from '../helpers/session-checkpoint-timeline-model';
-import { commitSessionCheckpointForwardBranch } from '../helpers/session-checkpoint-branch-commit';
 import {
   buildPlanReviewInteractionAction,
   buildPlanReviewResumeContent,
@@ -1138,6 +1136,7 @@ export class ChatEngineService implements IChatContext {
   private readonly liveHostRequestGraphCache = new LiveHostRequestGraphCache();
   private readonly pendingProtocolTruncations = new Map<string, ChatRuntimeHostProtocolTruncation>();
   private readonly pendingFollowupFlushAfterSettleSessionIds = new Set<string>();
+  private readonly stoppingRuntimeSessionIds = new Set<string>();
   private readonly hostItemLifecyclePerfSnapshotHandle = ChatPerformanceTracer.registerExternalSnapshotProvider(
     'hostItemLifecycle',
     (): HostItemLifecycleSnapshot => this.liveHostRequestGraphCache.getItemLifecycleSnapshot(),
@@ -2635,13 +2634,18 @@ export class ChatEngineService implements IChatContext {
           ? thisEngine.chatSessionModelStore.get(normalizedSessionId)?.getCheckpointTimelineState() ?? null
           : null;
       },
-      replaceSessionCheckpointTimelineState: (sessionId, state) => {
-        const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
-        if (!normalizedSessionId) {
-          return;
-        }
-        thisEngine.chatSessionModelStore.get(normalizedSessionId)?.replaceCheckpointTimelineState(state);
-      },
+      commitCheckpointRestoreRequestListTransaction: (sessionId, checkpointId) =>
+        thisEngine.chatSessionModelStore.commitCheckpointRestoreTransaction(sessionId, checkpointId),
+      rollbackCheckpointRestoreRequestListTransaction: (sessionId, committed) =>
+        thisEngine.chatSessionModelStore.rollbackCheckpointRestoreTransaction(sessionId, committed as any),
+      prepareCheckpointRedoRequestListTransaction: (sessionId) =>
+        thisEngine.chatSessionModelStore.prepareCheckpointRedoTransaction(sessionId),
+      commitCheckpointRedoRequestListTransaction: (sessionId, prepared) =>
+        thisEngine.chatSessionModelStore.commitCheckpointRedoTransaction(sessionId, prepared as any),
+      rollbackCheckpointRedoRequestListTransaction: (sessionId, prepared) =>
+        thisEngine.chatSessionModelStore.rollbackCheckpointRedoTransaction(sessionId, prepared as any),
+      applyRequestListTransactionEffects: (sessionId, transaction) =>
+        thisEngine.applyRequestListTransactionEffects(sessionId, transaction as ChatSessionRequestListTransactionResult),
       send: (sender, content, clear, sessionId) => thisEngine.sendFromCoordinationContext(sender, content, clear, sessionId),
     };
   }
@@ -2797,19 +2801,14 @@ export class ChatEngineService implements IChatContext {
         );
         return readSessionTurnResponses.call(thisEngine, typeof sessionId === 'string' ? sessionId : '');
       },
+      prepareForkPrefixRequestListTransaction: (sessionId, turnId) =>
+        thisEngine.chatSessionModelStore.prepareForkPrefixBeforeTurn(sessionId, turnId) as any,
       readSessionRuntimeState: (sessionId) => thisEngine.chatSessionRuntimeStore.read(sessionId),
       readSessionCheckpointTimelineState: (sessionId) => {
         const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
         return normalizedSessionId
           ? thisEngine.chatSessionModelStore.get(normalizedSessionId)?.getCheckpointTimelineState() ?? null
           : null;
-      },
-      replaceSessionCheckpointTimelineState: (sessionId, state) => {
-        const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
-        if (!normalizedSessionId) {
-          return;
-        }
-        thisEngine.chatSessionModelStore.get(normalizedSessionId)?.replaceCheckpointTimelineState(state);
       },
       acquireExistingSessionModel: (sessionId) => thisEngine.chatSessionModelStore.acquireExisting(sessionId),
       acquireSessionModel: (props) => thisEngine.chatSessionModelStore.acquireOrCreate(props),
@@ -3054,12 +3053,28 @@ export class ChatEngineService implements IChatContext {
     turnResponses: readonly TurnResponseTurn[] | null | undefined,
     ownerPolicy?: ChatSessionTurnOwnerPolicyOptions,
   ): readonly TurnResponseTurn[] | null {
-    return replaceSessionModelTurnResponsesInStore(
-      this.chatSessionModelStore,
-      sessionId,
-      turnResponses,
-      ownerPolicy,
-    );
+    const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!targetSessionId || !Array.isArray(turnResponses)) {
+      return null;
+    }
+
+    const existingModel = this.chatSessionModelStore.get(targetSessionId);
+    const modelReference = existingModel
+      ? { object: existingModel, dispose: () => undefined }
+      : this.chatSessionModelStore.acquireOrCreate({ sessionResource: targetSessionId });
+    if (!modelReference) {
+      return null;
+    }
+
+    try {
+      return this.chatSessionModelStore.replaceAllTurnResponsesTransaction(
+        targetSessionId,
+        turnResponses,
+        ownerPolicy,
+      )?.turnResponses ?? null;
+    } finally {
+      modelReference.dispose();
+    }
   }
 
   private mergeSessionModelTurnResponses(
@@ -3101,12 +3116,28 @@ export class ChatEngineService implements IChatContext {
     turnResponse: TurnResponseTurn,
     ownerPolicy?: ChatSessionTurnOwnerPolicyOptions,
   ): readonly TurnResponseTurn[] | null {
-    return appendOrReplaceSessionModelTurnResponseInStore(
-      this.chatSessionModelStore,
-      sessionId,
-      turnResponse,
-      ownerPolicy,
-    );
+    const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!targetSessionId) {
+      return null;
+    }
+
+    const existingModel = this.chatSessionModelStore.get(targetSessionId);
+    const modelReference = existingModel
+      ? { object: existingModel, dispose: () => undefined }
+      : this.chatSessionModelStore.acquireOrCreate({ sessionResource: targetSessionId });
+    if (!modelReference) {
+      return null;
+    }
+
+    try {
+      const status = turnResponse.response?.status;
+      const transaction = typeof status === 'string' && status !== 'streaming'
+        ? this.chatSessionModelStore.appendCompletedTurnTransaction(targetSessionId, turnResponse)
+        : this.chatSessionModelStore.appendTransientTurnTransaction(targetSessionId, turnResponse);
+      return transaction?.turnResponses ?? null;
+    } finally {
+      modelReference.dispose();
+    }
   }
 
   private projectSharedHostProjectionStateToRuntimeOwner(
@@ -3485,7 +3516,7 @@ export class ChatEngineService implements IChatContext {
         await waitForSessionRequestSettle.call(thisEngine, targetSessionId);
       },
       stopSettleTimeoutMs: 1000,
-      requestStop: (sessionId) => thisEngine.interruptSessionRuntime(sessionId),
+      requestStop: (sessionId) => thisEngine.stopRuntimeSessionWithBarrier(sessionId),
     };
   }
 
@@ -4280,7 +4311,8 @@ export class ChatEngineService implements IChatContext {
       return false;
     }
 
-    return this.readRuntimeHostSessionState(targetSessionId)?.requestInProgress === true;
+    return this.stoppingRuntimeSessionIds.has(targetSessionId)
+      || this.readRuntimeHostSessionState(targetSessionId)?.requestInProgress === true;
   }
 
   private readPendingFollowupYieldRequested(sessionId?: string | null): boolean {
@@ -5084,62 +5116,68 @@ export class ChatEngineService implements IChatContext {
     const getCheckpointTimelineState = (model as unknown as {
       getCheckpointTimelineState?: ChatSessionModel['getCheckpointTimelineState'];
     } | undefined)?.getCheckpointTimelineState;
-    const replaceCheckpointTimelineState = (model as unknown as {
-      replaceCheckpointTimelineState?: ChatSessionModel['replaceCheckpointTimelineState'];
-    } | undefined)?.replaceCheckpointTimelineState;
     const checkpointTimelineState = model && typeof getCheckpointTimelineState === 'function'
       ? getCheckpointTimelineState.call(model)
       : null;
-    const committedBranch = commitSessionCheckpointForwardBranch(checkpointTimelineState);
-    if (!model || !committedBranch || typeof replaceCheckpointTimelineState !== 'function') {
+    const transaction = this.chatSessionModelStore?.commitRestoredCheckpointForwardBranch?.(targetSessionId) ?? null;
+    if (!model || !transaction) {
       console.info('[AilyChat][CheckpointRestoreTrace]', {
         phase: 'commit-forward-branch-skip',
         sessionId: targetSessionId,
         hasModel: !!model,
-        hasCommittedBranch: !!committedBranch,
-        hasReplaceCheckpointTimelineState: typeof replaceCheckpointTimelineState === 'function',
+        hasRequestListTransaction: !!transaction,
         timeline: this.summarizeCheckpointTimelineForTrace(checkpointTimelineState),
       });
       return false;
     }
 
-    const replaceSessionModelTurnResponses = (
-      (this as unknown as { replaceSessionModelTurnResponses?: ChatEngineService['replaceSessionModelTurnResponses'] })
-        .replaceSessionModelTurnResponses
-      ?? ChatEngineService.prototype['replaceSessionModelTurnResponses']
-    );
-    const turnResponses = replaceSessionModelTurnResponses.call(this, targetSessionId, committedBranch.turnResponses)
-      ?? committedBranch.turnResponses;
-    replaceCheckpointTimelineState.call(model, committedBranch.checkpointTimelineState);
-    const protocolTruncation = this.buildProtocolTruncationForCommittedCheckpointBranch(
-      turnResponses,
-      committedBranch.discardedTurnResponses,
-    );
+    const turnResponses = transaction.effects.executionHost.hydrateTurnResponses;
+    const protocolTruncation = transaction.effects.executionHost.protocolTruncation;
+    console.info('[AilyChat][CheckpointRestoreTrace]', {
+      phase: 'commit-forward-branch',
+      sessionId: targetSessionId,
+      beforeTimeline: this.summarizeCheckpointTimelineForTrace(checkpointTimelineState),
+      afterTimeline: this.summarizeCheckpointTimelineForTrace(transaction.checkpointTimelineState),
+      retainedTurnIds: transaction.retainedTurnIds,
+      discardedTurnIds: transaction.discardedTurnIds,
+      protocolTruncation,
+      transactionKind: transaction.kind,
+      transactionRevision: transaction.revision,
+    });
+
+    await this.requestHostEditTrackingRestore(targetSessionId, turnResponses);
+
+    this.applyRequestListTransactionEffects(targetSessionId, transaction);
+    this.triggerSyncDetectChanges?.();
+    return true;
+  }
+
+  private applyRequestListTransactionEffects(
+    sessionId: string,
+    transaction: ChatSessionRequestListTransactionResult,
+  ): void {
+    const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!targetSessionId) {
+      return;
+    }
+
+    const protocolTruncation = transaction.effects.executionHost.protocolTruncation;
     if (protocolTruncation) {
       this.pendingProtocolTruncations.set(targetSessionId, protocolTruncation);
     } else {
       this.pendingProtocolTruncations.delete(targetSessionId);
     }
-    console.info('[AilyChat][CheckpointRestoreTrace]', {
-      phase: 'commit-forward-branch',
-      sessionId: targetSessionId,
-      beforeTimeline: this.summarizeCheckpointTimelineForTrace(checkpointTimelineState),
-      afterTimeline: this.summarizeCheckpointTimelineForTrace(committedBranch.checkpointTimelineState),
-      retainedTurnIds: this.summarizeTurnResponseIdsForTrace(turnResponses),
-      discardedTurnIds: this.summarizeTurnResponseIdsForTrace(committedBranch.discardedTurnResponses),
-      protocolTruncation,
-    });
 
-    await this.requestHostEditTrackingRestore(targetSessionId, turnResponses);
-
-    this.lexStream?.hydrateTurnResponses?.(targetSessionId, turnResponses, {
+    const executionTurnResponses = transaction.effects.executionHost.hydrateTurnResponses;
+    this.lexStream?.hydrateTurnResponses?.(targetSessionId, executionTurnResponses, {
       visibility: 'visibleAttach',
     });
 
-    const hostProjectionState = buildRuntimeHostProjectionState(turnResponses);
+    const projectionTurnResponses = transaction.effects.hostProjection.turnResponses;
+    const hostProjectionState = buildRuntimeHostProjectionState(projectionTurnResponses);
     if (hostProjectionState) {
       const currentViewSessionResource = this.resolveCurrentViewSessionResource();
-      this.projectRestoredHostProjection(targetSessionId, turnResponses, hostProjectionState, {
+      this.projectRestoredHostProjection(targetSessionId, projectionTurnResponses, hostProjectionState, {
         attachedView: currentViewSessionResource === targetSessionId,
       });
       if (currentViewSessionResource === targetSessionId) {
@@ -5148,54 +5186,20 @@ export class ChatEngineService implements IChatContext {
       }
     }
 
+    const persistenceTurnResponses = transaction.effects.persistence.turnResponses;
+    const persistenceProjectionState = persistenceTurnResponses === projectionTurnResponses
+      ? hostProjectionState
+      : buildRuntimeHostProjectionState(persistenceTurnResponses);
     const saveTarget = this.buildExecutionSaveTarget(targetSessionId);
     if (saveTarget) {
       this.session?.saveCurrentSession?.({
-        ...(hostProjectionState ? {
-          hostProjection: hostProjectionState,
-          visibleChatList: hostProjectionState.chatList,
+        ...(persistenceProjectionState ? {
+          hostProjection: persistenceProjectionState,
+          visibleChatList: persistenceProjectionState.chatList,
         } : {}),
         target: saveTarget,
       });
     }
-
-    this.triggerSyncDetectChanges?.();
-    return true;
-  }
-
-  private buildProtocolTruncationForCommittedCheckpointBranch(
-    retainedTurnResponses: readonly TurnResponseTurn[],
-    discardedTurnResponses: readonly TurnResponseTurn[],
-  ): ChatRuntimeHostProtocolTruncation | null {
-    const retainedTurnIds = retainedTurnResponses
-      .map(turn => typeof turn.turnId === 'string' ? turn.turnId.trim() : '')
-      .filter((turnId): turnId is string => turnId.length > 0);
-    const discardedTurnIds = discardedTurnResponses
-      .map(turn => typeof turn.turnId === 'string' ? turn.turnId.trim() : '')
-      .filter((turnId): turnId is string => turnId.length > 0);
-    const [firstDiscardedTurnId] = discardedTurnIds;
-    if (firstDiscardedTurnId) {
-      return {
-        kind: 'removeFrom',
-        turnId: firstDiscardedTurnId,
-        retainedTurnIds,
-        discardedTurnIds,
-      };
-    }
-
-    if (retainedTurnIds.length > 0) {
-      console.warn('[AilyChat][CheckpointRestore] Cannot build protocol truncation: discarded branch has no turn id.', {
-        retainedTurnIds,
-        discardedCount: discardedTurnResponses.length,
-      });
-      return null;
-    }
-
-    return {
-      kind: 'clear',
-      retainedTurnIds,
-      discardedTurnIds,
-    };
   }
 
   private prepareProtocolTruncationForResend(
@@ -5208,54 +5212,12 @@ export class ChatEngineService implements IChatContext {
       return false;
     }
 
-    const turnResponses = this.readSessionTurnResponses(targetSessionId);
-    const turnIndex = turnResponses.findIndex(turn => {
-      const candidateTurnId = typeof turn.turnId === 'string' ? turn.turnId.trim() : '';
-      return candidateTurnId === targetTurnId;
-    });
-    if (turnIndex < 0) {
+    const transaction = this.chatSessionModelStore?.removeFromTurnTransaction?.(targetSessionId, targetTurnId) ?? null;
+    if (!transaction) {
       return false;
     }
 
-    const retainedTurnResponses = turnResponses.slice(0, turnIndex);
-    const discardedTurnResponses = turnResponses.slice(turnIndex);
-    const retainedTurnIds = retainedTurnResponses
-      .map(turn => typeof turn.turnId === 'string' ? turn.turnId.trim() : '')
-      .filter((candidateTurnId): candidateTurnId is string => candidateTurnId.length > 0);
-    const discardedTurnIds = discardedTurnResponses
-      .map(turn => typeof turn.turnId === 'string' ? turn.turnId.trim() : '')
-      .filter((candidateTurnId): candidateTurnId is string => candidateTurnId.length > 0);
-
-    this.pendingProtocolTruncations.set(targetSessionId, {
-      kind: 'removeFrom',
-      turnId: targetTurnId,
-      retainedTurnIds,
-      discardedTurnIds,
-    });
-
-    const replaceSessionModelTurnResponses = (
-      (this as unknown as { replaceSessionModelTurnResponses?: ChatEngineService['replaceSessionModelTurnResponses'] })
-        .replaceSessionModelTurnResponses
-      ?? ChatEngineService.prototype['replaceSessionModelTurnResponses']
-    );
-    const nextTurnResponses = replaceSessionModelTurnResponses.call(this, targetSessionId, retainedTurnResponses)
-      ?? retainedTurnResponses;
-    this.lexStream?.hydrateTurnResponses?.(targetSessionId, nextTurnResponses, {
-      visibility: 'visibleAttach',
-    });
-
-    const hostProjectionState = buildRuntimeHostProjectionState(nextTurnResponses);
-    if (hostProjectionState) {
-      const currentViewSessionResource = this.resolveCurrentViewSessionResource();
-      this.projectRestoredHostProjection(targetSessionId, nextTurnResponses, hostProjectionState, {
-        attachedView: currentViewSessionResource === targetSessionId,
-      });
-      if (currentViewSessionResource === targetSessionId) {
-        this.visibleProjectionSessionId = targetSessionId;
-        this.liveHostRequestGraphCache?.replaceState?.(hostProjectionState);
-      }
-    }
-
+    this.applyRequestListTransactionEffects(targetSessionId, transaction);
     this.triggerSyncDetectChanges?.();
     return true;
   }
@@ -6256,12 +6218,6 @@ export class ChatEngineService implements IChatContext {
     const getCheckpointTimelineState = (model as unknown as {
       getCheckpointTimelineState?: ChatSessionModel['getCheckpointTimelineState'];
     }).getCheckpointTimelineState;
-    const replaceCheckpointTimelineState = (model as unknown as {
-      replaceCheckpointTimelineState?: ChatSessionModel['replaceCheckpointTimelineState'];
-    }).replaceCheckpointTimelineState;
-    if (typeof replaceCheckpointTimelineState !== 'function') {
-      return;
-    }
     const previousTimeline = typeof getCheckpointTimelineState === 'function'
       ? getCheckpointTimelineState.call(model)
       : null;
@@ -6269,8 +6225,9 @@ export class ChatEngineService implements IChatContext {
       && this.isRuntimeTranscriptStaleCheckpointReplay(previousTimeline, turnResponses)) {
       return;
     }
-    replaceCheckpointTimelineState.call(
-      model,
+    this.chatSessionModelStore.settleCheckpointMetadataTransaction(
+      targetSessionId,
+      turnResponses,
       this.createRuntimeTranscriptCheckpointTimelineState(
         targetSessionId,
         turnResponses,
@@ -6511,7 +6468,10 @@ export class ChatEngineService implements IChatContext {
       : this.resolveCurrentViewSessionResource() === sessionId;
     const status = this.mapRuntimeHostStatusToRuntimeStatus(state.status);
     const stopSession = state.requestInProgress
-      ? () => this.dispatchRuntimeHostCommand('stop runtime turn', (host) => host.stopTurn(sessionId))
+      ? () => this.dispatchRuntimeHostCommand('stop runtime turn', (host) => host.stopTurn({
+        sessionId,
+        turnId: state.activeTurnId ?? null,
+      }))
       : null;
     const patch = {
       status,
@@ -6769,6 +6729,18 @@ export class ChatEngineService implements IChatContext {
     }
   }
 
+  private async dispatchRuntimeHostCommandAsync(
+    operation: string,
+    command: (host: ChatRuntimeHost) => Promise<unknown>,
+  ): Promise<unknown> {
+    try {
+      return await command(this.runtimeHostForView());
+    } catch (error) {
+      console.warn(`[AilyChat][RuntimeHost] Failed to ${operation}:`, error);
+      throw error;
+    }
+  }
+
   private async attachRuntimeViewToHost(sessionId: string, visibleAttachmentGeneration?: number | null): Promise<void> {
     const runtimeHost = this.runtimeHostForView();
     const attachedState = await runtimeHost.attachView(this.runtimeViewId, sessionId, {
@@ -6841,7 +6813,41 @@ export class ChatEngineService implements IChatContext {
       return false;
     }
 
-    this.dispatchRuntimeHostCommand('stop runtime turn', (host) => host.stopTurn(targetSessionId));
+    void this.interruptSessionRuntimeAsync(targetSessionId);
+    return true;
+  }
+
+  private async stopRuntimeSessionWithBarrier(sessionId?: string | null): Promise<boolean> {
+    const targetSessionId = typeof sessionId === 'string' && sessionId.trim().length > 0
+      ? sessionId.trim()
+      : this.resolveActiveRuntimeSessionId();
+    if (!targetSessionId) {
+      return false;
+    }
+
+    this.stoppingRuntimeSessionIds.add(targetSessionId);
+    try {
+      const interrupted = await this.interruptSessionRuntimeAsync(targetSessionId);
+      await this.waitForSessionRequestSettle(targetSessionId);
+      return interrupted;
+    } finally {
+      this.stoppingRuntimeSessionIds.delete(targetSessionId);
+    }
+  }
+
+  private async interruptSessionRuntimeAsync(sessionId?: string | null): Promise<boolean> {
+    const targetSessionId = typeof sessionId === 'string' && sessionId.trim().length > 0
+      ? sessionId.trim()
+      : this.resolveActiveRuntimeSessionId();
+    if (!targetSessionId) {
+      return false;
+    }
+
+    const runtimeState = this.readRuntimeHostSessionState(targetSessionId);
+    await this.dispatchRuntimeHostCommandAsync('stop runtime turn', (host) => host.stopTurn({
+      sessionId: targetSessionId,
+      turnId: runtimeState?.activeTurnId ?? null,
+    }));
     return true;
   }
 
@@ -6925,6 +6931,7 @@ export class ChatEngineService implements IChatContext {
       && (this.isRuntimeHostViewAttached(runtimeState) || !!this.chatTextareaRef);
 
     if (isVisibleCurrentSession) {
+      this.stoppingRuntimeSessionIds.add(targetSessionId);
       if (isRequestStateTraceEnabled()) {
         console.info('[AilyChat][RequestStateTrace]', {
           phase: 'stop-dispatch',
@@ -6935,11 +6942,17 @@ export class ChatEngineService implements IChatContext {
           interrupted: true,
         });
       }
-      void this.stopCoordinator.stopVisibleSession(targetSessionId);
+      void this.stopCoordinator.stopVisibleSession(targetSessionId).finally(() => {
+        this.stoppingRuntimeSessionIds.delete(targetSessionId);
+      });
       return true;
     }
 
+    this.stoppingRuntimeSessionIds.add(targetSessionId);
     const interrupted = this.interruptSessionRuntime(targetSessionId);
+    void this.waitForSessionRequestSettle(targetSessionId).finally(() => {
+      this.stoppingRuntimeSessionIds.delete(targetSessionId);
+    });
     if (isRequestStateTraceEnabled()) {
       console.info('[AilyChat][RequestStateTrace]', {
         phase: 'stop-dispatch',
@@ -8781,6 +8794,21 @@ Do not create non-existent boards and libraries.
 
   stop(sessionId?: string | null): boolean {
     return this.requestStopRuntimeTurn(sessionId);
+  }
+
+  async stopAndWait(sessionId?: string | null): Promise<boolean> {
+    const targetSessionId = typeof sessionId === 'string' && sessionId.trim().length > 0
+      ? sessionId.trim()
+      : this.resolveActiveRuntimeSessionId();
+    if (!targetSessionId) {
+      return false;
+    }
+
+    const stopped = this.requestStopRuntimeTurn(targetSessionId);
+    if (stopped) {
+      await this.waitForSessionRequestSettle(targetSessionId);
+    }
+    return stopped;
   }
 
   // ==================== 模式 / 模型切换 ====================

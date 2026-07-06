@@ -18,6 +18,7 @@ import type {
   ChatRuntimeHostSessionId,
   ChatRuntimeHostSessionInventorySnapshot,
   ChatRuntimeHostSessionState,
+  ChatRuntimeHostStopTurnRequest,
   ChatRuntimeHostSubmitReadiness,
   ChatRuntimeHostSubmitRequest,
   ChatRuntimeHostTranscriptSnapshot,
@@ -237,8 +238,8 @@ export function createElectronChatRuntimeHostTransport(): ChatRuntimeHost | null
       api.call('readSubmitReadiness', [sessionId]) as Promise<ChatRuntimeHostSubmitReadiness>,
     ensureSessionCanRerun: (sessionId: ChatRuntimeHostSessionId) =>
       api.call('ensureSessionCanRerun', [sessionId]) as Promise<ChatRuntimeHostRerunReadiness>,
-    stopTurn: (sessionId: ChatRuntimeHostSessionId) =>
-      api.call('stopTurn', [sessionId]) as Promise<void>,
+    stopTurn: (request: ChatRuntimeHostSessionId | ChatRuntimeHostStopTurnRequest) =>
+      api.call('stopTurn', [request]) as Promise<void>,
     disposeSession: (sessionId: ChatRuntimeHostSessionId) =>
       api.call('disposeSession', [sessionId]) as Promise<void>,
     readSessionState: (sessionId: ChatRuntimeHostSessionId) =>

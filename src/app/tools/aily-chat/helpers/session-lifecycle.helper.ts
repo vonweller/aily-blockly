@@ -18,11 +18,14 @@ import type { LiveHostSessionRecord } from '../services/chat-history.service';
 import { countHostRecordMessages } from '../services/chat-history.service';
 import type {
   HostSessionRecord,
+  HostSessionSidecar,
   ImportedDebugSessionRecord,
+  PersistedHostTurnResponse,
 } from '../services/chat-history.service';
 import type {
   ChatSessionModelCreateProps,
   ChatSessionModelReference,
+  ChatSessionRequestListTransactionResult,
 } from '../services/chat-session-model-store.service';
 import type { ChatSessionViewModel } from '../services/chat-session-view-model-store.service';
 import type { ChatSessionRuntimeState } from '../services/chat-session-runtime-store.service';
@@ -93,6 +96,7 @@ import type {
   ChatRuntimeHostPrewarmRequest,
   ChatRuntimeHostPrewarmResult,
 } from '../core/chat-runtime-host-contract';
+import { createSessionCheckpointTimelineState } from './session-checkpoint-timeline-model';
 
 type LexInteractionAction = NonNullable<import('aily-lex/browser').TurnRequest['metadata']>['interactionAction'];
 
@@ -157,12 +161,12 @@ type SessionLifecycleContext = ChatViewWriteBridgeContext
     buildExecutionSaveTarget?(sessionId: string | null | undefined): HostSessionSaveTarget | null;
     getDevelopmentModePreferenceRuntimeMode?(): ChatAgentRuntimeMode | undefined;
     readSessionTurnResponses?(sessionId?: string | null): readonly TurnResponseTurn[];
+    prepareForkPrefixRequestListTransaction?(
+      sessionId: string | null | undefined,
+      turnId: string | null | undefined,
+    ): ChatSessionRequestListTransactionResult | null;
     readSessionRuntimeState?(sessionId?: string | null): Readonly<ChatSessionRuntimeState> | undefined;
     readSessionCheckpointTimelineState?(sessionId?: string | null): import('./session-checkpoint-timeline-model').SessionCheckpointTimelineState | null;
-    replaceSessionCheckpointTimelineState?(
-      sessionId: string,
-      state: import('./session-checkpoint-timeline-model').SessionCheckpointTimelineState | null | undefined,
-    ): void;
     hasSessionRuntimeHandle?(sessionId?: string | null): boolean;
     prewarmRuntimeExecutor?(request: ChatRuntimeHostPrewarmRequest): Promise<ChatRuntimeHostPrewarmResult>;
     projectRestoredRuntimeAuxiliary?(sessionId: string, auxiliary: HostSessionRecord['auxiliary'] | null | undefined): void;
@@ -435,18 +439,32 @@ export class SessionLifecycleHelper {
       return false;
     }
 
-    const sourceRecord = this.resolveForkSourceRecord(sourceSessionId);
-    const sourceTurnResponses = sourceRecord?.turnResponses ?? [];
-    const targetTurnIndex = sourceTurnResponses.findIndex(turn => turn['turnId'] === options.turnId);
-    if (targetTurnIndex < 0) {
-      this.ctx.message.info('未找到该请求对应的会话边界');
+    const forkPrefixTransaction = this.ctx.prepareForkPrefixRequestListTransaction?.(
+      sourceSessionId,
+      options.turnId,
+    ) ?? null;
+    if (!forkPrefixTransaction) {
+      this.ctx.message.info('Cannot fork because the request-list transaction is unavailable.');
       return false;
     }
-
-    const sourceRetainedTurnResponses = sourceTurnResponses.slice(0, targetTurnIndex);
+    const sourceRecord = this.resolveForkSourceRecord(sourceSessionId);
+    const sourceTurnResponses = sourceRecord?.turnResponses ?? [];
+    const sourceRetainedTurnResponses = [...forkPrefixTransaction.effects.hostProjection.turnResponses];
     if (sourceRetainedTurnResponses.length === 0) {
       this.ctx.message.info('无法在第一轮请求之前分叉会话');
       return false;
+    }
+
+    if (forkPrefixTransaction) {
+      console.info('[AilyChat][RequestListBranchTrace]', {
+        phase: 'fork-prefix-prepare',
+        sourceSessionId,
+        requestListRevision: forkPrefixTransaction.revision ?? null,
+        forkBoundaryTurnId: forkPrefixTransaction.forkBoundaryTurnId ?? options.turnId,
+        retainedTurnIds: forkPrefixTransaction.retainedTurnIds ?? summarizeTurnResponseIds(sourceRetainedTurnResponses),
+        discardedTurnIds: forkPrefixTransaction.discardedTurnIds ?? [],
+        canonicalPrefixTurnIds: summarizeTurnResponseIds(sourceRetainedTurnResponses),
+      });
     }
 
     this.saveCurrentSession();
@@ -526,15 +544,18 @@ export class SessionLifecycleHelper {
       forkedBeforeTurnId: options.turnId,
       forkedRetainedTurnCount: retainedTurnResponses.length,
     };
+    const forkedSidecar = this.buildForkCheckpointSidecar(forkedSessionId, retainedTurnResponses);
     const forkedRecord: HostSessionRecord = {
       metadata: forkedMetadata,
       ...(retainedTurnResponses.length > 0 ? { turnResponses: retainedTurnResponses } : {}),
+      ...(forkedSidecar ? { sidecar: forkedSidecar } : {}),
     };
 
     const persistedForkedRecord: LiveHostSessionRecord = {
       sessionId: forkedSessionId,
       metadata: forkedMetadata,
       turnResponses: retainedTurnResponses,
+      ...(forkedSidecar ? { sidecar: forkedSidecar } : {}),
     };
     try {
       await this.persistForkedSessionRecordThroughHost(persistedForkedRecord);
@@ -549,6 +570,46 @@ export class SessionLifecycleHelper {
     this.ctx.scrollManager.scrollToBottom();
 
     return true;
+  }
+
+  private buildForkCheckpointSidecar(
+    forkedSessionId: string,
+    retainedTurnResponses: readonly TurnResponseTurn[],
+  ): HostSessionSidecar | undefined {
+    const sessionResource = typeof forkedSessionId === 'string' ? forkedSessionId.trim() : '';
+    if (!sessionResource) {
+      return undefined;
+    }
+
+    const timeline = createSessionCheckpointTimelineState({
+      sessionResource,
+      turnResponses: retainedTurnResponses,
+    });
+    const checkpointMarker = {
+      sessionResource,
+      currentCheckpointIndex: timeline.currentCheckpointIndex,
+      currentTurnResponseCount: timeline.currentTurnResponseCount,
+    };
+    if (!timeline.checkpoints.length || !timeline.turnResponses.length) {
+      return { checkpointMarker };
+    }
+
+    return {
+      checkpointMarker,
+      checkpointRedoBranch: {
+        sessionResource,
+        currentCheckpointIndex: timeline.currentCheckpointIndex,
+        currentTurnResponseCount: timeline.currentTurnResponseCount,
+        checkpoints: timeline.checkpoints.map(checkpoint => ({
+          checkpointId: checkpoint.checkpointId,
+          requestId: checkpoint.requestId,
+          ...(checkpoint.turnId ? { turnId: checkpoint.turnId } : {}),
+          turnIndex: checkpoint.turnIndex,
+          ...(checkpoint.metadata ? { metadata: checkpoint.metadata } : {}),
+        })),
+        turnResponses: timeline.turnResponses as PersistedHostTurnResponse[],
+      },
+    };
   }
 
   private async persistForkedSessionRecordThroughHost(record: LiveHostSessionRecord): Promise<void> {
@@ -2779,6 +2840,12 @@ function deriveDefaultTitleFromTurnResponses(
   }
 
   return '';
+}
+
+function summarizeTurnResponseIds(turnResponses: readonly TurnResponseTurn[] | null | undefined): readonly string[] {
+  return (Array.isArray(turnResponses) ? turnResponses : [])
+    .map(turn => typeof turn?.turnId === 'string' ? turn.turnId.trim() : '')
+    .filter(Boolean);
 }
 
 function deriveDefaultTitleFromRequest(request: unknown): string {

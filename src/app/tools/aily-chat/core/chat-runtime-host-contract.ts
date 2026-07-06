@@ -572,6 +572,11 @@ export interface ChatRuntimeOwnerExecutorStopTurnCommand {
   readonly turnId?: string | null;
 }
 
+export interface ChatRuntimeHostStopTurnRequest {
+  readonly sessionId: ChatRuntimeHostSessionId;
+  readonly turnId?: string | null;
+}
+
 export interface ChatRuntimeOwnerExecutorDisposeSessionResourcesCommand {
   readonly sessionId: ChatRuntimeHostSessionId;
 }
@@ -678,7 +683,7 @@ export interface ChatRuntimeHost {
   submitTurn(request: ChatRuntimeHostSubmitRequest): Promise<ChatRuntimeHostSessionState>;
   readSubmitReadiness(sessionId: ChatRuntimeHostSessionId): Promise<ChatRuntimeHostSubmitReadiness>;
   ensureSessionCanRerun(sessionId: ChatRuntimeHostSessionId): Promise<ChatRuntimeHostRerunReadiness>;
-  stopTurn(sessionId: ChatRuntimeHostSessionId): Promise<void>;
+  stopTurn(request: ChatRuntimeHostSessionId | ChatRuntimeHostStopTurnRequest): Promise<void>;
   disposeSession(sessionId: ChatRuntimeHostSessionId): Promise<void>;
   readSessionState(sessionId: ChatRuntimeHostSessionId): Promise<ChatRuntimeHostSessionState | null>;
   readSessionInventory(): Promise<ChatRuntimeHostSessionInventorySnapshot>;

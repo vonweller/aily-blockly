@@ -14,7 +14,10 @@ import {
   type HostSessionProviderOptions,
 } from '../helpers/host-session-input-state';
 import { isAilyCategoryDebugEnabled } from '../core/chat-debug-flags';
-import { createSessionCheckpointTimelineState } from '../helpers/session-checkpoint-timeline-model';
+import {
+  createSessionCheckpointTimelineState,
+  type SessionCheckpointTimelineState,
+} from '../helpers/session-checkpoint-timeline-model';
 import { ChatSessionModelStoreService } from './chat-session-model-store.service';
 import { ChatPerformanceTracer } from './chat-perf-tracer';
 import type { RequestCheckpointMetadata } from './edit-checkpoint.service';
@@ -37,6 +40,13 @@ function shouldTraceApprovalRuntimeBoundary(): boolean {
   return isAilyCategoryDebugEnabled('aily.chat.traceApprovalRuntime', [
     '__AILY_CHAT_TRACE_APPROVAL_RUNTIME__',
     'AILY_CHAT_TRACE_APPROVAL_RUNTIME',
+  ]);
+}
+
+function shouldTraceRequestListBranchBoundary(): boolean {
+  return isAilyCategoryDebugEnabled('aily.chat.traceRequestListBranch', [
+    '__AILY_CHAT_TRACE_REQUEST_LIST_BRANCH__',
+    'AILY_CHAT_TRACE_REQUEST_LIST_BRANCH',
   ]);
 }
 
@@ -179,8 +189,6 @@ export class ChatRuntimeOwnerSubmittedTurnLifecycleService implements ChatRuntim
       this.writeCheckpointMetadataToTurnResponse(turn, metadata);
       this.indexCheckpointMetadata(metadata, metadataByCheckpointId, metadataByRequestId, metadataByTurnId);
     }));
-    this.ownerSessionModel.replaceTurnResponses(sessionId, hydratedTurnResponses, { source: 'checkpoint-metadata-settle' });
-
     const checkpointTimelineState = createSessionCheckpointTimelineState({
       sessionResource: sessionId,
       turnResponses: hydratedTurnResponses,
@@ -188,7 +196,14 @@ export class ChatRuntimeOwnerSubmittedTurnLifecycleService implements ChatRuntim
       metadataByRequestId,
       metadataByTurnId,
     });
-    model.replaceCheckpointTimelineState(checkpointTimelineState);
+    const transaction = this.chatSessionModelStore.settleCheckpointMetadataTransaction(
+      sessionId,
+      hydratedTurnResponses,
+      checkpointTimelineState as SessionCheckpointTimelineState,
+    );
+    if (!transaction) {
+      throw new Error(`[AilyChat][RuntimeOwnerLifecycle] Failed to settle checkpoint metadata transaction for ${sessionId}`);
+    }
   }
 
   private buildCheckpointMetadataLookup(turn: unknown): {
@@ -392,6 +407,13 @@ export class ChatRuntimeOwnerSubmittedTurnLifecycleService implements ChatRuntim
 
     const liveSnapshot = owner.session.snapshot(sessionId);
     if (this.isLiveSessionAlignedWithHistory(liveSnapshot, sessionId, historyTurnResponses)) {
+      this.traceSubmittedTurnHistorySync({
+        phase: 'submitted-turn-history-aligned',
+        sessionId,
+        activeTurnId,
+        historyTurnResponses,
+        liveSnapshot,
+      });
       owner.hydrateTurnResponses?.(sessionId, historyTurnResponses, {
         visibility: 'detached',
       });
@@ -400,14 +422,37 @@ export class ChatRuntimeOwnerSubmittedTurnLifecycleService implements ChatRuntim
 
     const restorePlan = await owner.session.resolveRestorePlan(sessionId, historyTurnResponses);
     if (!restorePlan?.snapshot) {
+      this.traceSubmittedTurnHistorySync({
+        phase: 'submitted-turn-history-restore-missing',
+        sessionId,
+        activeTurnId,
+        historyTurnResponses,
+        liveSnapshot,
+      });
       throw new Error(`[AilyChat][SubmittedTurnLifecycle] Missing Lex session snapshot for restored history: session=${sessionId}, turns=${historyTurnResponses.length}`);
     }
 
     const restored = owner.session.restoreResolvedSnapshot(restorePlan.snapshot, sessionId);
     if (!restored) {
+      this.traceSubmittedTurnHistorySync({
+        phase: 'submitted-turn-history-restore-failed',
+        sessionId,
+        activeTurnId,
+        historyTurnResponses,
+        liveSnapshot,
+        restorePlanTurnResponses: restorePlan.turnResponses,
+      });
       throw new Error(`[AilyChat][SubmittedTurnLifecycle] Failed to restore Lex session snapshot before submitting turn: session=${sessionId}, turns=${historyTurnResponses.length}`);
     }
 
+    this.traceSubmittedTurnHistorySync({
+      phase: 'submitted-turn-history-restored',
+      sessionId,
+      activeTurnId,
+      historyTurnResponses,
+      liveSnapshot,
+      restorePlanTurnResponses: restorePlan.turnResponses,
+    });
     owner.hydrateTurnResponses?.(sessionId, restorePlan.turnResponses, {
       visibility: 'detached',
     });
@@ -438,6 +483,52 @@ export class ChatRuntimeOwnerSubmittedTurnLifecycleService implements ChatRuntim
     }
 
     return true;
+  }
+
+  private traceSubmittedTurnHistorySync(input: {
+    readonly phase:
+      | 'submitted-turn-history-aligned'
+      | 'submitted-turn-history-restored'
+      | 'submitted-turn-history-restore-failed'
+      | 'submitted-turn-history-restore-missing';
+    readonly sessionId: string;
+    readonly activeTurnId: string;
+    readonly historyTurnResponses: readonly TurnResponseTurn[];
+    readonly liveSnapshot: SessionSnapshot | null | undefined;
+    readonly restorePlanTurnResponses?: readonly TurnResponseTurn[] | null;
+  }): void {
+    if (input.phase === 'submitted-turn-history-aligned' && !shouldTraceRequestListBranchBoundary()) {
+      return;
+    }
+
+    const model = this.chatSessionModelStore.get(input.sessionId) as {
+      readonly requestListRevision?: number;
+    } | undefined;
+    console.info('[AilyChat][RequestListBranchTrace]', {
+      phase: input.phase,
+      sessionId: input.sessionId,
+      requestListRevision: typeof model?.requestListRevision === 'number'
+        ? model.requestListRevision
+        : null,
+      activeTurnId: input.activeTurnId || null,
+      canonicalHistoryTurnIds: this.summarizeTurnResponseIds(input.historyTurnResponses),
+      liveSnapshotTurnIds: this.summarizeSnapshotTurnIds(input.liveSnapshot),
+      restorePlanTurnIds: this.summarizeTurnResponseIds(input.restorePlanTurnResponses),
+    });
+  }
+
+  private summarizeTurnResponseIds(
+    turnResponses: readonly TurnResponseTurn[] | null | undefined,
+  ): readonly string[] {
+    return (Array.isArray(turnResponses) ? turnResponses : [])
+      .map(turn => this.normalizeSessionId(turn?.turnId))
+      .filter(Boolean);
+  }
+
+  private summarizeSnapshotTurnIds(snapshot: SessionSnapshot | null | undefined): readonly string[] {
+    return (Array.isArray(snapshot?.turns) ? snapshot.turns : [])
+      .map(turn => this.normalizeSessionId(turn?.id))
+      .filter(Boolean);
   }
 
   private logSubmittedTurnStartupLatency(input: {

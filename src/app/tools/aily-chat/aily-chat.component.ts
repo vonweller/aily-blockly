@@ -387,7 +387,7 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
     this.requestController = new ChatRequestController({
       sendNow: (text, sessionId) => this.engine.submitUserText(text, { clearInput: true, sessionId }),
       queue: (text, sessionId, options) => this.engine.queueFollowupMessage(text, sessionId, options),
-      stop: (sessionId) => this.engine.stop(sessionId),
+      stop: (sessionId) => this.engine.stopAndWait(sessionId),
       getPending: (sessionId) => this.engine.getPendingFollowupRequests?.(sessionId) ?? [],
       hasPending: (sessionId) => this.engine.hasPendingFollowupRequests?.(sessionId) === true,
       clearPending: (sessionId) => this.engine.clearPendingFollowupRequests?.(sessionId),

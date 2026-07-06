@@ -16,6 +16,13 @@ const DEFAULT_API_ENDPOINT = 'https://api.aily.pro';
 const DEFAULT_INTERACTION_SOFT_ROUND_LIMIT = 200;
 const execAsync = promisify(execCallback);
 
+function createAbortError(message) {
+  const error = new Error(message);
+  error.name = 'AbortError';
+  error.code = 'ABORT_ERR';
+  return error;
+}
+
 export function createRuntimeOwner(options = {}) {
   return new LexExecutionRuntimeOwner(options);
 }
@@ -78,7 +85,7 @@ class LexExecutionRuntimeOwner {
       : String(request.displayText || '');
     this.prepareSubmittedTurnTitle(sessionId, request, text);
 
-    void this.runTurn(session, turnId, request, text, abortController)
+    const turnPromise = this.runTurn(session, turnId, request, text, abortController)
       .catch(error => {
         if (!abortController.signal.aborted) {
           this.emit({
@@ -91,12 +98,14 @@ class LexExecutionRuntimeOwner {
         }
       })
       .finally(() => {
-        if (session.activeAbortController === abortController) {
+        if (session.activeTurnPromise === turnPromise) {
           session.activeAbortController = null;
           session.activeTurnId = null;
+          session.activeTurnPromise = null;
           this.emitRuntimeStatus(session, abortController.signal.aborted ? 'cancelled' : 'completed', false);
         }
       });
+    session.activeTurnPromise = turnPromise;
 
     return this.createSessionState(session, 'running', true, turnId);
   }
@@ -134,19 +143,23 @@ class LexExecutionRuntimeOwner {
   async stopTurn(command = {}) {
     const sessionId = normalizeSessionId(command.sessionId);
     const session = this.sessions.get(sessionId);
-    if (session?.activeAbortController) {
-      session.activeAbortController.abort(new Error('[AilyChat][ExecutionHost] Turn stopped by host.'));
-      session.activeAbortController = null;
-      session.activeTurnId = null;
-      this.emitRuntimeStatus(session, 'cancelled', false);
+    if (!session?.activeAbortController) {
+      return session ? this.createSessionState(session, 'cancelled', false, null) : undefined;
     }
+
+    const activeTurnPromise = session.activeTurnPromise;
+    session.activeAbortController.abort(createAbortError('[AilyChat][ExecutionHost] Turn stopped by host.'));
+    if (activeTurnPromise && typeof activeTurnPromise.then === 'function') {
+      await activeTurnPromise.catch(() => undefined);
+    }
+    return this.createSessionState(session, 'cancelled', false, null);
   }
 
   async disposeSessionResources(command = {}) {
     const sessionId = normalizeSessionId(command.sessionId);
     const session = this.sessions.get(sessionId);
     if (session?.activeAbortController) {
-      session.activeAbortController.abort(new Error('[AilyChat][ExecutionHost] Session disposed.'));
+      session.activeAbortController.abort(createAbortError('[AilyChat][ExecutionHost] Session disposed.'));
     }
     try {
       session?.handle?.dispose?.();
@@ -181,7 +194,7 @@ class LexExecutionRuntimeOwner {
   async runTurn(session, turnId, request, text, abortController) {
     for await (const renderEvent of session.handle.chat(text, abortController.signal, { turnId })) {
       if (abortController.signal.aborted) {
-        break;
+        continue;
       }
       this.emit({
         kind: 'render-event',
@@ -214,6 +227,7 @@ class LexExecutionRuntimeOwner {
       revision: 0,
       activeTurnId: null,
       activeAbortController: null,
+      activeTurnPromise: null,
       handle: null,
       handlePromise: null,
       pendingApprovals: new Map(),

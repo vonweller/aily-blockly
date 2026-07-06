@@ -72,6 +72,9 @@ function resolveHostRequest(responseType, payload = {}) {
   pendingHostRequests.delete(requestId);
   if (payload.ok === false) {
     const error = new Error(payload.error?.message || '[AilyChat][ExecutionHost] Host request failed.');
+    if (payload.error?.name) {
+      error.name = payload.error.name;
+    }
     if (payload.error?.code) {
       error.code = payload.error.code;
     }
@@ -173,6 +176,7 @@ function respondCommandStartupError(command = {}) {
 function createErrorPayload(error) {
   return {
     message: error && error.message ? error.message : String(error || 'Unknown execution host startup error'),
+    name: error && typeof error.name === 'string' ? error.name : 'Error',
     code: error && typeof error.code === 'string' ? error.code : 'execution_host_startup_failed',
     retryable: false,
   };

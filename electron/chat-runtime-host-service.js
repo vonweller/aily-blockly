@@ -451,12 +451,18 @@ class ChatRuntimeHostProcessService {
     return this.hostSessionStore.buildSessionState(runningState.sessionId);
   }
 
-  handleStopTurn(args) {
-    const sessionId = normalizeSessionId(args && args[0]);
+  async handleStopTurn(args) {
+    const rawCommand = args && args[0];
+    const stopCommand = rawCommand && typeof rawCommand === 'object'
+      ? rawCommand
+      : { sessionId: rawCommand };
+    const sessionId = normalizeSessionId(stopCommand && stopCommand.sessionId);
+    const requestedTurnId = normalizeSessionId(stopCommand && stopCommand.turnId);
     const previousState = this.hostSessionStore.buildSessionState(sessionId);
+    const targetTurnId = requestedTurnId || (previousState && previousState.activeTurnId) || null;
     const stoppedTranscript = this.hostSessionStore.cancelRunningTurn(
       sessionId,
-      previousState && previousState.activeTurnId,
+      targetTurnId,
       previousState && previousState.transcriptRevision,
     );
     if (stoppedTranscript) {
@@ -467,14 +473,14 @@ class ChatRuntimeHostProcessService {
         transcript: stoppedTranscript,
       });
     }
+    await this.dispatchRuntimeOwnerCommandAndWaitIfAvailable('stopTurn', [{
+      sessionId,
+      turnId: targetTurnId,
+    }], sessionId);
     const stoppedState = this.hostSessionStore.stopSession(sessionId);
     if (stoppedState) {
       this.broadcastSessionState('runtime-status', stoppedState);
     }
-    this.dispatchRuntimeOwnerCommandIfAvailable('stopTurn', [{
-      sessionId,
-      turnId: previousState && previousState.activeTurnId,
-    }], sessionId);
     return undefined;
   }
 
@@ -749,7 +755,7 @@ class ChatRuntimeHostProcessService {
 
   dispatchRuntimeOwnerCommandIfAvailable(method, args, sessionId, options = {}) {
     if (!this.runtimeOwnerController.hasUsableRuntimeOwner()) {
-      console.warn('[AilyChat][RuntimeHostOwnerDispatch]', JSON.stringify({
+      console.info('[AilyChat][RuntimeHostOwnerDispatch]', JSON.stringify({
         phase: 'missing-owner',
         method,
         sessionId,
@@ -791,6 +797,47 @@ class ChatRuntimeHostProcessService {
         }
         this.broadcastRuntimeError(sessionId, error);
       });
+    return true;
+  }
+
+  async dispatchRuntimeOwnerCommandAndWaitIfAvailable(method, args, sessionId) {
+    if (!this.runtimeOwnerController.hasUsableRuntimeOwner()) {
+      console.warn('[AilyChat][RuntimeHostOwnerDispatch]', JSON.stringify({
+        phase: 'missing-owner',
+        method,
+        sessionId,
+      }));
+      return false;
+    }
+    const owner = typeof this.runtimeOwnerController.snapshotRuntimeOwner === 'function'
+      ? this.runtimeOwnerController.snapshotRuntimeOwner()
+      : null;
+    console.info('[AilyChat][RuntimeHostOwnerDispatch]', JSON.stringify({
+      phase: 'dispatch-wait',
+      method,
+      sessionId,
+      activeTurnId: args && args[0] && args[0].turnId,
+      owner,
+    }));
+    try {
+      const result = await this.runtimeOwnerController.dispatchCommand(method, args);
+      console.info('[AilyChat][RuntimeHostOwnerDispatch]', JSON.stringify({
+        phase: 'result-wait',
+        method,
+        sessionId,
+        owner,
+        resultStatus: result && result.status,
+        requestInProgress: result && result.requestInProgress,
+      }));
+    } catch (error) {
+      console.error('[AilyChat][RuntimeHost] Runtime owner command dispatch failed:', {
+        method,
+        sessionId,
+        message: error && error.message ? error.message : String(error || 'Unknown runtime owner error'),
+        code: error && typeof error.code === 'string' ? error.code : undefined,
+        stack: error && error.stack ? error.stack : undefined,
+      });
+    }
     return true;
   }
 
