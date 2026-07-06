@@ -22,6 +22,24 @@ import { CmdService } from '../../services/cmd.service';
 import { ElectronService } from '../../services/electron.service';
 import { NzToolTipModule } from "ng-zorro-antd/tooltip";
 
+type CacheClearOption = 'all' | '30' | '90';
+
+interface CacheStats {
+  totalFiles: number;
+  totalSizeFormatted: string;
+}
+
+interface DirectoryStats {
+  size: number;
+  count: number;
+}
+
+interface CacheClearPaths {
+  buildPath: string;
+  configFilePath: string;
+  scriptPath: string;
+}
+
 @Component({
   selector: 'app-settings',
   imports: [
@@ -103,9 +121,9 @@ export class SettingsComponent implements OnDestroy {
   ];
 
   // 缓存管理
-  cacheStats = { totalFiles: 0, totalSizeFormatted: '0 B' };
+  cacheStats: CacheStats = { totalFiles: 0, totalSizeFormatted: '0 B' };
   cacheSizeLoading = false;
-  cacheClearing: 'all' | '30' | '90' | null = null;
+  cacheClearing: CacheClearOption | null = null;
   private _clearCacheSubscription: Subscription | null = null;
   private _clearCacheLoadingRef: string | null = null;
 
@@ -547,34 +565,59 @@ export class SettingsComponent implements OnDestroy {
   }
 
   async loadCacheStats() {
-    const buildPath = window['path'].getAilyBuilderBuildPath();
-    if (!buildPath || !window['fs'].existsSync(buildPath)) {
-      this.cacheStats = { totalFiles: 0, totalSizeFormatted: '0 B' };
+    const buildPath = this.getCacheBuildPath();
+    if (!buildPath) {
+      this.cacheStats = this.getEmptyCacheStats();
       this.cacheSizeLoading = false;
       return;
     }
+
     this.cacheSizeLoading = true;
     try {
-      let totalSize = 0;
-      let totalFiles = 0;
-      const entries = window['fs'].readDirSync(buildPath);
-      for (const entry of entries) {
-        if (entry._isDirectory) {
-          const dirPath = window['path'].join(buildPath, entry.name);
-          const { size, count } = this.calcDirSize(dirPath);
-          totalSize += size;
-          totalFiles += count;
-        }
-      }
-      this.cacheStats = { totalFiles, totalSizeFormatted: this.formatFileSize(totalSize) };
+      this.cacheStats = this.calculateCacheStats(buildPath);
     } catch (e) {
       console.error('Failed to load cache stats', e);
+      this.cacheStats = this.getEmptyCacheStats();
     } finally {
       this.cacheSizeLoading = false;
     }
   }
 
-  private calcDirSize(dirPath: string): { size: number; count: number } {
+  private getCacheBuildPath(): string | null {
+    const buildPath = window['path'].getAilyBuilderBuildPath();
+    if (!buildPath || !window['fs'].existsSync(buildPath)) {
+      return null;
+    }
+    return buildPath;
+  }
+
+  private getEmptyCacheStats(): CacheStats {
+    return { totalFiles: 0, totalSizeFormatted: '0 B' };
+  }
+
+  private calculateCacheStats(buildPath: string): CacheStats {
+    let totalSize = 0;
+    let totalFiles = 0;
+    const entries = window['fs'].readDirSync(buildPath);
+
+    for (const entry of entries) {
+      if (!entry._isDirectory) {
+        continue;
+      }
+
+      const dirPath = window['path'].join(buildPath, entry.name);
+      const { size, count } = this.calcDirSize(dirPath);
+      totalSize += size;
+      totalFiles += count;
+    }
+
+    return {
+      totalFiles,
+      totalSizeFormatted: this.formatFileSize(totalSize)
+    };
+  }
+
+  private calcDirSize(dirPath: string): DirectoryStats {
     let size = 0;
     let count = 0;
     try {
@@ -608,7 +651,7 @@ export class SettingsComponent implements OnDestroy {
     return `${value.toFixed(1)} ${units[unitIndex]}`;
   }
 
-  clearCache(option: 'all' | '30' | '90') {
+  clearCache(option: CacheClearOption) {
     if (option === 'all') {
       this.modal.confirm({
         nzTitle: this.translateService.instant('SETTINGS.FIELDS.CACHE_CONFIRM_TITLE'),
@@ -623,84 +666,117 @@ export class SettingsComponent implements OnDestroy {
     }
   }
 
-  private doClearCache(option: 'all' | '30' | '90') {
+  private async doClearCache(option: CacheClearOption) {
+    const paths = this.getCacheClearPaths();
+    const excludeDirs = await this.getCurrentProjectCacheExcludeDirs();
+
+    if (!this.writeClearCacheConfig(paths, option, excludeDirs)) {
+      return;
+    }
+
+    this.startClearCacheProcess(option, paths);
+  }
+
+  private getCacheClearPaths(): CacheClearPaths {
     const buildPath = window['path'].getAilyBuilderBuildPath();
     const appDataPath = window['path'].getAppDataPath();
-    const configFilePath = window['path'].join(appDataPath, 'clear-cache-config.json');
-    const scriptPath = window['path'].join(window['path'].getAilyChildPath(), 'scripts', 'clear-cache.js');
 
-    // 先获取当前项目缓存目录，再写配置并执行
-    const run = (excludeDirs: string[]) => {
-      try {
-        window['fs'].writeFileSync(configFilePath, JSON.stringify({ buildPath, option, excludeDirs }, null, 2));
-      } catch (e) {
-        console.error('Failed to write clear-cache config', e);
-        this.message.error(this.translateService.instant('SETTINGS.FIELDS.CACHE_CLEAR_FAILED'));
-        return;
-      }
-
-      this.cacheClearing = option;
-      const loadingRef = this.message.loading(this.translateService.instant('SETTINGS.FIELDS.CACHE_CLEARING'), { nzDuration: 0 });
-      this._clearCacheLoadingRef = loadingRef.messageId;
-
-      const command = `node "${scriptPath}" "${configFilePath}"`;
-      this.sendLog({ detail: `${command}`, state: 'doing' });
-      const startTime = Date.now();
-
-      this._clearCacheSubscription?.unsubscribe();
-      this._clearCacheSubscription = this.cmdService.spawn('node', [scriptPath, configFilePath], {}, true).subscribe({
-        next: (output) => {
-          if (output.type === 'stdout' && output.data) {
-            const lines = output.data.split(/\r?\n/).filter(l => l.trim());
-            for (const line of lines) {
-              this.sendLog({ detail: line, state: 'doing' });
-            }
-          } else if (output.type === 'stderr' && output.data) {
-            const lines = output.data.split(/\r?\n/).filter(l => l.trim());
-            for (const line of lines) {
-              this.sendLog({ detail: line, state: 'error' });
-            }
-          } else if (output.type === 'close') {
-            const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-            this.message.remove(loadingRef.messageId);
-            this._clearCacheLoadingRef = null;
-            if (output.code === 0) {
-              this.sendLog({ detail: `Cache cleared (${duration}s)`, state: 'done' });
-              this.message.success(this.translateService.instant('SETTINGS.FIELDS.CACHE_CLEARED'));
-            } else {
-              this.sendLog({ detail: `Cache clear failed (${duration}s) ${output.stderr}`, state: 'error' });
-              this.message.error(this.translateService.instant('SETTINGS.FIELDS.CACHE_CLEAR_FAILED'));
-            }
-            this.cacheClearing = null;
-            this.loadCacheStats();
-          }
-        },
-        error: (e) => {
-          console.error('Failed to clear cache', e);
-          this.message.remove(loadingRef.messageId);
-          this._clearCacheLoadingRef = null;
-          this.sendLog({ title: this.translateService.instant('SETTINGS.FIELDS.CACHE_CLEAR_FAILED'), detail: String(e), state: 'error' });
-          this.message.error(this.translateService.instant('SETTINGS.FIELDS.CACHE_CLEAR_FAILED'));
-          this.cacheClearing = null;
-          this.loadCacheStats();
-        }
-      });
+    return {
+      buildPath,
+      configFilePath: window['path'].join(appDataPath, 'clear-cache-config.json'),
+      scriptPath: window['path'].join(window['path'].getAilyChildPath(), 'scripts', 'clear-cache.js')
     };
+  }
 
-    // 向主窗口查询当前项目的缓存目录名，获取后执行清理
-    if (window['iWindow'] && window['iWindow'].send) {
-      window['iWindow'].send({ to: 'main', data: { action: 'get-build-path' } })
-        .then((resp: any) => {
-          const excludeDirs: string[] = [];
-          if (resp?.buildPath) {
-            excludeDirs.push(window['path'].basename(resp.buildPath));
-          }
-          run(excludeDirs);
-        })
-        .catch(() => run([]));
-    } else {
-      run([]);
+  private async getCurrentProjectCacheExcludeDirs(): Promise<string[]> {
+    if (!window['iWindow']?.send) {
+      return [];
     }
+
+    try {
+      const resp = await window['iWindow'].send({ to: 'main', data: { action: 'get-build-path' } });
+      return resp?.buildPath ? [window['path'].basename(resp.buildPath)] : [];
+    } catch {
+      return [];
+    }
+  }
+
+  private writeClearCacheConfig(paths: CacheClearPaths, option: CacheClearOption, excludeDirs: string[]): boolean {
+    try {
+      window['fs'].writeFileSync(paths.configFilePath, JSON.stringify({
+        buildPath: paths.buildPath,
+        option,
+        excludeDirs
+      }, null, 2));
+      return true;
+    } catch (e) {
+      console.error('Failed to write clear-cache config', e);
+      this.message.error(this.translateService.instant('SETTINGS.FIELDS.CACHE_CLEAR_FAILED'));
+      return false;
+    }
+  }
+
+  private startClearCacheProcess(option: CacheClearOption, paths: CacheClearPaths) {
+    this.cacheClearing = option;
+    const loadingRef = this.message.loading(this.translateService.instant('SETTINGS.FIELDS.CACHE_CLEARING'), { nzDuration: 0 });
+    this._clearCacheLoadingRef = loadingRef.messageId;
+
+    const command = `node "${paths.scriptPath}" "${paths.configFilePath}"`;
+    this.sendLog({ detail: command, state: 'doing' });
+    const startTime = Date.now();
+
+    this._clearCacheSubscription?.unsubscribe();
+    this._clearCacheSubscription = this.cmdService.spawn('node', [paths.scriptPath, paths.configFilePath], {}, true).subscribe({
+      next: (output) => {
+        if (output.type === 'stdout' || output.type === 'stderr') {
+          this.logClearCacheOutput(output.data, output.type === 'stderr' ? 'error' : 'doing');
+          return;
+        }
+
+        if (output.type === 'close') {
+          this.finishClearCache(output.code === 0, startTime, output.stderr);
+        }
+      },
+      error: (e) => {
+        console.error('Failed to clear cache', e);
+        this.finishClearCache(false, startTime, String(e));
+      }
+    });
+  }
+
+  private logClearCacheOutput(data: string | undefined, state: 'doing' | 'error') {
+    if (!data) {
+      return;
+    }
+
+    const lines = data.split(/\r?\n/).filter(l => l.trim());
+    for (const line of lines) {
+      this.sendLog({ detail: line, state });
+    }
+  }
+
+  private finishClearCache(success: boolean, startTime: number, errorDetail?: string) {
+    const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+
+    if (this._clearCacheLoadingRef) {
+      this.message.remove(this._clearCacheLoadingRef);
+      this._clearCacheLoadingRef = null;
+    }
+
+    if (success) {
+      this.sendLog({ detail: `Cache cleared (${duration}s)`, state: 'done' });
+      this.message.success(this.translateService.instant('SETTINGS.FIELDS.CACHE_CLEARED'));
+    } else {
+      this.sendLog({
+        title: this.translateService.instant('SETTINGS.FIELDS.CACHE_CLEAR_FAILED'),
+        detail: `Cache clear failed (${duration}s) ${errorDetail || ''}`.trim(),
+        state: 'error'
+      });
+      this.message.error(this.translateService.instant('SETTINGS.FIELDS.CACHE_CLEAR_FAILED'));
+    }
+
+    this.cacheClearing = null;
+    this.loadCacheStats();
   }
 
   private sendLog(log: { title?: string; detail?: string; state?: string }) {
