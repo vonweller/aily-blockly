@@ -22,6 +22,7 @@ import {
 import type { SubagentChildItem } from './chat-parts';
 import type { ConfirmationPart, QuestionPart } from './chat-parts';
 import { ChatPerformanceTracer } from '../services/chat-perf-tracer';
+import { isTerminalSessionToolName } from './tool-name-normalizer';
 
 type ChatPartStoreKey = object | symbol | number | string;
 const TERMINAL_LIVE_STREAM_MAX_CHARS = 32 * 1024;
@@ -64,6 +65,12 @@ export interface StatePartPatch {
   progress?: number;
   kind?: StatePart['kind'];
   metadata?: Record<string, unknown>;
+}
+
+export interface TerminalPartPatch {
+  isRunning?: boolean;
+  status?: TerminalPart['status'];
+  exitCode?: TerminalPart['exitCode'];
 }
 
 export interface TextPayloadPartPatch {
@@ -334,6 +341,13 @@ function getTerminalSessionKey(terminal: Pick<TerminalPart, 'processId' | 'outpu
   return asString(terminal.processId) || asString(terminal.outputSessionId) || asString(terminal.terminalId);
 }
 
+function collectTerminalToolCallIds(terminal: Pick<TerminalPart, 'toolCallId' | 'sourceToolCallIds'>): Set<string> {
+  return new Set([
+    terminal.toolCallId,
+    ...(terminal.sourceToolCallIds ?? []),
+  ].map(value => asString(value)).filter((value): value is string => !!value));
+}
+
 function mergeTerminalSourceToolCallIds(existing: TerminalPart, next: TerminalPart): string[] | undefined {
   const merged = Array.from(new Set([
     ...(existing.sourceToolCallIds ?? []),
@@ -342,6 +356,174 @@ function mergeTerminalSourceToolCallIds(existing: TerminalPart, next: TerminalPa
     ...(next.toolCallId ? [next.toolCallId] : []),
   ].map(value => asString(value)).filter((value): value is string => !!value)));
   return merged.length > 0 ? merged : undefined;
+}
+
+function isReplaceableTerminalToolCall(part: ChatPart, terminal: TerminalPart): part is ToolCallPart {
+  if (part.type !== 'tool_call' || !isTerminalSessionToolName(part.toolName)) {
+    return false;
+  }
+
+  const terminalToolCallIds = collectTerminalToolCallIds(terminal);
+  if (terminalToolCallIds.has(part.toolCallId)) {
+    return true;
+  }
+
+  const partArgs = asRecord(part.args);
+  const partMetadata = asRecord(part.metadata);
+  const terminalSessionIds = new Set([
+    terminal.processId,
+    terminal.outputSessionId,
+    terminal.terminalId,
+  ].map(value => asString(value)).filter((value): value is string => !!value));
+  if (terminalSessionIds.size === 0) {
+    return false;
+  }
+
+  return [
+    partArgs?.['processId'],
+    partArgs?.['outputSessionId'],
+    partArgs?.['terminalId'],
+    partMetadata?.['processId'],
+    partMetadata?.['outputSessionId'],
+    partMetadata?.['terminalId'],
+    ...extractTerminalSessionIdsFromToolCallText(part.text),
+  ].some(value => {
+    const normalized = asString(value);
+    return !!normalized && terminalSessionIds.has(normalized);
+  });
+}
+
+function extractTerminalSessionIdsFromToolCallText(text: unknown): string[] {
+  const raw = asString(text);
+  if (!raw) {
+    return [];
+  }
+
+  const ids: string[] = [];
+  for (const line of raw.split(/\r?\n/)) {
+    const match = /^([A-Za-z][A-Za-z0-9_-]*)\s*:\s*(.*)$/.exec(line.trim());
+    if (!match) {
+      continue;
+    }
+    if (match[1] !== 'processId' && match[1] !== 'outputSessionId' && match[1] !== 'terminalId' && match[1] !== 'id') {
+      continue;
+    }
+    const value = asString(match[2]);
+    if (value) {
+      ids.push(value);
+    }
+  }
+  return ids;
+}
+
+function mergeTerminalMetadata(
+  existing: unknown,
+  next: unknown,
+): Record<string, unknown> | undefined {
+  const existingRecord = asRecord(existing);
+  const nextRecord = asRecord(next);
+  if (!existingRecord && !nextRecord) {
+    return undefined;
+  }
+
+  const merged: Record<string, unknown> = {
+    ...(existingRecord ?? {}),
+    ...(nextRecord ?? {}),
+  };
+  const existingApproval = asRecord(existingRecord?.['approval']);
+  const nextApproval = asRecord(nextRecord?.['approval']);
+  if (existingApproval || nextApproval) {
+    merged['approval'] = {
+      ...(existingApproval ?? {}),
+      ...(nextApproval ?? {}),
+    };
+  }
+  return merged;
+}
+
+function terminalWithInheritedMetadata(terminal: TerminalPart, sourcePart: ChatPart): TerminalPart {
+  if (sourcePart.type !== 'tool_call' && sourcePart.type !== 'terminal' && sourcePart.type !== 'confirmation') {
+    return terminal;
+  }
+
+  const metadata = mergeTerminalMetadata(
+    sourcePart.type === 'confirmation'
+      ? confirmationToTerminalMetadata(sourcePart, terminal)
+      : sourcePart.metadata,
+    terminal.metadata,
+  );
+  return metadata
+    ? { ...terminal, metadata }
+    : terminal;
+}
+
+function confirmationToTerminalMetadata(
+  confirmation: ConfirmationPart,
+  terminal: TerminalPart,
+): Record<string, unknown> {
+  return {
+    ...(confirmation.metadata ?? {}),
+    approval: {
+      toolCallId: terminal.toolCallId || confirmation.askId,
+      toolName: confirmation.toolName || 'run_in_terminal',
+      title: confirmation.title,
+      subtitle: confirmation.subtitle,
+      message: confirmation.message,
+      description: confirmation.description,
+      source: confirmation.source,
+      actions: confirmation.actions?.map(action => ({ ...action })) ?? [],
+      primaryScope: confirmation.primaryScope,
+      args: confirmation.args,
+      resolved: confirmation.resolved,
+      result: confirmation.result,
+      scope: confirmation.scope,
+    },
+  };
+}
+
+function isReplaceableTerminalConfirmation(part: ChatPart, terminal: TerminalPart): part is ConfirmationPart {
+  if (part.type !== 'confirmation' || !isTerminalSessionToolName(part.toolName)) {
+    return false;
+  }
+
+  const terminalToolCallIds = collectTerminalToolCallIds(terminal);
+  if (terminalToolCallIds.has(part.askId) || (!!part.partId && terminalToolCallIds.has(part.partId.replace(/^confirmation:/, '')))) {
+    return true;
+  }
+
+  const args = asRecord(part.args);
+  const command = asString(args?.['command']) || asString(args?.['cmd']);
+  const terminalCommand = asString(terminal.command);
+  return !!command && !!terminalCommand && command === terminalCommand;
+}
+
+function warnTerminalInvocationDuplicates(parts: readonly ChatPart[], terminal: TerminalPart): void {
+  const duplicates = parts.filter(part => isReplaceableTerminalToolCall(part, terminal) || isReplaceableTerminalConfirmation(part, terminal));
+  if (duplicates.length === 0) {
+    return;
+  }
+
+  console.debug('[AilyChat][TerminalInvocationInvariant]', {
+    terminal: {
+      partId: terminal.partId,
+      toolCallId: terminal.toolCallId,
+      sourceToolCallIds: terminal.sourceToolCallIds,
+      processId: terminal.processId,
+      outputSessionId: terminal.outputSessionId,
+      terminalId: terminal.terminalId,
+      hasApproval: !!asRecord(terminal.metadata)?.['approval'],
+    },
+    duplicates: duplicates.map(part => ({
+      type: part.type,
+      partId: part.partId,
+      toolCallId: part.type === 'tool_call' ? part.toolCallId : undefined,
+      toolName: part.toolName,
+      state: part.type === 'tool_call' ? part.state : undefined,
+      hasApproval: !!asRecord(part.metadata)?.['approval'],
+      askId: part.type === 'confirmation' ? part.askId : undefined,
+      resolved: part.type === 'confirmation' ? part.resolved : undefined,
+    })),
+  });
 }
 
 function mergeToolCallMetadata(
@@ -1077,8 +1259,20 @@ export class ChatPartStore {
         || (!!terminal.partId && part.partId === terminal.partId);
     });
 
+    const normalizedTerminal = normalizeTerminalLivePart(terminal);
     if (existingIndex < 0) {
-      return this.addPart(storeKey, normalizeTerminalLivePart(terminal));
+      const invocationIndex = parts.findIndex(part =>
+        isReplaceableTerminalToolCall(part, normalizedTerminal)
+        || isReplaceableTerminalConfirmation(part, normalizedTerminal));
+      if (invocationIndex >= 0) {
+        const replacement = terminalWithInheritedMetadata(normalizedTerminal, parts[invocationIndex]!);
+        this.updatePart(storeKey, invocationIndex, replacement);
+        warnTerminalInvocationDuplicates(this.getParts(storeKey), replacement);
+        return invocationIndex;
+      }
+      const addedIndex = this.addPart(storeKey, normalizedTerminal);
+      warnTerminalInvocationDuplicates(this.getParts(storeKey), normalizedTerminal);
+      return addedIndex;
     }
 
     const existing = parts[existingIndex] as TerminalPart;
@@ -1094,7 +1288,7 @@ export class ChatPartStore {
       ? appendTerminalLiveStream(existing.stderr, terminal.stderr)
       : existing.stderr;
     const sourceToolCallIds = mergeTerminalSourceToolCallIds(existing, terminal);
-    this.updatePart(storeKey, existingIndex, {
+    const nextTerminal: TerminalPart = {
       ...existing,
       ...terminal,
       partId: existing.partId || terminal.partId,
@@ -1114,8 +1308,60 @@ export class ChatPartStore {
       bytesTotal: terminal.bytesTotal ?? existing.bytesTotal,
       lastOutputAt: terminal.lastOutputAt || existing.lastOutputAt,
       outputUpdateKind: terminal.outputUpdateKind || existing.outputUpdateKind,
-    });
+      metadata: mergeTerminalMetadata(existing.metadata, terminal.metadata),
+    };
+    this.updatePart(storeKey, existingIndex, nextTerminal);
+    warnTerminalInvocationDuplicates(this.getParts(storeKey), nextTerminal);
     return existingIndex;
+  }
+
+  patchTerminalForHandle(
+    handle: ChatPartStoreReadableHandle | null,
+    identity: {
+      readonly partId?: string;
+      readonly processId?: string;
+      readonly outputSessionId?: string;
+      readonly terminalId?: string;
+      readonly toolCallId?: string;
+    },
+    patch: TerminalPartPatch,
+  ): boolean {
+    const storeKey = this.resolveStoreKey(handle);
+    if (storeKey === null) {
+      return false;
+    }
+
+    const parts = this.getParts(storeKey);
+    const identitySessionKey = getTerminalSessionKey(identity);
+    const index = parts.findIndex(part => {
+      if (part.type !== 'terminal') {
+        return false;
+      }
+      if (identity.partId && part.partId === identity.partId) {
+        return true;
+      }
+      const partSessionKey = getTerminalSessionKey(part);
+      if (identitySessionKey && partSessionKey === identitySessionKey) {
+        return true;
+      }
+      if (identity.toolCallId && (part.toolCallId === identity.toolCallId || part.sourceToolCallIds?.includes(identity.toolCallId))) {
+        return true;
+      }
+      return false;
+    });
+
+    if (index < 0) {
+      return false;
+    }
+
+    const existing = parts[index] as TerminalPart;
+    this.updatePart(storeKey, index, {
+      ...existing,
+      ...(typeof patch.isRunning === 'boolean' ? { isRunning: patch.isRunning } : {}),
+      ...(patch.status ? { status: patch.status } : {}),
+      ...(typeof patch.exitCode === 'number' ? { exitCode: patch.exitCode } : {}),
+    });
+    return true;
   }
 
   /** 在指定位置插入 Part。超出范围时追加到末尾。 */
@@ -2138,6 +2384,9 @@ export class ChatPartStore {
     for (const [storeKey, parts] of this._store) {
       for (const p of parts) {
         if (p.type === 'tool_call' && p.toolCallId === toolCallId) {
+          return storeKey;
+        }
+        if (p.type === 'terminal' && (p.toolCallId === toolCallId || p.sourceToolCallIds?.includes(toolCallId))) {
           return storeKey;
         }
       }

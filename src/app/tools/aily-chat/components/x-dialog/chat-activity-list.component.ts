@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, Input, forwardRef } from '@angular/core';
+import { ChangeDetectionStrategy, Component, EventEmitter, Input, Output, forwardRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 
 import { ChatActivityItemComponent } from './chat-activity-item.component';
@@ -17,7 +17,8 @@ import type { ActivityGroupDisplayItem } from './chat-activity-group.types';
           [sessionId]="sessionId"
           [first]="first"
           [last]="last"
-          [only]="count === 1" />
+          [only]="count === 1"
+          (contentDelta)="contentDelta.emit()" />
       }
     </div>
   `,
@@ -44,4 +45,5 @@ import type { ActivityGroupDisplayItem } from './chat-activity-group.types';
 export class ChatActivityListComponent {
   @Input() items: readonly ActivityGroupDisplayItem[] = [];
   @Input() sessionId = '';
+  @Output() contentDelta = new EventEmitter<void>();
 }

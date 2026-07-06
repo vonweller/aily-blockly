@@ -135,6 +135,7 @@
               [doing]="effectiveDoing"
               [turnResponse]="activityTurnResponse"
               [detailProjectionEnabled]="isViewportVisible"
+              (contentDelta)="handleStructuredContentDelta()"
             />
           } @else if (streamContent()) {
             <x-markdown
