@@ -185,23 +185,8 @@ function buildReadFileSummary(args: any, metadata?: Record<string, unknown> | nu
     return undefined;
   }
 
-  const rangeSummary = formatReadRange(
-    readFileMetadata?.['returnedStartLine'] ?? readFileMetadata?.['requestedStartLine'] ?? args?.startLine,
-    readFileMetadata?.['returnedEndLine'] ?? readFileMetadata?.['requestedEndLine'] ?? args?.endLine,
-    readFileMetadata?.['lineCount'] ?? args?.lineCount,
-    args?.startByte,
-    args?.byteCount,
-  );
-  const byteSummary = formatReadByteSummary(
-    readFileMetadata?.['readBytes'],
-    readFileMetadata?.['totalBytes'],
-    readFileMetadata?.['truncatedByBytes'],
-  );
-  const continuationSummary = formatReadContinuation(readFileMetadata?.['continueWith']);
-
   return {
     label: `Read ${formatPathLeaf(path, 'file')}`,
-    subtitle: joinSummaryParts(rangeSummary, byteSummary, continuationSummary),
   };
 }
 
@@ -1030,102 +1015,6 @@ function formatPathScope(path: string | undefined): string {
 
 function formatSearchScope(args: any): string {
   return formatPathScope(asString(args?.includePattern) || getPrimaryPath(args));
-}
-
-function formatReadRange(
-  startLine: unknown,
-  endLine: unknown,
-  lineCount: unknown,
-  startByte: unknown,
-  byteCount: unknown,
-): string | undefined {
-  const start = asNumber(startLine);
-  const end = asNumber(endLine);
-  const count = asNumber(lineCount);
-  const startOffset = asNumber(startByte);
-  const byteLength = asNumber(byteCount);
-
-  if (start !== undefined) {
-    const resolvedEnd = end !== undefined
-      ? end
-      : count !== undefined && count > 0
-        ? start + count - 1
-        : undefined;
-    if (resolvedEnd !== undefined) {
-      return start === resolvedEnd ? `line ${start}` : `lines ${start} to ${resolvedEnd}`;
-    }
-    return `from line ${start}`;
-  }
-
-  if (startOffset !== undefined) {
-    if (byteLength !== undefined && byteLength > 0) {
-      return `bytes ${startOffset} to ${startOffset + byteLength - 1}`;
-    }
-    return `from byte ${startOffset}`;
-  }
-
-  return undefined;
-}
-
-function formatReadByteSummary(
-  readBytes: unknown,
-  totalBytes: unknown,
-  truncatedByBytes: unknown,
-): string | undefined {
-  const read = asNumber(readBytes);
-  const total = asNumber(totalBytes);
-  const byteCap = truncatedByBytes === true;
-
-  if (read === undefined && total === undefined && !byteCap) {
-    return undefined;
-  }
-
-  const parts: string[] = [];
-  if (read !== undefined && total !== undefined) {
-    parts.push(`${formatByteCount(read)} of ${formatByteCount(total)}`);
-  } else if (read !== undefined) {
-    parts.push(formatByteCount(read));
-  } else if (total !== undefined) {
-    parts.push(`total ${formatByteCount(total)}`);
-  }
-
-  if (byteCap) {
-    parts.push('byte-capped');
-  }
-
-  return parts.length > 0 ? parts.join(', ') : undefined;
-}
-
-function formatReadContinuation(value: unknown): string | undefined {
-  const continuation = asRecord(value);
-  if (!continuation) {
-    return undefined;
-  }
-
-  const startLine = asNumber(continuation['startLine']);
-  const endLine = asNumber(continuation['endLine']);
-  if (startLine !== undefined) {
-    if (endLine !== undefined) {
-      return startLine === endLine
-        ? `continue with line ${startLine}`
-        : `continue with lines ${startLine} to ${endLine}`;
-    }
-    return `continue with line ${startLine}`;
-  }
-
-  const offset = asNumber(continuation['offset']);
-  const limit = asNumber(continuation['limit']);
-  if (offset !== undefined) {
-    return limit !== undefined
-      ? `continue with offset ${offset}, limit ${limit}`
-      : `continue with offset ${offset}`;
-  }
-
-  return undefined;
-}
-
-function formatByteCount(value: number): string {
-  return `${value.toLocaleString('en-US')} bytes`;
 }
 
 function joinSummaryParts(...parts: Array<string | undefined>): string | undefined {

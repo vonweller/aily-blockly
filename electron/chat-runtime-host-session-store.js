@@ -54,7 +54,13 @@ function normalizeResourceRequestKind(kind) {
     || kind === 'file-write'
     || kind === 'file-edit'
     || kind === 'workspace-mutation'
+    || kind === 'project-info'
+    || kind === 'project-build'
+    || kind === 'project-lint'
+    || kind === 'blockly-workspace'
+    || kind === 'connection-graph'
     || kind === 'edit-tracking'
+    || kind === 'session-title'
     || kind === 'save-current-session'
     || kind === 'history-persistence'
     ? kind
@@ -104,6 +110,86 @@ function clonePayload(value) {
     return structuredClone(value);
   }
   return JSON.parse(JSON.stringify(value));
+}
+
+function readTurnParts(turn) {
+  return Array.isArray(turn && turn.response && turn.response.parts)
+    ? turn.response.parts
+    : [];
+}
+
+function readTurnStatus(turn) {
+  return typeof (turn && turn.response && turn.response.status) === 'string'
+    ? turn.response.status
+    : undefined;
+}
+
+function getTurnPartStableKey(part) {
+  if (!part || typeof part !== 'object') {
+    return '';
+  }
+  if (typeof part.partId === 'string' && part.partId.trim().length > 0) {
+    return `${part.type || 'part'}:${part.partId.trim()}`;
+  }
+  switch (part.type) {
+    case 'tool_call':
+      return typeof part.toolCallId === 'string' && part.toolCallId.trim()
+        ? `tool:${part.toolCallId.trim()}`
+        : '';
+    case 'terminal': {
+      const terminalId = part.processId || part.outputSessionId || part.terminalId || part.toolCallId;
+      return typeof terminalId === 'string' && terminalId.trim()
+        ? `terminal:${terminalId.trim()}`
+        : '';
+    }
+    case 'state':
+      return typeof part.stateId === 'string' && part.stateId.trim()
+        ? `state:${part.stateId.trim()}`
+        : '';
+    case 'question':
+      return typeof part.requestId === 'string' && part.requestId.trim()
+        ? `question:${part.requestId.trim()}`
+        : '';
+    case 'confirmation': {
+      const askId = part.askId || part.requestId || part.toolCallId;
+      return typeof askId === 'string' && askId.trim()
+        ? `confirmation:${askId.trim()}`
+        : '';
+    }
+    default:
+      return '';
+  }
+}
+
+function stableStringifyPayload(value) {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function collectChangedTurnParts(previousTurn, nextTurn) {
+  const previousParts = readTurnParts(previousTurn);
+  const nextParts = readTurnParts(nextTurn);
+  if (nextParts.length === 0) {
+    return [];
+  }
+  const previousByKey = new Map();
+  previousParts.forEach((part, index) => {
+    const key = getTurnPartStableKey(part) || `index:${index}`;
+    previousByKey.set(key, stableStringifyPayload(part));
+  });
+  const changed = [];
+  nextParts.forEach((part, index) => {
+    const key = getTurnPartStableKey(part) || `index:${index}`;
+    const previousSignature = previousByKey.get(key);
+    const nextSignature = stableStringifyPayload(part);
+    if (previousSignature !== nextSignature) {
+      changed.push(part);
+    }
+  });
+  return changed;
 }
 
 class ChatRuntimeHostSessionStore {
@@ -619,6 +705,11 @@ class ChatRuntimeHostSessionStore {
     const renderEvent = payload && payload.renderEvent && typeof payload.renderEvent === 'object'
       ? payload.renderEvent
       : null;
+    const normalizedTurnId = this.normalizeActiveTurnId(payload && payload.turnId);
+    const beforeTranscript = this.transcriptBuilder.buildTranscriptSnapshot(sessionId);
+    const beforeTurn = Array.isArray(beforeTranscript && beforeTranscript.turnResponses)
+      ? beforeTranscript.turnResponses.find(candidate => this.normalizeActiveTurnId(candidate && candidate.turnId) === normalizedTurnId)
+      : null;
     const transcript = this.transcriptBuilder.acceptRenderEvent({
       sessionId,
       turnId: payload && payload.turnId,
@@ -626,11 +717,26 @@ class ChatRuntimeHostSessionStore {
       request: (payload && payload.request) || this.readActiveSubmittedRequest(sessionId),
       event: this.retargetRuntimeOwnerRenderEvent(renderEvent, payload && payload.turnId),
     });
-    const transcriptEvent = this.buildTurnTranscriptEvent(
-      transcript,
-      payload && payload.turnId,
-      payload && payload.revision,
-    );
+    const turns = Array.isArray(transcript && transcript.turnResponses)
+      ? transcript.turnResponses
+      : [];
+    const nextTurn = turns.find(candidate => this.normalizeActiveTurnId(candidate && candidate.turnId) === normalizedTurnId) || null;
+    const changedParts = collectChangedTurnParts(beforeTurn, nextTurn);
+    const transcriptEvent = changedParts.length > 0 && nextTurn
+      ? {
+          kind: 'part-transcript',
+          sessionId,
+          turnId: normalizedTurnId,
+          revision: Number(transcript && transcript.revision) || Number(payload && payload.revision) || 0,
+          parts: clonePayload(changedParts),
+          turn: clonePayload(nextTurn),
+          ...(readTurnStatus(nextTurn) ? { status: readTurnStatus(nextTurn) } : {}),
+        }
+      : this.buildTurnTranscriptEvent(
+        transcript,
+        payload && payload.turnId,
+        payload && payload.revision,
+      );
     const interactionEvents = this.cacheInteractionFromRenderEvent({
       sessionId,
       revision: Number(payload && payload.revision) || Number(transcript && transcript.revision) || 0,

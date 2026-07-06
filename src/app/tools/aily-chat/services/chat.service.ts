@@ -30,6 +30,7 @@ import { normalizeAgentIdentifier } from '../core/agent-identifiers';
 import {
   DEFAULT_CHAT_RESOLVED_MODE,
   DEFAULT_CHAT_SESSION_PERMISSION_MODE,
+  DEFAULT_CHAT_SESSION_PERMISSION_PROFILE,
   DEFAULT_CHAT_SESSION_TYPE,
   DEFAULT_CHAT_SELECTED_MODE,
   DEFAULT_CHAT_SURFACE_MODE_ID,
@@ -40,6 +41,7 @@ import {
   normalizeChatSelectedMode,
   normalizeChatSessionProviderOptionGroups,
   normalizeChatSessionPermissionMode,
+  normalizeChatSessionPermissionProfile,
   type ChatSessionInputMode,
   type ChatSessionInputModeInstructions,
   type ChatSessionInputState,
@@ -52,6 +54,7 @@ import {
   resolveChatSelectedCustomAgentTarget,
   resolveChatSurfaceModeId,
   type ChatSessionPermissionMode,
+  type ChatSessionPermissionProfile,
   type ChatResolvedModeTarget,
   type ChatSessionType,
   type ChatResolvedMode,
@@ -61,11 +64,14 @@ import {
   type ChatSurfaceModeId,
 } from '../core/chat-mode';
 import {
+  HOST_SESSION_APPROVALS_REVIEWER_OPTION_ID,
   HOST_SESSION_FOLDER_OPTION_ID,
   HOST_SESSION_PERMISSION_MODE_OPTION_ID,
+  HOST_SESSION_PERMISSION_PROFILE_OPTION_ID,
   normalizeHostSessionProviderOptions,
   resolveHostSessionProviderOptionGroups,
   resolveHostSessionProviderOptionsFromInputState,
+  type HostSessionProviderOptions,
 } from '../helpers/host-session-input-state';
 import {
   getTurnResponseResolvedPresetId,
@@ -108,6 +114,7 @@ export interface ChatTextMessage {
 export interface ChatServiceSessionProviderOptions {
   readonly folderPath?: unknown;
   readonly permissionMode?: unknown;
+  readonly permissionProfile?: unknown;
   readonly permissionLevel?: unknown;
   readonly approvalsReviewer?: unknown;
   readonly approvalPolicy?: unknown;
@@ -195,12 +202,16 @@ export class ChatService {
   private _currentSessionPath = '';
   private _currentSessionType: ChatSessionType = DEFAULT_CHAT_SESSION_TYPE;
   private _currentSessionPermissionMode: ChatSessionPermissionMode = DEFAULT_CHAT_SESSION_PERMISSION_MODE;
+  private _currentSessionPermissionProfile: ChatSessionPermissionProfile = DEFAULT_CHAT_SESSION_PERMISSION_PROFILE;
   private _currentSessionPermissionLevel: string | undefined;
   private _currentSessionApprovalsReviewer: 'user' | 'auto_review' | undefined;
   private _currentSessionApprovalPolicy: 'on_request' | 'never' | undefined;
   private _hasBlankSessionShell = false;
   private _newSessionFolderPath: string | undefined;
   private _newSessionPermissionMode: ChatSessionPermissionMode | undefined;
+  private _newSessionPermissionProfile: ChatSessionPermissionProfile | undefined;
+  private _newSessionApprovalsReviewer: 'user' | 'auto_review' | undefined;
+  private _newSessionApprovalPolicy: 'on_request' | 'never' | undefined;
   private _currentSessionProviderSelections: ChatServiceProviderSelectionState = {};
   private _newSessionProviderSelections: ChatServiceProviderSelectionState = {};
   private readonly sessionInputStateChangedSubject = new Subject<void>();
@@ -388,6 +399,20 @@ export class ChatService {
     }
 
     this._currentSessionPermissionMode = normalizedPermissionMode;
+    this.notifySessionInputStateChanged();
+  }
+
+  get currentSessionPermissionProfile(): ChatSessionPermissionProfile {
+    return this._currentSessionPermissionProfile;
+  }
+
+  set currentSessionPermissionProfile(permissionProfile: ChatSessionPermissionProfile) {
+    const normalizedPermissionProfile = normalizeChatSessionPermissionProfile(permissionProfile);
+    if (this._currentSessionPermissionProfile === normalizedPermissionProfile) {
+      return;
+    }
+
+    this._currentSessionPermissionProfile = normalizedPermissionProfile;
     this.notifySessionInputStateChanged();
   }
 
@@ -802,6 +827,10 @@ export class ChatService {
     this.currentSessionPermissionMode = normalizeChatSessionPermissionMode(permissionMode);
   }
 
+  setCurrentSessionPermissionProfile(permissionProfile: unknown): void {
+    this.currentSessionPermissionProfile = normalizeChatSessionPermissionProfile(permissionProfile);
+  }
+
   setCurrentSessionPermissionLevel(permissionLevel: unknown): void {
     this.currentSessionPermissionLevel = normalizeChatSessionPermissionLevel(permissionLevel);
   }
@@ -818,10 +847,11 @@ export class ChatService {
     this.currentSessionType = normalizeChatSessionType(sessionType);
   }
 
-  getCurrentSessionProviderOptions(): { folderPath: string; permissionMode: ChatSessionPermissionMode; permissionLevel?: string; approvalsReviewer?: 'user' | 'auto_review'; approvalPolicy?: 'on_request' | 'never' } {
+  getCurrentSessionProviderOptions(): HostSessionProviderOptions {
     return {
       folderPath: this.currentSessionPath,
       permissionMode: this.currentSessionPermissionMode,
+      permissionProfile: this.currentSessionPermissionProfile,
       ...(this.currentSessionPermissionLevel ? { permissionLevel: this.currentSessionPermissionLevel } : {}),
       ...(this.currentSessionApprovalsReviewer ? { approvalsReviewer: this.currentSessionApprovalsReviewer } : {}),
       ...(this.currentSessionApprovalPolicy ? { approvalPolicy: this.currentSessionApprovalPolicy } : {}),
@@ -830,11 +860,14 @@ export class ChatService {
 
   getNewSessionProviderOptions(
     fallback?: ChatServiceSessionProviderOptions | null,
-  ): { folderPath: string; permissionMode: ChatSessionPermissionMode; permissionLevel?: string; approvalsReviewer?: 'user' | 'auto_review'; approvalPolicy?: 'on_request' | 'never' } {
+  ): HostSessionProviderOptions {
     const normalizedFallback = this.normalizeProviderOptionsInput(fallback);
     return normalizeHostSessionProviderOptions({
       folderPath: this._newSessionFolderPath,
       permissionMode: this._newSessionPermissionMode,
+      permissionProfile: this._newSessionPermissionProfile,
+      approvalsReviewer: this._newSessionApprovalsReviewer,
+      approvalPolicy: this._newSessionApprovalPolicy,
     }, normalizedFallback);
   }
 
@@ -888,7 +921,7 @@ export class ChatService {
       readonly applyToCurrentSession?: boolean;
       readonly fallbackProviderOptions?: ChatServiceSessionProviderOptions | null;
     },
-  ): { folderPath: string; permissionMode: ChatSessionPermissionMode } {
+  ): HostSessionProviderOptions {
     let nextProviderOptions = this.getNewSessionProviderOptions(options?.fallbackProviderOptions);
     let nextNewSelections = { ...this._newSessionProviderSelections };
     let nextCurrentSelections = { ...this._currentSessionProviderSelections };
@@ -913,13 +946,122 @@ export class ChatService {
           continue;
         }
 
+        const selectionValue = update.value.trim();
         const permissionMode = normalizeChatSessionPermissionMode(update.value, nextProviderOptions.permissionMode);
-        if (permissionMode !== nextProviderOptions.permissionMode) {
+        const permissionProfile = normalizeChatSessionPermissionProfile(update.value, nextProviderOptions.permissionProfile);
+        const normalizedPermissionMode = permissionMode === 'bypassPermissions'
+          ? DEFAULT_CHAT_SESSION_PERMISSION_MODE
+          : permissionMode;
+        if (normalizedPermissionMode !== nextProviderOptions.permissionMode || permissionProfile !== nextProviderOptions.permissionProfile) {
           nextProviderOptions = {
             ...nextProviderOptions,
-            permissionMode,
+            permissionMode: normalizedPermissionMode,
+            permissionProfile,
           };
           hadProviderOptionsChange = true;
+        }
+        if (nextNewSelections[optionId] !== selectionValue) {
+          nextNewSelections = {
+            ...nextNewSelections,
+            [optionId]: selectionValue,
+          };
+          hadNewSelectionChange = true;
+        }
+        if (shouldApplyToCurrentSession && nextCurrentSelections[optionId] !== selectionValue) {
+          nextCurrentSelections = {
+            ...nextCurrentSelections,
+            [optionId]: selectionValue,
+          };
+        }
+        continue;
+      }
+
+      if (optionId === HOST_SESSION_PERMISSION_PROFILE_OPTION_ID) {
+        if (typeof update.value !== 'string' || update.value.trim().length === 0) {
+          continue;
+        }
+
+        const selectionValue = update.value.trim();
+        const permissionProfile = normalizeChatSessionPermissionProfile(update.value, nextProviderOptions.permissionProfile);
+        if (permissionProfile !== nextProviderOptions.permissionProfile) {
+          nextProviderOptions = {
+            ...nextProviderOptions,
+            permissionProfile,
+          };
+          hadProviderOptionsChange = true;
+        }
+        if (nextNewSelections[optionId] !== selectionValue) {
+          nextNewSelections = {
+            ...nextNewSelections,
+            [optionId]: selectionValue,
+          };
+          hadNewSelectionChange = true;
+        }
+        if (shouldApplyToCurrentSession && nextCurrentSelections[optionId] !== selectionValue) {
+          nextCurrentSelections = {
+            ...nextCurrentSelections,
+            [optionId]: selectionValue,
+          };
+        }
+        continue;
+      }
+
+      if (optionId === 'approvalsReviewer') {
+        if (typeof update.value !== 'string' || update.value.trim().length === 0) {
+          continue;
+        }
+
+        const selectionValue = update.value.trim();
+        const approvalsReviewer = normalizeChatSessionApprovalsReviewer(update.value);
+        if (approvalsReviewer && approvalsReviewer !== nextProviderOptions.approvalsReviewer) {
+          nextProviderOptions = {
+            ...nextProviderOptions,
+            approvalsReviewer,
+          };
+          hadProviderOptionsChange = true;
+        }
+        if (approvalsReviewer && nextNewSelections[optionId] !== selectionValue) {
+          nextNewSelections = {
+            ...nextNewSelections,
+            [optionId]: selectionValue,
+          };
+          hadNewSelectionChange = true;
+        }
+        if (approvalsReviewer && shouldApplyToCurrentSession && nextCurrentSelections[optionId] !== selectionValue) {
+          nextCurrentSelections = {
+            ...nextCurrentSelections,
+            [optionId]: selectionValue,
+          };
+        }
+        continue;
+      }
+
+      if (optionId === 'approvalPolicy') {
+        if (typeof update.value !== 'string' || update.value.trim().length === 0) {
+          continue;
+        }
+
+        const selectionValue = update.value.trim();
+        const approvalPolicy = normalizeChatSessionApprovalPolicy(update.value);
+        if (approvalPolicy && approvalPolicy !== nextProviderOptions.approvalPolicy) {
+          nextProviderOptions = {
+            ...nextProviderOptions,
+            approvalPolicy,
+          };
+          hadProviderOptionsChange = true;
+        }
+        if (approvalPolicy && nextNewSelections[optionId] !== selectionValue) {
+          nextNewSelections = {
+            ...nextNewSelections,
+            [optionId]: selectionValue,
+          };
+          hadNewSelectionChange = true;
+        }
+        if (approvalPolicy && shouldApplyToCurrentSession && nextCurrentSelections[optionId] !== selectionValue) {
+          nextCurrentSelections = {
+            ...nextCurrentSelections,
+            [optionId]: selectionValue,
+          };
         }
         continue;
       }
@@ -975,6 +1117,9 @@ export class ChatService {
     if (hadProviderOptionsChange || hadNewSelectionChange) {
       this._newSessionFolderPath = nextProviderOptions.folderPath;
       this._newSessionPermissionMode = nextProviderOptions.permissionMode;
+      this._newSessionPermissionProfile = nextProviderOptions.permissionProfile;
+      this._newSessionApprovalsReviewer = nextProviderOptions.approvalsReviewer;
+      this._newSessionApprovalPolicy = nextProviderOptions.approvalPolicy;
       this._newSessionProviderSelections = nextNewSelections;
       this.sessionProviderOptionsChangedSubject.next();
     }
@@ -996,7 +1141,7 @@ export class ChatService {
 
   applySessionProviderOptions(
     providerOptions?: ChatServiceSessionProviderOptions | null,
-  ): { folderPath: string; permissionMode: ChatSessionPermissionMode; permissionLevel?: string; approvalsReviewer?: 'user' | 'auto_review'; approvalPolicy?: 'on_request' | 'never' } {
+  ): HostSessionProviderOptions {
     const folderPath = typeof providerOptions?.folderPath === 'string'
       ? providerOptions.folderPath.trim()
       : '';
@@ -1004,28 +1149,33 @@ export class ChatService {
       providerOptions?.permissionMode,
       this.currentSessionPermissionMode,
     );
+    const permissionProfile = normalizeChatSessionPermissionProfile(
+      providerOptions?.permissionProfile ?? providerOptions?.permissionMode,
+      this.currentSessionPermissionProfile,
+    );
     const permissionLevel = normalizeChatSessionPermissionLevel(
       providerOptions?.permissionLevel,
     ) ?? this.currentSessionPermissionLevel;
     const approvalsReviewer = normalizeChatSessionApprovalsReviewer(providerOptions?.approvalsReviewer)
       ?? this.currentSessionApprovalsReviewer
       ?? this.ailyChatConfigService.getLexApprovalsReviewer?.();
-    const normalizedApprovalPolicy = normalizeChatSessionApprovalPolicy(providerOptions?.approvalPolicy)
+    const approvalPolicy = normalizeChatSessionApprovalPolicy(providerOptions?.approvalPolicy)
       ?? this.currentSessionApprovalPolicy
       ?? this.ailyChatConfigService.getLexApprovalPolicy?.();
-    const approvalPolicy = permissionMode === 'bypassPermissions'
-      ? 'never'
-      : normalizedApprovalPolicy;
 
     this.currentSessionPath = folderPath;
-    this.currentSessionPermissionMode = permissionMode;
+    this.currentSessionPermissionMode = permissionMode === 'bypassPermissions'
+      ? DEFAULT_CHAT_SESSION_PERMISSION_MODE
+      : permissionMode;
+    this.currentSessionPermissionProfile = permissionProfile;
     this.currentSessionPermissionLevel = permissionLevel;
     this.currentSessionApprovalsReviewer = approvalsReviewer;
     this.currentSessionApprovalPolicy = approvalPolicy;
 
     return {
       folderPath,
-      permissionMode,
+      permissionMode: this.currentSessionPermissionMode,
+      permissionProfile,
       ...(permissionLevel ? { permissionLevel } : {}),
       ...(approvalsReviewer ? { approvalsReviewer } : {}),
       ...(approvalPolicy ? { approvalPolicy } : {}),
@@ -1047,7 +1197,7 @@ export class ChatService {
       this.currentSessionType = normalizeChatSessionType(identity.sessionType, this.currentSessionType);
     }
 
-    let normalizedProviderOptions: { folderPath: string; permissionMode: ChatSessionPermissionMode; permissionLevel?: string; approvalsReviewer?: 'user' | 'auto_review'; approvalPolicy?: 'on_request' | 'never' } | undefined;
+    let normalizedProviderOptions: HostSessionProviderOptions | undefined;
     if (identity.providerOptions !== undefined) {
       normalizedProviderOptions = this.applySessionProviderOptions(identity.providerOptions);
     }
@@ -1071,20 +1221,16 @@ export class ChatService {
 
   private normalizeProviderOptionsInput(
     providerOptions?: ChatServiceSessionProviderOptions | null,
-  ): { folderPath?: string; permissionMode?: ChatSessionPermissionMode; permissionLevel?: string; approvalsReviewer?: 'user' | 'auto_review'; approvalPolicy?: 'on_request' | 'never' } {
-    const permissionMode = providerOptions?.permissionMode !== undefined
-      ? normalizeChatSessionPermissionMode(providerOptions.permissionMode, DEFAULT_CHAT_SESSION_PERMISSION_MODE)
-      : undefined;
-    const approvalPolicy = providerOptions?.approvalPolicy !== undefined
-      ? normalizeChatSessionApprovalPolicy(providerOptions.approvalPolicy)
-      : undefined;
-
+  ): Partial<HostSessionProviderOptions> {
     return {
       ...(typeof providerOptions?.folderPath === 'string'
         ? { folderPath: providerOptions.folderPath.trim() }
         : {}),
-      ...(permissionMode !== undefined
-        ? { permissionMode }
+      ...(providerOptions?.permissionMode !== undefined
+        ? { permissionMode: normalizeChatSessionPermissionMode(providerOptions.permissionMode, DEFAULT_CHAT_SESSION_PERMISSION_MODE) }
+        : {}),
+      ...(providerOptions?.permissionProfile !== undefined || providerOptions?.permissionMode === 'bypassPermissions'
+        ? { permissionProfile: normalizeChatSessionPermissionProfile(providerOptions.permissionProfile ?? providerOptions.permissionMode) }
         : {}),
       ...(providerOptions?.permissionLevel !== undefined
         ? { permissionLevel: normalizeChatSessionPermissionLevel(providerOptions.permissionLevel) }
@@ -1092,10 +1238,8 @@ export class ChatService {
       ...(providerOptions?.approvalsReviewer !== undefined
         ? { approvalsReviewer: normalizeChatSessionApprovalsReviewer(providerOptions.approvalsReviewer) }
         : {}),
-      ...((permissionMode === 'bypassPermissions'
-        ? 'never'
-        : approvalPolicy) !== undefined
-        ? { approvalPolicy: permissionMode === 'bypassPermissions' ? 'never' : approvalPolicy }
+      ...(providerOptions?.approvalPolicy !== undefined
+        ? { approvalPolicy: normalizeChatSessionApprovalPolicy(providerOptions.approvalPolicy) }
         : {}),
     };
   }
@@ -1103,7 +1247,7 @@ export class ChatService {
   private buildProviderOptionGroupsForSessionType(
     sessionType: ChatSessionType,
     previousInputState: ChatSessionInputState | null | undefined,
-    providerOptions: { folderPath: string; permissionMode: ChatSessionPermissionMode; permissionLevel?: string; approvalsReviewer?: 'user' | 'auto_review'; approvalPolicy?: 'on_request' | 'never' },
+    providerOptions: HostSessionProviderOptions,
     selectionState: ChatServiceProviderSelectionState,
     scope: 'current' | 'new',
   ): readonly ChatSessionProviderOptionGroup[] {
@@ -1122,7 +1266,7 @@ export class ChatService {
 
   private buildNewSessionOptionSelections(
     sessionType: ChatSessionType,
-    providerOptions: { folderPath: string; permissionMode: ChatSessionPermissionMode },
+    providerOptions: HostSessionProviderOptions,
     selectionState: ChatServiceProviderSelectionState,
   ): Record<string, string> {
     if (sessionType === 'aily-agent') {
@@ -1158,6 +1302,10 @@ export class ChatService {
 
     return {
       [HOST_SESSION_PERMISSION_MODE_OPTION_ID]: providerOptions.permissionMode,
+      [HOST_SESSION_PERMISSION_PROFILE_OPTION_ID]: providerOptions.permissionProfile,
+      ...(providerOptions.approvalsReviewer
+        ? { [HOST_SESSION_APPROVALS_REVIEWER_OPTION_ID]: providerOptions.approvalsReviewer }
+        : {}),
       ...(providerOptions.folderPath
         ? { [HOST_SESSION_FOLDER_OPTION_ID]: providerOptions.folderPath }
         : {}),
@@ -1166,7 +1314,7 @@ export class ChatService {
 
   private buildAilyAgentProviderOptionGroups(
     previousInputState: ChatSessionInputState | null | undefined,
-    providerOptions: { folderPath: string; permissionMode: ChatSessionPermissionMode },
+    providerOptions: HostSessionProviderOptions,
     selectionState: ChatServiceProviderSelectionState,
     scope: 'current' | 'new',
     sourceSnapshot: ChatSessionProviderOptionsSourceSnapshot | null,
@@ -1413,15 +1561,20 @@ export class ChatService {
     inputState?: unknown,
     fallbackProviderOptions?: ChatServiceSessionProviderOptions | null,
   ): void {
-    const groups = normalizeChatSessionProviderOptionGroups(inputState);
+    const fallbackOptions = this.normalizeProviderOptionsInput(fallbackProviderOptions);
+    const hasExplicitFallbackOptions = fallbackProviderOptions !== undefined && fallbackProviderOptions !== null;
+    const normalizedProviderOptions = hasExplicitFallbackOptions
+      ? normalizeHostSessionProviderOptions(fallbackOptions)
+      : resolveHostSessionProviderOptionsFromInputState(inputState, fallbackOptions);
+    const groups = resolveHostSessionProviderOptionGroups(inputState as ChatSessionInputState | null | undefined, normalizedProviderOptions);
     const nextSelections = this.readSelectionStateFromGroups(groups);
-    const normalizedProviderOptions = resolveHostSessionProviderOptionsFromInputState(
-      inputState,
-      this.normalizeProviderOptionsInput(fallbackProviderOptions),
-    );
     const hadSelectionChange = !this.areProviderSelectionsEqual(this._currentSessionProviderSelections, nextSelections);
     const hadProviderOptionsChange = this.currentSessionPath !== (normalizedProviderOptions.folderPath ?? '')
-      || this.currentSessionPermissionMode !== normalizedProviderOptions.permissionMode;
+      || this.currentSessionPermissionMode !== normalizedProviderOptions.permissionMode
+      || this.currentSessionPermissionProfile !== normalizedProviderOptions.permissionProfile
+      || this.currentSessionPermissionLevel !== normalizedProviderOptions.permissionLevel
+      || this.currentSessionApprovalsReviewer !== normalizedProviderOptions.approvalsReviewer
+      || this.currentSessionApprovalPolicy !== normalizedProviderOptions.approvalPolicy;
 
     this._currentSessionProviderSelections = nextSelections;
 
