@@ -115,6 +115,12 @@ export class LexTurnRuntimeBridge {
   async run(userMessage: string, displayContent?: string, options: { readonly turnId?: string; readonly sessionId?: string } = {}): Promise<void> {
     const handle = this.agentLifecycleBridge.getHandle?.(options.sessionId) ?? null;
     if (handle) {
+      console.info('[AilyChat][LexRuntimePath]', {
+        phase: 'turn-run',
+        path: 'handle-render-event',
+        sessionId: options.sessionId ?? null,
+        turnId: options.turnId ?? null,
+      });
       traceBackgroundSessionExecution('runtime-bridge-path', {
         path: 'handle-render-event',
       });
@@ -124,6 +130,12 @@ export class LexTurnRuntimeBridge {
 
     const agent = this.agentLifecycleBridge.getAgent(options.sessionId);
     if (!agent) {
+      console.warn('[AilyChat][LexRuntimePath]', {
+        phase: 'turn-run',
+        path: 'no-agent',
+        sessionId: options.sessionId ?? null,
+        turnId: options.turnId ?? null,
+      });
       traceBackgroundSessionExecution('runtime-bridge-path', {
         path: 'no-agent',
       });
@@ -133,6 +145,12 @@ export class LexTurnRuntimeBridge {
     // Wrap raw AilyLexAgent into a RenderEventSource using RenderEventEmitter
     const lex = this.agentLifecycleBridge.getLex();
     if (lex?.RenderEventEmitter) {
+      console.info('[AilyChat][LexRuntimePath]', {
+        phase: 'turn-run',
+        path: 'emitter-render-event',
+        sessionId: options.sessionId ?? null,
+        turnId: options.turnId ?? null,
+      });
       traceBackgroundSessionExecution('runtime-bridge-path', {
         path: 'emitter-render-event',
       });
@@ -178,6 +196,12 @@ export class LexTurnRuntimeBridge {
       await this.turnExecutionBridge.runTurnWithRenderEvents(source, userMessage, displayContent, options);
     } else {
       // Fallback: legacy AgentEvent path
+      console.warn('[AilyChat][LexRuntimePath]', {
+        phase: 'turn-run',
+        path: 'legacy-agent-event',
+        sessionId: options.sessionId ?? null,
+        turnId: options.turnId ?? null,
+      });
       traceBackgroundSessionExecution('runtime-bridge-path', {
         path: 'legacy-agent-event',
       });

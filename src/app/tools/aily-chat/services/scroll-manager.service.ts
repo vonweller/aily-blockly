@@ -40,6 +40,11 @@ export class ScrollManagerService {
   private readonly _pendingExchangeTimeouts = new Set<ReturnType<typeof setTimeout>>();
   private readonly _pendingScrollTimeouts = new Set<ReturnType<typeof setTimeout>>();
   private readonly _pendingTargetRevealTimeouts = new Set<ReturnType<typeof setTimeout>>();
+  private _followBottomFrameHandle: ReturnType<typeof setTimeout> | number | null = null;
+  private _followBottomFrameUsesRaf = false;
+  private _followBottomFrameRequestId = 0;
+  private _followBottomLastHeight = 0;
+  private _followBottomStableFrames = 0;
 
   private containerRef: ElementRef | null = null;
   private revealHostDelegate: ChatRevealHostDelegate | null = null;
@@ -147,7 +152,7 @@ export class ScrollManagerService {
         return;
       }
 
-      this.scrollToBottom('auto');
+      this.ensureFollowBottomLoop('auto');
       return;
     }
 
@@ -459,6 +464,80 @@ export class ScrollManagerService {
   private cancelPendingBottomScroll(): void {
     this._pendingScrollTimeouts.forEach((handle) => clearTimeout(handle));
     this._pendingScrollTimeouts.clear();
+    this.cancelFollowBottomLoop();
+  }
+
+  private ensureFollowBottomLoop(behavior: string = 'auto'): void {
+    const element = this.containerRef?.nativeElement;
+    if (!element || !this.scrollLock) {
+      return;
+    }
+
+    if (this._pendingExchangeTimeouts.size > 0) {
+      this._followBottomAfterExchangeReveal = true;
+      return;
+    }
+
+    if (this._followBottomFrameHandle !== null) {
+      return;
+    }
+
+    this._followBottomFrameRequestId = ++this._scrollRequestId;
+    this._followBottomLastHeight = element.scrollHeight;
+    this._followBottomStableFrames = 0;
+    this.scheduleFollowBottomFrame(() => this.runFollowBottomFrame(element, behavior, this._followBottomFrameRequestId));
+  }
+
+  private runFollowBottomFrame(element: HTMLElement, behavior: string, requestId: number): void {
+    this._followBottomFrameHandle = null;
+    this._followBottomFrameUsesRaf = false;
+
+    if (!this.scrollLock || requestId !== this._followBottomFrameRequestId || requestId !== this._scrollRequestId) {
+      return;
+    }
+
+    this.performBottomScroll(element, behavior, requestId);
+
+    const currentHeight = element.scrollHeight;
+    const heightStable = currentHeight === this._followBottomLastHeight;
+    const atBottom = this.isAtBottom(element, 4);
+    this._followBottomStableFrames = heightStable && atBottom
+      ? this._followBottomStableFrames + 1
+      : 0;
+    this._followBottomLastHeight = currentHeight;
+
+    if (this._followBottomStableFrames >= 2) {
+      return;
+    }
+
+    this.scheduleFollowBottomFrame(() => this.runFollowBottomFrame(element, behavior, requestId));
+  }
+
+  private scheduleFollowBottomFrame(callback: () => void): void {
+    if (typeof globalThis.requestAnimationFrame === 'function') {
+      this._followBottomFrameUsesRaf = true;
+      this._followBottomFrameHandle = globalThis.requestAnimationFrame(callback);
+      return;
+    }
+
+    this._followBottomFrameUsesRaf = false;
+    this._followBottomFrameHandle = setTimeout(callback, 16);
+  }
+
+  private cancelFollowBottomLoop(): void {
+    if (this._followBottomFrameHandle === null) {
+      return;
+    }
+
+    if (this._followBottomFrameUsesRaf && typeof globalThis.cancelAnimationFrame === 'function') {
+      globalThis.cancelAnimationFrame(this._followBottomFrameHandle as number);
+    } else {
+      clearTimeout(this._followBottomFrameHandle as ReturnType<typeof setTimeout>);
+    }
+    this._followBottomFrameHandle = null;
+    this._followBottomFrameUsesRaf = false;
+    this._followBottomFrameRequestId++;
+    this._followBottomStableFrames = 0;
   }
 
   private cancelPendingTargetReveal(): void {

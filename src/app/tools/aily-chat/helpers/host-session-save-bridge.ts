@@ -462,6 +462,7 @@ export class HostSessionSaveBridge {
       providerOptions: {
         folderPath: this.resolveProjectPath(),
         permissionMode: chatService.currentSessionPermissionMode,
+        permissionProfile: chatService.currentSessionPermissionProfile,
         ...(chatService.currentSessionPermissionLevel
           ? { permissionLevel: chatService.currentSessionPermissionLevel }
           : {}),
@@ -618,6 +619,7 @@ function normalizeHostSessionSaveTarget(target: HostSessionSaveTarget | null | u
     providerOptions: {
       folderPath: target?.providerOptions?.folderPath ?? null,
       permissionMode: target?.providerOptions?.permissionMode ?? 'default',
+      permissionProfile: target?.providerOptions?.permissionProfile ?? 'workspace-write',
       ...(typeof target?.providerOptions?.permissionLevel === 'string' && target.providerOptions.permissionLevel.trim().length > 0
         ? { permissionLevel: target.providerOptions.permissionLevel.trim() }
         : {}),

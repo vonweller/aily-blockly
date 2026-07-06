@@ -472,6 +472,8 @@ export class LexOwnerFacade {
             get isCancelled() { return ownerCtx.isCancelled; },
             get currentMessageSource() { return ownerCtx.currentMessageSource; },
             get contextBudgetService() { return ownerCtx.contextBudgetService; },
+            appendSessionModelTurnResponse: (targetSessionId, turnResponse, ownerPolicy) =>
+              ownerCtx.appendSessionModelTurnResponse?.(targetSessionId, turnResponse, ownerPolicy) ?? null,
           },
           hostSyncBridge,
           {
