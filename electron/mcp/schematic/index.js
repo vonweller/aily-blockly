@@ -1,48 +1,25 @@
-const { SCHEMATIC_TOOL_DEFINITIONS } = require('./tool-definitions');
-const { SchematicRuntimeClient } = require('./runtime-client');
-const { createSchematicHandlers } = require('./handlers');
-const { createErrorToolResult } = require('./result');
-const { SchematicBackendService } = require('./backend-service');
-const { createBackendSchematicTools } = require('./backend-tools');
+const { createProjectContext } = require('./project-context');
+const { createCatalogService } = require('./catalog-service');
+const { createPinmapService } = require('./pinmap-service');
+const { createAwsService } = require('./aws-service');
+const { createRuntimeAdapter } = require('./runtime-adapter');
 
-const TOOL_DEFINITION_MAP = new Map(
-  SCHEMATIC_TOOL_DEFINITIONS.map((tool) => [tool.name, tool]),
-);
-
-function createSchematicToolSource(rendererBridge, options = {}) {
-  const runtimeClient = new SchematicRuntimeClient(rendererBridge);
-  const backendService = new SchematicBackendService({
-    getCurrentProjectPath: options.getCurrentProjectPath,
-  });
-  const handlers = createSchematicHandlers(runtimeClient);
-  const backendTools = createBackendSchematicTools(backendService, runtimeClient);
+function createSchematicServices(runtimeClient, options = {}) {
+  const projectContext = createProjectContext(options);
+  const catalogService = createCatalogService(projectContext);
+  const pinmapService = createPinmapService(projectContext, catalogService);
+  const awsService = createAwsService(projectContext, pinmapService);
+  const runtimeAdapter = createRuntimeAdapter(runtimeClient);
 
   return {
-    getTools() {
-      return SCHEMATIC_TOOL_DEFINITIONS.map((tool) => ({ ...tool }));
-    },
-
-    hasTool(toolName) {
-      return TOOL_DEFINITION_MAP.has(toolName);
-    },
-
-    async invoke(toolName, args = {}) {
-      if (!TOOL_DEFINITION_MAP.has(toolName)) {
-        throw new Error(`Unknown schematic tool: ${toolName}`);
-      }
-      const handler = handlers[toolName];
-      const backendTool = backendTools[toolName];
-      if (backendTool) {
-        return backendTool(args);
-      }
-      if (!handler) {
-        return createErrorToolResult(`No schematic handler registered for ${toolName}.`);
-      }
-      return handler(args);
-    },
+    projectContext,
+    catalogService,
+    pinmapService,
+    awsService,
+    runtimeAdapter,
   };
 }
 
 module.exports = {
-  createSchematicToolSource,
+  createSchematicServices,
 };

@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 
 const { RendererMcpBridge } = require('./renderer-bridge');
-const { createSchematicToolSource } = require('./schematic');
+const { createLocalToolSource } = require('./tools');
 
 const SERVER_NAME_TO_CLIENT_MAP = new Map();
 const TOOL_TO_SERVER_NAME = new Map();
@@ -58,7 +58,7 @@ function createRuntime(mainWindow) {
   };
 
   const localToolSources = new Map([
-    ['schematic', createSchematicToolSource(rendererBridge, { getCurrentProjectPath })],
+    ['schematic', createLocalToolSource(rendererBridge, { getCurrentProjectPath })],
   ]);
 
   return {
