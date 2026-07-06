@@ -43,6 +43,12 @@ export interface LoginResponse {
   };
 }
 
+interface RefreshTokenResponseData {
+  access_token: string;
+  refresh_token?: string;
+  token_type?: 'bearer';
+}
+
 export type GitHubOAuthPurpose = 'login' | 'bind';
 
 export interface RegisterRequest {
@@ -151,6 +157,9 @@ export class AuthService {
           // console.log("登录成功，token: ", response.data.access_token);
           // 保存 token 和用户信息
           this.saveToken2(response.data.access_token);
+          if (response.data.refresh_token) {
+            this.saveRefreshToken(response.data.refresh_token);
+          }
           this.getMe(response.data.access_token);
           // if (response.data.user) {
           //   this.saveUserInfo(response.data.user);
@@ -205,6 +214,9 @@ export class AuthService {
             return response;
           }
           this.saveToken2(response.data.access_token);
+          if (response.data.refresh_token) {
+            this.saveRefreshToken(response.data.refresh_token);
+          }
           this.getMe(response.data.access_token);
           this.isLoggedInSubject.next(true);
         } else {
@@ -477,6 +489,56 @@ export class AuthService {
     }
   }
 
+  private async saveRefreshToken(refreshToken: string): Promise<void> {
+    try {
+      if (this.electronService.isElectron && (window as any).electronAPI?.path && (window as any).electronAPI?.fs) {
+        const appDataPath = (window as any).electronAPI.path.getAppDataPath();
+        const authFilePath = (window as any).electronAPI.path.join(appDataPath, '.aily');
+
+        let authData: any = {};
+        if ((window as any).electronAPI.fs.existsSync(authFilePath)) {
+          try {
+            const content = (window as any).electronAPI.fs.readFileSync(authFilePath);
+            authData = JSON.parse(content);
+          } catch (error) {
+            console.warn('读取现有认证文件失败，将创建新文件:', error);
+            authData = {};
+          }
+        }
+
+        authData.refresh_token = refreshToken;
+        authData.updated_at = new Date().toISOString();
+        (window as any).electronAPI.fs.writeFileSync(authFilePath, JSON.stringify(authData, null, 2));
+      } else {
+        localStorage.setItem(this.REFRESH_TOKEN_KEY, refreshToken);
+      }
+    } catch (error) {
+      console.error('保存刷新 token 失败:', error);
+    }
+  }
+
+  private async getRefreshToken(): Promise<string | null> {
+    try {
+      if (this.electronService.isElectron && (window as any).electronAPI?.path && (window as any).electronAPI?.fs) {
+        const appDataPath = (window as any).electronAPI.path.getAppDataPath();
+        const authFilePath = (window as any).electronAPI.path.join(appDataPath, '.aily');
+
+        if (!(window as any).electronAPI.fs.existsSync(authFilePath)) {
+          return null;
+        }
+
+        const content = (window as any).electronAPI.fs.readFileSync(authFilePath, 'utf8');
+        const authData = JSON.parse(content);
+        return authData.refresh_token || null;
+      }
+
+      return localStorage.getItem(this.REFRESH_TOKEN_KEY);
+    } catch (error) {
+      console.error('获取刷新 token 失败:', error);
+      return null;
+    }
+  }
+
   async getToken2(): Promise<string | null> {
     try {
       if (this.electronService.isElectron && (window as any).electronAPI?.path && (window as any).electronAPI?.fs) {
@@ -554,48 +616,6 @@ export class AuthService {
 
 
   /**
-   * 保存刷新 token
-   */
-  private async saveRefreshToken(refreshToken: string): Promise<void> {
-    try {
-      if (this.electronService.isElectron && (window as any).electronAPI?.safeStorage) {
-        const encrypted = (window as any).electronAPI.safeStorage.encryptString(refreshToken);
-        localStorage.setItem(this.REFRESH_TOKEN_KEY, encrypted.toString('base64'));
-      } else {
-        localStorage.setItem(this.REFRESH_TOKEN_KEY, refreshToken);
-      }
-    } catch (error) {
-      console.error('保存刷新 token 失败:', error);
-    }
-  }
-
-  /**
-   * 获取刷新 token
-   */
-  private async getRefreshToken(): Promise<string | null> {
-    try {
-      const storedData = localStorage.getItem(this.REFRESH_TOKEN_KEY);
-      if (!storedData) return null;
-
-      if (this.electronService.isElectron && (window as any).electronAPI?.safeStorage) {
-        try {
-          const buffer = Buffer.from(storedData, 'base64');
-          return (window as any).electronAPI.safeStorage.decryptString(buffer);
-        } catch (error) {
-          console.error('刷新 token 解密失败:', error);
-          localStorage.removeItem(this.REFRESH_TOKEN_KEY);
-          return null;
-        }
-      } else {
-        return storedData;
-      }
-    } catch (error) {
-      console.error('获取刷新 token 失败:', error);
-      return null;
-    }
-  }
-
-  /**
    * 保存用户信息
    */
   private async saveUserInfo(userInfo: any): Promise<void> {
@@ -642,33 +662,6 @@ export class AuthService {
   }
 
   /**
-   * 刷新 token
-   */
-  async refreshAuthToken(): Promise<boolean> {
-    try {
-      const refreshToken = await this.getRefreshToken();
-      if (!refreshToken) return false;
-
-      const response = await this.http.post<CommonResponse>(
-        API.refreshToken,
-        { refreshToken }
-      ).toPromise();
-
-      if (response?.data?.token) {
-        await this.saveToken2(response.data.token);
-        if (response.data.refreshToken) {
-          await this.saveRefreshToken(response.data.refreshToken);
-        }
-        return true;
-      }
-      return false;
-    } catch (error) {
-      console.error('刷新 token 失败:', error);
-      return false;
-    }
-  }
-
-  /**
    * 清除所有认证数据
    */
   private async clearAuthData(): Promise<void> {
@@ -692,6 +685,36 @@ export class AuthService {
    */
   get currentUser(): any {
     return this.userInfoSubject.value;
+  }
+
+  async refreshAuthToken(): Promise<boolean> {
+    const refreshToken = await this.getRefreshToken();
+    if (!refreshToken) {
+      return false;
+    }
+
+    try {
+      const response = await firstValueFrom(
+        this.http.post<CommonResponse & { data?: RefreshTokenResponseData }>(
+          API.refreshToken,
+          { refresh_token: refreshToken }
+        )
+      );
+
+      const accessToken = response.data?.access_token;
+      if (response.status !== 200 || !accessToken) {
+        return false;
+      }
+
+      await this.saveToken2(accessToken);
+      if (response.data?.refresh_token) {
+        await this.saveRefreshToken(response.data.refresh_token);
+      }
+      return true;
+    } catch (error) {
+      console.warn('刷新 token 失败:', error);
+      return false;
+    }
   }
 
   /**
@@ -1075,9 +1098,12 @@ export class AuthService {
   /**
    * GitHub OAuth 登录成功处理
    */
-  async handleGitHubOAuthSuccess(data: { access_token: string; user?: any }): Promise<void> {
+  async handleGitHubOAuthSuccess(data: { access_token: string; refresh_token?: string; user?: any }): Promise<void> {
     try {
       await this.saveToken2(data.access_token);
+      if (data.refresh_token) {
+        await this.saveRefreshToken(data.refresh_token);
+      }
       if (data.user) {
         await this.saveUserInfo(data.user);
         this.userInfoSubject.next(data.user);
@@ -1183,9 +1209,9 @@ export class AuthService {
   async handleWeChatOAuthSuccess(data: { access_token: string; refresh_token?: string; user?: any }): Promise<void> {
     try {
       await this.saveToken2(data.access_token);
-      // if (data.refresh_token) {
-      //   await this.saveRefreshToken(data.refresh_token);
-      // }
+      if (data.refresh_token) {
+        await this.saveRefreshToken(data.refresh_token);
+      }
       if (data.user) {
         await this.saveUserInfo(data.user);
         this.userInfoSubject.next(data.user);
