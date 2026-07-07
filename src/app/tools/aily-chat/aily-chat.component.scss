@@ -101,6 +101,13 @@
       padding-top: 0;
     }
   }
+
+  &.session-overflow-menu-open {
+    .chat-session-sidebar,
+    .dialog-list {
+      z-index: 120;
+    }
+  }
 }
 
 .chat-stage {
