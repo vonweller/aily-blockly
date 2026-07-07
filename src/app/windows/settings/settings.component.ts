@@ -325,7 +325,6 @@ export class SettingsComponent implements OnDestroy {
     this.scrollElement?.addEventListener('scroll', this.scrollHandler);
     await this.updateBoardList();
     this.initialAilyBuilderNext = !!this.labsConfig.ailyBuilderNext;
-    await this.syncAilyBuilderChannel();
     await this.loadAilyBuilderStatus();
     this.loadCacheStats();
   }
@@ -407,9 +406,8 @@ export class SettingsComponent implements OnDestroy {
     }
   }
 
-  async onAilyBuilderNextChange(enabled: boolean) {
+  onAilyBuilderNextChange(enabled: boolean) {
     this.labsConfig.ailyBuilderNext = enabled;
-    await this.syncAilyBuilderChannel();
   }
 
   private async syncAilyBuilderChannel(options: { install?: boolean } = {}) {
@@ -513,10 +511,9 @@ export class SettingsComponent implements OnDestroy {
     }
   }
 
-  async cancel() {
+  cancel() {
     if (this.labsConfig.ailyBuilderNext !== this.initialAilyBuilderNext) {
       this.labsConfig.ailyBuilderNext = this.initialAilyBuilderNext;
-      await this.syncAilyBuilderChannel();
     }
     this.uiService.closeWindow();
   }
@@ -525,7 +522,9 @@ export class SettingsComponent implements OnDestroy {
     await this.configService.applyResourceSourceRuntimeSelection();
     // 保存到config.json，如有需要立即加载的，再加载
     await this.configService.save();
-    await this.syncAilyBuilderChannel({ install: true });
+    if (this.labsConfig.ailyBuilderNext !== this.initialAilyBuilderNext) {
+      await this.syncAilyBuilderChannel({ install: true });
+    }
     this.initialAilyBuilderNext = !!this.labsConfig.ailyBuilderNext;
     window['ipcRenderer'].send('setting-changed', { action: 'devmode-changed', data: this.configData.devmode });
     // 保存完毕后关闭窗口
