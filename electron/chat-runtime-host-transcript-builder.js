@@ -1144,6 +1144,20 @@ function readSubagentStateEventPayload(event) {
       || 'Agent',
     description: description || 'Subagent',
     resultText: resultText || '',
+    modelName: normalizeOptionalString(event && event.modelName)
+      || normalizeOptionalString(metadata.modelName),
+    modelBillingLabel: normalizeOptionalString(event && event.modelBillingLabel)
+      || normalizeOptionalString(metadata.modelBillingLabel),
+    modelRouting: event && event.modelRouting && typeof event.modelRouting === 'object'
+      ? clonePayload(event.modelRouting)
+      : metadata.modelRouting && typeof metadata.modelRouting === 'object'
+        ? clonePayload(metadata.modelRouting)
+        : undefined,
+    quotaSnapshot: event && event.quotaSnapshot && typeof event.quotaSnapshot === 'object'
+      ? clonePayload(event.quotaSnapshot)
+      : metadata.quotaSnapshot && typeof metadata.quotaSnapshot === 'object'
+        ? clonePayload(metadata.quotaSnapshot)
+        : undefined,
     durationMs: Number.isFinite(event && event.durationMs)
       ? event.durationMs
       : Number.isFinite(metadata.durationMs) ? metadata.durationMs : undefined,
@@ -1166,6 +1180,14 @@ function subagentEventPayload(event) {
     agentName: normalizeOptionalString(event && event.agentName) || 'Agent',
     description: normalizeOptionalString(event && event.description) || 'Subagent',
     resultText: normalizeOptionalString(event && event.resultText) || '',
+    modelName: normalizeOptionalString(event && event.modelName),
+    modelBillingLabel: normalizeOptionalString(event && event.modelBillingLabel),
+    modelRouting: event && event.modelRouting && typeof event.modelRouting === 'object'
+      ? clonePayload(event.modelRouting)
+      : undefined,
+    quotaSnapshot: event && event.quotaSnapshot && typeof event.quotaSnapshot === 'object'
+      ? clonePayload(event.quotaSnapshot)
+      : undefined,
     durationMs: Number.isFinite(event && event.durationMs) ? event.durationMs : undefined,
   };
 }
@@ -1245,6 +1267,26 @@ function buildSubagentToolMetadata(event, payload, state, existingMetadata) {
         },
       ];
   const existingResult = normalizeOptionalString(existingToolSpecificData.result);
+  const modelName = payload.modelName
+    || normalizeOptionalString(existing.modelName)
+    || normalizeOptionalString(existingToolSpecificData.modelName);
+  const modelBillingLabel = payload.modelBillingLabel
+    || normalizeOptionalString(existing.modelBillingLabel)
+    || normalizeOptionalString(existingToolSpecificData.modelBillingLabel);
+  const modelRouting = payload.modelRouting && typeof payload.modelRouting === 'object'
+    ? clonePayload(payload.modelRouting)
+    : existing.modelRouting && typeof existing.modelRouting === 'object'
+      ? clonePayload(existing.modelRouting)
+      : existingToolSpecificData.modelRouting && typeof existingToolSpecificData.modelRouting === 'object'
+        ? clonePayload(existingToolSpecificData.modelRouting)
+        : undefined;
+  const quotaSnapshot = payload.quotaSnapshot && typeof payload.quotaSnapshot === 'object'
+    ? clonePayload(payload.quotaSnapshot)
+    : existing.quotaSnapshot && typeof existing.quotaSnapshot === 'object'
+      ? clonePayload(existing.quotaSnapshot)
+      : existingToolSpecificData.quotaSnapshot && typeof existingToolSpecificData.quotaSnapshot === 'object'
+        ? clonePayload(existingToolSpecificData.quotaSnapshot)
+        : undefined;
   return {
     ...existing,
     toolName: 'agent',
@@ -1255,12 +1297,20 @@ function buildSubagentToolMetadata(event, payload, state, existingMetadata) {
     pastTenseMessage: payload.description ? `Completed Task: "${payload.description}"` : payload.agentName,
     timeline,
     ...(Number.isFinite(payload.durationMs) ? { durationMs: payload.durationMs } : {}),
+    ...(modelName ? { modelName } : {}),
+    ...(modelBillingLabel ? { modelBillingLabel } : {}),
+    ...(modelRouting ? { modelRouting } : {}),
+    ...(quotaSnapshot ? { quotaSnapshot } : {}),
     toolSpecificData: {
       ...existingToolSpecificData,
       kind: 'subagent',
       agentName: payload.agentName,
       description: payload.description,
       result: payload.resultText || existingResult || '',
+      ...(modelName ? { modelName } : {}),
+      ...(modelBillingLabel ? { modelBillingLabel } : {}),
+      ...(modelRouting ? { modelRouting } : {}),
+      ...(quotaSnapshot ? { quotaSnapshot } : {}),
     },
   };
 }
