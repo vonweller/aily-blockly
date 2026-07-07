@@ -130,6 +130,8 @@ export class BlocklyLiveOperationBridgeService {
         return this.executeBlocksTidy();
       case 'project_save':
         return this.executeProjectSave();
+      case 'project_reload':
+        return this.executeProjectReload();
       default:
         return { ok: false, message: `不支持的 live Blockly 操作: ${payload.operation || ''}` };
     }
@@ -378,6 +380,20 @@ export class BlocklyLiveOperationBridgeService {
       operation: 'project_save',
       project: projectPath,
       message: '项目已保存',
+    };
+  }
+
+  private async executeProjectReload(): Promise<Record<string, any>> {
+    const projectPath = this.projectService.currentProjectPath;
+    if (!projectPath) {
+      return { ok: false, message: '当前未打开 Blockly 项目' };
+    }
+    await this.projectService.projectOpen();
+    return {
+      ok: true,
+      operation: 'project_reload',
+      project: projectPath,
+      message: '项目已从磁盘重新加载',
     };
   }
 

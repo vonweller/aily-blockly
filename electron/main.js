@@ -981,6 +981,22 @@ async function handleCliBridgeCommand(action, payload) {
       const dir = requestedPath ? path.resolve(requestedPath) : getOpenedProjectPathFromWindow();
       if (!dir) return { ok: false, message: '当前没有打开的项目,且未提供 path' };
       if (!fs.existsSync(dir)) return { ok: false, message: `项目目录不存在: ${dir}` };
+      const current = getOpenedProjectPathFromWindow();
+      if (current && path.resolve(current) === dir) {
+        const result = await requestMainWindow(
+          'cli-bridge:blockly-live-operation',
+          'cli-bridge:blockly-live-operation:response',
+          {
+            path: dir,
+            operation: 'project_reload',
+            params: {},
+          },
+          120000,
+        );
+        if (result && typeof result === 'object' && result.ok === true) {
+          return { ok: true, message: `已重载项目(刷新库/积木): ${dir}`, project: dir };
+        }
+      }
       const ok = navigateMainWindowHash(`#/main/blockly-editor?path=${encodeURIComponent(dir)}`);
       return { ok, message: ok ? `已重载项目(刷新库/积木): ${dir}` : '主窗口不可用', project: ok ? dir : null };
     }
