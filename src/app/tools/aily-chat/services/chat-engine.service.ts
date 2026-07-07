@@ -3748,6 +3748,20 @@ export class ChatEngineService implements IChatContext {
       this.chatService.clearResolvedActiveModel?.();
     }
 
+    const visibleProjectionSessionId = typeof this.visibleProjectionSessionId === 'string'
+      ? this.visibleProjectionSessionId.trim()
+      : '';
+    const resolveCurrentViewSessionResource = (
+      (this as unknown as { resolveCurrentViewSessionResource?: ChatEngineService['resolveCurrentViewSessionResource'] }).resolveCurrentViewSessionResource
+      ?? ChatEngineService.prototype['resolveCurrentViewSessionResource']
+    );
+    const resolveActiveRuntimeSessionId = (
+      (this as unknown as { resolveActiveRuntimeSessionId?: ChatEngineService['resolveActiveRuntimeSessionId'] }).resolveActiveRuntimeSessionId
+      ?? ChatEngineService.prototype['resolveActiveRuntimeSessionId']
+    );
+    const resetTurnsSessionId = resolveCurrentViewSessionResource.call(this)
+      || visibleProjectionSessionId
+      || resolveActiveRuntimeSessionId.call(this);
     const detachVisibleTranscript = (
       (this as unknown as { detachVisibleTranscript?: ChatEngineService['detachVisibleTranscript'] }).detachVisibleTranscript
       ?? ChatEngineService.prototype['detachVisibleTranscript']
@@ -3758,6 +3772,18 @@ export class ChatEngineService implements IChatContext {
     this.clearVisibleChatView({ detectChanges: options.detectChanges });
 
     if (options.clearTurns === true) {
+      const replaceSessionModelTurnResponses = (this as unknown as {
+        replaceSessionModelTurnResponses?: (
+          sessionId: string | null | undefined,
+          turnResponses: readonly TurnResponseTurn[] | null | undefined,
+          ownerPolicy?: ChatSessionTurnOwnerPolicyOptions,
+        ) => readonly TurnResponseTurn[] | null;
+      }).replaceSessionModelTurnResponses;
+      if (resetTurnsSessionId && typeof replaceSessionModelTurnResponses === 'function') {
+        replaceSessionModelTurnResponses.call(this, resetTurnsSessionId, [], {
+          source: 'visible-session-projection-reset',
+        });
+      }
       this.lexStream.turns.clear();
     }
     if (options.resetToolCallingIteration === true) {

@@ -1397,7 +1397,11 @@ export class SessionLifecycleHelper {
     }
 
     this.ctx.resetVisibleSessionProjection({
+      clearResolvedActiveModel: true,
+      clearTurns: true,
+      resetContextBudget: true,
       clearEditSummary: true,
+      resetToolCallingIteration: true,
     });
 
     this.setActiveSessionId('');
