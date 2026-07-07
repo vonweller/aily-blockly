@@ -115,6 +115,7 @@ async function main() {
 
         // 2. 生成sketch文件
         fs.writeFileSync(sketchFilePath, code);
+        copyProjectSrcToSketch(currentProjectPath, sketchPath);
 
         // 3. 处理库文件
         const libsPath = [];
@@ -367,6 +368,54 @@ function rm(pathToRemove) {
             logger.warn(`删除失败 ${pathToRemove}:`, e.message);
         }
     }
+}
+
+function copyProjectSrcToSketch(currentProjectPath, sketchPath) {
+    const projectSrcPath = path.join(currentProjectPath, 'src');
+    if (!fs.existsSync(projectSrcPath)) {
+        return;
+    }
+
+    if (!fs.statSync(projectSrcPath).isDirectory()) {
+        logger.warn(`Project src path exists but is not a directory: ${projectSrcPath}`);
+        return;
+    }
+
+    copyDirectoryContents(projectSrcPath, sketchPath);
+}
+
+function copyDirectoryContents(sourceDir, targetDir) {
+    mkdirp(targetDir);
+
+    const items = fs.readdirSync(sourceDir);
+    for (const item of items) {
+        copyItemRecursive(path.join(sourceDir, item), path.join(targetDir, item));
+    }
+}
+
+function copyItemRecursive(sourcePath, targetPath) {
+    const stat = fs.statSync(sourcePath);
+
+    if (stat.isDirectory()) {
+        if (fs.existsSync(targetPath) && !fs.statSync(targetPath).isDirectory()) {
+            rm(targetPath);
+        }
+
+        mkdirp(targetPath);
+        copyDirectoryContents(sourcePath, targetPath);
+        return;
+    }
+
+    if (!stat.isFile()) {
+        return;
+    }
+
+    if (fs.existsSync(targetPath) && fs.statSync(targetPath).isDirectory()) {
+        rm(targetPath);
+    }
+
+    mkdirp(path.dirname(targetPath));
+    fs.copyFileSync(sourcePath, targetPath);
 }
 
 async function processLibrariesParallel(libsPath, librariesPath, currentProjectPath, za7Path, devmode, libraryCache) {
