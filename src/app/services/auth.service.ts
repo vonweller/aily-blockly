@@ -1045,8 +1045,15 @@ export class AuthService {
       if (purpose === 'bind') {
         const bindData = await this.bindGitHubAccount(callbackData.code, callbackData.state).toPromise();
         this.clearOAuthState();
-        const user = await this.refreshCurrentUser();
+        const user = this.markGithubBoundLocally(bindData);
         this.githubBindCompletedSubject.next(user);
+        this.refreshCurrentUser().then(refreshedUser => {
+          if (refreshedUser && !this.hasGithubBinding(refreshedUser)) {
+            this.githubBindCompletedSubject.next(this.markGithubBoundLocally(refreshedUser));
+          }
+        }).catch(error => {
+          console.error('刷新 GitHub 绑定用户信息失败:', error);
+        });
         return {
           success: true,
           data: bindData,
@@ -1093,6 +1100,30 @@ export class AuthService {
         errorArgs: authError.errorArgs,
       };
     }
+  }
+
+  private markGithubBoundLocally(source?: any): any {
+    const sourceUser = source?.user && typeof source.user === 'object' && !Array.isArray(source.user)
+      ? source.user
+      : source;
+    const currentUser = this.currentUser || {};
+    const sourceGithub = sourceUser?.github && typeof sourceUser.github === 'object' && !Array.isArray(sourceUser.github)
+      ? sourceUser.github
+      : {};
+    const currentGithub = currentUser?.github && typeof currentUser.github === 'object' && !Array.isArray(currentUser.github)
+      ? currentUser.github
+      : {};
+    const nextUser = {
+      ...currentUser,
+      ...(sourceUser && typeof sourceUser === 'object' && !Array.isArray(sourceUser) ? sourceUser : {}),
+      github: {
+        ...currentGithub,
+        ...sourceGithub,
+        bound: true,
+      },
+    };
+    this.userInfoSubject.next(nextUser);
+    return nextUser;
   }
 
   /**

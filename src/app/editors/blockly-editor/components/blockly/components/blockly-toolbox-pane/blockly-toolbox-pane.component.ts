@@ -530,6 +530,10 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
   }
 
   private async submitPublishFromDialog(item: BlocklyToolboxFacadeItem, publishResult: LibraryPublishDialogResult): Promise<LibraryPublishSubmitResult> {
+    return this.submitPublishFromDialogWithGithubRetry(item, publishResult, true);
+  }
+
+  private async submitPublishFromDialogWithGithubRetry(item: BlocklyToolboxFacadeItem, publishResult: LibraryPublishDialogResult, allowGithubBindRetry: boolean): Promise<LibraryPublishSubmitResult> {
     try {
       const accepted = await this.submitLibraryWithExistingConfirmation(item, publishResult.packageJsonPatch);
       if (!accepted) {
@@ -542,6 +546,15 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
       this.showLibrarySubmissionSuccessMessage(item, publishResult.packageJsonPatch);
       return { success: true };
     } catch (error) {
+      if (allowGithubBindRetry && this.isGithubBindingRequiredError(error)) {
+        const ready = await this.promptGithubBindForLibrarySubmission();
+        if (!ready) {
+          return { success: false };
+        }
+
+        return this.submitPublishFromDialogWithGithubRetry(item, publishResult, false);
+      }
+
       if (!this.isPackageNameUnavailableError(error)) {
         throw error;
       }
@@ -553,6 +566,11 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
         packageNameConflictMessage: this.getPackageNameUnavailableMessage(error, packageName),
       };
     }
+  }
+
+  private isGithubBindingRequiredError(error: unknown): boolean {
+    const apiError = error as Partial<LibrarySubmissionApiError>;
+    return apiError.errorCode === 'github_not_bound';
   }
 
   private saveLibraryMetadataToLocalPackage(item: BlocklyToolboxFacadeItem, localPackageJsonPatch: Record<string, unknown>): BlocklyLibraryMetadataUpdateResult {
@@ -781,6 +799,10 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
     if (!isLoggedIn) {
       this.promptLoginForLibrarySubmission();
       return false;
+    }
+
+    if (this.authService.hasGithubBinding()) {
+      return true;
     }
 
     const currentUser = await this.authService.refreshCurrentUser();
