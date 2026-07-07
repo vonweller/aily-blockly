@@ -1995,10 +1995,10 @@ export class ChatEngineService implements IChatContext {
       flush: options?.flush ?? 'scheduled',
     });
     if (options?.flush === 'immediate') {
-      this.chatHistoryService.flushAll();
+      this.chatHistoryService.flushSession(sessionId);
       return;
     }
-    this.chatHistoryService.scheduleRecoverySnapshotFlush();
+    this.chatHistoryService.scheduleRecoverySnapshotFlush(sessionId);
   }
 
   private setCurrentViewVisibleProjectionList(list: ChatMessage[]): void {

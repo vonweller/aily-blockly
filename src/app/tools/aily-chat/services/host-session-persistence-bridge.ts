@@ -299,6 +299,17 @@ export class HostSessionPersistenceBridge {
     }, 'flush-all');
   }
 
+  flushSession(sessionId: string, options?: HostSessionFlushOptions): void {
+    const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!normalizedSessionId) {
+      return;
+    }
+
+    ChatPerformanceTracer.runWithSurface('history_save', () => {
+      this.flushSessionCore(normalizedSessionId, options);
+    }, 'flush-session');
+  }
+
   private flushAllCore(options?: HostSessionFlushOptions): void {
     const skippedSessions = new Map<string, HostSessionDirtyPolicy>();
     for (const [sessionId, policy] of this.dirtySessions) {
@@ -344,6 +355,54 @@ export class HostSessionPersistenceBridge {
       this.dirtySessions.set(sessionId, policy);
     }
 
+    if (this.options.hasDirtyIndex()) {
+      this.options.writeIndex();
+    }
+  }
+
+  private flushSessionCore(sessionId: string, options?: HostSessionFlushOptions): void {
+    const policy = this.dirtySessions.get(sessionId);
+    if (!policy) {
+      if (this.options.hasDirtyIndex()) {
+        this.options.writeIndex();
+      }
+      return;
+    }
+
+    if (options?.shouldSkipSession?.(sessionId, policy)) {
+      return;
+    }
+
+    let hostRecord = this.sessionCache.get(sessionId);
+    let liveRecord: LiveHostSessionRecord | null = null;
+    if (this.liveSessionProvider) {
+      try {
+        liveRecord = this.liveSessionProvider(sessionId);
+      } catch (error) {
+        console.warn('[ChatHistory] Failed to read live session:', error);
+      }
+    }
+
+    if (liveRecord
+      && liveRecord.sessionId === sessionId
+      && countHostRecordMessages(liveRecord) > 0
+      && !this.shouldRejectRecordOwnerMismatch(liveRecord, 'flushSession-live')) {
+      hostRecord = this.materializeHostRecord(liveRecord);
+      this.sessionCache.set(sessionId, hostRecord);
+    }
+
+    if (hostRecord
+      && !this.shouldRejectRecordOwnerMismatch(hostRecord, 'flushSession-cache')) {
+      const messageCount = countHostRecordMessages(hostRecord);
+      if (messageCount > 0) {
+        this.hostRecordStore.write(sessionId, hostRecord);
+        if (policy === 'authoritative') {
+          this.options.upsertIndexEntry(sessionId, hostRecord.metadata, messageCount);
+        }
+      }
+    }
+
+    this.dirtySessions.delete(sessionId);
     if (this.options.hasDirtyIndex()) {
       this.options.writeIndex();
     }

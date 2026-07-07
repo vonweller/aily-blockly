@@ -390,6 +390,7 @@ export class ChatHistoryService implements OnDestroy {
   private autoSaveTimer: any = null;
   private saveStateFlushTimer: any = null;
   private saveStateFlushAllowsActiveRecoverySnapshot = false;
+  private readonly pendingRecoverySnapshotSessionIds = new Set<string>();
 
   // ===== 路径常量 =====
   private readonly INDEX_FILE = 'chat_history_index.json';
@@ -929,7 +930,15 @@ export class ChatHistoryService implements OnDestroy {
     this.hostSessionPersistenceBridge.flushAll(options);
   }
 
-  scheduleRecoverySnapshotFlush(): void {
+  flushSession(sessionId: string, options?: HostSessionFlushOptions): void {
+    this.hostSessionPersistenceBridge.flushSession(sessionId, options);
+  }
+
+  scheduleRecoverySnapshotFlush(sessionId?: string): void {
+    const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (normalizedSessionId) {
+      this.pendingRecoverySnapshotSessionIds.add(normalizedSessionId);
+    }
     this.scheduleSaveStateFlush({ allowActiveRecoverySnapshots: true });
   }
 
@@ -1294,12 +1303,19 @@ export class ChatHistoryService implements OnDestroy {
       this.saveStateFlushTimer = null;
       const allowActiveRecoverySnapshot = this.saveStateFlushAllowsActiveRecoverySnapshot;
       this.saveStateFlushAllowsActiveRecoverySnapshot = false;
+      const pendingRecoverySnapshotSessionIds = allowActiveRecoverySnapshot
+        ? [...this.pendingRecoverySnapshotSessionIds]
+        : [];
+      if (pendingRecoverySnapshotSessionIds.length > 0) {
+        this.pendingRecoverySnapshotSessionIds.clear();
+        for (const sessionId of pendingRecoverySnapshotSessionIds) {
+          this.flushSession(sessionId);
+        }
+      }
       if (this.hostSessionPersistenceBridge.hasDirtySessions() || this.indexDirty) {
-        this.flushAll(allowActiveRecoverySnapshot
-          ? undefined
-          : {
-            shouldSkipSession: (sessionId, policy) => this.shouldSkipActiveRecoverySnapshot(sessionId, policy),
-          });
+        this.flushAll({
+          shouldSkipSession: (sessionId, policy) => this.shouldSkipActiveRecoverySnapshot(sessionId, policy),
+        });
       }
     }, 1000);
   }
