@@ -737,6 +737,14 @@ jobs:
               is_valid = saw_section_title and bullet_count > 0 and not unexpected_content
               return normalized, is_valid, bullet_count
 
+          def build_fallback_changelog(version, section_title, category_heading, bullet_text):
+              return f"## {version}\n\n{section_title}\n\n{category_heading}\n- {bullet_text}\n", 1
+
+          def log_invalid_changelog_preview(label, raw_output):
+              preview = strip_think_tags(raw_output or "").replace('\r\n', '\n').replace('\r', '\n')
+              print(f"--- Invalid {label} Raw Preview ---")
+              print(preview[:500] if preview else "(empty)")
+
           def strip_think_tags(text):
               """Remove <think>...</think> blocks and standalone tags from AI output."""
               text = re.sub(r'<think>[\s\S]*?</think>', '', text)
@@ -853,7 +861,8 @@ jobs:
               "- Merge commits, revert-then-redo sequences\n"
               "- Test additions or modifications\n"
               "- Documentation changes (README, dev docs) unless they are user-facing help docs\n"
-              "- Debug logging additions/removals\n\n"
+              "- Debug logging additions/removals\n"
+              "If all commit records are internal maintenance with no clear user-facing change, output exactly one bullet under 🔧 Improvements: Maintenance and dependency updates.\n\n"
               "## Summarization rules\n"
               "1. Group related commits (e.g. 5 commits about improving serial port connection) into ONE concise bullet point describing the net result.\n"
               "2. Focus on WHAT the user can see/feel, not HOW it was implemented. "
@@ -892,6 +901,7 @@ jobs:
 
             if not en_valid:
               print("⚠️ English changelog format invalid, retrying with repair prompt")
+              log_invalid_changelog_preview("English changelog", raw_changelog_en)
               try:
                 repaired_en_result = call_ai_with_fallbacks(
                   model_configs,
@@ -912,8 +922,14 @@ jobs:
 
             if not en_valid:
               print("⚠️ Falling back to minimal English changelog due to invalid format")
-              changelog_en = f"## {version}\n\n{EN_SECTION_TITLE}\n\n🔧 Improvements\n- {commits}\n"
-              en_bullet_count = 1
+              if 'repaired_en' in locals():
+                log_invalid_changelog_preview("English repair", repaired_en)
+              changelog_en, en_bullet_count = build_fallback_changelog(
+                version,
+                EN_SECTION_TITLE,
+                "🔧 Improvements",
+                "Maintenance and dependency updates.",
+              )
 
             with open('/tmp/changelog_en.md', 'w', encoding='utf-8') as f:
               f.write(changelog_en)
@@ -957,6 +973,7 @@ jobs:
 
             if not zh_valid or zh_bullet_count != en_bullet_count:
               print("⚠️ Chinese changelog format invalid or bullet count mismatch, retrying with stricter translation")
+              log_invalid_changelog_preview("Chinese changelog", raw_changelog_zh)
               strict_prompt_zh = (
                 prompt_zh
                 + f"\n\n## Additional hard constraints\n"
@@ -979,7 +996,14 @@ jobs:
 
             if not zh_valid or zh_bullet_count != en_bullet_count:
               print("⚠️ Falling back to minimal Chinese changelog due to invalid format")
-              changelog_zh = f"## {version}\n\n{ZH_SECTION_TITLE}\n\n🔧 体验改进\n- （中文翻译生成失败，请查阅 CHANGELOG.md）\n"
+              if 'repaired_zh' in locals():
+                log_invalid_changelog_preview("Chinese repair", repaired_zh)
+              changelog_zh, zh_bullet_count = build_fallback_changelog(
+                version,
+                ZH_SECTION_TITLE,
+                "🔧 体验改进",
+                "维护和依赖更新。",
+              )
 
             with open('/tmp/changelog_zh.md', 'w', encoding='utf-8') as f:
               f.write(changelog_zh)
