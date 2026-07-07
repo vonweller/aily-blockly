@@ -104,11 +104,13 @@ export class LibraryPublishDialogComponent {
       {
         text: this.translate.instant('LIBRARY_PUBLISH.CANCEL'),
         type: 'default',
+        disabled: this.isSubmitting,
         action: 'cancel',
       },
       {
         text: this.translate.instant('LIBRARY_PUBLISH.PUBLISH'),
         type: 'primary',
+        loading: this.isSubmitting,
         action: 'publish',
       },
     ];

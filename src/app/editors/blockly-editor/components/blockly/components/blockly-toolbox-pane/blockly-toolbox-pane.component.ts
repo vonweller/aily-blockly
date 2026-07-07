@@ -25,6 +25,10 @@ import {
   LibraryPublishDialogResult,
   LibraryPublishSubmitResult,
 } from '../../../../../../components/library-publish-dialog/library-publish-dialog.component';
+import {
+  LibraryPublishConfirmDialogComponent,
+  LibraryPublishConfirmDialogData,
+} from '../../../../../../components/library-publish-confirm-dialog/library-publish-confirm-dialog.component';
 import Sortable, { SortableEvent } from 'sortablejs';
 
 interface ToolboxContextMenuAction {
@@ -501,6 +505,7 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
   ): Promise<void> {
     return new Promise((resolve) => {
       const modalRef = this.modal.create({
+        nzClassName: 'library-publish-modal',
         nzTitle: null,
         nzFooter: null,
         nzClosable: false,
@@ -592,23 +597,18 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
       return;
     }
 
-    const confirmed = await new Promise<boolean>((resolve) => {
-      const renamedText = updateResult.previousPackageName && updateResult.nextPackageName
-        ? this.translate.instant('LIBRARY_PUBLISH.RELOAD_RENAMED', {
-          previousName: updateResult.previousPackageName,
-          nextName: updateResult.nextPackageName,
-        })
-        : this.translate.instant('LIBRARY_PUBLISH.RELOAD_UPDATED');
+    const renamedText = updateResult.previousPackageName && updateResult.nextPackageName
+      ? this.translate.instant('LIBRARY_PUBLISH.RELOAD_RENAMED', {
+        previousName: updateResult.previousPackageName,
+        nextName: updateResult.nextPackageName,
+      })
+      : this.translate.instant('LIBRARY_PUBLISH.RELOAD_UPDATED');
 
-      this.modal.confirm({
-        nzClassName: 'library-submission-existing-modal',
-        nzTitle: this.translate.instant('LIBRARY_PUBLISH.RELOAD_TITLE'),
-        nzContent: this.translate.instant('LIBRARY_PUBLISH.RELOAD_CONTENT', { message: renamedText }),
-        nzOkText: this.translate.instant('LIBRARY_PUBLISH.RELOAD_OK'),
-        nzCancelText: this.translate.instant('LIBRARY_PUBLISH.RELOAD_LATER'),
-        nzOnOk: () => resolve(true),
-        nzOnCancel: () => resolve(false),
-      });
+    const confirmed = await this.openLibraryPublishConfirmDialog({
+      title: this.translate.instant('LIBRARY_PUBLISH.RELOAD_TITLE'),
+      content: this.translate.instant('LIBRARY_PUBLISH.RELOAD_CONTENT', { message: renamedText }),
+      okText: this.translate.instant('LIBRARY_PUBLISH.RELOAD_OK'),
+      cancelText: this.translate.instant('LIBRARY_PUBLISH.RELOAD_LATER'),
     });
 
     if (!confirmed) {
@@ -781,16 +781,29 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
     const actionText = apiError.sameContent
       ? this.translate.instant('LIBRARY_PUBLISH.EXISTING_SAME_CONTENT')
       : this.translate.instant('LIBRARY_PUBLISH.EXISTING_UPDATE_CONTENT');
+    return this.openLibraryPublishConfirmDialog({
+      title: this.translate.instant('LIBRARY_PUBLISH.EXISTING_TITLE'),
+      content: `${extra}${actionText}`,
+      okText: this.translate.instant('LIBRARY_PUBLISH.EXISTING_OK'),
+      cancelText: this.translate.instant('LIBRARY_PUBLISH.EXISTING_CANCEL'),
+    });
+  }
+
+  private openLibraryPublishConfirmDialog(data: LibraryPublishConfirmDialogData): Promise<boolean> {
     return new Promise((resolve) => {
-      this.modal.confirm({
-        nzClassName: 'library-submission-existing-modal',
-        nzTitle: this.translate.instant('LIBRARY_PUBLISH.EXISTING_TITLE'),
-        nzContent: `${extra}${actionText}`,
-        nzOkText: this.translate.instant('LIBRARY_PUBLISH.EXISTING_OK'),
-        nzCancelText: this.translate.instant('LIBRARY_PUBLISH.EXISTING_CANCEL'),
-        nzOnOk: () => resolve(true),
-        nzOnCancel: () => resolve(false),
+      const modalRef = this.modal.create({
+        nzClassName: 'library-publish-modal',
+        nzTitle: null,
+        nzFooter: null,
+        nzClosable: false,
+        nzBodyStyle: { padding: '0' },
+        nzWidth: '526px',
+        nzMaskStyle: { background: 'transparent' },
+        nzContent: LibraryPublishConfirmDialogComponent,
+        nzData: data,
       });
+
+      modalRef.afterClose.subscribe(result => resolve(result?.result === true));
     });
   }
 
@@ -814,27 +827,32 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
   }
 
   private promptLoginForLibrarySubmission() {
-    this.modal.confirm({
-      nzTitle: '登录后上传库',
-      nzContent: '上传库会使用你的 GitHub 账号向官方库仓库提交 PR。请先登录并绑定 GitHub。',
-      nzOkText: '打开用户中心',
-      nzCancelText: '取消',
-      nzOnOk: () => this.uiService.openTool('user-center'),
+    this.openLibraryPublishConfirmDialog({
+      title: '登录后上传库',
+      content: '上传库会使用你的 GitHub 账号向官方库仓库提交 PR。请先登录并绑定 GitHub。',
+      okText: '打开用户中心',
+      cancelText: '取消',
+    }).then(confirmed => {
+      if (confirmed) {
+        this.uiService.openTool('user-center');
+      }
     });
   }
 
-  private promptGithubBindForLibrarySubmission(): Promise<boolean> {
+  private async promptGithubBindForLibrarySubmission(): Promise<boolean> {
+    const confirmed = await this.openLibraryPublishConfirmDialog({
+      title: '绑定 GitHub 后上传库',
+      content: '上传库需要使用你的 GitHub 账号提交 PR。授权完成后会自动继续本次上传。',
+      okText: '绑定 GitHub',
+      cancelText: '取消',
+    });
+
+    if (!confirmed) {
+      return false;
+    }
+
     return new Promise((resolve) => {
-      this.modal.confirm({
-        nzTitle: '绑定 GitHub 后上传库',
-        nzContent: '上传库需要使用你的 GitHub 账号提交 PR。授权完成后会自动继续本次上传。',
-        nzOkText: '绑定 GitHub',
-        nzCancelText: '取消',
-        nzOnOk: () => {
-          this.startGithubBindForLibrarySubmission(resolve);
-        },
-        nzOnCancel: () => resolve(false),
-      });
+      this.startGithubBindForLibrarySubmission(resolve);
     });
   }
 

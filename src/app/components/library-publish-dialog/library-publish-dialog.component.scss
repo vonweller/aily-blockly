@@ -8,7 +8,7 @@
   min-height: 0;
   max-height: calc(100vh - 260px);
   overflow-y: auto;
-  padding: 4px 10px 2px 0;
+  padding: 0 8px 0 0;
   scrollbar-width: thin;
   scrollbar-color: var(--aily-scrollbar-thumb) var(--aily-scrollbar-track);
 
@@ -28,20 +28,13 @@
       background: var(--aily-scrollbar-thumb-hover);
     }
   }
-  .form-item:first-child {
-    margin-top: 2px;
-  }
 }
 
-::ng-deep .prompt-box.dialog-scrollable:has(.publish-form) {
+::ng-deep .prompt-box.library-publish-dialog:has(.publish-form) {
   max-height: calc(100vh - 120px);
 
   .content {
     max-height: calc(100vh - 154px);
-  }
-
-  .footer {
-    padding-bottom: 4px;
   }
 }
 
@@ -52,12 +45,12 @@
 }
 
 .form-item {
-  margin-bottom: 20px;
+  margin-bottom: 16px;
 }
 
 .form-label {
   display: block;
-  margin-bottom: 9px;
+  margin-bottom: 8px;
   font-size: 14px;
   color: var(--aily-text-primary);
 }
