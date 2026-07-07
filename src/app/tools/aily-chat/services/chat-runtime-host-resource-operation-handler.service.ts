@@ -34,6 +34,17 @@ import { AilyChatConfigService } from './aily-chat-config.service';
 import { ChatRuntimeOwnerSubmittedTurnTitleService } from './chat-runtime-owner-submitted-turn-title.service';
 import { ChatRuntimeOwnerToolApprovalService } from './chat-runtime-owner-tool-approval.service';
 import { normalizeToolApprovalArgs } from '../core/tool-approval-input';
+import {
+  applySchematicTool,
+  generateConnectionGraphTool,
+  generatePinmapTool,
+  getCurrentSchematicTool,
+  getPinmapSummaryTool,
+  getProjectContextTool,
+  getSensorPinmapCatalogTool,
+  savePinmapTool,
+  validateConnectionGraphTool,
+} from '../tools/connectionGraphTool';
 
 type HostResourceOperationPayload = {
   readonly adapter?: unknown;
@@ -988,32 +999,40 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
     this.requireSessionId(request, 'connection graph');
     const payload = this.requirePayloadAdapter(request.payload, 'connectionGraph', 'connection graph');
     const action = typeof payload.action === 'string' ? payload.action : '';
-    const allowedActions = new Set([
-      'generateConnectionGraph',
-      'getPinmapSummary',
-      'validateConnectionGraph',
-      'getSensorPinmapCatalog',
-      'generatePinmap',
-      'savePinmap',
-      'getCurrentSchematic',
-      'applySchematic',
-    ]);
-    if (!allowedActions.has(action)) {
-      throw new HostResourceOperationError(
-        `[AilyChat][RuntimeHost] Unsupported connection graph action: ${String(payload.action || '<missing>')}.`,
-        'resource_operation_payload_invalid',
-        false,
-      );
+    const args = payload.args && typeof payload.args === 'object' && !Array.isArray(payload.args)
+      ? payload.args as Record<string, unknown>
+      : {};
+    const invocationContext = {
+      turnId: this.normalizeSessionId(payload.turnId),
+      toolCallId: this.normalizeSessionId(payload.toolCallId),
+    };
+
+    switch (action) {
+      case 'generateConnectionGraph':
+        return generateConnectionGraphTool(this.connectionGraphService, this.projectService, args as never);
+      case 'getPinmapSummary':
+        return getPinmapSummaryTool(this.connectionGraphService, this.projectService, args as never);
+      case 'getProjectContext':
+        return getProjectContextTool(this.connectionGraphService, this.projectService, args as never);
+      case 'getSensorPinmapCatalog':
+        return getSensorPinmapCatalogTool(this.connectionGraphService, this.projectService, args as never);
+      case 'validateConnectionGraph':
+        return validateConnectionGraphTool(this.connectionGraphService, this.projectService, args as never, invocationContext);
+      case 'generatePinmap':
+        return generatePinmapTool(this.connectionGraphService, this.projectService, args as never);
+      case 'savePinmap':
+        return savePinmapTool(this.connectionGraphService, this.projectService, args as never, invocationContext);
+      case 'getCurrentSchematic':
+        return getCurrentSchematicTool(this.connectionGraphService, this.projectService, args);
+      case 'applySchematic':
+        return applySchematicTool(this.connectionGraphService, this.projectService, args as never, invocationContext);
+      default:
+        throw new HostResourceOperationError(
+          `[AilyChat][RuntimeHost] Unsupported connection graph action: ${String(payload.action || '<missing>')}.`,
+          'resource_operation_payload_invalid',
+          false,
+        );
     }
-    const handler = (this.connectionGraphService as unknown as Record<string, unknown>)[action];
-    if (typeof handler !== 'function') {
-      throw new HostResourceOperationError(
-        `[AilyChat][RuntimeHost] Connection graph action is unavailable: ${action}.`,
-        'resource_operation_unavailable',
-        false,
-      );
-    }
-    return await Promise.resolve(handler.call(this.connectionGraphService, payload.args));
   }
 
   private async runBoardSearchOperation(request: ChatRuntimeHostResourceOperationRequest): Promise<unknown> {

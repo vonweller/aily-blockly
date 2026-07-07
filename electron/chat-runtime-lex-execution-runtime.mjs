@@ -72,6 +72,8 @@ Core rules:
 - validate_schematic(aws: ...) is the final step that validates, saves, and refreshes the diagram.
 - If a required board/component pinmap is missing, generate and save the pinmap first, then continue wiring.
 - Treat physical peripherals referenced by user intent or code usage as hardware even when they are surfaced through software libraries.
+- Even when no external peripheral library is installed, infer physical modules from generated code and hardware APIs such as I2S, I2C, SPI, UART, ADC, PWM, pinMode, digitalWrite, analogWrite, and GPIO usage.
+- Do not drop GPIO-driven hardware such as LEDs, buzzers, relays, or transistor switches merely because they do not have an installed library.
 
 Workflow:
 1. Start from the runtime project context already present in the environment. Call get_project_context() only when you need Blockly-specific detail not already in the runtime summary.
@@ -89,6 +91,105 @@ ASSIGN <alias>.<pinName> AS <role> @<type>:<busNumber>
 Safety:
 - Refuse wiring that could cause harm, intentional shorts, or dangerous voltage configurations.
 - Verify power, ground, protocol, and pin conflict assumptions before saving.`;
+const SCHEMATIC_TOOL_DEFINITIONS = [
+  {
+    name: 'generate_schematic',
+    description: 'Prepare board and component pin summaries for an AWS wiring schematic. Pass the board and every required component pinmapId.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pinmapIds: {
+          oneOf: [
+            { type: 'array', items: { oneOf: [{ type: 'string' }, { type: 'object' }] } },
+            { type: 'string' },
+          ],
+        },
+        components: { type: 'array', items: { type: 'string' } },
+        requirements: { type: 'string' },
+      },
+    },
+    readOnly: true,
+  },
+  {
+    name: 'get_pinmap_summary',
+    description: 'Read available board/component pin summaries for the current project.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pinmapIds: { type: 'array', items: { type: 'string' } },
+      },
+    },
+    readOnly: true,
+  },
+  {
+    name: 'get_component_catalog',
+    description: 'Read the current project component catalog, including board, libraries, software libraries, and pinmap availability.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        libraryFilter: { type: 'string' },
+        includeNeedsGeneration: { type: 'boolean' },
+        includeBoards: { type: 'boolean' },
+      },
+    },
+    readOnly: true,
+  },
+  {
+    name: 'get_project_context',
+    description: 'Read dynamic schematic context: generated code, component catalog, and pinmap availability. Runtime already injects base project facts.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        includeNeedsGeneration: { type: 'boolean' },
+      },
+    },
+    readOnly: true,
+  },
+  {
+    name: 'validate_schematic',
+    description: 'Validate AWS wiring, save the schematic, and refresh the diagram. This is the final schematic step.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        aws: { type: 'string' },
+      },
+    },
+    readOnly: false,
+  },
+  {
+    name: 'get_current_schematic',
+    description: 'Read the current saved schematic JSON and summary.',
+    inputSchema: { type: 'object', properties: {} },
+    readOnly: true,
+    agentScope: ['main', SCHEMATIC_AGENT_TYPE],
+  },
+  {
+    name: 'generate_pinmap',
+    description: 'Prepare README/example/template material for a missing component pinmap.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pinmapId: { type: 'string' },
+        referenceSource: { type: 'string', enum: ['readme', 'example', 'auto'] },
+      },
+      required: ['pinmapId'],
+    },
+    readOnly: true,
+  },
+  {
+    name: 'save_pinmap',
+    description: 'Save a generated pinmap JSON into the component package and mark it available in the catalog.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pinmapId: { type: 'string' },
+        pinmapConfig: { type: 'object' },
+      },
+      required: ['pinmapId', 'pinmapConfig'],
+    },
+    readOnly: false,
+  },
+];
 const BLOCKLY_SLASH_COMMANDS = [
   {
     name: 'fix',
@@ -2646,7 +2747,26 @@ function createElectronBlocklyToolContributions(hostAPI) {
       agentScope: ['main'],
     });
   }
+  if (hostAPI.connectionGraph) {
+    appendElectronSchematicToolContributions(contributions);
+  }
   return contributions;
+}
+
+function appendElectronSchematicToolContributions(contributions) {
+  for (const definition of SCHEMATIC_TOOL_DEFINITIONS) {
+    contributions.push({
+      name: definition.name,
+      toolSet: 'blockly-schematic',
+      description: definition.description,
+      prompt: definition.description,
+      inputSchema: definition.inputSchema || { type: 'object', properties: {} },
+      annotations: { readOnly: definition.readOnly !== false },
+      runtimeModes: ['blockly'],
+      requiredCapabilities: ['runtime:blockly'],
+      agentScope: definition.agentScope || [SCHEMATIC_AGENT_TYPE],
+    });
+  }
 }
 
 async function invokeElectronBlocklyTool(toolName, input, hostAPI, context = {}) {
@@ -2675,9 +2795,68 @@ async function invokeElectronBlocklyTool(toolName, input, hostAPI, context = {})
       return invokeElectronAnalyzeLibraryTool(input, hostAPI);
     case 'lint':
       return invokeElectronLintTool(hostAPI);
+    case 'generate_schematic':
+    case 'get_pinmap_summary':
+    case 'get_component_catalog':
+    case 'get_project_context':
+    case 'validate_schematic':
+    case 'get_current_schematic':
+    case 'generate_pinmap':
+    case 'save_pinmap':
+      return invokeElectronSchematicTool(toolName, input, hostAPI, context);
     default:
       return toolError(`Unknown contributed tool: ${toolName}`);
   }
+}
+
+async function invokeElectronSchematicTool(toolName, input, hostAPI, context = {}) {
+  if (!hostAPI.connectionGraph) {
+    return toolError('Connection graph service is not available in this environment.');
+  }
+  let result;
+  switch (toolName) {
+    case 'generate_schematic':
+      result = await hostAPI.connectionGraph.generateSchematic(input, context);
+      break;
+    case 'get_pinmap_summary':
+      result = await hostAPI.connectionGraph.getPinmapSummary(input, context);
+      break;
+    case 'get_component_catalog':
+      result = await hostAPI.connectionGraph.getComponentCatalog(input, context);
+      break;
+    case 'get_project_context':
+      result = await hostAPI.connectionGraph.getProjectContext(input, context);
+      break;
+    case 'validate_schematic':
+      result = await hostAPI.connectionGraph.validateSchematic(input, context);
+      break;
+    case 'get_current_schematic':
+      result = await hostAPI.connectionGraph.getCurrentSchematic(input, context);
+      break;
+    case 'generate_pinmap':
+      result = await hostAPI.connectionGraph.generatePinmap(input, context);
+      break;
+    case 'save_pinmap':
+      result = await hostAPI.connectionGraph.savePinmap(input, context);
+      break;
+    default:
+      return toolError(`Unknown schematic tool: ${toolName}`);
+  }
+  return normalizeHostToolUseResult(result);
+}
+
+function normalizeHostToolUseResult(result) {
+  if (result && typeof result === 'object') {
+    const content = Object.prototype.hasOwnProperty.call(result, 'content')
+      ? result.content
+      : result;
+    const text = typeof content === 'string' ? content : formatExternalResult(content);
+    if (result.is_error || result.isError) {
+      return toolError(text);
+    }
+    return toolText(text, result.metadata);
+  }
+  return toolText(formatExternalResult(result));
 }
 
 async function invokeElectronProjectTool(input, hostAPI, context = {}) {
@@ -3383,7 +3562,7 @@ function createExternalBoardSearch(sessionId, requestResourceOperation) {
 }
 
 function createExternalConnectionGraph(sessionId, requestResourceOperation) {
-  const call = async (action, args) => {
+  const call = async (action, args = {}, context = {}) => {
     const result = await requestResourceOperation({
       sessionId,
       kind: 'connection-graph',
@@ -3391,20 +3570,21 @@ function createExternalConnectionGraph(sessionId, requestResourceOperation) {
         adapter: 'connectionGraph',
         action,
         args,
+        turnId: normalizeString(context?.trace?.turnId || context?.turnId),
+        toolCallId: normalizeString(context?.toolCallId || context?.trace?.toolCallId),
       },
     });
     return result?.result ?? result;
   };
   return {
-    getCurrentSchematic: () => call('getCurrentSchematic'),
-    getProjectContext: async () => {
-      const context = await call('getCurrentSchematic');
-      return { context: typeof context === 'string' ? context : JSON.stringify(context ?? null), components: [] };
-    },
-    getPinmapSummary: () => call('getPinmapSummary'),
-    generatePinmap: componentId => call('generatePinmap', componentId),
-    savePinmap: (componentId, pinmap) => call('savePinmap', { componentId, pinmap }),
-    validateSchematic: schematic => call('validateConnectionGraph', schematic),
+    generateSchematic: (input = {}, context = {}) => call('generateConnectionGraph', input, context),
+    getCurrentSchematic: (input = {}, context = {}) => call('getCurrentSchematic', input, context),
+    getProjectContext: (input = {}, context = {}) => call('getProjectContext', input, context),
+    getPinmapSummary: (input = {}, context = {}) => call('getPinmapSummary', input, context),
+    getComponentCatalog: (input = {}, context = {}) => call('getSensorPinmapCatalog', input, context),
+    generatePinmap: (input = {}, context = {}) => call('generatePinmap', input, context),
+    savePinmap: (input = {}, context = {}) => call('savePinmap', input, context),
+    validateSchematic: (input = {}, context = {}) => call('validateConnectionGraph', input, context),
   };
 }
 
