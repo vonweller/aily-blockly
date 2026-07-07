@@ -57,8 +57,12 @@ function normalizeResourceRequestKind(kind) {
     || kind === 'project-info'
     || kind === 'project-build'
     || kind === 'project-lint'
+    || kind === 'tool-approval'
     || kind === 'blockly-workspace'
     || kind === 'connection-graph'
+    || kind === 'board-search'
+    || kind === 'library-analysis'
+    || kind === 'diagnostics'
     || kind === 'edit-tracking'
     || kind === 'session-title'
     || kind === 'save-current-session'
@@ -366,6 +370,57 @@ class ChatRuntimeHostSessionStore {
 
   buildTranscriptSnapshot(sessionId) {
     return this.transcriptBuilder.buildTranscriptSnapshot(sessionId);
+  }
+
+  buildLiveHostSessionRecord(sessionId, statePatch) {
+    const normalizedSessionId = normalizeSessionId(sessionId);
+    if (!normalizedSessionId) {
+      return null;
+    }
+    const transcript = this.transcriptBuilder.buildTranscriptSnapshot(normalizedSessionId);
+    const turnResponses = Array.isArray(transcript && transcript.turnResponses)
+      ? clonePayload(transcript.turnResponses)
+      : [];
+    if (turnResponses.length === 0) {
+      return null;
+    }
+    const state = {
+      ...(this.buildSessionState(normalizedSessionId) || {}),
+      ...(statePatch && typeof statePatch === 'object' ? statePatch : {}),
+    };
+    const metadata = this.sessionInventoryMetadata.get(normalizedSessionId) ?? {};
+    const now = Date.now();
+    const activeTurnId = this.normalizeActiveTurnId(state.activeTurnId);
+    return {
+      sessionId: normalizedSessionId,
+      metadata: {
+        sessionId: normalizedSessionId,
+        title: typeof metadata.title === 'string' ? metadata.title : '',
+        ...(typeof metadata.titleSource === 'string' ? { titleSource: metadata.titleSource } : {}),
+        ...(typeof metadata.sessionType === 'string' ? { sessionType: metadata.sessionType } : {}),
+        projectPath: Object.prototype.hasOwnProperty.call(metadata, 'projectPath') ? metadata.projectPath : null,
+        createdAt: typeof metadata.createdAt === 'number' && Number.isFinite(metadata.createdAt)
+          ? metadata.createdAt
+          : now,
+        updatedAt: now,
+        mode: typeof metadata.mode === 'string' && metadata.mode.trim()
+          ? metadata.mode.trim()
+          : typeof state.selectedMode === 'string' && state.selectedMode.trim()
+            ? state.selectedMode.trim()
+            : 'agent',
+        model: state.currentModel ?? null,
+        toolCallingIteration: 0,
+      },
+      turnResponses,
+      auxiliary: {
+        runtimeHost: {
+          transcriptRevision: Number(transcript && transcript.revision) || Number(state.transcriptRevision) || 0,
+          requestInProgress: state.requestInProgress === true,
+          activeTurnId: activeTurnId || null,
+          status: typeof state.status === 'string' ? state.status : null,
+        },
+      },
+    };
   }
 
   buildInteractionSnapshot(sessionId) {
@@ -1271,6 +1326,8 @@ class ChatRuntimeHostSessionStore {
     switch (payload.kind) {
       case 'turnProgress':
         return this.cacheRuntimeOwnerTurnProgress(payload);
+      case 'runtimeProjectPathUpdated':
+        return payload;
       case 'turnInteractionRequested':
         return this.cacheRuntimeOwnerTurnInteractionRequested(payload);
       case 'turnError':

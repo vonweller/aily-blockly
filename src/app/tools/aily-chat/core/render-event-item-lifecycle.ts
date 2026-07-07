@@ -1628,7 +1628,7 @@ function normalizeCommandProgress(data: unknown): {
 
   if (kind === 'command_output') {
     return {
-      command: asString(record['command']) || 'terminal command',
+      command: asTerminalCommand(record['command']) ?? '',
       stdout: stream === 'stdout' ? text : '',
       stderr: stream === 'stderr' ? text : '',
       updateKind: 'delta',
@@ -1644,7 +1644,7 @@ function normalizeCommandProgress(data: unknown): {
   }
 
   return {
-    command: asString(record['command']) || 'terminal command',
+    command: asTerminalCommand(record['command']) ?? '',
     stdout: typeof record['stdout'] === 'string' ? record['stdout'] : '',
     stderr: typeof record['stderr'] === 'string' ? record['stderr'] : '',
     updateKind: 'snapshot',
@@ -1905,6 +1905,21 @@ function subagentActivityStructuredPayload(
 
 function asString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
+}
+
+function isPlaceholderTerminalCommand(value: unknown): boolean {
+  if (typeof value !== 'string') {
+    return false;
+  }
+  const normalized = value.trim().toLowerCase();
+  return normalized === 'undefined'
+    || normalized === 'null'
+    || normalized === 'terminal command';
+}
+
+function asTerminalCommand(value: unknown): string | undefined {
+  const command = asString(value);
+  return command && !isPlaceholderTerminalCommand(command) ? command : undefined;
 }
 
 function asNumber(value: unknown): number | undefined {

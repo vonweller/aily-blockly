@@ -311,6 +311,7 @@ function createRuntimeOwnerEvent(event, registrationState) {
 function isRuntimeOwnerEvent(event) {
   const kind = event && event.kind;
   return kind === 'turnProgress'
+    || kind === 'runtimeProjectPathUpdated'
     || kind === 'turnInteractionRequested'
     || kind === 'turnError'
     || kind === 'turnCompleted';

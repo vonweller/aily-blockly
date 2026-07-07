@@ -1849,12 +1849,14 @@ export class SessionLifecycleHelper {
       return;
     }
 
-    const hostRecordToRestore = this.ctx.buildRuntimeRestoreHostRecord?.(restoreRequest) ?? restoreRequest.hostRecord;
+    const runtimeRestoreHostRecord = this.ctx.buildRuntimeRestoreHostRecord?.(restoreRequest) ?? null;
+    const hostRecordToRestore = runtimeRestoreHostRecord ?? restoreRequest.hostRecord;
     if (hostRecordToRestore) {
       await this.restoreDurableSessionModelFromRestoreRequest(
         restoreRequest,
         hostRecordToRestore,
         activationRequestId,
+        { preserveActiveResponseState: !!runtimeRestoreHostRecord },
       );
       return;
     }
@@ -1872,6 +1874,7 @@ export class SessionLifecycleHelper {
     },
     hostRecordToRestore: HostSessionRecord,
     activationRequestId: number,
+    options: { readonly preserveActiveResponseState?: boolean } = {},
   ): Promise<void> {
     const sessionId = typeof restoreRequest.target.sessionId === 'string'
       ? restoreRequest.target.sessionId.trim()
@@ -1906,6 +1909,7 @@ export class SessionLifecycleHelper {
       await this.ctx.restoreSessionHostRecord(hostRecordToRestore, {
         sessionId,
         isCurrent: () => this.isCurrentSessionActivationRequest(activationRequestId),
+        preserveActiveResponseState: options.preserveActiveResponseState === true,
       });
       this.throwIfSessionActivationSuperseded(activationRequestId);
     } catch (error) {
