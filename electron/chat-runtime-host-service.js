@@ -199,6 +199,17 @@ function summarizeInteraction(interaction) {
   };
 }
 
+function traceActiveTurnDurability(phase, payload = {}) {
+  try {
+    console.info('[AilyChat][ActiveTurnDurability]', JSON.stringify({
+      phase,
+      ...payload,
+    }));
+  } catch {
+    console.info('[AilyChat][ActiveTurnDurability]', phase);
+  }
+}
+
 class ChatRuntimeHostProcessService {
   constructor(options = {}) {
     if (!options.BrowserWindow) {
@@ -418,6 +429,17 @@ class ChatRuntimeHostProcessService {
       permissionMode: request && request.providerOptions ? request.providerOptions.permissionMode : undefined,
       permissionProfile: request && request.providerOptions ? request.providerOptions.permissionProfile : undefined,
     }));
+    try {
+      await this.persistHostSessionRecord(runningState.sessionId, 'submitted');
+      traceActiveTurnDurability('submitted', {
+        sessionId: runningState.sessionId,
+        activeTurnId: runningState.activeTurnId,
+        transcriptRevision: Number(runningState.transcriptRevision) || 0,
+      });
+    } catch (error) {
+      await this.failSubmittedTurnWithError(runningState.sessionId, error);
+      throw error;
+    }
     this.replayTranscriptForAttachedSession(runningState.sessionId);
     this.broadcastSessionState('runtime-status', runningState);
     const submittedRequest = this.hostSessionStore.readActiveSubmittedRequest(runningState.sessionId) || request;
@@ -446,7 +468,7 @@ class ChatRuntimeHostProcessService {
       const error = new Error('[AilyChat][RuntimeHost] No registered runtime owner.');
       error.code = 'runtime_owner_unavailable';
       error.retryable = true;
-      this.failSubmittedTurnWithError(runningState.sessionId, error);
+      await this.failSubmittedTurnWithError(runningState.sessionId, error);
     }
     return this.hostSessionStore.buildSessionState(runningState.sessionId);
   }
@@ -473,6 +495,20 @@ class ChatRuntimeHostProcessService {
         transcript: stoppedTranscript,
       });
     }
+    if (stoppedTranscript) {
+      await this.persistHostSessionRecord(sessionId, 'cancelled', {
+        requestInProgress: false,
+        activeTurnId: null,
+        status: 'stopped',
+      });
+      traceActiveTurnDurability('terminal', {
+        sessionId,
+        activeTurnId: targetTurnId,
+        status: 'stopped',
+        reason: 'explicit-stop',
+        transcriptRevision: Number(stoppedTranscript.revision) || 0,
+      });
+    }
     await this.dispatchRuntimeOwnerCommandAndWaitIfAvailable('stopTurn', [{
       sessionId,
       turnId: targetTurnId,
@@ -482,6 +518,34 @@ class ChatRuntimeHostProcessService {
       this.broadcastSessionState('runtime-status', stoppedState);
     }
     return undefined;
+  }
+
+  async persistHostSessionRecord(sessionId, reason, statePatch) {
+    const normalizedSessionId = normalizeSessionId(sessionId);
+    if (!normalizedSessionId) {
+      return false;
+    }
+    const record = this.hostSessionStore.buildLiveHostSessionRecord(normalizedSessionId, statePatch);
+    if (!record) {
+      return false;
+    }
+    const request = {
+      id: this.nextResourceOperationCommandId('save-current-session'),
+      sessionId: normalizedSessionId,
+      kind: 'save-current-session',
+      label: 'Persist chat session',
+      detail: typeof reason === 'string' && reason.trim() ? reason.trim() : undefined,
+      payload: {
+        adapter: 'chatHistory',
+        record,
+      },
+    };
+    if (this.resourceOperationHandler) {
+      await this.resourceOperationHandler(request);
+    } else {
+      await this.dispatchResourceOperationToRegisteredHandler(request);
+    }
+    return true;
   }
 
   handleDisposeSession(args) {
@@ -792,7 +856,7 @@ class ChatRuntimeHostProcessService {
           stack: error && error.stack ? error.stack : undefined,
         });
         if (options.failSubmittedTurnOnError) {
-          this.failSubmittedTurnWithError(sessionId, error);
+          void this.failSubmittedTurnWithError(sessionId, error);
           return;
         }
         this.broadcastRuntimeError(sessionId, error);
@@ -841,8 +905,22 @@ class ChatRuntimeHostProcessService {
     return true;
   }
 
-  failSubmittedTurnWithError(sessionId, error) {
+  async failSubmittedTurnWithError(sessionId, error) {
     const transcript = this.hostSessionStore.markSubmittedTurnFailed(sessionId, error);
+    if (transcript) {
+      try {
+        await this.persistHostSessionRecord(sessionId, 'failed', {
+          requestInProgress: false,
+          activeTurnId: null,
+          status: 'failed',
+        });
+      } catch (persistError) {
+        console.warn('[AilyChat][RuntimeHost] Failed to persist failed turn before clearing active state:', {
+          sessionId,
+          message: persistError && persistError.message ? persistError.message : String(persistError || 'Unknown persistence error'),
+        });
+      }
+    }
     const failedState = this.hostSessionStore.failSubmittedTurn(sessionId);
     if (!failedState) {
       return;
@@ -878,16 +956,16 @@ class ChatRuntimeHostProcessService {
     }
   }
 
-  handleRuntimeOwnerEvent(event, payload = {}) {
+  async handleRuntimeOwnerEvent(event, payload = {}) {
     try {
       this.runtimeOwnerController.assertRegisteredRuntimeOwnerSender(event);
-      this.handleRuntimeOwnerTransportEvent(payload);
+      await this.handleRuntimeOwnerTransportEvent(payload);
     } catch (error) {
       console.warn('[AilyChat][RuntimeHost] Ignored runtime owner event:', error.message);
     }
   }
 
-  handleRuntimeOwnerTransportEvent(payload = {}) {
+  async handleRuntimeOwnerTransportEvent(payload = {}) {
     try {
       const shouldTraceRuntimeOwnerEvents = isRuntimeOwnerTraceEnabled();
       if (payload && (payload.kind === 'turnInteractionRequested' || payload.interaction)) {
@@ -928,9 +1006,51 @@ class ChatRuntimeHostProcessService {
           this.broadcastHostEvent(canonicalEvent);
         }
       }
+      await this.persistTerminalHostRecordFromEvents(eventList);
     } catch (error) {
       console.warn('[AilyChat][RuntimeHost] Ignored runtime owner transport event:', error.message);
     }
+  }
+
+  async persistTerminalHostRecordFromEvents(events) {
+    const eventList = Array.isArray(events) ? events : [];
+    const persistOperations = [];
+    for (const event of eventList) {
+      const state = event && (event.kind === 'runtime-status' || event.kind === 'session-state')
+        && event.state && typeof event.state === 'object'
+        ? event.state
+        : null;
+      const sessionId = normalizeSessionId(state && state.sessionId);
+      if (!sessionId || state.requestInProgress === true) {
+        continue;
+      }
+      const status = typeof state.status === 'string' && state.status.trim()
+        ? state.status.trim()
+        : 'completed';
+      if (status !== 'completed' && status !== 'failed' && status !== 'stopped' && status !== 'disposed') {
+        continue;
+      }
+      persistOperations.push(this.persistHostSessionRecord(sessionId, 'terminal', {
+        requestInProgress: false,
+        activeTurnId: null,
+        status,
+      }).then(persisted => {
+        if (persisted) {
+          traceActiveTurnDurability('terminal', {
+            sessionId,
+            status,
+            reason: 'runtime-owner-event',
+          });
+        }
+      }, error => {
+        console.warn('[AilyChat][RuntimeHost] Failed to persist terminal turn state:', {
+          sessionId,
+          status,
+          message: error && error.message ? error.message : String(error || 'Unknown persistence error'),
+        });
+      }));
+    }
+    await Promise.all(persistOperations);
   }
 
   broadcastHostEvent(payload) {

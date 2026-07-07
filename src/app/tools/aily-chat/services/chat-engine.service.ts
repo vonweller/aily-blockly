@@ -518,6 +518,23 @@ function isRuntimeInteractionProjectionTraceEnabled(): boolean {
   ]);
 }
 
+function isActiveTurnDurabilityTraceEnabled(): boolean {
+  return isAilyCategoryDebugEnabled('aily.chat.traceActiveTurnDurability', [
+    '__AILY_CHAT_TRACE_ACTIVE_TURN_DURABILITY__',
+    'AILY_CHAT_TRACE_ACTIVE_TURN_DURABILITY',
+  ]);
+}
+
+function traceActiveTurnDurability(phase: string, details: Record<string, unknown>): void {
+  if (!isActiveTurnDurabilityTraceEnabled()) {
+    return;
+  }
+  console.info('[AilyChat][ActiveTurnDurability]', {
+    phase,
+    ...details,
+  });
+}
+
 type PendingPlanReview = NonNullable<ReturnType<typeof readPendingPlanReview>>;
 
 function buildRuntimeQuotaOverlayFromTurnResponses(
@@ -1966,6 +1983,22 @@ export class ChatEngineService implements IChatContext {
     this.chatHistoryService.markDirty(targetSessionId);
   }
 
+  private markRuntimeHostRecoverySnapshotDirty(
+    sessionId: string,
+    options?: { readonly flush?: 'immediate' | 'scheduled' },
+  ): void {
+    this.markHistoryDirty(sessionId);
+    traceActiveTurnDurability(options?.flush === 'immediate' ? 'part-delta-immediate' : 'part-delta', {
+      sessionId,
+      flush: options?.flush ?? 'scheduled',
+    });
+    if (options?.flush === 'immediate') {
+      this.chatHistoryService.flushAll();
+      return;
+    }
+    this.chatHistoryService.scheduleRecoverySnapshotFlush();
+  }
+
   private setCurrentViewVisibleProjectionList(list: ChatMessage[]): void {
     this.markCurrentViewVisibleProjectionOwner();
     this.list = list;
@@ -2251,7 +2284,7 @@ export class ChatEngineService implements IChatContext {
         permissionProfile: 'danger-full-access',
         permissionLevel: undefined,
         approvalsReviewer: 'user',
-        approvalPolicy: 'on_request',
+        approvalPolicy: 'never',
       });
     }
 
@@ -2260,16 +2293,13 @@ export class ChatEngineService implements IChatContext {
     }
 
     this.rememberRuntimeSessionProviderOptions(targetSessionId, nextProviderOptions);
-    this.chatService.setCurrentSessionPermissionMode(nextProviderOptions.permissionMode);
-    this.chatService.setCurrentSessionPermissionProfile?.(nextProviderOptions.permissionProfile);
-    this.chatService.setCurrentSessionPermissionLevel(nextProviderOptions.permissionLevel);
-    this.chatService.setCurrentSessionApprovalsReviewer?.(nextProviderOptions.approvalsReviewer);
-    this.chatService.setCurrentSessionApprovalPolicy?.(nextProviderOptions.approvalPolicy);
+    this.chatService.applySessionProviderOptions(nextProviderOptions);
     this.syncExecutionModeGuidanceNotice(
       nextProviderOptions.permissionLevel,
       nextProviderOptions.approvalsReviewer,
       nextProviderOptions.approvalPolicy,
     );
+    this.syncCurrentSessionEntryTargetRuntimeMode(targetSessionId);
   }
 
   get currentCustomAgentTarget() { return this.resolveVisibleSelectedModeSnapshot().customAgentTarget; }
@@ -5394,6 +5424,9 @@ export class ChatEngineService implements IChatContext {
     });
 
     switch (event.kind) {
+      case 'runtimeProjectPathUpdated':
+        this.applyRuntimeProjectPathUpdatedEvent(targetSessionId, event);
+        return;
       case 'turnProgress':
         if (event.turn) {
           this.applyRuntimeHostTurnTranscriptEvent(targetSessionId, event.turn, {
@@ -5473,6 +5506,31 @@ export class ChatEngineService implements IChatContext {
         this.applyRuntimeHostViewRequestEvent(targetSessionId, event.request);
         return;
     }
+  }
+
+  private applyRuntimeProjectPathUpdatedEvent(
+    targetSessionId: string,
+    event: Extract<ChatRuntimeOwnerExecutorEvent, { readonly kind: 'runtimeProjectPathUpdated' }>,
+  ): void {
+    const projectPath = typeof event.projectPath === 'string' ? event.projectPath.trim() : '';
+    if (!projectPath) {
+      return;
+    }
+
+    const currentProviderOptions = this.resolveVisibleSessionProviderOptionsSnapshot(targetSessionId);
+    const providerOptions = normalizeHostSessionProviderOptions({
+      ...currentProviderOptions,
+      ...(event.providerOptions && typeof event.providerOptions === 'object' ? event.providerOptions : {}),
+      folderPath: projectPath,
+    });
+    this.rememberRuntimeSessionProviderOptions(targetSessionId, providerOptions);
+
+    const shouldProjectToVisibleOwner = this.shouldProjectRuntimeViewStateToVisibleOwner(targetSessionId)
+      || !(this as unknown as { chatSessionRuntimeStore?: unknown }).chatSessionRuntimeStore;
+    if (shouldProjectToVisibleOwner) {
+      this.chatService.applySessionProviderOptions?.(providerOptions);
+    }
+    this.syncCurrentSessionEntryTargetRuntimeMode(targetSessionId);
   }
 
   private shouldProjectRuntimeHostVisibleEvent(sessionId: string): boolean {
@@ -5773,6 +5831,7 @@ export class ChatEngineService implements IChatContext {
     const committedTurnResponses = commitSessionModelTurnResponses.call(this, sessionId, turnResponses, {
       source: 'runtime-host-transcript',
     }) ?? turnResponses;
+    this.markRuntimeHostRecoverySnapshotDirty(sessionId, { flush: 'immediate' });
     const shouldRefreshCheckpointTimeline = (
       (this as unknown as {
         shouldRefreshRuntimeTranscriptCheckpointTimeline?: ChatEngineService['shouldRefreshRuntimeTranscriptCheckpointTimeline'];
@@ -5813,6 +5872,7 @@ export class ChatEngineService implements IChatContext {
     if (!committedTurnResponses) {
       return;
     }
+    this.markRuntimeHostRecoverySnapshotDirty(sessionId, { flush: 'immediate' });
 
     if (this.shouldRefreshRuntimeTranscriptCheckpointTimeline([turnResponse], committedTurnResponses, {
       authoritativeSnapshot: false,
@@ -5854,11 +5914,13 @@ export class ChatEngineService implements IChatContext {
       ) ?? null;
       if (committedTurnResponses) {
         this.syncResolvedActiveModelFromCommittedTranscript(targetSessionId, committedTurnResponses);
+        this.markRuntimeHostRecoverySnapshotDirty(targetSessionId, { flush: 'scheduled' });
       }
     } else {
       const model = this.chatSessionModelStore.get(targetSessionId);
       if (model?.upsertTurnResponseParts(turnId, event.parts)) {
         committedTurnResponses = model.turnResponses;
+        this.markRuntimeHostRecoverySnapshotDirty(targetSessionId, { flush: 'scheduled' });
       }
     }
 
@@ -7405,11 +7467,7 @@ export class ChatEngineService implements IChatContext {
     if (!currentSessionActive) {
       this.session.saveCurrentSession();
     }
-    this.chatHistoryService.flushAll({
-      shouldSkipSession: (sessionId, policy) => (
-        policy === 'recovery-snapshot' && this.readVisibleSessionRequestInProgress(sessionId)
-      ),
-    });
+    this.chatHistoryService.flushAll();
     this.chatHistoryService.setLiveSessionProvider(null);
     this.chatHistoryService.setAutoSaveSessionActiveProvider(null);
 

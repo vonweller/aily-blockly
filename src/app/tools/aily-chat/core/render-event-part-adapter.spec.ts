@@ -434,6 +434,118 @@ describe('RenderEventPartAdapter', () => {
     }));
   });
 
+  it('should keep the invocation command when worker progress omits a valid terminal command', () => {
+    processCurrent({
+      type: 'tool_call_begin',
+      toolCallId: 'tc-command-undefined',
+      toolName: 'command_exec',
+      input: { command: 'Get-Location' },
+      timestamp: 1,
+    });
+
+    processCurrent({
+      type: 'tool_call_progress',
+      toolCallId: 'tc-command-undefined',
+      data: {
+        kind: 'command_output',
+        toolName: 'command_exec',
+        command: 'undefined',
+        stream: 'stdout',
+        text: 'C:\\workspace\n',
+        outputSessionId: 'out-command-undefined',
+        status: 'running',
+        running: true,
+      },
+      timestamp: 2,
+    });
+
+    expect(store.getPartsForHandle(currentHandle)).toEqual([
+      jasmine.objectContaining({
+        type: 'terminal',
+        command: 'Get-Location',
+        output: 'C:\\workspace\n',
+        outputSessionId: 'out-command-undefined',
+        isRunning: true,
+      }),
+    ]);
+  });
+
+  it('should keep the approval command when worker progress arrives without a prior visible tool part', () => {
+    processCurrent({
+      type: 'approval_request',
+      toolCallId: 'tc-approval-command-only',
+      requestId: 'approval-command-only',
+      toolName: 'command_exec',
+      input: { command: 'Write-Output ok' },
+      message: 'Allow terminal command?',
+      timestamp: 1,
+    } as RenderEvent);
+
+    processCurrent({
+      type: 'tool_call_progress',
+      toolCallId: 'tc-approval-command-only',
+      data: {
+        kind: 'command_output',
+        toolName: 'command_exec',
+        command: 'undefined',
+        stream: 'stdout',
+        text: 'ok\n',
+        outputSessionId: 'out-approval-command-only',
+        status: 'running',
+        running: true,
+      },
+      timestamp: 2,
+    });
+
+    expect(store.getPartsForHandle(currentHandle)).toEqual([
+      jasmine.objectContaining({
+        type: 'terminal',
+        command: 'Write-Output ok',
+        output: 'ok\n',
+        outputSessionId: 'out-approval-command-only',
+        isRunning: true,
+      }),
+    ]);
+  });
+
+  it('should keep the invocation command when final terminal result has an invalid command', () => {
+    processCurrent({
+      type: 'tool_call_begin',
+      toolCallId: 'tc-command-final-undefined',
+      toolName: 'command_exec',
+      input: { command: 'echo "Command line tool works!" && ver' },
+      timestamp: 1,
+    });
+
+    processCurrent({
+      type: 'tool_call_end',
+      toolCallId: 'tc-command-final-undefined',
+      toolName: 'command_exec',
+      input: { command: 'echo "Command line tool works!" && ver' },
+      resultText: 'status: completed\ncommand: undefined\nexitCode: 0\n\nstdout:\nCommand line tool works!',
+      result: {
+        content: [{
+          type: 'text',
+          text: 'status: completed\ncommand: undefined\nexitCode: 0\n\nstdout:\nCommand line tool works!',
+        }],
+      },
+      state: 'done',
+      isError: false,
+      durationMs: 74,
+      timestamp: 2,
+    } as RenderEvent);
+
+    expect(store.getPartsForHandle(currentHandle)).toEqual([
+      jasmine.objectContaining({
+        type: 'terminal',
+        command: 'echo "Command line tool works!" && ver',
+        output: 'Command line tool works!',
+        exitCode: 0,
+        isRunning: false,
+      }),
+    ]);
+  });
+
   it('should merge structured command session updates into the same terminal session without duplicating live output', () => {
     processCurrent({
       type: 'tool_call_begin',

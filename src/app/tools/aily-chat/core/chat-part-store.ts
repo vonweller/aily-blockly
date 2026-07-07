@@ -174,6 +174,21 @@ function asString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
 }
 
+function isPlaceholderTerminalCommand(value: unknown): boolean {
+  if (typeof value !== 'string') {
+    return false;
+  }
+  const normalized = value.trim().toLowerCase();
+  return normalized === 'undefined'
+    || normalized === 'null'
+    || normalized === 'terminal command';
+}
+
+function asTerminalCommand(value: unknown): string | undefined {
+  const command = asString(value);
+  return command && !isPlaceholderTerminalCommand(command) ? command : undefined;
+}
+
 function getChatPartStableStoreKey(part: ChatPart): string | undefined {
   switch (part.type) {
     case 'markdown':
@@ -203,8 +218,10 @@ function appendTerminalLiveStream(existing: string | undefined, delta: string | 
 }
 
 function normalizeTerminalLivePart(terminal: TerminalPart): TerminalPart {
+  const command = asTerminalCommand(terminal.command) ?? '';
   return {
     ...terminal,
+    command,
     output: appendTerminalLiveStream(undefined, terminal.output),
     stderr: appendTerminalLiveStream(undefined, terminal.stderr),
   };
@@ -452,9 +469,44 @@ function terminalWithInheritedMetadata(terminal: TerminalPart, sourcePart: ChatP
       : sourcePart.metadata,
     terminal.metadata,
   );
+  const command = asTerminalCommand(terminal.command)
+    ?? extractTerminalCommandFromSourcePart(sourcePart)
+    ?? '';
+  const inherited = command === terminal.command ? terminal : { ...terminal, command };
   return metadata
-    ? { ...terminal, metadata }
-    : terminal;
+    ? { ...inherited, metadata }
+    : inherited;
+}
+
+function extractTerminalCommandFromSourcePart(sourcePart: ToolCallPart | TerminalPart | ConfirmationPart): string | undefined {
+  if (sourcePart.type === 'terminal') {
+    return asTerminalCommand(sourcePart.command)
+      ?? extractTerminalCommandFromMetadata(sourcePart.metadata);
+  }
+
+  if (sourcePart.type === 'confirmation') {
+    return asTerminalCommand(asRecord(sourcePart.args)?.['command'])
+      ?? asTerminalCommand(asRecord(sourcePart.args)?.['cmd'])
+      ?? extractTerminalCommandFromMetadata(sourcePart.metadata);
+  }
+
+  const args = asRecord(sourcePart.args);
+  return asTerminalCommand(args?.['command'])
+    ?? asTerminalCommand(args?.['cmd'])
+    ?? extractTerminalCommandFromMetadata(sourcePart.metadata);
+}
+
+function extractTerminalCommandFromMetadata(metadata: unknown): string | undefined {
+  const metadataRecord = asRecord(metadata);
+  if (!metadataRecord) {
+    return undefined;
+  }
+  const approval = asRecord(metadataRecord['approval']);
+  const approvalArgs = asRecord(approval?.['args']);
+  return asTerminalCommand(approvalArgs?.['command'])
+    ?? asTerminalCommand(approvalArgs?.['cmd'])
+    ?? asTerminalCommand(metadataRecord['command'])
+    ?? asTerminalCommand(metadataRecord['cmd']);
 }
 
 function confirmationToTerminalMetadata(
@@ -492,8 +544,8 @@ function isReplaceableTerminalConfirmation(part: ChatPart, terminal: TerminalPar
   }
 
   const args = asRecord(part.args);
-  const command = asString(args?.['command']) || asString(args?.['cmd']);
-  const terminalCommand = asString(terminal.command);
+  const command = asTerminalCommand(args?.['command']) || asTerminalCommand(args?.['cmd']);
+  const terminalCommand = asTerminalCommand(terminal.command);
   return !!command && !!terminalCommand && command === terminalCommand;
 }
 
@@ -1293,7 +1345,11 @@ export class ChatPartStore {
       ...terminal,
       partId: existing.partId || terminal.partId,
       toolCallId: existing.toolCallId || terminal.toolCallId,
-      command: terminal.command || existing.command,
+      command: asTerminalCommand(terminal.command)
+        ?? asTerminalCommand(existing.command)
+        ?? extractTerminalCommandFromMetadata(terminal.metadata)
+        ?? extractTerminalCommandFromMetadata(existing.metadata)
+        ?? '',
       output,
       stderr,
       isRunning: terminal.isRunning,
