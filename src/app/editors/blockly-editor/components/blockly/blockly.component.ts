@@ -44,7 +44,11 @@ const BLOCKLY_LOCALES: { [key: string]: any } = {
 // } from './plugins/continuous-toolbox/src/index.js';
 import './plugins/toolbox-search/src/index';
 import './plugins/block-plus-minus/src/index.js';
-import { arduinoGenerator, type BlockCodeMapping } from './generators/arduino/arduino';
+import {
+  arduinoGenerator,
+  normalizeArduinoGeneratedCode,
+  type BlockCodeMapping,
+} from './generators/arduino/arduino';
 import { micropythonGenerator } from './generators/micropython/micropython';
 import { BlocklyService, WorkspaceBlockSearchState } from '../../services/blockly.service';
 import { BitmapUploadResponse, GlobalServiceManager } from '../../services/bitmap-upload.service';
@@ -1655,7 +1659,7 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
       takeUntil(this.destroy$)
     ).subscribe(() => {
       try {
-        const code = this.generator.workspaceToCode(this.workspace);
+        const code = normalizeArduinoGeneratedCode(this.generator.workspaceToCode(this.workspace));
         this.blocklyService.publishGeneratedCode(code);
         let blockCodeMap = new Map<string, BlockCodeMapping>();
 

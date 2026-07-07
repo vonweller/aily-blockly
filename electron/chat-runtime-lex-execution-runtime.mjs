@@ -2540,8 +2540,8 @@ function createElectronBlocklyToolContributions(hostAPI) {
     contributions.push({
       name: 'boardSearch',
       toolSet: 'blockly-discovery',
-      description: 'Search for development boards and libraries',
-      prompt: 'Use this tool to find development boards and libraries by keyword or filter, get categories, or inspect board parameters.',
+      description: 'Board/library search and hardware library search for development boards, hardware modules, and libraries',
+      prompt: 'Use this tool for board library search, hardware library search, and development board/library discovery by keyword or filter. It can get categories or inspect board parameters.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -2561,8 +2561,8 @@ function createElectronBlocklyToolContributions(hostAPI) {
     contributions.push({
       name: 'search_boards_libraries',
       toolSet: 'blockly-discovery',
-      description: 'Search Aily development boards and libraries by text query',
-      prompt: 'Search development boards and libraries. Use type="boards", "libraries", or "both".',
+      description: 'Search Aily development boards, hardware modules, and libraries by text query',
+      prompt: 'Search development boards, hardware modules, and libraries. Use type="boards", "libraries", or "both".',
       inputSchema: {
         type: 'object',
         properties: {
@@ -2787,7 +2787,9 @@ async function invokeElectronBoardSearchTool(input, hostAPI) {
 }
 
 async function invokeElectronLintTool(hostAPI) {
-  const generatedCode = await hostAPI.blockly.exportAbs();
+  const generatedCode = typeof hostAPI.blockly.getGeneratedCode === 'function'
+    ? await hostAPI.blockly.getGeneratedCode()
+    : await hostAPI.blockly.exportAbs();
   if (!normalizeString(generatedCode)) {
     return toolText('No generated code to lint (workspace is empty).');
   }
@@ -2912,6 +2914,32 @@ function normalizeCategoryType(value) {
 function normalizeLibraryAnalysisMode(value) {
   const normalized = normalizeString(value);
   return normalized === 'readme_ref' || normalized === 'analysis' ? normalized : 'auto';
+}
+
+function formatExternalResult(value) {
+  return typeof value === 'string' ? value : JSON.stringify(value ?? null, null, 2);
+}
+
+function normalizeGeneratedCodeText(value) {
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (value instanceof String) {
+    return value.toString();
+  }
+  if (Array.isArray(value)) {
+    const firstText = value.find(item => typeof item === 'string' && item.length > 0);
+    return typeof firstText === 'string' ? firstText : '';
+  }
+  if (value && typeof value === 'object') {
+    for (const key of ['code', 'generatedCode', 'content', 'text', 'source', 'value']) {
+      const normalized = normalizeGeneratedCodeText(value[key]);
+      if (normalized) {
+        return normalized;
+      }
+    }
+  }
+  return '';
 }
 
 function toolText(text, metadata) {
@@ -3047,10 +3075,25 @@ function createExternalBlockly(sessionId, requestResourceOperation) {
     exportAbs: async () => {
       const result = await requestResourceOperation({
         sessionId,
+        kind: 'file-write',
+        payload: {
+          adapter: 'syncAbs',
+          args: { operation: 'export' },
+        },
+      });
+      const syncResult = result?.result ?? result;
+      if (syncResult?.is_error) {
+        throw new Error(syncResult.content || 'ABS export failed.');
+      }
+      return syncResult?.metadata?.absPreview || syncResult?.content || '';
+    },
+    getGeneratedCode: async () => {
+      const result = await requestResourceOperation({
+        sessionId,
         kind: 'blockly-workspace',
         payload: { adapter: 'blockly', action: 'getGeneratedCode' },
       });
-      return String(result?.result ?? result ?? '');
+      return normalizeGeneratedCodeText(result?.result ?? result);
     },
     getWorkspaceOverview: async () => {
       const result = await requestResourceOperation({
@@ -3058,7 +3101,7 @@ function createExternalBlockly(sessionId, requestResourceOperation) {
         kind: 'blockly-workspace',
         payload: { adapter: 'blockly', action: 'getGeneratedCode' },
       });
-      const generatedCode = String(result?.result ?? result ?? '');
+      const generatedCode = normalizeGeneratedCodeText(result?.result ?? result);
       return {
         structure: '',
         generatedCode,

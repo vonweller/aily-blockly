@@ -8,7 +8,11 @@ import { ElectronService } from '../../../services/electron.service';
 import { LogService } from '../../../services/log.service';
 import { NoticeService } from '../../../services/notice.service';
 import { BlocklyLibraryDiagnostics, BlocklyLibraryPackageService, BlocklyLibraryPackageSnapshot } from '../../../services/blockly-library-package.service';
-import { BlockCodeMapping, CodeLineRange } from '../components/blockly/generators/arduino/arduino';
+import {
+  BlockCodeMapping,
+  CodeLineRange,
+  normalizeArduinoGeneratedCode,
+} from '../components/blockly/generators/arduino/arduino';
 import { convertBlockTreeToAbs, convertAbiToAbsWithLineMap } from '../../../tools/aily-chat/public-api';
 import { BlockSearcher } from '../components/blockly/plugins/toolbox-search/src/block_searcher';
 import { dragSelectionWeakMap } from '../components/blockly/plugins/workspace-multiselect/index.js';
@@ -201,10 +205,15 @@ export class BlocklyService {
     this.workspaceCodeRevision++;
   }
 
-  publishGeneratedCode(code: string): void {
-    this.latestGeneratedCode = code;
+  publishGeneratedCode(code: unknown): void {
+    const normalizedCode = normalizeArduinoGeneratedCode(code);
+    this.latestGeneratedCode = normalizedCode;
     this.generatedCodeRevision = this.workspaceCodeRevision;
-    this.codeSubject.next(code);
+    this.codeSubject.next(normalizedCode);
+  }
+
+  getGeneratedCode(): string {
+    return this.latestGeneratedCode || this.codeSubject.value || '';
   }
 
   getReusableGeneratedCode(): string | null {
