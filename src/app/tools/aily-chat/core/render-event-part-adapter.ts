@@ -24,6 +24,7 @@ import {
   type StatePart,
   type SubagentToolCallSnapshot,
   mkSubagentTimelineEntry,
+  normalizeSubagentToolCallState,
   mkTerminal,
   mkToolCall,
   mkState,
@@ -63,6 +64,7 @@ export type RenderEventPartStoreAccess = Pick<
   | 'upsertSubagentForHandle'
   | 'updateConfirmationResultForHandle'
   | 'updateSubagentForHandle'
+  | 'finalizeSubagentScopedPartsForHandle'
   | 'upsertTerminalForHandle'
 >;
 
@@ -405,7 +407,18 @@ export class RenderEventPartAdapter {
         if (!this._hasExactToolCallHandle(event.toolCallId, handle)) {
           recordScopedSubagentToolHandleMiss(event, 'subagent_end');
         }
-        this._store.updateSubagentForHandle(toolHandle, event.toolCallId, event.state, event.resultText);
+        const state = normalizeSubagentToolCallState(event.state || 'done');
+        this._store.updateSubagentForHandle(
+          toolHandle,
+          event.toolCallId,
+          state,
+          event.resultText,
+        );
+        this._store.finalizeSubagentScopedPartsForHandle(toolHandle, {
+          subAgentInvocationId: event.subAgentInvocationId,
+          parentToolCallId: event.toolCallId,
+          toolCallId: event.toolCallId,
+        }, { status: state === 'error' ? 'error' : 'completed' });
         return finish(true);
       }
 
@@ -1319,7 +1332,7 @@ function subagentStateUpdateToSnapshot(
     subAgentInvocationId: asString(metadata['subAgentInvocationId']) || toolCallId,
     agentName,
     description,
-    state: event.state === 'error' ? 'error' as const : event.state === 'done' ? 'done' as const : 'doing' as const,
+    state: normalizeSubagentToolCallState(event.state),
     resultText: asString(metadata['resultText']) || asString(metadata['result']) || '',
     childItems: [],
     metadata: {

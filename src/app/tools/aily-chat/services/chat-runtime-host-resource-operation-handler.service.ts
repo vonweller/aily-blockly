@@ -1009,7 +1009,7 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
 
     switch (action) {
       case 'generateConnectionGraph':
-        return generateConnectionGraphTool(this.connectionGraphService, this.projectService, args as never);
+        return generateConnectionGraphTool(this.connectionGraphService, this.projectService, args as never, invocationContext);
       case 'getPinmapSummary':
         return getPinmapSummaryTool(this.connectionGraphService, this.projectService, args as never);
       case 'getProjectContext':

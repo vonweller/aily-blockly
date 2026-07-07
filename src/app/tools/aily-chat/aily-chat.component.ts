@@ -346,6 +346,7 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
     this.engine.setPaneSessionCommandHandlers({
       requestNewChat: () => this.requestNewChat(),
     });
+    this.engine.setSchematicIframeProgressTarget(this.connectionGraphService);
     this.debugBrowserChangeSubscription = this.debugBrowser.onDidChange.subscribe(() => {
       this.cdr.markForCheck();
     });

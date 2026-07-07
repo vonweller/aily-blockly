@@ -418,12 +418,33 @@ class ChatRuntimeHostProcessService {
   async handleSubmitTurn(args) {
     const request = args && args[0];
     const runningState = this.hostSessionStore.beginSubmittedTurn(request);
+    const requestMetadata = request && request.requestMetadata && typeof request.requestMetadata === 'object'
+      ? request.requestMetadata
+      : request && request.metadata && typeof request.metadata === 'object'
+        ? request.metadata
+        : null;
+    const requestRouting = requestMetadata && requestMetadata.requestRouting && typeof requestMetadata.requestRouting === 'object'
+      ? requestMetadata.requestRouting
+      : null;
+    const explicitAgentInvocation = requestMetadata && requestMetadata.explicitAgentInvocation && typeof requestMetadata.explicitAgentInvocation === 'object'
+      ? requestMetadata.explicitAgentInvocation
+      : null;
     console.warn('[AilyChat][RuntimeHostSubmitBoundary]', JSON.stringify({
       phase: 'begin-submitted-turn',
       sessionId: runningState.sessionId,
       activeTurnId: runningState.activeTurnId,
       hasRuntimeOwner: this.runtimeOwnerController.hasUsableRuntimeOwner(),
       requestTextLength: measureTextLength(request && request.requestText),
+      customAgentTarget: requestRouting && typeof requestRouting.customAgentTarget === 'string'
+        ? requestRouting.customAgentTarget
+        : undefined,
+      explicitAgentTarget: explicitAgentInvocation && typeof explicitAgentInvocation.targetAgent === 'string'
+        ? explicitAgentInvocation.targetAgent
+        : undefined,
+      explicitAgentSource: explicitAgentInvocation && typeof explicitAgentInvocation.source === 'string'
+        ? explicitAgentInvocation.source
+        : undefined,
+      hasExplicitAgentPrompt: !!(explicitAgentInvocation && typeof explicitAgentInvocation.prompt === 'string' && explicitAgentInvocation.prompt.length > 0),
       approvalPolicy: request && request.providerOptions ? request.providerOptions.approvalPolicy : undefined,
       approvalsReviewer: request && request.providerOptions ? request.providerOptions.approvalsReviewer : undefined,
       permissionMode: request && request.providerOptions ? request.providerOptions.permissionMode : undefined,

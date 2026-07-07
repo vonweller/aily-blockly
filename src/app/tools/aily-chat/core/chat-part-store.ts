@@ -17,7 +17,7 @@ import { appendThinkContent, getThinkContentLength, getThinkContentWindow, store
 import {
   ChatPart, MarkdownPart, ThinkingPart, ToolCallPart, StatePart, TerminalPart,
   SubagentToolCallSnapshot, isSubagentToolCallMetadata, mkMarkdown, mkThinking, mkToolCall, mkError, mkState, mkSubagentTimelineEntry, subagentSnapshotToToolCall, toolCallPartToSubagentSnapshot, mkPlan, mkQuestion, mkConfirmation, buildScopedTextPartId,
-  type ChatPartScope, isSameChatPartScope, normalizeChatPartScope, withChatPartScopeMetadata,
+  getParentToolCallId, getSubAgentInvocationId, normalizeSubagentToolCallState, type ChatPartScope, isSameChatPartScope, normalizeChatPartScope, withChatPartScopeMetadata,
 } from './chat-parts';
 import type { SubagentChildItem } from './chat-parts';
 import type { ConfirmationPart, QuestionPart } from './chat-parts';
@@ -725,6 +725,28 @@ function finalizeSubagentChildItems(
   });
 
   return changed ? nextItems : [...childItems];
+}
+
+function isPartInSubagentScope(part: ChatPart, targetIds: ReadonlySet<string>): boolean {
+  const subAgentInvocationId = getSubAgentInvocationId(part);
+  if (subAgentInvocationId && targetIds.has(subAgentInvocationId)) {
+    return true;
+  }
+
+  const parentToolCallId = getParentToolCallId(part);
+  if (parentToolCallId && targetIds.has(parentToolCallId)) {
+    return true;
+  }
+
+  if (part.type === 'tool_call' && part.toolCallId && targetIds.has(part.toolCallId)) {
+    return true;
+  }
+
+  if (part.type === 'terminal' && part.toolCallId && targetIds.has(part.toolCallId)) {
+    return true;
+  }
+
+  return false;
 }
 
 function finalizeQuestionAnswers(part: QuestionPart): QuestionPart['answers'] {
@@ -2072,6 +2094,104 @@ export class ChatPartStore {
     }
   }
 
+  finalizeSubagentScopedPartsForHandle(
+    handle: ChatPartStoreReadableHandle | null,
+    scope: { readonly subAgentInvocationId?: string; readonly parentToolCallId?: string; readonly toolCallId?: string },
+    options: { readonly status?: RunningPartFinalizeStatus } = {},
+  ): void {
+    const storeKey = this.resolveStoreKey(handle);
+    if (storeKey === null) {
+      return;
+    }
+
+    const parts = this._store.get(storeKey);
+    if (!parts) {
+      return;
+    }
+
+    const targetIds = new Set([
+      scope.subAgentInvocationId,
+      scope.parentToolCallId,
+      scope.toolCallId,
+    ].filter((value): value is string => typeof value === 'string' && value.trim().length > 0));
+    if (targetIds.size === 0) {
+      return;
+    }
+
+    const finalToolState: ToolCallPart['state'] = options.status === 'error' ? 'error' : 'done';
+    const finalState: StatePart['state'] = options.status === 'error' ? 'error' : 'done';
+
+    for (let partIndex = 0; partIndex < parts.length; partIndex += 1) {
+      const part = parts[partIndex];
+      if (!isPartInSubagentScope(part, targetIds)) {
+        continue;
+      }
+
+      if (part.type === 'thinking' && !part.isComplete) {
+        this.updatePart(storeKey, partIndex, {
+          ...part,
+          isComplete: true,
+        });
+        continue;
+      }
+
+      if (part.type === 'tool_call' && (part.state === 'doing' || part.state === 'pending_approval')) {
+        const compatSubagent = isSubagentToolCallMetadata(part.metadata)
+          ? toolCallPartToSubagentSnapshot(part)
+          : null;
+        this.updatePart(storeKey, partIndex, {
+          ...(compatSubagent
+            ? this.rebuildSubagentToolCallPart(part, {
+              ...compatSubagent,
+              state: finalToolState === 'error' ? 'error' : 'done',
+              childItems: finalizeSubagentChildItems(compatSubagent.childItems, options.status),
+            }, { appendTerminalEntry: true })
+            : part),
+          state: finalToolState,
+          ...(part.state === 'pending_approval'
+            ? { metadata: finalizePendingApprovalMetadata(part, options.status) ?? part.metadata }
+            : {}),
+        });
+        continue;
+      }
+
+      if (part.type === 'state' && part.state === 'doing') {
+        this.updatePart(storeKey, partIndex, {
+          ...part,
+          state: finalState,
+        });
+        continue;
+      }
+
+      if (part.type === 'terminal' && part.isRunning) {
+        this.updatePart(storeKey, partIndex, {
+          ...part,
+          isRunning: false,
+        });
+        continue;
+      }
+
+      if (part.type === 'confirmation' && !part.resolved) {
+        this.updatePart(storeKey, partIndex, {
+          ...part,
+          resolved: true,
+          result: 'rejected',
+          metadata: finalizeInteractionMetadata(part.metadata, options.status),
+        });
+        continue;
+      }
+
+      if (part.type === 'question' && !part.answers) {
+        this.updatePart(storeKey, partIndex, {
+          ...part,
+          answers: finalizeQuestionAnswers(part),
+          isHistory: true,
+          metadata: finalizeInteractionMetadata(part.metadata, options.status),
+        });
+      }
+    }
+  }
+
   private updatePartForHandle(handle: ChatPartStoreReadableHandle | null, partIndex: number, part: ChatPart): void {
     const storeKey = this.resolveStoreKey(handle);
     if (storeKey === null) {
@@ -2144,7 +2264,11 @@ export class ChatPartStore {
         this.updatePart(
           storeKey,
           i,
-          this.rebuildSubagentToolCallPart(p, { ...compat, state, resultText }, { appendTerminalEntry: true }),
+          this.rebuildSubagentToolCallPart(p, {
+            ...compat,
+            state: normalizeSubagentToolCallState(state),
+            resultText,
+          }, { appendTerminalEntry: true }),
         );
         return;
       }

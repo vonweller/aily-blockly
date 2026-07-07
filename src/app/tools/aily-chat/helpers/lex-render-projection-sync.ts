@@ -124,6 +124,14 @@ export class LexRenderProjectionSync {
               status: event.status === 'failed' ? 'failed' : event.status === 'cancelled' ? 'killed' : 'completed',
             }) || changed;
           }
+        } else if (event.itemKind === 'subagent') {
+          const subagentScope = parseLifecycleSubagentScope(event.itemId);
+          if (subagentScope) {
+            this.ctx.partStore.finalizeSubagentScopedPartsForHandle(handle, subagentScope, {
+              status: toRunningPartFinalizeStatus(event.status),
+            });
+            changed = true;
+          }
         }
         continue;
       }
@@ -303,6 +311,22 @@ function parseLifecycleTerminalIdentity(itemId: string): { partId: string; proce
     processId: sessionId,
     outputSessionId: sessionId,
     terminalId: sessionId,
+  };
+}
+
+function parseLifecycleSubagentScope(itemId: string): { subAgentInvocationId: string; parentToolCallId: string; toolCallId: string } | null {
+  const trimmed = itemId.trim();
+  if (!trimmed.startsWith('subagent:')) {
+    return null;
+  }
+  const id = trimmed.slice('subagent:'.length).trim();
+  if (!id) {
+    return null;
+  }
+  return {
+    subAgentInvocationId: id,
+    parentToolCallId: id,
+    toolCallId: id,
   };
 }
 

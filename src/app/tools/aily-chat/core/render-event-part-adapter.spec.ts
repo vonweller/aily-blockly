@@ -1,7 +1,7 @@
 import { ChatPartStore } from './chat-part-store';
 import { RenderEventPartAdapter } from './render-event-part-adapter';
 import { turnResponsePartsToDisplayChatParts } from './turn-response-part-mapper';
-import { buildToolActivityDisplayItem } from '../components/x-dialog/chat-activity-group-projection';
+import { buildActivityGroupPresentation, buildToolActivityDisplayItem } from '../components/x-dialog/chat-activity-group-projection';
 import { buildChatRenderItems } from '../components/x-dialog/chat-subagent-group-projection';
 import type { RenderEvent } from 'aily-lex/browser';
 
@@ -1420,6 +1420,135 @@ describe('RenderEventPartAdapter', () => {
     }));
   });
 
+  it('normalizes host subagent terminal aliases before updating the response model', () => {
+    processCurrent({
+      type: 'subagent_begin',
+      toolCallId: 'sa-completed',
+      agentName: 'Explore',
+      description: 'Search files',
+      timestamp: 1,
+    });
+
+    processCurrent({
+      type: 'subagent_end',
+      toolCallId: 'sa-completed',
+      agentName: 'Explore',
+      resultText: 'Found files',
+      state: 'completed',
+      durationMs: 50,
+      timestamp: 2,
+    } as any);
+
+    processCurrent({
+      type: 'subagent_begin',
+      toolCallId: 'sa-failed',
+      agentName: 'Explore',
+      description: 'Search failed',
+      timestamp: 3,
+    });
+
+    processCurrent({
+      type: 'subagent_end',
+      toolCallId: 'sa-failed',
+      agentName: 'Explore',
+      resultText: 'Search failed',
+      state: 'failed',
+      durationMs: 60,
+      timestamp: 4,
+    } as any);
+
+    processCurrent({
+      type: 'subagent_begin',
+      toolCallId: 'sa-end-without-state',
+      agentName: 'Explore',
+      description: 'Search without explicit state',
+      timestamp: 5,
+    });
+
+    processCurrent({
+      type: 'subagent_end',
+      toolCallId: 'sa-end-without-state',
+      agentName: 'Explore',
+      resultText: 'Ended',
+      durationMs: 70,
+      timestamp: 6,
+    } as any);
+
+    const parts = store.getPartsForHandle(currentHandle);
+    expect(parts[0]).toEqual(jasmine.objectContaining({
+      type: 'tool_call',
+      toolCallId: 'sa-completed',
+      state: 'done',
+      metadata: jasmine.objectContaining({ phase: 'completed' }),
+    }));
+    expect(parts[1]).toEqual(jasmine.objectContaining({
+      type: 'tool_call',
+      toolCallId: 'sa-failed',
+      state: 'error',
+      metadata: jasmine.objectContaining({ phase: 'failed' }),
+    }));
+    expect(parts[2]).toEqual(jasmine.objectContaining({
+      type: 'tool_call',
+      toolCallId: 'sa-end-without-state',
+      state: 'done',
+      metadata: jasmine.objectContaining({ phase: 'completed' }),
+    }));
+  });
+
+  it('finalizes scoped subagent child parts when the parent subagent ends', () => {
+    processCurrent({
+      type: 'subagent_begin',
+      toolCallId: 'sa-parent',
+      subAgentInvocationId: 'sa-parent',
+      agentName: 'SchematicAgent',
+      description: 'Generate wiring diagram',
+      timestamp: 1,
+    } as any);
+
+    processCurrent({
+      type: 'thinking_delta',
+      text: 'Let me analyze the project context.',
+      timestamp: 2,
+      sourceAgentRole: 'subagent',
+      subAgentInvocationId: 'sa-parent',
+      parentToolCallId: 'sa-parent',
+    } as any);
+
+    processCurrent({
+      type: 'tool_call_begin',
+      toolCallId: 'child-context',
+      toolName: 'checked_project_context',
+      input: {},
+      timestamp: 3,
+      sourceAgentRole: 'subagent',
+      subAgentInvocationId: 'sa-parent',
+      parentToolCallId: 'sa-parent',
+    } as any);
+
+    processCurrent({
+      type: 'subagent_end',
+      toolCallId: 'sa-parent',
+      subAgentInvocationId: 'sa-parent',
+      agentName: 'SchematicAgent',
+      resultText: 'Wiring diagram generated.',
+      state: 'done',
+      timestamp: 4,
+    } as any);
+
+    const parts = store.getPartsForHandle(currentHandle);
+    expect(parts).toEqual([
+      jasmine.objectContaining({ type: 'tool_call', toolCallId: 'sa-parent', state: 'done' }),
+      jasmine.objectContaining({ type: 'thinking', isComplete: true }),
+      jasmine.objectContaining({ type: 'tool_call', toolCallId: 'child-context', state: 'done' }),
+    ]);
+
+    const renderItems = buildChatRenderItems(parts, false);
+    expect(renderItems.length).toBe(1);
+    expect(renderItems[0].kind).toBe('group');
+    const presentation = buildActivityGroupPresentation(renderItems[0].kind === 'group' ? renderItems[0].parts : []);
+    expect(presentation.state).toBe('done');
+  });
+
   it('canonicalizes subagent state updates as parent subagent tool calls', () => {
     processCurrent({
       type: 'state_update',
@@ -2006,7 +2135,7 @@ describe('RenderEventPartAdapter', () => {
       jasmine.objectContaining({
         type: 'tool_call',
         toolCallId: 'child-shift',
-        state: 'doing',
+        state: 'done',
         sourceAgentRole: 'subagent',
         subAgentInvocationId: 'sa-shift',
         parentToolCallId: 'sa-shift',

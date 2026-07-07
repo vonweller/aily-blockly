@@ -1668,6 +1668,25 @@ class ChatRuntimeHostSessionStore {
         interaction: clonePayload(payload.interaction),
       });
     }
+    const completionTurnId = visibleTurnId || turnSnapshotId || turnId || payloadTurnId;
+    const completedTranscript = completionTurnId
+      ? this.transcriptBuilder.completeTurn({
+        sessionId,
+        turnId: completionTurnId,
+        revision: payload && payload.revision,
+        timestamp: Date.now(),
+      })
+      : null;
+    const completedTranscriptEvent = completedTranscript
+      ? this.buildTurnTranscriptEvent(
+        completedTranscript,
+        completionTurnId,
+        payload && payload.revision,
+      )
+      : null;
+    if (completedTranscriptEvent) {
+      events.push(completedTranscriptEvent);
+    }
     const previousState = this.buildSessionState(sessionId);
     const transcriptRevision = Math.max(
       Number(previousState && previousState.transcriptRevision) || 0,

@@ -5,6 +5,7 @@ import { parseTerminalPayload, type ParsedTerminalPayload } from './terminal-pay
 import { collectToolResultText, extractRawToolResultPayloadText } from './tool-result-content';
 import { ProposedPlanParser, type ProposedPlanSegment } from './proposed-plan-parser';
 import type { QuestionItem, ToolCallPart } from './chat-parts';
+import { normalizeSubagentToolCallState } from './chat-parts';
 import { normalizeChatErrorNotice } from './chat-error-notice-normalizer';
 
 export type CanonicalRenderItemKind =
@@ -297,8 +298,9 @@ export class RenderEventItemLifecycleNormalizer {
             event.text,
             subagentStateUpdatePayload(event),
           ));
-          if (event.state === 'error' || event.state === 'done') {
-            output.push(this.completeItem(id, 'subagent', timestamp, event.state === 'error' ? 'failed' : 'completed', event.type));
+          const subagentState = normalizeSubagentToolCallState(event.state);
+          if (subagentState === 'error' || subagentState === 'done') {
+            output.push(this.completeItem(id, 'subagent', timestamp, subagentState === 'error' ? 'failed' : 'completed', event.type));
           }
           return output;
         }
@@ -1158,7 +1160,7 @@ function subagentStateUpdatePayload(event: Extract<RenderEvent, { type: 'state_u
     subAgentInvocationId,
     agentName,
     description,
-    state: event.state === 'error' ? 'error' : event.state === 'done' ? 'done' : 'doing',
+    state: normalizeSubagentToolCallState(event.state),
     resultText: subagentStateUpdateString(event, 'resultText')
       || subagentStateUpdateString(event, 'result')
       || '',
@@ -1169,14 +1171,15 @@ function subagentStateUpdatePayload(event: Extract<RenderEvent, { type: 'state_u
 function subagentEndPayload(event: Extract<RenderEvent, { type: 'subagent_end' }>): CanonicalRenderItemStructuredPayload {
   const boundedResult = boundedString(event.resultText, SUBAGENT_RESULT_MAX_CHARS);
   const description = event.agentName || 'Agent';
-  const metadata = boundedRecord(subagentMetadata(event, event.state === 'error' ? 'failed' : 'completed')) ?? {};
+  const state = normalizeSubagentToolCallState(event.state || 'done');
+  const metadata = boundedRecord(subagentMetadata(event, state === 'error' ? 'failed' : 'completed')) ?? {};
   return {
     type: 'subagent',
     toolCallId: event.toolCallId,
     subAgentInvocationId: event.subAgentInvocationId,
     agentName: description,
     description,
-    state: event.state,
+    state,
     resultText: boundedResult.text,
     metadata: {
       ...metadata,

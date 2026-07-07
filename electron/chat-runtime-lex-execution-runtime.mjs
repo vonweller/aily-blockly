@@ -417,7 +417,8 @@ class LexExecutionRuntimeOwner {
   }
 
   async runTurn(session, turnId, request, text, abortController) {
-    for await (const renderEvent of session.handle.chat(text, abortController.signal, { turnId })) {
+    const requestMetadata = normalizeRequestMetadata(request);
+    for await (const renderEvent of session.handle.chat(text, abortController.signal, { turnId, requestMetadata })) {
       if (abortController.signal.aborted) {
         continue;
       }
@@ -1249,6 +1250,32 @@ function normalizeApprovalDecision(payload) {
   return approved
     ? { approved: true }
     : { approved: false, reason: normalizeString(result?.reason) || 'rejected' };
+}
+
+function normalizeRequestMetadata(request) {
+  const metadata = request?.metadata && typeof request.metadata === 'object' && !Array.isArray(request.metadata)
+    ? request.metadata
+    : request?.requestMetadata && typeof request.requestMetadata === 'object' && !Array.isArray(request.requestMetadata)
+      ? request.requestMetadata
+      : null;
+  if (!metadata) {
+    return undefined;
+  }
+
+  try {
+    if (typeof globalThis.structuredClone === 'function') {
+      return globalThis.structuredClone(metadata);
+    }
+  } catch {
+    // Fall through to JSON clone below. Request metadata is expected to be
+    // structured-cloneable, but older Electron builds may be stricter.
+  }
+
+  try {
+    return JSON.parse(JSON.stringify(metadata));
+  } catch {
+    return { ...metadata };
+  }
 }
 
 function normalizeProtocolTruncation(value) {
