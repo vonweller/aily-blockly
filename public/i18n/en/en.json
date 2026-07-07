@@ -936,6 +936,7 @@
         "TITLE": "Publish Library",
         "CANCEL": "Cancel",
         "PUBLISH": "Publish Library",
+        "SUBMITTING": "{{name}} is submitting...",
         "FIELD_PACKAGE_NAME": "Package name",
         "FIELD_VERSION": "Version",
         "FIELD_DISPLAY_NAME": "Display name",

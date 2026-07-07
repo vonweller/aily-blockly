@@ -931,6 +931,7 @@
         "TITLE": "发布库",
         "CANCEL": "取消",
         "PUBLISH": "发布库",
+        "SUBMITTING": "{{name}} 正在提交...",
         "FIELD_PACKAGE_NAME": "库名",
         "FIELD_VERSION": "版本号",
         "FIELD_DISPLAY_NAME": "显示名称",

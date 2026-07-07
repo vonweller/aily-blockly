@@ -860,6 +860,7 @@
         "TITLE": "Bibliothek veröffentlichen",
         "CANCEL": "Abbrechen",
         "PUBLISH": "Bibliothek veröffentlichen",
+        "SUBMITTING": "{{name}} wird eingereicht...",
         "FIELD_PACKAGE_NAME": "Paketname",
         "FIELD_VERSION": "Version",
         "FIELD_DISPLAY_NAME": "Anzeigename",

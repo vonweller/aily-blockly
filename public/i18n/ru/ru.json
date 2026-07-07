@@ -860,6 +860,7 @@
         "TITLE": "Опубликовать библиотеку",
         "CANCEL": "Отмена",
         "PUBLISH": "Опубликовать библиотеку",
+        "SUBMITTING": "{{name}} отправляется...",
         "FIELD_PACKAGE_NAME": "Имя пакета",
         "FIELD_VERSION": "Версия",
         "FIELD_DISPLAY_NAME": "Отображаемое имя",

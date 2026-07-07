@@ -682,7 +682,9 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
   }
 
   private async submitLibraryRequest(item: BlocklyToolboxFacadeItem, confirmExisting: boolean, packageJsonPatch: Record<string, unknown>): Promise<void> {
-    const loadingMessage = this.message.loading(`${this.getLibraryDisplayName(item)} 正在提交...`, { nzDuration: 0 });
+    const loadingMessage = this.message.loading(this.translate.instant('LIBRARY_PUBLISH.SUBMITTING', {
+      name: this.getLibraryDisplayName(item),
+    }), { nzDuration: 0 });
     try {
       await firstValueFrom(this.librarySubmissionService.submitLocalLibraryByRef({
         name: item.libraryName || '',

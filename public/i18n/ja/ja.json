@@ -860,6 +860,7 @@
         "TITLE": "ライブラリを公開",
         "CANCEL": "キャンセル",
         "PUBLISH": "ライブラリを公開",
+        "SUBMITTING": "{{name}} を提出中...",
         "FIELD_PACKAGE_NAME": "パッケージ名",
         "FIELD_VERSION": "バージョン",
         "FIELD_DISPLAY_NAME": "表示名",

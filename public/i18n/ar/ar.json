@@ -860,6 +860,7 @@
         "TITLE": "نشر المكتبة",
         "CANCEL": "إلغاء",
         "PUBLISH": "نشر المكتبة",
+        "SUBMITTING": "جارٍ إرسال {{name}}...",
         "FIELD_PACKAGE_NAME": "اسم الحزمة",
         "FIELD_VERSION": "الإصدار",
         "FIELD_DISPLAY_NAME": "اسم العرض",

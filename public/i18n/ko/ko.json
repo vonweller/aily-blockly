@@ -848,6 +848,7 @@
         "TITLE": "라이브러리 게시",
         "CANCEL": "취소",
         "PUBLISH": "라이브러리 게시",
+        "SUBMITTING": "{{name}} 제출 중...",
         "FIELD_PACKAGE_NAME": "패키지 이름",
         "FIELD_VERSION": "버전",
         "FIELD_DISPLAY_NAME": "표시 이름",

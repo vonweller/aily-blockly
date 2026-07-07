@@ -873,6 +873,7 @@
         "TITLE": "發布庫",
         "CANCEL": "取消",
         "PUBLISH": "發布庫",
+        "SUBMITTING": "{{name}} 正在提交...",
         "FIELD_PACKAGE_NAME": "庫名",
         "FIELD_VERSION": "版本號",
         "FIELD_DISPLAY_NAME": "顯示名稱",
