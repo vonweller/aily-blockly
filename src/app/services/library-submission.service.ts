@@ -42,6 +42,8 @@ export interface LibrarySubmissionApiError extends ApiErrorDetails {
   raw: unknown;
   submission?: LibrarySubmissionResult;
   sameContent?: boolean;
+  submittedByCurrentUser?: boolean;
+  conflictType?: string;
 }
 
 @Injectable({
@@ -103,6 +105,8 @@ export class LibrarySubmissionService {
       raw: error,
       submission: this.getSubmissionFromErrorPayload(source),
       sameContent: this.getSameContentFromErrorPayload(source),
+      submittedByCurrentUser: this.getSubmittedByCurrentUserFromErrorPayload(source),
+      conflictType: this.getConflictTypeFromErrorPayload(source),
     };
     return throwError(() => normalized);
   }
@@ -145,5 +149,21 @@ export class LibrarySubmissionService {
     }
     const value = source['same_content'] ?? source['sameContent'];
     return typeof value === 'boolean' ? value : undefined;
+  }
+
+  private getSubmittedByCurrentUserFromErrorPayload(source: unknown): boolean | undefined {
+    if (!source || typeof source !== 'object' || Array.isArray(source)) {
+      return undefined;
+    }
+    const value = source['submitted_by_current_user'] ?? source['submittedByCurrentUser'];
+    return typeof value === 'boolean' ? value : undefined;
+  }
+
+  private getConflictTypeFromErrorPayload(source: unknown): string | undefined {
+    if (!source || typeof source !== 'object' || Array.isArray(source)) {
+      return undefined;
+    }
+    const value = source['conflict_type'] ?? source['conflictType'];
+    return typeof value === 'string' ? value : undefined;
   }
 }

@@ -73,6 +73,19 @@ img {
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4) !important;
 }
 
+.library-submission-existing-modal {
+  .ant-modal-content {
+    background: var(--aily-bg-elevated) !important;
+    border: 1px solid var(--aily-border-input);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4) !important;
+  }
+
+  .ant-modal-confirm-title,
+  .ant-modal-confirm-content {
+    color: var(--aily-text-primary);
+  }
+}
+
 .project-lock-conflict-modal {
   .ant-modal-content {
     background: var(--aily-bg-elevated) !important;

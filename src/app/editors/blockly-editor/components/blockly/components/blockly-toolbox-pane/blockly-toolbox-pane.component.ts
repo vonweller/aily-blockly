@@ -7,7 +7,7 @@ import {
   BlocklyService,
   BlocklyToolboxFacadeItem,
 } from '../../../../services/blockly.service';
-import { BlocklyLibraryPackageService } from '../../../../../../services/blockly-library-package.service';
+import { BlocklyLibraryMetadataUpdateResult, BlocklyLibraryPackageService } from '../../../../../../services/blockly-library-package.service';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { MenuComponent } from '../../../../../../components/menu/menu.component';
 import { IMenuItem } from '../../../../../../configs/menu.config';
@@ -104,6 +104,7 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
   private dragSorting = false;
   private lastDragEndAt = 0;
   private readonly toolboxOrderPackageKey = 'blocklyToolboxOrder';
+  private pendingLibraryMetadataUpdateResult: BlocklyLibraryMetadataUpdateResult | null = null;
   lastSubmittedLibraryDisplayName = '';
 
   @ViewChild('librarySubmissionSuccessTpl')
@@ -521,7 +522,10 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
         },
       });
 
-      modalRef.afterClose.subscribe(() => resolve());
+      modalRef.afterClose.subscribe(async () => {
+        await this.promptProjectReloadAfterLibraryMetadataUpdate();
+        resolve();
+      });
     });
   }
 
@@ -533,7 +537,7 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
       }
 
       if (publishResult.saveToLocalPackageJson) {
-        this.saveLibraryMetadataToLocalPackage(item, publishResult.localPackageJsonPatch);
+        this.pendingLibraryMetadataUpdateResult = this.saveLibraryMetadataToLocalPackage(item, publishResult.localPackageJsonPatch);
       }
       this.showLibrarySubmissionSuccessMessage(item, publishResult.packageJsonPatch);
       return { success: true };
@@ -551,9 +555,9 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
     }
   }
 
-  private saveLibraryMetadataToLocalPackage(item: BlocklyToolboxFacadeItem, localPackageJsonPatch: Record<string, unknown>): void {
+  private saveLibraryMetadataToLocalPackage(item: BlocklyToolboxFacadeItem, localPackageJsonPatch: Record<string, unknown>): BlocklyLibraryMetadataUpdateResult {
     try {
-      this.blocklyLibraryPackageService.updateLibraryPackageJsonMetadata({
+      return this.blocklyLibraryPackageService.updateLibraryPackageJsonMetadata({
         name: item.libraryName || '',
         path: item.libraryPath || '',
         source: 'declared',
@@ -563,31 +567,77 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
     }
   }
 
+  private async promptProjectReloadAfterLibraryMetadataUpdate(): Promise<void> {
+    const updateResult = this.pendingLibraryMetadataUpdateResult;
+    this.pendingLibraryMetadataUpdateResult = null;
+    if (!updateResult?.requiresProjectReload || !this.projectService.currentProjectPath) {
+      return;
+    }
+
+    const confirmed = await new Promise<boolean>((resolve) => {
+      const renamedText = updateResult.previousPackageName && updateResult.nextPackageName
+        ? this.translate.instant('LIBRARY_PUBLISH.RELOAD_RENAMED', {
+          previousName: updateResult.previousPackageName,
+          nextName: updateResult.nextPackageName,
+        })
+        : this.translate.instant('LIBRARY_PUBLISH.RELOAD_UPDATED');
+
+      this.modal.confirm({
+        nzClassName: 'library-submission-existing-modal',
+        nzTitle: this.translate.instant('LIBRARY_PUBLISH.RELOAD_TITLE'),
+        nzContent: this.translate.instant('LIBRARY_PUBLISH.RELOAD_CONTENT', { message: renamedText }),
+        nzOkText: this.translate.instant('LIBRARY_PUBLISH.RELOAD_OK'),
+        nzCancelText: this.translate.instant('LIBRARY_PUBLISH.RELOAD_LATER'),
+        nzOnOk: () => resolve(true),
+        nzOnCancel: () => resolve(false),
+      });
+    });
+
+    if (!confirmed) {
+      this.message.info(this.translate.instant('LIBRARY_PUBLISH.RELOAD_SKIPPED'), { nzDuration: 5000 });
+      return;
+    }
+
+    const projectPath = this.projectService.currentProjectPath;
+    const saveResult = await this.projectService.save(projectPath);
+    if (!saveResult.success) {
+      this.message.error(this.translate.instant('LIBRARY_PUBLISH.RELOAD_SAVE_FAILED', {
+        error: saveResult.error || this.translate.instant('LIBRARY_PUBLISH.UNKNOWN_ERROR'),
+      }), { nzDuration: 7000 });
+      return;
+    }
+
+    await this.projectService.projectOpen(projectPath, { reason: 'reload' });
+  }
+
   private async submitLibraryWithExistingConfirmation(item: BlocklyToolboxFacadeItem, packageJsonPatch: Record<string, unknown>): Promise<boolean> {
     try {
       await this.submitLibraryRequest(item, false, packageJsonPatch);
       return true;
     } catch (error) {
-      if (this.isPackageNameUnavailableError(error)) {
-        throw error;
+      if (this.isExistingLibrarySubmissionError(error)) {
+        const confirmed = await this.confirmExistingLibrarySubmission(item, error);
+        if (!confirmed) {
+          return false;
+        }
+
+        await this.submitLibraryRequest(item, true, packageJsonPatch);
+        return true;
       }
 
-      if (!this.isExistingLibrarySubmissionError(error)) {
-        throw error;
-      }
-
-      const confirmed = await this.confirmExistingLibrarySubmission(item, error);
-      if (!confirmed) {
-        return false;
-      }
-
-      await this.submitLibraryRequest(item, true, packageJsonPatch);
-      return true;
+      throw error;
     }
   }
 
   private isPackageNameUnavailableError(error: unknown): boolean {
     const apiError = error as Partial<LibrarySubmissionApiError>;
+    if (apiError.submittedByCurrentUser === true) {
+      return false;
+    }
+    if (apiError.submittedByCurrentUser === false) {
+      return true;
+    }
+
     const message = (apiError.message || '').toLowerCase();
     const messageIndicatesNameUnavailable =
       /already exists|already submitted|pending submission|name conflict|same name|package name|another user|other user|not your|not owned|已存在|已提交|待审核|待处理|同名|占用|其他用户|别人|不是本人|非本人|不属于你/.test(message);
@@ -690,6 +740,13 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
 
   private isExistingLibrarySubmissionError(error: unknown): boolean {
     const apiError = error as Partial<LibrarySubmissionApiError>;
+    if (apiError.submittedByCurrentUser === true) {
+      return true;
+    }
+    if (apiError.submittedByCurrentUser === false) {
+      return false;
+    }
+
     return apiError.status === 409
       && apiError.errorCode === 'library_submission_already_submitted'
       && !!apiError.submission;
@@ -698,16 +755,19 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
   private confirmExistingLibrarySubmission(item: BlocklyToolboxFacadeItem, error: unknown): Promise<boolean> {
     const apiError = error as Partial<LibrarySubmissionApiError>;
     const prNumber = apiError.submission?.pr_number;
-    const extra = prNumber ? `当前提交记录 PR #${prNumber}。` : '当前已有提交记录。';
+    const extra = prNumber
+      ? this.translate.instant('LIBRARY_PUBLISH.EXISTING_WITH_PR', { prNumber })
+      : this.translate.instant('LIBRARY_PUBLISH.EXISTING_NO_PR');
     const actionText = apiError.sameContent
-      ? '本次内容与已有提交一致，继续后不会重复创建新 PR。'
-      : '继续提交会更新这条提交记录，并由后台重新创建或更新 PR。';
+      ? this.translate.instant('LIBRARY_PUBLISH.EXISTING_SAME_CONTENT')
+      : this.translate.instant('LIBRARY_PUBLISH.EXISTING_UPDATE_CONTENT');
     return new Promise((resolve) => {
       this.modal.confirm({
-        nzTitle: '该库已经提交过',
+        nzClassName: 'library-submission-existing-modal',
+        nzTitle: this.translate.instant('LIBRARY_PUBLISH.EXISTING_TITLE'),
         nzContent: `${extra}${actionText}`,
-        nzOkText: '继续提交',
-        nzCancelText: '取消',
+        nzOkText: this.translate.instant('LIBRARY_PUBLISH.EXISTING_OK'),
+        nzCancelText: this.translate.instant('LIBRARY_PUBLISH.EXISTING_CANCEL'),
         nzOnOk: () => resolve(true),
         nzOnCancel: () => resolve(false),
       });

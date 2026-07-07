@@ -1,60 +1,69 @@
-<app-base-dialog title="发布库" [buttons]="buttons" [showCloseButton]="true" [showFooter]="true"
+<app-base-dialog [title]="'LIBRARY_PUBLISH.TITLE' | translate" [buttons]="buttons" [showCloseButton]="true" [showFooter]="true"
   [loading]="isSubmitting" customClass="dialog-scrollable" (closeDialog)="onCloseDialog()"
   (buttonClick)="onButtonClick($event)">
   <div class="publish-form">
     <div class="form-item">
-      <label class="form-label">库名 <span class="required">*</span></label>
-      <input class="form-control" nz-input [(ngModel)]="packageName" placeholder="@aily-project/lib-your-library">
-      @if (packageNameConflictMessage) {
-        <div class="field-error">{{ packageNameConflictMessage }}</div>
+      <label class="form-label">{{ 'LIBRARY_PUBLISH.FIELD_PACKAGE_NAME' | translate }} <span class="required">*</span></label>
+      <input class="form-control" #packageNameInput nz-input [(ngModel)]="packageName"
+        (ngModelChange)="onPackageNameInputChange()" (focusout)="validatePackageNameField()"
+        placeholder="@aily-project/lib-your-library">
+      @if (packageNameErrorMessage) {
+        <div class="field-error">{{ packageNameErrorMessage }}</div>
       }
-      @if (isKnownPublicLibraryName) {
-        <div class="field-warning">当前库名已存在于公有库列表，建议修改后再发布。</div>
+      @if (!packageNameErrorMessage && isKnownPublicLibraryName) {
+        <div class="field-warning">{{ 'LIBRARY_PUBLISH.PACKAGE_NAME_PUBLIC_WARNING' | translate }}</div>
       }
     </div>
 
     <div class="form-item">
-      <label class="form-label">版本号 <span class="required">*</span></label>
-      <input class="form-control" nz-input [(ngModel)]="version" placeholder="例如：1.0.0">
+      <label class="form-label">{{ 'LIBRARY_PUBLISH.FIELD_VERSION' | translate }} <span class="required">*</span></label>
+      <input class="form-control" #versionInput nz-input [(ngModel)]="version"
+        (ngModelChange)="onVersionInputChange()" (focusout)="validateVersionField()"
+        [placeholder]="'LIBRARY_PUBLISH.VERSION_PLACEHOLDER' | translate">
+      @if (versionErrorMessage) {
+        <div class="field-error">{{ versionErrorMessage }}</div>
+      }
     </div>
 
     <div class="form-item">
-      <label class="form-label">显示名称 <span class="required">*</span></label>
-      <input class="form-control" nz-input [(ngModel)]="nickname" placeholder="例如：温湿度传感器">
+      <label class="form-label">{{ 'LIBRARY_PUBLISH.FIELD_DISPLAY_NAME' | translate }} <span class="required">*</span></label>
+      <input class="form-control" #nicknameInput nz-input [(ngModel)]="nickname"
+        [placeholder]="'LIBRARY_PUBLISH.DISPLAY_NAME_PLACEHOLDER' | translate">
     </div>
 
     <div class="form-item">
-      <label class="form-label">库描述</label>
+      <label class="form-label">{{ 'LIBRARY_PUBLISH.FIELD_DESCRIPTION' | translate }}</label>
       <textarea class="form-control" nz-input [(ngModel)]="description" rows="4"
-        placeholder="简要说明这个库支持的硬件、功能和适用场景"></textarea>
+        [placeholder]="'LIBRARY_PUBLISH.DESCRIPTION_PLACEHOLDER' | translate"></textarea>
     </div>
 
     <div class="form-row">
       <div class="form-item">
-        <label class="form-label">作者</label>
+        <label class="form-label">{{ 'LIBRARY_PUBLISH.FIELD_AUTHOR' | translate }}</label>
         <input class="form-control" nz-input [(ngModel)]="author">
       </div>
       <div class="form-item">
-        <label class="form-label">关键词</label>
-        <input class="form-control" nz-input [(ngModel)]="keywords" placeholder="用英文逗号分隔">
+        <label class="form-label">{{ 'LIBRARY_PUBLISH.FIELD_KEYWORDS' | translate }}</label>
+        <input class="form-control" nz-input [(ngModel)]="keywords"
+          [placeholder]="'LIBRARY_PUBLISH.KEYWORDS_PLACEHOLDER' | translate">
       </div>
     </div>
 
-    <label class="confirm-option" nz-checkbox [(ngModel)]="hardwareTestConfirmed">
-      我确认该库已在真实硬件上测试通过 <span class="required">*</span>
+    <label class="confirm-option" #hardwareConfirmOption tabindex="-1" nz-checkbox [(ngModel)]="hardwareTestConfirmed">
+      {{ 'LIBRARY_PUBLISH.HARDWARE_CONFIRMED' | translate }} <span class="required">*</span>
     </label>
 
     <label class="sync-option" nz-checkbox [(ngModel)]="saveToLocalPackageJson">
-      同步保存版本号、显示名称、描述、作者和关键词到本地库 package.json
+      {{ 'LIBRARY_PUBLISH.SYNC_LOCAL_PACKAGE_JSON' | translate }}
     </label>
 
     <div class="tips">
-      <div>0. 本功能可以将私有库发布到公有仓库，供其他用户使用；</div>
-      <div>1. 本次发布将通过你的github账号提交PR进行，库经过项目管理员审核后，会合并到
-        <a href="" (click)="openLibraryRepo($event)">aily-blockly-libraries</a>；
+      <div>{{ 'LIBRARY_PUBLISH.TIP_0' | translate }}</div>
+      <div>{{ 'LIBRARY_PUBLISH.TIP_1_PREFIX' | translate }}
+        <a href="" (click)="openLibraryRepo($event)">aily-blockly-libraries</a>{{ 'LIBRARY_PUBLISH.TIP_1_SUFFIX' | translate }}
       </div>
-      <div>2. 项目管理员通常会在48小时内，进行审核。审核结果，会通过邮件通知您；</div>
-      <div>3. 首次成功发布私有库，将获得积分，积分用于兑换礼品或服务。</div>
+      <div>{{ 'LIBRARY_PUBLISH.TIP_2' | translate }}</div>
+      <div>{{ 'LIBRARY_PUBLISH.TIP_3' | translate }}</div>
     </div>
   </div>
 </app-base-dialog>

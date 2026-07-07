@@ -1,11 +1,12 @@
 import { CommonModule } from '@angular/common';
-import { Component, inject } from '@angular/core';
+import { Component, ElementRef, ViewChild, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { NZ_MODAL_DATA, NzModalRef } from 'ng-zorro-antd/modal';
 import { NzButtonModule } from 'ng-zorro-antd/button';
 import { NzCheckboxModule } from 'ng-zorro-antd/checkbox';
 import { NzInputModule } from 'ng-zorro-antd/input';
 import { NzMessageService } from 'ng-zorro-antd/message';
+import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { BaseDialogComponent, DialogButton } from '../base-dialog/base-dialog.component';
 import {
   BlocklyLibraryPackageRef,
@@ -35,6 +36,7 @@ export interface LibraryPublishSubmitResult {
     NzButtonModule,
     NzCheckboxModule,
     NzInputModule,
+    TranslateModule,
     BaseDialogComponent,
   ],
   templateUrl: './library-publish-dialog.component.html',
@@ -63,9 +65,17 @@ export class LibraryPublishDialogComponent {
   isSubmitting = false;
   currentPackageNameConflictMessage = '';
   currentPackageNameConflictValue = '';
+  packageNameValidationMessage = '';
+  versionValidationMessage = '';
 
   private readonly packageNamePattern = /^@aily-project\/lib-[a-zA-Z0-9._-]+$/;
-  private readonly versionPattern = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
+  private readonly packageNamePrefix = '@aily-project/lib-';
+  private readonly versionPattern = /^\d+\.\d+\.\d+$/;
+
+  @ViewChild('packageNameInput') private packageNameInput?: ElementRef<HTMLInputElement>;
+  @ViewChild('versionInput') private versionInput?: ElementRef<HTMLInputElement>;
+  @ViewChild('nicknameInput') private nicknameInput?: ElementRef<HTMLInputElement>;
+  @ViewChild('hardwareConfirmOption') private hardwareConfirmOption?: ElementRef<HTMLElement>;
 
   get packageNameConflictMessage(): string {
     const conflictValue = this.currentPackageNameConflictValue || '';
@@ -76,6 +86,14 @@ export class LibraryPublishDialogComponent {
     return this.currentPackageNameConflictMessage || '';
   }
 
+  get packageNameErrorMessage(): string {
+    return this.packageNameValidationMessage || this.packageNameConflictMessage;
+  }
+
+  get versionErrorMessage(): string {
+    return this.versionValidationMessage;
+  }
+
   get isKnownPublicLibraryName(): boolean {
     const packageName = this.packageName.trim();
     return !!packageName && !!this.configService.libraryDict?.[packageName];
@@ -84,12 +102,12 @@ export class LibraryPublishDialogComponent {
   get buttons(): DialogButton[] {
     return [
       {
-        text: '取消',
+        text: this.translate.instant('LIBRARY_PUBLISH.CANCEL'),
         type: 'default',
         action: 'cancel',
       },
       {
-        text: '发布库',
+        text: this.translate.instant('LIBRARY_PUBLISH.PUBLISH'),
         type: 'primary',
         action: 'publish',
       },
@@ -101,6 +119,7 @@ export class LibraryPublishDialogComponent {
     private blocklyLibraryPackageService: BlocklyLibraryPackageService,
     private electronService: ElectronService,
     private configService: ConfigService,
+    private translate: TranslateService,
   ) {}
 
   ngOnInit(): void {
@@ -111,7 +130,9 @@ export class LibraryPublishDialogComponent {
       this.currentPackageNameConflictMessage = this.data.packageNameConflictMessage || '';
       this.currentPackageNameConflictValue = this.data.packageNameConflictValue || '';
     } catch (error) {
-      this.message.error(`库信息读取失败: ${error instanceof Error ? error.message : error}`);
+      this.message.error(this.translate.instant('LIBRARY_PUBLISH.READ_FAILED', {
+        error: error instanceof Error ? error.message : error,
+      }));
       this.modal.close({ result: 'cancel' });
     }
   }
@@ -134,6 +155,59 @@ export class LibraryPublishDialogComponent {
   openLibraryRepo(event: MouseEvent): void {
     event.preventDefault();
     this.electronService.openUrl('https://github.com/ailyProject/aily-blockly-libraries');
+  }
+
+  validatePackageNameField(): boolean {
+    const packageName = this.packageName.trim();
+    if (!packageName) {
+      this.packageNameValidationMessage = this.translate.instant('LIBRARY_PUBLISH.PACKAGE_NAME_REQUIRED');
+      return false;
+    }
+
+    if (!packageName.startsWith(this.packageNamePrefix)) {
+      this.packageNameValidationMessage = this.translate.instant('LIBRARY_PUBLISH.PACKAGE_NAME_PREFIX_REQUIRED', {
+        prefix: this.packageNamePrefix,
+      });
+      return false;
+    }
+
+    if (!this.packageNamePattern.test(packageName)) {
+      this.packageNameValidationMessage = this.translate.instant('LIBRARY_PUBLISH.PACKAGE_NAME_PATTERN');
+      return false;
+    }
+
+    this.packageNameValidationMessage = '';
+    return true;
+  }
+
+  onPackageNameInputChange(): void {
+    this.currentPackageNameConflictMessage = '';
+    this.currentPackageNameConflictValue = '';
+    if (this.packageNameValidationMessage) {
+      this.validatePackageNameField();
+    }
+  }
+
+  validateVersionField(): boolean {
+    const version = this.version.trim();
+    if (!version) {
+      this.versionValidationMessage = this.translate.instant('LIBRARY_PUBLISH.VERSION_REQUIRED');
+      return false;
+    }
+
+    if (!this.versionPattern.test(version)) {
+      this.versionValidationMessage = this.translate.instant('LIBRARY_PUBLISH.VERSION_PATTERN');
+      return false;
+    }
+
+    this.versionValidationMessage = '';
+    return true;
+  }
+
+  onVersionInputChange(): void {
+    if (this.versionValidationMessage) {
+      this.validateVersionField();
+    }
   }
 
   private applyPackage(pkg: BlocklyLibrarySubmissionPackage): void {
@@ -192,23 +266,27 @@ export class LibraryPublishDialogComponent {
     }
 
     const packageName = this.packageName.trim();
-    if (!this.packageNamePattern.test(packageName)) {
-      this.message.warning('库名必须以 @aily-project/lib- 开头，且只能包含字母、数字、点、下划线和短横线');
+    if (!this.validatePackageNameField()) {
+      this.focusPublishField('packageName');
+      this.message.warning(this.packageNameValidationMessage, { nzDuration: 5000 });
+      return;
+    }
+
+    if (!this.validateVersionField()) {
+      this.focusPublishField('version');
+      this.message.warning(this.versionValidationMessage, { nzDuration: 5000 });
       return;
     }
 
     if (!this.nickname.trim()) {
-      this.message.warning('请填写库显示名称');
-      return;
-    }
-
-    if (!this.versionPattern.test(this.version.trim())) {
-      this.message.warning('版本号格式应为 1.0.0 或 1.0.0-beta.1');
+      this.focusPublishField('nickname');
+      this.message.warning(this.translate.instant('LIBRARY_PUBLISH.DISPLAY_NAME_REQUIRED'), { nzDuration: 5000 });
       return;
     }
 
     if (!this.hardwareTestConfirmed) {
-      this.message.warning('请确认该库已在真实硬件上测试通过');
+      this.focusPublishField('hardwareTest');
+      this.message.warning(this.translate.instant('LIBRARY_PUBLISH.HARDWARE_REQUIRED'), { nzDuration: 5000 });
       return;
     }
 
@@ -222,6 +300,7 @@ export class LibraryPublishDialogComponent {
         keywords: this.parseKeywords(),
       },
       localPackageJsonPatch: {
+        name: packageName,
         version: this.version.trim(),
         nickname: this.nickname.trim(),
         description: this.description.trim(),
@@ -246,6 +325,7 @@ export class LibraryPublishDialogComponent {
 
       this.currentPackageNameConflictMessage = submitResult.packageNameConflictMessage || '';
       this.currentPackageNameConflictValue = submitResult.packageNameConflictValue || packageName;
+      this.focusPublishField('packageName', true);
     } catch (error) {
       this.message.error(error instanceof Error ? error.message : String(error), { nzDuration: 8000 });
     } finally {
@@ -258,5 +338,37 @@ export class LibraryPublishDialogComponent {
       .split(',')
       .map(keyword => keyword.trim())
       .filter(keyword => keyword.length > 0);
+  }
+
+  private focusPublishField(field: 'packageName' | 'version' | 'nickname' | 'hardwareTest', afterRender = false): void {
+    const focus = () => {
+      const target = this.getPublishFieldElement(field);
+      if (!target) {
+        return;
+      }
+
+      target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      target.focus({ preventScroll: true });
+    };
+
+    if (afterRender) {
+      window.setTimeout(focus, 0);
+      return;
+    }
+
+    focus();
+  }
+
+  private getPublishFieldElement(field: 'packageName' | 'version' | 'nickname' | 'hardwareTest'): HTMLElement | undefined {
+    if (field === 'packageName') {
+      return this.packageNameInput?.nativeElement;
+    }
+    if (field === 'version') {
+      return this.versionInput?.nativeElement;
+    }
+    if (field === 'nickname') {
+      return this.nicknameInput?.nativeElement;
+    }
+    return this.hardwareConfirmOption?.nativeElement;
   }
 }
