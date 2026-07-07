@@ -177,10 +177,24 @@ function createHandler(services) {
     }
     services.awsService.saveJSONFile(jsonData, currentProjectPath);
 
+    let runtimeSync = { ok: true, saved: true, windowUpdated: false };
     try {
-      await services.runtimeAdapter.notifySchematicSaved({ jsonData }, projectPath);
-    } catch (_error) {
-      // ignore
+      const syncResult = await services.runtimeAdapter.notifySchematicSaved({ jsonData }, projectPath);
+      if (syncResult && typeof syncResult === 'object') {
+        runtimeSync = {
+          ok: syncResult.ok !== false,
+          saved: syncResult.saved !== false,
+          windowUpdated: syncResult.windowUpdated === true,
+          ...(syncResult.error ? { error: syncResult.error } : {}),
+        };
+      }
+    } catch (error) {
+      runtimeSync = {
+        ok: false,
+        saved: false,
+        windowUpdated: false,
+        error: error && error.message ? error.message : String(error),
+      };
     }
 
     return {
@@ -188,6 +202,7 @@ function createHandler(services) {
       content: JSON.stringify({
         valid: errors.length === 0,
         saved: true,
+        runtimeSync,
         summary: {
           totalConnections: jsonData.connections.length,
           totalComponents: jsonData.components.length,

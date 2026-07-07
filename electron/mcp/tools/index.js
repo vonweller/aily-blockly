@@ -2,15 +2,27 @@ const { createSchematicServices } = require('../schematic');
 const { createErrorToolResult } = require('../schematic/result');
 const { SchematicRuntimeClient } = require('../schematic/runtime-client');
 
-const toolModules = [
-  require('./get_component_catalog'),
+const publicToolModules = [
+  require('./list_dir'),
+  require('./read_file'),
+  require('./glob_search'),
+  require('./grep_search'),
   require('./get_project_context'),
+];
+
+const schematicToolModules = [
+  require('./get_component_catalog'),
   require('./get_pinmap_summary'),
   require('./generate_pinmap'),
   require('./save_pinmap'),
   require('./get_current_schematic'),
   require('./generate_schematic'),
   require('./validate_schematic'),
+];
+
+const toolModules = [
+  ...publicToolModules,
+  ...schematicToolModules,
 ];
 
 function createLocalToolSource(rendererBridge, options = {}) {

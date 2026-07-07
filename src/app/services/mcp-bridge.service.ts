@@ -1,7 +1,6 @@
 import { Injectable, NgZone } from '@angular/core';
 
 import { ProjectService } from './project.service';
-import type { ToolUseResult } from '../tools/aily-chat/core/tool-types';
 import { SchematicMcpRuntimeService } from './schematic-mcp-runtime.service';
 
 type McpBridgePayload = {
@@ -69,7 +68,7 @@ export class McpBridgeService {
     }
   }
 
-  private async execute(payload: McpBridgePayload): Promise<ToolUseResult> {
+  private async execute(payload: McpBridgePayload): Promise<unknown> {
     const namespace = typeof payload?.namespace === 'string' ? payload.namespace.trim() : '';
     switch (namespace) {
       case 'schematic':
@@ -79,20 +78,23 @@ export class McpBridgeService {
     }
   }
 
-  private async executeSchematic(payload: McpBridgePayload): Promise<ToolUseResult> {
+  private async executeSchematic(payload: McpBridgePayload): Promise<unknown> {
     const args = this.normalizeArgs(payload?.args);
     const targetProjectPath = this.normalizePath(payload?.targetProjectPath);
     const currentProjectPath = this.normalizePath(this.projectService.currentProjectPath);
 
     if (targetProjectPath && currentProjectPath && targetProjectPath !== currentProjectPath) {
       return {
-        is_error: true,
-        content: `当前打开项目不匹配: ${this.projectService.currentProjectPath}`,
+        ok: false,
+        error: `当前打开项目不匹配: ${this.projectService.currentProjectPath}`,
       };
     }
 
     const method = typeof payload?.method === 'string' ? payload.method.trim() : '';
-    return this.schematicRuntime.invoke(method, args);
+    return this.schematicRuntime.invoke(method, {
+      ...args,
+      targetProjectPath,
+    });
   }
 
   private normalizeArgs(value: unknown): Record<string, unknown> {
