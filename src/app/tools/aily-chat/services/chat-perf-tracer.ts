@@ -51,7 +51,11 @@ export type ChatPerformanceOperationSurface =
   | 'workspace_finalize'
   | 'session_save'
   | 'builder_preprocess'
-  | 'editor_operation';
+  | 'editor_operation'
+  | 'renderer_content_delta'
+  | 'renderer_scroll'
+  | 'markdown_render'
+  | 'thinking_render';
 
 interface OperationSurfaceEntry {
   surface: ChatPerformanceOperationSurface;
@@ -89,6 +93,38 @@ export interface ChatPerformanceStateSnapshot {
     readonly maxMs: number;
     readonly recent20TotalMs: number;
     readonly recent20MaxMs: number;
+  };
+}
+
+export interface ChatPerformanceRendererBudgetOptions {
+  readonly recentSampleCount?: number;
+  readonly surfaces?: readonly ChatPerformanceOperationSurface[];
+  readonly maxRecentEventLoopLagMs?: number;
+  readonly maxRecentEventLoopLagTotalMs?: number;
+  readonly maxRecentLongTaskMs?: number;
+  readonly maxRecentLongTaskTotalMs?: number;
+}
+
+export interface ChatPerformanceRendererBudgetReport {
+  readonly ok: boolean;
+  readonly violations: readonly string[];
+  readonly recentEventLoopLag: {
+    readonly count: number;
+    readonly totalMs: number;
+    readonly maxMs: number;
+    readonly samples: readonly Readonly<Record<string, unknown>>[];
+  };
+  readonly recentLongTasks: {
+    readonly count: number;
+    readonly totalMs: number;
+    readonly maxMs: number;
+  };
+  readonly budget: {
+    readonly recentSampleCount: number;
+    readonly maxRecentEventLoopLagMs: number;
+    readonly maxRecentEventLoopLagTotalMs: number;
+    readonly maxRecentLongTaskMs: number;
+    readonly maxRecentLongTaskTotalMs: number;
   };
 }
 
@@ -282,6 +318,10 @@ function normalizeSurface(surface: ChatPerformanceOperationSurface | string): Ch
     case 'session_save':
     case 'builder_preprocess':
     case 'editor_operation':
+    case 'renderer_content_delta':
+    case 'renderer_scroll':
+    case 'markdown_render':
+    case 'thinking_render':
       return surface;
     default:
       return 'unknown';
@@ -422,8 +462,11 @@ export class ChatPerformanceTracer {
   static startEventLoopLagSampler(options: {
     readonly intervalMs?: number;
     readonly thresholdMs?: number;
+    readonly enableTrace?: boolean;
   } = {}): void {
-    this.enable();
+    if (options.enableTrace !== false) {
+      this.enable();
+    }
     if (eventLoopLagSamplerHandle) {
       return;
     }
@@ -659,6 +702,89 @@ export class ChatPerformanceTracer {
   // ─── 输出与调试 ───
 
   /** 打印最近的全部事件日志 */
+  static snapshotRendererStreamingBudget(
+    options: ChatPerformanceRendererBudgetOptions = {},
+  ): ChatPerformanceRendererBudgetReport {
+    const recentSampleCount = Number.isFinite(options.recentSampleCount) && options.recentSampleCount! > 0
+      ? Math.max(1, Math.floor(options.recentSampleCount!))
+      : 20;
+    const maxRecentEventLoopLagMs = Number.isFinite(options.maxRecentEventLoopLagMs)
+      ? Math.max(0, options.maxRecentEventLoopLagMs!)
+      : 50;
+    const maxRecentEventLoopLagTotalMs = Number.isFinite(options.maxRecentEventLoopLagTotalMs)
+      ? Math.max(0, options.maxRecentEventLoopLagTotalMs!)
+      : 120;
+    const maxRecentLongTaskMs = Number.isFinite(options.maxRecentLongTaskMs)
+      ? Math.max(0, options.maxRecentLongTaskMs!)
+      : 50;
+    const maxRecentLongTaskTotalMs = Number.isFinite(options.maxRecentLongTaskTotalMs)
+      ? Math.max(0, options.maxRecentLongTaskTotalMs!)
+      : 120;
+    const surfaceFilter = Array.isArray(options.surfaces) && options.surfaces.length > 0
+      ? new Set(options.surfaces.map(surface => normalizeSurface(surface)))
+      : null;
+
+    const recentLag = eventLoopLagSamples
+      .slice(-recentSampleCount)
+      .filter(entry => !surfaceFilter || surfaceFilter.has(entry.surface));
+    const lagTotalMs = +recentLag.reduce((sum, entry) => sum + entry.lagMs, 0).toFixed(1);
+    const lagMaxMs = +recentLag.reduce((max, entry) => Math.max(max, entry.lagMs), 0).toFixed(1);
+
+    const recentLongTasks = longTasks.slice(-recentSampleCount);
+    const longTaskTotalMs = +recentLongTasks.reduce((sum, task) => sum + task.duration, 0).toFixed(1);
+    const longTaskMaxMs = +recentLongTasks.reduce((max, task) => Math.max(max, task.duration), 0).toFixed(1);
+
+    const violations: string[] = [];
+    if (lagMaxMs > maxRecentEventLoopLagMs) {
+      violations.push(`event-loop lag max ${lagMaxMs}ms exceeded ${maxRecentEventLoopLagMs}ms`);
+    }
+    if (lagTotalMs > maxRecentEventLoopLagTotalMs) {
+      violations.push(`event-loop lag total ${lagTotalMs}ms exceeded ${maxRecentEventLoopLagTotalMs}ms`);
+    }
+    if (longTaskMaxMs > maxRecentLongTaskMs) {
+      violations.push(`long task max ${longTaskMaxMs}ms exceeded ${maxRecentLongTaskMs}ms`);
+    }
+    if (longTaskTotalMs > maxRecentLongTaskTotalMs) {
+      violations.push(`long task total ${longTaskTotalMs}ms exceeded ${maxRecentLongTaskTotalMs}ms`);
+    }
+
+    return {
+      ok: violations.length === 0,
+      violations,
+      recentEventLoopLag: {
+        count: recentLag.length,
+        totalMs: lagTotalMs,
+        maxMs: lagMaxMs,
+        samples: recentLag.map(entry => ({
+          surface: entry.surface,
+          lagMs: entry.lagMs,
+          t: entry.t,
+          ...(entry.detail ? { detail: entry.detail } : {}),
+        })),
+      },
+      recentLongTasks: {
+        count: recentLongTasks.length,
+        totalMs: longTaskTotalMs,
+        maxMs: longTaskMaxMs,
+      },
+      budget: {
+        recentSampleCount,
+        maxRecentEventLoopLagMs,
+        maxRecentEventLoopLagTotalMs,
+        maxRecentLongTaskMs,
+        maxRecentLongTaskTotalMs,
+      },
+    };
+  }
+
+  static assertRendererStreamingBudget(options: ChatPerformanceRendererBudgetOptions = {}): void {
+    const report = this.snapshotRendererStreamingBudget(options);
+    if (report.ok) {
+      return;
+    }
+    throw new Error(`[AilyChat][Performance] Renderer streaming budget exceeded: ${report.violations.join('; ')}`);
+  }
+
   static dump(count?: number): void {
     if (log.length === 0) { console.log('[PerfTracer] 无记录'); return; }
     const recent = log.slice(-120);
@@ -819,6 +945,7 @@ export class ChatPerformanceTracer {
     surfaceStack.length = 0;
     surfaceEvents.length = 0;
     eventLoopLagSamples.length = 0;
+    longTasks.length = 0;
     counters.clear();
     printedDetailHints.clear();
     lastJankContextDumpAt = 0;
@@ -864,6 +991,12 @@ try {
       options?: { readonly slowThresholdMs?: number; readonly counterPrefix?: string },
     ) => ChatPerformanceTracer.recordDuration(tag, durationMs, detail, options),
     snapshotPerformanceState: () => ChatPerformanceTracer.snapshotPerformanceState(),
+    snapshotRendererStreamingBudget: (options?: ChatPerformanceRendererBudgetOptions) => (
+      ChatPerformanceTracer.snapshotRendererStreamingBudget(options)
+    ),
+    assertRendererStreamingBudget: (options?: ChatPerformanceRendererBudgetOptions) => (
+      ChatPerformanceTracer.assertRendererStreamingBudget(options)
+    ),
   };
 } catch {}
 

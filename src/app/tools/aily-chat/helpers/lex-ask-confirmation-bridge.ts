@@ -7,7 +7,6 @@ import {
 
 /** Narrow context: only needs lexStream for presenting/resolving confirmations */
 type LexAskConfirmationContext = Pick<IChatCoordination, 'lexStream'>
-  & Pick<IChatCoordination, 'handleToolApproval'>
   & Pick<ISessionAccess, 'sessionId'>
   & Pick<IChatServiceAccess, 'runtimeInteractionHost'>
   & {
@@ -48,6 +47,7 @@ export class LexAskConfirmationBridge {
   }
 
   handleAskConfirmation(request: {
+    approvalTraceId?: string;
     message: string;
     source: string;
     toolCallId?: string;
@@ -63,6 +63,7 @@ export class LexAskConfirmationBridge {
     return new Promise<boolean>((resolve) => {
       if (request.source === 'beforeToolExecution' && request.toolCallId && request.toolName) {
         const normalizedRequest = normalizeToolApprovalRequest({
+          approvalTraceId: request.approvalTraceId,
           toolCallId: request.toolCallId,
           toolName: request.toolName,
           title: request.title || '',
@@ -75,8 +76,16 @@ export class LexAskConfirmationBridge {
           approveCombination: request.approveCombination,
           args: request.toolInput,
         });
-        void this.ctx.handleToolApproval(normalizedRequest).then((result) => {
-          resolve(!!result.approved);
+
+        this.resolveAskConfirmation = resolve;
+
+        void this.ctx.runtimeInteractionHost.presentToolApproval(
+          this.resolveInteractionSessionResource(),
+          normalizedRequest,
+        ).then((result) => {
+          const resolveRef = this.resolveAskConfirmation;
+          this.resolveAskConfirmation = null;
+          resolveRef?.(!!result.approved);
         });
         return;
       }
@@ -139,4 +148,5 @@ export class LexAskConfirmationBridge {
       });
     });
   }
+
 }

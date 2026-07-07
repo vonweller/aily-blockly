@@ -1027,6 +1027,42 @@ async function handleCliBridgeCommand(action, payload) {
       );
       return result && typeof result === 'object' ? result : { ok: false, message: '渲染进程返回了无效结果' };
     }
+    case 'mcp-runtime': {
+      const dir = requestedPath ? path.resolve(requestedPath) : getOpenedProjectPathFromWindow();
+      const namespace = payload && payload.namespace;
+      const method = payload && payload.method;
+      const requestedTimeoutMs = Number(payload && payload.timeoutMs);
+      const runtimeTimeoutMs = Number.isFinite(requestedTimeoutMs) && requestedTimeoutMs > 0
+        ? Math.max(1000, Math.min(requestedTimeoutMs, 620000))
+        : method === 'notify_schematic_saved'
+          ? 20000
+          : 15000;
+      if (!dir) {
+        return { ok: false, message: '当前没有打开的项目,且未提供 path' };
+      }
+      if (!fs.existsSync(dir)) {
+        return { ok: false, message: `项目目录不存在: ${dir}` };
+      }
+      const result = await requestMainWindow(
+        'mcp:request',
+        'mcp:response',
+        {
+          namespace,
+          method,
+          args: payload && payload.args,
+          targetProjectPath: dir,
+          timeoutMs: runtimeTimeoutMs,
+        },
+        runtimeTimeoutMs,
+      );
+      if (!result || typeof result !== 'object') {
+        return { ok: false, message: '渲染进程返回了无效结果' };
+      }
+      if (result.ok === true && result.result && typeof result.result === 'object') {
+        return result.result;
+      }
+      return result;
+    }
     default:
       return { ok: false, message: `未知命令: ${action}` };
   }

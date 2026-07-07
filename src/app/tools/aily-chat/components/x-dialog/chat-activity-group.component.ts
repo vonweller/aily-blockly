@@ -17,9 +17,11 @@ import {
   ChangeDetectionStrategy,
   Component,
   ElementRef,
+  EventEmitter,
   Input,
   OnChanges,
   OnDestroy,
+  Output,
   SimpleChanges,
   ViewChild,
   inject,
@@ -53,6 +55,8 @@ import {
   type DetailSectionDescriptor,
 } from './x-aily-state-viewer/activity-detail-items';
 import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
+import { isTerminalSessionToolName } from '../../core/tool-name-normalizer';
+import { storeThinkContent } from '../../core/think-content-store';
 
 @Component({
   selector: 'aily-chat-activity-group',
@@ -136,7 +140,7 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
           [class.cag-detail-viewport-fixed]="useFixedViewport"
           (scroll)="onDetailViewportScroll()">
           @if (displayItems.length) {
-            <aily-chat-activity-list [items]="displayItems" [sessionId]="sessionId" />
+            <aily-chat-activity-list [items]="displayItems" [sessionId]="sessionId" (contentDelta)="emitContentDelta()" />
           }
         </div>
       }
@@ -383,6 +387,7 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked, 
   @Input() sessionId = '';
   @Input() turnResponse: TurnResponseTurn | null = null;
   @Input() detailProjectionEnabled = true;
+  @Output() contentDelta = new EventEmitter<void>();
   @ViewChild('detailViewport') private detailViewportRef?: ElementRef<HTMLElement>;
 
   expanded = false;
@@ -490,6 +495,10 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked, 
     this.updateDetailViewportFades(viewport);
   }
 
+  emitContentDelta(): void {
+    this.contentDelta.emit();
+  }
+
   private _refresh(options?: { forceDetailProjection?: boolean }): void {
     ChatPerformanceTracer.runWithSurface('chat_projection', () => {
       this._refreshProjected(options);
@@ -505,6 +514,7 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked, 
     }
     const refreshStartedAt = performance.now();
     const projectionKey = buildActivityGroupProjectionKey(this.parts, this.doing, this.turnResponse);
+    const detailProjectionKey = buildActivityGroupDetailProjectionKey(this.parts, this.doing, this.turnResponse);
     const headerCacheHit = projectionKey === this.lastProjectionKey;
     if (headerCacheHit && !options?.forceDetailProjection) {
       this._syncExpandedState();
@@ -522,7 +532,7 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked, 
         );
         return;
       }
-      if (projectionKey === this.lastDetailProjectionKey) {
+      if (detailProjectionKey === this.lastDetailProjectionKey) {
         ChatPerformanceTracer.increment('activity_group_refresh.cache_hit');
         ChatPerformanceTracer.recordDuration(
           'activity_group_refresh',
@@ -539,7 +549,7 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked, 
       const pres = buildActivityGroupPresentation(this.parts);
       const settledState = pres.state === 'doing' ? 'done' : pres.state;
       this.groupState = this.doing ? 'doing' : settledState;
-      this.groupHeader = pres.header;
+      this.groupHeader = mergeStableGroupHeader(this.groupHeader, pres.header);
     }
 
     this._syncExpandedState();
@@ -559,7 +569,7 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked, 
       return;
     }
 
-    if (!options?.forceDetailProjection && projectionKey === this.lastDetailProjectionKey) {
+    if (!options?.forceDetailProjection && detailProjectionKey === this.lastDetailProjectionKey) {
       ChatPerformanceTracer.increment('activity_group_refresh.cache_hit');
       ChatPerformanceTracer.recordDuration(
         'activity_group_refresh',
@@ -570,9 +580,10 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked, 
       return;
     }
 
-    this.lastDetailProjectionKey = projectionKey;
+    this.lastDetailProjectionKey = detailProjectionKey;
     this.displayItems = this._attachTurnResponseContinuation(this.parts.flatMap((part, i) => this._buildItems(part, i, this.parts)));
     this._syncExpandedState();
+    this.emitContentDelta();
     ChatPerformanceTracer.recordDuration(
       'activity_group_refresh',
       performance.now() - refreshStartedAt,
@@ -734,6 +745,7 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked, 
   }
 
   private _syncDetailViewportScroll(): void {
+    const surface = ChatPerformanceTracer.enterSurface('renderer_scroll', 'activity_group_detail');
     const syncStartedAt = performance.now();
     const recordSync = (detail: string): void => {
       ChatPerformanceTracer.recordDuration(
@@ -742,6 +754,7 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked, 
         detail,
         { slowThresholdMs: 8 },
       );
+      surface.dispose();
     };
 
     if (!this.expanded || !this.useFixedViewport) {
@@ -833,7 +846,7 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked, 
     }
 
     if (part.type === 'thinking') {
-      const tp = part as ThinkingPart;
+      const tp = this._normalizeThinkingPartForStableRendering(part as ThinkingPart, id);
       const isSpinning = !tp.isComplete;
       const thinking = buildThinkingActivityPresentation(tp);
       return [{
@@ -852,6 +865,9 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked, 
     }
 
     if (part.type === 'tool_call') {
+      if (isTerminalOwnedToolCallActivity(part as ToolCallPart, groupParts)) {
+        return [];
+      }
       if (isSubagentToolCall(part)) {
         const scopedChildren = collectScopedSubagentChildren(groupParts, part);
         if (scopedChildren.length > 0) {
@@ -874,6 +890,9 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked, 
     }
 
     if (part.type === 'confirmation') {
+      if (isTerminalOwnedConfirmationActivity(part as ConfirmationPart, groupParts)) {
+        return [];
+      }
       return [buildConfirmationActivityDisplayItem(part as ConfirmationPart, { id })];
     }
 
@@ -943,7 +962,7 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked, 
       return [buildScopedMarkdownActivityDisplayItem(part as MarkdownPart, { id })];
     }
     if (part.type === 'thinking') {
-      const tp = part as ThinkingPart;
+      const tp = this._normalizeThinkingPartForStableRendering(part as ThinkingPart, id);
       const isSpinning = !tp.isComplete;
       const thinking = buildThinkingActivityPresentation(tp);
       return [{
@@ -997,6 +1016,118 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked, 
     }
     return [];
   }
+
+  private _normalizeThinkingPartForStableRendering(part: ThinkingPart, itemId: string): ThinkingPart {
+    if (part.contentRef || part.isComplete || !part.content) {
+      return part;
+    }
+
+    const contentRef = [
+      'activity-thinking',
+      this.sessionId || 'session',
+      this.turnResponse?.turnId || 'turn',
+      itemId,
+    ].join(':');
+    storeThinkContent(contentRef, part.content);
+    return {
+      ...part,
+      content: '',
+      contentRef,
+      contentLength: part.contentLength ?? part.content.length,
+    };
+  }
+}
+
+function isTerminalOwnedConfirmationActivity(part: ConfirmationPart, groupParts: readonly ChatPart[]): boolean {
+  if (!isTerminalSessionToolName(part.toolName)) {
+    return false;
+  }
+
+  const command = readTerminalCommandFromRecord(readRecord(part.args), readRecord(part.metadata));
+  const askId = part.askId || part.partId?.replace(/^confirmation:/, '') || '';
+  return groupParts.some(candidate => {
+    if (candidate.type !== 'terminal') {
+      return false;
+    }
+    if (askId && (candidate.toolCallId === askId || candidate.sourceToolCallIds?.includes(askId))) {
+      return true;
+    }
+    return !!command && candidate.command === command;
+  });
+}
+
+function isTerminalOwnedToolCallActivity(part: ToolCallPart, groupParts: readonly ChatPart[]): boolean {
+  if (!isTerminalSessionToolName(part.toolName)) {
+    return false;
+  }
+
+  const args = readRecord(part.args);
+  const metadata = readRecord(part.metadata);
+  const command = readTerminalCommandFromRecord(args, metadata);
+  const sessionIds = readTerminalSessionIdsFromRecord(args, metadata);
+
+  return groupParts.some(candidate => {
+    if (candidate.type !== 'terminal') {
+      return false;
+    }
+    if (candidate.toolCallId === part.toolCallId || candidate.sourceToolCallIds?.includes(part.toolCallId)) {
+      return true;
+    }
+    if (sessionIds.some(sessionId => terminalHasSessionId(candidate, sessionId))) {
+      return true;
+    }
+    return !!command && candidate.command === command;
+  });
+}
+
+function terminalHasSessionId(terminal: TerminalPart, sessionId: string): boolean {
+  return [terminal.processId, terminal.outputSessionId, terminal.terminalId]
+    .some(value => readString(value) === sessionId);
+}
+
+function readTerminalCommandFromRecord(
+  args: Record<string, unknown> | undefined,
+  metadata?: Record<string, unknown> | undefined,
+): string {
+  const approval = readRecord(metadata?.['approval']);
+  const approvalArgs = readRecord(approval?.['args']);
+  return readString(args?.['command'])
+    || readString(args?.['cmd'])
+    || readString(approvalArgs?.['command'])
+    || readString(approvalArgs?.['cmd'])
+    || '';
+}
+
+function readTerminalSessionIdsFromRecord(
+  args: Record<string, unknown> | undefined,
+  metadata?: Record<string, unknown> | undefined,
+): string[] {
+  const approval = readRecord(metadata?.['approval']);
+  const approvalArgs = readRecord(approval?.['args']);
+  return [
+    args?.['processId'],
+    args?.['outputSessionId'],
+    args?.['terminalId'],
+    args?.['id'],
+    metadata?.['processId'],
+    metadata?.['outputSessionId'],
+    metadata?.['terminalId'],
+    metadata?.['id'],
+    approvalArgs?.['processId'],
+    approvalArgs?.['outputSessionId'],
+    approvalArgs?.['terminalId'],
+    approvalArgs?.['id'],
+  ].map(value => readString(value)).filter((value): value is string => !!value);
+}
+
+function readRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function readString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
 }
 
 function collectScopedSubagentChildren(parts: readonly ChatPart[], parent: ToolCallPart): ChatPart[] {
@@ -1081,6 +1212,33 @@ function buildActivityGroupProjectionKey(
   ].join('|');
 }
 
+function mergeStableGroupHeader(
+  previous: ActivityGroupHeaderDisplayData,
+  next: ActivityGroupHeaderDisplayData,
+): ActivityGroupHeaderDisplayData {
+  if (!previous.title || previous.kind !== next.kind) {
+    return next;
+  }
+
+  return {
+    ...next,
+    title: next.title || previous.title,
+    titleDetail: next.titleDetail || previous.titleDetail,
+    detail: next.detail || previous.detail,
+  };
+}
+
+function buildActivityGroupDetailProjectionKey(
+  parts: readonly ChatPart[],
+  doing: boolean,
+  turnResponse: TurnResponseTurn | null,
+): string {
+  return [
+    buildActivityGroupProjectionKey(parts, doing, turnResponse),
+    ...parts.map((part, index) => buildActivityPartDetailProjectionKey(part, index, doing)),
+  ].join('|');
+}
+
 function buildContinuationProjectionKey(turnResponse: TurnResponseTurn | null): string {
   const continuation = turnResponse?.response?.continuation;
   return [
@@ -1093,14 +1251,13 @@ function buildContinuationProjectionKey(turnResponse: TurnResponseTurn | null): 
 }
 
 function buildActivityPartProjectionKey(part: ChatPart, index: number): string {
-  const base = `${index}:${buildChatPartIdentity(part, index)}:${part.type}`;
+  const base = `${buildChatPartIdentity(part, index)}:${part.type}`;
   switch (part.type) {
     case 'markdown':
       return [
         base,
         part.partId ?? '',
         part.contentRef ?? '',
-        part.contentLength ?? part.content.length,
         isSubagentChildPart(part) ? getSubAgentInvocationId(part) ?? '' : '',
       ].join(':');
     case 'thinking':
@@ -1108,7 +1265,6 @@ function buildActivityPartProjectionKey(part: ChatPart, index: number): string {
         base,
         part.partId ?? '',
         part.contentRef ?? '',
-        part.contentLength ?? part.content.length,
         part.isComplete ? 'complete' : 'running',
         isSubagentChildPart(part) ? getSubAgentInvocationId(part) ?? '' : '',
       ].join(':');
@@ -1119,9 +1275,6 @@ function buildActivityPartProjectionKey(part: ChatPart, index: number): string {
         part.toolCallId,
         part.toolName,
         part.state,
-        part.text,
-        getObjectIdentityKey(part.args),
-        buildMetadataProjectionKey(part.metadata),
         part.sourceAgentRole ?? '',
         part.subAgentInvocationId ?? '',
         part.parentToolCallId ?? '',
@@ -1133,8 +1286,6 @@ function buildActivityPartProjectionKey(part: ChatPart, index: number): string {
         part.askId,
         part.resolved ? 'resolved' : 'pending',
         part.result ?? '',
-        getObjectIdentityKey(part.args),
-        buildMetadataProjectionKey(part.metadata),
       ].join(':');
     case 'terminal':
       return [
@@ -1147,6 +1298,65 @@ function buildActivityPartProjectionKey(part: ChatPart, index: number): string {
         part.status ?? '',
         part.isRunning ? 'running' : 'idle',
         part.exitCode ?? '',
+      ].join(':');
+    case 'state':
+      return [
+        base,
+        part.stateId,
+        part.state,
+        part.kind ?? '',
+      ].join(':');
+    case 'question':
+      return [
+        base,
+        part.partId ?? '',
+        part.questions.length,
+        part.answers ? 'answered' : 'open',
+      ].join(':');
+    case 'error':
+      return [base, part.severity ?? ''].join(':');
+    case 'plan':
+      return [base, part.partId ?? '', part.status].join(':');
+    default:
+      return base;
+  }
+}
+
+function buildActivityPartDetailProjectionKey(part: ChatPart, index: number, doing: boolean): string {
+  const base = buildActivityPartProjectionKey(part, index);
+  switch (part.type) {
+    case 'markdown':
+      if (doing && part.contentRef) {
+        return base;
+      }
+      return [
+        base,
+        part.contentLength ?? part.content.length,
+      ].join(':');
+    case 'thinking':
+      if (doing && part.contentRef) {
+        return base;
+      }
+      return [
+        base,
+        contentProgressKey(part),
+      ].join(':');
+    case 'tool_call':
+      return [
+        base,
+        getObjectIdentityKey(part.args),
+        buildMetadataProjectionKey(part.metadata),
+      ].join(':');
+    case 'confirmation':
+      return [
+        base,
+        getObjectIdentityKey(part.args),
+        projectionValue(part.message),
+        buildMetadataProjectionKey(part.metadata),
+      ].join(':');
+    case 'terminal':
+      return [
+        base,
         part.bytesTotal ?? '',
         part.lastOutputAt ?? '',
         part.output?.length ?? 0,
@@ -1155,9 +1365,6 @@ function buildActivityPartProjectionKey(part: ChatPart, index: number): string {
     case 'state':
       return [
         base,
-        part.stateId,
-        part.state,
-        part.kind ?? '',
         part.text,
         part.progress ?? '',
         buildMetadataProjectionKey(part.metadata),
@@ -1165,18 +1372,30 @@ function buildActivityPartProjectionKey(part: ChatPart, index: number): string {
     case 'question':
       return [
         base,
-        part.partId ?? '',
-        part.questions.length,
-        part.answers ? 'answered' : 'open',
         buildMetadataProjectionKey(part.metadata),
       ].join(':');
     case 'error':
-      return [base, part.message, part.severity ?? '', buildMetadataProjectionKey(part.metadata)].join(':');
+      return [
+        base,
+        part.message,
+        buildMetadataProjectionKey(part.metadata),
+      ].join(':');
     case 'plan':
-      return [base, part.partId ?? '', part.status, part.text.length].join(':');
+      return [
+        base,
+        part.text.length,
+      ].join(':');
     default:
       return base;
   }
+}
+
+function contentProgressKey(part: { readonly content?: string; readonly contentLength?: number }): string {
+  const length = part.contentLength ?? part.content?.length ?? 0;
+  if (!part.content || part.content.length === 0) {
+    return String(length);
+  }
+  return `${length}:${projectionValue(part.content)}`;
 }
 
 function buildMetadataProjectionKey(metadata: Record<string, unknown> | undefined): string {
@@ -1187,19 +1406,15 @@ function buildMetadataProjectionKey(metadata: Record<string, unknown> | undefine
   const toolSpecificData = asRecord(metadata['toolSpecificData']);
   const childItems = asArray(toolSpecificData?.['childItems']);
   return [
-    getObjectIdentityKey(metadata),
     projectionValue(metadata['kind']),
     projectionValue(metadata['phase']),
     projectionValue(metadata['status']),
     projectionValue(metadata['argsSummary']),
-    projectionValue(metadata['duration']),
     buildApprovalProjectionKey(metadata['approval']),
     buildTimelineProjectionKey(metadata['timeline']),
-    getObjectIdentityKey(toolSpecificData),
     projectionValue(toolSpecificData?.['kind']),
     projectionValue(toolSpecificData?.['agentName']),
     projectionValue(toolSpecificData?.['description']),
-    projectionLength(toolSpecificData?.['result']),
     childItems.length,
     ...childItems.map((child, index) => buildSubagentChildProjectionKey(child, index)),
   ].join(':');
@@ -1213,7 +1428,6 @@ function buildSubagentChildProjectionKey(value: unknown, index: number): string 
 
   return [
     index,
-    getObjectIdentityKey(child),
     projectionValue(child['kind']),
     projectionValue(child['toolCallId']),
     projectionValue(child['toolName']),
@@ -1222,8 +1436,6 @@ function buildSubagentChildProjectionKey(value: unknown, index: number): string 
     projectionValue(child['contentKind']),
     projectionValue(child['contentLength']),
     projectionLength(child['content']),
-    projectionValue(child['duration']),
-    projectionValue(child['argsSummary']),
   ].join(',');
 }
 
@@ -1231,12 +1443,10 @@ function buildTimelineProjectionKey(value: unknown): string {
   const timeline = asArray(value);
   const last = asRecord(timeline[timeline.length - 1]);
   return [
-    getObjectIdentityKey(value),
     timeline.length,
     projectionValue(last?.['recordId']),
     projectionValue(last?.['phase']),
     projectionValue(last?.['state']),
-    projectionLength(last?.['resultText']),
     buildProgressDetailsProjectionKey(last?.['progressDetails']),
   ].join(',');
 }
@@ -1244,21 +1454,15 @@ function buildTimelineProjectionKey(value: unknown): string {
 function buildProgressDetailsProjectionKey(value: unknown): string {
   const details = asRecord(value);
   return [
-    getObjectIdentityKey(details),
     projectionValue(details?.['contentRef']),
-    projectionValue(details?.['contentLength']),
-    projectionLength(details?.['content']),
-    projectionValue(details?.['bytesTotal']),
   ].join(',');
 }
 
 function buildApprovalProjectionKey(value: unknown): string {
   const approval = asRecord(value);
   return [
-    getObjectIdentityKey(approval),
     projectionValue(approval?.['resolved']),
     projectionValue(approval?.['approved']),
-    projectionLength(approval?.['previousText']),
   ].join(',');
 }
 

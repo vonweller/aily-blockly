@@ -1,6 +1,5 @@
 import { Routes } from '@angular/router';
 import {
-    AILY_CHAT_RUNTIME_OWNER_PROVIDERS,
     AILY_CHAT_VIEW_PROVIDERS,
 } from './tools/aily-chat/aily-chat.providers';
 import { inject, provideEnvironmentInitializer } from '@angular/core';
@@ -143,14 +142,6 @@ export const routes: Routes = [
     {
         path: "aily-chat-process-detail/:sessionId/:processId",
         loadComponent: () => import('./tools/aily-chat/components/process-detail-window/chat-process-detail-window.component').then(m => m.ChatProcessDetailWindowComponent)
-    },
-    {
-        path: "aily-chat-runtime-owner",
-        providers: [
-            ...AILY_CHAT_RUNTIME_OWNER_PROVIDERS,
-        ],
-        loadComponent: () => import('./tools/aily-chat/runtime-owner/chat-runtime-owner.component')
-            .then(m => m.AilyChatRuntimeOwnerComponent)
     },
     {
         path: "code-viewer",

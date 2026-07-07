@@ -219,6 +219,10 @@ export class RenderEventPartAdapter {
 
       // ---- Tool Call ----
       case 'tool_call_begin':
+        if (this._isTerminalSessionToolCoveredByTerminal(handle, event)) {
+          this._rememberToolOrigin(event.toolCallId, handle, eventScope(event));
+          return finish(false, 'terminal_tool_call_begin_covered');
+        }
         this._rememberToolOrigin(event.toolCallId, handle, eventScope(event));
         this._store.addPartToHandle(handle, mkToolCall(
           event.toolCallId,
@@ -236,6 +240,9 @@ export class RenderEventPartAdapter {
 
       case 'tool_call_end': {
         const scope = eventScope(event);
+        if (this._appendTerminalPart(handle, event)) {
+          return finish(true, 'terminal_tool_call_end');
+        }
         const toolHandle = this._findToolCallHandle(event.toolCallId, handle, scope);
         if (!this._hasExactToolCallHandle(event.toolCallId, handle, scope)) {
           recordScopedSubagentToolHandleMiss(event, 'tool_call_end');
@@ -257,7 +264,6 @@ export class RenderEventPartAdapter {
             }), scope),
           },
         );
-        this._appendTerminalPart(handle, event);
         return finish(true);
       }
 
@@ -562,6 +568,28 @@ export class RenderEventPartAdapter {
     event: Extract<RenderEvent, { type: 'tool_call_progress' }>,
   ): boolean {
     const scope = eventScope(event);
+    const commandOutput = normalizeCommandOutputProgress(event.data);
+    if (commandOutput) {
+      const terminal = commandTerminalUpdateToPart(commandOutput, event.toolCallId, true);
+      if (scope) {
+        Object.assign(terminal, scope);
+      }
+      const toolHandle = this._findToolCallHandle(event.toolCallId, fallbackHandle, scope);
+      this._store.upsertTerminalForHandle(toolHandle ?? fallbackHandle, terminal);
+      return true;
+    }
+
+    const commandSession = normalizeCommandSessionUpdate(event.data);
+    if (commandSession) {
+      const terminal = commandTerminalUpdateToPart(commandSession, event.toolCallId, false);
+      if (scope) {
+        Object.assign(terminal, scope);
+      }
+      const toolHandle = this._findToolCallHandle(event.toolCallId, fallbackHandle, scope);
+      this._store.upsertTerminalForHandle(toolHandle ?? fallbackHandle, terminal);
+      return true;
+    }
+
     const toolHandle = this._findToolCallHandle(event.toolCallId, fallbackHandle, scope);
     if (!this._hasExactToolCallHandle(event.toolCallId, fallbackHandle, scope)) {
       recordScopedSubagentToolHandleMiss(event, 'tool_call_progress');
@@ -574,25 +602,6 @@ export class RenderEventPartAdapter {
     const progressUpdate = normalizeToolCallProgressUpdate(event.data, toolPart?.toolName);
     if (!progressUpdate) {
       return false;
-    }
-    const commandOutput = normalizeCommandOutputProgress(event.data);
-    if (commandOutput) {
-      const terminal = commandTerminalUpdateToPart(commandOutput, event.toolCallId, true);
-      const scope = eventScope(event);
-      if (scope) {
-        Object.assign(terminal, scope);
-      }
-      this._store.upsertTerminalForHandle(toolHandle, terminal);
-    }
-
-    const commandSession = normalizeCommandSessionUpdate(event.data);
-    if (commandSession) {
-      const terminal = commandTerminalUpdateToPart(commandSession, event.toolCallId, false);
-      const scope = eventScope(event);
-      if (scope) {
-        Object.assign(terminal, scope);
-      }
-      this._store.upsertTerminalForHandle(toolHandle, terminal);
     }
 
     const nextMetadata = withChatPartScopeMetadata(buildToolCallProgressMetadataPatch({
@@ -633,6 +642,21 @@ export class RenderEventPartAdapter {
     );
   }
 
+  private _hasToolInvocationPart(
+    handle: ChatPartStoreOpaqueHandle,
+    toolCallId: string,
+  ): boolean {
+    return this._store.getPartsForHandle(handle).some(part => {
+      if (part.type === 'tool_call') {
+        return part.toolCallId === toolCallId;
+      }
+      if (part.type === 'terminal') {
+        return part.toolCallId === toolCallId || part.sourceToolCallIds?.includes(toolCallId) === true;
+      }
+      return false;
+    });
+  }
+
   private _ensureSubagentParentForActivity(
     handle: ChatPartStoreOpaqueHandle,
     event: SubagentActivity,
@@ -654,7 +678,7 @@ export class RenderEventPartAdapter {
   ): ChatPartStoreOpaqueHandle | null {
     const originHandle = this._toolOriginHandles.get(this._toolOriginKey(toolCallId, scope))
       ?? this._toolOriginHandles.get(this._toolOriginKey(toolCallId));
-    if (originHandle && this._findToolCallPart(originHandle, toolCallId)) {
+    if (originHandle && this._hasToolInvocationPart(originHandle, toolCallId)) {
       return originHandle;
     }
 
@@ -662,7 +686,7 @@ export class RenderEventPartAdapter {
       return null;
     }
 
-    return this._findToolCallPart(fallbackHandle, toolCallId) ? fallbackHandle : null;
+    return this._hasToolInvocationPart(fallbackHandle, toolCallId) ? fallbackHandle : null;
   }
 
   private _hasExactToolCallHandle(toolCallId: string, handle: ChatPartStoreOpaqueHandle | null, scope?: ChatPartScope): boolean {
@@ -714,15 +738,15 @@ export class RenderEventPartAdapter {
     }
   }
 
-  private _appendTerminalPart(handle: ChatPartStoreOpaqueHandle, event: Extract<RenderEvent, { type: 'tool_call_end' }>): void {
+  private _appendTerminalPart(handle: ChatPartStoreOpaqueHandle, event: Extract<RenderEvent, { type: 'tool_call_end' }>): boolean {
     if (!isTerminalSessionToolName(event.toolName)) {
-      return;
+      return false;
     }
 
     const terminal = extractTerminalPart(event.toolCallId, event.result)
       ?? extractTerminalReadPart(event);
     if (!terminal) {
-      return;
+      return false;
     }
 
     const scope = eventScope(event);
@@ -732,6 +756,41 @@ export class RenderEventPartAdapter {
 
     const toolHandle = this._findToolCallHandle(event.toolCallId, handle, eventScope(event));
     this._store.upsertTerminalForHandle(toolHandle ?? handle, terminal);
+    return true;
+  }
+
+  private _isTerminalSessionToolCoveredByTerminal(
+    handle: ChatPartStoreOpaqueHandle,
+    event: Extract<RenderEvent, { type: 'tool_call_begin' }>,
+  ): boolean {
+    if (!isTerminalSessionToolName(event.toolName)) {
+      return false;
+    }
+
+    const input = asRecord(event.input);
+    const sessionIds = [
+      input?.['processId'],
+      input?.['outputSessionId'],
+      input?.['terminalId'],
+      input?.['id'],
+    ].map(value => asString(value)).filter((value): value is string => !!value);
+    if (sessionIds.length === 0) {
+      return false;
+    }
+
+    return this._store.getPartsForHandle(handle).some(part => {
+      if (part.type !== 'terminal') {
+        return false;
+      }
+      return [
+        part.processId,
+        part.outputSessionId,
+        part.terminalId,
+      ].some(value => {
+        const normalized = asString(value);
+        return !!normalized && sessionIds.includes(normalized);
+      });
+    });
   }
 
   private _processMarkdownDelta(handle: ChatPartStoreOpaqueHandle, text: string, scope?: ChatPartScope): void {
@@ -1645,6 +1704,7 @@ function approvalRequestToToolCallPatch(
     args: event.input,
     metadata: withChatPartScopeMetadata({
       approval: buildPendingToolCallApprovalMetadata({
+        approvalTraceId: event.approvalTraceId,
         toolCallId: event.toolCallId,
         toolName: event.toolName,
         message: event.message,
@@ -1667,6 +1727,7 @@ function approvalResolveToToolCallPatch(
     state: event.result === 'approved' ? 'doing' : 'error',
     metadata: withChatPartScopeMetadata({
       approval: buildResolvedToolCallApprovalMetadata({
+        approvalTraceId: event.approvalTraceId,
         toolCallId: event.toolCallId,
         result: event.result,
         scope: event.scope,
@@ -1682,6 +1743,7 @@ function approvalAutoReviewStartToToolCallPatch(
     text: event.reason,
     metadata: {
       approval: buildPendingToolCallApprovalMetadata({
+        approvalTraceId: event.approvalTraceId,
         toolCallId: event.toolCallId,
         toolName: event.toolName,
         title: '自动审查中',
@@ -1702,10 +1764,12 @@ function approvalAutoReviewCompleteToToolCallPatch(
   event: Extract<RenderEvent, { type: 'approval_auto_review_complete' }> & { toolCallId: string },
 ): ToolCallPartPatch {
   const approved = event.status === 'approved';
+  const decisionSource = (event as { readonly decisionSource?: string }).decisionSource ?? 'auto_review';
   return {
     ...(approved ? {} : { state: 'error' as const }),
     metadata: {
       approval: buildResolvedToolCallApprovalMetadata({
+        approvalTraceId: event.approvalTraceId,
         toolCallId: event.toolCallId,
         result: approved ? 'approved' : 'rejected',
         reviewer: 'auto_review',
@@ -1713,7 +1777,7 @@ function approvalAutoReviewCompleteToToolCallPatch(
         reviewRiskLevel: event.riskLevel,
         source: event.source,
         reviewCompletedAt: event.timestamp,
-        decisionSource: approved ? 'auto_review' : 'auto_review',
+        decisionSource,
         title: approved ? '自动审查已允许' : (event.status === 'timedOut' ? '自动审查超时' : '自动审查已拒绝'),
         message: event.rationale,
         description: `风险等级：${event.riskLevel}`,
