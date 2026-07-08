@@ -1,4 +1,5 @@
 const { createSchematicServices } = require('../schematic');
+const { createArchServices } = require('../arch');
 const { createErrorToolResult } = require('../schematic/result');
 const { SchematicRuntimeClient } = require('../schematic/runtime-client');
 
@@ -20,14 +21,26 @@ const schematicToolModules = [
   require('./validate_schematic'),
 ];
 
+const archToolModules = [
+  require('./save_arch'),
+];
+
 const toolModules = [
   ...publicToolModules,
   ...schematicToolModules,
+  ...archToolModules,
 ];
 
 function createLocalToolSource(rendererBridge, options = {}) {
   const runtimeClient = new SchematicRuntimeClient(rendererBridge);
-  const services = createSchematicServices(runtimeClient, options);
+  const schematicServices = createSchematicServices(runtimeClient, options);
+  const archServices = createArchServices({
+    projectContext: schematicServices.projectContext,
+  });
+  const services = {
+    ...schematicServices,
+    ...archServices,
+  };
   const definitionMap = new Map();
   const handlerMap = new Map();
 
