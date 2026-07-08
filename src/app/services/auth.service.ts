@@ -49,7 +49,7 @@ interface RefreshTokenResponseData {
   token_type?: 'bearer';
 }
 
-export type GitHubOAuthPurpose = 'login' | 'bind';
+export type GitHubOAuthPurpose = 'login' | 'bind' | 'library_pr_submit';
 
 export interface RegisterRequest {
   username: string;
@@ -294,8 +294,9 @@ export class AuthService {
     }
     const res = await firstValueFrom(this.http.get<CommonResponse>(API.me));
     if (res.status === 200 && res.data) {
-      this.userInfoSubject.next(res.data);
-      return res.data;
+      const user = this.mergeCurrentGithubInfo(res.data);
+      this.userInfoSubject.next(user);
+      return user;
     }
     return null;
   }
@@ -306,6 +307,56 @@ export class AuthService {
 
   hasGithubBinding(user: any = this.currentUser): boolean {
     return user?.github?.bound === true;
+  }
+
+  hasGithubLibraryPrPermission(user: any = this.currentUser): boolean {
+    const github = user?.github;
+    if (!github || typeof github !== 'object' || Array.isArray(github)) {
+      return false;
+    }
+    if (github.pr_submission_enabled === true) {
+      return true;
+    }
+
+    const extraData = github.extra_data && typeof github.extra_data === 'object' && !Array.isArray(github.extra_data)
+      ? github.extra_data
+      : {};
+    const scopes = [
+      ...this.normalizeGithubScopes(github.scopes),
+      ...this.normalizeGithubScopes(github.scope),
+      ...this.normalizeGithubScopes(extraData['scopes']),
+      ...this.normalizeGithubScopes(extraData['scope']),
+    ];
+    return scopes.includes('repo');
+  }
+
+  private normalizeGithubScopes(value: unknown): string[] {
+    if (Array.isArray(value)) {
+      return value.filter((scope): scope is string => typeof scope === 'string');
+    }
+    if (typeof value === 'string') {
+      return value.split(/[,\s]+/).map(scope => scope.trim()).filter(Boolean);
+    }
+    return [];
+  }
+
+  private mergeCurrentGithubInfo(user: any): any {
+    if (!user || typeof user !== 'object' || Array.isArray(user)) {
+      return user;
+    }
+    const currentGithub = this.currentUser?.github && typeof this.currentUser.github === 'object' && !Array.isArray(this.currentUser.github)
+      ? this.currentUser.github
+      : {};
+    const nextGithub = user.github && typeof user.github === 'object' && !Array.isArray(user.github)
+      ? user.github
+      : {};
+    return {
+      ...user,
+      github: {
+        ...currentGithub,
+        ...nextGithub,
+      },
+    };
   }
 
   /**
@@ -755,6 +806,10 @@ export class AuthService {
     return this.startGitHubOAuthForPurpose('bind');
   }
 
+  startGitHubLibraryPrSubmitOAuth(): Observable<{ authorization_url: string; state: string }> {
+    return this.startGitHubOAuthForPurpose('library_pr_submit');
+  }
+
   private startGitHubOAuthForPurpose(purpose: GitHubOAuthPurpose, inviteCode?: string): Observable<{ authorization_url: string; state: string }> {
     // 生成并存储 state 参数
     const state = this.generateOAuthState(purpose);
@@ -762,7 +817,8 @@ export class AuthService {
     const requestData: any = {
       redirect_uri: 'abis://auth/callback',
       state: state,
-      device_id: 'pc'
+      device_id: 'pc',
+      purpose,
     };
     if (inviteCode) {
       requestData.invite_code = inviteCode;
@@ -869,7 +925,7 @@ export class AuthService {
     }
 
     const fileState = await this.loadOAuthStateFromFile();
-    if (fileState?.state === state && (fileState.purpose === 'bind' || fileState.purpose === 'login')) {
+    if (fileState?.state === state && (fileState.purpose === 'bind' || fileState.purpose === 'login' || fileState.purpose === 'library_pr_submit')) {
       return fileState.purpose;
     }
 
@@ -983,12 +1039,13 @@ export class AuthService {
     );
   }
 
-  bindGitHubAccount(code: string, state: string): Observable<any> {
+  bindGitHubAccount(code: string, state: string, purpose?: GitHubOAuthPurpose): Observable<any> {
     return this.http.post<CommonResponse>(API.githubBind, {
       code,
       state,
       device_id: 'pc',
       client_type: 'electron',
+      purpose,
     }).pipe(
       map(response => {
         if (response.status === 200) {
@@ -1042,10 +1099,10 @@ export class AuthService {
 
       const purpose = await this.getOAuthPurpose(callbackData.state);
 
-      if (purpose === 'bind') {
-        const bindData = await this.bindGitHubAccount(callbackData.code, callbackData.state).toPromise();
+      if (purpose === 'bind' || purpose === 'library_pr_submit') {
+        const bindData = await this.bindGitHubAccount(callbackData.code, callbackData.state, purpose).toPromise();
         this.clearOAuthState();
-        const user = this.markGithubBoundLocally(bindData);
+        const user = this.markGithubBoundLocally(bindData, purpose);
         this.githubBindCompletedSubject.next(user);
         this.refreshCurrentUser().then(refreshedUser => {
           if (refreshedUser && !this.hasGithubBinding(refreshedUser)) {
@@ -1057,7 +1114,7 @@ export class AuthService {
         return {
           success: true,
           data: bindData,
-          purpose: 'bind',
+          purpose,
         };
       }
 
@@ -1102,7 +1159,7 @@ export class AuthService {
     }
   }
 
-  private markGithubBoundLocally(source?: any): any {
+  private markGithubBoundLocally(source?: any, purpose?: GitHubOAuthPurpose): any {
     const sourceUser = source?.user && typeof source.user === 'object' && !Array.isArray(source.user)
       ? source.user
       : source;
@@ -1113,12 +1170,23 @@ export class AuthService {
     const currentGithub = currentUser?.github && typeof currentUser.github === 'object' && !Array.isArray(currentUser.github)
       ? currentUser.github
       : {};
+    const prSubmissionGithub = purpose === 'library_pr_submit'
+      ? {
+        pr_submission_enabled: true,
+        scopes: Array.from(new Set([
+          ...this.normalizeGithubScopes(currentGithub.scopes),
+          ...this.normalizeGithubScopes(sourceGithub.scopes),
+          'repo',
+        ])),
+      }
+      : {};
     const nextUser = {
       ...currentUser,
       ...(sourceUser && typeof sourceUser === 'object' && !Array.isArray(sourceUser) ? sourceUser : {}),
       github: {
         ...currentGithub,
         ...sourceGithub,
+        ...prSubmissionGithub,
         bound: true,
       },
     };
