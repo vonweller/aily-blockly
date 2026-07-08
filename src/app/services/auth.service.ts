@@ -16,6 +16,19 @@ export interface CommonResponse {
   data?: any;
 }
 
+export interface GitHubPermissionStatus {
+  provider: 'github';
+  bound: boolean;
+  provider_username?: string | null;
+  provider_email?: string | null;
+  scopes: string[];
+  repo: boolean;
+  public_repo: boolean;
+  pr_submission_enabled: boolean;
+  github_authorization_purpose?: string | null;
+  scope_checked_at?: string | null;
+}
+
 export interface LoginRequest {
   username: string;
   password: string;
@@ -338,6 +351,43 @@ export class AuthService {
       return value.split(/[,\s]+/).map(scope => scope.trim()).filter(Boolean);
     }
     return [];
+  }
+
+  getGithubPermissions(): Observable<GitHubPermissionStatus> {
+    return this.http.get<CommonResponse & { data: GitHubPermissionStatus }>(API.githubPermissions).pipe(
+      map(response => {
+        if (response.status === 200 && response.data) {
+          this.mergeGithubPermissionStatus(response.data);
+          return response.data;
+        }
+        throw response;
+      }),
+      catchError(this.handleError)
+    );
+  }
+
+  hasGithubLibraryPrPermissionStatus(status: GitHubPermissionStatus | null | undefined): boolean {
+    if (!status?.bound) {
+      return false;
+    }
+    const scopes = this.normalizeGithubScopes(status.scopes);
+    return status.pr_submission_enabled === true || status.repo === true || scopes.includes('repo');
+  }
+
+  private mergeGithubPermissionStatus(status: GitHubPermissionStatus): void {
+    const currentUser = this.currentUser || {};
+    const currentGithub = currentUser?.github && typeof currentUser.github === 'object' && !Array.isArray(currentUser.github)
+      ? currentUser.github
+      : {};
+    this.userInfoSubject.next({
+      ...currentUser,
+      github: {
+        ...currentGithub,
+        ...status,
+        bound: status.bound,
+        scopes: this.normalizeGithubScopes(status.scopes),
+      },
+    });
   }
 
   private mergeCurrentGithubInfo(user: any): any {

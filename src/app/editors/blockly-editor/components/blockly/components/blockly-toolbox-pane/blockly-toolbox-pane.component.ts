@@ -825,15 +825,20 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
       return false;
     }
 
-    if (this.authService.hasGithubLibraryPrPermission()) {
-      return true;
-    }
-
-    const currentUser = await this.authService.refreshCurrentUser();
-    if (this.authService.hasGithubLibraryPrPermission(currentUser)) {
+    if (await this.hasGithubLibraryPrPermission()) {
       return true;
     }
     return this.promptGithubBindForLibrarySubmission();
+  }
+
+  private async hasGithubLibraryPrPermission(): Promise<boolean> {
+    try {
+      const permissions = await firstValueFrom(this.authService.getGithubPermissions());
+      return this.authService.hasGithubLibraryPrPermissionStatus(permissions);
+    } catch (error) {
+      console.warn('检查 GitHub PR 提交权限失败:', error);
+      return false;
+    }
   }
 
   private promptLoginForLibrarySubmission() {
@@ -872,10 +877,10 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
       resolve(false);
     }, 5 * 60 * 1000);
 
-    const subscription = this.authService.githubBindCompleted$.subscribe(() => {
+    const subscription = this.authService.githubBindCompleted$.subscribe(async () => {
       clearTimeout(timer);
       subscription.unsubscribe();
-      resolve(true);
+      resolve(await this.hasGithubLibraryPrPermission());
     });
 
     this.authService.startGitHubLibraryPrSubmitOAuth().subscribe({
