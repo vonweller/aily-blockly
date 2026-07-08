@@ -1,7 +1,219 @@
 const fs = require('fs');
 const path = require('path');
 
-function createPinmapService(projectContext, catalogService) {
+function createPinmapService(projectContext, catalogService, runtimeAdapter) {
+  function isUsableComponentConfig(config) {
+    return !!config
+      && typeof config.id === 'string'
+      && typeof config.name === 'string'
+      && Array.isArray(config.pins);
+  }
+
+  function inferProjectPathFromPackagesBasePath(packagesBasePath) {
+    if (!packagesBasePath) {
+      return null;
+    }
+    const candidate = path.dirname(packagesBasePath);
+    return projectContext.resolveProjectPath(candidate);
+  }
+
+  function getBoardPinmapId(boardPackagePath) {
+    const boardPkgName = path.basename(boardPackagePath || '') || 'board';
+    return `${boardPkgName}:default:default`;
+  }
+
+  function getConnectionGraphPath(projectPath) {
+    return projectPath ? path.join(projectPath, 'connection_output.json') : null;
+  }
+
+  function readConnectionGraph(projectPath) {
+    try {
+      const filePath = getConnectionGraphPath(projectPath);
+      return filePath && fs.existsSync(filePath) ? projectContext.readJsonFile(filePath) : null;
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  function saveConnectionGraph(data, projectPath) {
+    try {
+      const filePath = getConnectionGraphPath(projectPath);
+      if (!filePath) {
+        return false;
+      }
+      fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+      return true;
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  function buildPreviewPayloadFromGraph(graphData, boardPackagePath, packagesBasePath) {
+    const payload = {
+      componentConfigs: {},
+      components: Array.isArray(graphData?.components) ? graphData.components : [],
+      connections: Array.isArray(graphData?.connections) ? graphData.connections : [],
+    };
+    const boardConfig = boardPackagePath ? getBoardConfig(boardPackagePath) : null;
+    if (boardConfig) {
+      payload.componentConfigs.board = boardConfig;
+    }
+    if (!packagesBasePath) {
+      return payload;
+    }
+    for (const component of payload.components) {
+      if (!component || component.refId === 'board' || !component.refId || !component.pinmapId) {
+        continue;
+      }
+      const config = loadPinmapById(component.pinmapId, packagesBasePath);
+      if (isUsableComponentConfig(config)) {
+        payload.componentConfigs[component.refId] = config;
+      }
+    }
+    return payload;
+  }
+
+  function buildInitialPreviewPayload(packagesBasePath) {
+    const projectPath = inferProjectPathFromPackagesBasePath(packagesBasePath);
+    const boardPackagePath = projectPath ? projectContext.resolveBoardPackagePath(projectPath) : null;
+    const existingGraph = projectPath ? readConnectionGraph(projectPath) : null;
+    const hasStagedComponents = Array.isArray(existingGraph?.components) && existingGraph.components.length > 0;
+    if (hasStagedComponents && Array.isArray(existingGraph?.connections) && existingGraph.connections.length === 0) {
+      return buildPreviewPayloadFromGraph(existingGraph, boardPackagePath, packagesBasePath);
+    }
+
+    const boardConfig = boardPackagePath ? getBoardConfig(boardPackagePath) : null;
+    if (!boardConfig) {
+      return { componentConfigs: {}, components: [], connections: [] };
+    }
+    return {
+      componentConfigs: { board: boardConfig },
+      components: [{
+        refId: 'board',
+        componentId: boardConfig.id,
+        componentName: boardConfig.name,
+        pinmapId: getBoardPinmapId(boardPackagePath),
+        isBoard: true,
+      }],
+      connections: [],
+    };
+  }
+
+  function previewCircuitWindow(packagesBasePath) {
+    const projectPath = inferProjectPathFromPackagesBasePath(packagesBasePath);
+    if (!runtimeAdapter || !projectPath) {
+      return;
+    }
+    const payload = buildInitialPreviewPayload(packagesBasePath);
+    try {
+      Promise.resolve(runtimeAdapter.previewSchematicComponents(payload, projectPath)).catch(() => {});
+    } catch (_error) {
+      // ignore preview failure
+    }
+  }
+
+  function createTemporaryRefId(modelId, components) {
+    const base = String(modelId || '').trim() || 'component';
+    const used = new Set((components || []).map((item) => item?.refId).filter(Boolean));
+    if (base !== 'board' && !used.has(base)) {
+      return base;
+    }
+    let index = 2;
+    let candidate = `${base}_${index}`;
+    while (candidate === 'board' || used.has(candidate)) {
+      index += 1;
+      candidate = `${base}_${index}`;
+    }
+    return candidate;
+  }
+
+  function buildStagedSnapshot(pinmapId, config, packagesBasePath) {
+    const projectPath = inferProjectPathFromPackagesBasePath(packagesBasePath);
+    if (!projectPath) {
+      return null;
+    }
+
+    const ref = catalogService.parsePinmapId(pinmapId);
+    const boardPackagePath = projectContext.resolveBoardPackagePath(projectPath);
+    const boardConfig = boardPackagePath ? getBoardConfig(boardPackagePath) : null;
+    const existingGraph = readConnectionGraph(projectPath);
+    const keepExistingComponents = Array.isArray(existingGraph?.components)
+      && Array.isArray(existingGraph?.connections)
+      && existingGraph.connections.length === 0;
+    const components = [];
+
+    if (boardConfig) {
+      components.push({
+        refId: 'board',
+        componentId: boardConfig.id,
+        componentName: boardConfig.name,
+        pinmapId: getBoardPinmapId(boardPackagePath),
+        isBoard: true,
+      });
+    }
+
+    if (keepExistingComponents) {
+      for (const component of existingGraph.components) {
+        if (!component || component.refId === 'board') {
+          continue;
+        }
+        components.push(component);
+      }
+    }
+
+    if (!ref.packageSlug.startsWith('board-')) {
+      const existingIndex = components.findIndex((item) => item && item.refId !== 'board' && item.pinmapId === pinmapId);
+      const componentEntry = {
+        refId: existingIndex >= 0
+          ? components[existingIndex].refId
+          : createTemporaryRefId(ref.modelId, components),
+        componentId: config.id,
+        componentName: config.name,
+        pinmapId,
+      };
+      if (existingIndex >= 0) {
+        components[existingIndex] = componentEntry;
+      } else {
+        components.push(componentEntry);
+      }
+    }
+
+    return {
+      projectPath,
+      jsonData: {
+        version: '1.0.0',
+        description: keepExistingComponents && existingGraph?.description
+          ? existingGraph.description
+          : '连线方案（阶段保存）',
+        components,
+        connections: [],
+      },
+    };
+  }
+
+  function syncStagedSnapshot(pinmapId, config, packagesBasePath) {
+    const stagedSnapshot = buildStagedSnapshot(pinmapId, config, packagesBasePath);
+    if (!stagedSnapshot) {
+      return;
+    }
+    if (!saveConnectionGraph(stagedSnapshot.jsonData, stagedSnapshot.projectPath)) {
+      console.warn('[pinmap-service] 保存阶段性 connection_output.json 失败');
+      return;
+    }
+    if (!runtimeAdapter) {
+      return;
+    }
+    try {
+      Promise.resolve(
+        runtimeAdapter.notifySchematicSaved({ jsonData: stagedSnapshot.jsonData }, stagedSnapshot.projectPath),
+      ).catch((error) => {
+        console.warn('[pinmap-service] 阶段性电路连接窗口刷新失败:', error?.message || error);
+      });
+    } catch (error) {
+      console.warn('[pinmap-service] 阶段性电路连接窗口刷新失败:', error?.message || error);
+    }
+  }
+
   function extractPinSummary(config) {
     const extractedPins = (config.pins || [])
       .filter((pin) => pin.visible !== false && pin.disabled !== true)
@@ -60,12 +272,13 @@ function createPinmapService(projectContext, catalogService) {
       return null;
     }
     const config = readComponentConfig(pinmapPath);
-    return config ? extractPinSummary(config) : null;
+    return isUsableComponentConfig(config) ? extractPinSummary(config) : null;
   }
 
   function getBoardConfig(boardPackagePath) {
     const pinmapPath = resolveBoardPinmapPath(boardPackagePath);
-    return pinmapPath ? readComponentConfig(pinmapPath) : null;
+    const config = pinmapPath ? readComponentConfig(pinmapPath) : null;
+    return isUsableComponentConfig(config) ? config : null;
   }
 
   function resolvePinmapPath(fullId, packagesBasePath) {
@@ -99,7 +312,8 @@ function createPinmapService(projectContext, catalogService) {
 
   function loadPinmapById(fullId, packagesBasePath) {
     const pinmapPath = resolvePinmapPath(fullId, packagesBasePath);
-    return pinmapPath ? readComponentConfig(pinmapPath) : null;
+    const config = pinmapPath ? readComponentConfig(pinmapPath) : null;
+    return isUsableComponentConfig(config) ? config : null;
   }
 
   function loadPinSummaryById(fullId, packagesBasePath) {
@@ -108,6 +322,8 @@ function createPinmapService(projectContext, catalogService) {
   }
 
   function getLibraryInfo(pinmapId, packagesBasePath) {
+    previewCircuitWindow(packagesBasePath);
+
     const ref = catalogService.parsePinmapId(pinmapId);
     const packagePath = path.join(packagesBasePath, '@aily-project', ref.packageSlug);
     const result = {};
@@ -344,6 +560,8 @@ function createPinmapService(projectContext, catalogService) {
       const filePath = path.join(pinmapsDir, fileName);
       fs.writeFileSync(filePath, JSON.stringify(config, null, 2));
       updateCatalogStatus(pinmapId, 'available', `pinmaps/${fileName}`, packagePath, config, normalizedOptions);
+      overwriteBoardRootPinmapIfPresent(ref.packageSlug, packagePath, config);
+      syncStagedSnapshot(pinmapId, config, packagesBasePath);
 
       return {
         success: true,

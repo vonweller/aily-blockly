@@ -7,9 +7,9 @@ const { createRuntimeAdapter } = require('./runtime-adapter');
 function createSchematicServices(runtimeClient, options = {}) {
   const projectContext = createProjectContext(options);
   const catalogService = createCatalogService(projectContext);
-  const pinmapService = createPinmapService(projectContext, catalogService);
-  const awsService = createAwsService(projectContext, pinmapService);
   const runtimeAdapter = createRuntimeAdapter(runtimeClient);
+  const pinmapService = createPinmapService(projectContext, catalogService, runtimeAdapter);
+  const awsService = createAwsService(projectContext, pinmapService);
 
   return {
     projectContext,
