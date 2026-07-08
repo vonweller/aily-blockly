@@ -270,6 +270,7 @@ function isRuntimeOwnerEvent(event: unknown): event is ChatRuntimeOwnerExecutorE
   }
   const kind = (event as { readonly kind?: unknown }).kind;
   return kind === 'turnProgress'
+    || kind === 'runtimeProjectPathUpdated'
     || kind === 'turnInteractionRequested'
     || kind === 'turnError'
     || kind === 'turnCompleted';

@@ -1,12 +1,15 @@
 import { exec as execCallback } from 'node:child_process';
+import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import {
   AilyServicesEndpoint,
   OpenAIEndpoint,
+  PromptLayer,
   createAgentHandleAsync,
   createBlocklyHostBridge,
 } from 'aily-lex';
@@ -14,7 +17,215 @@ import {
 const DEFAULT_MODEL_ID = 'auto';
 const DEFAULT_API_ENDPOINT = 'https://api.aily.pro';
 const DEFAULT_INTERACTION_SOFT_ROUND_LIMIT = 200;
+const BLOCKLY_CONTEXT_SCOPES = [
+  'workspaceIdentity',
+  'projectInfo',
+  'boardInfo',
+  'libraryIndex',
+  'libraryReadmeRefs',
+  'workspaceArtifacts',
+];
+const MAX_ENV_LIBRARY_NAMES = 24;
+const MAX_ENV_README_REFS = 16;
+const MAX_ENV_LIBRARIES_WITHOUT_README = 16;
+const AILY_PROJECT_SCOPE = '@aily-project/';
+const AILY_BOARD_DEP_PREFIX = `${AILY_PROJECT_SCOPE}board-`;
+const AILY_LIBRARY_DEP_PREFIX = `${AILY_PROJECT_SCOPE}lib-`;
+const ELECTRON_BLOCKLY_DEFERRED_GROUPS = [
+  { id: 'blockly-library-discovery', label: '硬件/库工具', description: '开发板、库搜索与库定义分析' },
+  { id: 'blockly-project-management', label: '项目管理', description: '项目创建、切板、构建与配置' },
+  { id: 'blockly-architecture', label: '架构文档', description: '低频架构图持久化工具' },
+];
+const SCHEMATIC_AGENT_TYPE = 'SchematicAgent';
+const SCHEMATIC_AGENT_TOOLS = [
+  'generate_schematic',
+  'validate_schematic',
+  'generate_pinmap',
+  'save_pinmap',
+  'get_pinmap_summary',
+  'get_component_catalog',
+  'get_project_context',
+  'read_file',
+  'grep_search',
+  'glob_search',
+  'get_current_schematic',
+  'fetch_webpage',
+  'tool_search',
+  'edit_file',
+  'multi_edit_file',
+  'delete_file',
+  'get_errors',
+];
+const SCHEMATIC_AGENT_REQUIRED_CONTEXT = {
+  scopes: ['workspaceIdentity', 'projectInfo', 'boardInfo', 'libraryIndex', 'libraryReadmeRefs', 'workspaceArtifacts'],
+  strict: true,
+  hydrateBeforeFirstModelCall: true,
+};
+const SCHEMATIC_AGENT_WHEN_TO_USE = 'Generate and validate circuit schematics / connection diagrams. Use only when the task explicitly involves wiring, pin assignment, or component connections. Do not use for programming help, ABS block/library analysis, code generation, or general project setup.';
+const SCHEMATIC_AGENT_WHEN_NOT_TO_USE = 'Do not use for library analysis, ABS block/library questions, generic project setup, or other programming-first tasks unless the request explicitly asks for wiring or a connection diagram.';
+const SCHEMATIC_AGENT_PROMPT = `You are an interactive AI assistant specializing in circuit schematic wiring. Your name is Aily.
+Only handle tasks that explicitly require circuit schematics, wiring, pin assignment, or connection diagrams.
+
+Core rules:
+- If the user is asking for programming help, ABS block/library analysis, code generation, project setup, or debugging without an explicit wiring goal, do not continue as SchematicAgent.
+- Your working output format is AWS (Aily Wiring Syntax), not connection JSON.
+- validate_schematic(aws: ...) is the final step that validates, saves, and refreshes the diagram.
+- If a required board/component pinmap is missing, generate and save the pinmap first, then continue wiring.
+- Treat physical peripherals referenced by user intent or code usage as hardware even when they are surfaced through software libraries.
+- Even when no external peripheral library is installed, infer physical modules from generated code and hardware APIs such as I2S, I2C, SPI, UART, ADC, PWM, pinMode, digitalWrite, analogWrite, and GPIO usage.
+- Do not drop GPIO-driven hardware such as LEDs, buzzers, relays, or transistor switches merely because they do not have an installed library.
+
+Workflow:
+1. Start from the runtime project context already present in the environment. Call get_project_context() only when you need Blockly-specific detail not already in the runtime summary.
+2. Infer required hardware from the user request, installed libraries, generated code, and GPIO/peripheral usage.
+3. Resolve board and component pinmaps. If any required item lacks a usable pinmap, call generate_pinmap(...) and save_pinmap(...) before wiring.
+4. Call generate_schematic(pinmapIds: [...]) with the board plus every required component.
+5. Write AWS using USE declarations for external components and board as the predefined board alias.
+6. Call validate_schematic(aws: "..."). If validation reports issues, fix the AWS and validate again.
+
+AWS syntax:
+USE <pinmapId> AS <alias> "<displayName>"
+CONNECT <fromAlias>.<pinName> -> <toAlias>.<pinName> @<type>
+ASSIGN <alias>.<pinName> AS <role> @<type>:<busNumber>
+
+Safety:
+- Refuse wiring that could cause harm, intentional shorts, or dangerous voltage configurations.
+- Verify power, ground, protocol, and pin conflict assumptions before saving.`;
+const SCHEMATIC_TOOL_DEFINITIONS = [
+  {
+    name: 'generate_schematic',
+    description: 'Prepare board and component pin summaries for an AWS wiring schematic. Pass the board and every required component pinmapId.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pinmapIds: {
+          oneOf: [
+            { type: 'array', items: { oneOf: [{ type: 'string' }, { type: 'object' }] } },
+            { type: 'string' },
+          ],
+        },
+        components: { type: 'array', items: { type: 'string' } },
+        requirements: { type: 'string' },
+      },
+    },
+    readOnly: true,
+  },
+  {
+    name: 'get_pinmap_summary',
+    description: 'Read available board/component pin summaries for the current project.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pinmapIds: { type: 'array', items: { type: 'string' } },
+      },
+    },
+    readOnly: true,
+  },
+  {
+    name: 'get_component_catalog',
+    description: 'Read the current project component catalog, including board, libraries, software libraries, and pinmap availability.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        libraryFilter: { type: 'string' },
+        includeNeedsGeneration: { type: 'boolean' },
+        includeBoards: { type: 'boolean' },
+      },
+    },
+    readOnly: true,
+  },
+  {
+    name: 'get_project_context',
+    description: 'Read dynamic schematic context: generated code, component catalog, and pinmap availability. Runtime already injects base project facts.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        includeNeedsGeneration: { type: 'boolean' },
+      },
+    },
+    readOnly: true,
+  },
+  {
+    name: 'validate_schematic',
+    description: 'Validate AWS wiring, save the schematic, and refresh the diagram. This is the final schematic step.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        aws: { type: 'string' },
+      },
+    },
+    readOnly: false,
+  },
+  {
+    name: 'get_current_schematic',
+    description: 'Read the current saved schematic JSON and summary.',
+    inputSchema: { type: 'object', properties: {} },
+    readOnly: true,
+    agentScope: ['main', SCHEMATIC_AGENT_TYPE],
+  },
+  {
+    name: 'generate_pinmap',
+    description: 'Prepare README/example/template material for a missing component pinmap.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pinmapId: { type: 'string' },
+        referenceSource: { type: 'string', enum: ['readme', 'example', 'auto'] },
+      },
+      required: ['pinmapId'],
+    },
+    readOnly: true,
+  },
+  {
+    name: 'save_pinmap',
+    description: 'Save a generated pinmap JSON into the component package and mark it available in the catalog.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pinmapId: { type: 'string' },
+        pinmapConfig: { type: 'object' },
+      },
+      required: ['pinmapId', 'pinmapConfig'],
+    },
+    readOnly: false,
+  },
+];
+const BLOCKLY_SLASH_COMMANDS = [
+  {
+    name: 'fix',
+    description: 'Ask the main agent to diagnose a problem and propose or apply a fix.',
+    sampleRequest: '/fix explain why this test is failing',
+    when: 'Use for debugging, remediation, and follow-up fix requests.',
+  },
+  {
+    name: 'explain',
+    description: 'Ask for an explanation of code, behavior, or implementation details.',
+    sampleRequest: '/explain how request routing is resolved',
+    when: 'Use when the goal is understanding rather than changing code.',
+  },
+  {
+    name: 'search',
+    description: 'Search the current workspace for relevant code, files, or nearby implementation context.',
+    sampleRequest: '/search find where slash command metadata is produced',
+    when: 'Use for project-wide discovery before deeper reading or editing.',
+  },
+  {
+    name: 'edit',
+    description: 'Ask the main agent to make a targeted code change in the current workspace.',
+    sampleRequest: '/edit rename this helper to match the new contract',
+    when: 'Use when the request is an explicit code modification task.',
+  },
+  {
+    name: 'compact',
+    description: 'Compact the current conversation history.',
+    sampleRequest: '/compact',
+    when: 'Use to summarize older conversation context and keep the session continuing with a compacted history.',
+  },
+];
+const SKILL_LISTING_CHAR_BUDGET = 15000;
+const SKILL_LISTING_TRUNCATED_NAMES_BUDGET = 5000;
 const execAsync = promisify(execCallback);
+const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 function createAbortError(message) {
   const error = new Error(message);
@@ -186,13 +397,28 @@ class LexExecutionRuntimeOwner {
       session.handle.respondToApproval(interactionId, normalizeApprovalDecision(request.payload).approved, request.payload || undefined);
     }
     if (request.kind === 'question.complete') {
+      const pending = session.pendingQuestions?.get(interactionId);
+      if (pending) {
+        session.pendingQuestions.delete(interactionId);
+        pending.resolve(toAskUserBridgeResponse(pending.questions, request.payload?.result));
+        return this.createInteractionSnapshot(session);
+      }
       session.handle.respondToQuestion(interactionId, String(request.payload?.answer ?? ''));
+    }
+    if (request.kind === 'question.skip') {
+      const pending = session.pendingQuestions?.get(interactionId);
+      if (pending) {
+        session.pendingQuestions.delete(interactionId);
+        pending.resolve({ answer: '', cancelled: true });
+        return this.createInteractionSnapshot(session);
+      }
     }
     return this.createInteractionSnapshot(session);
   }
 
   async runTurn(session, turnId, request, text, abortController) {
-    for await (const renderEvent of session.handle.chat(text, abortController.signal, { turnId })) {
+    const requestMetadata = normalizeRequestMetadata(request);
+    for await (const renderEvent of session.handle.chat(text, abortController.signal, { turnId, requestMetadata })) {
       if (abortController.signal.aborted) {
         continue;
       }
@@ -208,59 +434,156 @@ class LexExecutionRuntimeOwner {
   }
 
   async ensureSession(sessionId, command = {}, projectInfo = null) {
-    const existing = this.sessions.get(sessionId);
-    if (existing) {
-      await existing.handlePromise;
-      return existing;
-    }
-
     const request = command.request || {};
     const executionContext = command.executionContext && typeof command.executionContext === 'object'
       ? command.executionContext
       : null;
     const currentModel = command.currentModel || executionContext?.currentModel || request.currentModel || null;
     const providerOptions = command.providerOptions || executionContext?.providerOptions || request.providerOptions || null;
+    const runtimeConfigKey = createSessionRuntimeConfigKey(providerOptions, currentModel, this.resolveCwd(projectInfo, providerOptions));
+    const existing = this.sessions.get(sessionId);
+    if (existing) {
+      await existing.handlePromise;
+      if (existing.runtimeConfigKey !== runtimeConfigKey && !existing.activeTurnPromise) {
+        await this.recreateSessionRuntime(existing, projectInfo, {
+          providerOptions,
+          currentModel,
+          runtimeConfigKey,
+        });
+      } else {
+        existing.providerOptions = providerOptions || existing.providerOptions || null;
+        existing.currentModel = currentModel || existing.currentModel || null;
+      }
+      return existing;
+    }
+
     const session = {
       sessionId,
       providerOptions,
       currentModel,
+      runtimeConfigKey,
       revision: 0,
       activeTurnId: null,
       activeAbortController: null,
       activeTurnPromise: null,
       handle: null,
       handlePromise: null,
+      cwd: null,
+      adapter: null,
       pendingApprovals: new Map(),
+      pendingQuestions: new Map(),
       completionChain: Promise.resolve(),
     };
     this.sessions.set(sessionId, session);
+    await this.createSessionRuntime(session, projectInfo);
+    return session;
+  }
 
-    const hostAPI = this.createExternalHostAPI(sessionId, projectInfo, currentModel);
+  async recreateSessionRuntime(session, projectInfo, nextConfig) {
+    const previousHandle = session.handle;
+    let snapshot = null;
+    try {
+      snapshot = typeof previousHandle?.getSessionSnapshot === 'function'
+        ? previousHandle.getSessionSnapshot()
+        : typeof previousHandle?.saveSession === 'function'
+          ? previousHandle.saveSession()
+          : null;
+    } catch (error) {
+      console.warn('[AilyChat][LexExecutionHostSnapshotBeforeRecreateFailed]', error?.message || error);
+    }
+    try {
+      previousHandle?.dispose?.();
+    } catch (error) {
+      console.warn('[AilyChat][LexExecutionHostDisposeBeforeRecreateFailed]', error?.message || error);
+    }
+    session.providerOptions = nextConfig.providerOptions;
+    session.currentModel = nextConfig.currentModel;
+    session.runtimeConfigKey = nextConfig.runtimeConfigKey;
+    session.handle = null;
+    session.adapter = null;
+    session.pendingApprovals?.clear?.();
+    session.pendingQuestions?.clear?.();
+    await this.createSessionRuntime(session, projectInfo, snapshot);
+  }
+
+  async createSessionRuntime(session, projectInfo, snapshot = null) {
+    const { sessionId, providerOptions, currentModel } = session;
     const runtimeConfig = readRuntimeConfig(projectInfo);
     const endpoint = this.createEndpoint(currentModel, runtimeConfig);
+    const resolvedCwd = this.resolveCwd(projectInfo, providerOptions);
+    session.cwd = resolvedCwd;
+    const hostAPI = this.createExternalHostAPI(sessionId, projectInfo, currentModel, session);
+    const skillRegistry = createElectronSkillRegistry(resolvedCwd, projectInfo, readRuntimeConfig(projectInfo));
+    const searchExtension = createElectronSearchExtension();
+    const webFetchBridgeExtension = createElectronWebFetchBridgeExtension();
+    const webSearchBridgeExtension = createElectronWebSearchBridgeExtension();
     const bridge = createBlocklyHostBridge({
       hostAPI,
       endpoint,
       model: this.createModelConfig(currentModel),
-      cwd: this.resolveCwd(projectInfo, providerOptions),
+      cwd: resolvedCwd,
+      toolProvider: createElectronBlocklyToolProvider(hostAPI),
+      skillProvider: createElectronSkillProvider(skillRegistry),
+      agentProvider: createElectronBlocklyAgentProvider(),
+      slashCommandProvider: createElectronBlocklySlashCommandProvider(skillRegistry),
       extensions: {
+        syncFs: createSyncFsExtension(),
+        binaryWrite: createBinaryWriteExtension(),
+        readline: createLineReadExtension(),
+        path: createPathExtension(),
+        runtimeWorkspaceContext: {
+          getCwd: () => session.cwd || resolvedCwd,
+        },
+        memoryStorage: createMemoryStorageExtension(resolvedCwd, this.env),
+        memoryFeatureConfig: createMemoryFeatureConfigExtension(runtimeConfig),
+        diagnostics: createDiagnosticsExtension(sessionId, this.requestResourceOperation),
+        skillManager: createElectronSkillManager(skillRegistry, session),
+        workspaceReadAccess: createElectronWorkspaceReadAccess(skillRegistry),
+        ...(searchExtension ? { search: searchExtension } : {}),
+        ...(webFetchBridgeExtension ? { webFetchBridge: webFetchBridgeExtension } : {}),
+        ...(webSearchBridgeExtension ? { webSearchBridge: webSearchBridgeExtension } : {}),
         sessionCompletionCoordinator: this.createSessionCompletionCoordinator(session),
+        askUser: this.createAskUserExtension(session),
       },
       permissionMode: normalizePermissionMode(providerOptions),
+      permissionProfile: normalizePermissionProfile(providerOptions),
       approvalPolicy: normalizeApprovalPolicy(providerOptions),
+      approvalsReviewer: normalizeApprovalsReviewer(providerOptions),
+      strictAutoReview: normalizeApprovalsReviewer(providerOptions) === 'auto_review',
       approvalHandler: approvalRequest => this.requestApproval(session, approvalRequest),
+      approvalPreflightHandler: approvalRequest => this.requestApprovalPreflight(session, approvalRequest),
+      additionalDeferredGroups: ELECTRON_BLOCKLY_DEFERRED_GROUPS,
     });
+    const agentBridge = withElectronBlocklyPromptProfile(bridge, {
+      hostAPI,
+      skillRegistry,
+    });
+    session.adapter = agentBridge.hostAccess;
 
-    session.handlePromise = createAgentHandleAsync(bridge, {
+    session.handlePromise = createAgentHandleAsync(agentBridge, {
       sessionId,
       permissionMode: normalizePermissionMode(providerOptions),
+      permissionProfile: normalizePermissionProfile(providerOptions),
       approvalPolicy: normalizeApprovalPolicy(providerOptions),
+      approvalsReviewer: normalizeApprovalsReviewer(providerOptions),
+      strictAutoReview: normalizeApprovalsReviewer(providerOptions) === 'auto_review',
+      ...(snapshot ? { snapshot } : {}),
     }).then(handle => {
       session.handle = handle;
+      this.registerPostCreateExtensions(session, handle);
       return handle;
     });
     await session.handlePromise;
-    return session;
+  }
+
+  registerPostCreateExtensions(session, handle) {
+    const registerExtension = session.adapter && typeof session.adapter.registerExtension === 'function'
+      ? (id, extension) => session.adapter.registerExtension(id, extension)
+      : null;
+    if (!registerExtension || !handle?.agent || typeof handle.agent.getAgentExecutor !== 'function') {
+      return;
+    }
+    registerExtension('agentExecutor', handle.agent.getAgentExecutor());
   }
 
   prepareSubmittedTurnTitle(sessionId, request, text) {
@@ -304,6 +627,57 @@ class LexExecutionRuntimeOwner {
     };
   }
 
+  createAskUserExtension(session) {
+    return {
+      ask: options => this.requestUserQuestion(session, normalizeAskUserQuestions([{
+        question: options?.question,
+        options: options?.options,
+        allow_freeform: options?.allowFreeform ?? true,
+        multi_select: options?.multiSelect ?? false,
+      }]), options),
+      askMany: options => this.requestUserQuestion(session, normalizeAskUserQuestions(options?.questions), options),
+    };
+  }
+
+  requestUserQuestion(session, questions, options = {}) {
+    if (!Array.isArray(questions) || questions.length === 0) {
+      return Promise.resolve({ answer: '', cancelled: true });
+    }
+
+    const interaction = createQuestionInteraction(session, questions, options);
+    if (options?.signal?.aborted) {
+      return Promise.resolve({ answer: '', cancelled: true });
+    }
+
+    const questionPromise = new Promise(resolve => {
+      let settled = false;
+      const cleanup = () => {
+        session.pendingQuestions.delete(interaction.partId);
+        options?.signal?.removeEventListener?.('abort', onAbort);
+      };
+      const settle = result => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanup();
+        resolve(result);
+      };
+      const onAbort = () => settle({ answer: '', cancelled: true });
+      options?.signal?.addEventListener?.('abort', onAbort, { once: true });
+      session.pendingQuestions.set(interaction.partId, { questions, resolve: settle });
+    });
+    const snapshot = this.createInteractionSnapshot(session, [], interaction);
+    this.emit({
+      kind: 'turnInteractionRequested',
+      sessionId: session.sessionId,
+      turnId: session.activeTurnId || normalizeString(options?.toolCallId) || interaction.partId,
+      revision: snapshot.revision,
+      interaction: snapshot,
+    });
+    return questionPromise;
+  }
+
   requestApproval(session, approvalRequest) {
     const interaction = createApprovalInteraction(session, approvalRequest);
     const approvalPromise = new Promise(resolve => {
@@ -318,6 +692,39 @@ class LexExecutionRuntimeOwner {
       interaction: snapshot,
     });
     return approvalPromise;
+  }
+
+  async requestApprovalPreflight(session, approvalRequest) {
+    if (!this.requestResourceOperation) {
+      return { approved: false, reason: 'approval preflight bridge unavailable' };
+    }
+    const input = normalizeApprovalInput(approvalRequest);
+    try {
+      const result = await this.requestResourceOperation({
+        sessionId: session.sessionId,
+        kind: 'tool-approval',
+        payload: {
+          adapter: 'toolApproval',
+          action: 'preflight',
+          approvalTraceId: normalizeString(approvalRequest?.approvalTraceId),
+          toolCallId: normalizeString(approvalRequest?.toolCallId),
+          toolName: normalizeString(approvalRequest?.toolName),
+          title: normalizeString(approvalRequest?.title),
+          subtitle: normalizeString(approvalRequest?.subtitle),
+          message: normalizeString(approvalRequest?.message),
+          source: normalizeString(approvalRequest?.source),
+          actions: Array.isArray(approvalRequest?.actions) ? approvalRequest.actions : undefined,
+          primaryScope: normalizeString(approvalRequest?.primaryScope),
+          allowAutoConfirm: approvalRequest?.allowAutoConfirm !== false,
+          approveCombination: approvalRequest?.approveCombination,
+          args: input,
+        },
+      });
+      return normalizeApprovalDecision(result?.result ?? result);
+    } catch (error) {
+      console.warn('[AilyChat][LexExecutionHostApprovalPreflightFailed]', error?.message || error);
+      return { approved: false, reason: error?.message || 'approval preflight failed' };
+    }
   }
 
   async readProjectInfo(sessionId) {
@@ -340,16 +747,23 @@ class LexExecutionRuntimeOwner {
     }
   }
 
-  createExternalHostAPI(sessionId, projectInfo, currentModel) {
+  createExternalHostAPI(sessionId, projectInfo, currentModel, session) {
+    const readCwd = () => session?.cwd || this.resolveCwd(projectInfo, session?.providerOptions || null);
     return {
       fs: createExternalFileSystem(),
-      terminal: createExternalTerminal(this.resolveCwd(projectInfo, null)),
-      platform: createExternalPlatform(this.resolveCwd(projectInfo, null)),
+      terminal: createExternalTerminal(readCwd),
+      platform: createExternalPlatform(readCwd),
       path: createPathExtension(),
-      project: createExternalProject(sessionId, this.requestResourceOperation, projectInfo),
-      builder: createExternalBuilder(sessionId, this.requestResourceOperation, projectInfo),
+      project: createExternalProject(
+        sessionId,
+        this.requestResourceOperation,
+        projectInfo,
+        result => this.applyProjectCreatedScope(session, result),
+      ),
+      builder: createExternalBuilder(sessionId, this.requestResourceOperation, projectInfo, readCwd),
       blockly: createExternalBlockly(sessionId, this.requestResourceOperation),
       connectionGraph: createExternalConnectionGraph(sessionId, this.requestResourceOperation),
+      boardSearch: createExternalBoardSearch(sessionId, this.requestResourceOperation),
       auth: {
         getToken: async () => this.resolveAuthToken(currentModel, readRuntimeConfig(projectInfo)),
         token: this.resolveAuthToken(currentModel, readRuntimeConfig(projectInfo)),
@@ -361,6 +775,30 @@ class LexExecutionRuntimeOwner {
         locale: this.env.AILY_CHAT_LOCALE || this.env.LANG || 'zh-CN',
       },
     };
+  }
+
+  applyProjectCreatedScope(session, result) {
+    const projectInfo = normalizeProjectInfo(result);
+    const projectPath = normalizeString(projectInfo.projectPath)
+      || normalizeString(projectInfo.path)
+      || normalizeString(projectInfo.rootPath);
+    if (!session || !projectPath) {
+      return;
+    }
+    session.cwd = projectPath;
+    session.providerOptions = {
+      ...(session.providerOptions && typeof session.providerOptions === 'object' ? session.providerOptions : {}),
+      folderPath: projectPath,
+    };
+    this.emit({
+      kind: 'runtimeProjectPathUpdated',
+      sessionId: session.sessionId,
+      turnId: session.activeTurnId || `project-create-${Date.now()}`,
+      revision: ++session.revision,
+      projectPath,
+      providerOptions: session.providerOptions,
+      projectInfo,
+    });
   }
 
   createEndpoint(currentModel, runtimeConfig = null) {
@@ -473,11 +911,11 @@ class LexExecutionRuntimeOwner {
     };
   }
 
-  createInteractionSnapshot(session, confirmationQueue = []) {
+  createInteractionSnapshot(session, confirmationQueue = [], question = null) {
     return {
       sessionId: session.sessionId,
       revision: ++session.revision,
-      question: null,
+      question,
       confirmationQueue,
       activeConfirmationIndex: confirmationQueue.length > 0 ? 0 : -1,
       activePlanReview: null,
@@ -518,21 +956,33 @@ function createExternalFileSystem() {
 }
 
 function createExternalTerminal(cwd) {
+  const readCwd = () => typeof cwd === 'function' ? cwd() : cwd;
   const exec = async (command, options = {}) => {
+    const terminalCommand = String(command || '');
+    const terminalCwd = normalizeString(options.cwd) || normalizeString(readCwd()) || process.cwd();
+    const startedAt = Date.now();
     try {
-      const { stdout, stderr } = await execAsync(String(command || ''), {
-        cwd: normalizeString(options.cwd) || cwd || process.cwd(),
+      const { stdout, stderr } = await execAsync(terminalCommand, {
+        cwd: terminalCwd,
         env: { ...process.env, ...(options.env && typeof options.env === 'object' ? options.env : {}) },
-        timeout: Number.isFinite(options.timeout) ? options.timeout : undefined,
+        timeout: Number.isFinite(options.timeoutMs)
+          ? options.timeoutMs
+          : Number.isFinite(options.timeout)
+            ? options.timeout
+            : undefined,
         maxBuffer: Number.isFinite(options.maxBuffer) ? options.maxBuffer : 1024 * 1024 * 10,
         windowsHide: true,
       });
-      return normalizeTerminalResult({ stdout, stderr, exitCode: 0 });
+      return normalizeTerminalResult({ command: terminalCommand, cwd: terminalCwd, stdout, stderr, exitCode: 0, startedAt });
     } catch (error) {
       return normalizeTerminalResult({
+        command: terminalCommand,
+        cwd: terminalCwd,
         stdout: error?.stdout,
         stderr: error?.stderr || error?.message,
         exitCode: Number.isFinite(error?.code) ? error.code : 1,
+        status: error?.killed || error?.signal === 'SIGTERM' ? 'cancelled' : undefined,
+        startedAt,
       });
     }
   };
@@ -543,10 +993,216 @@ function createExternalTerminal(cwd) {
   };
 }
 
+function createSyncFsExtension() {
+  return {
+    readFileAsBase64: filePath => fsSync.readFileSync(String(filePath || '')).toString('base64'),
+  };
+}
+
+function createBinaryWriteExtension() {
+  return {
+    writeBinary: async (filePath, data) => {
+      const targetPath = String(filePath || '');
+      const bytes = data instanceof Uint8Array
+        ? Buffer.from(data)
+        : Buffer.from(data || []);
+      await fs.mkdir(path.dirname(targetPath), { recursive: true });
+      await fs.writeFile(targetPath, bytes);
+    },
+  };
+}
+
+function createLineReadExtension() {
+  return {
+    head: (filePath, options = {}) => readLineWindow(filePath, { ...options, mode: 'head' }),
+    tail: (filePath, options = {}) => readLineWindow(filePath, { ...options, mode: 'tail' }),
+    sed: (filePath, options = {}) => readLineWindow(filePath, { ...options, mode: 'sed' }),
+  };
+}
+
+async function readLineWindow(filePath, options = {}) {
+  if (options?.signal?.aborted) {
+    return [];
+  }
+  const content = await fs.readFile(String(filePath || ''), 'utf-8');
+  let lines = content.split(/\r?\n/);
+  const filterPattern = normalizeString(options.filterPattern);
+  if (filterPattern) {
+    let regex = null;
+    try {
+      regex = new RegExp(filterPattern);
+    } catch {
+      regex = null;
+    }
+    if (regex) {
+      lines = lines.filter(line => regex.test(line));
+    }
+  }
+  const maxLines = Number.isFinite(options.maxLines)
+    ? Math.max(1, Math.floor(options.maxLines))
+    : 200;
+  if (options.mode === 'head') {
+    return lines.slice(0, maxLines);
+  }
+  if (options.mode === 'sed') {
+    const startLine = Number.isFinite(options.startLine) ? Math.max(1, Math.floor(options.startLine)) : 1;
+    const endLine = Number.isFinite(options.endLine) ? Math.max(startLine, Math.floor(options.endLine)) : startLine;
+    return lines.slice(startLine - 1, endLine);
+  }
+  return lines.slice(-maxLines);
+}
+
+function createMemoryStorageExtension(cwd, env = process.env) {
+  return {
+    getLayout(input = {}) {
+      const sessionId = normalizeString(input.sessionId);
+      const workspaceRoot = normalizeString(cwd) || normalizeString(input.cwd);
+      const appDataPath = resolveAppDataPath(env);
+      if (!sessionId || !workspaceRoot || !appDataPath) {
+        return undefined;
+      }
+      const globalMemoryRoot = path.join(appDataPath, 'chat_history', 'memory-tool', 'memories');
+      const workspaceMemoryRoot = path.join(workspaceRoot, '.chat_history', 'memory-tool', 'memories');
+      return {
+        userDir: globalMemoryRoot,
+        sessionRootDir: workspaceMemoryRoot,
+        sessionDir: path.join(workspaceMemoryRoot, sessionId),
+        repoDir: path.join(workspaceMemoryRoot, 'repo'),
+      };
+    },
+  };
+}
+
+function createMemoryFeatureConfigExtension(runtimeConfig = null) {
+  return {
+    getMemoryFeatureFlags() {
+      return {
+        memoryToolEnabled: runtimeConfig?.memoryToolEnabled !== false,
+        repositoryMemoryEnabled: runtimeConfig?.repositoryMemoryEnabled === true,
+      };
+    },
+  };
+}
+
+function resolveAppDataPath(env = process.env) {
+  return normalizeString(env.AILY_APPDATA_PATH)
+    || normalizeString(env.AILY_APP_DATA_PATH)
+    || normalizeString(env.AILY_CHAT_APP_DATA_PATH)
+    || normalizeString(env.APPDATA && path.join(env.APPDATA, 'aily-project'))
+    || path.join(os.homedir(), '.aily');
+}
+
+function normalizeAskUserQuestions(questions) {
+  if (!Array.isArray(questions)) {
+    return [];
+  }
+  return questions
+    .filter(question => question && typeof question === 'object')
+    .map(question => {
+      const text = normalizeString(question.question);
+      if (!text) {
+        return null;
+      }
+      return {
+        ...(normalizeString(question.header) ? { header: normalizeString(question.header) } : {}),
+        ...(normalizeString(question.id) ? { id: normalizeString(question.id) } : {}),
+        question: text,
+        ...(Array.isArray(question.options)
+          ? { options: question.options.map(normalizeAskUserOption).filter(Boolean) }
+          : {}),
+        ...(Object.prototype.hasOwnProperty.call(question, 'allow_freeform')
+          ? { allow_freeform: Boolean(question.allow_freeform) }
+          : Object.prototype.hasOwnProperty.call(question, 'allowFreeformInput')
+            ? { allow_freeform: Boolean(question.allowFreeformInput) }
+            : Object.prototype.hasOwnProperty.call(question, 'allowFreeform')
+              ? { allow_freeform: Boolean(question.allowFreeform) }
+              : {}),
+        ...(Object.prototype.hasOwnProperty.call(question, 'multi_select')
+          ? { multi_select: Boolean(question.multi_select) }
+          : Object.prototype.hasOwnProperty.call(question, 'multiSelect')
+            ? { multi_select: Boolean(question.multiSelect) }
+            : {}),
+      };
+    })
+    .filter(Boolean);
+}
+
+function normalizeAskUserOption(option) {
+  if (!option || typeof option !== 'object') {
+    return null;
+  }
+  const label = normalizeString(option.label);
+  if (!label) {
+    return null;
+  }
+  return {
+    label,
+    ...(normalizeString(option.description) ? { description: normalizeString(option.description) } : {}),
+    ...(Boolean(option.recommended) ? { recommended: true } : {}),
+  };
+}
+
+function createQuestionInteraction(session, questions, options = {}) {
+  const traceToolCallId = normalizeString(options?.trace?.toolCallId);
+  const parentToolCallId = normalizeString(options?.trace?.parentToolCallId);
+  const toolCallId = normalizeString(options?.toolCallId) || traceToolCallId || `question-${Date.now()}`;
+  const context = parentToolCallId
+    ? {
+        toolCallId,
+        sourceAgentRole: 'subagent',
+        subAgentInvocationId: parentToolCallId,
+        parentToolCallId,
+      }
+    : toolCallId
+      ? { toolCallId }
+      : undefined;
+  return {
+    sessionId: session.sessionId,
+    partId: toolCallId,
+    ...(context ? { context } : {}),
+    data: {
+      partId: toolCallId,
+      isHistory: false,
+      questions,
+    },
+  };
+}
+
+function toAskUserBridgeResponse(questions, response) {
+  const answers = response && typeof response === 'object' && response.answers && typeof response.answers === 'object'
+    ? response.answers
+    : null;
+  if (!answers) {
+    return { answer: '', cancelled: true };
+  }
+
+  const parts = [];
+  for (const question of questions) {
+    const key = normalizeString(question.id) || normalizeString(question.header) || normalizeString(question.question);
+    const answer = answers[key] || answers[question.question] || (question.header ? answers[question.header] : undefined);
+    if (!answer || answer.skipped) {
+      return { answer: '', cancelled: true };
+    }
+    if (Array.isArray(answer.selected) && answer.selected.length > 0) {
+      parts.push(answer.selected.map(String).join(', '));
+    }
+    if (normalizeString(answer.freeText)) {
+      parts.push(normalizeString(answer.freeText));
+    }
+  }
+
+  return {
+    answer: parts.join('\n'),
+    cancelled: false,
+    fullResponse: { answers },
+  };
+}
+
 function createApprovalInteraction(session, request) {
   const toolCallId = normalizeString(request?.toolCallId) || `approval-${Date.now()}`;
   const toolName = normalizeString(request?.toolName) || 'tool';
   const approvalTraceId = normalizeString(request?.approvalTraceId) || `${toolName}:${toolCallId}`;
+  const input = normalizeApprovalInput(request);
   const actions = Array.isArray(request?.actions) && request.actions.length > 0
     ? request.actions.map(action => ({
       scope: normalizeString(action?.scope) || 'once',
@@ -578,7 +1234,7 @@ function createApprovalInteraction(session, request) {
       title: normalizeString(request?.title) || `Allow ${toolName}?`,
       subtitle: normalizeString(request?.subtitle) || toolName,
       message: normalizeString(request?.description) || normalizeString(request?.message) || normalizeString(request?.reason) || '',
-      args: request?.input && typeof request.input === 'object' ? request.input : {},
+      args: input,
       actions,
       primaryScope: normalizeString(request?.primaryScope) || actions[0]?.scope || 'once',
       ...(request?.approveCombination && typeof request.approveCombination === 'object'
@@ -594,6 +1250,32 @@ function normalizeApprovalDecision(payload) {
   return approved
     ? { approved: true }
     : { approved: false, reason: normalizeString(result?.reason) || 'rejected' };
+}
+
+function normalizeRequestMetadata(request) {
+  const metadata = request?.metadata && typeof request.metadata === 'object' && !Array.isArray(request.metadata)
+    ? request.metadata
+    : request?.requestMetadata && typeof request.requestMetadata === 'object' && !Array.isArray(request.requestMetadata)
+      ? request.requestMetadata
+      : null;
+  if (!metadata) {
+    return undefined;
+  }
+
+  try {
+    if (typeof globalThis.structuredClone === 'function') {
+      return globalThis.structuredClone(metadata);
+    }
+  } catch {
+    // Fall through to JSON clone below. Request metadata is expected to be
+    // structured-cloneable, but older Electron builds may be stricter.
+  }
+
+  try {
+    return JSON.parse(JSON.stringify(metadata));
+  } catch {
+    return { ...metadata };
+  }
 }
 
 function normalizeProtocolTruncation(value) {
@@ -704,13 +1386,14 @@ function isSnapshotTurnId(turn, turnId) {
 }
 
 function createExternalPlatform(cwd) {
+  const readCwd = () => typeof cwd === 'function' ? cwd() : cwd;
   return {
     type: process.platform,
     os: process.platform,
     pathSep: path.sep,
     separator: path.sep,
     language: process.env.LANG || 'zh-CN',
-    cwd: () => cwd || process.cwd(),
+    cwd: () => normalizeString(readCwd()) || process.cwd(),
     homedir: () => os.homedir(),
     env: key => process.env[key],
   };
@@ -726,31 +1409,1836 @@ function createPathExtension() {
     relative: (from, to) => path.relative(from, to),
     isAbsolute: value => path.isAbsolute(value),
     normalize: value => path.normalize(value),
+    getAppDataPath: () => resolveAppDataPath(process.env),
+    getUserHome: () => os.homedir(),
   };
 }
 
-function createExternalProject(sessionId, requestResourceOperation, initialProjectInfo) {
+function createElectronSkillRegistry(cwd, projectInfo, runtimeConfig = {}) {
+  runtimeConfig = runtimeConfig && typeof runtimeConfig === 'object' ? runtimeConfig : {};
+  const skills = new Map();
+  const activeSkillNames = new Set();
+  const projectRoot = normalizeString(cwd)
+    || normalizeString(projectInfo?.rootPath)
+    || normalizeString(projectInfo?.path)
+    || normalizeString(projectInfo?.projectPath);
+  const directories = resolveElectronSkillDirectories(projectRoot, runtimeConfig);
+
+  for (const entry of directories) {
+    scanElectronSkillDirectory(skills, entry.dir, entry.origin);
+  }
+
+  const registry = {
+    search(query) {
+      const normalizedQuery = normalizeString(query).toLowerCase();
+      const entries = [...skills.values()].filter(skill => isTrustedElectronSkill(skill));
+      if (!normalizedQuery) {
+        return entries.map(skill => ({ skill, score: 1 }));
+      }
+      return entries
+        .map(skill => ({
+          skill,
+          score: scoreElectronSkillMatch(skill, normalizedQuery),
+        }))
+        .filter(entry => entry.score > 0)
+        .sort((left, right) => right.score - left.score || left.skill.name.localeCompare(right.skill.name));
+    },
+    getAll() {
+      return [...skills.values()].filter(skill => isTrustedElectronSkill(skill));
+    },
+    getContext(name) {
+      const skill = skills.get(normalizeString(name));
+      if (!isTrustedElectronSkill(skill)) {
+        return null;
+      }
+      return buildElectronSkillContext(skill);
+    },
+    load(name) {
+      return this.getContext(name);
+    },
+    unload(name) {
+      const skill = skills.get(normalizeString(name));
+      if (!skill || skill.metadata.autoActivate) {
+        return false;
+      }
+      return activeSkillNames.delete(skill.name);
+    },
+    listAvailable() {
+      const activated = new Set(this.getActivatedSkillNames());
+      return this.getAll().map(skill => skillToSearchEntry(skill, activated));
+    },
+    listLoaded() {
+      return this.getActivatedSkillNames()
+        .map(name => this.getContext(name))
+        .filter(Boolean)
+        .map(context => ({
+          name: context.name,
+          displayName: context.displayName,
+          description: context.description,
+          skillMdPath: context.skillMdPath,
+          baseDir: context.baseDir,
+          mode: context.mode,
+          relatedFileCount: context.relatedFiles.length,
+        }));
+    },
+    getActivatedSkillNames() {
+      const autoNames = [...skills.values()]
+        .filter(skill => skill.metadata.autoActivate)
+        .map(skill => skill.name);
+      return [...new Set([...autoNames, ...activeSkillNames])];
+    },
+    getAutoActivateSkills() {
+      return [...skills.values()].filter(skill => isTrustedElectronSkill(skill) && skill.metadata.autoActivate);
+    },
+    getSkillRoots() {
+      return this.getAll()
+        .map(skill => normalizeString(skill.baseDir))
+        .filter(Boolean);
+    },
+  };
+
+  return registry;
+}
+
+function createElectronSkillProvider(registry) {
+  return {
+    contributeSkills: () => registry.getAutoActivateSkills().map(skill => ({
+      name: skill.name,
+      description: skill.description,
+      priority: 80,
+      content: readSkillBody(skill) || '',
+    })),
+  };
+}
+
+function createElectronSkillManager(registry, session) {
+  return {
+    search: query => {
+      const activated = new Set(registry.getActivatedSkillNames());
+      return registry.search(query).map(entry => skillToSearchEntry(entry.skill, activated));
+    },
+    listAvailable: () => registry.listAvailable(),
+    getContext: name => registry.getContext(name),
+    load: name => registry.load(name),
+    unload: name => registry.unload(name),
+    listLoaded: () => registry.listLoaded(),
+    runFork: async (name, task, context = {}) => {
+      const skillContext = registry.getContext(name);
+      if (!skillContext) {
+        return toolError(`Skill "${name}" not found.`);
+      }
+      const executor = session?.adapter?.getExtension?.('agentExecutor');
+      if (!executor || typeof executor.runSync !== 'function') {
+        return toolError('Skill fork execution is not supported in this environment.');
+      }
+      const result = await executor.runSync({
+        prompt: buildElectronForkSkillPrompt(skillContext, task),
+        description: `Run ${skillContext.name} skill`,
+        toolCallId: context.toolCallId,
+        trace: context.trace,
+        signal: context.signal,
+        inheritMessages: 'parent',
+        inheritDiscoveredTools: true,
+        onEvent: context.emitEvent,
+      });
+      return buildElectronForkSkillResult(skillContext, task, result?.text ?? '');
+    },
+  };
+}
+
+function createElectronWorkspaceReadAccess(registry) {
+  return {
+    getAdditionalReadRoots: () => registry.getSkillRoots(),
+  };
+}
+
+function createElectronBlocklyAgentProvider() {
+  return {
+    contributeAgents() {
+      return [
+        {
+          agentType: SCHEMATIC_AGENT_TYPE,
+          name: 'Schematic Agent',
+          description: SCHEMATIC_AGENT_WHEN_TO_USE,
+          argumentHint: 'Describe the circuit wiring or schematic task to complete',
+          target: 'aily',
+          whenToUse: SCHEMATIC_AGENT_WHEN_TO_USE,
+          whenNotToUse: SCHEMATIC_AGENT_WHEN_NOT_TO_USE,
+          uri: `aily-chat-agent:/agents/${SCHEMATIC_AGENT_TYPE}.agent.md`,
+          modeInstructions: {
+            content: SCHEMATIC_AGENT_PROMPT,
+            toolReferences: [],
+          },
+          requiredContext: SCHEMATIC_AGENT_REQUIRED_CONTEXT,
+          systemPrompt: SCHEMATIC_AGENT_PROMPT,
+          tools: [...SCHEMATIC_AGENT_TOOLS],
+          commands: [
+            {
+              name: 'connect',
+              description: 'Generate or update a circuit wiring schematic for the selected board and hardware modules.',
+              sampleRequest: '@SchematicAgent /connect connect a DHT20 to XIAO ESP32S3',
+              when: 'Use when the user explicitly asks for a wiring diagram, pin assignment, or hardware connection plan.',
+            },
+            {
+              name: 'validate',
+              description: 'Validate the current AWS wiring plan, save it, and report any connection issues.',
+              sampleRequest: '@SchematicAgent /validate validate the current schematic and save it',
+              when: 'Use after editing or generating AWS wiring content that needs validation and persistence.',
+            },
+          ],
+          excludeTools: [],
+          maxTurns: 25,
+          model: 'inherit',
+          messageInheritance: 'none',
+          disallowedPromptPatterns: [
+            'analyzelibrary',
+            'analyze library',
+            'library analysis',
+            'abs block',
+            'abs library',
+            'project setup',
+          ],
+          agents: [],
+        },
+      ];
+    },
+  };
+}
+
+function createElectronBlocklySlashCommandProvider(registry) {
+  return {
+    contributeSlashCommands() {
+      const skillCommands = registry.listAvailable()
+        .filter(skill => skill.origin?.type !== 'url' && skill.userInvocable !== false)
+        .map(skill => ({
+          name: skill.name,
+          description: skill.description || `Invoke the ${skill.displayName || skill.name} skill.`,
+          sampleRequest: `/${skill.name} ${skill.mode === 'fork' ? 'run this skill for the current task' : 'apply this skill to the current task'}`,
+          when: skill.mode === 'fork'
+            ? `Use to run the ${skill.displayName || skill.name} skill as a forked subagent for the current task.`
+            : `Use to load the ${skill.displayName || skill.name} skill before handling the current task.`,
+        }));
+
+      return [...BLOCKLY_SLASH_COMMANDS, ...skillCommands];
+    },
+    onSlashCommandsChanged() {
+      return { dispose() {} };
+    },
+  };
+}
+
+function withElectronBlocklyPromptProfile(bridge, options) {
+  const withProjectContext = withElectronBlocklyProjectContextPromptProfile(bridge, options.hostAPI);
+  const withBlocklySections = withElectronBlocklyWorkflowPromptSections(withProjectContext, options.skillRegistry);
+  const withSkills = withElectronSkillsListingPromptProfile(withBlocklySections, options.skillRegistry);
+  return {
+    ...withSkills,
+    capabilities: extendElectronCapabilities(withSkills.capabilities, ['runtime:blockly']),
+  };
+}
+
+function extendElectronCapabilities(capabilities, extraCapabilities) {
+  return new Set([
+    ...(capabilities && typeof capabilities[Symbol.iterator] === 'function' ? Array.from(capabilities) : []),
+    ...extraCapabilities,
+  ]);
+}
+
+function withElectronBlocklyWorkflowPromptSections(bridge, registry) {
+  const profile = bridge?.promptProfile;
+  if (!profile) {
+    return bridge;
+  }
+
+  const sections = Array.isArray(profile.sections) ? profile.sections : [];
+  const existingIds = new Set(sections.map(section => section?.id).filter(Boolean));
+  const additions = createElectronBlocklyWorkflowSections(registry)
+    .filter(section => !existingIds.has(section.id));
+
+  if (additions.length === 0) {
+    return bridge;
+  }
+
+  return {
+    ...bridge,
+    promptProfile: {
+      ...profile,
+      sections: [
+        ...sections,
+        ...additions,
+      ],
+    },
+  };
+}
+
+function createElectronBlocklyWorkflowSections(registry) {
+  return [
+    {
+      id: 'blockly-project-workflow',
+      layer: PromptLayer.ToolInstructions,
+      priority: 95,
+      cacheable: true,
+      tag: 'projectWorkflow',
+      getContent: () => `Project planning and creation workflow:
+- If the environment says "No project is currently open.", treat that as the authoritative state. Do not infer an active project, board, or installed libraries from arbitrary directories or search results.
+- If the request is simple and does not require creating a project, answer directly or ask one concise clarification question.
+- If no project is open and the request requires or implies creating a new Blockly project, follow this sequence before any creation/editing action, even for simple features such as LED blink:
+  1. Call load_skill with action="load" and name="blockly-project-planning".
+  2. Use hardware/library discovery tools to search for the required development board and library package names. Do not guess package names and do not ask the user to choose a board before this search.
+  3. Select 2-3 viable board/library combinations when alternatives exist, or explain why only one combination is practical.
+  4. Plan the architecture and workflow for each candidate: board, libraries, wiring/pins, ABS/workspace structure, validation, and safety notes.
+  5. Present the options to the user and ask them to choose or confirm before creating the project.
+- In Plan mode, stop at the option/architecture plan. Do not inspect arbitrary local project files for implementation details when no project is open, and do not create a project, install libraries, or edit workspace files.
+- Do not ask "which development board do you want to use?" as the first response. First run the required skill and board/library discovery, then offer researched options.
+- Ask the user to confirm the selected plan with ask_user before creating a project, installing libraries, or making workspace edits.
+- After the user confirms creation, create or open the project, then continue using the new project path from the refreshed environment/context.`,
+    },
+    {
+      id: 'blockly-abs-editing-workflow',
+      layer: PromptLayer.HostDomain,
+      priority: 85,
+      cacheable: true,
+      tag: 'absEditingWorkflow',
+      getContent: () => `Blockly ABS editing workflow:
+- In Blockly mode, implement visual-program changes by editing ABS/project artifacts, not generated C++ output, unless the user explicitly asks for raw code.
+- Before modifying Blockly code, ensure a project is open. If no project is open, follow the project planning and creation workflow first.
+- For program edits, use the host-owned sync path: syncAbs action="export", read/edit {projectPath}/project.abs, then syncAbs action="import" to apply changes back to the visual workspace.
+- For non-trivial ABS syntax, block argument order, statement inputs, or library block usage, load or consult the abs-syntax-reference skill instead of guessing.
+- After edits, run the available lint/build checks when relevant and fix errors with the smallest ABS change that preserves the user's intended behavior.`,
+    },
+    {
+      id: 'blockly-hardware-safety',
+      layer: PromptLayer.HostDomain,
+      priority: 90,
+      cacheable: true,
+      tag: 'hardwareSafety',
+      getContent: () => `When working with hardware:
+- Always confirm before flashing firmware to a connected board.
+- Warn users about potential pin conflicts, for example using a pin for both I2C and GPIO.
+- Verify power supply requirements before recommending external components.
+- Be cautious with motor drivers, high-power components, and battery circuits; incorrect wiring can damage hardware.
+- When generating ABS blocks that control actuators, default to safe initial values, for example motors at 0 speed.`,
+    },
+    createElectronSkillCommandSection(registry),
+  ];
+}
+
+function createElectronSkillCommandSection(registry) {
+  return {
+    id: 'blockly-skill-command',
+    layer: PromptLayer.ToolInstructions,
+    priority: 55,
+    cacheable: false,
+    getContent: ctx => {
+      const requestedSkillNames = Array.isArray(ctx?.requestedSkillNames)
+        ? ctx.requestedSkillNames
+          .filter(name => typeof name === 'string' && name.trim().length > 0)
+          .map(name => name.trim())
+        : [];
+      const commandName = typeof ctx?.command?.name === 'string' ? ctx.command.name.trim() : '';
+      const targetSkillNames = requestedSkillNames.length > 0
+        ? requestedSkillNames
+        : (commandName ? [commandName] : []);
+      const sections = targetSkillNames
+        .map(name => buildElectronRequestedSkillSection(registry, name, requestedSkillNames.length > 0))
+        .filter(Boolean);
+      return sections.join('\n\n');
+    },
+  };
+}
+
+function buildElectronRequestedSkillSection(registry, name, fromRequestedSkillNames) {
+  const skillContext = registry.getContext(name);
+  if (!skillContext || (!fromRequestedSkillNames && skillContext.userInvocable === false)) {
+    return '';
+  }
+
+  const intro = fromRequestedSkillNames
+    ? `The current request explicitly requested the ${skillContext.name} skill for this turn.`
+    : `The current request explicitly selected the /${skillContext.name} skill command.`;
+
+  if (skillContext.mode === 'fork') {
+    return [
+      intro,
+      `Call load_skill with action="load", name="${skillContext.name}", and task set to the current user request so the skill runs as a forked subagent.`,
+      `Skill file: ${normalizePathForSkill(skillContext.skillMdPath)}`,
+    ].join('\n');
+  }
+
+  const relatedFiles = Array.isArray(skillContext.relatedFiles) ? skillContext.relatedFiles : [];
+  const relatedFilesSection = relatedFiles.length > 0
+    ? [
+      'Related files (use read_file to inspect only what you need):',
+      ...relatedFiles.slice(0, 20).map(file => `- ${normalizePathForSkill(file)}`),
+    ].join('\n')
+    : '';
+
+  return [
+    intro,
+    `Before answering, call load_skill with action="load" and name="${skillContext.name}".`,
+    `Skill file: ${normalizePathForSkill(skillContext.skillMdPath)}`,
+    relatedFilesSection,
+  ].filter(Boolean).join('\n');
+}
+
+function withElectronBlocklyProjectContextPromptProfile(bridge, hostAPI) {
+  const profile = bridge?.promptProfile;
+  if (!profile) {
+    return bridge;
+  }
+  const existingGetContext = typeof profile.getContext === 'function'
+    ? profile.getContext.bind(profile)
+    : null;
+  return {
+    ...bridge,
+    promptProfile: {
+      ...profile,
+      requiredContext: extendElectronBlocklyRequiredContext(profile.requiredContext),
+      getContext: async () => {
+        const base = existingGetContext ? await existingGetContext() : {};
+        const existingEnvExtra = Array.isArray(base?.envExtra) ? base.envExtra : [];
+        const standardLines = buildElectronStandardEnvironmentLines(hostAPI);
+        const projectLines = await buildElectronBlocklyEnvironmentLines(hostAPI);
+        return {
+          ...base,
+          platform: base?.platform || hostAPI?.platform?.type || process.platform,
+          envExtra: mergeUniquePromptLines(existingEnvExtra, standardLines, projectLines),
+        };
+      },
+    },
+  };
+}
+
+function extendElectronBlocklyRequiredContext(requiredContext) {
+  const existingScopes = Array.isArray(requiredContext?.scopes) ? requiredContext.scopes : [];
+  return {
+    ...(requiredContext || {}),
+    scopes: [...new Set([...existingScopes, ...BLOCKLY_CONTEXT_SCOPES])],
+    strict: requiredContext?.strict ?? true,
+    hydrateBeforeFirstModelCall: requiredContext?.hydrateBeforeFirstModelCall ?? true,
+  };
+}
+
+function buildElectronStandardEnvironmentLines(hostAPI) {
+  const lines = [];
+  const platformType = normalizeString(hostAPI?.platform?.type)
+    || normalizeString(hostAPI?.platform?.os)
+    || process.platform;
+  if (platformType === 'win32' || process.platform === 'win32') {
+    lines.push('Shell: PowerShell - use semicolons (;) to chain commands, NOT && or ||');
+  }
+  const locale = normalizeString(hostAPI?.config?.locale)
+    || normalizeString(process.env.AILY_CHAT_LOCALE)
+    || normalizeString(process.env.LANG);
+  if (locale) {
+    lines.push(`Locale: ${locale}`);
+  }
+  return lines;
+}
+
+async function buildElectronBlocklyEnvironmentLines(hostAPI) {
+  const projectInfo = normalizeProjectInfo(await safeCall(() => hostAPI?.project?.getProjectInfo?.()));
+  const packageJson = await resolveElectronProjectPackageJson(hostAPI, projectInfo);
+  const projectPath = resolveElectronProjectPath(projectInfo, hostAPI);
+  const projectOpened = projectInfo.projectOpened !== false
+    && Boolean(projectPath || normalizeString(projectInfo.projectName || projectInfo.name) || resolveElectronBoardName(projectInfo, packageJson, hostAPI));
+  if (!projectOpened) {
+    return ['No project is currently open.'];
+  }
+
+  const lines = [];
+  const projectName = normalizeString(projectInfo.projectName || projectInfo.name || packageJson?.name)
+    || (projectPath ? path.basename(projectPath) : '');
+  const boardName = resolveElectronBoardName(projectInfo, packageJson, hostAPI);
+  const libraries = resolveElectronProjectLibraries(projectInfo, packageJson, projectPath);
+
+  if (projectPath) {
+    lines.push(`Project path: ${projectPath}`);
+  }
+  if (projectName) {
+    lines.push(`Project: ${projectName}`);
+  }
+  if (boardName) {
+    lines.push(`Current board: ${boardName}`);
+  }
+  lines.push(...formatElectronLibraryEnvironmentLines(libraries));
+  lines.push(...formatElectronWorkspaceArtifactLines(projectPath, packageJson));
+  return lines;
+}
+
+async function resolveElectronProjectPackageJson(hostAPI, projectInfo) {
+  const fromHost = normalizeJsonRecord(await safeCall(() => hostAPI?.project?.getPackageJson?.()));
+  if (fromHost) {
+    return fromHost;
+  }
+
+  const projectPath = resolveElectronProjectPath(projectInfo, hostAPI);
+  if (!projectPath) {
+    return null;
+  }
+  return readJsonFile(path.join(projectPath, 'package.json'));
+}
+
+function resolveElectronProjectPath(projectInfo, hostAPI) {
+  const projectPath = normalizeString(projectInfo.projectPath)
+    || normalizeString(projectInfo.path)
+    || normalizeString(projectInfo.rootPath)
+    || normalizeString(hostAPI?.project?.getProjectPath?.());
+  return projectPath ? normalizePathForSkill(projectPath).replace(/\/+$/g, '') : '';
+}
+
+function resolveElectronBoardName(projectInfo, packageJson, hostAPI) {
+  return normalizeBoardName(projectInfo.board)
+    || normalizeBoardName(hostAPI?.project?.getBoard?.())
+    || normalizeString(packageJson?.board)
+    || resolveElectronBoardDependency(packageJson);
+}
+
+function normalizeBoardName(value) {
+  if (typeof value === 'string') {
+    return normalizeString(value);
+  }
+  if (value && typeof value === 'object') {
+    return normalizeString(value.nickname)
+      || normalizeString(value.displayName)
+      || normalizeString(value.name);
+  }
+  return '';
+}
+
+function resolveElectronBoardDependency(packageJson) {
+  const dependencyName = getElectronDependencyNames(packageJson)
+    .find(name => name.startsWith(AILY_BOARD_DEP_PREFIX));
+  return dependencyName ? dependencyName.slice(AILY_PROJECT_SCOPE.length) : '';
+}
+
+function resolveElectronProjectLibraries(projectInfo, packageJson, projectPath) {
+  const packageLibraries = getElectronDependencyNames(packageJson)
+    .filter(name => name.startsWith(AILY_LIBRARY_DEP_PREFIX))
+    .map(dependencyName => {
+      const packageName = dependencyName.slice(AILY_PROJECT_SCOPE.length);
+      return createElectronLibraryInfo(packageName, projectPath);
+    });
+  const infoLibraries = normalizeElectronProjectInfoLibraries(projectInfo.libraries, projectPath);
+  return dedupeElectronLibraries([...packageLibraries, ...infoLibraries]);
+}
+
+function normalizeElectronProjectInfoLibraries(value, projectPath) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map(item => {
+      if (!item || typeof item !== 'object') {
+        return null;
+      }
+      const name = normalizeLibraryName(item.name || item.packageName || item.id);
+      if (!name) {
+        return null;
+      }
+      const library = createElectronLibraryInfo(name, projectPath);
+      const readmePath = normalizeString(item.readmePath || item.readmeAiPath);
+      return {
+        ...library,
+        ...(readmePath ? { readmePath: normalizePathForSkill(readmePath) } : {}),
+      };
+    })
+    .filter(Boolean);
+}
+
+function createElectronLibraryInfo(name, projectPath) {
+  const normalizedName = normalizeLibraryName(name);
+  const simplifiedPath = `{projectPath}/node_modules/${AILY_PROJECT_SCOPE}${normalizedName}`;
+  const readmePath = projectPath
+    ? path.join(projectPath, 'node_modules', AILY_PROJECT_SCOPE.slice(0, -1), normalizedName, 'readme_ai.md')
+    : '';
+  const hasReadme = Boolean(readmePath && fsSync.existsSync(readmePath));
+  return {
+    name: normalizedName,
+    path: simplifiedPath,
+    ...(hasReadme ? { readmePath: `${simplifiedPath}/readme_ai.md` } : {}),
+  };
+}
+
+function normalizeLibraryName(value) {
+  const normalized = normalizeString(value);
+  if (!normalized) {
+    return '';
+  }
+  return normalized.startsWith(AILY_PROJECT_SCOPE)
+    ? normalized.slice(AILY_PROJECT_SCOPE.length)
+    : normalized;
+}
+
+function dedupeElectronLibraries(libraries) {
+  const byName = new Map();
+  for (const library of libraries) {
+    if (!library?.name || byName.has(library.name)) {
+      continue;
+    }
+    byName.set(library.name, library);
+  }
+  return [...byName.values()].sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function getElectronDependencyNames(packageJson) {
+  if (!packageJson || typeof packageJson !== 'object') {
+    return [];
+  }
+  const blocks = [
+    packageJson.dependencies,
+    packageJson.devDependencies,
+    packageJson.peerDependencies,
+  ].filter(value => value && typeof value === 'object' && !Array.isArray(value));
+  return [...new Set(blocks.flatMap(block => Object.keys(block)))];
+}
+
+function formatElectronLibraryEnvironmentLines(libraries) {
+  if (!libraries.length) {
+    return [];
+  }
+  const lines = [];
+  const librariesWithReadme = libraries.filter(library => Boolean(library.readmePath));
+  const librariesWithoutReadme = libraries.filter(library => !library.readmePath);
+  lines.push(`Library inventory: total ${libraries.length}; with readme_ai.md ${librariesWithReadme.length}; without readme_ai.md ${librariesWithoutReadme.length}`);
+
+  const displayedLibraryNames = libraries.slice(0, MAX_ENV_LIBRARY_NAMES).map(library => library.name);
+  const remainingLibraryNames = libraries.length - displayedLibraryNames.length;
+  lines.push(
+    `Installed libraries (${displayedLibraryNames.length}/${libraries.length} shown): ${displayedLibraryNames.join(', ')}`
+    + (remainingLibraryNames > 0 ? ` ... (+${remainingLibraryNames} more)` : ''),
+  );
+
+  if (librariesWithReadme.length > 0) {
+    const displayedReadmes = librariesWithReadme.slice(0, MAX_ENV_README_REFS);
+    const remainingReadmes = librariesWithReadme.length - displayedReadmes.length;
+    lines.push(
+      `Library README docs (${displayedReadmes.length}/${librariesWithReadme.length} shown): ${displayedReadmes
+        .map(library => `${library.name}=${library.readmePath}`)
+        .join('; ')}`
+      + (remainingReadmes > 0 ? ` ... (+${remainingReadmes} more)` : ''),
+    );
+  }
+
+  if (librariesWithoutReadme.length > 0) {
+    const displayedWithoutReadme = librariesWithoutReadme.slice(0, MAX_ENV_LIBRARIES_WITHOUT_README);
+    const remainingWithoutReadme = librariesWithoutReadme.length - displayedWithoutReadme.length;
+    lines.push(
+      `Libraries without readme_ai.md (${displayedWithoutReadme.length}/${librariesWithoutReadme.length} shown): ${displayedWithoutReadme
+        .map(library => library.name)
+        .join(', ')}`
+      + (remainingWithoutReadme > 0 ? ` ... (+${remainingWithoutReadme} more)` : ''),
+    );
+  }
+
+  return lines;
+}
+
+function formatElectronWorkspaceArtifactLines(projectPath, packageJson) {
+  if (!projectPath) {
+    return [];
+  }
+  const lines = [];
+  const mainEntry = normalizeString(packageJson?.main);
+  if (mainEntry) {
+    lines.push(`Main source entry: ${normalizePathForSkill(path.isAbsolute(mainEntry) ? mainEntry : path.join(projectPath, mainEntry))}`);
+  }
+  lines.push(`ABS source: ${normalizePathForSkill(path.join(projectPath, 'project.abs'))}`);
+  lines.push(`Generated C++: ${normalizePathForSkill(path.join(projectPath, '.temp', 'sketch', 'sketch.ino'))}`);
+  return lines;
+}
+
+function mergeUniquePromptLines(...groups) {
+  const merged = [];
+  const seen = new Set();
+  for (const group of groups) {
+    for (const line of Array.isArray(group) ? group : []) {
+      const normalized = normalizeString(line);
+      if (!normalized || seen.has(normalized)) {
+        continue;
+      }
+      seen.add(normalized);
+      merged.push(normalized);
+    }
+  }
+  return merged;
+}
+
+function withElectronSkillsListingPromptProfile(bridge, registry) {
+  const profile = bridge?.promptProfile;
+  if (!profile) {
+    return bridge;
+  }
+  const sections = Array.isArray(profile.sections) ? profile.sections : [];
+  if (sections.some(section => section?.id === 'electron-skills-listing')) {
+    return bridge;
+  }
+  return {
+    ...bridge,
+    promptProfile: {
+      ...profile,
+      sections: [
+        ...sections,
+        createElectronSkillsListingSection(registry),
+      ],
+    },
+  };
+}
+
+function createElectronSkillsListingSection(registry) {
+  return {
+    id: 'electron-skills-listing',
+    layer: PromptLayer.SessionContext,
+    priority: 50,
+    cacheable: false,
+    getContent: ctx => buildElectronSkillsListing(registry, ctx?.availableToolNames),
+  };
+}
+
+function buildElectronSkillsListing(registry, availableToolNames) {
+  const toolNames = normalizeAvailableToolNames(availableToolNames);
+  const hasLoadSkillTool = !toolNames || toolNames.has('load_skill');
+  const hasReadFileTool = !toolNames || toolNames.has('read_file');
+  const listable = registry.listAvailable()
+    .filter(skill => !skill.loaded
+      && skill.modelInvocable !== false
+      && normalizeString(skill.description));
+
+  if (listable.length === 0) {
+    return '';
+  }
+
+  const allEntries = listable.map(skill => {
+    const flags = [
+      `user-invocable: ${skill.userInvocable === false ? 'false' : 'true'}`,
+      `model-invocable: ${skill.modelInvocable === false ? 'false' : 'true'}`,
+      `mode: ${skill.mode || 'inline'}`,
+      ...(!hasLoadSkillTool ? [`uri: ${normalizePathForSkill(skill.skillMdPath)}`] : []),
+    ];
+    return `- ${skill.name}: ${skill.description} (${flags.join(', ')})`;
+  });
+
+  const entries = [];
+  let truncatedAtIndex = allEntries.length;
+  let charCount = 0;
+
+  for (let index = 0; index < allEntries.length; index += 1) {
+    const entry = allEntries[index];
+    const entryLength = entry.length + 1;
+    if (hasLoadSkillTool && charCount + entryLength > SKILL_LISTING_CHAR_BUDGET) {
+      truncatedAtIndex = index;
+      break;
+    }
+    charCount += entryLength;
+    entries.push(entry);
+  }
+
+  if (truncatedAtIndex < listable.length) {
+    const truncatedSkills = listable.slice(truncatedAtIndex);
+    const names = [];
+    let nameListLength = 0;
+    for (const skill of truncatedSkills) {
+      const addition = (names.length > 0 ? 2 : 0) + skill.name.length;
+      if (nameListLength + addition > SKILL_LISTING_TRUNCATED_NAMES_BUDGET) {
+        break;
+      }
+      nameListLength += addition;
+      names.push(skill.name);
+    }
+    const remaining = truncatedSkills.length - names.length;
+    const nameList = names.join(', ');
+    if (nameList) {
+      entries.push(remaining > 0
+        ? `Additional skills available (invoke by name): ${nameList}... and ${remaining} more`
+        : `Additional skills available (invoke by name): ${nameList}`);
+    }
+  }
+
+  if (entries.length === 0) {
+    return '';
+  }
+
+  return [
+    '<skills>',
+    ...entries,
+    '',
+    buildElectronSkillsListingInstruction({ hasLoadSkillTool, hasReadFileTool }),
+    '</skills>',
+  ].join('\n');
+}
+
+function normalizeAvailableToolNames(value) {
+  if (!value) {
+    return undefined;
+  }
+  const values = typeof value[Symbol.iterator] === 'function' ? Array.from(value) : [];
+  const normalized = values
+    .filter(entry => typeof entry === 'string' && entry.trim().length > 0)
+    .map(entry => entry.trim());
+  return normalized.length > 0 ? new Set(normalized) : undefined;
+}
+
+function buildElectronSkillsListingInstruction(input) {
+  if (input.hasLoadSkillTool) {
+    return 'Review the listed skills first and directly call load_skill with action="load" and the exact skill name when one clearly matches the task. Use action="search" only as a fallback when no currently listed skill clearly fits or when you need to discover an additional skill. Searching does not load a skill; after search, you must call load_skill again with action="load" and an exact name before claiming a skill is loaded.';
+  }
+
+  if (input.hasReadFileTool) {
+    return 'When a user request falls within a skill\'s domain, use read_file to acquire the full instructions from the skill\'s SKILL.md file URI before continuing.';
+  }
+
+  return 'When a listed skill applies to the request, treat it as a blocking requirement and defer the task until the required skill instructions become readable in the current tool set.';
+}
+
+function resolveElectronSkillDirectories(projectRoot, runtimeConfig = {}) {
+  const entries = [];
+  const push = (dir, origin) => {
+    const normalized = normalizeString(dir);
+    if (!normalized || entries.some(entry => samePath(entry.dir, normalized))) {
+      return;
+    }
+    entries.push({ dir: normalized, origin });
+  };
+
+  push(path.resolve(MODULE_DIR, '..', 'renderer', 'skills'), { type: 'builtin' });
+  push(path.resolve(MODULE_DIR, '..', 'dist', 'aily-blockly', 'browser', 'skills'), { type: 'builtin' });
+  push(path.resolve(MODULE_DIR, '..', 'public', 'skills'), { type: 'builtin' });
+  push(path.join(resolveAppDataPath(process.env), 'aily-skills'), { type: 'user' });
+
+  for (const dir of normalizeStringArray(runtimeConfig.userSkillFolders)) {
+    push(dir, { type: 'user' });
+  }
+
+  if (projectRoot) {
+    push(path.join(projectRoot, '.aily', 'skills'), { type: 'project' });
+    push(path.join(projectRoot, '.agents', 'skills'), { type: 'project' });
+  }
+
+  for (const dir of normalizeStringArray(runtimeConfig.projectSkillFolders)) {
+    push(dir, { type: 'project' });
+  }
+
+  return entries;
+}
+
+function scanElectronSkillDirectory(skills, dir, origin) {
+  if (!fsSync.existsSync(dir)) {
+    return;
+  }
+
+  let entries = [];
+  try {
+    entries = fsSync.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+    const skillDir = path.join(dir, entry.name);
+    const skillMdPath = path.join(skillDir, 'SKILL.md');
+    if (!fsSync.existsSync(skillMdPath)) {
+      continue;
+    }
+    try {
+      const raw = fsSync.readFileSync(skillMdPath, 'utf8');
+      const parsed = parseElectronSkillMarkdown(raw);
+      const metadata = {
+        ...parsed.metadata,
+        name: entry.name,
+        displayName: parsed.metadata.name && parsed.metadata.name !== 'unknown' && parsed.metadata.name !== entry.name
+          ? parsed.metadata.name
+          : undefined,
+      };
+      skills.set(entry.name, {
+        name: entry.name,
+        displayName: metadata.displayName,
+        description: metadata.description || '',
+        metadata,
+        body: metadata.autoActivate ? parsed.body : undefined,
+        baseDir: skillDir,
+        skillMdPath,
+        origin,
+      });
+    } catch (error) {
+      console.warn('[AilyChat][SkillRegistry] Failed to parse skill', skillMdPath, error?.message || error);
+    }
+  }
+}
+
+function parseElectronSkillMarkdown(raw) {
+  const match = String(raw || '').match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
+  if (!match) {
+    return { metadata: { name: 'unknown', description: '' }, body: String(raw || '') };
+  }
+  return {
+    metadata: parseElectronSkillFrontmatter(match[1]),
+    body: match[2] || '',
+  };
+}
+
+function parseElectronSkillFrontmatter(yaml) {
+  const topLevel = {};
+  const metadata = {};
+  let inMetadata = false;
+
+  for (const line of String(yaml || '').split(/\r?\n/)) {
+    if (!line.trim() || line.trim().startsWith('#')) {
+      continue;
+    }
+    if (inMetadata) {
+      const nested = line.match(/^  ([a-zA-Z_-]+)\s*:\s*(.*)$/);
+      if (nested) {
+        metadata[nested[1].trim()] = trimSkillValue(nested[2]);
+        continue;
+      }
+      if (!line.startsWith(' ')) {
+        inMetadata = false;
+      } else {
+        continue;
+      }
+    }
+
+    const top = line.match(/^([a-zA-Z_-]+)\s*:\s*(.*)$/);
+    if (!top) {
+      continue;
+    }
+    const key = top[1].trim();
+    const value = top[2].trim();
+    if (key === 'metadata' && !value) {
+      inMetadata = true;
+      continue;
+    }
+    topLevel[key] = trimSkillValue(value);
+  }
+
+  const parsedName = topLevel.name || 'unknown';
+  return {
+    name: parsedName,
+    description: topLevel.description || '',
+    autoActivate: metadata['auto-activate'] === 'true',
+    tags: parseSkillList(metadata.tags),
+    agents: parseSkillList(metadata.agents),
+    userInvocable: parseSkillBoolean(topLevel['user-invokable'] ?? topLevel.userInvocable),
+    disableModelInvocation: parseSkillBoolean(topLevel['disable-model-invocation'] ?? topLevel.disableModelInvocation),
+    context: String(topLevel.context || '').trim().toLowerCase() === 'fork' ? 'fork' : 'inline',
+    metadata,
+  };
+}
+
+function trimSkillValue(value) {
+  return String(value || '').trim().replace(/^['"]|['"]$/g, '');
+}
+
+function parseSkillBoolean(value) {
+  const normalized = normalizeString(value).toLowerCase();
+  if (normalized === 'true') {
+    return true;
+  }
+  if (normalized === 'false') {
+    return false;
+  }
+  return undefined;
+}
+
+function parseSkillList(value) {
+  const normalized = normalizeString(value);
+  if (!normalized) {
+    return undefined;
+  }
+  const body = normalized.startsWith('[') && normalized.endsWith(']')
+    ? normalized.slice(1, -1)
+    : normalized;
+  const values = body.split(',').map(trimSkillValue).filter(Boolean);
+  return values.length > 0 ? values : undefined;
+}
+
+function isTrustedElectronSkill(skill) {
+  return !!skill && skill.origin?.type !== 'url';
+}
+
+function scoreElectronSkillMatch(skill, query) {
+  const name = skill.name.toLowerCase();
+  const displayName = normalizeString(skill.displayName).toLowerCase();
+  const description = normalizeString(skill.description).toLowerCase();
+  const tags = Array.isArray(skill.metadata.tags) ? skill.metadata.tags.join(' ').toLowerCase() : '';
+  if (name === query || displayName === query) {
+    return 100;
+  }
+  if (name.includes(query) || displayName.includes(query)) {
+    return 80;
+  }
+  if (tags.includes(query)) {
+    return 60;
+  }
+  if (description.includes(query)) {
+    return 40;
+  }
+  return 0;
+}
+
+function skillToSearchEntry(skill, activated) {
+  return {
+    name: skill.name,
+    displayName: skill.displayName,
+    description: skill.description,
+    loaded: activated.has(skill.name),
+    userInvocable: skill.metadata.userInvocable !== false,
+    modelInvocable: skill.metadata.disableModelInvocation !== true && !!skill.description,
+    mode: skill.metadata.context || 'inline',
+    skillMdPath: normalizePathForSkill(skill.skillMdPath),
+  };
+}
+
+function buildElectronSkillContext(skill) {
+  const body = readSkillBody(skill);
+  if (!body) {
+    return null;
+  }
+  return {
+    name: skill.name,
+    displayName: skill.displayName,
+    description: skill.description,
+    body,
+    skillMdPath: normalizePathForSkill(skill.skillMdPath),
+    baseDir: normalizePathForSkill(skill.baseDir),
+    mode: skill.metadata.context || 'inline',
+    userInvocable: skill.metadata.userInvocable !== false,
+    modelInvocable: skill.metadata.disableModelInvocation !== true && !!skill.description,
+    relatedFiles: listElectronSkillRelatedFiles(skill.baseDir),
+  };
+}
+
+function readSkillBody(skill) {
+  if (typeof skill.body === 'string') {
+    return skill.body;
+  }
+  try {
+    const raw = fsSync.readFileSync(skill.skillMdPath, 'utf8');
+    const parsed = parseElectronSkillMarkdown(raw);
+    skill.body = parsed.body;
+    return parsed.body;
+  } catch {
+    return '';
+  }
+}
+
+function listElectronSkillRelatedFiles(baseDir) {
+  const results = [];
+  const walk = (current, depth) => {
+    if (depth > 5 || results.length >= 50) {
+      return;
+    }
+    let entries = [];
+    try {
+      entries = fsSync.readdirSync(current, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (results.length >= 50 || entry.name === 'SKILL.md') {
+        continue;
+      }
+      if (entry.isDirectory() && isIgnoredSkillDirectory(entry.name)) {
+        continue;
+      }
+      const fullPath = path.join(current, entry.name);
+      const rel = normalizePathForSkill(path.relative(baseDir, fullPath));
+      if (entry.isDirectory()) {
+        walk(fullPath, depth + 1);
+      } else if (entry.isFile()) {
+        const firstSegment = rel.split('/')[0]?.toLowerCase();
+        results.push({
+          path: rel,
+          uri: normalizePathForSkill(fullPath),
+          category: firstSegment === 'scripts'
+            ? 'script'
+            : firstSegment === 'references'
+              ? 'reference'
+              : firstSegment === 'assets'
+                ? 'asset'
+                : 'other',
+        });
+      }
+    }
+  };
+  walk(baseDir, 0);
+  return results.sort((left, right) => left.path.localeCompare(right.path));
+}
+
+function isIgnoredSkillDirectory(name) {
+  return ['.git', 'node_modules', 'dist', 'build', 'out', '.cache', 'coverage'].includes(String(name).toLowerCase());
+}
+
+function buildElectronForkSkillPrompt(skillContext, task) {
+  const relatedFiles = skillContext.relatedFiles.length > 0
+    ? [
+        '',
+        'Related files available inside the skill directory:',
+        ...skillContext.relatedFiles.map(file => `- ${file.path}${file.category ? ` (${file.category})` : ''}`),
+      ]
+    : [];
+  return [
+    `You are running the "${skillContext.displayName || skillContext.name}" skill as a forked subagent.`,
+    'Use the parent conversation as context, follow the skill instructions below, and complete the task directly.',
+    `<skill_instructions name="${skillContext.name}" uri="${skillContext.skillMdPath}">`,
+    skillContext.body,
+    '</skill_instructions>',
+    ...relatedFiles,
+    '',
+    'Task:',
+    task || `Run the ${skillContext.displayName || skillContext.name} skill`,
+  ].join('\n');
+}
+
+function buildElectronForkSkillResult(skillContext, task, text) {
+  return {
+    content: [
+      {
+        type: 'text',
+        text: `Result from the "${skillContext.displayName || skillContext.name}" skill for task "${task}":\n\n${text}`,
+      },
+      {
+        type: 'resource',
+        uri: skillContext.skillMdPath,
+        mimeType: 'text/markdown',
+        text: skillContext.displayName || skillContext.name,
+      },
+      ...skillContext.relatedFiles.slice(0, 40).map(file => ({
+        type: 'resource',
+        uri: file.uri,
+        text: file.path,
+      })),
+    ],
+    metadata: {
+      kind: 'skill',
+      invocation: {
+        mode: 'fork',
+        scope: 'request',
+      },
+      skill: {
+        name: skillContext.name,
+        displayName: skillContext.displayName,
+        description: skillContext.description,
+        skillMdPath: skillContext.skillMdPath,
+        baseDir: skillContext.baseDir,
+        mode: skillContext.mode || 'fork',
+        scope: 'request',
+      },
+      relatedFiles: skillContext.relatedFiles.map(file => ({
+        path: file.path,
+        uri: file.uri,
+        category: file.category,
+      })),
+    },
+  };
+}
+
+function normalizePathForSkill(value) {
+  return normalizeString(value).replace(/\\/g, '/');
+}
+
+async function safeCall(callback) {
+  if (typeof callback !== 'function') {
+    return undefined;
+  }
+  try {
+    return await callback();
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeJsonRecord(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value;
+  }
+  if (typeof value !== 'string' || !value.trim()) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function readJsonFile(filePath) {
+  try {
+    return normalizeJsonRecord(fsSync.readFileSync(filePath, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function normalizeStringArray(value) {
+  return Array.isArray(value)
+    ? value.map(item => normalizeString(item)).filter(Boolean)
+    : [];
+}
+
+function samePath(left, right) {
+  return normalizePathForSkill(path.resolve(left)).toLowerCase() === normalizePathForSkill(path.resolve(right)).toLowerCase();
+}
+
+function createElectronBlocklyToolProvider(hostAPI) {
+  const contributions = createElectronBlocklyToolContributions(hostAPI);
+  return {
+    contributeTools: () => contributions,
+    invoke: async (toolName, input = {}, signal, context = {}) => {
+      try {
+        return await invokeElectronBlocklyTool(toolName, input && typeof input === 'object' ? input : {}, hostAPI, { ...context, signal });
+      } catch (error) {
+        return toolError(`${toolName} error: ${error?.message || String(error)}`);
+      }
+    },
+  };
+}
+
+function createElectronBlocklyToolContributions(hostAPI) {
+  const contributions = [];
+  if (hostAPI.project) {
+    contributions.push({
+      name: 'project',
+      toolSet: 'blockly-project',
+      description: 'Inspect or update the current Blockly project',
+      prompt: 'Use this tool for Blockly project actions. Available actions: create, reload, switch_board, get_board_config, set_board_config. Creation asks the user for confirmation and then switches the runtime session to the new project path.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', enum: ['create', 'reload', 'switch_board', 'get_board_config', 'set_board_config'] },
+          name: { type: 'string' },
+          path: { type: 'string' },
+          board: { type: 'string' },
+          config: { type: 'object' },
+          config_key: { type: 'string' },
+          config_value: { type: 'string' },
+          parameters: {},
+        },
+        required: ['action'],
+      },
+      annotations: { readOnly: false },
+      runtimeModes: ['unbound', 'coder', 'blockly'],
+      agentScope: ['main'],
+      deferred: { group: 'blockly-project-management', reason: 'Project management is used on demand.' },
+    });
+    contributions.push({
+      name: 'get_board_parameters',
+      toolSet: 'blockly-discovery',
+      description: 'Read detailed parameters from the current project board configuration',
+      prompt: 'Use this read-only tool when you need the current board pins, serial/I2C/SPI configuration, PWM pins, builtin LEDs, or other board.json parameters.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          parameters: {
+            oneOf: [
+              { type: 'string' },
+              { type: 'array', items: { type: 'string' } },
+            ],
+          },
+        },
+      },
+      annotations: { readOnly: true },
+      runtimeModes: ['unbound', 'coder', 'blockly'],
+      agentScope: ['main', 'Plan', 'Explore', 'SchematicAgent'],
+    });
+  }
+  if (hostAPI.builder?.build) {
+    contributions.push({
+      name: 'buildProject',
+      toolSet: 'blockly-project',
+      description: 'Build/compile the current project',
+      prompt: 'Use this tool to compile the current project. Returns the build output including any errors.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          verbose: { type: 'boolean' },
+        },
+      },
+      annotations: { readOnly: false },
+      runtimeModes: ['unbound', 'coder', 'blockly'],
+      agentScope: ['main'],
+      deferred: { group: 'blockly-project-management', reason: 'Build is used on demand.' },
+    });
+  }
+  if (hostAPI.boardSearch?.search) {
+    contributions.push({
+      name: 'boardSearch',
+      toolSet: 'blockly-discovery',
+      description: 'Board/library search and hardware library search for development boards, hardware modules, and libraries',
+      prompt: 'Use this tool for board library search, hardware library search, and development board/library discovery by keyword or filter. It can get categories or inspect board parameters.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', enum: ['search', 'get_categories', 'get_board_parameters'] },
+          query: { type: 'string' },
+          type: { type: 'string', enum: ['boards', 'libraries', 'both'] },
+          boardId: { type: 'string' },
+          dimension: { type: 'string' },
+        },
+        required: ['action'],
+      },
+      annotations: { readOnly: true },
+      runtimeModes: ['unbound', 'coder', 'blockly'],
+      agentScope: ['main', 'Plan', 'Explore', 'SchematicAgent'],
+      deferred: { group: 'blockly-library-discovery', reason: 'Board/library discovery is used on demand.' },
+    });
+    contributions.push({
+      name: 'search_boards_libraries',
+      toolSet: 'blockly-discovery',
+      description: 'Search Aily development boards, hardware modules, and libraries by text query',
+      prompt: 'Search development boards, hardware modules, and libraries. Use type="boards", "libraries", or "both".',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          query: {},
+          type: { type: 'string', enum: ['boards', 'libraries', 'both'] },
+        },
+      },
+      annotations: { readOnly: true },
+      runtimeModes: ['unbound', 'coder', 'blockly'],
+      agentScope: ['main', 'Plan', 'Explore', 'SchematicAgent'],
+    });
+    contributions.push({
+      name: 'get_hardware_categories',
+      toolSet: 'blockly-discovery',
+      description: 'Get board or library category facets for guided hardware selection',
+      prompt: 'Get available hardware category values for boards or libraries.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          type: { type: 'string', enum: ['boards', 'libraries'] },
+          dimension: { type: 'string' },
+        },
+        required: ['type', 'dimension'],
+      },
+      annotations: { readOnly: true },
+      runtimeModes: ['unbound', 'coder', 'blockly'],
+      agentScope: ['main', 'Plan', 'Explore', 'SchematicAgent'],
+    });
+  }
+  if (hostAPI.blockly?.lintGeneratedCode) {
+    if (hostAPI.blockly?.syncAbs) {
+      contributions.push({
+        name: 'syncAbs',
+        toolSet: 'blockly-workspace',
+        description: 'Sync ABS between the text file and Blockly workspace',
+        prompt: 'Use this tool to export/import/status ABS through the host-owned Blockly workspace sync path.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            action: { type: 'string', enum: ['export', 'import', 'status'] },
+            content: { type: 'string' },
+          },
+          required: ['action'],
+        },
+        annotations: { readOnly: false },
+        runtimeModes: ['blockly'],
+        requiredCapabilities: ['runtime:blockly'],
+        agentScope: ['main'],
+      });
+    }
+    if (hostAPI.blockly?.analyzeBlocks) {
+      contributions.push({
+        name: 'analyzeLibrary',
+        toolSet: 'blockly-library',
+        description: 'Analyze library block definitions and readme_ai.md references',
+        prompt: 'Use this tool to inspect an installed library. mode="auto" prefers readme_ai.md references when available and falls back to block analysis only for libraries without readme_ai.md.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            libraryId: { type: 'string' },
+            mode: { type: 'string', enum: ['auto', 'readme_ref', 'analysis'] },
+          },
+          required: ['libraryId'],
+        },
+        annotations: { readOnly: true },
+        runtimeModes: ['blockly'],
+        requiredCapabilities: ['runtime:blockly'],
+        agentScope: ['main'],
+        deferred: { group: 'blockly-library-discovery', reason: 'Library block analysis is used on demand.' },
+      });
+    }
+    contributions.push({
+      name: 'lint',
+      toolSet: 'blockly-workspace',
+      description: 'Lint/check the generated Blockly Arduino code',
+      prompt: 'Use this tool to check generated code for syntax or lint errors.',
+      inputSchema: { type: 'object', properties: {} },
+      annotations: { readOnly: true },
+      runtimeModes: ['blockly'],
+      requiredCapabilities: ['runtime:blockly'],
+      agentScope: ['main'],
+    });
+  }
+  if (hostAPI.connectionGraph) {
+    appendElectronSchematicToolContributions(contributions);
+  }
+  return contributions;
+}
+
+function appendElectronSchematicToolContributions(contributions) {
+  for (const definition of SCHEMATIC_TOOL_DEFINITIONS) {
+    contributions.push({
+      name: definition.name,
+      toolSet: 'blockly-schematic',
+      description: definition.description,
+      prompt: definition.description,
+      inputSchema: definition.inputSchema || { type: 'object', properties: {} },
+      annotations: { readOnly: definition.readOnly !== false },
+      runtimeModes: ['blockly'],
+      requiredCapabilities: ['runtime:blockly'],
+      agentScope: definition.agentScope || [SCHEMATIC_AGENT_TYPE],
+    });
+  }
+}
+
+async function invokeElectronBlocklyTool(toolName, input, hostAPI, context = {}) {
+  switch (toolName) {
+    case 'project':
+      return invokeElectronProjectTool(input, hostAPI, context);
+    case 'buildProject':
+      return invokeElectronBuildProjectTool(hostAPI);
+    case 'boardSearch':
+      return invokeElectronBoardSearchTool(input, hostAPI);
+    case 'search_boards_libraries':
+      return toolText(formatExternalResult(await hostAPI.boardSearch.search(
+        normalizeSearchQuery(input.query),
+        normalizeBoardSearchType(input.type),
+      )));
+    case 'get_hardware_categories':
+      return toolText(formatExternalResult(await hostAPI.boardSearch.getCategories(
+        normalizeCategoryType(input.type),
+        normalizeString(input.dimension),
+      )));
+    case 'get_board_parameters':
+      return toolText(formatExternalResult(await readBoardParameters(hostAPI.project, input.parameters)));
+    case 'syncAbs':
+      return invokeElectronSyncAbsTool(input, hostAPI);
+    case 'analyzeLibrary':
+      return invokeElectronAnalyzeLibraryTool(input, hostAPI);
+    case 'lint':
+      return invokeElectronLintTool(hostAPI);
+    case 'generate_schematic':
+    case 'get_pinmap_summary':
+    case 'get_component_catalog':
+    case 'get_project_context':
+    case 'validate_schematic':
+    case 'get_current_schematic':
+    case 'generate_pinmap':
+    case 'save_pinmap':
+      return invokeElectronSchematicTool(toolName, input, hostAPI, context);
+    default:
+      return toolError(`Unknown contributed tool: ${toolName}`);
+  }
+}
+
+async function invokeElectronSchematicTool(toolName, input, hostAPI, context = {}) {
+  if (!hostAPI.connectionGraph) {
+    return toolError('Connection graph service is not available in this environment.');
+  }
+  let result;
+  switch (toolName) {
+    case 'generate_schematic':
+      result = await hostAPI.connectionGraph.generateSchematic(input, context);
+      break;
+    case 'get_pinmap_summary':
+      result = await hostAPI.connectionGraph.getPinmapSummary(input, context);
+      break;
+    case 'get_component_catalog':
+      result = await hostAPI.connectionGraph.getComponentCatalog(input, context);
+      break;
+    case 'get_project_context':
+      result = await hostAPI.connectionGraph.getProjectContext(input, context);
+      break;
+    case 'validate_schematic':
+      result = await hostAPI.connectionGraph.validateSchematic(input, context);
+      break;
+    case 'get_current_schematic':
+      result = await hostAPI.connectionGraph.getCurrentSchematic(input, context);
+      break;
+    case 'generate_pinmap':
+      result = await hostAPI.connectionGraph.generatePinmap(input, context);
+      break;
+    case 'save_pinmap':
+      result = await hostAPI.connectionGraph.savePinmap(input, context);
+      break;
+    default:
+      return toolError(`Unknown schematic tool: ${toolName}`);
+  }
+  return normalizeHostToolUseResult(result);
+}
+
+function normalizeHostToolUseResult(result) {
+  if (result && typeof result === 'object') {
+    const content = Object.prototype.hasOwnProperty.call(result, 'content')
+      ? result.content
+      : result;
+    const text = typeof content === 'string' ? content : formatExternalResult(content);
+    if (result.is_error || result.isError) {
+      return toolError(text);
+    }
+    return toolText(text, result.metadata);
+  }
+  return toolText(formatExternalResult(result));
+}
+
+async function invokeElectronProjectTool(input, hostAPI, context = {}) {
+  const action = normalizeString(input.action);
+  if (action === 'create') {
+    const board = normalizeString(input.board);
+    if (!board) {
+      return toolError('project create requires board.');
+    }
+    const confirmation = await confirmProjectCreate(input, context);
+    if (!confirmation.confirmed) {
+      return toolError(confirmation.reason || 'Project creation was cancelled by the user.');
+    }
+    return toolText(formatExternalResult(await hostAPI.project.createProject({
+      name: normalizeString(input.name),
+      board,
+      path: normalizeString(input.path),
+    })));
+  }
+  if (action === 'reload') {
+    return toolText(formatExternalResult(await hostAPI.project.reloadProject()));
+  }
+  if (action === 'switch_board') {
+    const board = normalizeString(input.board);
+    if (!board) {
+      return toolError('project switch_board requires board.');
+    }
+    return toolText(formatExternalResult(await hostAPI.project.switchBoard(board)));
+  }
+  if (action === 'get_board_config') {
+    return toolText(formatExternalResult(await readBoardParameters(hostAPI.project, input.parameters)));
+  }
+  if (action === 'set_board_config') {
+    const config = readProjectConfigInput(input);
+    if (!config) {
+      return toolError('project set_board_config requires config_key/config_value or a single-entry config object.');
+    }
+    return toolText(formatExternalResult(await hostAPI.project.setBoardConfig(config)));
+  }
+  return toolError(`Project action "${action || '<missing>'}" is not migrated to the Electron execution host yet.`);
+}
+
+async function confirmProjectCreate(input, context = {}) {
+  const askUser = context?.host && typeof context.host.getExtension === 'function'
+    ? context.host.getExtension('askUser')
+    : null;
+  if (!askUser || typeof askUser.ask !== 'function') {
+    return { confirmed: false, reason: 'Project creation requires the askUser interaction bridge.' };
+  }
+  const name = normalizeString(input.name) || 'new Blockly project';
+  const board = normalizeString(input.board);
+  const targetPath = normalizeString(input.path);
+  const answer = await askUser.ask({
+    question: `Create project "${name}" for board "${board}"${targetPath ? ` in ${targetPath}` : ''}?`,
+    options: ['Create project', 'Cancel'],
+    allowFreeform: false,
+    signal: context.signal,
+  });
+  const selected = normalizeString(answer?.answer || answer?.choice || answer?.value);
+  return { confirmed: !answer?.cancelled && selected === 'Create project' };
+}
+
+function readProjectConfigInput(input) {
+  const key = normalizeString(input.config_key ?? input.configKey);
+  const hasValue = Object.prototype.hasOwnProperty.call(input, 'config_value')
+    || Object.prototype.hasOwnProperty.call(input, 'configValue');
+  if (key && hasValue) {
+    return { [key]: String(input.config_value ?? input.configValue ?? '') };
+  }
+  const config = input.config && typeof input.config === 'object' && !Array.isArray(input.config)
+    ? input.config
+    : null;
+  if (!config || Object.keys(config).length !== 1) {
+    return null;
+  }
+  const [entryKey, entryValue] = Object.entries(config)[0];
+  const normalizedKey = normalizeString(entryKey);
+  return normalizedKey ? { [normalizedKey]: String(entryValue ?? '') } : null;
+}
+
+async function invokeElectronBuildProjectTool(hostAPI) {
+  const projectPath = hostAPI.project?.getProjectPath?.();
+  if (!projectPath) {
+    return toolError('No active project is available for build.');
+  }
+  return toolText(formatExternalResult(await hostAPI.builder.build({ projectPath })));
+}
+
+async function invokeElectronBoardSearchTool(input, hostAPI) {
+  const action = normalizeString(input.action);
+  if (action === 'search') {
+    return toolText(formatExternalResult(await hostAPI.boardSearch.search(
+      normalizeSearchQuery(input.query),
+      normalizeBoardSearchType(input.type),
+    )));
+  }
+  if (action === 'get_categories') {
+    return toolText(formatExternalResult(await hostAPI.boardSearch.getCategories(
+      normalizeCategoryType(input.type),
+      normalizeString(input.dimension) || 'category',
+    )));
+  }
+  if (action === 'get_board_parameters') {
+    return toolText(formatExternalResult(await readBoardParameters(hostAPI.project, input.boardId || input.parameters)));
+  }
+  return toolError(`Unknown boardSearch action: ${action || '<missing>'}`);
+}
+
+async function invokeElectronLintTool(hostAPI) {
+  const generatedCode = typeof hostAPI.blockly.getGeneratedCode === 'function'
+    ? await hostAPI.blockly.getGeneratedCode()
+    : await hostAPI.blockly.exportAbs();
+  if (!normalizeString(generatedCode)) {
+    return toolText('No generated code to lint (workspace is empty).');
+  }
+  const result = await hostAPI.blockly.lintGeneratedCode(generatedCode, {
+    mode: 'ast-grep',
+    format: 'json',
+  });
+  return toolText(formatExternalResult(result));
+}
+
+async function invokeElectronSyncAbsTool(input, hostAPI) {
+  if (typeof hostAPI.blockly?.syncAbs !== 'function') {
+    return toolError('ABS sync is not available in this environment.');
+  }
+  const operation = normalizeString(input.action);
+  if (operation !== 'export' && operation !== 'import' && operation !== 'status') {
+    return toolError('syncAbs requires action to be "export", "import", or "status".');
+  }
+  const result = await hostAPI.blockly.syncAbs({
+    operation,
+    ...(typeof input.includeHeader === 'boolean' ? { includeHeader: input.includeHeader } : {}),
+    ...(typeof input.content === 'string' ? { pendingAbsContent: input.content } : {}),
+  });
+  if (result?.is_error) {
+    return toolError(result.content || 'syncAbs failed.');
+  }
+  return toolText(result?.content || formatExternalResult(result), result?.metadata);
+}
+
+async function invokeElectronAnalyzeLibraryTool(input, hostAPI) {
+  if (typeof hostAPI.blockly?.analyzeBlocks !== 'function') {
+    return toolError('Library analysis is not available in this environment.');
+  }
+  const libraryId = normalizeString(input.libraryId);
+  if (!libraryId) {
+    return toolError('analyzeLibrary requires libraryId.');
+  }
+  const result = await hostAPI.blockly.analyzeBlocks(libraryId, {
+    mode: normalizeLibraryAnalysisMode(input.mode),
+  });
+  if (result?.is_error) {
+    return toolError(result.content || 'analyzeLibrary failed.');
+  }
+  return toolText(result?.content || formatExternalResult(result), result?.metadata);
+}
+
+async function readBoardParameters(project, parameters) {
+  if (!project?.getProjectPath?.()) {
+    throw new Error('No active project is available.');
+  }
+  const boardData = await project.getBoardJson?.();
+  const boardName = normalizeString(await project.getBoardModule?.()) || normalizeString(project.getBoard?.()) || 'unknown';
+  const keys = boardData && typeof boardData === 'object' ? Object.keys(boardData) : [];
+  const requested = normalizeParameterList(parameters);
+  if (requested.length === 0) {
+    return {
+      boardName,
+      parameters: boardData ?? {},
+      availableParameters: keys,
+    };
+  }
+  const selected = {};
+  const missing = [];
+  for (const parameter of requested) {
+    const exact = keys.find(key => key.toLowerCase() === parameter.toLowerCase());
+    if (exact) {
+      selected[exact] = boardData[exact];
+      continue;
+    }
+    const fuzzy = keys.filter(key => key.toLowerCase().includes(parameter.toLowerCase()));
+    if (fuzzy.length > 0) {
+      for (const key of fuzzy) {
+        selected[key] = boardData[key];
+      }
+      continue;
+    }
+    missing.push(parameter);
+  }
+  return {
+    boardName,
+    parameters: selected,
+    ...(missing.length > 0 ? { warning: `Missing board parameters: ${missing.join(', ')}` } : {}),
+  };
+}
+
+function normalizeParameterList(value) {
+  if (Array.isArray(value)) {
+    return value.map(item => normalizeString(item)).filter(Boolean);
+  }
+  const raw = normalizeString(value);
+  if (!raw) {
+    return [];
+  }
+  if (raw.startsWith('[') && raw.endsWith(']')) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed.map(item => normalizeString(item)).filter(Boolean);
+      }
+    } catch {
+      // Fall through to comma splitting.
+    }
+  }
+  return raw.split(',').map(item => normalizeString(item)).filter(Boolean);
+}
+
+function normalizeSearchQuery(value) {
+  return Array.isArray(value)
+    ? value.map(item => normalizeString(item)).filter(Boolean).join(' ')
+    : normalizeString(value);
+}
+
+function normalizeBoardSearchType(value) {
+  const normalized = normalizeString(value);
+  return normalized === 'boards' || normalized === 'libraries' ? normalized : 'both';
+}
+
+function normalizeCategoryType(value) {
+  return normalizeString(value) === 'libraries' ? 'libraries' : 'boards';
+}
+
+function normalizeLibraryAnalysisMode(value) {
+  const normalized = normalizeString(value);
+  return normalized === 'readme_ref' || normalized === 'analysis' ? normalized : 'auto';
+}
+
+function formatExternalResult(value) {
+  return typeof value === 'string' ? value : JSON.stringify(value ?? null, null, 2);
+}
+
+function normalizeGeneratedCodeText(value) {
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (value instanceof String) {
+    return value.toString();
+  }
+  if (Array.isArray(value)) {
+    const firstText = value.find(item => typeof item === 'string' && item.length > 0);
+    return typeof firstText === 'string' ? firstText : '';
+  }
+  if (value && typeof value === 'object') {
+    for (const key of ['code', 'generatedCode', 'content', 'text', 'source', 'value']) {
+      const normalized = normalizeGeneratedCodeText(value[key]);
+      if (normalized) {
+        return normalized;
+      }
+    }
+  }
+  return '';
+}
+
+function toolText(text, metadata) {
+  return {
+    content: [{ type: 'text', text: String(text ?? '') }],
+    ...(metadata ? { metadata } : {}),
+  };
+}
+
+function toolError(text) {
+  return {
+    content: [{ type: 'text', text: String(text ?? '') }],
+    isError: true,
+  };
+}
+
+function createExternalProject(sessionId, requestResourceOperation, initialProjectInfo, onProjectCreated) {
   let projectInfo = normalizeProjectInfo(initialProjectInfo);
   return {
     getProjectInfo: async () => {
       projectInfo = await requestProjectInfo(sessionId, requestResourceOperation, 'getProjectInfo');
       return projectInfo;
     },
-    getProjectPath: () => normalizeString(projectInfo.path || projectInfo.rootPath),
+    getProjectPath: () => normalizeString(projectInfo.projectPath || projectInfo.path || projectInfo.rootPath),
     getBoard: () => normalizeString(projectInfo.board),
     getBoardConfig: async () => requestProjectInfo(sessionId, requestResourceOperation, 'getBoardJson'),
     getPackageJson: async () => requestProjectInfo(sessionId, requestResourceOperation, 'getPackageJson'),
     getBoardJson: async () => requestProjectInfo(sessionId, requestResourceOperation, 'getBoardJson'),
     getBoardModule: async () => requestProjectInfo(sessionId, requestResourceOperation, 'getBoardModule'),
     getBoardPackageJson: async () => requestProjectInfo(sessionId, requestResourceOperation, 'getBoardPackageJson'),
+    createProject: async options => {
+      if (!requestResourceOperation) {
+        throw new Error('Project creation requires a host resource operation bridge.');
+      }
+      const name = normalizeString(options?.name);
+      const board = normalizeString(options?.board);
+      const targetPath = normalizeString(options?.path);
+      if (!board) {
+        throw new Error('createProject requires board.');
+      }
+      const result = await requestResourceOperation({
+        sessionId,
+        kind: 'project-info',
+        payload: {
+          adapter: 'project',
+          action: 'createProject',
+          ...(name ? { name } : {}),
+          board,
+          ...(targetPath ? { path: targetPath } : {}),
+        },
+      });
+      const projectResult = result?.result ?? result;
+      if (projectResult && typeof projectResult === 'object') {
+        projectInfo = normalizeProjectInfo(projectResult);
+        await onProjectCreated?.(projectInfo);
+      }
+      return projectResult;
+    },
+    reloadProject: async () => requestProjectInfo(sessionId, requestResourceOperation, 'reloadProject'),
+    switchBoard: async board => {
+      const result = await requestResourceOperation({
+        sessionId,
+        kind: 'project-info',
+        payload: {
+          adapter: 'project',
+          action: 'switchBoard',
+          board,
+        },
+      });
+      return result?.result ?? result;
+    },
+    setBoardConfig: async config => {
+      const result = await requestResourceOperation({
+        sessionId,
+        kind: 'project-info',
+        payload: {
+          adapter: 'project',
+          action: 'setBoardConfig',
+          config,
+        },
+      });
+      return result?.result ?? result;
+    },
   };
 }
 
-function createExternalBuilder(sessionId, requestResourceOperation, initialProjectInfo) {
+function createExternalBuilder(sessionId, requestResourceOperation, initialProjectInfo, readCwd) {
   return {
     build: async options => {
       const projectInfo = normalizeProjectInfo(initialProjectInfo);
-      const projectPath = normalizeString(options?.projectPath) || normalizeString(projectInfo.path || projectInfo.rootPath);
+      const projectPath = normalizeString(options?.projectPath)
+        || normalizeString(projectInfo.projectPath || projectInfo.path || projectInfo.rootPath)
+        || normalizeString(typeof readCwd === 'function' ? readCwd() : '');
       const result = await requestResourceOperation({
         sessionId,
         kind: 'project-build',
@@ -767,13 +3255,51 @@ function createExternalBuilder(sessionId, requestResourceOperation, initialProje
 
 function createExternalBlockly(sessionId, requestResourceOperation) {
   return {
+    syncAbs: async args => {
+      const operation = normalizeString(args?.operation);
+      if (operation !== 'export' && operation !== 'import' && operation !== 'status') {
+        throw new Error('syncAbs requires operation to be "export", "import", or "status".');
+      }
+      const result = await requestResourceOperation({
+        sessionId,
+        kind: operation === 'import'
+          ? 'workspace-mutation'
+          : operation === 'export'
+            ? 'file-write'
+            : 'file-read',
+        payload: {
+          adapter: 'syncAbs',
+          args: {
+            operation,
+            ...(typeof args?.includeHeader === 'boolean' ? { includeHeader: args.includeHeader } : {}),
+            ...(typeof args?.pendingAbsContent === 'string' ? { pendingAbsContent: args.pendingAbsContent } : {}),
+          },
+        },
+      });
+      return result?.result ?? result;
+    },
     exportAbs: async () => {
+      const result = await requestResourceOperation({
+        sessionId,
+        kind: 'file-write',
+        payload: {
+          adapter: 'syncAbs',
+          args: { operation: 'export' },
+        },
+      });
+      const syncResult = result?.result ?? result;
+      if (syncResult?.is_error) {
+        throw new Error(syncResult.content || 'ABS export failed.');
+      }
+      return syncResult?.metadata?.absPreview || syncResult?.content || '';
+    },
+    getGeneratedCode: async () => {
       const result = await requestResourceOperation({
         sessionId,
         kind: 'blockly-workspace',
         payload: { adapter: 'blockly', action: 'getGeneratedCode' },
       });
-      return String(result?.result ?? result ?? '');
+      return normalizeGeneratedCodeText(result?.result ?? result);
     },
     getWorkspaceOverview: async () => {
       const result = await requestResourceOperation({
@@ -781,7 +3307,7 @@ function createExternalBlockly(sessionId, requestResourceOperation) {
         kind: 'blockly-workspace',
         payload: { adapter: 'blockly', action: 'getGeneratedCode' },
       });
-      const generatedCode = String(result?.result ?? result ?? '');
+      const generatedCode = normalizeGeneratedCodeText(result?.result ?? result);
       return {
         structure: '',
         generatedCode,
@@ -791,11 +3317,279 @@ function createExternalBlockly(sessionId, requestResourceOperation) {
         complexity: 'unknown',
       };
     },
+    lintGeneratedCode: async (code, options = {}) => {
+      const result = await requestResourceOperation({
+        sessionId,
+        kind: 'project-lint',
+        payload: {
+          adapter: 'arduinoLint',
+          action: 'checkSyntax',
+          code,
+          options,
+        },
+      });
+      return result?.result ?? result;
+    },
+    analyzeBlocks: async (libraryId, options = {}) => {
+      const result = await requestResourceOperation({
+        sessionId,
+        kind: 'library-analysis',
+        payload: {
+          adapter: 'libraryAnalysis',
+          action: 'analyzeLibrary',
+          libraryId,
+          mode: normalizeLibraryAnalysisMode(options?.mode),
+        },
+      });
+      return result?.result ?? result;
+    },
+  };
+}
+
+function createDiagnosticsExtension(sessionId, requestResourceOperation) {
+  return {
+    getErrors: async (filePaths, ranges) => {
+      const result = await requestResourceOperation({
+        sessionId,
+        kind: 'diagnostics',
+        payload: {
+          adapter: 'diagnostics',
+          action: 'getErrors',
+          ...(Array.isArray(filePaths) ? { filePaths } : {}),
+          ...(Array.isArray(ranges) ? { ranges } : {}),
+        },
+      });
+      const errors = result?.result ?? result;
+      return Array.isArray(errors) ? errors : [];
+    },
+  };
+}
+
+function createElectronWebFetchBridgeExtension() {
+  const webviewBridge = getElectronAPI()?.webviewBridge;
+  if (typeof webviewBridge?.fetchPage !== 'function') {
+    return null;
+  }
+  return {
+    fetchPage: async options => {
+      const result = await webviewBridge.fetchPage({
+        url: options?.url,
+        timeoutMs: 20000,
+        waitAfterLoadMs: options?.waitMs,
+      });
+      if (!result?.ok) {
+        throw new Error(result?.error || `webview bridge fetch failed for ${options?.url || '<unknown>'}`);
+      }
+      return {
+        text: String(result.html || result.text || ''),
+        status: Number.isFinite(result.status) ? Number(result.status) : 200,
+        contentType: typeof result.contentType === 'string' ? result.contentType : 'text/html; charset=utf-8',
+      };
+    },
+  };
+}
+
+function createElectronWebSearchBridgeExtension() {
+  const webviewBridge = getElectronAPI()?.webviewBridge;
+  if (typeof webviewBridge?.searchWeb !== 'function') {
+    return null;
+  }
+  return {
+    searchPage: async options => {
+      const result = await webviewBridge.searchWeb({
+        url: options?.url,
+        timeoutMs: 20000,
+      });
+      if (!result?.ok) {
+        throw new Error(result?.error || `webview bridge search failed for ${options?.url || '<unknown>'}`);
+      }
+      return {
+        html: String(result.html || result.text || ''),
+        ...(typeof result.url === 'string' ? { url: result.url } : {}),
+        ...(typeof result.title === 'string' ? { title: result.title } : {}),
+      };
+    },
+  };
+}
+
+function createElectronSearchExtension() {
+  const ripgrep = getElectronAPI()?.ripgrep;
+  const hasSearchContent = typeof ripgrep?.searchContent === 'function';
+  const hasListAllContentFiles = typeof ripgrep?.listAllContentFiles === 'function';
+  if (!hasSearchContent && !hasListAllContentFiles) {
+    return null;
+  }
+
+  const extension = {};
+  if (hasListAllContentFiles) {
+    extension.searchFiles = async input => {
+      const cwd = normalizeString(input?.cwd);
+      if (!cwd) {
+        return [];
+      }
+      const maxResults = normalizePositiveInteger(input?.maxResults, 100);
+      const matchesEverything = input?.pattern === '**/*' || input?.pattern === '**' || input?.pattern === '*';
+      const regex = matchesEverything ? null : globToRegex(normalizeString(input?.pattern) || '**/*');
+      const seen = new Set();
+      const matches = [];
+      let scanLimit = Math.max(maxResults * 50, 2000);
+
+      while (true) {
+        const result = await ripgrep.listAllContentFiles(cwd, scanLimit);
+        if (!result?.success) {
+          throw new Error(result?.error || 'Electron ripgrep file listing failed');
+        }
+        const files = Array.isArray(result.files) ? result.files : [];
+        appendSearchFileMatches(files, cwd, regex, seen, matches, maxResults);
+        if (matches.length >= maxResults || files.length < scanLimit || scanLimit >= 32000) {
+          break;
+        }
+        scanLimit = Math.min(scanLimit * 2, 32000);
+      }
+      return matches.slice(0, maxResults);
+    };
+  }
+
+  if (hasSearchContent) {
+    extension.searchText = async input => {
+      const cwd = normalizeString(input?.cwd);
+      if (!cwd) {
+        return [];
+      }
+      const result = await ripgrep.searchContent({
+        pattern: normalizeString(input?.query),
+        path: cwd,
+        include: normalizeString(input?.includePattern) || undefined,
+        isRegex: input?.isRegexp === true,
+        maxResults: normalizePositiveInteger(input?.maxResults, 100),
+        ignoreCase: true,
+        maxLineLength: 500,
+      });
+      if (!result?.success) {
+        throw new Error(result?.error || 'Electron ripgrep search failed');
+      }
+      return Array.isArray(result.matches)
+        ? result.matches
+          .filter(match => !!match?.file)
+          .map(match => ({
+            file: String(match.file),
+            line: Number(match.line || 0),
+            content: String(match.content || ''),
+          }))
+        : [];
+    };
+  }
+
+  return extension;
+}
+
+function getElectronAPI() {
+  const candidate = globalThis?.electronAPI
+    || (globalThis?.window && typeof globalThis.window === 'object' ? globalThis.window.electronAPI : null);
+  return candidate && typeof candidate === 'object' ? candidate : null;
+}
+
+function appendSearchFileMatches(files, cwd, regex, seen, matches, maxResults) {
+  for (const file of files) {
+    const normalized = normalizeSearchPath(String(file || ''));
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    const relative = relativizeSearchPath(normalized, cwd);
+    if (!relative || (regex && !regex.test(relative))) {
+      continue;
+    }
+    seen.add(normalized);
+    matches.push(normalized);
+    if (matches.length >= maxResults) {
+      return;
+    }
+  }
+}
+
+function globToRegex(pattern) {
+  const source = normalizeSearchPath(pattern).replace(/^\//, '');
+  let regex = '';
+  let index = 0;
+  while (index < source.length) {
+    const ch = source[index];
+    if (ch === '*' && source[index + 1] === '*') {
+      regex += '.*';
+      index += 2;
+      if (source[index] === '/') {
+        index += 1;
+      }
+    } else if (ch === '*') {
+      regex += '[^/]*';
+      index += 1;
+    } else if (ch === '?') {
+      regex += '[^/]';
+      index += 1;
+    } else if ('.+^$|()[]\\'.includes(ch)) {
+      regex += `\\${ch}`;
+      index += 1;
+    } else {
+      regex += ch;
+      index += 1;
+    }
+  }
+  return new RegExp(`^${regex}$`, 'i');
+}
+
+function relativizeSearchPath(filePath, cwd) {
+  const normalizedPath = normalizeSearchPath(filePath);
+  const normalizedCwd = normalizeSearchPath(cwd).replace(/\/$/, '');
+  if (!normalizedCwd) {
+    return normalizedPath;
+  }
+  const lowerPath = normalizedPath.toLowerCase();
+  const lowerCwd = normalizedCwd.toLowerCase();
+  if (lowerPath === lowerCwd) {
+    return '';
+  }
+  if (lowerPath.startsWith(`${lowerCwd}/`)) {
+    return normalizedPath.slice(normalizedCwd.length + 1);
+  }
+  return normalizedPath;
+}
+
+function normalizeSearchPath(value) {
+  return normalizeString(value).replace(/\\/g, '/').replace(/\/+/g, '/').replace(/^\.\//, '');
+}
+
+function normalizePositiveInteger(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? Math.trunc(number) : fallback;
+}
+
+function createExternalBoardSearch(sessionId, requestResourceOperation) {
+  const call = async payload => {
+    const result = await requestResourceOperation({
+      sessionId,
+      kind: 'board-search',
+      payload: {
+        adapter: 'boardSearch',
+        ...payload,
+      },
+    });
+    return result?.result ?? result;
+  };
+  return {
+    search: (query, searchType = 'both') => call({
+      action: 'search',
+      query,
+      searchType,
+    }),
+    getCategories: (categoryType = 'boards', dimension = 'category') => call({
+      action: 'getCategories',
+      categoryType,
+      dimension,
+    }),
   };
 }
 
 function createExternalConnectionGraph(sessionId, requestResourceOperation) {
-  const call = async (action, args) => {
+  const call = async (action, args = {}, context = {}) => {
     const result = await requestResourceOperation({
       sessionId,
       kind: 'connection-graph',
@@ -803,20 +3597,21 @@ function createExternalConnectionGraph(sessionId, requestResourceOperation) {
         adapter: 'connectionGraph',
         action,
         args,
+        turnId: normalizeString(context?.trace?.turnId || context?.turnId),
+        toolCallId: normalizeString(context?.toolCallId || context?.trace?.toolCallId),
       },
     });
     return result?.result ?? result;
   };
   return {
-    getCurrentSchematic: () => call('getCurrentSchematic'),
-    getProjectContext: async () => {
-      const context = await call('getCurrentSchematic');
-      return { context: typeof context === 'string' ? context : JSON.stringify(context ?? null), components: [] };
-    },
-    getPinmapSummary: () => call('getPinmapSummary'),
-    generatePinmap: componentId => call('generatePinmap', componentId),
-    savePinmap: (componentId, pinmap) => call('savePinmap', { componentId, pinmap }),
-    validateSchematic: schematic => call('validateConnectionGraph', schematic),
+    generateSchematic: (input = {}, context = {}) => call('generateConnectionGraph', input, context),
+    getCurrentSchematic: (input = {}, context = {}) => call('getCurrentSchematic', input, context),
+    getProjectContext: (input = {}, context = {}) => call('getProjectContext', input, context),
+    getPinmapSummary: (input = {}, context = {}) => call('getPinmapSummary', input, context),
+    getComponentCatalog: (input = {}, context = {}) => call('getSensorPinmapCatalog', input, context),
+    generatePinmap: (input = {}, context = {}) => call('generatePinmap', input, context),
+    savePinmap: (input = {}, context = {}) => call('savePinmap', input, context),
+    validateSchematic: (input = {}, context = {}) => call('validateConnectionGraph', input, context),
   };
 }
 
@@ -837,10 +3632,24 @@ async function requestProjectInfo(sessionId, requestResourceOperation, action) {
 
 function normalizeTerminalResult(value) {
   const record = value && typeof value === 'object' ? value : {};
+  const exitCode = Number.isFinite(record.exitCode) ? record.exitCode : Number(record.code ?? 0);
+  const status = normalizeString(record.status) || (exitCode === 0 ? 'completed' : 'failed');
+  const startedAt = Number.isFinite(record.startedAt) ? record.startedAt : Date.now();
+  const completedAt = Number.isFinite(record.completedAt) ? record.completedAt : Date.now();
+  const id = normalizeString(record.processId) || normalizeString(record.id) || `exec-${startedAt}-${Math.random().toString(36).slice(2, 8)}`;
   return {
+    id,
+    processId: id,
+    command: String(record.command ?? ''),
+    cwd: normalizeString(record.cwd) || process.cwd(),
     stdout: String(record.stdout ?? record.output ?? ''),
     stderr: String(record.stderr ?? ''),
-    exitCode: Number.isFinite(record.exitCode) ? record.exitCode : Number(record.code ?? 0),
+    running: false,
+    status,
+    exitCode,
+    startedAt,
+    completedAt,
+    lastOutputAt: Number.isFinite(record.lastOutputAt) ? record.lastOutputAt : completedAt,
   };
 }
 
@@ -868,6 +3677,8 @@ function readRuntimeConfig(projectInfo) {
       isLoggedIn: Boolean(runtimeConfig.isLoggedIn),
       userId: normalizeString(runtimeConfig.userId) || null,
       maxRequests: normalizeSoftRoundLimit(runtimeConfig.maxRequests),
+      memoryToolEnabled: runtimeConfig.memoryToolEnabled !== false,
+      repositoryMemoryEnabled: runtimeConfig.repositoryMemoryEnabled === true,
     }
     : null;
 }
@@ -881,12 +3692,40 @@ function normalizeSoftRoundLimit(value) {
 
 function normalizePermissionMode(providerOptions) {
   const mode = normalizeString(providerOptions?.permissionMode);
-  return mode || 'default';
+  return mode === 'bypassPermissions' ? 'default' : mode || 'default';
+}
+
+function normalizePermissionProfile(providerOptions) {
+  const profile = normalizeString(providerOptions?.permissionProfile || providerOptions?.permissionMode);
+  if (profile === 'danger-full-access' || profile === 'bypassPermissions') {
+    return 'danger-full-access';
+  }
+  if (profile === 'workspace-write' || profile === 'read-only') {
+    return profile;
+  }
+  return undefined;
 }
 
 function normalizeApprovalPolicy(providerOptions) {
   const policy = normalizeString(providerOptions?.approvalPolicy);
   return policy === 'never' ? 'never' : 'on_request';
+}
+
+function normalizeApprovalsReviewer(providerOptions) {
+  const reviewer = normalizeString(providerOptions?.approvalsReviewer || providerOptions?.approvalReviewer);
+  return reviewer === 'auto_review' ? 'auto_review' : 'user';
+}
+
+function createSessionRuntimeConfigKey(providerOptions, currentModel, cwd) {
+  return JSON.stringify({
+    cwd: normalizeString(cwd),
+    permissionMode: normalizePermissionMode(providerOptions),
+    permissionProfile: normalizePermissionProfile(providerOptions) || null,
+    approvalPolicy: normalizeApprovalPolicy(providerOptions),
+    approvalsReviewer: normalizeApprovalsReviewer(providerOptions),
+    model: normalizeString(currentModel?.model || currentModel?.modelId || currentModel?.id),
+    baseUrl: normalizeString(currentModel?.baseUrl || currentModel?.llmConfig?.baseUrl),
+  });
 }
 
 function normalizeSessionId(value) {
@@ -907,6 +3746,81 @@ function normalizeTurnId(value) {
 
 function normalizeString(value) {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function normalizeApprovalInput(request) {
+  const input = readApprovalRecord(request?.input)
+    || readApprovalRecord(request?.args)
+    || readApprovalRecord(request?.arguments)
+    || {};
+  const toolName = normalizeString(request?.toolName);
+  const command = readApprovalCommand(toolName, input)
+    || readApprovalCommand(toolName, request?.input)
+    || readApprovalCommand(toolName, request?.args)
+    || readApprovalCommand(toolName, request?.arguments)
+    || readApprovalCommandFromMessage(request?.message || request?.description || request?.title);
+  if (!command || normalizeString(input.command)) {
+    return input;
+  }
+  return {
+    ...input,
+    command,
+  };
+}
+
+function readApprovalRecord(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value;
+  }
+  const text = normalizeString(value);
+  if (!text || !text.startsWith('{')) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(text);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function readApprovalCommand(toolName, value) {
+  const record = readApprovalRecord(value);
+  if (record) {
+    const direct = normalizeString(record.command)
+      || normalizeString(record.cmd)
+      || normalizeString(record.commandLine)
+      || normalizeString(record.shellCommand)
+      || normalizeString(record.script);
+    if (direct) {
+      return direct;
+    }
+    const nested = readApprovalCommand(toolName, record.input)
+      || readApprovalCommand(toolName, record.args)
+      || readApprovalCommand(toolName, record.arguments);
+    if (nested) {
+      return nested;
+    }
+    if ((toolName === 'command_write_stdin' || toolName === 'send_to_terminal') && normalizeString(record.input)) {
+      return normalizeString(record.input);
+    }
+    return '';
+  }
+  const text = normalizeString(value);
+  return text && !text.startsWith('{') ? text : '';
+}
+
+function readApprovalCommandFromMessage(value) {
+  const text = normalizeString(value);
+  if (!text) {
+    return '';
+  }
+  const lines = text.split(/\r?\n/).map(line => line.trim());
+  const markerIndex = lines.findIndex(line => /terminal command|run command|execute command|运行终端命令|命令/i.test(line));
+  const command = markerIndex >= 0
+    ? normalizeString(lines.slice(markerIndex + 1).find(line => line && !/^\(.+\)$/.test(line)))
+    : '';
+  return command && !/unknown command|未知命令/i.test(command) ? command : '';
 }
 
 function toErrorPayload(error) {

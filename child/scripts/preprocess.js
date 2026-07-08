@@ -64,10 +64,6 @@ async function main() {
     const buildPath = path.join(currentProjectPath, '.build');
     const sketchPath = path.join(tempPath, 'sketch');
     const sketchFilePath = path.join(sketchPath, 'sketch.ino');
-    // Aily Code： Blockly 生成的入口落在 project.aci.entry（默认 src/main.cpp），与纯 Blockly 的 .temp/sketch 区分
-    const compileSourcePath = ailyCodeProject.isAilyCodeProjectRoot(currentProjectPath)
-        ? ailyCodeProject.resolveCompileSourcePath(currentProjectPath)
-        : sketchFilePath;
     const librariesPath = path.join(tempPath, 'libraries');
     
     const compilerPath = path.join(appDataPath, 'compiler');
@@ -99,12 +95,7 @@ async function main() {
         throw new Error(`未找到板子包文件: ${boardPackageJsonPath}`);
     }
     const boardPackageJson = JSON.parse(fs.readFileSync(boardPackageJsonPath, 'utf8'));
-    const platformRef = platformRuntime.readPlatformRefFromProjectAci(currentProjectPath);
-    const boardDependencies = platformRuntime.resolveEffectiveBoardDependencies(
-        boardPackageJson.boardDependencies,
-        appDataPath,
-        platformRef?.packageName,
-    );
+    const boardDependencies = boardPackageJson.boardDependencies || {};
 
     // 缓存文件路径
     const cacheFilePath = path.join(path.dirname(librariesPath), 'library-cache.json');
@@ -123,9 +114,9 @@ async function main() {
         mkdirp(sketchPath);
         mkdirp(librariesPath);
 
-        // 2. 生成源码：Aily Code 写入 entry 所指文件； Blockly 仍为 .temp/sketch/sketch.ino
-        mkdirp(path.dirname(compileSourcePath));
-        fs.writeFileSync(compileSourcePath, code);
+        // 2. 生成sketch文件
+        fs.writeFileSync(sketchFilePath, code);
+        copyProjectSrcToSketch(currentProjectPath, sketchPath);
 
         // 3. 处理库文件
         const libsPath = [];
@@ -290,7 +281,7 @@ async function main() {
             `"${path.join(ailyBuilderPath, 'index.js')}"`,
             'preprocess',
             // `...parseArgs(compilerParam)`,
-            `"${compileSourcePath}"`,
+            `"${sketchFilePath}"`,
             '--board', `"${boardType}"`,
             '--libraries-path', `"${librariesPath}"`,
             '--sdk-path', `"${fullSdkPath}"`,
@@ -378,6 +369,54 @@ function rm(pathToRemove) {
             logger.warn(`删除失败 ${pathToRemove}:`, e.message);
         }
     }
+}
+
+function copyProjectSrcToSketch(currentProjectPath, sketchPath) {
+    const projectSrcPath = path.join(currentProjectPath, 'src');
+    if (!fs.existsSync(projectSrcPath)) {
+        return;
+    }
+
+    if (!fs.statSync(projectSrcPath).isDirectory()) {
+        logger.warn(`Project src path exists but is not a directory: ${projectSrcPath}`);
+        return;
+    }
+
+    copyDirectoryContents(projectSrcPath, sketchPath);
+}
+
+function copyDirectoryContents(sourceDir, targetDir) {
+    mkdirp(targetDir);
+
+    const items = fs.readdirSync(sourceDir);
+    for (const item of items) {
+        copyItemRecursive(path.join(sourceDir, item), path.join(targetDir, item));
+    }
+}
+
+function copyItemRecursive(sourcePath, targetPath) {
+    const stat = fs.statSync(sourcePath);
+
+    if (stat.isDirectory()) {
+        if (fs.existsSync(targetPath) && !fs.statSync(targetPath).isDirectory()) {
+            rm(targetPath);
+        }
+
+        mkdirp(targetPath);
+        copyDirectoryContents(sourcePath, targetPath);
+        return;
+    }
+
+    if (!stat.isFile()) {
+        return;
+    }
+
+    if (fs.existsSync(targetPath) && fs.statSync(targetPath).isDirectory()) {
+        rm(targetPath);
+    }
+
+    mkdirp(path.dirname(targetPath));
+    fs.copyFileSync(sourcePath, targetPath);
 }
 
 async function processLibrariesParallel(libsPath, librariesPath, currentProjectPath, za7Path, devmode, libraryCache) {

@@ -15,6 +15,7 @@ import {
 import type { MetricsSnapshot, TurnResponseTurn } from 'aily-lex/browser';
 import { projectRegisteredToolCallOutputRows } from './tool-call-output-projectors';
 import { chatI18n } from '../../../helpers/chat-i18n';
+import { formatCompactBillingLabel } from '../../../helpers/model-billing-label';
 
 export type StateTone = 'info' | 'success' | 'warn' | 'error' | 'neutral';
 
@@ -173,7 +174,7 @@ export function buildToolCallDetailSections(source: {
 
   const toolSpecificData = asRecord(metadata['toolSpecificData']);
   if (isSubagentMetadata(toolSpecificData)) {
-    return [];
+    return buildSubagentDetailSections(source);
   }
 
   const toolName = asString(metadata['toolName']);
@@ -367,7 +368,7 @@ export function buildToolCallSummaryBadges(source: {
 
   const toolSpecificData = asRecord(metadata['toolSpecificData']);
   if (isSubagentMetadata(toolSpecificData)) {
-    return [];
+    return buildSubagentSummaryBadges(metadata, toolSpecificData);
   }
 
   const badges: ActivitySummaryBadge[] = [];
@@ -402,6 +403,57 @@ export function buildToolCallSummaryBadges(source: {
   }
 
   return badges;
+}
+
+function buildSubagentSummaryBadges(
+  metadata: Record<string, unknown>,
+  toolSpecificData: Record<string, unknown> | undefined,
+): ActivitySummaryBadge[] {
+  const badges: ActivitySummaryBadge[] = [];
+  const agentName = asString(toolSpecificData?.['agentName']);
+  const modelRouting = asRecord(metadata['modelRouting']) || asRecord(toolSpecificData?.['modelRouting']);
+  const selectedPresetId = asString(modelRouting?.['selectedPresetId']);
+  const requestedPresetId = asString(modelRouting?.['requestedPresetId']);
+  const modelName = selectedPresetId
+    || requestedPresetId
+    || asString(metadata['modelName'])
+    || asString(toolSpecificData?.['modelName']);
+  const modelBillingLabel = formatCompactBillingLabel(
+    asString(metadata['modelBillingLabel'])
+      || asString(toolSpecificData?.['modelBillingLabel'])
+      || asString(modelRouting?.['modelBillingLabel']),
+  );
+
+  if (agentName) {
+    badges.push({ label: 'Subagent', value: agentName, tone: 'info' });
+  }
+  if (modelName) {
+    badges.push({ label: 'Model', value: formatSubagentModelDisplayName(modelName), tone: 'neutral' });
+  }
+  if (modelBillingLabel) {
+    badges.push({ label: 'Cost', value: modelBillingLabel, tone: 'neutral' });
+  }
+
+  return badges;
+}
+
+function formatSubagentModelDisplayName(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return trimmed;
+  }
+  return trimmed
+    .split(/([_-]+)/)
+    .map((part) => {
+      if (/^[_-]+$/.test(part)) {
+        return part === '_' ? '-' : part;
+      }
+      if (!part) {
+        return part;
+      }
+      return `${part.charAt(0).toUpperCase()}${part.slice(1)}`;
+    })
+    .join('');
 }
 
 function buildReadFileSummaryBadges(readFileMetadata: Record<string, unknown>): ActivitySummaryBadge[] {

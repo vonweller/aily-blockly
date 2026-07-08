@@ -1,4 +1,5 @@
 import { normalizeReadSideToolName, toRuntimeGovernanceToolName } from './tool-name-normalizer';
+import { readToolApprovalCommand } from './tool-approval-input';
 
 export interface ToolInvocationDisplaySummary {
   label: string;
@@ -285,7 +286,7 @@ function buildPathSummary(verb: string, args: any, fallbackKind: 'file' | 'folde
 }
 
 function buildCommandSummary(verb: string, args: any): ToolInvocationDisplaySummary {
-  const command = asString(args?.command);
+  const command = readToolApprovalCommand('command_exec', args);
   return {
     label: `${verb} ${truncateDisplayText(command || 'command', 64)}`,
     subtitle: asString(args?.cwd) ? `in ${truncateDisplayText(String(args.cwd), 56)}` : undefined,

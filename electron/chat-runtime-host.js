@@ -82,7 +82,11 @@ function registerChatRuntimeHostIpc(mainWindow) {
     service.handleRuntimeOwnerResponse(event, payload);
   });
   ipcMain.on(channels.RUNTIME_OWNER_EVENT_CHANNEL, (event, payload = {}) => {
-    service.handleRuntimeOwnerEvent(event, payload);
+    void service.handleRuntimeOwnerEvent(event, payload).catch(error => {
+      console.warn('[AilyChat][RuntimeHost] Ignored runtime owner IPC event:', {
+        message: error && error.message ? error.message : String(error || 'Unknown runtime owner IPC event error'),
+      });
+    });
   });
   ipcMain.on(channels.RESOURCE_HANDLER_RESPONSE_CHANNEL, (event, payload = {}) => {
     service.handleResourceOperationHandlerResponse(event, payload);

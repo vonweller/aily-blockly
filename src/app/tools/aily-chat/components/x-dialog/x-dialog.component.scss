@@ -273,9 +273,14 @@
 
 .dialog-box.user .msg-footer,
 .dialog-box.user .msg-actions {
-  margin: -1px 8px 2px 0;
+  margin: -1px 0 2px 0;
   padding: 0;
   min-height: 22px;
+}
+
+.dialog-box.user .msg-footer {
+  width: fit-content;
+  max-width: 88%;
 }
 
 // loader 对齐
@@ -493,17 +498,20 @@
 }
 
 .dialog-box.has-hover-footer .msg-footer {
-  opacity: 0.38;
-  pointer-events: auto;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .dialog-box.has-hover-footer:hover .msg-footer,
-.dialog-box.has-hover-footer:focus-within .msg-footer {
+.dialog-box.has-hover-footer:focus-within .msg-footer,
+.dialog-box.has-hover-footer .msg-footer:hover {
   opacity: 1;
+  pointer-events: auto;
 }
 
 .dialog-box.footer-always-visible .msg-footer {
   opacity: 1;
+  pointer-events: auto;
 }
 
 // 消息操作栏（Copilot footer-toolbar 对齐）
@@ -513,6 +521,10 @@
   gap: 2px;
   padding: 0;
   justify-content: flex-start;
+}
+
+.user-msg-actions {
+  gap: 4px;
 }
 
 .msg-action-btn {
@@ -559,6 +571,31 @@
   padding: 0;
   opacity: 0.85;
   flex: 0 0 auto;
+}
+
+.msg-footer-meta {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-left: auto;
+  min-width: 0;
+}
+
+.msg-time-label {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  color: var(--aily-chat-xdialog-msg-model, var(--chat-fg-muted));
+  font-size: 11px;
+  line-height: 20px;
+  white-space: nowrap;
+  user-select: none;
+  opacity: 0.85;
+}
+
+.msg-actions .msg-time-label {
+  margin-left: 4px;
 }
 
 // 流式加载进度条（底部横条，Copilot shimmer-progress 对齐）

@@ -183,6 +183,7 @@ interface PendingFollowupSection {
 })
 export class AilyChatComponent implements OnDestroy, AfterViewChecked {
   readonly chatInputMaxChars = AILY_CHAT_INPUT_MAX_CHARS;
+  sessionOverflowMenuOpen = false;
 
   readonly debugBrowserViewState = {
     Home: ChatDebugBrowserViewState.Home,
@@ -346,6 +347,7 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
     this.engine.setPaneSessionCommandHandlers({
       requestNewChat: () => this.requestNewChat(),
     });
+    this.engine.setSchematicIframeProgressTarget(this.connectionGraphService);
     this.debugBrowserChangeSubscription = this.debugBrowser.onDidChange.subscribe(() => {
       this.cdr.markForCheck();
     });
@@ -2226,6 +2228,11 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
     this.sessionActions.sessionActionClick(event, this.chatService.currentSessionId, this.createSessionRowActionCallbacks());
   }
 
+  handleSessionOverflowOpenChange(open: boolean): void {
+    this.sessionOverflowMenuOpen = open;
+    this.cdr.markForCheck();
+  }
+
   requestNewChat(): void {
     this.requestReturnToEntryInventory({
       saveCurrentSession: true,
@@ -2428,6 +2435,7 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
   closeChatSessionMenus(): void {
     this.vm.closeSessionPicker();
     this.menuManager.closeAll();
+    this.sessionOverflowMenuOpen = false;
     this.cdr.markForCheck();
   }
 

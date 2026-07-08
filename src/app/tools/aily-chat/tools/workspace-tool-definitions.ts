@@ -31,7 +31,7 @@ export const WORKSPACE_TOOL_DEFINITIONS = [
 - 行号从 1 开始计数
 - 字节位置从 0 开始计数
 - 字节范围读取优先级最高
-- 不要把终端输出文件或瞬时 `.log` 路径当作普通源码/文档文件交给本工具`,
+- 不要把终端输出文件或瞬时 \`.log\` 路径当作普通源码/文档文件交给本工具`,
         input_schema: {
             type: 'object',
             properties: {

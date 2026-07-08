@@ -17,7 +17,7 @@ import { appendThinkContent, getThinkContentLength, getThinkContentWindow, store
 import {
   ChatPart, MarkdownPart, ThinkingPart, ToolCallPart, StatePart, TerminalPart,
   SubagentToolCallSnapshot, isSubagentToolCallMetadata, mkMarkdown, mkThinking, mkToolCall, mkError, mkState, mkSubagentTimelineEntry, subagentSnapshotToToolCall, toolCallPartToSubagentSnapshot, mkPlan, mkQuestion, mkConfirmation, buildScopedTextPartId,
-  type ChatPartScope, isSameChatPartScope, normalizeChatPartScope, withChatPartScopeMetadata,
+  getParentToolCallId, getSubAgentInvocationId, normalizeSubagentToolCallState, type ChatPartScope, isSameChatPartScope, normalizeChatPartScope, withChatPartScopeMetadata,
 } from './chat-parts';
 import type { SubagentChildItem } from './chat-parts';
 import type { ConfirmationPart, QuestionPart } from './chat-parts';
@@ -174,6 +174,21 @@ function asString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
 }
 
+function isPlaceholderTerminalCommand(value: unknown): boolean {
+  if (typeof value !== 'string') {
+    return false;
+  }
+  const normalized = value.trim().toLowerCase();
+  return normalized === 'undefined'
+    || normalized === 'null'
+    || normalized === 'terminal command';
+}
+
+function asTerminalCommand(value: unknown): string | undefined {
+  const command = asString(value);
+  return command && !isPlaceholderTerminalCommand(command) ? command : undefined;
+}
+
 function getChatPartStableStoreKey(part: ChatPart): string | undefined {
   switch (part.type) {
     case 'markdown':
@@ -203,8 +218,10 @@ function appendTerminalLiveStream(existing: string | undefined, delta: string | 
 }
 
 function normalizeTerminalLivePart(terminal: TerminalPart): TerminalPart {
+  const command = asTerminalCommand(terminal.command) ?? '';
   return {
     ...terminal,
+    command,
     output: appendTerminalLiveStream(undefined, terminal.output),
     stderr: appendTerminalLiveStream(undefined, terminal.stderr),
   };
@@ -452,9 +469,44 @@ function terminalWithInheritedMetadata(terminal: TerminalPart, sourcePart: ChatP
       : sourcePart.metadata,
     terminal.metadata,
   );
+  const command = asTerminalCommand(terminal.command)
+    ?? extractTerminalCommandFromSourcePart(sourcePart)
+    ?? '';
+  const inherited = command === terminal.command ? terminal : { ...terminal, command };
   return metadata
-    ? { ...terminal, metadata }
-    : terminal;
+    ? { ...inherited, metadata }
+    : inherited;
+}
+
+function extractTerminalCommandFromSourcePart(sourcePart: ToolCallPart | TerminalPart | ConfirmationPart): string | undefined {
+  if (sourcePart.type === 'terminal') {
+    return asTerminalCommand(sourcePart.command)
+      ?? extractTerminalCommandFromMetadata(sourcePart.metadata);
+  }
+
+  if (sourcePart.type === 'confirmation') {
+    return asTerminalCommand(asRecord(sourcePart.args)?.['command'])
+      ?? asTerminalCommand(asRecord(sourcePart.args)?.['cmd'])
+      ?? extractTerminalCommandFromMetadata(sourcePart.metadata);
+  }
+
+  const args = asRecord(sourcePart.args);
+  return asTerminalCommand(args?.['command'])
+    ?? asTerminalCommand(args?.['cmd'])
+    ?? extractTerminalCommandFromMetadata(sourcePart.metadata);
+}
+
+function extractTerminalCommandFromMetadata(metadata: unknown): string | undefined {
+  const metadataRecord = asRecord(metadata);
+  if (!metadataRecord) {
+    return undefined;
+  }
+  const approval = asRecord(metadataRecord['approval']);
+  const approvalArgs = asRecord(approval?.['args']);
+  return asTerminalCommand(approvalArgs?.['command'])
+    ?? asTerminalCommand(approvalArgs?.['cmd'])
+    ?? asTerminalCommand(metadataRecord['command'])
+    ?? asTerminalCommand(metadataRecord['cmd']);
 }
 
 function confirmationToTerminalMetadata(
@@ -492,8 +544,8 @@ function isReplaceableTerminalConfirmation(part: ChatPart, terminal: TerminalPar
   }
 
   const args = asRecord(part.args);
-  const command = asString(args?.['command']) || asString(args?.['cmd']);
-  const terminalCommand = asString(terminal.command);
+  const command = asTerminalCommand(args?.['command']) || asTerminalCommand(args?.['cmd']);
+  const terminalCommand = asTerminalCommand(terminal.command);
   return !!command && !!terminalCommand && command === terminalCommand;
 }
 
@@ -673,6 +725,28 @@ function finalizeSubagentChildItems(
   });
 
   return changed ? nextItems : [...childItems];
+}
+
+function isPartInSubagentScope(part: ChatPart, targetIds: ReadonlySet<string>): boolean {
+  const subAgentInvocationId = getSubAgentInvocationId(part);
+  if (subAgentInvocationId && targetIds.has(subAgentInvocationId)) {
+    return true;
+  }
+
+  const parentToolCallId = getParentToolCallId(part);
+  if (parentToolCallId && targetIds.has(parentToolCallId)) {
+    return true;
+  }
+
+  if (part.type === 'tool_call' && part.toolCallId && targetIds.has(part.toolCallId)) {
+    return true;
+  }
+
+  if (part.type === 'terminal' && part.toolCallId && targetIds.has(part.toolCallId)) {
+    return true;
+  }
+
+  return false;
 }
 
 function finalizeQuestionAnswers(part: QuestionPart): QuestionPart['answers'] {
@@ -1293,7 +1367,11 @@ export class ChatPartStore {
       ...terminal,
       partId: existing.partId || terminal.partId,
       toolCallId: existing.toolCallId || terminal.toolCallId,
-      command: terminal.command || existing.command,
+      command: asTerminalCommand(terminal.command)
+        ?? asTerminalCommand(existing.command)
+        ?? extractTerminalCommandFromMetadata(terminal.metadata)
+        ?? extractTerminalCommandFromMetadata(existing.metadata)
+        ?? '',
       output,
       stderr,
       isRunning: terminal.isRunning,
@@ -2016,6 +2094,104 @@ export class ChatPartStore {
     }
   }
 
+  finalizeSubagentScopedPartsForHandle(
+    handle: ChatPartStoreReadableHandle | null,
+    scope: { readonly subAgentInvocationId?: string; readonly parentToolCallId?: string; readonly toolCallId?: string },
+    options: { readonly status?: RunningPartFinalizeStatus } = {},
+  ): void {
+    const storeKey = this.resolveStoreKey(handle);
+    if (storeKey === null) {
+      return;
+    }
+
+    const parts = this._store.get(storeKey);
+    if (!parts) {
+      return;
+    }
+
+    const targetIds = new Set([
+      scope.subAgentInvocationId,
+      scope.parentToolCallId,
+      scope.toolCallId,
+    ].filter((value): value is string => typeof value === 'string' && value.trim().length > 0));
+    if (targetIds.size === 0) {
+      return;
+    }
+
+    const finalToolState: ToolCallPart['state'] = options.status === 'error' ? 'error' : 'done';
+    const finalState: StatePart['state'] = options.status === 'error' ? 'error' : 'done';
+
+    for (let partIndex = 0; partIndex < parts.length; partIndex += 1) {
+      const part = parts[partIndex];
+      if (!isPartInSubagentScope(part, targetIds)) {
+        continue;
+      }
+
+      if (part.type === 'thinking' && !part.isComplete) {
+        this.updatePart(storeKey, partIndex, {
+          ...part,
+          isComplete: true,
+        });
+        continue;
+      }
+
+      if (part.type === 'tool_call' && (part.state === 'doing' || part.state === 'pending_approval')) {
+        const compatSubagent = isSubagentToolCallMetadata(part.metadata)
+          ? toolCallPartToSubagentSnapshot(part)
+          : null;
+        this.updatePart(storeKey, partIndex, {
+          ...(compatSubagent
+            ? this.rebuildSubagentToolCallPart(part, {
+              ...compatSubagent,
+              state: finalToolState === 'error' ? 'error' : 'done',
+              childItems: finalizeSubagentChildItems(compatSubagent.childItems, options.status),
+            }, { appendTerminalEntry: true })
+            : part),
+          state: finalToolState,
+          ...(part.state === 'pending_approval'
+            ? { metadata: finalizePendingApprovalMetadata(part, options.status) ?? part.metadata }
+            : {}),
+        });
+        continue;
+      }
+
+      if (part.type === 'state' && part.state === 'doing') {
+        this.updatePart(storeKey, partIndex, {
+          ...part,
+          state: finalState,
+        });
+        continue;
+      }
+
+      if (part.type === 'terminal' && part.isRunning) {
+        this.updatePart(storeKey, partIndex, {
+          ...part,
+          isRunning: false,
+        });
+        continue;
+      }
+
+      if (part.type === 'confirmation' && !part.resolved) {
+        this.updatePart(storeKey, partIndex, {
+          ...part,
+          resolved: true,
+          result: 'rejected',
+          metadata: finalizeInteractionMetadata(part.metadata, options.status),
+        });
+        continue;
+      }
+
+      if (part.type === 'question' && !part.answers) {
+        this.updatePart(storeKey, partIndex, {
+          ...part,
+          answers: finalizeQuestionAnswers(part),
+          isHistory: true,
+          metadata: finalizeInteractionMetadata(part.metadata, options.status),
+        });
+      }
+    }
+  }
+
   private updatePartForHandle(handle: ChatPartStoreReadableHandle | null, partIndex: number, part: ChatPart): void {
     const storeKey = this.resolveStoreKey(handle);
     if (storeKey === null) {
@@ -2088,7 +2264,11 @@ export class ChatPartStore {
         this.updatePart(
           storeKey,
           i,
-          this.rebuildSubagentToolCallPart(p, { ...compat, state, resultText }, { appendTerminalEntry: true }),
+          this.rebuildSubagentToolCallPart(p, {
+            ...compat,
+            state: normalizeSubagentToolCallState(state),
+            resultText,
+          }, { appendTerminalEntry: true }),
         );
         return;
       }

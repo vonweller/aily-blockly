@@ -56,6 +56,18 @@ import { ChatEngineService } from '../../services/chat-engine.service';
 
 const EMPTY_PROGRESS_MESSAGES: readonly NonNullable<TurnResponseTurn['response']['progressMessages']>[number][] = [];
 const EMPTY_CHAT_PARTS: readonly ChatPart[] = [];
+const MESSAGE_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
+  hour: '2-digit',
+  minute: '2-digit',
+});
+const MESSAGE_TIME_TITLE_FORMATTER = new Intl.DateTimeFormat(undefined, {
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+});
 
 
 @Component({
@@ -238,7 +250,21 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
 
   /** 是否渲染底部栏 DOM（非最后一条仅占位，hover 显影） */
   get shouldRenderFooter(): boolean {
-    return this.canShowActions || this.canShowLimitActions;
+    if (this.isEditing) {
+      return false;
+    }
+
+    if (this.role === 'user') {
+      return !!this.userCopyText || !!this.messageTimeLabel;
+    }
+
+    if (this.role !== 'aily' || this.effectiveDoing) {
+      return false;
+    }
+
+    return this.canShowActions
+      || this.canShowLimitActions
+      || !!this.assistantModelBadgeLabel;
   }
 
   /** 非最后一条助手消息：底部栏 hover 淡入，避免 @if 撑开布局 */
@@ -343,7 +369,49 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
   }
 
   get showAssistantModelBadge(): boolean {
-    return this.shouldRenderFooter && this.role === 'aily' && !this.effectiveDoing && !!this.assistantModelBadgeLabel;
+    return this.role === 'aily' && !this.effectiveDoing && !!this.assistantModelBadgeLabel;
+  }
+
+  get messageTimeLabel(): string | null {
+    const timestamp = this.messageTimestampMs;
+    return timestamp == null ? null : this.formatMessageTime(timestamp);
+  }
+
+  get messageTimeTitle(): string {
+    const timestamp = this.messageTimestampMs;
+    return timestamp == null ? '' : this.formatMessageTimeTitle(timestamp);
+  }
+
+  private get messageTimestampMs(): number | null {
+    const turn = this.activityTurnResponse;
+    if (!turn) {
+      return null;
+    }
+
+    if (this.role === 'user') {
+      return this.normalizeTimestampMs(turn.createdAt ?? turn.response?.createdAt);
+    }
+
+    if (this.role === 'aily' && !this.effectiveDoing) {
+      return this.normalizeTimestampMs(
+        turn.response?.updatedAt
+          ?? turn.updatedAt
+          ?? turn.response?.createdAt
+          ?? turn.createdAt,
+      );
+    }
+
+    return null;
+  }
+
+  private get userCopyText(): string {
+    if (this.role !== 'user') {
+      return '';
+    }
+
+    return this.renderableUserContent
+      || this.requestContent
+      || extractHistoricalDialogCopyText(this.content || '');
   }
 
   get assistantModelBadgeTitle(): string {
@@ -360,6 +428,27 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
 
   private isMultiplierBillingLabel(label: string): boolean {
     return /^\s*(?:x\s*\d+(?:\.\d+)?|\d+(?:\.\d+)?\s*x)\s*$/i.test(label);
+  }
+
+  private normalizeTimestampMs(value: unknown): number | null {
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+      return value;
+    }
+
+    if (typeof value === 'string') {
+      const parsed = Date.parse(value);
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+    }
+
+    return null;
+  }
+
+  private formatMessageTime(timestamp: number): string {
+    return MESSAGE_TIME_FORMATTER.format(new Date(timestamp));
+  }
+
+  private formatMessageTimeTitle(timestamp: number): string {
+    return MESSAGE_TIME_TITLE_FORMATTER.format(new Date(timestamp));
   }
 
   get assistantTerminationLabel(): string | null {
@@ -627,6 +716,11 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
   }
 
   onCopyContent(): void {
+    if (this.role === 'user') {
+      void this.writeClipboardText(this.userCopyText);
+      return;
+    }
+
     const turnText = this.effectiveTurnContext?.response
       ? getTurnResponseResponseText(this.effectiveTurnContext.response)
       : (this.effectiveTurnContext?.turnResponse
