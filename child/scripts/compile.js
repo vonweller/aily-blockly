@@ -22,6 +22,10 @@ function exitWithFatalError(error) {
     process.exit(1);
 }
 
+function isDevelopmentEnvironment() {
+    return process.env.DEV === 'true' || process.env.DEV === '1';
+}
+
 process.on('uncaughtException', (error) => {
     exitWithFatalError(error);
 });
@@ -119,6 +123,10 @@ async function main() {
             '--build-path', `"${buildPath}"`,
             '--preprocess-result', `"${preprocessCachePath}"`,
         ];
+
+        if (isDevelopmentEnvironment()) {
+            args.push('--generate-archive-cloud-cache');
+        }
 
         logger.log(`执行编译: ${builderCommand} ${args.join(' ')}`);
 
