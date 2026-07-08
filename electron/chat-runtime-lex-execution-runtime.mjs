@@ -2778,6 +2778,29 @@ function createElectronBlocklyToolContributions(hostAPI) {
       agentScope: ['main'],
     });
   }
+  contributions.push({
+    name: 'save_arch',
+    toolSet: 'blockly-architecture',
+    description: 'Save or overwrite the project arch.md architecture diagram file with raw Mermaid DSL.',
+    prompt: `Save the generated Mermaid architecture diagram to arch.md.
+Use this after generating a project architecture or framework diagram. Pass only raw Mermaid DSL in code; do not include fenced code blocks.
+Prefer flowchart TD or flowchart LR. After this tool succeeds, do not repeat the Mermaid source in the assistant message.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        code: {
+          type: 'string',
+          description: 'Raw Mermaid DSL, without ```mermaid fences.',
+        },
+      },
+      required: ['code'],
+    },
+    annotations: { readOnly: false },
+    runtimeModes: ['blockly'],
+    requiredCapabilities: ['runtime:blockly'],
+    agentScope: ['main'],
+    deferred: { group: 'blockly-architecture', reason: 'Architecture diagram persistence is used on demand.' },
+  });
   if (hostAPI.connectionGraph) {
     appendElectronSchematicToolContributions(contributions);
   }
@@ -2826,6 +2849,8 @@ async function invokeElectronBlocklyTool(toolName, input, hostAPI, context = {})
       return invokeElectronAnalyzeLibraryTool(input, hostAPI);
     case 'lint':
       return invokeElectronLintTool(hostAPI);
+    case 'save_arch':
+      return invokeElectronSaveArchTool(input, hostAPI);
     case 'generate_schematic':
     case 'get_pinmap_summary':
     case 'get_component_catalog':
@@ -3027,6 +3052,49 @@ async function invokeElectronSyncAbsTool(input, hostAPI) {
     return toolError(result.content || 'syncAbs failed.');
   }
   return toolText(result?.content || formatExternalResult(result), result?.metadata);
+}
+
+async function invokeElectronSaveArchTool(input, hostAPI) {
+  const code = normalizeString(input?.code);
+  if (!code) {
+    return toolError('save_arch requires code.');
+  }
+  if (typeof hostAPI.fs?.writeFile !== 'function') {
+    return toolError('File system service is not available.');
+  }
+
+  let projectInfo = {};
+  try {
+    projectInfo = await hostAPI.project?.getProjectInfo?.() || {};
+  } catch {
+    projectInfo = {};
+  }
+
+  const activeProjectPath = normalizeString(projectInfo.currentProjectPath)
+    || normalizeString(projectInfo.projectPath)
+    || normalizeString(projectInfo.path);
+  const rootPath = normalizeString(projectInfo.projectRootPath)
+    || normalizeString(projectInfo.rootPath)
+    || normalizeString(projectInfo.workspaceRoot)
+    || normalizeString(hostAPI.project?.getProjectPath?.());
+  const targetDir = activeProjectPath || (rootPath ? path.join(rootPath, '.chat_history') : '');
+  if (!targetDir) {
+    return toolError('Unable to determine where to save arch.md.');
+  }
+
+  const archPath = path.join(targetDir, 'arch.md');
+  const content = `\`\`\`mermaid\n${code}\n\`\`\`\n`;
+  await fs.mkdir(path.dirname(archPath), { recursive: true });
+  await hostAPI.fs.writeFile(archPath, content, 'utf-8');
+  return toolText(`Saved architecture diagram to ${archPath}.`, {
+    path: archPath,
+    filePath: archPath,
+    artifact: {
+      kind: 'mermaid',
+      path: archPath,
+      code,
+    },
+  });
 }
 
 async function invokeElectronAnalyzeLibraryTool(input, hostAPI) {

@@ -8,6 +8,7 @@ import { AilyHost } from '../../core/host';
 import { AilyChatCodeComponent } from './aily-chat-code.component';
 import { ChatTerminalPartComponent } from './chat-terminal-part/chat-terminal-part.component';
 import { XAilyThinkViewerComponent } from './x-aily-think-viewer/x-aily-think-viewer.component';
+import { XAilyMermaidViewerComponent } from './x-aily-mermaid-viewer/x-aily-mermaid-viewer.component';
 import { AilyMarkdownExternalLinksDirective } from '../../directives/aily-markdown-external-links.directive';
 import type { ActivityGroupDisplayItem, ActivityToolbarActionDisplayData, ActivityToolHeaderDisplayData } from './chat-activity-group.types';
 import { XAilyConfirmationViewerComponent } from './x-aily-confirmation-viewer/x-aily-confirmation-viewer.component';
@@ -42,7 +43,7 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
 @Component({
   selector: 'aily-chat-activity-item',
   standalone: true,
-  imports: [CommonModule, TranslateModule, XMarkdownComponent, XAilyConfirmationViewerComponent, ChatTerminalPartComponent, XAilyThinkViewerComponent, AilyMarkdownExternalLinksDirective, forwardRef(() => ChatActivityItemComponent)],
+  imports: [CommonModule, TranslateModule, XMarkdownComponent, XAilyConfirmationViewerComponent, ChatTerminalPartComponent, XAilyThinkViewerComponent, XAilyMermaidViewerComponent, AilyMarkdownExternalLinksDirective, forwardRef(() => ChatActivityItemComponent)],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div
@@ -560,6 +561,33 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
                                             rootClassName="x-markdown-dark cag-item-markdown"
                                             ailyMarkdownExternalLinks
                                           />
+                                        </div>
+                                      }
+                                    </div>
+                                  } @else if (row.outputKind === 'mermaid') {
+                                    <div class="cag-item-invocation-output-subpart cag-item-invocation-output-mermaid">
+                                      <div class="cag-item-detail-row-head">
+                                        <span class="cag-item-detail-row-title">{{ row.title }}</span>
+                                        @if (row.trailing) {
+                                          <span class="cag-item-detail-row-pill" [attr.data-tone]="row.tone || 'neutral'">{{ row.trailing }}</span>
+                                        }
+                                      </div>
+                                      @if (row.subtitle) {
+                                        <div class="cag-item-detail-row-subtitle">{{ row.subtitle }}</div>
+                                      }
+                                      <x-aily-mermaid-viewer
+                                        [data]="{ code: row.outputCode || row.note || '' }"
+                                        [streamStatus]="'done'"
+                                        [mermaidInstance]="mermaidInstance"
+                                        (contentDelta)="emitContentDelta()"></x-aily-mermaid-viewer>
+                                      @if (row.outputLabel || row.outputMimeType) {
+                                        <div class="cag-item-invocation-output-resource-meta">
+                                          @if (row.outputLabel) {
+                                            <span class="cag-item-invocation-output-resource-label">{{ row.outputLabel }}</span>
+                                          }
+                                          @if (row.outputMimeType) {
+                                            <span class="cag-item-invocation-output-resource-mime">{{ row.outputMimeType }}</span>
+                                          }
                                         </div>
                                       }
                                     </div>
@@ -2274,7 +2302,9 @@ export class ChatActivityItemComponent implements OnChanges {
 
   detailExpanded = false;
   stableToolHeader: ActivityToolHeaderDisplayData | null = null;
+  mermaidInstance: any = null;
   private stableToolHeaderItemId = '';
+  private mermaidLoading = false;
 
   emitContentDelta(): void {
     this.contentDelta.emit();
@@ -2363,6 +2393,7 @@ export class ChatActivityItemComponent implements OnChanges {
       if (this.detailExpanded) {
         this.ensureLazyDetailLoaded();
       }
+      void this.ensureMermaidInstance();
 
       this.syncStableToolHeader(isSameItem);
       this.lastAutoDetailExpanded = nextAutoDetailExpanded;
@@ -2751,6 +2782,7 @@ export class ChatActivityItemComponent implements OnChanges {
     const nextExpanded = !this.detailExpanded;
     if (nextExpanded) {
       this.ensureLazyDetailLoaded();
+      void this.ensureMermaidInstance();
     }
     this.detailExpanded = nextExpanded;
   }
@@ -2778,6 +2810,72 @@ export class ChatActivityItemComponent implements OnChanges {
       `id=${this.item.id},kind=${this.item.detailKind || 'unknown'},sections=${detail.detailSections?.length || 0}`,
       { slowThresholdMs: 8 },
     );
+  }
+
+  private async ensureMermaidInstance(): Promise<void> {
+    if (this.mermaidInstance || this.mermaidLoading || !this.hasMermaidRows()) {
+      return;
+    }
+
+    this.mermaidLoading = true;
+    try {
+      const module = await import('mermaid');
+      this.mermaidInstance = module.default ?? module;
+      this.cdr.markForCheck();
+    } finally {
+      this.mermaidLoading = false;
+    }
+  }
+
+  private hasMermaidRows(): boolean {
+    return this.collectMermaidRows(this.getDetailSectionsForMermaid()).length > 0;
+  }
+
+  private getDetailSectionsForMermaid(): readonly DetailSectionDescriptor[] {
+    if (!this.item) {
+      return [];
+    }
+    const sections: readonly DetailSectionDescriptor[] = [
+      ...(this.item.detailSections || []),
+      ...(this.item.invocationDetail?.progressSection ? [this.item.invocationDetail.progressSection] : []),
+      ...(this.item.invocationDetail?.argsSection ? [this.item.invocationDetail.argsSection] : []),
+      ...(this.item.invocationDetail?.outputSections || []),
+      ...(this.item.invocationDetail?.historySections || []),
+    ];
+
+    return sections;
+  }
+
+  private collectMermaidRows(sections: readonly DetailSectionDescriptor[]): readonly StateDetailRow[] {
+    const rows: StateDetailRow[] = [];
+    const seen = new Set<string>();
+    for (const section of sections) {
+      for (const row of section.rows || []) {
+        this.addMermaidRow(rows, seen, row);
+      }
+      for (const group of section.outputGroups || []) {
+        for (const row of group.rows || []) {
+          this.addMermaidRow(rows, seen, row);
+        }
+      }
+    }
+    return rows;
+  }
+
+  private addMermaidRow(rows: StateDetailRow[], seen: Set<string>, row: StateDetailRow): void {
+    if (row.outputKind !== 'mermaid') {
+      return;
+    }
+    const code = row.outputCode || row.note || '';
+    if (!code.trim()) {
+      return;
+    }
+    const key = row.id || `${row.title || 'mermaid'}:${code}`;
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    rows.push(row);
   }
 
   getOutputImageSource(row: StateDetailRow): string | null {

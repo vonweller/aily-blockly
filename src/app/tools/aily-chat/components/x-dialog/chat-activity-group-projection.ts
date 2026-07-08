@@ -190,6 +190,7 @@ export function getPreparedDetailSections(part: ChatPart): readonly DetailSectio
 
     const sections = buildToolCallDetailSections({
       id: part.toolCallId,
+      toolName: part.toolName,
       metadata: part.metadata || null,
       args: part.args,
       text: part.text,
