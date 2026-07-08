@@ -171,6 +171,39 @@ function createHandler(services) {
     const validationResults = services.awsService.validateConnectionGraph(jsonData);
     const errors = validationResults.filter((item) => item.level === 'error');
     const warnings = validationResults.filter((item) => item.level === 'warning');
+    const existingJsonData = services.awsService.getConnectionGraph(currentProjectPath);
+    const jsonUnchanged = existingJsonData && JSON.stringify(existingJsonData) === JSON.stringify(jsonData);
+
+    if (jsonUnchanged) {
+      return {
+        is_error: false,
+        content: JSON.stringify({
+          valid: errors.length === 0,
+          saved: true,
+          unchanged: true,
+          runtimeSync: {
+            ok: true,
+            saved: true,
+            windowUpdated: false,
+            skipped: true,
+          },
+          summary: {
+            totalConnections: jsonData.connections.length,
+            totalComponents: jsonData.components.length,
+            errors: errors.length,
+            warnings: warnings.length,
+          },
+          issues: validationResults.length > 0 ? validationResults : undefined,
+          message: errors.length === 0
+            ? (warnings.length > 0
+              ? `连线配置基本安全，但有 ${warnings.length} 条警告需要注意。JSON 未变化，已忽略重复保存。`
+              : '连线配置未变化，已忽略重复保存。')
+            : `发现 ${errors.length} 个安全问题。JSON 未变化，已忽略重复保存。`,
+          awsWarnings: parsed.warnings.length > 0 ? parsed.warnings : undefined,
+          tip: '用户可以点击右侧工具栏的「电路连接」按钮查看连线图。',
+        }, null, 2),
+      };
+    }
 
     if (awsContent) {
       services.awsService.saveAWSFile(awsContent, currentProjectPath);
