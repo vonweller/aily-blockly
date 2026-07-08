@@ -229,7 +229,11 @@ class ChatRuntimeHostExecutionHostController {
       return;
     }
     if (message.type === 'event') {
-      this.runtimeHostService.handleRuntimeOwnerTransportEvent(message.payload || {});
+      void this.runtimeHostService.handleRuntimeOwnerTransportEvent(message.payload || {}).catch(error => {
+        console.warn('[AilyChat][ExecutionHost] Ignored runtime owner event:', {
+          message: error && error.message ? error.message : String(error || 'Unknown runtime owner event error'),
+        });
+      });
       return;
     }
     if (message.type === 'ready') {

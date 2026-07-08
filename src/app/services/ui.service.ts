@@ -301,9 +301,21 @@ export class UiService {
     this.openTool('aily-chat');
     const deliver = () => {
       if (ChatService.isReady) {
+        console.info('[AilyChat][ExternalInputDelivery]', {
+          phase: 'deliver',
+          target: 'chat-service',
+          textLength: typeof text === 'string' ? text.length : 0,
+          autoSend: options?.['autoSend'] === true,
+        });
         ChatService.sendToChat(text, options);
         return;
       }
+      console.info('[AilyChat][ExternalInputDelivery]', {
+        phase: 'deliver',
+        target: 'ui-subject',
+        textLength: typeof text === 'string' ? text.length : 0,
+        autoSend: options?.['autoSend'] === true,
+      });
       this.chatMessageSubject.next({ text, options });
     };
     setTimeout(deliver, 0);

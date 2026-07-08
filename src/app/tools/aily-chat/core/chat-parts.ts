@@ -282,6 +282,25 @@ export interface SubagentToolCallSnapshot {
   _toolTimers?: Record<string, unknown>;
 }
 
+export function normalizeSubagentToolCallState(value: unknown): SubagentToolCallSnapshot['state'] {
+  if (value === 'done'
+    || value === 'completed'
+    || value === 'complete'
+    || value === 'success'
+    || value === 'succeeded') {
+    return 'done';
+  }
+  if (value === 'error'
+    || value === 'failed'
+    || value === 'failure'
+    || value === 'cancelled'
+    || value === 'canceled'
+    || value === 'stopped') {
+    return 'error';
+  }
+  return 'doing';
+}
+
 export interface PlanStep {
   id: string;
   text: string;
@@ -669,11 +688,13 @@ function stripLegacySubagentToolSpecificData(record: Record<string, unknown>): R
 }
 
 function subagentStateToToolState(state: SubagentToolCallSnapshot['state']): ToolCallPart['state'] {
-  return state === 'error' ? 'error' : state === 'done' ? 'done' : 'doing';
+  const normalized = normalizeSubagentToolCallState(state);
+  return normalized === 'error' ? 'error' : normalized === 'done' ? 'done' : 'doing';
 }
 
 function subagentStateToNarrativePhase(state: SubagentToolCallSnapshot['state']): 'started' | 'completed' | 'failed' {
-  return state === 'error' ? 'failed' : state === 'done' ? 'completed' : 'started';
+  const normalized = normalizeSubagentToolCallState(state);
+  return normalized === 'error' ? 'failed' : normalized === 'done' ? 'completed' : 'started';
 }
 
 export function mkSubagentTimelineEntry(entry: {
@@ -749,7 +770,7 @@ export function toolCallPartToSubagentSnapshot(part: ToolCallPart): SubagentTool
       || asString(metadata['pastTenseMessage'])
       || part.toolName
       || 'Agent',
-    state: part.state === 'error' ? 'error' : part.state === 'doing' ? 'doing' : 'done',
+    state: normalizeSubagentToolCallState(part.state),
     resultText: asString(toolSpecificData['result']) || '',
     childItems,
     metadata,

@@ -14,6 +14,7 @@ import {
   isTerminalCommandToolName,
   normalizeReadSideToolName,
 } from '../core/tool-name-normalizer';
+import { normalizeToolApprovalArgs, readToolApprovalCommand } from '../core/tool-approval-input';
 import { AilyHost } from '../core/host';
 import { chatI18n } from './chat-i18n';
 import { normalizeToolApprovalRequest } from './tool-approval-ui';
@@ -250,9 +251,7 @@ export class UserInteractionHelper {
   ): Promise<{ approved: true } | { approved: false; reason?: string }> {
     const normalizedRequest = normalizeToolApprovalRequest({
       ...request,
-      args: request.args && typeof request.args === 'object'
-        ? request.args as Record<string, unknown>
-        : {},
+      args: normalizeToolApprovalArgs(request.toolName, request.args, request.message || request.title),
     });
     const autoApproval = this.evaluateAutoApproval(normalizedRequest);
     this.logToolApprovalTrace('handle-auto-check', normalizedRequest, autoApproval);
@@ -281,9 +280,7 @@ export class UserInteractionHelper {
   ): Promise<{ approved: true } | { approved: false; reason?: string }> {
     const normalizedRequest = normalizeToolApprovalRequest({
       ...request,
-      args: request.args && typeof request.args === 'object'
-        ? request.args as Record<string, unknown>
-        : {},
+      args: normalizeToolApprovalArgs(request.toolName, request.args, request.message || request.title),
     });
     const autoApproval = this.evaluateAutoApproval(normalizedRequest, { ignoreAllowAutoConfirm: true });
     this.logToolApprovalTrace('preflight', normalizedRequest, autoApproval);
@@ -301,7 +298,7 @@ export class UserInteractionHelper {
     const input = request.args && typeof request.args === 'object'
       ? request.args as Record<string, unknown>
       : {};
-    const command = normalizeTerminalCommand(input['command']);
+    const command = normalizeTerminalCommand(readToolApprovalCommand(toolName, input, request.message));
     const combinationKey = typeof request.approveCombination?.key === 'string'
       ? request.approveCombination.key.trim()
       : '';
@@ -448,7 +445,7 @@ export class UserInteractionHelper {
     }
 
     if (isTerminalApprovalTool(toolName)) {
-      const command = normalizeTerminalCommand(input['command']);
+      const command = normalizeTerminalCommand(readToolApprovalCommand(toolName, input, request.message));
       if (normalizedScope === 'session-all-terminal') {
         this.ctx.toolApprovalPolicy.setSessionTerminalAutoApproval(sessionResource, true);
         this.logToolApprovalTrace('remember', request, undefined, {
@@ -539,7 +536,7 @@ export class UserInteractionHelper {
       rawToolName: request.toolName,
       normalizedToolName,
       sessionResource: evaluation?.sessionResource ?? extra?.['sessionResource'],
-      command: evaluation?.command ?? normalizeTerminalCommand(input['command']),
+      command: evaluation?.command ?? normalizeTerminalCommand(readToolApprovalCommand(normalizedToolName, input, request.message)),
       allowAutoConfirm: evaluation?.allowAutoConfirm ?? request.allowAutoConfirm !== false,
       approved: evaluation?.approved,
       reason: evaluation?.reason,

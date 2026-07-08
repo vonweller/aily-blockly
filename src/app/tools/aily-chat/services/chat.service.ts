@@ -1160,8 +1160,15 @@ export class ChatService {
       ?? this.currentSessionApprovalsReviewer
       ?? this.ailyChatConfigService.getLexApprovalsReviewer?.();
     const approvalPolicy = normalizeChatSessionApprovalPolicy(providerOptions?.approvalPolicy)
+      ?? (permissionMode === 'bypassPermissions' ? 'never' : undefined)
       ?? this.currentSessionApprovalPolicy
       ?? this.ailyChatConfigService.getLexApprovalPolicy?.();
+    const hadProviderOptionsChange = this.currentSessionPath !== folderPath
+      || this.currentSessionPermissionMode !== (permissionMode === 'bypassPermissions' ? DEFAULT_CHAT_SESSION_PERMISSION_MODE : permissionMode)
+      || this.currentSessionPermissionProfile !== permissionProfile
+      || this.currentSessionPermissionLevel !== permissionLevel
+      || this.currentSessionApprovalsReviewer !== approvalsReviewer
+      || this.currentSessionApprovalPolicy !== approvalPolicy;
 
     this.currentSessionPath = folderPath;
     this.currentSessionPermissionMode = permissionMode === 'bypassPermissions'
@@ -1172,7 +1179,7 @@ export class ChatService {
     this.currentSessionApprovalsReviewer = approvalsReviewer;
     this.currentSessionApprovalPolicy = approvalPolicy;
 
-    return {
+    const normalizedProviderOptions = {
       folderPath,
       permissionMode: this.currentSessionPermissionMode,
       permissionProfile,
@@ -1180,6 +1187,48 @@ export class ChatService {
       ...(approvalsReviewer ? { approvalsReviewer } : {}),
       ...(approvalPolicy ? { approvalPolicy } : {}),
     };
+    this.applyCurrentSessionProviderSelections(normalizedProviderOptions, {
+      notify: !hadProviderOptionsChange,
+    });
+    return normalizedProviderOptions;
+  }
+
+  private applyCurrentSessionProviderSelections(
+    providerOptions: HostSessionProviderOptions,
+    options?: {
+      readonly notify?: boolean;
+    },
+  ): void {
+    let nextSelections = { ...this._currentSessionProviderSelections };
+
+    if (providerOptions.folderPath) {
+      nextSelections = {
+        ...nextSelections,
+        [HOST_SESSION_FOLDER_OPTION_ID]: providerOptions.folderPath,
+        [AILY_AGENT_REPOSITORY_OPTION_ID]: providerOptions.folderPath,
+      };
+    }
+
+    nextSelections = {
+      ...nextSelections,
+      [HOST_SESSION_PERMISSION_MODE_OPTION_ID]: providerOptions.permissionMode,
+      [HOST_SESSION_PERMISSION_PROFILE_OPTION_ID]: providerOptions.permissionProfile ?? DEFAULT_CHAT_SESSION_PERMISSION_PROFILE,
+      ...(providerOptions.approvalsReviewer
+        ? { [HOST_SESSION_APPROVALS_REVIEWER_OPTION_ID]: providerOptions.approvalsReviewer }
+        : {}),
+      ...(providerOptions.approvalPolicy
+        ? { approvalPolicy: providerOptions.approvalPolicy }
+        : {}),
+    };
+
+    if (this.areProviderSelectionsEqual(this._currentSessionProviderSelections, nextSelections)) {
+      return;
+    }
+
+    this._currentSessionProviderSelections = nextSelections;
+    if (options?.notify !== false) {
+      this.notifySessionInputStateChanged();
+    }
   }
 
   applySessionIdentity(identity?: ChatServiceSessionIdentity | null): void {

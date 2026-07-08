@@ -9,7 +9,10 @@ import { LogService } from '../../../services/log.service';
 import { ConfigService } from '../../../services/config.service';
 import { ActionState } from '../../../services/ui.service';
 import { ActionService } from '../../../services/action.service';
-import { arduinoGenerator } from '../components/blockly/generators/arduino/arduino';
+import {
+  arduinoGenerator,
+  normalizeArduinoGeneratedCode,
+} from '../components/blockly/generators/arduino/arduino';
 
 import { BlocklyService as BlocklyService } from './blockly.service';
 
@@ -188,7 +191,7 @@ export class _BuilderService {
     await this.waitForOneIdleBoundary();
     return this.runBuilderPreprocessPhase(
       'workspace_to_code',
-      () => arduinoGenerator.workspaceToCode(workspace as any) || '',
+      () => normalizeArduinoGeneratedCode(arduinoGenerator.workspaceToCode(workspace as any)),
       detail,
     );
   }

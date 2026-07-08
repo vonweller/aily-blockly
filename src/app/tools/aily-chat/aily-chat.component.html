@@ -60,6 +60,7 @@
     (selectSession)="handleSessionSelection($event)"
     (preloadSession)="handleSessionPreload($event)"
     (actionClick)="handleSessionAction($event)"
+    (overflowOpenChange)="handleSessionOverflowOpenChange($event)"
     (retryRequested)="handleSessionListRetry()"
     (newSession)="requestNewChat()"></aily-chat-session-list>
 </ng-template>
@@ -138,7 +139,8 @@
     @if (paneStageSurfaceModel; as paneStageSurface) {
     <div
       class="chat-main-layout"
-      [class.has-session-sidebar]="paneStageSurface.showSidebarSessionList">
+      [class.has-session-sidebar]="paneStageSurface.showSidebarSessionList"
+      [class.session-overflow-menu-open]="sessionOverflowMenuOpen">
       @if (paneStageSurface.showSidebarSessionList) {
       @if (paneStageSurface.sidebarSessionListSurface; as sidebarSessionSurface) {
       <div

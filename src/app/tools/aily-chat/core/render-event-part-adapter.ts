@@ -24,6 +24,7 @@ import {
   type StatePart,
   type SubagentToolCallSnapshot,
   mkSubagentTimelineEntry,
+  normalizeSubagentToolCallState,
   mkTerminal,
   mkToolCall,
   mkState,
@@ -63,6 +64,7 @@ export type RenderEventPartStoreAccess = Pick<
   | 'upsertSubagentForHandle'
   | 'updateConfirmationResultForHandle'
   | 'updateSubagentForHandle'
+  | 'finalizeSubagentScopedPartsForHandle'
   | 'upsertTerminalForHandle'
 >;
 
@@ -181,6 +183,7 @@ export class RenderEventPartAdapter {
   private _planStreamState: 'markdown' | 'plan' = 'markdown';
   private _planStreamBuffer = '';
   private readonly _toolOriginHandles = new Map<string, ChatPartStoreOpaqueHandle>();
+  private readonly _toolInputs = new Map<string, unknown>();
 
   constructor(store: RenderEventPartStoreAccess) {
     this._store = store;
@@ -221,9 +224,11 @@ export class RenderEventPartAdapter {
       case 'tool_call_begin':
         if (this._isTerminalSessionToolCoveredByTerminal(handle, event)) {
           this._rememberToolOrigin(event.toolCallId, handle, eventScope(event));
+          this._rememberToolInput(event.toolCallId, event.input, eventScope(event));
           return finish(false, 'terminal_tool_call_begin_covered');
         }
         this._rememberToolOrigin(event.toolCallId, handle, eventScope(event));
+        this._rememberToolInput(event.toolCallId, event.input, eventScope(event));
         this._store.addPartToHandle(handle, mkToolCall(
           event.toolCallId,
           event.toolName,
@@ -323,6 +328,7 @@ export class RenderEventPartAdapter {
 
       case 'approval_request':
         if (isToolExecutionApprovalEvent(event)) {
+          this._rememberToolInput(event.toolCallId, event.input, eventScope(event));
           this._store.patchToolCallForHandle(
             this._findToolCallHandle(event.toolCallId, handle, eventScope(event)),
             event.toolCallId,
@@ -401,7 +407,18 @@ export class RenderEventPartAdapter {
         if (!this._hasExactToolCallHandle(event.toolCallId, handle)) {
           recordScopedSubagentToolHandleMiss(event, 'subagent_end');
         }
-        this._store.updateSubagentForHandle(toolHandle, event.toolCallId, event.state, event.resultText);
+        const state = normalizeSubagentToolCallState(event.state || 'done');
+        this._store.updateSubagentForHandle(
+          toolHandle,
+          event.toolCallId,
+          state,
+          event.resultText,
+        );
+        this._store.finalizeSubagentScopedPartsForHandle(toolHandle, {
+          subAgentInvocationId: event.subAgentInvocationId,
+          parentToolCallId: event.toolCallId,
+          toolCallId: event.toolCallId,
+        }, { status: state === 'error' ? 'error' : 'completed' });
         return finish(true);
       }
 
@@ -423,6 +440,7 @@ export class RenderEventPartAdapter {
     this._planStreamState = 'markdown';
     this._planStreamBuffer = '';
     this._toolOriginHandles.clear();
+    this._toolInputs.clear();
   }
 
   finalize(handle: ChatPartStoreOpaqueHandle | null): void {
@@ -568,29 +586,35 @@ export class RenderEventPartAdapter {
     event: Extract<RenderEvent, { type: 'tool_call_progress' }>,
   ): boolean {
     const scope = eventScope(event);
+    const toolHandle = this._findToolCallHandle(event.toolCallId, fallbackHandle, scope);
     const commandOutput = normalizeCommandOutputProgress(event.data);
     if (commandOutput) {
-      const terminal = commandTerminalUpdateToPart(commandOutput, event.toolCallId, true);
+      const terminal = commandTerminalUpdateToPart(
+        this._withInheritedTerminalCommand(commandOutput, event.toolCallId, toolHandle, scope),
+        event.toolCallId,
+        true,
+      );
       if (scope) {
         Object.assign(terminal, scope);
       }
-      const toolHandle = this._findToolCallHandle(event.toolCallId, fallbackHandle, scope);
       this._store.upsertTerminalForHandle(toolHandle ?? fallbackHandle, terminal);
       return true;
     }
 
     const commandSession = normalizeCommandSessionUpdate(event.data);
     if (commandSession) {
-      const terminal = commandTerminalUpdateToPart(commandSession, event.toolCallId, false);
+      const terminal = commandTerminalUpdateToPart(
+        this._withInheritedTerminalCommand(commandSession, event.toolCallId, toolHandle, scope),
+        event.toolCallId,
+        false,
+      );
       if (scope) {
         Object.assign(terminal, scope);
       }
-      const toolHandle = this._findToolCallHandle(event.toolCallId, fallbackHandle, scope);
       this._store.upsertTerminalForHandle(toolHandle ?? fallbackHandle, terminal);
       return true;
     }
 
-    const toolHandle = this._findToolCallHandle(event.toolCallId, fallbackHandle, scope);
     if (!this._hasExactToolCallHandle(event.toolCallId, fallbackHandle, scope)) {
       recordScopedSubagentToolHandleMiss(event, 'tool_call_progress');
     }
@@ -697,6 +721,38 @@ export class RenderEventPartAdapter {
     this._toolOriginHandles.set(this._toolOriginKey(toolCallId, scope), handle);
   }
 
+  private _rememberToolInput(toolCallId: string, input: unknown, scope?: ChatPartScope): void {
+    this._toolInputs.set(this._toolOriginKey(toolCallId, scope), input);
+    this._toolInputs.set(this._toolOriginKey(toolCallId), input);
+  }
+
+  private _readToolInput(toolCallId: string, scope?: ChatPartScope): unknown {
+    return this._toolInputs.get(this._toolOriginKey(toolCallId, scope))
+      ?? this._toolInputs.get(this._toolOriginKey(toolCallId));
+  }
+
+  private _withInheritedTerminalCommand<T extends { command: string }>(
+    update: T,
+    toolCallId: string,
+    toolHandle: ChatPartStoreOpaqueHandle | null,
+    scope?: ChatPartScope,
+  ): T {
+    if (asTerminalCommand(update.command)) {
+      return update;
+    }
+
+    const storedInput = asRecord(this._readToolInput(toolCallId, scope));
+    const toolPartInput = toolHandle
+      ? asRecord(this._findToolCallPart(toolHandle, toolCallId)?.args)
+      : undefined;
+    const command = asTerminalCommand(storedInput?.['command'])
+      ?? asTerminalCommand(storedInput?.['cmd'])
+      ?? asTerminalCommand(toolPartInput?.['command'])
+      ?? asTerminalCommand(toolPartInput?.['cmd']);
+
+    return command ? { ...update, command } : update;
+  }
+
   private _toolOriginKey(toolCallId: string, scope?: ChatPartScope): string {
     const normalizedScope = normalizeChatPartScope(scope);
     return [
@@ -755,6 +811,7 @@ export class RenderEventPartAdapter {
     }
 
     const toolHandle = this._findToolCallHandle(event.toolCallId, handle, eventScope(event));
+    Object.assign(terminal, this._withInheritedTerminalCommand(terminal, event.toolCallId, toolHandle, scope));
     this._store.upsertTerminalForHandle(toolHandle ?? handle, terminal);
     return true;
   }
@@ -1092,6 +1149,21 @@ function asString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
 }
 
+function isPlaceholderTerminalCommand(value: unknown): boolean {
+  if (typeof value !== 'string') {
+    return false;
+  }
+  const normalized = value.trim().toLowerCase();
+  return normalized === 'undefined'
+    || normalized === 'null'
+    || normalized === 'terminal command';
+}
+
+function asTerminalCommand(value: unknown): string | undefined {
+  const command = asString(value);
+  return command && !isPlaceholderTerminalCommand(command) ? command : undefined;
+}
+
 function asNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
@@ -1260,7 +1332,7 @@ function subagentStateUpdateToSnapshot(
     subAgentInvocationId: asString(metadata['subAgentInvocationId']) || toolCallId,
     agentName,
     description,
-    state: event.state === 'error' ? 'error' as const : event.state === 'done' ? 'done' as const : 'doing' as const,
+    state: normalizeSubagentToolCallState(event.state),
     resultText: asString(metadata['resultText']) || asString(metadata['result']) || '',
     childItems: [],
     metadata: {
@@ -1372,7 +1444,7 @@ function normalizeCommandOutputProgress(data: unknown): {
   }
 
   const stream = asString(record['stream']) === 'stderr' ? 'stderr' : 'stdout';
-  const command = asString(record['command']) || 'terminal command';
+  const command = asTerminalCommand(record['command']) ?? '';
   return {
     command,
     stdout: stream === 'stdout' ? text : '',
@@ -1408,7 +1480,7 @@ function normalizeCommandSessionUpdate(data: unknown): {
   }
 
   return {
-    command: asString(record['command']) || 'terminal command',
+    command: asTerminalCommand(record['command']) ?? '',
     stdout: typeof record['stdout'] === 'string' ? record['stdout'] : '',
     stderr: typeof record['stderr'] === 'string' ? record['stderr'] : '',
     processId: asString(record['processId']),

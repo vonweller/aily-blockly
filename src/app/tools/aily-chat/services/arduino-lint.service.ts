@@ -1,6 +1,7 @@
 ﻿import { Injectable } from '@angular/core';
 import { AilyHost } from '../core/host';
 import { isAilyCategoryDebugEnabled } from '../core/chat-debug-flags';
+import { normalizeArduinoGeneratedCode } from '../../../editors/blockly-editor/components/blockly/generators/arduino/arduino';
 
 // Arduino 代码检查器
 declare const arduinoGenerator: any;
@@ -267,7 +268,7 @@ export class ArduinoLintService {
   async checkCurrentWorkspace(options: LintOptions = {}): Promise<LintResult> {
     try {
       // 从 Blockly 工作区生成代码
-      const code = arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
+      const code = normalizeArduinoGeneratedCode(arduinoGenerator.workspaceToCode(this.blocklyService.workspace));
       
       if (!code || code.trim().length === 0) {
         return {

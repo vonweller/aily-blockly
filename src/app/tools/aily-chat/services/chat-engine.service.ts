@@ -145,12 +145,13 @@ import { MenuManagerService } from './menu-manager.service';
 import { ChatMessage, ToolCallState, ResourceItem } from '../core/chat-types';
 import { AilyHost } from '../core/host';
 import { mkdir as mkdirAsync, writeFile as writeFileAsync } from '../core/async-fs';
-import type { MetricsSnapshot, TurnRequest, TurnResponsePart, TurnResponseStatus, TurnResponseTurn } from 'aily-lex/browser';
+import type { MetricsSnapshot, RenderEvent, TurnRequest, TurnResponsePart, TurnResponseStatus, TurnResponseTurn } from 'aily-lex/browser';
 
 import { ChatTitleCoordinator } from '../helpers/chat-title-coordinator';
 import { ChatTitleRequestService } from '../helpers/chat-title-request.service';
 import { MessageDisplayHelper } from '../helpers/message-display.helper';
 import { SessionLifecycleHelper } from '../helpers/session-lifecycle.helper';
+import { SchematicIframeProgressProjector } from '../helpers/schematic-iframe-progress-projector';
 import { createSessionLifecycleHostSessionSaveBridge } from '../helpers/session-lifecycle-save-bridge';
 import { getUserSelectedToolsForRequest } from '../helpers/lex-agent-bootstrap';
 import type {
@@ -516,6 +517,23 @@ function isRuntimeInteractionProjectionTraceEnabled(): boolean {
     '__AILY_CHAT_TRACE_RUNTIME_INTERACTION__',
     'AILY_CHAT_TRACE_RUNTIME_INTERACTION',
   ]);
+}
+
+function isActiveTurnDurabilityTraceEnabled(): boolean {
+  return isAilyCategoryDebugEnabled('aily.chat.traceActiveTurnDurability', [
+    '__AILY_CHAT_TRACE_ACTIVE_TURN_DURABILITY__',
+    'AILY_CHAT_TRACE_ACTIVE_TURN_DURABILITY',
+  ]);
+}
+
+function traceActiveTurnDurability(phase: string, details: Record<string, unknown>): void {
+  if (!isActiveTurnDurabilityTraceEnabled()) {
+    return;
+  }
+  console.info('[AilyChat][ActiveTurnDurability]', {
+    phase,
+    ...details,
+  });
 }
 
 type PendingPlanReview = NonNullable<ReturnType<typeof readPendingPlanReview>>;
@@ -1128,6 +1146,7 @@ export class ChatEngineService implements IChatContext {
   private readonly uiService = inject(UiService);
   private readonly electronRuntimeHost = createElectronChatRuntimeHostTransport();
   private readonly runtimeViewId = createRuntimeViewId('aily-chat-visible-transcript');
+  private schematicIframeProgressProjector: SchematicIframeProgressProjector | null = null;
 
   private readonly entryPartStore = new ChatPartStore();
   // ==================== Part-based 消息模型（Phase 1） ====================
@@ -1976,6 +1995,22 @@ export class ChatEngineService implements IChatContext {
     this.chatHistoryService.markDirty(targetSessionId);
   }
 
+  private markRuntimeHostRecoverySnapshotDirty(
+    sessionId: string,
+    options?: { readonly flush?: 'immediate' | 'scheduled' },
+  ): void {
+    this.markHistoryDirty(sessionId);
+    traceActiveTurnDurability(options?.flush === 'immediate' ? 'part-delta-immediate' : 'part-delta', {
+      sessionId,
+      flush: options?.flush ?? 'scheduled',
+    });
+    if (options?.flush === 'immediate') {
+      this.chatHistoryService.flushSession(sessionId);
+      return;
+    }
+    this.chatHistoryService.scheduleRecoverySnapshotFlush(sessionId);
+  }
+
   private setCurrentViewVisibleProjectionList(list: ChatMessage[]): void {
     this.markCurrentViewVisibleProjectionOwner();
     this.list = list;
@@ -2175,16 +2210,13 @@ export class ChatEngineService implements IChatContext {
 
   private syncCurrentSessionEntryTargetRuntimeMode(sessionId?: string | null): void {
     const currentSessionId = resolveOptionalUiSessionOwner(this, sessionId);
-    const providerOptions = this.resolveVisibleSessionProviderOptionsSnapshot(currentSessionId);
-    const projectPath = providerOptions.folderPath ?? null;
-
-    this.chatSessionEntryStateService?.setEntryProviderOptions?.(providerOptions, projectPath);
-
     if (!currentSessionId) {
       return;
     }
 
+    const providerOptions = this.resolveVisibleSessionProviderOptionsSnapshot(currentSessionId);
     const selectedMode = this.resolveVisibleSelectedModeSnapshot(currentSessionId);
+    const projectPath = providerOptions.folderPath ?? null;
 
     this.chatSessionEntryStateService?.setSessionEntryTarget({
       sessionId: currentSessionId,
@@ -2273,20 +2305,13 @@ export class ChatEngineService implements IChatContext {
     }
 
     this.rememberRuntimeSessionProviderOptions(targetSessionId, nextProviderOptions);
-    this.chatService.setCurrentSessionPermissionMode(nextProviderOptions.permissionMode);
-    this.chatService.setCurrentSessionPermissionProfile?.(nextProviderOptions.permissionProfile);
-    this.chatService.setCurrentSessionPermissionLevel(nextProviderOptions.permissionLevel);
-    this.chatService.setCurrentSessionApprovalsReviewer?.(nextProviderOptions.approvalsReviewer);
-    this.chatService.setCurrentSessionApprovalPolicy?.(nextProviderOptions.approvalPolicy);
-    this.chatSessionEntryStateService?.setEntryProviderOptions?.(
-      nextProviderOptions,
-      nextProviderOptions.folderPath ?? this.getCurrentProjectPath(),
-    );
+    this.chatService.applySessionProviderOptions(nextProviderOptions);
     this.syncExecutionModeGuidanceNotice(
       nextProviderOptions.permissionLevel,
       nextProviderOptions.approvalsReviewer,
       nextProviderOptions.approvalPolicy,
     );
+    this.syncCurrentSessionEntryTargetRuntimeMode(targetSessionId);
   }
 
   get currentCustomAgentTarget() { return this.resolveVisibleSelectedModeSnapshot().customAgentTarget; }
@@ -3657,6 +3682,34 @@ export class ChatEngineService implements IChatContext {
     this.viewAdapter.setCdCallback(cb);
   }
 
+  /** Project schematic subagent progress into the connection-graph iframe notice channel. */
+  setSchematicIframeProgressTarget(target: { emitNotice?: (opts: {
+    title?: string;
+    text?: string;
+    state?: string;
+    showProgress?: boolean;
+    setTimeout?: number;
+    sendToLog?: boolean;
+  }) => void } | null | undefined): void {
+    this.schematicIframeProgressProjector = target
+      ? new SchematicIframeProgressProjector(target)
+      : null;
+  }
+
+  projectExecutionRenderEvent(
+    sessionId: string | null | undefined,
+    event: RenderEvent,
+    request?: {
+      readonly sessionId: string;
+      readonly requestText: string;
+      readonly displayText?: string;
+      readonly metadata?: TurnRequest['metadata'] | null;
+      readonly activeResponseHandle?: unknown;
+    } | null,
+  ): void {
+    this.schematicIframeProgressProjector?.process(sessionId, event, request);
+  }
+
   /** AI 编辑完成后在内嵌 Coder 打开 DiffEditor 预览（与 autoSaveEdits / 摘要 UI 解耦） */
   triggerAiEditDiffPreview(summary: EditsSummary | null): void {
     const workspaceRoot = this.prjPath || this.prjRootPath;
@@ -3705,6 +3758,20 @@ export class ChatEngineService implements IChatContext {
       this.chatService.clearResolvedActiveModel?.();
     }
 
+    const visibleProjectionSessionId = typeof this.visibleProjectionSessionId === 'string'
+      ? this.visibleProjectionSessionId.trim()
+      : '';
+    const resolveCurrentViewSessionResource = (
+      (this as unknown as { resolveCurrentViewSessionResource?: ChatEngineService['resolveCurrentViewSessionResource'] }).resolveCurrentViewSessionResource
+      ?? ChatEngineService.prototype['resolveCurrentViewSessionResource']
+    );
+    const resolveActiveRuntimeSessionId = (
+      (this as unknown as { resolveActiveRuntimeSessionId?: ChatEngineService['resolveActiveRuntimeSessionId'] }).resolveActiveRuntimeSessionId
+      ?? ChatEngineService.prototype['resolveActiveRuntimeSessionId']
+    );
+    const resetTurnsSessionId = resolveCurrentViewSessionResource.call(this)
+      || visibleProjectionSessionId
+      || resolveActiveRuntimeSessionId.call(this);
     const detachVisibleTranscript = (
       (this as unknown as { detachVisibleTranscript?: ChatEngineService['detachVisibleTranscript'] }).detachVisibleTranscript
       ?? ChatEngineService.prototype['detachVisibleTranscript']
@@ -3715,6 +3782,18 @@ export class ChatEngineService implements IChatContext {
     this.clearVisibleChatView({ detectChanges: options.detectChanges });
 
     if (options.clearTurns === true) {
+      const replaceSessionModelTurnResponses = (this as unknown as {
+        replaceSessionModelTurnResponses?: (
+          sessionId: string | null | undefined,
+          turnResponses: readonly TurnResponseTurn[] | null | undefined,
+          ownerPolicy?: ChatSessionTurnOwnerPolicyOptions,
+        ) => readonly TurnResponseTurn[] | null;
+      }).replaceSessionModelTurnResponses;
+      if (resetTurnsSessionId && typeof replaceSessionModelTurnResponses === 'function') {
+        replaceSessionModelTurnResponses.call(this, resetTurnsSessionId, [], {
+          source: 'visible-session-projection-reset',
+        });
+      }
       this.lexStream.turns.clear();
     }
     if (options.resetToolCallingIteration === true) {
@@ -5411,7 +5490,21 @@ export class ChatEngineService implements IChatContext {
     });
 
     switch (event.kind) {
+      case 'runtimeProjectPathUpdated':
+        this.applyRuntimeProjectPathUpdatedEvent(targetSessionId, event);
+        return;
       case 'turnProgress':
+        if (event.renderEvent) {
+          this.projectExecutionRenderEvent(targetSessionId, event.renderEvent, event.request
+            ? {
+                sessionId: event.request.sessionId,
+                requestText: event.request.requestText,
+                displayText: event.request.displayText,
+                metadata: event.request.metadata ?? null,
+                activeResponseHandle: event.request.activeResponseHandle,
+              }
+            : null);
+        }
         if (event.turn) {
           this.applyRuntimeHostTurnTranscriptEvent(targetSessionId, event.turn, {
             visibleProjection: this.shouldProjectRuntimeHostTranscriptEvent(targetSessionId),
@@ -5490,6 +5583,31 @@ export class ChatEngineService implements IChatContext {
         this.applyRuntimeHostViewRequestEvent(targetSessionId, event.request);
         return;
     }
+  }
+
+  private applyRuntimeProjectPathUpdatedEvent(
+    targetSessionId: string,
+    event: Extract<ChatRuntimeOwnerExecutorEvent, { readonly kind: 'runtimeProjectPathUpdated' }>,
+  ): void {
+    const projectPath = typeof event.projectPath === 'string' ? event.projectPath.trim() : '';
+    if (!projectPath) {
+      return;
+    }
+
+    const currentProviderOptions = this.resolveVisibleSessionProviderOptionsSnapshot(targetSessionId);
+    const providerOptions = normalizeHostSessionProviderOptions({
+      ...currentProviderOptions,
+      ...(event.providerOptions && typeof event.providerOptions === 'object' ? event.providerOptions : {}),
+      folderPath: projectPath,
+    });
+    this.rememberRuntimeSessionProviderOptions(targetSessionId, providerOptions);
+
+    const shouldProjectToVisibleOwner = this.shouldProjectRuntimeViewStateToVisibleOwner(targetSessionId)
+      || !(this as unknown as { chatSessionRuntimeStore?: unknown }).chatSessionRuntimeStore;
+    if (shouldProjectToVisibleOwner) {
+      this.chatService.applySessionProviderOptions?.(providerOptions);
+    }
+    this.syncCurrentSessionEntryTargetRuntimeMode(targetSessionId);
   }
 
   private shouldProjectRuntimeHostVisibleEvent(sessionId: string): boolean {
@@ -5790,6 +5908,7 @@ export class ChatEngineService implements IChatContext {
     const committedTurnResponses = commitSessionModelTurnResponses.call(this, sessionId, turnResponses, {
       source: 'runtime-host-transcript',
     }) ?? turnResponses;
+    this.markRuntimeHostRecoverySnapshotDirty(sessionId, { flush: 'immediate' });
     const shouldRefreshCheckpointTimeline = (
       (this as unknown as {
         shouldRefreshRuntimeTranscriptCheckpointTimeline?: ChatEngineService['shouldRefreshRuntimeTranscriptCheckpointTimeline'];
@@ -5830,6 +5949,7 @@ export class ChatEngineService implements IChatContext {
     if (!committedTurnResponses) {
       return;
     }
+    this.markRuntimeHostRecoverySnapshotDirty(sessionId, { flush: 'immediate' });
 
     if (this.shouldRefreshRuntimeTranscriptCheckpointTimeline([turnResponse], committedTurnResponses, {
       authoritativeSnapshot: false,
@@ -5871,11 +5991,13 @@ export class ChatEngineService implements IChatContext {
       ) ?? null;
       if (committedTurnResponses) {
         this.syncResolvedActiveModelFromCommittedTranscript(targetSessionId, committedTurnResponses);
+        this.markRuntimeHostRecoverySnapshotDirty(targetSessionId, { flush: 'scheduled' });
       }
     } else {
       const model = this.chatSessionModelStore.get(targetSessionId);
       if (model?.upsertTurnResponseParts(turnId, event.parts)) {
         committedTurnResponses = model.turnResponses;
+        this.markRuntimeHostRecoverySnapshotDirty(targetSessionId, { flush: 'scheduled' });
       }
     }
 
@@ -7422,11 +7544,7 @@ export class ChatEngineService implements IChatContext {
     if (!currentSessionActive) {
       this.session.saveCurrentSession();
     }
-    this.chatHistoryService.flushAll({
-      shouldSkipSession: (sessionId, policy) => (
-        policy === 'recovery-snapshot' && this.readVisibleSessionRequestInProgress(sessionId)
-      ),
-    });
+    this.chatHistoryService.flushAll();
     this.chatHistoryService.setLiveSessionProvider(null);
     this.chatHistoryService.setAutoSaveSessionActiveProvider(null);
 

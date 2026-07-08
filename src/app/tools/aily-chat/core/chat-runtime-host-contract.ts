@@ -270,6 +270,10 @@ export type ChatRuntimeHostResourceRequestKind =
   | 'project-info'
   | 'project-build'
   | 'project-lint'
+  | 'tool-approval'
+  | 'board-search'
+  | 'library-analysis'
+  | 'diagnostics'
   | 'blockly-workspace'
   | 'connection-graph'
   | 'edit-tracking'
@@ -433,10 +437,20 @@ export interface ChatRuntimeHostProjectInfoPayload {
   readonly adapter: 'project';
   readonly action:
     | 'getProjectInfo'
+    | 'createProject'
     | 'getPackageJson'
     | 'getBoardJson'
     | 'getBoardModule'
-    | 'getBoardPackageJson';
+    | 'getBoardPackageJson'
+    | 'reloadProject'
+    | 'switchBoard'
+    | 'setBoardConfig';
+  readonly name?: string;
+  readonly path?: string;
+  readonly board?: string;
+  readonly config?: Readonly<Record<string, unknown>>;
+  readonly configKey?: string;
+  readonly configValue?: string;
 }
 
 export interface ChatRuntimeHostProjectBuildPayload {
@@ -478,6 +492,48 @@ export interface ChatRuntimeHostConnectionGraphPayload {
   readonly args?: unknown;
 }
 
+export interface ChatRuntimeHostBoardSearchPayload {
+  readonly adapter: 'boardSearch';
+  readonly action: 'search' | 'getCategories';
+  readonly query?: string;
+  readonly searchType?: 'boards' | 'libraries' | 'both';
+  readonly categoryType?: 'boards' | 'libraries';
+  readonly dimension?: string;
+  readonly args?: unknown;
+}
+
+export interface ChatRuntimeHostLibraryAnalysisPayload {
+  readonly adapter: 'libraryAnalysis';
+  readonly action: 'analyzeLibrary';
+  readonly libraryId?: string;
+  readonly libraryIds?: readonly string[];
+  readonly mode?: 'auto' | 'readme_ref' | 'analysis';
+}
+
+export interface ChatRuntimeHostDiagnosticsPayload {
+  readonly adapter: 'diagnostics';
+  readonly action: 'getErrors';
+  readonly filePaths?: readonly string[];
+  readonly ranges?: readonly unknown[];
+}
+
+export interface ChatRuntimeHostToolApprovalPayload {
+  readonly adapter: 'toolApproval';
+  readonly action: 'preflight';
+  readonly approvalTraceId?: string;
+  readonly toolCallId: string;
+  readonly toolName: string;
+  readonly title?: string;
+  readonly subtitle?: string;
+  readonly message?: string;
+  readonly source?: string;
+  readonly actions?: readonly unknown[];
+  readonly primaryScope?: string;
+  readonly allowAutoConfirm?: boolean;
+  readonly approveCombination?: unknown;
+  readonly args?: unknown;
+}
+
 export type ChatRuntimeHostResourceOperationPayload =
   | ChatRuntimeHostAbsSessionStartExportPayload
   | ChatRuntimeHostEditCheckpointCommitPayload
@@ -489,7 +545,11 @@ export type ChatRuntimeHostResourceOperationPayload =
   | ChatRuntimeHostProjectBuildPayload
   | ChatRuntimeHostProjectLintPayload
   | ChatRuntimeHostBlocklyWorkspacePayload
-  | ChatRuntimeHostConnectionGraphPayload;
+  | ChatRuntimeHostConnectionGraphPayload
+  | ChatRuntimeHostBoardSearchPayload
+  | ChatRuntimeHostLibraryAnalysisPayload
+  | ChatRuntimeHostDiagnosticsPayload
+  | ChatRuntimeHostToolApprovalPayload;
 
 export interface ChatRuntimeHostResourceOperationRequest {
   readonly id?: string;
@@ -611,6 +671,7 @@ export type ChatRuntimeOwnerExecutorCommand =
 
 export type ChatRuntimeOwnerExecutorEventKind =
   | 'turnProgress'
+  | 'runtimeProjectPathUpdated'
   | 'turnInteractionRequested'
   | 'turnError'
   | 'turnCompleted';
@@ -637,6 +698,13 @@ export interface ChatRuntimeOwnerExecutorTurnInteractionRequestedEvent extends C
   readonly interaction: ChatRuntimeHostInteractionSnapshot;
 }
 
+export interface ChatRuntimeOwnerExecutorProjectPathUpdatedEvent extends ChatRuntimeOwnerExecutorEventBase {
+  readonly kind: 'runtimeProjectPathUpdated';
+  readonly projectPath: string;
+  readonly providerOptions?: HostSessionProviderOptions | null;
+  readonly projectInfo?: unknown;
+}
+
 export interface ChatRuntimeOwnerExecutorTurnErrorEvent extends ChatRuntimeOwnerExecutorEventBase {
   readonly kind: 'turnError';
   readonly error: {
@@ -655,6 +723,7 @@ export interface ChatRuntimeOwnerExecutorTurnCompletedEvent extends ChatRuntimeO
 
 export type ChatRuntimeOwnerExecutorEvent =
   | ChatRuntimeOwnerExecutorTurnProgressEvent
+  | ChatRuntimeOwnerExecutorProjectPathUpdatedEvent
   | ChatRuntimeOwnerExecutorTurnInteractionRequestedEvent
   | ChatRuntimeOwnerExecutorTurnErrorEvent
   | ChatRuntimeOwnerExecutorTurnCompletedEvent;

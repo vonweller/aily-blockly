@@ -54,11 +54,11 @@ export function shouldStartRendererRuntimeOwner(env: RuntimeHostEnvironment = re
   }
 
   console.info('[AilyChat][RendererRuntimeOwnerBootstrap]', {
-    phase: 'allow',
-    reason: 'execution-host-off-default-renderer-fallback',
+    phase: 'skip',
+    reason: 'renderer-owner-default-off',
     executionHostMode: executionHostMode || 'off',
   });
-  return true;
+  return false;
 }
 
 @Injectable()

@@ -223,7 +223,10 @@ export function normalizeHostSessionProviderOptions(
     ?? normalizeHostSessionPermissionLevel(fallback?.permissionLevel);
   const approvalsReviewer = normalizeHostSessionApprovalsReviewer(value?.approvalsReviewer)
     ?? normalizeHostSessionApprovalsReviewer(fallback?.approvalsReviewer);
+  const hasLegacyFullAccessPreset = legacyValuePermissionMode === 'bypassPermissions'
+    || legacyFallbackPermissionMode === 'bypassPermissions';
   const approvalPolicy = normalizeHostSessionApprovalPolicy(value?.approvalPolicy)
+    ?? (hasLegacyFullAccessPreset ? 'never' : undefined)
     ?? normalizeHostSessionApprovalPolicy(fallback?.approvalPolicy);
 
   const normalizedPermissionMode = normalizeChatSessionPermissionMode(
@@ -283,6 +286,8 @@ export function resolveHostSessionProviderOptionsFromInputState(
     readSelectedGroupOptionId(inputState, HOST_SESSION_PERMISSION_MODE_OPTION_ID),
     normalizedFallback.permissionMode,
   );
+  const selectedPermissionModeId = readSelectedGroupOptionId(inputState, HOST_SESSION_PERMISSION_MODE_OPTION_ID);
+  const selectedLegacyFullAccessPreset = selectedPermissionModeId === 'bypassPermissions';
 
   return {
     folderPath: normalizeHostSessionFolderPath(readSelectedGroupOptionId(inputState, HOST_SESSION_FOLDER_OPTION_ID))
@@ -300,7 +305,9 @@ export function resolveHostSessionProviderOptionsFromInputState(
       ?? normalizedFallback.approvalsReviewer
       ? { approvalsReviewer: normalizeHostSessionApprovalsReviewer(readSelectedGroupOptionId(inputState, HOST_SESSION_APPROVALS_REVIEWER_OPTION_ID)) ?? normalizedFallback.approvalsReviewer }
       : {}),
-    ...(normalizedFallback.approvalPolicy ? { approvalPolicy: normalizedFallback.approvalPolicy } : {}),
+    ...(selectedLegacyFullAccessPreset
+      ? { approvalPolicy: 'never' as const }
+      : (normalizedFallback.approvalPolicy ? { approvalPolicy: normalizedFallback.approvalPolicy } : {})),
   };
 }
 

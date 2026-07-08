@@ -6,7 +6,7 @@
     'request-disabled': isRequestDisabled,
     'chat-most-recent-response': isCurrentStreamingResponse,
     'has-turn-actions': canRenderCheckpointAnchor && !isEditing,
-    'has-hover-footer': hasHoverFooterFade,
+    'has-hover-footer': shouldRenderFooter,
     'footer-always-visible': canShowActions
   }"
 >
@@ -158,7 +158,18 @@
     }
     @if (shouldRenderFooter) {
       <div class="msg-footer">
-        @if (canShowActions) {
+        @if (role === 'user') {
+          <div class="msg-actions user-msg-actions">
+            @if (messageTimeLabel) {
+              <span class="msg-time-label" [title]="messageTimeTitle">
+                <span>{{ messageTimeLabel }}</span>
+              </span>
+            }
+            <div class="msg-action-btn" (click)="onCopyContent(); $event.stopPropagation()" title="复制">
+              <i class="fa-light fa-copy"></i>
+            </div>
+          </div>
+        } @else if (canShowActions) {
           <div class="msg-actions">
             <div class="msg-action-btn" [class.disabled]="regenerateActionDisabled" (click)="onRegenerate(); $event.stopPropagation()" [title]="regenerateActionTitle">
               <i class="fa-light fa-rotate-right"></i>
@@ -172,6 +183,11 @@
             <div class="msg-action-btn" [class.active]="feedbackState === 'unhelpful'" (click)="onFeedback('unhelpful'); $event.stopPropagation()" title="没帮助">
               <i class="fa-light fa-thumbs-down"></i>
             </div>
+            @if (messageTimeLabel) {
+              <span class="msg-time-label" [title]="messageTimeTitle">
+                <span>{{ messageTimeLabel }}</span>
+              </span>
+            }
           </div>
         } @else if (canShowLimitActions) {
           <div class="msg-actions">
@@ -184,11 +200,20 @@
             <div class="msg-action-btn" [class.active]="feedbackState === 'unhelpful'" (click)="onFeedback('unhelpful'); $event.stopPropagation()" title="没帮助">
               <i class="fa-light fa-thumbs-down"></i>
             </div>
+            @if (messageTimeLabel) {
+              <span class="msg-time-label" [title]="messageTimeTitle">
+                <span>{{ messageTimeLabel }}</span>
+              </span>
+            }
           </div>
         }
 
-        @if (showAssistantModelBadge) {
-          <span class="msg-model-label" [title]="assistantModelBadgeTitle">{{ assistantModelBadgeLabel }}</span>
+        @if (role === 'aily') {
+          <div class="msg-footer-meta">
+            @if (showAssistantModelBadge) {
+              <span class="msg-model-label" [title]="assistantModelBadgeTitle">{{ assistantModelBadgeLabel }}</span>
+            }
+          </div>
         }
       </div>
     }

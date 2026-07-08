@@ -288,6 +288,7 @@ export interface HostSessionRestoreFailureDetails {
 export interface HostSessionRestoreOptions {
   readonly isCurrent?: () => boolean;
   readonly sessionId?: string | null;
+  readonly preserveActiveResponseState?: boolean;
 }
 
 export interface HostSessionProjectionRestoreOptions {
@@ -453,8 +454,13 @@ export class HostSessionRestoreBridge {
   ): Promise<void> {
     const isCurrent = options.isCurrent ?? (() => true);
     const targetSessionId = this.resolveRestoreTargetSessionId(hostRecord, options.sessionId);
-    const sanitizedHostRecord = sanitizeHostRecordForRestore(hostRecord);
+    const sanitizedHostRecord = options.preserveActiveResponseState === true
+      ? hostRecord
+      : sanitizeHostRecordForRestore(hostRecord);
     this.assertHostRecordMatchesTargetSession(sanitizedHostRecord, targetSessionId);
+    if (sanitizedHostRecord !== hostRecord) {
+      this.persistRecoveredCancelledHostRecord(targetSessionId, sanitizedHostRecord);
+    }
 
     let restorePlan: ResolvedLexSessionRestorePlan | null = null;
     try {
@@ -684,7 +690,7 @@ export class HostSessionRestoreBridge {
     const sessionContent = this.hostSessionContentProvider.provideChatSessionContent(targetSessionId, projectPathHint, {
       metadataFallback: indexEntry,
     });
-    const hostRecord = this.buildRuntimeRestoreHostRecord({
+    const runtimeHostRecord = this.buildRuntimeRestoreHostRecord({
       target: {
         sessionId: targetSessionId,
         sessionType: sessionContent.sessionType,
@@ -700,7 +706,8 @@ export class HostSessionRestoreBridge {
       },
       sessionContent,
       hostRecord: sessionContent.hostRecord,
-    }) ?? sessionContent.hostRecord;
+    });
+    const hostRecord = runtimeHostRecord ?? sessionContent.hostRecord;
     if (!hostRecord) {
       return false;
     }
@@ -708,8 +715,34 @@ export class HostSessionRestoreBridge {
     await this.restore(hostRecord, {
       sessionId: targetSessionId,
       isCurrent: options.isCurrent,
+      preserveActiveResponseState: !!runtimeHostRecord,
     });
     return true;
+  }
+
+  private persistRecoveredCancelledHostRecord(
+    sessionId: string,
+    hostRecord: HostSessionRecord,
+  ): void {
+    try {
+      this.ctx.chatHistoryService.saveHostRecord?.({
+        sessionId,
+        metadata: hostRecord.metadata,
+        ...(hostRecord.turnResponses ? { turnResponses: hostRecord.turnResponses } : {}),
+        ...(hostRecord.sidecar ? { sidecar: hostRecord.sidecar } : {}),
+        ...(hostRecord.auxiliary ? { auxiliary: hostRecord.auxiliary } : {}),
+      });
+      console.info('[AilyChat][ActiveTurnDurability]', {
+        phase: 'recovered-cancelled',
+        sessionId,
+        turnCount: hostRecord.turnResponses?.length ?? 0,
+      });
+    } catch (error) {
+      console.warn('[AilyChat][ActiveTurnDurability] recovered-cancelled persistence failed', {
+        sessionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   private resolveRestoreTargetSessionId(hostRecord: HostSessionRecord, requestedSessionId?: string | null): string {
@@ -944,6 +977,9 @@ export class HostSessionRestoreBridge {
     if (!pending || pending['kind'] === 'none') {
       return;
     }
+    if (!hasRestoredActiveInteractionResponse(turnResponses)) {
+      return;
+    }
 
     if (pending['kind'] === 'question') {
       this.restorePendingQuestion(sessionId, turnResponses);
@@ -1147,18 +1183,33 @@ function sanitizeHostRecordForRestore(hostRecord: HostSessionRecord): HostSessio
 function stableDurableTurnResponsesForRuntimeRestore(
   turnResponses: readonly TurnResponseTurn[],
 ): readonly TurnResponseTurn[] {
-  return turnResponses.filter(turn => !isTransientTurnResponseStatus(turn.response.status));
+  return turnResponses.filter(turn =>
+    !isTransientTurnResponseStatus(turn.response.status)
+    && !isPendingInteractionContinuation(turn.response.continuation)
+  );
 }
 
 function isTransientTurnResponseStatus(status: unknown): boolean {
-  return status === 'streaming'
-    || status === 'in_progress'
-    || status === 'pending';
+  switch (typeof status === 'string' ? status.trim().toLowerCase() : '') {
+    case 'streaming':
+    case 'in_progress':
+    case 'pending':
+    case 'needs_input':
+    case 'waiting_question':
+    case 'waiting_confirmation':
+    case 'waiting_tool_results':
+    case 'waiting_plan_review':
+      return true;
+    default:
+      return false;
+  }
 }
 
 function sanitizeTurnResponseForRestore(turn: TurnResponseTurn): TurnResponseTurn {
   const clonedTurn = cloneJsonLikeValue(turn);
+  const timestamp = Date.now();
   const responseStatus = isTransientTurnResponseStatus(clonedTurn.response.status)
+    || isPendingInteractionContinuation(clonedTurn.response.continuation)
     ? 'cancelled'
     : clonedTurn.response.status;
   const continuation = sanitizeTerminalPlanReviewContinuation(
@@ -1166,16 +1217,137 @@ function sanitizeTurnResponseForRestore(turn: TurnResponseTurn): TurnResponseTur
     clonedTurn.response.parts,
     clonedTurn.response.continuation,
   );
+  const nextParts = clonedTurn.response.parts
+    .filter(part => !isTransientRuntimeStatePart(part))
+    .map(part => cancelOpenResponsePartForRestore(part, timestamp));
+  const updatedAt = Math.max(
+    typeof clonedTurn.updatedAt === 'number' ? clonedTurn.updatedAt : 0,
+    typeof clonedTurn.response.updatedAt === 'number' ? clonedTurn.response.updatedAt : 0,
+    timestamp,
+  );
 
   return {
     ...clonedTurn,
+    updatedAt,
     response: {
       ...clonedTurn.response,
       status: responseStatus,
-      ...(continuation ? { continuation } : { continuation: undefined }),
-      parts: clonedTurn.response.parts.filter(part => !isTransientRuntimeStatePart(part)),
+      updatedAt,
+      ...(responseStatus === 'cancelled' ? { modelState: { value: 2, completedAt: updatedAt } } : {}),
+      ...(continuation && responseStatus !== 'cancelled' ? { continuation } : { continuation: undefined }),
+      parts: nextParts,
     },
   };
+}
+
+function cancelOpenResponsePartForRestore(
+  part: TurnResponseTurn['response']['parts'][number],
+  timestamp: number,
+): TurnResponseTurn['response']['parts'][number] {
+  const record = part as unknown as Record<string, unknown>;
+  switch (part.type) {
+    case 'tool_call': {
+      if (!isOpenRuntimeState(record['state'] ?? record['status'])) {
+        return part;
+      }
+      return {
+        ...part,
+        state: 'error',
+        metadata: {
+          ...(record['metadata'] && typeof record['metadata'] === 'object'
+            ? record['metadata'] as Record<string, unknown>
+            : {}),
+          phase: 'cancelled',
+          cancelledAt: timestamp,
+        },
+      } as TurnResponseTurn['response']['parts'][number];
+    }
+    case 'terminal': {
+      if (record['isRunning'] !== true && !isOpenRuntimeState(record['status'])) {
+        return part;
+      }
+      return {
+        ...part,
+        isRunning: false,
+        status: 'cancelled',
+        metadata: {
+          ...(record['metadata'] && typeof record['metadata'] === 'object'
+            ? record['metadata'] as Record<string, unknown>
+            : {}),
+          cancelledAt: timestamp,
+        },
+      } as TurnResponseTurn['response']['parts'][number];
+    }
+    case 'confirmation': {
+      if (record['resolved'] === true) {
+        return part;
+      }
+      return {
+        ...part,
+        resolved: true,
+        result: 'rejected',
+        metadata: {
+          ...(record['metadata'] && typeof record['metadata'] === 'object'
+            ? record['metadata'] as Record<string, unknown>
+            : {}),
+          cancelledAt: timestamp,
+        },
+      } as TurnResponseTurn['response']['parts'][number];
+    }
+    case 'question': {
+      if (record['answers'] && typeof record['answers'] === 'object') {
+        return part;
+      }
+      return {
+        ...part,
+        metadata: {
+          ...(record['metadata'] && typeof record['metadata'] === 'object'
+            ? record['metadata'] as Record<string, unknown>
+            : {}),
+          cancelledAt: timestamp,
+        },
+      } as TurnResponseTurn['response']['parts'][number];
+    }
+    case 'thinking': {
+      if (record['isComplete'] === true) {
+        return part;
+      }
+      return {
+        ...part,
+        isComplete: true,
+      } as TurnResponseTurn['response']['parts'][number];
+    }
+    case 'plan': {
+      if (record['status'] !== 'streaming') {
+        return part;
+      }
+      return {
+        ...part,
+        status: 'failed',
+      } as TurnResponseTurn['response']['parts'][number];
+    }
+    default:
+      return part;
+  }
+}
+
+function isOpenRuntimeState(value: unknown): boolean {
+  switch (typeof value === 'string' ? value.trim().toLowerCase() : '') {
+    case '':
+    case 'pending':
+    case 'running':
+    case 'doing':
+    case 'reviewing':
+    case 'in_progress':
+    case 'waiting':
+    case 'waiting_confirmation':
+    case 'waiting_question':
+    case 'waiting_tool_results':
+    case 'waiting_plan_review':
+      return true;
+    default:
+      return false;
+  }
 }
 
 function hasTerminalPlanReviewContinuation(turn: TurnResponseTurn): boolean {
@@ -1232,6 +1404,34 @@ function isPlanReviewContinuation(continuation: unknown): boolean {
     && typeof pendingState === 'object'
     && typeof (pendingState as Record<string, unknown>)['kind'] === 'string'
     && ((pendingState as Record<string, unknown>)['kind'] as string).trim().toLowerCase() === 'plan_review';
+}
+
+function isPendingInteractionContinuation(continuation: unknown): boolean {
+  if (!continuation || typeof continuation !== 'object') {
+    return false;
+  }
+
+  const record = continuation as Record<string, unknown>;
+  const status = typeof record['status'] === 'string' ? record['status'].trim().toLowerCase() : '';
+  if (
+    status === 'waiting_plan_review'
+    || status === 'plan_review'
+    || status === 'waiting_confirmation'
+    || status === 'waiting_question'
+    || status === 'waiting_tool_results'
+  ) {
+    return true;
+  }
+
+  const pendingState = record['pendingState'];
+  return !!pendingState && typeof pendingState === 'object';
+}
+
+function hasRestoredActiveInteractionResponse(turnResponses: readonly TurnResponseTurn[]): boolean {
+  return turnResponses.some(turn =>
+    isTransientTurnResponseStatus(turn.response.status)
+    || isPendingInteractionContinuation(turn.response.continuation)
+  );
 }
 
 function cloneJsonLikeValue<T>(value: T): T {

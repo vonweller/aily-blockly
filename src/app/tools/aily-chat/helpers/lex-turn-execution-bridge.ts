@@ -26,6 +26,17 @@ type LexTurnExecutionContext = Pick<
       readonly activeResponseHandle?: unknown;
     } | null,
   ): void;
+  projectExecutionRenderEvent?(
+    sessionId: string | null | undefined,
+    event: RenderEvent,
+    request?: {
+      readonly sessionId: string;
+      readonly requestText: string;
+      readonly displayText?: string;
+      readonly metadata?: TurnRequest['metadata'] | null;
+      readonly activeResponseHandle?: unknown;
+    } | null,
+  ): void;
 };
 
 type LexTurnRunOptions = {
@@ -1270,20 +1281,19 @@ export class LexTurnExecutionBridge {
   }
 
   private emitRenderEventToHost(state: LexTurnExecutionRunState, event: RenderEvent): void {
-    if (typeof this.ctx.emitExecutionRenderEvent !== 'function') {
-      return;
-    }
     const executionSessionId = state.sessionId;
     if (!executionSessionId) {
       return;
     }
-    this.ctx.emitExecutionRenderEvent(executionSessionId, event, {
+    const request = {
       sessionId: executionSessionId,
       requestText: state.requestContent,
       displayText: state.requestDisplayContent,
       metadata: state.requestMetadata ?? null,
       activeResponseHandle: state.activeTurnId,
-    });
+    };
+    this.ctx.projectExecutionRenderEvent?.(executionSessionId, event, request);
+    this.ctx.emitExecutionRenderEvent?.(executionSessionId, event, request);
   }
 
   private acceptRenderEventForActiveTurn(state: LexTurnExecutionRunState, event: RenderEvent): boolean {
