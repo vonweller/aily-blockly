@@ -1,6 +1,7 @@
 import type { TurnResponseTurn } from 'aily-lex/browser';
 
 import type { IAgentLifecycle, IChatCoordination, IChatServiceAccess } from '../core/chat-context';
+import { AilyHost } from '../core/host';
 import type {
   RollbackResult,
   WorkspaceCheckpointPresentationMode,
@@ -570,6 +571,10 @@ export class CheckpointReplayCoordinator {
       presentationMode: workspaceCheckpointAccess.getPresentationMode?.(),
       buildRestorePlan: workspaceCheckpointAccess.buildRestorePlan?.bind(workspaceCheckpointAccess),
       applyRestorePlan: workspaceCheckpointAccess.applyRestorePlan?.bind(workspaceCheckpointAccess),
+      allowRequestListOnlyRestore: this.canRestoreCheckpointAsRequestListOnly(
+        restoreTarget.sessionResource,
+        restoreTarget.checkpointId,
+      ),
     });
     let preparedRestoreCommitExecution: CheckpointPreparedSequentialExecution<
       { artifact: CheckpointRestoreCommitArtifact; deferredCommitFailureResult?: CheckpointRestoreCommitTransitionResult; },
@@ -2034,14 +2039,26 @@ export class CheckpointReplayCoordinator {
       presentationMode: WorkspaceCheckpointPresentationMode | undefined;
       buildRestorePlan: CheckpointWorkspaceAccess['buildRestorePlan'] | undefined;
       applyRestorePlan: CheckpointWorkspaceAccess['applyRestorePlan'] | undefined;
+      allowRequestListOnlyRestore?: boolean;
     },
   ): Promise<{
     presentationMode: ReturnType<CheckpointWorkspaceAccess['getPresentationMode']>;
     apply: () => Promise<CheckpointWorkspaceApplyResult>;
   }> {
-    const { presentationMode, buildRestorePlan, applyRestorePlan } = frozenWorkspaceAction;
+    const {
+      presentationMode,
+      buildRestorePlan,
+      applyRestorePlan,
+      allowRequestListOnlyRestore = false,
+    } = frozenWorkspaceAction;
 
     if (!buildRestorePlan || !applyRestorePlan) {
+      if (allowRequestListOnlyRestore) {
+        return {
+          presentationMode,
+          apply: async () => this.buildRequestListOnlyWorkspaceApplyResult(),
+        };
+      }
       return {
         presentationMode,
         apply: async () => ({ rolledBackFiles: 0, errors: ['checkpoint restore timeline plan 不可用'] }),
@@ -2061,6 +2078,12 @@ export class CheckpointReplayCoordinator {
     }
 
     if (!restorePlan) {
+      if (allowRequestListOnlyRestore) {
+        return {
+          presentationMode,
+          apply: async () => this.buildRequestListOnlyWorkspaceApplyResult(),
+        };
+      }
       return {
         presentationMode,
         apply: async () => ({ rolledBackFiles: 0, errors: [`未找到检查点 restore plan: ${checkpointId}`] }),
@@ -2118,6 +2141,38 @@ export class CheckpointReplayCoordinator {
     presentationMode: WorkspaceCheckpointPresentationMode | undefined,
   ): boolean {
     return presentationMode === 'unknown' || !plan;
+  }
+
+  private buildRequestListOnlyWorkspaceApplyResult(): CheckpointWorkspaceApplyResult {
+    return { rolledBackFiles: 0, errors: [] };
+  }
+
+  private canRestoreCheckpointAsRequestListOnly(
+    sessionId: string | null | undefined,
+    checkpointId: string | null | undefined,
+  ): boolean {
+    if (this.hasOpenProjectWorkspace()) {
+      return false;
+    }
+
+    const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    const normalizedCheckpointId = typeof checkpointId === 'string' ? checkpointId.trim() : '';
+    if (!normalizedSessionId || !normalizedCheckpointId) {
+      return false;
+    }
+
+    const timelineState = this.ctx.readSessionCheckpointTimelineState?.(normalizedSessionId) ?? null;
+    return timelineState?.sessionResource === normalizedSessionId
+      && timelineState.checkpoints.some(checkpoint => checkpoint.checkpointId === normalizedCheckpointId);
+  }
+
+  private hasOpenProjectWorkspace(): boolean {
+    try {
+      const currentProjectPath = AilyHost.get().project?.currentProjectPath;
+      return typeof currentProjectPath === 'string' && currentProjectPath.trim().length > 0;
+    } catch {
+      return false;
+    }
   }
 
   private getWorkspaceCheckpointAccess(): CheckpointWorkspaceAccess {

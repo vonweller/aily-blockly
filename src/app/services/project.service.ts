@@ -51,14 +51,17 @@ export interface ProjectActivationEvent {
   path: string;
   previousPath: string;
   reason: ProjectActivationReason;
+  sessionResource?: string | null;
 }
 
 interface ProjectOpenOptions {
   reason?: ProjectActivationReason;
+  sessionResource?: string | null;
 }
 
 interface ProjectCreationOptions {
   activationReason?: ProjectActivationReason;
+  sessionResource?: string | null;
 }
 
 interface ProjectCloseOptions {
@@ -235,7 +238,10 @@ export class ProjectService {
       window['ipcRenderer'].on('window-receive', async (event, message) => {
         // console.log('window-receive', message);
         if (message.data.action == 'open-project') {
-          this.projectOpen(message.data.path, { reason: this.parseProjectActivationReason(message.data.reason) });
+          this.projectOpen(message.data.path, {
+            reason: this.parseProjectActivationReason(message.data.reason),
+            sessionResource: typeof message.data.sessionResource === 'string' ? message.data.sessionResource : null,
+          });
         } else {
           return;
         }
@@ -346,7 +352,12 @@ export class ProjectService {
     this.uiService.updateFooterState({ state: 'done', text: this.translate.instant('PROJECT.PROJECT_CREATED') });
     await window['iWindow'].send({
       to: 'main',
-      data: { action: 'open-project', path: projectPath, reason: options.activationReason || 'new' }
+      data: {
+        action: 'open-project',
+        path: projectPath,
+        reason: options.activationReason || 'new',
+        sessionResource: options.sessionResource ?? null,
+      }
     });
     return true;
   }
@@ -484,6 +495,7 @@ export class ProjectService {
       path: projectPath,
       previousPath: previousProjectPath,
       reason: activationReason,
+      sessionResource: options.sessionResource ?? null,
     });
 
     const abiIsExist = window['path'].isExists(projectPath + '/project.abi');

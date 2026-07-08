@@ -457,7 +457,7 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
       case 'getProjectInfo':
         return this.withRuntimeConfigSnapshot(this.buildProjectInfoSnapshot());
       case 'createProject':
-        return await this.runProjectCreateOperation(payload);
+        return await this.runProjectCreateOperation(request, payload);
       case 'getPackageJson':
         return typeof this.projectService.getPackageJson === 'function'
           ? await this.projectService.getPackageJson()
@@ -503,7 +503,10 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
     }
   }
 
-  private async runProjectCreateOperation(payload: HostResourceOperationPayload): Promise<unknown> {
+  private async runProjectCreateOperation(
+    request: ChatRuntimeHostResourceOperationRequest,
+    payload: HostResourceOperationPayload,
+  ): Promise<unknown> {
     const basePath = this.normalizeSessionId(payload.path)
       || this.normalizeSessionId(this.projectService.projectRootPath);
     if (!basePath) {
@@ -544,6 +547,7 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
       ...(devmode ? { devmode } : {}),
     }, {
       activationReason: 'chat-tool-create',
+      sessionResource: request.sessionId ?? null,
     });
     if (result === false) {
       throw new HostResourceOperationError(

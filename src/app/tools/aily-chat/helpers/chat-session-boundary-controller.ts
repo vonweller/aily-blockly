@@ -3,6 +3,7 @@ import {
   buildDialogTurnContext,
   type DialogTurnContext,
 } from '../core/user-turn-action-target';
+import { AilyHost } from '../core/host';
 import type {
   WorkspaceCheckpointAvailabilityDetail,
   WorkspaceCheckpointPresentationMode,
@@ -183,11 +184,38 @@ export class ChatSessionBoundaryController implements ChatSessionBoundaryActionC
     if (mode === 'git' || mode === 'timeline') {
       return true;
     }
+    if (this.hasCurrentSessionTimelineCheckpointBoundary()) {
+      return true;
+    }
     return this.blockUnavailable({
       action,
       reason: 'workspace-checkpoint-unavailable',
       workspaceCheckpointDetail: this.ctx.getWorkspaceCheckpointAvailabilityDetail?.() ?? undefined,
     });
+  }
+
+  private hasCurrentSessionTimelineCheckpointBoundary(): boolean {
+    if (this.hasOpenProjectWorkspace()) {
+      return false;
+    }
+
+    const sessionResource = this.resolveCurrentSessionResource();
+    if (!sessionResource) {
+      return false;
+    }
+
+    const timelineState = this.ctx.readSessionCheckpointTimelineState?.(sessionResource) ?? null;
+    return normalizeString(timelineState?.sessionResource) === sessionResource
+      && (timelineState?.checkpoints.length ?? 0) > 0;
+  }
+
+  private hasOpenProjectWorkspace(): boolean {
+    try {
+      const currentProjectPath = AilyHost.get().project?.currentProjectPath;
+      return typeof currentProjectPath === 'string' && currentProjectPath.trim().length > 0;
+    } catch {
+      return false;
+    }
   }
 
   private hasTimelineCheckpointBoundary(

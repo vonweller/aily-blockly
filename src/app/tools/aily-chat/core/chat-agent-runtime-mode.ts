@@ -222,6 +222,15 @@ export function resolveChatAgentRuntimeModeForProject(
     };
   }
 
+  if (restoredMode && restoredMode !== 'unbound') {
+    return {
+      mode: restoredMode,
+      source: restoredSource,
+      reason: `restored runtime mode: ${restoredMode}`,
+      projectPath: projectPath ?? null,
+    };
+  }
+
   if (projectPath) {
     const hasAbsProject = hostPathExists(projectPath, 'project.abs');
     const hasCoderEntry = hostPathExists(projectPath, 'src', 'main.cpp');
@@ -276,15 +285,6 @@ export function resolveChatAgentRuntimeModeForProject(
         hasCoderEntry,
       };
     }
-  }
-
-  if (restoredMode && restoredMode !== 'unbound') {
-    return {
-      mode: restoredMode,
-      source: restoredSource,
-      reason: `restored runtime mode: ${restoredMode}`,
-      projectPath: projectPath ?? null,
-    };
   }
 
   if (userPreferenceMode && userPreferenceMode !== 'unbound') {

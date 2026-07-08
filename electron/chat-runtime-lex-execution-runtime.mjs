@@ -1128,6 +1128,10 @@ function normalizeAskUserQuestions(questions) {
 }
 
 function normalizeAskUserOption(option) {
+  if (typeof option === 'string') {
+    const label = normalizeString(option);
+    return label ? { label } : null;
+  }
   if (!option || typeof option !== 'object') {
     return null;
   }

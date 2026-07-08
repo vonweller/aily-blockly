@@ -1608,9 +1608,9 @@ export class LiveHostRequestGraphCache implements IHostStreamListener {
 export function hasHostResponseConversationContent(
   model: Pick<HostResponseProjection, 'turnResponses' | 'chatList' | 'dialogItems'> | null | undefined,
 ): boolean {
-  return (model?.turnResponses.length ?? 0) > 0
-    || (model?.chatList.length ?? 0) > 0
-    || (model?.dialogItems.length ?? 0) > 0;
+  return (model?.turnResponses?.length ?? 0) > 0
+    || (model?.chatList?.length ?? 0) > 0
+    || (model?.dialogItems?.length ?? 0) > 0;
 }
 
 export function buildHostRequestModel(

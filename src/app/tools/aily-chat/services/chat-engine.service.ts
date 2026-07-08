@@ -1613,7 +1613,32 @@ export class ChatEngineService implements IChatContext {
   }
 
   get workspaceCheckpointPresentationMode() {
-    return this.workspaceCheckpointProvider.getPresentationMode?.() ?? 'unknown';
+    const mode = this.workspaceCheckpointProvider.getPresentationMode?.() ?? 'unknown';
+    return mode === 'unknown' && this.currentViewHasSessionCheckpointTimeline()
+      ? 'timeline'
+      : mode;
+  }
+
+  private currentViewHasSessionCheckpointTimeline(): boolean {
+    const currentProjectPath = AilyHost.get().project?.currentProjectPath;
+    if (typeof currentProjectPath === 'string' && currentProjectPath.trim().length > 0) {
+      return false;
+    }
+
+    const sessionResource = this.resolveCurrentViewSessionResource();
+    if (!sessionResource) {
+      return false;
+    }
+
+    const model = this.chatSessionModelStore?.get?.(sessionResource);
+    const getCheckpointTimelineState = (model as unknown as {
+      getCheckpointTimelineState?: ChatSessionModel['getCheckpointTimelineState'];
+    } | undefined)?.getCheckpointTimelineState;
+    const checkpointTimelineState = model && typeof getCheckpointTimelineState === 'function'
+      ? getCheckpointTimelineState.call(model)
+      : null;
+    return checkpointTimelineState?.sessionResource === sessionResource
+      && checkpointTimelineState.checkpoints.length > 0;
   }
 
   get hostResponseProjection(): HostResponseProjection | null {
