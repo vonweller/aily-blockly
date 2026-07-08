@@ -586,7 +586,7 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
     }
 
     const message = (apiError.message || '').toLowerCase();
-    return /repo permission|public repository write permissions|writable fork|reconnect github|重新绑定 github|github 授权|github 权限/.test(message);
+    return /missing repo permission|repo permission|repository write permissions|reconnect github|bad credentials|重新绑定 github|github 授权/.test(message);
   }
 
   private saveLibraryMetadataToLocalPackage(item: BlocklyToolboxFacadeItem, localPackageJsonPatch: Record<string, unknown>): BlocklyLibraryMetadataUpdateResult {
@@ -895,10 +895,14 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
   private getLibrarySubmissionErrorMessage(error: unknown): string {
     const apiError = error as Partial<LibrarySubmissionApiError>;
     const message = apiError.message || this.getErrorMessage(error, '库提交失败');
-    if (apiError.status === 401 || apiError.status === 403) {
-      return `${message}，请重新绑定 GitHub 并确认授权权限`;
+    const requestId = apiError.errorArgs?.['githubRequestId'];
+    const suffix = typeof requestId === 'string' && requestId
+      ? `（GitHub Request ID: ${requestId}）`
+      : '';
+    if (this.isGithubBindingRequiredError(error)) {
+      return `${message}，请升级 GitHub PR 提交权限后重试${suffix}`;
     }
-    return message;
+    return `${message}${suffix}`;
   }
 
   private async removeLibrary(item: BlocklyToolboxFacadeItem) {
