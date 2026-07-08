@@ -186,7 +186,9 @@ export class LibrarySubmissionService {
 
   private isNonEmptyDirectory(path: string): boolean {
     try {
-      return window['fs'].statSync(path)?.isDirectory?.() === true && (window['fs'].readDirSync(path) || []).length > 0;
+      const stat = window['fs'].statSync(path);
+      const isDirectory = stat?.isDirectory?.() === true || stat?._isDirectory === true;
+      return isDirectory && (window['fs'].readDirSync(path) || []).length > 0;
     } catch {
       return false;
     }
@@ -195,7 +197,8 @@ export class LibrarySubmissionService {
   private isNonEmptyFile(path: string): boolean {
     try {
       const stat = window['fs'].statSync(path);
-      return stat?.isFile?.() === true && Number(stat.size || 0) > 0;
+      const isFile = stat?.isFile?.() === true || stat?._isFile === true;
+      return isFile && Number(stat.size || 0) > 0;
     } catch {
       return false;
     }
