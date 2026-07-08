@@ -178,21 +178,21 @@
                 <div class="builder-setting-inline">
                   <div class="builder-version">
                   <strong>{{ getAilyBuilderDisplayName() }}</strong>
-                  @if (ailyBuilderStatus?.updateAvailable && ailyBuilderStatus?.targetVersion) {
+                  @if (hasAilyBuilderUpdate() && ailyBuilderStatus?.targetVersion) {
                   <span class="version">→ {{ ailyBuilderStatus.targetVersion }}</span>
                   }
                   </div>
                   <div class="builder-update-row">
                     @if (getAilyBuilderStatusText()) {
                     <span class="builder-status" [ngClass]="{
-                      updating: ailyBuilderUpdating || ailyBuilderStatus?.installing,
-                      warning: ailyBuilderStatus?.updateAvailable || !ailyBuilderStatus?.installed
+                      updating: isAilyBuilderUpdateLoading(),
+                      warning: hasAilyBuilderUpdate() || !ailyBuilderStatus?.installed
                     }">{{ getAilyBuilderStatusText() }}</span>
                     }
-                    @if (!ailyBuilderStatus?.error && (!ailyBuilderStatus?.installed || ailyBuilderStatus?.updateAvailable || ailyBuilderUpdating || ailyBuilderStatus?.installing)) {
-                    <button nz-button nzSize="small" [nzLoading]="ailyBuilderUpdating || ailyBuilderStatus?.installing"
-                      [disabled]="ailyBuilderUpdating || ailyBuilderStatus?.installing" (click)="updateAilyBuilder()">
-                      @if (!ailyBuilderUpdating && !ailyBuilderStatus?.installing) {
+                    @if (shouldShowAilyBuilderUpdateButton()) {
+                    <button nz-button nzSize="small" [nzLoading]="isAilyBuilderUpdateLoading()"
+                      [disabled]="!canUpdateAilyBuilderManually()" (click)="updateAilyBuilder()">
+                      @if (!isAilyBuilderUpdateLoading()) {
                       {{ 'SETTINGS.FIELDS.AILY_BUILDER_UPDATE' | translate }}
                       }
                     </button>

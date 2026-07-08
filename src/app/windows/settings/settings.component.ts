@@ -348,7 +348,7 @@ export class SettingsComponent implements OnDestroy {
     }
     try {
       this.ailyBuilderStatus = await window['builder'].status();
-      if (this.ailyBuilderStatus?.installing) {
+      if (this.shouldPollAilyBuilderStatus()) {
         this.scheduleAilyBuilderStatusReload();
       }
       this.checkAilyBuilderUpdatesInBackground();
@@ -368,7 +368,7 @@ export class SettingsComponent implements OnDestroy {
       .then((updateCheck) => {
         if (updateCheck?.ailyBuilder) {
           this.ailyBuilderStatus = updateCheck.ailyBuilder;
-          if (this.ailyBuilderStatus?.installing) {
+          if (this.shouldPollAilyBuilderStatus()) {
             this.scheduleAilyBuilderStatusReload();
           }
         }
@@ -400,6 +400,35 @@ export class SettingsComponent implements OnDestroy {
     return this.translateService.instant('SETTINGS.FIELDS.AILY_BUILDER_UP_TO_DATE');
   }
 
+  hasAilyBuilderUpdate() {
+    return !!this.ailyBuilderStatus?.updateAvailable;
+  }
+
+  isRequiredAilyBuilderUpdatePending() {
+    return !!this.ailyBuilderStatus &&
+      !this.ailyBuilderStatus.error &&
+      !!this.ailyBuilderStatus.required &&
+      (!this.ailyBuilderStatus.installed || this.ailyBuilderStatus.updateAvailable);
+  }
+
+  isAilyBuilderUpdateLoading() {
+    return this.ailyBuilderUpdating ||
+      !!this.ailyBuilderStatus?.installing ||
+      this.isRequiredAilyBuilderUpdatePending();
+  }
+
+  shouldShowAilyBuilderUpdateButton() {
+    return !!this.ailyBuilderStatus &&
+      !this.ailyBuilderStatus.error &&
+      (!this.ailyBuilderStatus.installed || this.ailyBuilderStatus.updateAvailable || this.ailyBuilderUpdating || this.ailyBuilderStatus.installing);
+  }
+
+  canUpdateAilyBuilderManually() {
+    return this.shouldShowAilyBuilderUpdateButton() &&
+      !this.ailyBuilderStatus?.required &&
+      !this.isAilyBuilderUpdateLoading();
+  }
+
   getAilyBuilderDisplayName() {
     const status = this.ailyBuilderStatus;
     if (!status) {
@@ -412,7 +441,7 @@ export class SettingsComponent implements OnDestroy {
   }
 
   async updateAilyBuilder() {
-    if (!window['builder']?.update || this.ailyBuilderUpdating) {
+    if (!window['builder']?.update || !this.canUpdateAilyBuilderManually()) {
       return;
     }
 
@@ -443,7 +472,7 @@ export class SettingsComponent implements OnDestroy {
     try {
       const channel = this.labsConfig.ailyBuilderNext ? 'next' : 'stable';
       this.ailyBuilderStatus = await window['builder'].setChannel(channel, options);
-      if (this.ailyBuilderStatus?.installing) {
+      if (this.shouldPollAilyBuilderStatus()) {
         this.scheduleAilyBuilderStatusReload();
       }
     } catch (error: any) {
@@ -460,6 +489,10 @@ export class SettingsComponent implements OnDestroy {
       this.ailyBuilderStatusTimer = null;
       this.loadAilyBuilderStatus();
     }, 2000);
+  }
+
+  private shouldPollAilyBuilderStatus() {
+    return !!this.ailyBuilderStatus?.installing || this.isRequiredAilyBuilderUpdatePending();
   }
 
   private clearAilyBuilderStatusTimer() {
