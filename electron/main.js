@@ -1080,8 +1080,9 @@ function resolveAilyBuilderPath(childPath) {
 }
 
 function resolveAilyBuilderCommand(childPath) {
-  if (isAilyBuilderInstallComplete(getNpmAilyBuilderPath())) {
-    return "aily-builder";
+  const npmBuilderPath = getNpmAilyBuilderPath();
+  if (isAilyBuilderInstallComplete(npmBuilderPath)) {
+    return `node "${path.join(npmBuilderPath, "index.js")}"`;
   }
 
   const legacyNpmBuilderPath = getAilyBuilderChannel() === "stable" ? getLegacyNpmAilyBuilderPath() : null;
@@ -1705,6 +1706,19 @@ async function checkPackageUpdatesFromManifest() {
   }
 
   return result;
+}
+
+function checkAilyBuilderChannelUpdatesInBackground(childPath, options = {}) {
+  checkPackageUpdatesFromManifest()
+    .then(() => {
+      if (options.install) {
+        ensureAilyBuilderFromNpm(childPath, { reason: "channel-switch" });
+      }
+      applyAilyBuilderCommandEnv(childPath);
+    })
+    .catch((error) => {
+      console.error("后台检查 aily-builder 更新失败:", error);
+    });
 }
 
 // 监听渲染进程就绪事件
@@ -3416,8 +3430,10 @@ ipcMain.handle("aily-builder-channel-set", async (event, { channel, install } = 
   }
 
   setAilyBuilderChannel(channel);
-  await checkPackageUpdatesFromManifest();
-  if (install) {
+  const normalizedChannel = getAilyBuilderChannel();
+  if (normalizedChannel === "next") {
+    checkAilyBuilderChannelUpdatesInBackground(childPath, { install });
+  } else if (install) {
     ensureAilyBuilderFromNpm(childPath, { reason: "channel-switch" });
   }
   applyAilyBuilderCommandEnv(childPath);

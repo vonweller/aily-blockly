@@ -132,6 +132,7 @@ export class SettingsComponent implements OnDestroy {
   ailyBuilderStatus: any = null;
   ailyBuilderUpdating = false;
   ailyBuilderChannelSwitching = false;
+  private ailyBuilderUpdateCheckRunning = false;
   private ailyBuilderStatusTimer: ReturnType<typeof setTimeout> | null = null;
   private initialAilyBuilderNext = false;
 
@@ -346,15 +347,38 @@ export class SettingsComponent implements OnDestroy {
       return;
     }
     try {
-      const updateCheck = await window['packageUpdates']?.check?.();
-      this.ailyBuilderStatus = updateCheck?.ailyBuilder || await window['builder'].status();
+      this.ailyBuilderStatus = await window['builder'].status();
       if (this.ailyBuilderStatus?.installing) {
         this.scheduleAilyBuilderStatusReload();
       }
+      this.checkAilyBuilderUpdatesInBackground();
     } catch (error) {
       console.warn('加载 aily-builder 状态失败:', error);
       this.ailyBuilderStatus = null;
     }
+  }
+
+  private checkAilyBuilderUpdatesInBackground() {
+    if (!window['packageUpdates']?.check || this.ailyBuilderUpdateCheckRunning) {
+      return;
+    }
+
+    this.ailyBuilderUpdateCheckRunning = true;
+    window['packageUpdates'].check()
+      .then((updateCheck) => {
+        if (updateCheck?.ailyBuilder) {
+          this.ailyBuilderStatus = updateCheck.ailyBuilder;
+          if (this.ailyBuilderStatus?.installing) {
+            this.scheduleAilyBuilderStatusReload();
+          }
+        }
+      })
+      .catch((error) => {
+        console.warn('检查 aily-builder 更新失败:', error);
+      })
+      .finally(() => {
+        this.ailyBuilderUpdateCheckRunning = false;
+      });
   }
 
   getAilyBuilderStatusText() {
@@ -419,7 +443,9 @@ export class SettingsComponent implements OnDestroy {
     try {
       const channel = this.labsConfig.ailyBuilderNext ? 'next' : 'stable';
       this.ailyBuilderStatus = await window['builder'].setChannel(channel, options);
-      await this.loadAilyBuilderStatus();
+      if (this.ailyBuilderStatus?.installing) {
+        this.scheduleAilyBuilderStatusReload();
+      }
     } catch (error: any) {
       console.error('aily-builder channel 切换失败:', error);
       this.message.error(error?.message || this.translateService.instant('SETTINGS.FIELDS.AILY_BUILDER_UPDATE_FAILED'));
@@ -520,9 +546,10 @@ export class SettingsComponent implements OnDestroy {
 
   async apply() {
     await this.configService.applyResourceSourceRuntimeSelection();
+    const ailyBuilderChannelChanged = this.labsConfig.ailyBuilderNext !== this.initialAilyBuilderNext;
     // 保存到config.json，如有需要立即加载的，再加载
     await this.configService.save();
-    if (this.labsConfig.ailyBuilderNext !== this.initialAilyBuilderNext) {
+    if (ailyBuilderChannelChanged) {
       await this.syncAilyBuilderChannel({ install: true });
     }
     this.initialAilyBuilderNext = !!this.labsConfig.ailyBuilderNext;
