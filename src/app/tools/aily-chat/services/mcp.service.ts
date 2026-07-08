@@ -26,7 +26,6 @@ export class McpService {
   clients: string[] = [];
   tools: MCPTool[] = [];
   mcpConfigName: string = "mcp.json";
-  localServerName = "__local__";
   private isInitialized = false; // 添加初始化标志位
 
   constructor() {}
@@ -49,11 +48,6 @@ export class McpService {
 
       // 先添加已有工具
       this.tools.forEach(tool => {
-        toolMap.set(tool.name, tool);
-      });
-
-      const localTools = await this.getTools(this.localServerName);
-      localTools.forEach(tool => {
         toolMap.set(tool.name, tool);
       });
 

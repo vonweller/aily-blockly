@@ -3,7 +3,7 @@
     "aily-blockly": {
       "command": "node",
       "args": [
-        "${workspaceFolder}/child/aily-blockly-cli/dist/mcp.js"
+        "${workspaceFolder}/../aily-lex-pro/packages/aily-blockly-bridge/dist/mcp.js"
       ],
       "enabled": true
     }
