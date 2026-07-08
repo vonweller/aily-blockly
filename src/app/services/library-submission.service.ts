@@ -1,7 +1,7 @@
 import { Injectable } from '@angular/core';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
-import { Observable, throwError } from 'rxjs';
-import { catchError } from 'rxjs/operators';
+import { defer, Observable, throwError } from 'rxjs';
+import { catchError, finalize, switchMap } from 'rxjs/operators';
 import { API } from '../configs/api.config';
 import {
   BlocklyLibraryPackageRef,
@@ -10,6 +10,8 @@ import {
   BlocklyLibrarySubmissionPackage,
 } from './blockly-library-package.service';
 import { extractApiErrorDetails, ApiErrorDetails } from '../utils/api-error.utils';
+import { CmdOutput, CmdService } from './cmd.service';
+import { PlatformService } from './platform.service';
 
 export interface LibrarySubmissionPayload {
   package: BlocklyLibrarySubmissionPackage;
@@ -46,6 +48,11 @@ export interface LibrarySubmissionApiError extends ApiErrorDetails {
   conflictType?: string;
 }
 
+interface PreparedSrcArchive {
+  path: string;
+  tempDir?: string;
+}
+
 @Injectable({
   providedIn: 'root',
 })
@@ -53,6 +60,8 @@ export class LibrarySubmissionService {
   constructor(
     private http: HttpClient,
     private blocklyLibraryPackageService: BlocklyLibraryPackageService,
+    private cmdService: CmdService,
+    private platformService: PlatformService,
   ) { }
 
   submitLocalLibrary(projectPath: string, packageName: string, confirmExisting = false, packageJsonPatch?: Record<string, unknown>): Observable<LibrarySubmissionResponse> {
@@ -72,10 +81,21 @@ export class LibrarySubmissionService {
     if (confirmExisting) {
       payload.confirmExisting = true;
     }
-    if (bundle.srcArchivePath) {
-      return this.submitMultipart(payload, bundle.srcArchivePath);
-    }
-    return this.submitJson(payload);
+    return defer(() => this.prepareSrcArchive(bundle)).pipe(
+      switchMap((srcArchive) => {
+        if (srcArchive) {
+          try {
+            return this.submitMultipart(payload, srcArchive.path).pipe(
+              finalize(() => this.cleanupPreparedArchive(srcArchive)),
+            );
+          } catch (error) {
+            this.cleanupPreparedArchive(srcArchive);
+            throw error;
+          }
+        }
+        return this.submitJson(payload);
+      }),
+    );
   }
 
   submitJson(payload: LibrarySubmissionPayload): Observable<LibrarySubmissionResponse> {
@@ -120,6 +140,108 @@ export class LibrarySubmissionService {
       ...bundle.package.packageJson,
       ...packageJsonPatch,
     };
+  }
+
+  private async prepareSrcArchive(bundle: BlocklyLibrarySubmissionBundle): Promise<PreparedSrcArchive | undefined> {
+    if (bundle.srcArchivePath && this.isNonEmptyFile(bundle.srcArchivePath)) {
+      return { path: bundle.srcArchivePath };
+    }
+
+    if (!bundle.srcArchiveOutputPath) {
+      return undefined;
+    }
+
+    const sourceDir = bundle.srcDirectoryPath || window['path']?.join?.(window['path']?.dirname?.(bundle.srcArchiveOutputPath), 'src');
+    if (!this.isNonEmptyDirectory(sourceDir)) {
+      if (bundle.srcArchivePath) {
+        throw new Error(`src.7z 文件为空，且未找到可打包的非空 src 目录: ${bundle.srcArchivePath}`);
+      }
+      return undefined;
+    }
+
+    const packagePath = window['path']?.dirname?.(sourceDir);
+    if (!packagePath) {
+      throw new Error(`无法定位库目录: ${sourceDir}`);
+    }
+
+    const tempDir = this.createTempArchiveDirectory();
+    const tempArchivePath = window['path'].join(tempDir, 'src.7z');
+    const command = `${this.platformService.za7} a -t7z -mx=9 "${tempArchivePath}" src`;
+    const result = await this.cmdService.runAsync(command, packagePath, false);
+    if (result.type === 'error' || result.code !== 0) {
+      this.cleanupTempDirectory(tempDir);
+      throw new Error(this.formatArchiveError('src.7z 打包失败', command, result));
+    }
+
+    if (!this.isNonEmptyFile(tempArchivePath)) {
+      this.cleanupTempDirectory(tempDir);
+      throw new Error(this.formatArchiveError(`src.7z 生成失败: ${tempArchivePath}`, command, result));
+    }
+
+    return {
+      path: tempArchivePath,
+      tempDir,
+    };
+  }
+
+  private isNonEmptyDirectory(path: string): boolean {
+    try {
+      return window['fs'].statSync(path)?.isDirectory?.() === true && (window['fs'].readDirSync(path) || []).length > 0;
+    } catch {
+      return false;
+    }
+  }
+
+  private isNonEmptyFile(path: string): boolean {
+    try {
+      const stat = window['fs'].statSync(path);
+      return stat?.isFile?.() === true && Number(stat.size || 0) > 0;
+    } catch {
+      return false;
+    }
+  }
+
+  private createTempArchiveDirectory(): string {
+    const tempBase = (window as any)['os']?.tmpdir?.() || (window as any)['electronAPI']?.os?.tmpdir?.();
+    if (!tempBase) {
+      throw new Error('无法获取临时目录，不能打包 src.7z');
+    }
+    const tempDir = window['path'].join(tempBase, `aily_library_publish_${Date.now()}_${Math.random().toString(36).slice(2)}`);
+    window['fs'].mkdirSync(tempDir, { recursive: true });
+    return tempDir;
+  }
+
+  private cleanupPreparedArchive(srcArchive: PreparedSrcArchive): void {
+    if (!srcArchive.tempDir) {
+      return;
+    }
+    this.cleanupTempDirectory(srcArchive.tempDir);
+  }
+
+  private cleanupTempDirectory(path: string): void {
+    try {
+      if (window['fs'].existsSync(path)) {
+        window['fs'].rmSync(path, { recursive: true, force: true });
+      }
+    } catch {
+      // 临时文件清理失败不影响发布结果。
+    }
+  }
+
+  private formatArchiveError(message: string, command: string, result: CmdOutput): string {
+    const output = [
+      result.error,
+      result.stderr,
+      result.stdout,
+      result.data,
+    ]
+      .filter(Boolean)
+      .join('\n')
+      .trim();
+    const exitCode = result.code === undefined ? 'unknown' : result.code;
+    return output
+      ? `${message} (exit code: ${exitCode})\n命令: ${command}\n输出: ${output}`
+      : `${message} (exit code: ${exitCode})\n命令: ${command}`;
   }
 
   private getApiErrorPayload(error: HttpErrorResponse | unknown): unknown {
