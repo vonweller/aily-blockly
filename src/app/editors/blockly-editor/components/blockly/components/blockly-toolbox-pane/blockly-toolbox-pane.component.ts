@@ -29,6 +29,7 @@ import {
   LibraryPublishConfirmDialogComponent,
   LibraryPublishConfirmDialogData,
 } from '../../../../../../components/library-publish-confirm-dialog/library-publish-confirm-dialog.component';
+import { extractApiErrorDetails } from '../../../../../../utils/api-error.utils';
 import Sortable, { SortableEvent } from 'sortablejs';
 
 interface ToolboxContextMenuAction {
@@ -960,7 +961,7 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
   }
 
   private getErrorMessage(error: unknown, fallback: string): string {
-    let message = fallback;
+    let message = extractApiErrorDetails(error, fallback).message || fallback;
     if (error instanceof Error && error.message) {
       message = error.message;
     } else if (typeof error === 'string' && error) {

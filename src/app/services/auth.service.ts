@@ -4,7 +4,7 @@ import { BehaviorSubject, Observable, Subject, throwError, from, firstValueFrom 
 import { catchError, map, switchMap } from 'rxjs/operators';
 import { API } from '../configs/api.config';
 import { ElectronService } from './electron.service';
-import { extractApiErrorDetails } from '../utils/api-error.utils';
+import { createApiError, extractApiErrorDetails } from '../utils/api-error.utils';
 
 export interface CommonResponse {
   status: number;
@@ -63,6 +63,10 @@ interface RefreshTokenResponseData {
 }
 
 export type GitHubOAuthPurpose = 'login' | 'bind' | 'library_pr_submit';
+
+interface AuthHandleErrorOptions {
+  log?: boolean;
+}
 
 export interface RegisterRequest {
   username: string;
@@ -184,7 +188,7 @@ export class AuthService {
         }
         return response;
       }),
-      catchError(this.handleError)
+      catchError(error => this.handleError(error))
     );
   }
 
@@ -193,7 +197,7 @@ export class AuthService {
    */
   register(registerData: RegisterRequest): Observable<any> {
     return this.http.post(API.register, registerData).pipe(
-      catchError(this.handleError)
+      catchError(error => this.handleError(error))
     );
   }
 
@@ -211,7 +215,7 @@ export class AuthService {
       });
     }
     return this.http.post<CommonResponse>(API.sendEmailCode, { email, altcha, device_id: 'pc' }).pipe(
-      catchError(this.handleError)
+      catchError(error => this.handleError(error))
     );
   }
 
@@ -237,7 +241,7 @@ export class AuthService {
         }
         return response;
       }),
-      catchError(this.handleError)
+      catchError(error => this.handleError(error))
     );
   }
 
@@ -362,7 +366,7 @@ export class AuthService {
         }
         throw response;
       }),
-      catchError(this.handleError)
+      catchError(error => this.handleError(error))
     );
   }
 
@@ -857,10 +861,14 @@ export class AuthService {
   }
 
   startGitHubLibraryPrSubmitOAuth(): Observable<{ authorization_url: string; state: string }> {
-    return this.startGitHubOAuthForPurpose('library_pr_submit');
+    return this.startGitHubOAuthForPurpose('library_pr_submit', undefined, { logErrors: false });
   }
 
-  private startGitHubOAuthForPurpose(purpose: GitHubOAuthPurpose, inviteCode?: string): Observable<{ authorization_url: string; state: string }> {
+  private startGitHubOAuthForPurpose(
+    purpose: GitHubOAuthPurpose,
+    inviteCode?: string,
+    options: { logErrors?: boolean } = {},
+  ): Observable<{ authorization_url: string; state: string }> {
     // 生成并存储 state 参数
     const state = this.generateOAuthState(purpose);
 
@@ -891,9 +899,9 @@ export class AuthService {
             state: state
           };
         }
-        throw new Error(response.message || '获取授权URL失败');
+        throw response;
       }),
-      catchError(this.handleError)
+      catchError(error => this.handleError(error, { log: options.logErrors !== false }))
     );
   }
 
@@ -1083,9 +1091,9 @@ export class AuthService {
         if (response.status === 200 && response.data) {
           return response.data;
         }
-        throw new Error(response.message || '网络超时，请重试');
+        throw response;
       }),
-      catchError(this.handleError)
+      catchError(error => this.handleError(error))
     );
   }
 
@@ -1103,7 +1111,7 @@ export class AuthService {
         }
         throw response;
       }),
-      catchError(this.handleError)
+      catchError(error => this.handleError(error, { log: purpose !== 'library_pr_submit' }))
     );
   }
 
@@ -1303,7 +1311,7 @@ export class AuthService {
       params.invite_code = inviteCode;
     }
     return this.http.get<CommonResponse & { data: { ticket: string; qrcode_url: string; expires_in: number } }>(API.wechatQrcode, { params }).pipe(
-      catchError(this.handleError)
+      catchError(error => this.handleError(error))
     );
   }
 
@@ -1348,7 +1356,7 @@ export class AuthService {
       API.wechatCheck,
       { params: { ticket } }
     ).pipe(
-      catchError(this.handleError)
+      catchError(error => this.handleError(error))
     );
   }
 
@@ -1398,7 +1406,7 @@ export class AuthService {
       API.wechatLoginBindQrcode,
       { params: { pending_ticket: pendingTicket }, headers: { 'X-Supports-Merge-Confirm': 'true' } }
     ).pipe(
-      catchError(this.handleError)
+      catchError(error => this.handleError(error))
     );
   }
 
@@ -1440,7 +1448,7 @@ export class AuthService {
       API.wechatLoginBindCheck,
       { params: { ticket }, headers: { 'X-Supports-Merge-Confirm': 'true' } }
     ).pipe(
-      catchError(this.handleError)
+      catchError(error => this.handleError(error))
     );
   }
 
@@ -1503,7 +1511,7 @@ export class AuthService {
       body,
       { headers: { 'X-Supports-Merge-Confirm': 'true' } }
     ).pipe(
-      catchError(this.handleError)
+      catchError(error => this.handleError(error))
     );
   }
 
@@ -1533,7 +1541,7 @@ export class AuthService {
       API.wechatConfirmMerge,
       { ticket, flow }
     ).pipe(
-      catchError(this.handleError)
+      catchError(error => this.handleError(error))
     );
   }
 
@@ -1567,7 +1575,7 @@ export class AuthService {
                 target_url: response.data.target_url
               };
             }
-            throw new Error(response.message || '生成 SSO Token 失败');
+            throw response;
           }),
           catchError((error) => {
             console.error('生成 SSO Token 失败:', error);
@@ -1588,8 +1596,12 @@ export class AuthService {
   /**
    * 错误处理
    */
-  private handleError(error: any): Observable<never> {
-    console.error('认证服务错误:', error);
-    return throwError(() => error);
+  private handleError(error: any, options: AuthHandleErrorOptions = {}): Observable<never> {
+    const apiError = createApiError(error, '认证服务错误');
+    if (options.log !== false) {
+      const codeSuffix = apiError.errorCode ? ` (${apiError.errorCode})` : '';
+      console.error(`认证服务错误: ${apiError.message}${codeSuffix}`, error);
+    }
+    return throwError(() => apiError);
   }
 }
