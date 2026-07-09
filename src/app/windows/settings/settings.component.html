@@ -225,10 +225,10 @@
                 <div class="region-buttons">
                   <button nz-button nzSize="small" [disabled]="cacheClearing" [nzLoading]="cacheClearing === 'all'"
                     (click)="clearCache('all')">{{ 'SETTINGS.FIELDS.CACHE_ALL' | translate }}</button>
-                  <button nz-button nzSize="small" [disabled]="cacheClearing" [nzLoading]="cacheClearing === '30'"
-                    (click)="clearCache('30')">{{ 'SETTINGS.FIELDS.CACHE_ONE_MONTH' | translate }}</button>
-                  <button nz-button nzSize="small" [disabled]="cacheClearing" [nzLoading]="cacheClearing === '90'"
-                    (click)="clearCache('90')">{{ 'SETTINGS.FIELDS.CACHE_THREE_MONTHS' | translate }}</button>
+                  <button nz-button nzSize="small" [disabled]="cacheClearing" [nzLoading]="cacheClearing === 'unused-7'"
+                    (click)="clearCache('unused-7')">{{ 'SETTINGS.FIELDS.CACHE_ONE_MONTH' | translate }}</button>
+                  <button nz-button nzSize="small" [disabled]="cacheClearing" [nzLoading]="cacheClearing === 'unused-30'"
+                    (click)="clearCache('unused-30')">{{ 'SETTINGS.FIELDS.CACHE_THREE_MONTHS' | translate }}</button>
                 </div>
               </div>
             </div>

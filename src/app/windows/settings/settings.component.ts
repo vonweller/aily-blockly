@@ -22,7 +22,7 @@ import { CmdService } from '../../services/cmd.service';
 import { ElectronService } from '../../services/electron.service';
 import { NzToolTipModule } from "ng-zorro-antd/tooltip";
 
-type CacheClearOption = 'all' | '30' | '90';
+type CacheClearOption = 'all' | 'unused-7' | 'unused-30';
 
 interface CacheStats {
   totalFiles: number;
@@ -32,12 +32,6 @@ interface CacheStats {
 interface DirectoryStats {
   size: number;
   count: number;
-}
-
-interface CacheClearPaths {
-  buildPath: string;
-  configFilePath: string;
-  scriptPath: string;
 }
 
 @Component({
@@ -725,67 +719,31 @@ export class SettingsComponent implements OnDestroy {
     }
   }
 
-  private async doClearCache(option: CacheClearOption) {
-    const paths = this.getCacheClearPaths();
-    const excludeDirs = await this.getCurrentProjectCacheExcludeDirs();
-
-    if (!this.writeClearCacheConfig(paths, option, excludeDirs)) {
-      return;
-    }
-
-    this.startClearCacheProcess(option, paths);
+  private doClearCache(option: CacheClearOption) {
+    this.startClearCacheProcess(option);
   }
 
-  private getCacheClearPaths(): CacheClearPaths {
-    const buildPath = window['path'].getAilyBuilderBuildPath();
-    const appDataPath = window['path'].getAppDataPath();
-
-    return {
-      buildPath,
-      configFilePath: window['path'].join(appDataPath, 'clear-cache-config.json'),
-      scriptPath: window['path'].join(window['path'].getAilyChildPath(), 'scripts', 'clear-cache.js')
+  private getCacheClearArgs(option: CacheClearOption): string[] {
+    const optionArgMap: Record<CacheClearOption, string> = {
+      all: '--all',
+      'unused-7': '--unused-7',
+      'unused-30': '--unused-30'
     };
+    return ['cache', 'clear', optionArgMap[option]];
   }
 
-  private async getCurrentProjectCacheExcludeDirs(): Promise<string[]> {
-    if (!window['iWindow']?.send) {
-      return [];
-    }
-
-    try {
-      const resp = await window['iWindow'].send({ to: 'main', data: { action: 'get-build-path' } });
-      return resp?.buildPath ? [window['path'].basename(resp.buildPath)] : [];
-    } catch {
-      return [];
-    }
-  }
-
-  private writeClearCacheConfig(paths: CacheClearPaths, option: CacheClearOption, excludeDirs: string[]): boolean {
-    try {
-      window['fs'].writeFileSync(paths.configFilePath, JSON.stringify({
-        buildPath: paths.buildPath,
-        option,
-        excludeDirs
-      }, null, 2));
-      return true;
-    } catch (e) {
-      console.error('Failed to write clear-cache config', e);
-      this.message.error(this.translateService.instant('SETTINGS.FIELDS.CACHE_CLEAR_FAILED'));
-      return false;
-    }
-  }
-
-  private startClearCacheProcess(option: CacheClearOption, paths: CacheClearPaths) {
+  private startClearCacheProcess(option: CacheClearOption) {
     this.cacheClearing = option;
     const loadingRef = this.message.loading(this.translateService.instant('SETTINGS.FIELDS.CACHE_CLEARING'), { nzDuration: 0 });
     this._clearCacheLoadingRef = loadingRef.messageId;
 
-    const command = `node "${paths.scriptPath}" "${paths.configFilePath}"`;
-    this.sendLog({ detail: command, state: 'doing' });
+    const command = window['path'].getAilyBuilderCommand?.() || 'aily-builder';
+    const args = this.getCacheClearArgs(option);
+    this.sendLog({ detail: `${command} ${args.join(' ')}`, state: 'doing' });
     const startTime = Date.now();
 
     this._clearCacheSubscription?.unsubscribe();
-    this._clearCacheSubscription = this.cmdService.spawn('node', [paths.scriptPath, paths.configFilePath], {}, true).subscribe({
+    this._clearCacheSubscription = this.cmdService.spawn(command, args, {}, true).subscribe({
       next: (output) => {
         if (output.type === 'stdout' || output.type === 'stderr') {
           this.logClearCacheOutput(output.data, output.type === 'stderr' ? 'error' : 'doing');
@@ -855,6 +813,6 @@ export class SettingsComponent implements OnDestroy {
   }
 
   openCacheFolder() {
-    this.electronService.openByExplorer(window['path'].getAilyBuilderCachePath());
+    this.electronService.openByExplorer(window['path'].getAilyBuilderBuildPath());
   }
 }

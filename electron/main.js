@@ -2283,7 +2283,7 @@ function loadEnv() {
   } else if (isDarwin) {
     // 设置macOS的环境变量
     process.env.AILY_APPDATA_PATH = conf["appdata_path"]["darwin"].replace('~', os.homedir());
-    process.env.AILY_BUILDER_CACHE_PATH = path.join(os.homedir(), "Library", "aily-builder");
+    process.env.AILY_BUILDER_CACHE_PATH = path.join(os.homedir(), "Library", "Caches", "aily-builder");
     process.env.AILY_BUILDER_BUILD_PATH = path.join(process.env.AILY_BUILDER_CACHE_PATH, "cache");
   } else {
     // 设置Linux的环境变量
@@ -2306,6 +2306,14 @@ function loadEnv() {
       fs.mkdirSync(process.env.AILY_BUILDER_CACHE_PATH, { recursive: true });
     } catch (error) {
       console.error("Failed to create aily-builder cache path:", error);
+    }
+  }
+
+  if (!fs.existsSync(process.env.AILY_BUILDER_BUILD_PATH)) {
+    try {
+      fs.mkdirSync(process.env.AILY_BUILDER_BUILD_PATH, { recursive: true });
+    } catch (error) {
+      console.error("Failed to create aily-builder build path:", error);
     }
   }
 
