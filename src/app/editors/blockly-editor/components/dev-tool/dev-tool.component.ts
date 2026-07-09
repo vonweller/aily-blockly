@@ -401,6 +401,9 @@ export class DevToolComponent implements OnInit, AfterViewInit, OnDestroy {
     if (!this.electronService.exists(archPath)) {
       this.uiService.openTool('aily-chat');
       const prompt = this.translate.instant('FLOAT_SIDER.GENERATE_ARCH_PROMPT');
+//       const prompt = `${this.translate.instant('FLOAT_SIDER.GENERATE_ARCH_PROMPT')}
+
+// Generate a Mermaid project architecture diagram and save it to arch.md. If the architecture save tool is deferred, use tool_search for blockly-architecture or save_arch, then call save_arch with raw Mermaid DSL in code. Do not only print Mermaid source.`;
       setTimeout(() => {
         void this.sendArchPrompt(prompt);
       }, 400);

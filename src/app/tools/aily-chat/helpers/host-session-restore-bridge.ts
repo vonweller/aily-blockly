@@ -972,7 +972,8 @@ export class HostSessionRestoreBridge {
   }
 
   private restorePendingRuntimeInteraction(sessionId: string, turnResponses: readonly TurnResponseTurn[]): void {
-    const interactionContinuation = this.ctx.lexStream.session.snapshot(sessionId)?.requestContext?.interactionContinuation;
+    const interactionContinuation = this.ctx.lexStream.session.snapshot(sessionId)?.requestContext?.interactionContinuation
+      ?? findPendingInteractionContinuation(turnResponses);
     const pending = readInteractionPendingRecord(interactionContinuation);
     if (!pending || pending['kind'] === 'none') {
       return;
@@ -1431,7 +1432,41 @@ function hasRestoredActiveInteractionResponse(turnResponses: readonly TurnRespon
   return turnResponses.some(turn =>
     isTransientTurnResponseStatus(turn.response.status)
     || isPendingInteractionContinuation(turn.response.continuation)
+    || hasPendingInteractionPart(turn.response.parts)
   );
+}
+
+function findPendingInteractionContinuation(turnResponses: readonly TurnResponseTurn[]): LexTurnContinuation | undefined {
+  for (let turnIndex = turnResponses.length - 1; turnIndex >= 0; turnIndex--) {
+    const continuation = turnResponses[turnIndex]?.response?.continuation;
+    if (isPendingInteractionContinuation(continuation)) {
+      return continuation;
+    }
+  }
+
+  return undefined;
+}
+
+function hasPendingInteractionPart(parts: readonly TurnResponseTurn['response']['parts'][number][] | null | undefined): boolean {
+  if (!Array.isArray(parts)) {
+    return false;
+  }
+
+  return parts.some(part => {
+    if (!part || typeof part !== 'object') {
+      return false;
+    }
+    if (part.type === 'question') {
+      return !('answers' in part) || part.answers == null;
+    }
+    if (part.type === 'confirmation') {
+      return part.resolved !== true;
+    }
+    if (part.type === 'plan_review') {
+      return part.resolved !== true;
+    }
+    return false;
+  });
 }
 
 function cloneJsonLikeValue<T>(value: T): T {

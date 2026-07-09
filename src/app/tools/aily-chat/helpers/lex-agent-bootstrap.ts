@@ -1455,6 +1455,7 @@ export function buildExternalHostAPI(
           ...(devmode ? { devmode } : {}),
         }, {
           activationReason: 'chat-tool-create',
+          sessionResource: options.sessionId || null,
         });
         if (result === false) {
           throw new Error('Project service returned false while creating project.');

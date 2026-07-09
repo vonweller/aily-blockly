@@ -27,7 +27,7 @@ export interface StateDetailRow {
   reference?: string;
   trailing?: string;
   tone?: StateTone;
-  outputKind?: 'default' | 'terminal-command' | 'terminal-stream' | 'text' | 'resource' | 'image' | 'code' | 'changed-file';
+  outputKind?: 'default' | 'terminal-command' | 'terminal-stream' | 'text' | 'resource' | 'image' | 'code' | 'changed-file' | 'mermaid';
   outputChannel?: 'stdout' | 'stderr';
   outputUri?: string;
   outputMimeType?: string;
@@ -162,6 +162,7 @@ export function buildActivityItemsFromDetailSections(
 
 export function buildToolCallDetailSections(source: {
   id?: string;
+  toolName?: string;
   metadata?: Record<string, unknown> | null;
   args?: unknown;
   text?: string;
@@ -177,7 +178,7 @@ export function buildToolCallDetailSections(source: {
     return buildSubagentDetailSections(source);
   }
 
-  const toolName = asString(metadata['toolName']);
+  const toolName = source.toolName || asString(metadata['toolName']);
   const readFileMetadata = asRecord(metadata['readFile']);
   const argsSummary = asString(metadata['argsSummary']);
   const argsNote = argsSummary || formatToolCallArgs(source.args);
@@ -213,6 +214,7 @@ export function buildToolCallDetailSections(source: {
     timelineEntries,
     toolName,
     baseId,
+    args: source.args,
     text: source.text,
     state: source.state,
   });
@@ -243,15 +245,18 @@ function buildToolCallOutputRowsWithFallback(input: {
   timelineEntries: readonly Record<string, unknown>[];
   toolName?: string;
   baseId: string;
+  args?: unknown;
   text?: string;
   state?: 'doing' | 'done' | 'warn' | 'error' | 'pending_approval';
 }): StateDetailRow[] {
-  const timelineRows = input.timelineEntries.flatMap((entry, index) => buildToolCallOutputRows(entry, index, input.toolName));
+  const timelineRows = input.timelineEntries.flatMap((entry, index) =>
+    buildToolCallOutputRows(withToolCallArgs(entry, input.args), index, input.toolName),
+  );
   if (timelineRows.length > 0) {
     return timelineRows;
   }
 
-  const metadataRows = buildToolCallOutputRows(input.metadata, 0, input.toolName);
+  const metadataRows = buildToolCallOutputRows(withToolCallArgs(input.metadata, input.args), 0, input.toolName);
   if (metadataRows.length > 0) {
     return metadataRows;
   }
@@ -261,6 +266,7 @@ function buildToolCallOutputRowsWithFallback(input: {
     entry: {
       recordId: `${input.baseId}:output:text`,
       phase: asString(input.metadata['phase']) || toolCallStateToNarrativePhase(input.state),
+      args: input.args,
       resultText: input.text,
     },
     index: 0,
@@ -286,6 +292,14 @@ function buildToolCallOutputRowsWithFallback(input: {
   }
 
   return [];
+}
+
+function withToolCallArgs(entry: Record<string, unknown>, args: unknown): Record<string, unknown> {
+  if (args === undefined || entry['args'] !== undefined) {
+    return entry;
+  }
+
+  return { ...entry, args };
 }
 
 function buildFallbackToolCallOutputRow(
@@ -3593,6 +3607,7 @@ function outputGroupKindFromRow(row: StateDetailRow): StateDetailOutputGroup['ki
     case 'terminal-stream':
       return 'terminal';
     case 'code':
+    case 'mermaid':
       return 'code';
     case 'image':
     case 'resource':

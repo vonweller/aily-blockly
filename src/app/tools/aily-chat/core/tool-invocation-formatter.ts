@@ -123,7 +123,7 @@ export function buildToolInvocationDisplaySummary(input: {
     case 'get_board_parameters':
       return buildBoardParametersSummary(args);
     case 'save_arch':
-      return buildSaveArchSummary(args);
+      return buildSaveArchSummary(args, input.metadata, input.result);
     case 'search_boards_libraries':
       return buildBoardsLibrariesSummary(args);
     case 'get_hardware_categories':
@@ -519,10 +519,20 @@ function buildBoardParametersSummary(args: any): ToolInvocationDisplaySummary {
   };
 }
 
-function buildSaveArchSummary(args: any): ToolInvocationDisplaySummary {
+function buildSaveArchSummary(
+  args: any,
+  metadata?: Record<string, unknown> | null,
+  result?: any,
+): ToolInvocationDisplaySummary {
+  const resultMetadata = asRecord(result?.metadata);
+  const path = asString(args?.path)
+    || asString(metadata?.['path'])
+    || asString(metadata?.['filePath'])
+    || asString(resultMetadata?.['path'])
+    || asString(resultMetadata?.['filePath']);
   return {
     label: 'Saved architecture diagram',
-    subtitle: asString(args?.path) ? `to ${truncateDisplayText(String(args.path), 56)}` : undefined,
+    subtitle: path ? `to ${truncateDisplayText(path, 56)}` : undefined,
   };
 }
 

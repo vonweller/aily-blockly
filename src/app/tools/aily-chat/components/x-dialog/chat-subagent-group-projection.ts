@@ -1,4 +1,4 @@
-import { ChatPart, getParentToolCallId, getSubAgentInvocationId, isSubagentChildPart } from '../../core/chat-parts';
+import { ChatPart, MarkdownPart, getParentToolCallId, getSubAgentInvocationId, isSubagentChildPart } from '../../core/chat-parts';
 import { isProgressMessageDisplayPart, type RenderableChatPart } from './chat-render-parts';
 import {
   buildActivityGroupIdentity,
@@ -195,10 +195,19 @@ function buildBaseRenderItems(parts: readonly RenderableChatPart[]): ChatRenderI
           bufferStartIndex = index;
         }
         buffer.push(part as ChatPart);
+        const mermaidPart = buildSaveArchMermaidDisplayPart(part);
+        if (mermaidPart) {
+          flushBuffer();
+          items.push({ kind: 'part', id: buildChatPartIdentity(mermaidPart, index), part: mermaidPart });
+        }
         continue;
       }
       flushBuffer();
       items.push({ kind: 'part', id: buildChatPartIdentity(part, index), part });
+      const mermaidPart = buildSaveArchMermaidDisplayPart(part);
+      if (mermaidPart) {
+        items.push({ kind: 'part', id: buildChatPartIdentity(mermaidPart, index), part: mermaidPart });
+      }
       continue;
     }
 
@@ -387,6 +396,69 @@ function shouldPinToolCallToThinking(part: RenderableChatPart): boolean {
   }
 
   return true;
+}
+
+function buildSaveArchMermaidDisplayPart(part: RenderableChatPart): MarkdownPart | null {
+  const toolPart = toRuntimeToolCallPart(part);
+  if (toolPart.type !== 'tool_call' || normalizeReadSideToolName(toolPart.toolName) !== 'save_arch') {
+    return null;
+  }
+
+  if (toolPart.state !== 'done' && toolPart.state !== 'warn') {
+    return null;
+  }
+
+  const code = extractSaveArchMermaidCode(toolPart.args, toolPart.metadata, (part as { readonly text?: string }).text);
+  if (!code) {
+    return null;
+  }
+
+  const scoped = part as {
+    readonly sourceAgentRole?: 'main' | 'subagent';
+    readonly subAgentInvocationId?: string;
+    readonly parentToolCallId?: string;
+    readonly sequence?: number;
+  };
+  return {
+    type: 'markdown',
+    partId: `${toolPart.toolCallId || 'save_arch'}:mermaid-artifact`,
+    content: `\`\`\`mermaid\n${code}\n\`\`\``,
+    sourceAgentRole: scoped.sourceAgentRole,
+    subAgentInvocationId: scoped.subAgentInvocationId,
+    parentToolCallId: scoped.parentToolCallId,
+    sequence: typeof scoped.sequence === 'number' ? scoped.sequence + 0.01 : undefined,
+  };
+}
+
+function extractSaveArchMermaidCode(args: unknown, metadata: unknown, text: unknown): string | null {
+  const metadataRecord = asRecord(metadata);
+  const artifact = asRecord(metadataRecord?.['artifact']);
+  const artifactCode = asString(artifact?.['code']);
+  if (artifactCode) {
+    return artifactCode;
+  }
+
+  const argsCode = asString(asRecord(args)?.['code']);
+  if (argsCode) {
+    return argsCode;
+  }
+
+  const resultText = [
+    asString(metadataRecord?.['resultText']),
+    typeof text === 'string' ? text : undefined,
+  ].find((candidate): candidate is string => !!candidate);
+  const fencedCode = extractMermaidFence(resultText);
+  return fencedCode || null;
+}
+
+function extractMermaidFence(text: string | undefined): string | null {
+  if (!text) {
+    return null;
+  }
+
+  const match = text.match(/```(?:mermaid|aily-mermaid)?\s*([\s\S]*?)```/i);
+  const code = match?.[1]?.trim();
+  return code || null;
 }
 
 function getSubagentGroupId(part: RenderableChatPart): string | null {

@@ -1077,14 +1077,49 @@ export class SessionLifecycleHelper {
     return true;
   }
 
-  adoptActiveGlobalSessionToProject(projectPath: string, reason = 'chat-tool-create'): boolean {
+  adoptActiveGlobalSessionToProject(
+    projectPath: string,
+    reason = 'chat-tool-create',
+    eventSessionResource?: string | null,
+  ): boolean {
     const sessionId = this.resolveCurrentViewSessionResource();
+    const normalizedEventSessionResource = typeof eventSessionResource === 'string'
+      ? eventSessionResource.trim()
+      : '';
     const targetProjectPath = this.getPersistableProjectPath(projectPath);
     if (!sessionId || !targetProjectPath) {
+      this.logSessionScopeAdoption({
+        event: 'adopt-global-to-project',
+        reason,
+        sessionResource: normalizedEventSessionResource || sessionId || null,
+        projectPath: targetProjectPath,
+        adopted: false,
+        failureReason: !sessionId ? 'missing-session-resource' : 'missing-project-path',
+      });
+      return false;
+    }
+
+    if (normalizedEventSessionResource && normalizedEventSessionResource !== sessionId) {
+      this.logSessionScopeAdoption({
+        event: 'adopt-global-to-project',
+        reason,
+        sessionResource: normalizedEventSessionResource,
+        projectPath: targetProjectPath,
+        adopted: false,
+        failureReason: 'session-resource-mismatch',
+      });
       return false;
     }
 
     if (this.getPersistableProjectPath(this.ctx.chatService.currentSessionPath)) {
+      this.logSessionScopeAdoption({
+        event: 'adopt-global-to-project',
+        reason,
+        sessionResource: sessionId,
+        projectPath: targetProjectPath,
+        adopted: false,
+        failureReason: 'current-session-already-project-scoped',
+      });
       return false;
     }
 
@@ -1096,6 +1131,14 @@ export class SessionLifecycleHelper {
       reason,
     );
     if (!adopted) {
+      this.logSessionScopeAdoption({
+        event: 'adopt-global-to-project',
+        reason,
+        sessionResource: sessionId,
+        projectPath: targetProjectPath,
+        adopted: false,
+        failureReason: 'history-adoption-failed',
+      });
       return false;
     }
 
@@ -1133,7 +1176,31 @@ export class SessionLifecycleHelper {
     this.persistSessionEntryTarget(this.buildFreshSessionEntryTarget(sessionId));
     this.refreshHistoryList();
     this.ctx.triggerSyncDetectChanges();
+    this.logSessionScopeAdoption({
+      event: 'adopt-global-to-project',
+      reason,
+      sessionResource: sessionId,
+      projectPath: targetProjectPath,
+      adopted: true,
+    });
     return true;
+  }
+
+  private logSessionScopeAdoption(input: {
+    event: string;
+    reason: string;
+    sessionResource: string | null;
+    projectPath: string | null;
+    adopted: boolean;
+    failureReason?: string;
+  }): void {
+    console.info('[AilyChat][SessionScopeAdoption]', {
+      ...input,
+      fromScope: 'global',
+      toScope: input.projectPath ? `project:${input.projectPath}` : 'project:<missing>',
+      currentViewResource: this.resolveCurrentViewSessionResource() || null,
+      hasBlankSessionShell: this.ctx.chatService.hasBlankSessionShell === true,
+    });
   }
 
   async initializeSessionForCurrentProject(): Promise<void> {
@@ -1540,6 +1607,26 @@ export class SessionLifecycleHelper {
     });
   }
 
+  private async restoreHostEditTrackingSessionState(
+    sessionId: string | null | undefined,
+    workspaceRoot: string | null | undefined,
+    turnResponses: readonly TurnResponseTurn[] | null | undefined,
+  ): Promise<void> {
+    const canonicalTurnResponses = Array.isArray(turnResponses) ? turnResponses : [];
+    await this.requestHostEditTrackingOperation({
+      sessionId,
+      label: 'Restoring edit tracking timeline',
+      detail: 'Host edit tracking resource is restoring session edit state from the response model.',
+      payload: {
+        adapter: 'editTracking',
+        action: 'restoreFromTurnResponses',
+        workspaceRoot: workspaceRoot ?? null,
+        turnResponses: canonicalTurnResponses,
+        autoSaveEdits: this.ctx.ailyChatConfigService.autoSaveEdits === true,
+      },
+    });
+  }
+
   private async requestHostEditTrackingOperation(input: {
     readonly sessionId: string | null | undefined;
     readonly label: string;
@@ -1819,6 +1906,8 @@ export class SessionLifecycleHelper {
         hostRecordSource: restoreRequest.diagnostics.hostRecordSource,
         metadataSource: restoreRequest.diagnostics.metadataSource,
       });
+      this.discardMissingRestoreTarget(restoreRequest);
+      return;
     }
 
     this.resetForSessionActivation({ clearVisibleProjection: false });
@@ -1848,12 +1937,19 @@ export class SessionLifecycleHelper {
     }
 
     if (options.preferDetachedRuntimeAttach === true
-      && this.shouldReattachDetachedRuntimeSession(restoreRequest.target.sessionId)) {
+      && this.shouldReattachDetachedRuntimeSession(restoreRequest.target.sessionId, {
+        allowIdleContent: !restoreRequest.hostRecord,
+      })) {
       await this.reattachDetachedRuntimeSession(restoreRequest, activationRequestId);
       return;
     }
 
-    const runtimeRestoreHostRecord = this.ctx.buildRuntimeRestoreHostRecord?.(restoreRequest) ?? null;
+    const runtimeRestoreHostRecord = this.shouldUseRuntimeRestoreHostRecord(
+      restoreRequest.target.sessionId,
+      restoreRequest.hostRecord,
+    )
+      ? this.ctx.buildRuntimeRestoreHostRecord?.(restoreRequest) ?? null
+      : null;
     const hostRecordToRestore = runtimeRestoreHostRecord ?? restoreRequest.hostRecord;
     if (hostRecordToRestore) {
       await this.restoreDurableSessionModelFromRestoreRequest(
@@ -1945,6 +2041,33 @@ export class SessionLifecycleHelper {
     });
   }
 
+  private shouldUseRuntimeRestoreHostRecord(
+    sessionId: string | null | undefined,
+    durableHostRecord: HostSessionRecord | null | undefined,
+  ): boolean {
+    const normalizedSessionId = typeof sessionId === 'string'
+      ? sessionId.trim()
+      : '';
+    if (!normalizedSessionId) {
+      return false;
+    }
+
+    const runtimeState = this.ctx.readSessionRuntimeState?.(normalizedSessionId);
+    if (!runtimeState) {
+      return false;
+    }
+
+    if (runtimeState.requestInProgress === true || runtimeState.attachedView === true) {
+      return true;
+    }
+
+    if (!durableHostRecord) {
+      return Array.isArray(runtimeState.turnResponses) && runtimeState.turnResponses.length > 0;
+    }
+
+    return false;
+  }
+
   private async attachExistingSessionModelFromRestoreRequest(
     restoreRequest: {
       readonly target: {
@@ -2005,6 +2128,16 @@ export class SessionLifecycleHelper {
       ?? restoreRequest.sessionContent.providerOptions;
 
     this.persistSessionEntryTarget(this.buildSessionEntryTarget(sessionId, restoreRequest.sessionContent));
+    await this.restoreHostEditTrackingSessionState(
+      sessionId,
+      providerOptions.folderPath
+        ?? restoreRequest.sessionContent.projectPathHint
+        ?? restoreRequest.target.projectPath
+        ?? null,
+      restoreRequest.hostRecord?.turnResponses
+        ?? restoreRequest.sessionContent.hostRecord?.turnResponses
+        ?? model.turnResponses,
+    );
 
     await this.ctx.attachSessionView?.(sessionId);
     this.throwIfSessionActivationSuperseded(activationRequestId);
@@ -2120,6 +2253,49 @@ export class SessionLifecycleHelper {
     }
 
     return !this.restoreRequestHasDurableConversationContent(restoreRequest);
+  }
+
+  private discardMissingRestoreTarget(
+    restoreRequest: {
+      readonly target: {
+        readonly sessionId: string;
+        readonly projectPath?: string | null;
+      };
+      readonly sessionContent: HostSessionContent;
+    },
+  ): void {
+    const sessionId = typeof restoreRequest.target.sessionId === 'string'
+      ? restoreRequest.target.sessionId.trim()
+      : '';
+    if (!sessionId) {
+      return;
+    }
+
+    this.sessionModelReferences.get(sessionId)?.dispose();
+    this.sessionModelReferences.delete(sessionId);
+    this.hostSessionItemController.discardChatSessionItem(sessionId);
+    this.clearPersistedSessionEntryTarget(sessionId);
+    this.ctx.detachSessionRuntimeView?.(sessionId);
+    this.ctx.detachSessionViewModel?.(sessionId);
+
+    const currentSessionId = this.resolveCurrentViewSessionResource();
+    const liveSessionId = typeof this.ctx.chatService.currentSessionId === 'string'
+      ? this.ctx.chatService.currentSessionId.trim()
+      : '';
+    if (currentSessionId === sessionId || liveSessionId === sessionId) {
+      this.enterEntryState({
+        projectPath: restoreRequest.sessionContent.projectPathHint
+          ?? restoreRequest.sessionContent.providerOptions.folderPath
+          ?? restoreRequest.target.projectPath
+          ?? this.resolveCurrentProjectPath(),
+      });
+    }
+
+    this.requestSessionListRefresh({
+      reason: 'entry',
+      scope: 'summary',
+      priority: 'after-paint',
+    });
   }
 
   private logSessionActivationScalar(
@@ -2290,7 +2466,10 @@ export class SessionLifecycleHelper {
     return !!hostRecord && countHostRecordMessages(hostRecord) > 0;
   }
 
-  private shouldReattachDetachedRuntimeSession(sessionId: string): boolean {
+  private shouldReattachDetachedRuntimeSession(
+    sessionId: string,
+    options: { readonly allowIdleContent?: boolean } = {},
+  ): boolean {
     const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
     if (!normalizedSessionId) {
       return false;
@@ -2301,17 +2480,18 @@ export class SessionLifecycleHelper {
       return false;
     }
 
+    const runtimeHasConversationContent = hasHostResponseConversationContent(runtimeState.hostProjectionState ?? null)
+      || (Array.isArray(runtimeState.turnResponses) && runtimeState.turnResponses.length > 0);
     const runtimeStillOwnsActiveTurn = runtimeState.requestInProgress === true
       || runtimeState.status === 'in_progress'
       || runtimeState.status === 'needs_input'
       || !!runtimeState.activeResponseHandle;
-    if (!runtimeStillOwnsActiveTurn) {
+    if (!runtimeStillOwnsActiveTurn && (options.allowIdleContent !== true || !runtimeHasConversationContent)) {
       return false;
     }
 
     return runtimeState.attachedView === false
-      || hasHostResponseConversationContent(runtimeState.hostProjectionState ?? null)
-      || (Array.isArray(runtimeState.turnResponses) && runtimeState.turnResponses.length > 0);
+      || runtimeHasConversationContent;
   }
 
   private async reattachDetachedRuntimeSession(
