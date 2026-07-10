@@ -90,7 +90,7 @@ export class IframeComponent implements OnInit, OnDestroy {
   private noticeSubscription: Subscription | null = null;
   /** 待响应的保存请求：messageId -> resolve */
   private pendingSaveResolvers = new Map<string, (result: { success: boolean }) => void>();
-  /** 程序化推送图数据后，短时间内忽略子页面自动触发的保存回写 */
+  /** 程序化推送图数据后，短时间内忽略子页面未变化的保存回写 */
   private suppressProgrammaticSaveUntil = 0;
 
   constructor(
@@ -291,12 +291,16 @@ export class IframeComponent implements OnInit, OnDestroy {
                 // 获取当前 payload 数据（包含 componentConfigs, components, connections）
                 const currentPayload = this.iframeData as any;
                 if (currentPayload && currentPayload.components) {
-                  if (Date.now() < this.suppressProgrammaticSaveUntil) {
+                  if (
+                    Date.now() < this.suppressProgrammaticSaveUntil
+                    && JSON.stringify(currentPayload.connections ?? [])
+                      === JSON.stringify(connections)
+                  ) {
                     this.iframeData = {
                       ...currentPayload,
                       connections: connections,
                     };
-                    console.log('[IframeComponent] 跳过程序化更新触发的自动保存');
+                    console.log('[IframeComponent] 跳过程序化更新的未变化回写');
                     return;
                   }
                   // 通过 IPC 让主窗口保存数据（子窗口无法直接访问 projectPath）
@@ -512,8 +516,10 @@ export class IframeComponent implements OnInit, OnDestroy {
   private async handleConnectionGraphUpdate(data: any): Promise<void> {
     if (!data) return;
     try {
-      // runtime/agent 推送的新图已经在主流程中保存过，不应立即再触发一次子窗口自动保存。
-      this.suppressProgrammaticSave();
+      // 记录程序化推送窗口，只过滤远端对相同 connections 的回写。
+      if (this.isProgrammaticConnectionGraphPayload(data)) {
+        this.suppressProgrammaticSave();
+      }
       // 使用 IPC 发送过来的完整 payload（包含最新的 componentConfigs）
       const currentPayload = this.iframeData as any;
       const newPayload = {
@@ -523,6 +529,9 @@ export class IframeComponent implements OnInit, OnDestroy {
         components: data.components || [],
         connections: data.connections || [],
         theme: data.theme || currentPayload?.theme || 'dark',
+        ...(typeof data.autoRoutingMode === 'boolean'
+          ? { autoRoutingMode: data.autoRoutingMode }
+          : {}),
       };
       this.iframeData = newPayload;
       await this.pushDataToRemote();
