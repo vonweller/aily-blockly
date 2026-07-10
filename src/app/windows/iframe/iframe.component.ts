@@ -225,6 +225,11 @@ export class IframeComponent implements OnInit, OnDestroy {
     iframe: HTMLIFrameElement,
   ): Promise<void> {
     try {
+      // MCP 可能在 Penpal 初始化回调中立即推图并触发保存，必须先监听保存回执。
+      if (this.isConnectionGraphWindow) {
+        this.startConnectionGraphIpcListener();
+      }
+
       const messenger = new WindowMessenger({
         remoteWindow: iframe.contentWindow!,
         allowedOrigins: this.allowedOrigins,
@@ -355,11 +360,6 @@ export class IframeComponent implements OnInit, OnDestroy {
       this.isLoading = false;
       this.showEmptyState = false;
 
-      // 开始监听 connection-graph IPC（统一按 type 分发）
-      if (this.isConnectionGraphWindow) {
-        this.startConnectionGraphIpcListener();
-      }
-
       // TODO:如果是 component-viewer 窗口，立即推送数据给子页面，新版本为web主动调用，这里临时多推送一次，待web更新后可删除
       if (this.isComponentViewerWindow) {
         setTimeout(() => {
@@ -446,7 +446,11 @@ export class IframeComponent implements OnInit, OnDestroy {
    * 开始监听 connection-graph IPC（统一按 type 分发，规范：docs/iframe-ipc-spec.md）
    */
   private startConnectionGraphIpcListener(): void {
-    if (!this.electronService.isElectron || !window['ipcRenderer']) return;
+    if (
+      this.connectionGraphIpcCleanup
+      || !this.electronService.isElectron
+      || !window['ipcRenderer']
+    ) return;
 
     const handler = (_event: unknown, payload: IframeIpcPayload) => {
       const { type, data } = payload ?? {};
