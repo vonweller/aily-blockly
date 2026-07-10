@@ -793,7 +793,7 @@ export class HeaderComponent implements OnInit, OnDestroy {
             }
           });
         }
-        this.updateService.checkForUpdates();
+        this.updateService.checkForUpdates(true);
         break;
       case 'browser-open':
         this.electronService.openUrl(item.data.url);

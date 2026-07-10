@@ -23,6 +23,10 @@ function exitWithFatalError(error) {
     process.exit(1);
 }
 
+function isDevelopmentEnvironment() {
+    return process.env.DEV === 'true' || process.env.DEV === '1';
+}
+
 process.on('uncaughtException', (error) => {
     exitWithFatalError(error);
 });
@@ -50,7 +54,8 @@ async function main() {
         currentProjectPath,
         boardModule,
         code,
-        ailyBuilderPath
+        ailyBuilderPath,
+        ailyBuilderCommand
     } = config;
 
     // 辅助函数：递归创建目录
@@ -131,8 +136,8 @@ async function main() {
 
         // 5. 执行编译；Aily Code 时将 AILY_BUILDER_BUILD_PATH 指到 `.aily/build/<framework>`，
         // 与 Electron 全局行为一致（aily-builder 可能在其下再分子目录，upload 递归查找固件）。
+        const builderCommand = ailyBuilderCommand || process.env.AILY_BUILDER_COMMAND || `node "${path.join(ailyBuilderPath, 'index.js')}"`;
         const args = [
-            `"${path.join(ailyBuilderPath, 'index.js')}"`,
             'compile',
             `"${compileSourcePath}"`,
             '--board', `"${boardType}"`,
@@ -140,7 +145,9 @@ async function main() {
             '--preprocess-result', `"${preprocessCachePath}"`,
         ];
 
-        logger.log(`执行编译: node ${args.join(' ')}`);
+        if (isDevelopmentEnvironment()) {
+            args.push('--generate-archive-cloud-cache');
+        }
 
         /** @type {{ cwd: string, shell: boolean, stdio: string[], env?: NodeJS.ProcessEnv }} */
         const spawnOpts = {
@@ -156,7 +163,9 @@ async function main() {
             };
         }
 
-        const child = spawn('node', args, spawnOpts);
+        logger.log(`执行编译: ${builderCommand} ${args.join(' ')}`);
+
+        const child = spawn(builderCommand, args, spawnOpts);
 
         child.on('close', (code, signal) => {
             if (signal) {

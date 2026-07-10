@@ -476,8 +476,15 @@ export class _BuilderService {
         }
         await this.waitForOneIdleBoundary();
 
+        let ailyBuilderRuntime: { ailyBuilderPath: string; ailyBuilderCommand: string };
+        try {
+          ailyBuilderRuntime = await this.getAilyBuilderRuntimeConfig();
+        } catch (error) {
+          console.warn('aily-builder 未准备完成，跳过本次后台预处理:', error);
+          return;
+        }
         const currentProjectPath = this.projectService.currentProjectPath;
-        const ailyBuilderPath = window['path'].getAilyBuilderPath();
+        const { ailyBuilderPath, ailyBuilderCommand } = ailyBuilderRuntime;
         const boardModule = await this.projectService.getBoardModule();
         const appDataPath = window['path'].getAppDataPath();
         const ailyChildPath = window['path'].getAilyChildPath();
@@ -495,6 +502,7 @@ export class _BuilderService {
           console.error('[后台预处理] 参数详情:', {
             currentProjectPath,
             ailyBuilderPath,
+            ailyBuilderCommand,
             boardModule,
             appDataPath,
             ailyChildPath
@@ -510,6 +518,7 @@ export class _BuilderService {
           appDataPath,
           za7Path: this.platformService.za7,
           ailyBuilderPath,
+          ailyBuilderCommand,
           devmode: this.configService.data.devmode || false,
           partitionFilePath: this.electronService.pathJoin(currentProjectPath, 'partitions.csv')
         };
@@ -624,7 +633,7 @@ export class _BuilderService {
           }
         });
         this.recordPreprocessDuration('spawn_command_stream', spawnStartedAt);
-        
+
         // 保存订阅引用以便后续终止
         this.preprocessProcess = subscription;
       } catch (error) {
@@ -808,12 +817,62 @@ export class _BuilderService {
     }
   }
 
+  private async ensureAilyBuilderReady(): Promise<void> {
+    if (window['builder']?.ensure) {
+      await window['builder'].ensure();
+    }
+  }
+
+  private async getAilyBuilderRuntimeConfig(): Promise<{ ailyBuilderPath: string; ailyBuilderCommand: string }> {
+    await this.ensureAilyBuilderReady();
+    return {
+      ailyBuilderPath: window['path'].getAilyBuilderPath(),
+      ailyBuilderCommand: window['path'].getAilyBuilderCommand()
+    };
+  }
+
+  private async invalidateBuildCacheIfBuilderChanged(tempPath: string, buildPath: string): Promise<void> {
+    const configFilePath = this.electronService.pathJoin(tempPath, 'build-config.json');
+    if (!window['path'].isExists(configFilePath)) {
+      return;
+    }
+
+    try {
+      const buildConfig = JSON.parse(window['fs'].readFileSync(configFilePath, 'utf8'));
+      const currentBuilder = await this.getAilyBuilderRuntimeConfig();
+      if (
+        buildConfig.ailyBuilderPath !== currentBuilder.ailyBuilderPath ||
+        buildConfig.ailyBuilderCommand !== currentBuilder.ailyBuilderCommand
+      ) {
+        this.removeDirIfExists(tempPath);
+        this.removeDirIfExists(buildPath);
+        console.log('aily-builder 已切换，清除旧构建缓存');
+      }
+    } catch (error) {
+      console.warn('检查 aily-builder 构建缓存状态失败:', error);
+    }
+  }
+
+  private removeDirIfExists(dirPath: string): void {
+    if (!window['path'].isExists(dirPath)) {
+      return;
+    }
+
+    try {
+      window['fs'].rmdirSync(dirPath);
+    } catch (error) {
+      console.warn('删除目录失败:', dirPath, error);
+    }
+  }
+
   /**
    * 运行预编译脚本（同步等待完成）
    */
   private async runPreprocess(): Promise<void> {
+    const ailyBuilderRuntime = await this.getAilyBuilderRuntimeConfig();
+
     const currentProjectPath = this.projectService.currentProjectPath;
-    const ailyBuilderPath = window['path'].getAilyBuilderPath();
+    const { ailyBuilderPath, ailyBuilderCommand } = ailyBuilderRuntime;
     const boardModule = await this.projectService.getBoardModule();
     const appDataPath = window['path'].getAppDataPath();
     const ailyChildPath = window['path'].getAilyChildPath();
@@ -837,6 +896,7 @@ export class _BuilderService {
       console.error('[同步预处理] 参数详情:', {
         currentProjectPath,
         ailyBuilderPath,
+        ailyBuilderCommand,
         boardModule,
         appDataPath,
         ailyChildPath
@@ -858,6 +918,7 @@ export class _BuilderService {
       appDataPath,
       za7Path: this.platformService.za7,
       ailyBuilderPath,
+      ailyBuilderCommand,
       devmode: this.configService.data.devmode || false,
       partitionFilePath: this.electronService.pathJoin(currentProjectPath, 'partitions.csv')
     };
@@ -1054,6 +1115,7 @@ export class _BuilderService {
 
         const tempPath = this.electronService.pathJoin(this.currentProjectPath, '.temp');
         const preprocessCachePath = this.electronService.pathJoin(tempPath, 'preprocess.json');
+        const buildPath = this.electronService.pathJoin(this.currentProjectPath, '.build');
 
         // 1. 检查是否有预编译程序正在运行，等待其完成
         if (this.preprocessProcess) {
@@ -1149,6 +1211,8 @@ export class _BuilderService {
             }
           }
         }
+
+        await this.invalidateBuildCacheIfBuilderChanged(tempPath, buildPath);
 
         // 4. 检查是否存在预编译缓存文件，如果不存在则启动预编译
         if (!window['path'].isExists(preprocessCachePath)) {
@@ -1254,6 +1318,7 @@ export class _BuilderService {
           const boardModule = await this.projectService.getBoardModule();
           const boardName = boardModule.replace('@aily-project/board-', '');
           const configFilePath = this.electronService.pathJoin(tempPath, 'build-config.json');
+          const ailyBuilderRuntime = await this.getAilyBuilderRuntimeConfig();
 
           // 更新配置文件中的 code（compile.js：Blockly 写入 sketch.ino；Aily Code 写入 project.aci.entry）
           let buildConfig: any = {};
@@ -1261,6 +1326,8 @@ export class _BuilderService {
             buildConfig = JSON.parse(window['fs'].readFileSync(configFilePath, 'utf8'));
           }
           buildConfig.code = code;
+          buildConfig.ailyBuilderPath = ailyBuilderRuntime.ailyBuilderPath;
+          buildConfig.ailyBuilderCommand = ailyBuilderRuntime.ailyBuilderCommand;
           await this.writeTextFile(configFilePath, JSON.stringify(buildConfig, null, 2));
 
           // 运行编译脚本
