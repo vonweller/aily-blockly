@@ -4,7 +4,7 @@ import { BehaviorSubject, Observable, Subject, throwError, from, firstValueFrom 
 import { catchError, map, switchMap } from 'rxjs/operators';
 import { API } from '../configs/api.config';
 import { ElectronService } from './electron.service';
-import { extractApiErrorDetails } from '../utils/api-error.utils';
+import { createApiError, extractApiErrorDetails } from '../utils/api-error.utils';
 
 export interface CommonResponse {
   status: number;
@@ -14,6 +14,19 @@ export interface CommonResponse {
   errorArgs?: Record<string, unknown>;
   errorMessage?: string | null;
   data?: any;
+}
+
+export interface GitHubPermissionStatus {
+  provider: 'github';
+  bound: boolean;
+  provider_username?: string | null;
+  provider_email?: string | null;
+  scopes: string[];
+  repo: boolean;
+  public_repo: boolean;
+  pr_submission_enabled: boolean;
+  github_authorization_purpose?: string | null;
+  scope_checked_at?: string | null;
 }
 
 export interface LoginRequest {
@@ -49,7 +62,11 @@ interface RefreshTokenResponseData {
   token_type?: 'bearer';
 }
 
-export type GitHubOAuthPurpose = 'login' | 'bind';
+export type GitHubOAuthPurpose = 'login' | 'bind' | 'library_pr_submit';
+
+interface AuthHandleErrorOptions {
+  log?: boolean;
+}
 
 export interface RegisterRequest {
   username: string;
@@ -171,7 +188,7 @@ export class AuthService {
         }
         return response;
       }),
-      catchError(this.handleError)
+      catchError(error => this.handleError(error))
     );
   }
 
@@ -180,7 +197,7 @@ export class AuthService {
    */
   register(registerData: RegisterRequest): Observable<any> {
     return this.http.post(API.register, registerData).pipe(
-      catchError(this.handleError)
+      catchError(error => this.handleError(error))
     );
   }
 
@@ -198,7 +215,7 @@ export class AuthService {
       });
     }
     return this.http.post<CommonResponse>(API.sendEmailCode, { email, altcha, device_id: 'pc' }).pipe(
-      catchError(this.handleError)
+      catchError(error => this.handleError(error))
     );
   }
 
@@ -224,7 +241,7 @@ export class AuthService {
         }
         return response;
       }),
-      catchError(this.handleError)
+      catchError(error => this.handleError(error))
     );
   }
 
@@ -294,8 +311,9 @@ export class AuthService {
     }
     const res = await firstValueFrom(this.http.get<CommonResponse>(API.me));
     if (res.status === 200 && res.data) {
-      this.userInfoSubject.next(res.data);
-      return res.data;
+      const user = this.mergeCurrentGithubInfo(res.data);
+      this.userInfoSubject.next(user);
+      return user;
     }
     return null;
   }
@@ -306,6 +324,93 @@ export class AuthService {
 
   hasGithubBinding(user: any = this.currentUser): boolean {
     return user?.github?.bound === true;
+  }
+
+  hasGithubLibraryPrPermission(user: any = this.currentUser): boolean {
+    const github = user?.github;
+    if (!github || typeof github !== 'object' || Array.isArray(github)) {
+      return false;
+    }
+    if (github.pr_submission_enabled === true) {
+      return true;
+    }
+
+    const extraData = github.extra_data && typeof github.extra_data === 'object' && !Array.isArray(github.extra_data)
+      ? github.extra_data
+      : {};
+    const scopes = [
+      ...this.normalizeGithubScopes(github.scopes),
+      ...this.normalizeGithubScopes(github.scope),
+      ...this.normalizeGithubScopes(extraData['scopes']),
+      ...this.normalizeGithubScopes(extraData['scope']),
+    ];
+    return scopes.includes('repo');
+  }
+
+  private normalizeGithubScopes(value: unknown): string[] {
+    if (Array.isArray(value)) {
+      return value.filter((scope): scope is string => typeof scope === 'string');
+    }
+    if (typeof value === 'string') {
+      return value.split(/[,\s]+/).map(scope => scope.trim()).filter(Boolean);
+    }
+    return [];
+  }
+
+  getGithubPermissions(): Observable<GitHubPermissionStatus> {
+    return this.http.get<CommonResponse & { data: GitHubPermissionStatus }>(API.githubPermissions).pipe(
+      map(response => {
+        if (response.status === 200 && response.data) {
+          this.mergeGithubPermissionStatus(response.data);
+          return response.data;
+        }
+        throw response;
+      }),
+      catchError(error => this.handleError(error))
+    );
+  }
+
+  hasGithubLibraryPrPermissionStatus(status: GitHubPermissionStatus | null | undefined): boolean {
+    if (!status?.bound) {
+      return false;
+    }
+    const scopes = this.normalizeGithubScopes(status.scopes);
+    return status.pr_submission_enabled === true || status.repo === true || scopes.includes('repo');
+  }
+
+  private mergeGithubPermissionStatus(status: GitHubPermissionStatus): void {
+    const currentUser = this.currentUser || {};
+    const currentGithub = currentUser?.github && typeof currentUser.github === 'object' && !Array.isArray(currentUser.github)
+      ? currentUser.github
+      : {};
+    this.userInfoSubject.next({
+      ...currentUser,
+      github: {
+        ...currentGithub,
+        ...status,
+        bound: status.bound,
+        scopes: this.normalizeGithubScopes(status.scopes),
+      },
+    });
+  }
+
+  private mergeCurrentGithubInfo(user: any): any {
+    if (!user || typeof user !== 'object' || Array.isArray(user)) {
+      return user;
+    }
+    const currentGithub = this.currentUser?.github && typeof this.currentUser.github === 'object' && !Array.isArray(this.currentUser.github)
+      ? this.currentUser.github
+      : {};
+    const nextGithub = user.github && typeof user.github === 'object' && !Array.isArray(user.github)
+      ? user.github
+      : {};
+    return {
+      ...user,
+      github: {
+        ...currentGithub,
+        ...nextGithub,
+      },
+    };
   }
 
   /**
@@ -755,14 +860,23 @@ export class AuthService {
     return this.startGitHubOAuthForPurpose('bind');
   }
 
-  private startGitHubOAuthForPurpose(purpose: GitHubOAuthPurpose, inviteCode?: string): Observable<{ authorization_url: string; state: string }> {
+  startGitHubLibraryPrSubmitOAuth(): Observable<{ authorization_url: string; state: string }> {
+    return this.startGitHubOAuthForPurpose('library_pr_submit', undefined, { logErrors: false });
+  }
+
+  private startGitHubOAuthForPurpose(
+    purpose: GitHubOAuthPurpose,
+    inviteCode?: string,
+    options: { logErrors?: boolean } = {},
+  ): Observable<{ authorization_url: string; state: string }> {
     // 生成并存储 state 参数
     const state = this.generateOAuthState(purpose);
 
     const requestData: any = {
       redirect_uri: 'abis://auth/callback',
       state: state,
-      device_id: 'pc'
+      device_id: 'pc',
+      purpose,
     };
     if (inviteCode) {
       requestData.invite_code = inviteCode;
@@ -785,9 +899,9 @@ export class AuthService {
             state: state
           };
         }
-        throw new Error(response.message || '获取授权URL失败');
+        throw response;
       }),
-      catchError(this.handleError)
+      catchError(error => this.handleError(error, { log: options.logErrors !== false }))
     );
   }
 
@@ -869,7 +983,7 @@ export class AuthService {
     }
 
     const fileState = await this.loadOAuthStateFromFile();
-    if (fileState?.state === state && (fileState.purpose === 'bind' || fileState.purpose === 'login')) {
+    if (fileState?.state === state && (fileState.purpose === 'bind' || fileState.purpose === 'login' || fileState.purpose === 'library_pr_submit')) {
       return fileState.purpose;
     }
 
@@ -977,18 +1091,19 @@ export class AuthService {
         if (response.status === 200 && response.data) {
           return response.data;
         }
-        throw new Error(response.message || '网络超时，请重试');
+        throw response;
       }),
-      catchError(this.handleError)
+      catchError(error => this.handleError(error))
     );
   }
 
-  bindGitHubAccount(code: string, state: string): Observable<any> {
+  bindGitHubAccount(code: string, state: string, purpose?: GitHubOAuthPurpose): Observable<any> {
     return this.http.post<CommonResponse>(API.githubBind, {
       code,
       state,
       device_id: 'pc',
       client_type: 'electron',
+      purpose,
     }).pipe(
       map(response => {
         if (response.status === 200) {
@@ -996,7 +1111,7 @@ export class AuthService {
         }
         throw response;
       }),
-      catchError(this.handleError)
+      catchError(error => this.handleError(error, { log: purpose !== 'library_pr_submit' }))
     );
   }
 
@@ -1042,10 +1157,10 @@ export class AuthService {
 
       const purpose = await this.getOAuthPurpose(callbackData.state);
 
-      if (purpose === 'bind') {
-        const bindData = await this.bindGitHubAccount(callbackData.code, callbackData.state).toPromise();
+      if (purpose === 'bind' || purpose === 'library_pr_submit') {
+        const bindData = await this.bindGitHubAccount(callbackData.code, callbackData.state, purpose).toPromise();
         this.clearOAuthState();
-        const user = this.markGithubBoundLocally(bindData);
+        const user = this.markGithubBoundLocally(bindData, purpose);
         this.githubBindCompletedSubject.next(user);
         this.refreshCurrentUser().then(refreshedUser => {
           if (refreshedUser && !this.hasGithubBinding(refreshedUser)) {
@@ -1057,7 +1172,7 @@ export class AuthService {
         return {
           success: true,
           data: bindData,
-          purpose: 'bind',
+          purpose,
         };
       }
 
@@ -1102,7 +1217,7 @@ export class AuthService {
     }
   }
 
-  private markGithubBoundLocally(source?: any): any {
+  private markGithubBoundLocally(source?: any, purpose?: GitHubOAuthPurpose): any {
     const sourceUser = source?.user && typeof source.user === 'object' && !Array.isArray(source.user)
       ? source.user
       : source;
@@ -1113,12 +1228,23 @@ export class AuthService {
     const currentGithub = currentUser?.github && typeof currentUser.github === 'object' && !Array.isArray(currentUser.github)
       ? currentUser.github
       : {};
+    const prSubmissionGithub = purpose === 'library_pr_submit'
+      ? {
+        pr_submission_enabled: true,
+        scopes: Array.from(new Set([
+          ...this.normalizeGithubScopes(currentGithub.scopes),
+          ...this.normalizeGithubScopes(sourceGithub.scopes),
+          'repo',
+        ])),
+      }
+      : {};
     const nextUser = {
       ...currentUser,
       ...(sourceUser && typeof sourceUser === 'object' && !Array.isArray(sourceUser) ? sourceUser : {}),
       github: {
         ...currentGithub,
         ...sourceGithub,
+        ...prSubmissionGithub,
         bound: true,
       },
     };
@@ -1185,7 +1311,7 @@ export class AuthService {
       params.invite_code = inviteCode;
     }
     return this.http.get<CommonResponse & { data: { ticket: string; qrcode_url: string; expires_in: number } }>(API.wechatQrcode, { params }).pipe(
-      catchError(this.handleError)
+      catchError(error => this.handleError(error))
     );
   }
 
@@ -1230,7 +1356,7 @@ export class AuthService {
       API.wechatCheck,
       { params: { ticket } }
     ).pipe(
-      catchError(this.handleError)
+      catchError(error => this.handleError(error))
     );
   }
 
@@ -1280,7 +1406,7 @@ export class AuthService {
       API.wechatLoginBindQrcode,
       { params: { pending_ticket: pendingTicket }, headers: { 'X-Supports-Merge-Confirm': 'true' } }
     ).pipe(
-      catchError(this.handleError)
+      catchError(error => this.handleError(error))
     );
   }
 
@@ -1322,7 +1448,7 @@ export class AuthService {
       API.wechatLoginBindCheck,
       { params: { ticket }, headers: { 'X-Supports-Merge-Confirm': 'true' } }
     ).pipe(
-      catchError(this.handleError)
+      catchError(error => this.handleError(error))
     );
   }
 
@@ -1385,7 +1511,7 @@ export class AuthService {
       body,
       { headers: { 'X-Supports-Merge-Confirm': 'true' } }
     ).pipe(
-      catchError(this.handleError)
+      catchError(error => this.handleError(error))
     );
   }
 
@@ -1415,7 +1541,7 @@ export class AuthService {
       API.wechatConfirmMerge,
       { ticket, flow }
     ).pipe(
-      catchError(this.handleError)
+      catchError(error => this.handleError(error))
     );
   }
 
@@ -1449,7 +1575,7 @@ export class AuthService {
                 target_url: response.data.target_url
               };
             }
-            throw new Error(response.message || '生成 SSO Token 失败');
+            throw response;
           }),
           catchError((error) => {
             console.error('生成 SSO Token 失败:', error);
@@ -1470,8 +1596,12 @@ export class AuthService {
   /**
    * 错误处理
    */
-  private handleError(error: any): Observable<never> {
-    console.error('认证服务错误:', error);
-    return throwError(() => error);
+  private handleError(error: any, options: AuthHandleErrorOptions = {}): Observable<never> {
+    const apiError = createApiError(error, '认证服务错误');
+    if (options.log !== false) {
+      const codeSuffix = apiError.errorCode ? ` (${apiError.errorCode})` : '';
+      console.error(`认证服务错误: ${apiError.message}${codeSuffix}`, error);
+    }
+    return throwError(() => apiError);
   }
 }

@@ -29,6 +29,7 @@ import {
   LibraryPublishConfirmDialogComponent,
   LibraryPublishConfirmDialogData,
 } from '../../../../../../components/library-publish-confirm-dialog/library-publish-confirm-dialog.component';
+import { extractApiErrorDetails } from '../../../../../../utils/api-error.utils';
 import Sortable, { SortableEvent } from 'sortablejs';
 
 interface ToolboxContextMenuAction {
@@ -575,7 +576,18 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
 
   private isGithubBindingRequiredError(error: unknown): boolean {
     const apiError = error as Partial<LibrarySubmissionApiError>;
-    return apiError.errorCode === 'github_not_bound';
+    const permissionErrorCodes = new Set([
+      'github_not_bound',
+      'github_repo_scope_required',
+      'github_fork_permission_denied',
+      'github_token_invalid',
+    ]);
+    if (apiError.errorCode && permissionErrorCodes.has(apiError.errorCode)) {
+      return true;
+    }
+
+    const message = (apiError.message || '').toLowerCase();
+    return /missing repo permission|repo permission|repository write permissions|reconnect github|bad credentials|重新绑定 github|github 授权/.test(message);
   }
 
   private saveLibraryMetadataToLocalPackage(item: BlocklyToolboxFacadeItem, localPackageJsonPatch: Record<string, unknown>): BlocklyLibraryMetadataUpdateResult {
@@ -814,16 +826,20 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
       return false;
     }
 
-    if (this.authService.hasGithubBinding()) {
+    if (await this.hasGithubLibraryPrPermission()) {
       return true;
     }
-
-    const currentUser = await this.authService.refreshCurrentUser();
-    if (this.authService.hasGithubBinding(currentUser)) {
-      return true;
-    }
-
     return this.promptGithubBindForLibrarySubmission();
+  }
+
+  private async hasGithubLibraryPrPermission(): Promise<boolean> {
+    try {
+      const permissions = await firstValueFrom(this.authService.getGithubPermissions());
+      return this.authService.hasGithubLibraryPrPermissionStatus(permissions);
+    } catch (error) {
+      console.warn('检查 GitHub PR 提交权限失败:', error);
+      return false;
+    }
   }
 
   private promptLoginForLibrarySubmission() {
@@ -841,9 +857,9 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
 
   private async promptGithubBindForLibrarySubmission(): Promise<boolean> {
     const confirmed = await this.openLibraryPublishConfirmDialog({
-      title: '绑定 GitHub 后上传库',
-      content: '上传库需要使用你的 GitHub 账号提交 PR。授权完成后会自动继续本次上传。',
-      okText: '绑定 GitHub',
+      title: '授权 GitHub PR 提交权限',
+      content: '上传库需要使用你的 GitHub 账号向官方库仓库提交 PR。请授权 repo 权限，完成后会自动继续本次上传。',
+      okText: '去授权',
       cancelText: '取消',
     });
 
@@ -862,16 +878,16 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
       resolve(false);
     }, 5 * 60 * 1000);
 
-    const subscription = this.authService.githubBindCompleted$.subscribe(() => {
+    const subscription = this.authService.githubBindCompleted$.subscribe(async () => {
       clearTimeout(timer);
       subscription.unsubscribe();
-      resolve(true);
+      resolve(await this.hasGithubLibraryPrPermission());
     });
 
-    this.authService.startGitHubBindOAuth().subscribe({
+    this.authService.startGitHubLibraryPrSubmitOAuth().subscribe({
       next: (response) => {
         this.electronService.openUrl(response.authorization_url);
-        this.message.info('请在浏览器中完成 GitHub 授权，授权完成后会自动继续上传');
+        this.message.info('请在浏览器中完成 GitHub PR 提交授权，授权完成后会自动继续上传');
       },
       error: (error) => {
         clearTimeout(timer);
@@ -885,10 +901,14 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
   private getLibrarySubmissionErrorMessage(error: unknown): string {
     const apiError = error as Partial<LibrarySubmissionApiError>;
     const message = apiError.message || this.getErrorMessage(error, '库提交失败');
-    if (apiError.status === 401 || apiError.status === 403) {
-      return `${message}，请重新绑定 GitHub 并确认授权权限`;
+    const requestId = apiError.errorArgs?.['githubRequestId'];
+    const suffix = typeof requestId === 'string' && requestId
+      ? `（GitHub Request ID: ${requestId}）`
+      : '';
+    if (this.isGithubBindingRequiredError(error)) {
+      return `${message}，请升级 GitHub PR 提交权限后重试${suffix}`;
     }
-    return message;
+    return `${message}${suffix}`;
   }
 
   private async removeLibrary(item: BlocklyToolboxFacadeItem) {
@@ -941,7 +961,7 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
   }
 
   private getErrorMessage(error: unknown, fallback: string): string {
-    let message = fallback;
+    let message = extractApiErrorDetails(error, fallback).message || fallback;
     if (error instanceof Error && error.message) {
       message = error.message;
     } else if (typeof error === 'string' && error) {

@@ -231,6 +231,8 @@ function getDownloadGuardConfig() {
 
   const firstByteTimeoutMs = Number(strategy.first_byte_timeout_ms);
   const stallTimeoutMs = Number(strategy.stall_timeout_ms);
+  const lowSpeedWindowMs = Number(strategy.low_speed_window_ms);
+  const minAverageSpeedBytesPerSecond = Number(strategy.min_average_speed_bytes_per_second);
 
   return {
     firstByteTimeoutMs: Number.isFinite(firstByteTimeoutMs) && firstByteTimeoutMs > 0
@@ -238,6 +240,12 @@ function getDownloadGuardConfig() {
       : 0,
     stallTimeoutMs: Number.isFinite(stallTimeoutMs) && stallTimeoutMs > 0
       ? stallTimeoutMs
+      : 0,
+    lowSpeedWindowMs: Number.isFinite(lowSpeedWindowMs) && lowSpeedWindowMs > 0
+      ? lowSpeedWindowMs
+      : 0,
+    minAverageSpeedBytesPerSecond: Number.isFinite(minAverageSpeedBytesPerSecond) && minAverageSpeedBytesPerSecond > 0
+      ? minAverageSpeedBytesPerSecond
       : 0,
   };
 }
@@ -369,13 +377,23 @@ function serializeError(error) {
   return error.stack || error.message || error.toString();
 }
 
-function createDownloadAttemptGuard(mainWindow, mirror, token) {
-  const { firstByteTimeoutMs, stallTimeoutMs } = getDownloadGuardConfig();
+function createDownloadAttemptGuard(mainWindow, mirror, token, options = {}) {
+  const {
+    firstByteTimeoutMs,
+    stallTimeoutMs,
+    lowSpeedWindowMs,
+    minAverageSpeedBytesPerSecond,
+  } = getDownloadGuardConfig();
   let firstByteReceived = false;
   let lastTransferred = 0;
+  let lowSpeedWindowStartedAt = 0;
+  let lowSpeedWindowStartTransferred = 0;
   let firstByteTimer = null;
   let stallTimer = null;
   let cancelReason = null;
+  const shouldCancelOnLowSpeed = options.allowLowSpeedCancel === true
+    && lowSpeedWindowMs > 0
+    && minAverageSpeedBytesPerSecond > 0;
 
   function clearFirstByteTimer() {
     if (firstByteTimer) {
@@ -445,6 +463,42 @@ function createDownloadAttemptGuard(mainWindow, mirror, token) {
     }, stallTimeoutMs);
   }
 
+  function resetLowSpeedWindow(transferred) {
+    lowSpeedWindowStartedAt = Date.now();
+    lowSpeedWindowStartTransferred = transferred;
+  }
+
+  function checkLowSpeed(transferred) {
+    if (!shouldCancelOnLowSpeed || !firstByteReceived) {
+      return;
+    }
+
+    if (!lowSpeedWindowStartedAt) {
+      resetLowSpeedWindow(transferred);
+      return;
+    }
+
+    const elapsedMs = Date.now() - lowSpeedWindowStartedAt;
+    if (elapsedMs < lowSpeedWindowMs) {
+      return;
+    }
+
+    const transferredInWindow = Math.max(0, transferred - lowSpeedWindowStartTransferred);
+    const averageBytesPerSecond = transferredInWindow / (elapsedMs / 1000);
+    if (averageBytesPerSecond < minAverageSpeedBytesPerSecond) {
+      triggerStrategyCancel({
+        type: 'low-speed',
+        windowMs: lowSpeedWindowMs,
+        averageBytesPerSecond: Math.round(averageBytesPerSecond),
+        thresholdBytesPerSecond: minAverageSpeedBytesPerSecond,
+        transferred,
+      });
+      return;
+    }
+
+    resetLowSpeedWindow(transferred);
+  }
+
   function onDownloadProgress(progressObj) {
     const transferred = Number(progressObj && progressObj.transferred);
     const safeTransferred = Number.isFinite(transferred) ? transferred : 0;
@@ -457,11 +511,13 @@ function createDownloadAttemptGuard(mainWindow, mirror, token) {
         baseUrl: mirror && mirror.url,
         transferred: safeTransferred,
       });
+      resetLowSpeedWindow(safeTransferred);
     }
 
     if (safeTransferred > lastTransferred) {
       lastTransferred = safeTransferred;
       scheduleStallTimer();
+      checkLowSpeed(safeTransferred);
     }
   }
 
@@ -480,14 +536,14 @@ function createDownloadAttemptGuard(mainWindow, mirror, token) {
   };
 }
 
-async function downloadWithCurrentProvider(mainWindow, mirror) {
+async function downloadWithCurrentProvider(mainWindow, mirror, options = {}) {
   cancellationToken = new CancellationToken();
   activeDownloadAttempt = {
     mirror,
     cancelReason: null,
     initiatedByUserCancel: false,
   };
-  const attemptGuard = createDownloadAttemptGuard(mainWindow, mirror, cancellationToken);
+  const attemptGuard = createDownloadAttemptGuard(mainWindow, mirror, cancellationToken, options);
   logUpdater('downloading installer', {
     region: mirror && mirror.region,
     baseUrl: mirror && mirror.url,
@@ -556,7 +612,9 @@ async function downloadWithMirrors(mainWindow) {
       nextMirrorReason = null;
 
       try {
-        return await downloadWithCurrentProvider(mainWindow, mirror);
+        return await downloadWithCurrentProvider(mainWindow, mirror, {
+          allowLowSpeedCancel: index < mirrors.length - 1,
+        });
       } catch (error) {
         lastError = error;
         if (isCancellationError(error)) {

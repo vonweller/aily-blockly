@@ -1080,8 +1080,9 @@ function resolveAilyBuilderPath(childPath) {
 }
 
 function resolveAilyBuilderCommand(childPath) {
-  if (isAilyBuilderInstallComplete(getNpmAilyBuilderPath())) {
-    return "aily-builder";
+  const npmBuilderPath = getNpmAilyBuilderPath();
+  if (isAilyBuilderInstallComplete(npmBuilderPath)) {
+    return `node "${path.join(npmBuilderPath, "index.js")}"`;
   }
 
   const legacyNpmBuilderPath = getAilyBuilderChannel() === "stable" ? getLegacyNpmAilyBuilderPath() : null;
@@ -1707,6 +1708,19 @@ async function checkPackageUpdatesFromManifest() {
   return result;
 }
 
+function checkAilyBuilderChannelUpdatesInBackground(childPath, options = {}) {
+  checkPackageUpdatesFromManifest()
+    .then(() => {
+      if (options.install) {
+        ensureAilyBuilderFromNpm(childPath, { reason: "channel-switch" });
+      }
+      applyAilyBuilderCommandEnv(childPath);
+    })
+    .catch((error) => {
+      console.error("后台检查 aily-builder 更新失败:", error);
+    });
+}
+
 // 监听渲染进程就绪事件
 ipcMain.on('renderer-ready', () => {
   console.log('渲染进程已就绪');
@@ -2269,7 +2283,7 @@ function loadEnv() {
   } else if (isDarwin) {
     // 设置macOS的环境变量
     process.env.AILY_APPDATA_PATH = conf["appdata_path"]["darwin"].replace('~', os.homedir());
-    process.env.AILY_BUILDER_CACHE_PATH = path.join(os.homedir(), "Library", "aily-builder");
+    process.env.AILY_BUILDER_CACHE_PATH = path.join(os.homedir(), "Library", "Caches", "aily-builder");
     process.env.AILY_BUILDER_BUILD_PATH = path.join(process.env.AILY_BUILDER_CACHE_PATH, "cache");
   } else {
     // 设置Linux的环境变量
@@ -2292,6 +2306,14 @@ function loadEnv() {
       fs.mkdirSync(process.env.AILY_BUILDER_CACHE_PATH, { recursive: true });
     } catch (error) {
       console.error("Failed to create aily-builder cache path:", error);
+    }
+  }
+
+  if (!fs.existsSync(process.env.AILY_BUILDER_BUILD_PATH)) {
+    try {
+      fs.mkdirSync(process.env.AILY_BUILDER_BUILD_PATH, { recursive: true });
+    } catch (error) {
+      console.error("Failed to create aily-builder build path:", error);
     }
   }
 
@@ -3416,8 +3438,10 @@ ipcMain.handle("aily-builder-channel-set", async (event, { channel, install } = 
   }
 
   setAilyBuilderChannel(channel);
-  await checkPackageUpdatesFromManifest();
-  if (install) {
+  const normalizedChannel = getAilyBuilderChannel();
+  if (normalizedChannel === "next") {
+    checkAilyBuilderChannelUpdatesInBackground(childPath, { install });
+  } else if (install) {
     ensureAilyBuilderFromNpm(childPath, { reason: "channel-switch" });
   }
   applyAilyBuilderCommandEnv(childPath);

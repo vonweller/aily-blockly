@@ -1255,6 +1255,8 @@ interface AppConfig {
     fallback_on_error?: boolean;
     first_byte_timeout_ms?: number;
     stall_timeout_ms?: number;
+    low_speed_window_ms?: number;
+    min_average_speed_bytes_per_second?: number;
   };
 
   /** 编译选项 */

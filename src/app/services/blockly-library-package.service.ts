@@ -36,6 +36,7 @@ export interface BlocklyLibraryPackagePaths {
   generatorJs: string;
   readme: string;
   readmeAi: string;
+  srcDir: string;
   srcArchive: string;
   i18nDir: string;
   pinmapsDir: string;
@@ -71,6 +72,8 @@ export interface BlocklyLibrarySubmissionPackage {
 export interface BlocklyLibrarySubmissionBundle {
   package: BlocklyLibrarySubmissionPackage;
   srcArchivePath?: string;
+  srcArchiveOutputPath?: string;
+  srcDirectoryPath?: string;
 }
 
 export interface BlocklyLibraryMetadataUpdateResult {
@@ -128,6 +131,7 @@ export class BlocklyLibraryPackageService {
       generatorJs: this.electronService.pathJoin(packagePath, 'generator.js'),
       readme: this.electronService.pathJoin(packagePath, 'readme.md'),
       readmeAi: this.electronService.pathJoin(packagePath, 'readme_ai.md'),
+      srcDir: this.electronService.pathJoin(packagePath, 'src'),
       srcArchive: this.electronService.pathJoin(packagePath, 'src.7z'),
       i18nDir: this.electronService.pathJoin(packagePath, 'i18n'),
       pinmapsDir: this.electronService.pathJoin(packagePath, 'pinmaps'),
@@ -287,6 +291,8 @@ export class BlocklyLibraryPackageService {
         pinmaps,
       },
       srcArchivePath,
+      srcArchiveOutputPath: paths.srcArchive,
+      srcDirectoryPath: paths.srcDir,
     };
   }
 

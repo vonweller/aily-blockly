@@ -22,7 +22,7 @@ import { CmdService } from '../../services/cmd.service';
 import { ElectronService } from '../../services/electron.service';
 import { NzToolTipModule } from "ng-zorro-antd/tooltip";
 
-type CacheClearOption = 'all' | '30' | '90';
+type CacheClearOption = 'all' | 'unused-7' | 'unused-30';
 
 interface CacheStats {
   totalFiles: number;
@@ -32,12 +32,6 @@ interface CacheStats {
 interface DirectoryStats {
   size: number;
   count: number;
-}
-
-interface CacheClearPaths {
-  buildPath: string;
-  configFilePath: string;
-  scriptPath: string;
 }
 
 @Component({
@@ -132,6 +126,7 @@ export class SettingsComponent implements OnDestroy {
   ailyBuilderStatus: any = null;
   ailyBuilderUpdating = false;
   ailyBuilderChannelSwitching = false;
+  private ailyBuilderUpdateCheckRunning = false;
   private ailyBuilderStatusTimer: ReturnType<typeof setTimeout> | null = null;
   private initialAilyBuilderNext = false;
 
@@ -346,15 +341,38 @@ export class SettingsComponent implements OnDestroy {
       return;
     }
     try {
-      const updateCheck = await window['packageUpdates']?.check?.();
-      this.ailyBuilderStatus = updateCheck?.ailyBuilder || await window['builder'].status();
-      if (this.ailyBuilderStatus?.installing) {
+      this.ailyBuilderStatus = await window['builder'].status();
+      if (this.shouldPollAilyBuilderStatus()) {
         this.scheduleAilyBuilderStatusReload();
       }
+      this.checkAilyBuilderUpdatesInBackground();
     } catch (error) {
       console.warn('加载 aily-builder 状态失败:', error);
       this.ailyBuilderStatus = null;
     }
+  }
+
+  private checkAilyBuilderUpdatesInBackground() {
+    if (!window['packageUpdates']?.check || this.ailyBuilderUpdateCheckRunning) {
+      return;
+    }
+
+    this.ailyBuilderUpdateCheckRunning = true;
+    window['packageUpdates'].check()
+      .then((updateCheck) => {
+        if (updateCheck?.ailyBuilder) {
+          this.ailyBuilderStatus = updateCheck.ailyBuilder;
+          if (this.shouldPollAilyBuilderStatus()) {
+            this.scheduleAilyBuilderStatusReload();
+          }
+        }
+      })
+      .catch((error) => {
+        console.warn('检查 aily-builder 更新失败:', error);
+      })
+      .finally(() => {
+        this.ailyBuilderUpdateCheckRunning = false;
+      });
   }
 
   getAilyBuilderStatusText() {
@@ -376,6 +394,35 @@ export class SettingsComponent implements OnDestroy {
     return this.translateService.instant('SETTINGS.FIELDS.AILY_BUILDER_UP_TO_DATE');
   }
 
+  hasAilyBuilderUpdate() {
+    return !!this.ailyBuilderStatus?.updateAvailable;
+  }
+
+  isRequiredAilyBuilderUpdatePending() {
+    return !!this.ailyBuilderStatus &&
+      !this.ailyBuilderStatus.error &&
+      !!this.ailyBuilderStatus.required &&
+      (!this.ailyBuilderStatus.installed || this.ailyBuilderStatus.updateAvailable);
+  }
+
+  isAilyBuilderUpdateLoading() {
+    return this.ailyBuilderUpdating ||
+      !!this.ailyBuilderStatus?.installing ||
+      this.isRequiredAilyBuilderUpdatePending();
+  }
+
+  shouldShowAilyBuilderUpdateButton() {
+    return !!this.ailyBuilderStatus &&
+      !this.ailyBuilderStatus.error &&
+      (!this.ailyBuilderStatus.installed || this.ailyBuilderStatus.updateAvailable || this.ailyBuilderUpdating || this.ailyBuilderStatus.installing);
+  }
+
+  canUpdateAilyBuilderManually() {
+    return this.shouldShowAilyBuilderUpdateButton() &&
+      !this.ailyBuilderStatus?.required &&
+      !this.isAilyBuilderUpdateLoading();
+  }
+
   getAilyBuilderDisplayName() {
     const status = this.ailyBuilderStatus;
     if (!status) {
@@ -388,7 +435,7 @@ export class SettingsComponent implements OnDestroy {
   }
 
   async updateAilyBuilder() {
-    if (!window['builder']?.update || this.ailyBuilderUpdating) {
+    if (!window['builder']?.update || !this.canUpdateAilyBuilderManually()) {
       return;
     }
 
@@ -419,7 +466,9 @@ export class SettingsComponent implements OnDestroy {
     try {
       const channel = this.labsConfig.ailyBuilderNext ? 'next' : 'stable';
       this.ailyBuilderStatus = await window['builder'].setChannel(channel, options);
-      await this.loadAilyBuilderStatus();
+      if (this.shouldPollAilyBuilderStatus()) {
+        this.scheduleAilyBuilderStatusReload();
+      }
     } catch (error: any) {
       console.error('aily-builder channel 切换失败:', error);
       this.message.error(error?.message || this.translateService.instant('SETTINGS.FIELDS.AILY_BUILDER_UPDATE_FAILED'));
@@ -434,6 +483,10 @@ export class SettingsComponent implements OnDestroy {
       this.ailyBuilderStatusTimer = null;
       this.loadAilyBuilderStatus();
     }, 2000);
+  }
+
+  private shouldPollAilyBuilderStatus() {
+    return !!this.ailyBuilderStatus?.installing || this.isRequiredAilyBuilderUpdatePending();
   }
 
   private clearAilyBuilderStatusTimer() {
@@ -520,9 +573,10 @@ export class SettingsComponent implements OnDestroy {
 
   async apply() {
     await this.configService.applyResourceSourceRuntimeSelection();
+    const ailyBuilderChannelChanged = this.labsConfig.ailyBuilderNext !== this.initialAilyBuilderNext;
     // 保存到config.json，如有需要立即加载的，再加载
     await this.configService.save();
-    if (this.labsConfig.ailyBuilderNext !== this.initialAilyBuilderNext) {
+    if (ailyBuilderChannelChanged) {
       await this.syncAilyBuilderChannel({ install: true });
     }
     this.initialAilyBuilderNext = !!this.labsConfig.ailyBuilderNext;
@@ -665,67 +719,31 @@ export class SettingsComponent implements OnDestroy {
     }
   }
 
-  private async doClearCache(option: CacheClearOption) {
-    const paths = this.getCacheClearPaths();
-    const excludeDirs = await this.getCurrentProjectCacheExcludeDirs();
-
-    if (!this.writeClearCacheConfig(paths, option, excludeDirs)) {
-      return;
-    }
-
-    this.startClearCacheProcess(option, paths);
+  private doClearCache(option: CacheClearOption) {
+    this.startClearCacheProcess(option);
   }
 
-  private getCacheClearPaths(): CacheClearPaths {
-    const buildPath = window['path'].getAilyBuilderBuildPath();
-    const appDataPath = window['path'].getAppDataPath();
-
-    return {
-      buildPath,
-      configFilePath: window['path'].join(appDataPath, 'clear-cache-config.json'),
-      scriptPath: window['path'].join(window['path'].getAilyChildPath(), 'scripts', 'clear-cache.js')
+  private getCacheClearArgs(option: CacheClearOption): string[] {
+    const optionArgMap: Record<CacheClearOption, string> = {
+      all: '--all',
+      'unused-7': '--unused-7',
+      'unused-30': '--unused-30'
     };
+    return ['cache', 'clear', optionArgMap[option]];
   }
 
-  private async getCurrentProjectCacheExcludeDirs(): Promise<string[]> {
-    if (!window['iWindow']?.send) {
-      return [];
-    }
-
-    try {
-      const resp = await window['iWindow'].send({ to: 'main', data: { action: 'get-build-path' } });
-      return resp?.buildPath ? [window['path'].basename(resp.buildPath)] : [];
-    } catch {
-      return [];
-    }
-  }
-
-  private writeClearCacheConfig(paths: CacheClearPaths, option: CacheClearOption, excludeDirs: string[]): boolean {
-    try {
-      window['fs'].writeFileSync(paths.configFilePath, JSON.stringify({
-        buildPath: paths.buildPath,
-        option,
-        excludeDirs
-      }, null, 2));
-      return true;
-    } catch (e) {
-      console.error('Failed to write clear-cache config', e);
-      this.message.error(this.translateService.instant('SETTINGS.FIELDS.CACHE_CLEAR_FAILED'));
-      return false;
-    }
-  }
-
-  private startClearCacheProcess(option: CacheClearOption, paths: CacheClearPaths) {
+  private startClearCacheProcess(option: CacheClearOption) {
     this.cacheClearing = option;
     const loadingRef = this.message.loading(this.translateService.instant('SETTINGS.FIELDS.CACHE_CLEARING'), { nzDuration: 0 });
     this._clearCacheLoadingRef = loadingRef.messageId;
 
-    const command = `node "${paths.scriptPath}" "${paths.configFilePath}"`;
-    this.sendLog({ detail: command, state: 'doing' });
+    const command = window['path'].getAilyBuilderCommand?.() || 'aily-builder';
+    const args = this.getCacheClearArgs(option);
+    this.sendLog({ detail: `${command} ${args.join(' ')}`, state: 'doing' });
     const startTime = Date.now();
 
     this._clearCacheSubscription?.unsubscribe();
-    this._clearCacheSubscription = this.cmdService.spawn('node', [paths.scriptPath, paths.configFilePath], {}, true).subscribe({
+    this._clearCacheSubscription = this.cmdService.spawn(command, args, {}, true).subscribe({
       next: (output) => {
         if (output.type === 'stdout' || output.type === 'stderr') {
           this.logClearCacheOutput(output.data, output.type === 'stderr' ? 'error' : 'doing');
@@ -795,6 +813,6 @@ export class SettingsComponent implements OnDestroy {
   }
 
   openCacheFolder() {
-    this.electronService.openByExplorer(window['path'].getAilyBuilderCachePath());
+    this.electronService.openByExplorer(window['path'].getAilyBuilderBuildPath());
   }
 }

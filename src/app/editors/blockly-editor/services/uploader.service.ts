@@ -34,6 +34,8 @@ interface Esp32UploadProgressState {
   expectedFiles: number;
   currentFileIndex: number;
   completedFiles: number;
+  eraseRegionSizes: number[];
+  currentFileBytes: number;
 }
 
 @Injectable()
@@ -164,7 +166,28 @@ export class _UploaderService {
     return matches?.length || 0;
   }
 
-  private startEsp32FlashFile(state: Esp32UploadProgressState): void {
+  private parseEsp32EraseRegionSize(line: string): number | null {
+    const match = line.match(/Flash will be erased from 0x([0-9a-f]+) to 0x([0-9a-f]+)/i);
+    if (!match) return null;
+
+    const start = parseInt(match[1], 16);
+    const end = parseInt(match[2], 16);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null;
+
+    return end - start + 1;
+  }
+
+  private parseEsp32CompressedSize(line: string): { originalBytes: number; compressedBytes: number } | null {
+    const match = line.match(/^Compressed\s+(\d+)\s+bytes\s+to\s+(\d+)\.\.\./i);
+    if (!match) return null;
+
+    return {
+      originalBytes: parseInt(match[1], 10),
+      compressedBytes: parseInt(match[2], 10),
+    };
+  }
+
+  private startEsp32FlashFile(state: Esp32UploadProgressState, currentFileBytes = 0): void {
     if (state.currentFileIndex >= 0) {
       state.completedFiles = Math.max(state.completedFiles, state.currentFileIndex + 1);
     }
@@ -174,6 +197,7 @@ export class _UploaderService {
       state.currentFileIndex = Math.min(state.currentFileIndex, state.expectedFiles - 1);
       state.completedFiles = Math.min(state.completedFiles, state.expectedFiles);
     }
+    state.currentFileBytes = Math.max(0, currentFileBytes);
   }
 
   private completeEsp32FlashFile(state: Esp32UploadProgressState): number | null {
@@ -183,7 +207,21 @@ export class _UploaderService {
       state.expectedFiles,
       Math.max(state.completedFiles, state.currentFileIndex + 1)
     );
-    return this.clampProgress((state.completedFiles / state.expectedFiles) * 100);
+    if (state.eraseRegionSizes.length > 0) {
+      const totalBytes = state.eraseRegionSizes.reduce((sum, size) => sum + size, 0);
+      const completedBytes = state.eraseRegionSizes
+        .slice(0, Math.min(state.completedFiles, state.eraseRegionSizes.length))
+        .reduce((sum, size) => sum + size, 0);
+      state.currentFileBytes = 0;
+
+      if (totalBytes > 0) {
+        return this.clampProgress((completedBytes / totalBytes) * 100);
+      }
+    }
+
+    const weightedProgress = this.clampProgress((state.completedFiles / state.expectedFiles) * 100);
+    state.currentFileBytes = 0;
+    return weightedProgress;
   }
 
   private calculateEsp32FlashProgress(state: Esp32UploadProgressState, rawProgress: number): number {
@@ -191,6 +229,20 @@ export class _UploaderService {
 
     if (state.expectedFiles <= 0 || state.currentFileIndex < 0) {
       return regionProgress;
+    }
+
+    if (state.eraseRegionSizes.length > 0) {
+      const fallbackBytes = state.currentFileBytes || state.eraseRegionSizes[state.currentFileIndex] || 1;
+      const totalBytes = state.eraseRegionSizes.reduce((sum, size) => sum + size, 0);
+      const completedBytes = state.eraseRegionSizes
+        .slice(0, Math.min(state.completedFiles, state.eraseRegionSizes.length))
+        .reduce((sum, size) => sum + size, 0);
+      const currentRegionBytes = state.eraseRegionSizes[state.currentFileIndex] || fallbackBytes;
+
+      if (totalBytes > 0) {
+        const overallProgress = ((completedBytes + currentRegionBytes * (regionProgress / 100)) / totalBytes) * 100;
+        return this.clampProgress(Math.min(99, overallProgress));
+      }
     }
 
     const completedFiles = Math.min(state.completedFiles, state.expectedFiles);
@@ -231,7 +283,9 @@ export class _UploaderService {
         const esp32UploadState: Esp32UploadProgressState = {
           expectedFiles: 0,
           currentFileIndex: -1,
-          completedFiles: 0
+          completedFiles: 0,
+          eraseRegionSizes: [],
+          currentFileBytes: 0
         };
 
         // 先判断当前是否处于编译状态
@@ -612,14 +666,23 @@ export class _UploaderService {
                     const probeRsFinished = /(?:^\s*Finished\s+in\s+[\d.]+s|\[probe-rs:phase\]\s*Finished)/i.test(trimmedLine);
 
                     // ESP32特定进度跟踪
-                    let isESP32Format = /Writing\s+at\s+0x[0-9a-f]+\s+\[[^\]]*\]\s+\d+\.\d+%\s+\d+\/\d+\s+bytes\.\.\./i.test(trimmedLine);
+                    let isESP32Format = /Writing\s+at\s+0x[0-9a-f]+\s+\[[^\]]*\]\s+\d+(?:\.\d+)?%\s+\d+\/\d+\s+bytes\.\.\./i.test(trimmedLine);
                     
                     const esp32FlashFileCount = this.parseEsp32FlashFileCount(trimmedLine);
                     if (esp32FlashFileCount > 0) {
                       esp32UploadState.expectedFiles = Math.max(esp32UploadState.expectedFiles, esp32FlashFileCount);
                     }
 
-                    if (/^Writing\s+['"].+?['"]\s+at\s+0x[0-9a-f]+/i.test(trimmedLine)) {
+                    const esp32EraseRegionSize = this.parseEsp32EraseRegionSize(trimmedLine);
+                    if (esp32EraseRegionSize !== null) {
+                      esp32UploadState.eraseRegionSizes.push(esp32EraseRegionSize);
+                      esp32UploadState.expectedFiles = Math.max(esp32UploadState.expectedFiles, esp32UploadState.eraseRegionSizes.length);
+                    }
+
+                    const esp32CompressedSize = this.parseEsp32CompressedSize(trimmedLine);
+                    if (esp32CompressedSize) {
+                      this.startEsp32FlashFile(esp32UploadState, esp32CompressedSize.originalBytes);
+                    } else if (/^Writing\s+['"].+?['"]\s+at\s+0x[0-9a-f]+/i.test(trimmedLine)) {
                       this.startEsp32FlashFile(esp32UploadState);
                     }
 
@@ -653,7 +716,7 @@ export class _UploaderService {
                       lastUploadText = this.uploadT('COMPLETE_TEXT');
                       this.uploadCompleted = true;
                     } else if (isESP32Format) {
-                      const numericMatch = trimmedLine.match(/(\d+\.\d+)%/);
+                      const numericMatch = trimmedLine.match(/(\d+(?:\.\d+)?)%/);
                       if (numericMatch) {
                         const regionProgress = parseFloat(numericMatch[1]);
                         progressValue = this.calculateEsp32FlashProgress(esp32UploadState, regionProgress);
