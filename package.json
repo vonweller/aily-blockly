@@ -1,7 +1,7 @@
 {
   "name": "aily-blockly",
   "productName": "aily blockly",
-  "version": "0.9.65",
+  "version": "0.9.67",
   "author": "coloz",
   "description": "aily blockly dev",
   "main": "electron/main.js",
@@ -98,7 +98,11 @@
       "extraResources": [
         {
           "from": "child/windows",
-          "to": "child"
+          "to": "child",
+          "filter": [
+            "**/*",
+            "!aily-builder-*.7z"
+          ]
         }
       ]
     },
@@ -116,7 +120,11 @@
       "extraResources": [
         {
           "from": "child/macos",
-          "to": "child"
+          "to": "child",
+          "filter": [
+            "**/*",
+            "!aily-builder-*.7z"
+          ]
         }
       ]
     },

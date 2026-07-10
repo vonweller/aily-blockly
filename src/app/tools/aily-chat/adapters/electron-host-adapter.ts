@@ -260,6 +260,7 @@ export function createElectronHostAdapter(deps: ElectronAdapterDeps): IAilyHostA
     getUserDocuments: () => getPath()?.getUserDocuments?.() ?? '',
     getUserHome: () => getPath()?.getUserHome?.() ?? '',
     getAilyBuilderPath: () => getPath()?.getAilyBuilderPath?.(),
+    getAilyBuilderCommand: () => getPath()?.getAilyBuilderCommand?.(),
     getAilyBuilderCachePath: () => getPath()?.getAilyBuilderCachePath?.(),
     getAilyBuilderBuildPath: () => getPath()?.getAilyBuilderBuildPath?.(),
     getAilyChildPath: () => getPath()?.getAilyChildPath?.(),

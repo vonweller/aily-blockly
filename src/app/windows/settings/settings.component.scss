@@ -126,6 +126,52 @@ textarea {
   }
 }
 
+.builder-setting-inline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  flex: 1;
+}
+
+.builder-version {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  min-width: 0;
+
+  strong {
+    font-weight: 500;
+    color: var(--aily-text-primary);
+    word-break: break-all;
+  }
+
+  .version {
+    color: var(--aily-color-primary-alt);
+  }
+}
+
+.builder-update-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+
+  .builder-status {
+    color: var(--aily-text-secondary);
+    white-space: nowrap;
+
+    &.updating {
+      color: var(--aily-color-primary-alt);
+    }
+
+    &.warning {
+      color: var(--aily-text-primary);
+    }
+  }
+}
+
 .right {
   height: 100%; // 确保占满整个高度
 
@@ -199,6 +245,38 @@ ngx-simplebar {
       }
     }
   }
+}
+
+.lab-feature-card {
+  min-height: 72px;
+  border-radius: 8px;
+  padding: 14px 20px;
+  background: var(--aily-bg-tertiary);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.lab-feature-content {
+  min-width: 0;
+}
+
+.lab-feature-title {
+  color: var(--aily-text-primary);
+  font-size: 14px;
+  line-height: 22px;
+  white-space: nowrap;
+}
+
+.lab-feature-desc {
+  color: var(--aily-text-secondary);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.lab-feature-card nz-switch {
+  flex-shrink: 0;
 }
 
 .item {

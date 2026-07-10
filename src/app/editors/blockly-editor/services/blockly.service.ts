@@ -110,9 +110,22 @@ export class BlocklyService {
   private readonly projectDocumentSchemaVersion = 3;
   private readonly sharedProcedureBlockPrefixes = ['procedures_'];
   private readonly toolboxSearchKey = BLOCKLY_TOOLBOX_SEARCH_KEY;
+  private readonly deferredWorkspaceRenderBlockTypes = new Set([
+    'u8g2_draw_bitmap',
+    'u8g2_bitmap',
+    'u8g2_icon_16x16',
+    'u8g2_icon_32x32',
+    'u8g2_icon_64x64',
+    'u8g2_play_animation',
+    'u8g2_draw_animation_frame',
+    'u8g2_animation',
+    'u8g2_animation_frame_count',
+  ]);
 
   private _workspace: Blockly.WorkspaceSvg | null = null;
   private workspaceReadySubject = new BehaviorSubject<Blockly.WorkspaceSvg | null>(null);
+  private workspaceRenderAfterLoadAnimationFrame: number | null = null;
+  private workspaceRenderAfterLoadTimeout: ReturnType<typeof setTimeout> | null = null;
 
   get workspace(): Blockly.WorkspaceSvg {
     return this._workspace as Blockly.WorkspaceSvg;
@@ -927,7 +940,59 @@ export class BlocklyService {
       }
     });
 
+    const shouldRenderAfterLoad = this.shouldRenderWorkspaceAfterLoad(workspaceJson);
     Blockly.serialization.workspaces.load(workspaceJson, this.workspace);
+    if (shouldRenderAfterLoad) {
+      this.scheduleWorkspaceRenderAfterLoad();
+    }
+  }
+
+  private scheduleWorkspaceRenderAfterLoad(): void {
+    const workspace = this._workspace;
+    if (!workspace) {
+      return;
+    }
+
+    if (this.workspaceRenderAfterLoadAnimationFrame !== null) {
+      cancelAnimationFrame(this.workspaceRenderAfterLoadAnimationFrame);
+      this.workspaceRenderAfterLoadAnimationFrame = null;
+    }
+    if (this.workspaceRenderAfterLoadTimeout !== null) {
+      clearTimeout(this.workspaceRenderAfterLoadTimeout);
+      this.workspaceRenderAfterLoadTimeout = null;
+    }
+
+    const renderWorkspace = () => {
+      this.workspaceRenderAfterLoadAnimationFrame = null;
+      this.workspaceRenderAfterLoadTimeout = null;
+      if (this._workspace === workspace) {
+        workspace.render();
+      }
+    };
+
+    if (typeof requestAnimationFrame === 'function') {
+      this.workspaceRenderAfterLoadAnimationFrame = requestAnimationFrame(renderWorkspace);
+    } else {
+      this.workspaceRenderAfterLoadTimeout = setTimeout(renderWorkspace, 0);
+    }
+  }
+
+  private shouldRenderWorkspaceAfterLoad(workspaceJson: any): boolean {
+    const blocks = Array.isArray(workspaceJson?.blocks?.blocks)
+      ? workspaceJson.blocks.blocks
+      : [];
+    const blockTypes = new Set<string>();
+
+    for (const block of blocks) {
+      this.collectBlockTypesFromBlock(block, blockTypes);
+      for (const blockType of this.deferredWorkspaceRenderBlockTypes) {
+        if (blockTypes.has(blockType)) {
+          return true;
+        }
+      }
+    }
+
+    return false;
   }
 
   // 通过node_modules加载库
