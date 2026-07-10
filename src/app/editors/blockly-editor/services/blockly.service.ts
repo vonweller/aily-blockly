@@ -115,6 +115,10 @@ export class BlocklyService {
     'u8g2_draw_animation_frame',
     'u8g2_animation',
     'u8g2_animation_frame_count',
+    'tftespi_play_animation',
+    'tftespi_draw_animation_frame',
+    'tftespi_animation',
+    'tftespi_animation_frame_count',
   ]);
 
   private _workspace: Blockly.WorkspaceSvg | null = null;

@@ -215,6 +215,10 @@
             "LIB_MANAGER_TITLE": "مدير المكتبات",
             "LIB_MANAGER_DESC": "انقر هنا لفتح مدير المكتبات، حيث يمكنك تثبيت مكتبات التوسعة المختلفة وإزالتها لإضافة المزيد من الكتل إلى مشروعك."
         },
+        "TFTESPI_ANIMATION": {
+            "UPLOAD_TOOLTIP": "التنسيقات المدعومة: MP4 وGIF",
+            "WORKER_ERROR_UNSUPPORTED_FILE_TYPE": "يتم دعم ملفات MP4 وGIF فقط"
+        },
         "U8G2_ANIMATION": {
             "BUTTON_UPLOAD": "تحميل",
             "UPLOAD_TOOLTIP": "الصيغ المدعومة: MP4، GIF، PNG",

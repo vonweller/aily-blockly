@@ -252,6 +252,10 @@
             "LIB_MANAGER_TITLE": "Library Manager",
             "LIB_MANAGER_DESC": "Manage external libraries here. You can add, remove, or update libraries for your project."
         },
+        "TFTESPI_ANIMATION": {
+            "UPLOAD_TOOLTIP": "Supported formats: MP4, GIF",
+            "WORKER_ERROR_UNSUPPORTED_FILE_TYPE": "Only MP4 and GIF files are supported"
+        },
         "U8G2_ANIMATION": {
             "BUTTON_UPLOAD": "Upload",
             "UPLOAD_TOOLTIP": "Supported formats: MP4, GIF, PNG",

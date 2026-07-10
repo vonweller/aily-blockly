@@ -215,6 +215,10 @@
             "LIB_MANAGER_TITLE": "Bibliotheksmanager",
             "LIB_MANAGER_DESC": "Klicken Sie hier, um den Bibliotheksmanager zu öffnen. Dort können Sie Erweiterungsbibliotheken installieren und entfernen, um Ihrem Projekt weitere Blöcke hinzuzufügen."
         },
+        "TFTESPI_ANIMATION": {
+            "UPLOAD_TOOLTIP": "Unterstützte Formate: MP4, GIF",
+            "WORKER_ERROR_UNSUPPORTED_FILE_TYPE": "Nur MP4- und GIF-Dateien werden unterstützt"
+        },
         "U8G2_ANIMATION": {
             "BUTTON_UPLOAD": "Hochladen",
             "UPLOAD_TOOLTIP": "Unterstützte Formate: MP4, GIF, PNG",

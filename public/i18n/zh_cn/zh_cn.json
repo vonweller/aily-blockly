@@ -246,6 +246,10 @@
             "LIB_MANAGER_TITLE": "库管理器",
             "LIB_MANAGER_DESC": "点击这里打开库管理器，可以安装、卸载各种功能扩展库，为您的项目添加更多积木块。"
         },
+        "TFTESPI_ANIMATION": {
+            "UPLOAD_TOOLTIP": "支持格式：MP4、GIF",
+            "WORKER_ERROR_UNSUPPORTED_FILE_TYPE": "只支持 MP4 或 GIF 文件"
+        },
         "U8G2_ANIMATION": {
             "BUTTON_UPLOAD": "上传",
             "UPLOAD_TOOLTIP": "支持格式：MP4、GIF、PNG",
