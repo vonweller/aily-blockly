@@ -1,4 +1,4 @@
-// 这个文件用于和cli交互，进行编译和烧录等操作
+// 管理伪终端进程，为编译、烧录等 CLI 操作提供交互能力。
 const { ipcMain } = require("electron");
 const pty = require("@lydell/node-pty");
 const { exec } = require('child_process');

@@ -1,3 +1,4 @@
+// 管理系统命令进程，并提供 Shell、路径和终端环境检测能力。
 const { spawn, exec } = require('child_process');
 const { ipcMain } = require('electron');
 const fs = require('fs');

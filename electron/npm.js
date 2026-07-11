@@ -1,4 +1,4 @@
-// 这个文件用于和npm交互，获取仓库信息
+// 管理 npm 命令进程，并将执行状态和日志回传给渲染进程。
 const { ipcMain } = require("electron");
 const { spawn, exec } = require('child_process');
 

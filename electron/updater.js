@@ -1,3 +1,4 @@
+// 管理应用更新检查、下载、取消和安装流程。
 const fs = require("fs");
 const path = require("path");
 const { app, BrowserWindow, ipcMain, dialog, screen, shell } = require("electron");

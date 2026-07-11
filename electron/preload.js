@@ -1,3 +1,4 @@
+// 通过预加载桥接向渲染进程安全暴露 Electron 和原生能力。
 const { contextBridge, ipcRenderer, shell, safeStorage, webFrame, clipboard } = require("electron");
 const { SerialPort } = require("serialport");
 const { createThrottledSerialPort, createRawSerialPort, listPorts } = require("./serial");
