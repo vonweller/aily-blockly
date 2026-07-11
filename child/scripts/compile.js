@@ -52,9 +52,7 @@ async function main() {
     const {
         currentProjectPath,
         boardModule,
-        code,
-        ailyBuilderPath,
-        ailyBuilderCommand
+        code
     } = config;
 
     // 辅助函数：递归创建目录
@@ -115,7 +113,7 @@ async function main() {
         }
 
         // 5. 执行编译
-        const builderCommand = ailyBuilderCommand || process.env.AILY_BUILDER_COMMAND || `node "${path.join(ailyBuilderPath, 'index.js')}"`;
+        const builderCommand = 'aily-builder';
         const args = [
             'compile',
             `"${sketchFilePath}"`,

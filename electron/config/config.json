@@ -74,13 +74,6 @@
     "verbose": true,
     "warnings": "error"
   },
-  "ailyBuilder": {
-    "version": "1.2.4",
-    "required": false
-  },
-  "packageUpdates": {
-    "manifest": "package-updates.json"
-  },
   "upload": {
     "verbose": true,
     "warnings": "error"

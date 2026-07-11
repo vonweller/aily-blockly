@@ -20,7 +20,6 @@ if (isWin32) {
 }
 
 const PROTOCOL = "abis";
-const AILY_BUILDER_DEFAULT_VERSION = process.env.AILY_BUILDER_VERSION || "1.2.4";
 const AILY_BUILDER_CHANNELS = {
   stable: {
     key: "aily-builder",
@@ -37,12 +36,7 @@ const AILY_BUILDER_CHANNELS = {
     },
   },
 };
-const PACKAGE_UPDATES_DEFAULT_MANIFEST = "package-updates.json";
-let ailyBuilderTargetVersion = AILY_BUILDER_DEFAULT_VERSION;
-let ailyBuilderUpdateRequired = false;
-let packageUpdatesManifestUrl = "";
 let ailyBuilderChannel = "stable";
-let ailyBuilderUpdateConfigLoaded = true;
 
 // OAuth实例管理
 const OAUTH_STATE_FILE = 'oauth-instances.json';
@@ -790,18 +784,9 @@ function buildZipUrls(conf = {}) {
   return JSON.stringify(getZipUrlState(conf).urls);
 }
 let isRendererReady = false;
-let pendingAilyBuilderFooterState = null;
 
 function isAilyBuilderInstallComplete(targetPath) {
-  if (!targetPath) {
-    return false;
-  }
-  const requiredFiles = [
-    path.join(targetPath, "index.js"),
-    path.join(targetPath, "node_modules/tree-sitter/build/Release/tree_sitter_runtime_binding.node"),
-    path.join(targetPath, "node_modules/tree-sitter-cpp/build/Release/tree_sitter_cpp_binding.node"),
-  ];
-  return requiredFiles.every((filePath) => fs.existsSync(filePath));
+  return !!targetPath && fs.existsSync(path.join(targetPath, "index.js"));
 }
 
 function appendEnvPathSegment(segment, options = {}) {
@@ -817,13 +802,9 @@ function appendEnvPathSegment(segment, options = {}) {
 }
 
 function applyAilyBuilderCommandEnv(childPath) {
-  const ailyBuilderPath = resolveAilyBuilderPath(childPath);
-  const npmAilyBuilderBinPath = getNpmAilyBuilderBinPath();
+  const npmAilyBuilderBinPath = getNpmAilyBuilderBinPath(childPath);
 
   appendEnvPathSegment(npmAilyBuilderBinPath, { requireExists: false });
-  process.env.AILY_BUILDER_PATH = ailyBuilderPath;
-  process.env.AILY_BUILDER_BIN_PATH = npmAilyBuilderBinPath || "";
-  process.env.AILY_BUILDER_COMMAND = resolveAilyBuilderCommand(childPath);
 }
 
 function normalizeAilyBuilderChannel(channel) {
@@ -841,129 +822,59 @@ function getAilyBuilderChannelConfig(channel = getAilyBuilderChannel()) {
 function setAilyBuilderChannel(channel) {
   ailyBuilderChannel = normalizeAilyBuilderChannel(channel);
   process.env.AILY_BUILDER_CHANNEL = ailyBuilderChannel;
-  delete process.env.AILY_BUILDER_PACKAGE;
-  ailyBuilderTargetVersion = normalizeAilyBuilderVersion(AILY_BUILDER_DEFAULT_VERSION);
-  process.env.AILY_BUILDER_TARGET_VERSION = ailyBuilderTargetVersion;
-  ailyBuilderUpdateRequired = false;
-  process.env.AILY_BUILDER_REQUIRED = "false";
-  ailyBuilderUpdateConfigLoaded = ailyBuilderChannel === "stable";
   return ailyBuilderChannel;
 }
 
-function getAilyBuilderUpdateKey(channel = getAilyBuilderChannel()) {
-  return getAilyBuilderChannelConfig(channel).key;
-}
-
-function getAilyBuilderPackageName() {
+function getAilyBuilderPackageName(channel = getAilyBuilderChannel()) {
   const platformKey = `${process.platform}-${process.arch}`;
-  const channelConfig = getAilyBuilderChannelConfig();
-  return process.env.AILY_BUILDER_PACKAGE || channelConfig.platformPackages[platformKey] || "";
+  const channelConfig = getAilyBuilderChannelConfig(channel);
+  return channelConfig.platformPackages[platformKey] || "";
 }
 
-function normalizeAilyBuilderVersion(version) {
-  return String(version || AILY_BUILDER_DEFAULT_VERSION).trim();
-}
-
-function compareSemver(version1, version2) {
-  const parse = (version) => normalizeAilyBuilderVersion(version)
-    .replace(/^v/, "")
-    .split(".")
-    .map((part) => Number.parseInt(part, 10) || 0);
-  const v1 = parse(version1);
-  const v2 = parse(version2);
-  while (v1.length < 3) v1.push(0);
-  while (v2.length < 3) v2.push(0);
-  for (let i = 0; i < 3; i++) {
-    if (v1[i] !== v2[i]) {
-      return v1[i] > v2[i] ? 1 : -1;
-    }
+function getAilyBuilderNpmEnv() {
+  const env = { ...process.env };
+  if (process.env.AILY_APPDATA_PATH) {
+    // 使用用户可写的 npm 全局前缀，避免写入应用安装目录。
+    env.npm_config_prefix = process.env.AILY_APPDATA_PATH;
   }
-  return 0;
+  return env;
 }
 
-function getAilyBuilderTargetVersion() {
-  return normalizeAilyBuilderVersion(process.env.AILY_BUILDER_TARGET_VERSION || ailyBuilderTargetVersion);
+function readNpmGlobalValue(childPath, args) {
+  const npmPath = getNpmExecutablePath(childPath);
+  const npmCommand = isWin32 ? quoteWindowsShellPath(npmPath) : npmPath;
+  const result = require("child_process").spawnSync(npmCommand, args, {
+    env: getAilyBuilderNpmEnv(),
+    shell: isWin32,
+    windowsHide: true,
+    encoding: "utf8",
+  });
+  return result.status === 0 ? String(result.stdout || "").trim() : "";
 }
 
-function getManagedPackagesRoot() {
-  const prefix = process.env.AILY_NPM_PREFIX || process.env.AILY_APPDATA_PATH;
-  return prefix ? path.join(prefix, "packages") : null;
+function getNpmGlobalRoot(childPath) {
+  return readNpmGlobalValue(childPath, ["root", "-g"]);
 }
 
-function getAilyBuilderStoreRoot() {
-  const root = getManagedPackagesRoot();
-  return root ? path.join(root, "aily-builder") : null;
-}
-
-function getLegacyAilyBuilderStoreRoot() {
-  const prefix = process.env.AILY_NPM_PREFIX || process.env.AILY_APPDATA_PATH;
-  return prefix ? path.join(prefix, "aily-builder") : null;
-}
-
-function getAilyBuilderChannelRoot(channel = getAilyBuilderChannel()) {
-  const root = getAilyBuilderStoreRoot();
-  return root ? path.join(root, "channels", normalizeAilyBuilderChannel(channel)) : null;
-}
-
-function getLegacyAilyBuilderChannelRoot(channel = getAilyBuilderChannel()) {
-  const root = getLegacyAilyBuilderStoreRoot();
-  return root ? path.join(root, "channels", normalizeAilyBuilderChannel(channel)) : null;
-}
-
-function getAilyBuilderVersionsRoot() {
-  const root = getAilyBuilderChannelRoot();
-  return root ? path.join(root, "versions") : null;
-}
-
-function getAilyBuilderCurrentFile() {
-  const root = getAilyBuilderChannelRoot();
-  return root ? path.join(root, "current.json") : null;
-}
-
-function getLegacyAilyBuilderChannelCurrentFile() {
-  const root = getLegacyAilyBuilderChannelRoot();
-  return root ? path.join(root, "current.json") : null;
-}
-
-function getLegacyAilyBuilderCurrentFile() {
-  const root = getLegacyAilyBuilderStoreRoot();
-  return root ? path.join(root, "current.json") : null;
-}
-
-function getAilyBuilderVersionPrefix(version = getAilyBuilderTargetVersion()) {
-  const versionsRoot = getAilyBuilderVersionsRoot();
-  const safeVersion = normalizeAilyBuilderVersion(version).replace(/[^0-9A-Za-z._-]/g, "_");
-  return versionsRoot ? path.join(versionsRoot, safeVersion) : null;
-}
-
-function getNpmAilyBuilderPath(version) {
-  const prefix = version
-    ? getAilyBuilderVersionPrefix(version)
-    : getCurrentAilyBuilderPrefix() || getAilyBuilderVersionPrefix(getAilyBuilderTargetVersion());
-  const packageName = getAilyBuilderPackageName();
-  if (!prefix || !packageName) {
-    return null;
-  }
-  return path.join(prefix, "node_modules", ...packageName.split("/"));
-}
-
-function getLegacyNpmAilyBuilderPath() {
-  const prefix = process.env.AILY_NPM_PREFIX || process.env.AILY_APPDATA_PATH;
-  const packageName = getAilyBuilderPackageName();
-  if (!prefix || !packageName) {
-    return null;
-  }
-  return path.join(prefix, "node_modules", ...packageName.split("/"));
-}
-
-function getNpmAilyBuilderBinPath(version) {
-  const prefix = version
-    ? getAilyBuilderVersionPrefix(version)
-    : getCurrentAilyBuilderPrefix() || getAilyBuilderVersionPrefix(getAilyBuilderTargetVersion());
+function getNpmGlobalBinPath(childPath) {
+  const prefix = readNpmGlobalValue(childPath, ["prefix", "-g"]);
   if (!prefix) {
     return null;
   }
-  return path.join(prefix, "node_modules", ".bin");
+  return isWin32 ? prefix : path.join(prefix, "bin");
+}
+
+function getNpmAilyBuilderPath(childPath, channel = getAilyBuilderChannel()) {
+  const root = getNpmGlobalRoot(childPath);
+  const packageName = getAilyBuilderPackageName(channel);
+  if (!root || !packageName) {
+    return null;
+  }
+  return path.join(root, ...packageName.split("/"));
+}
+
+function getNpmAilyBuilderBinPath(childPath) {
+  return getNpmGlobalBinPath(childPath);
 }
 
 function readJsonFile(filePath) {
@@ -979,123 +890,11 @@ function readJsonFile(filePath) {
 
 function getInstalledAilyBuilderVersion(packagePath) {
   const packageJson = readJsonFile(path.join(packagePath || "", "package.json"));
-  return packageJson && typeof packageJson.version === "string" ? packageJson.version : null;
-}
-
-function readCurrentAilyBuilderInfoFromFile(currentFile, allowMissingChannel = false) {
-  const current = readJsonFile(currentFile);
-  if (!current || !current.version || !current.prefix || !current.path) {
-    return null;
-  }
-  if (current.channel && normalizeAilyBuilderChannel(current.channel) !== getAilyBuilderChannel()) {
-    return null;
-  }
-  if (!current.channel && !allowMissingChannel) {
-    return null;
-  }
-  const packageName = getAilyBuilderPackageName();
-  if (current.packageName && packageName && current.packageName !== packageName) {
-    return null;
-  }
-  if (!isAilyBuilderInstallComplete(current.path)) {
-    return null;
-  }
-  return current;
-}
-
-function getAilyBuilderCurrentFileCandidates() {
-  const candidates = [];
-  const currentFile = getAilyBuilderCurrentFile();
-  if (currentFile) {
-    candidates.push({ file: currentFile, allowMissingChannel: false });
-  }
-
-  const legacyChannelCurrentFile = getLegacyAilyBuilderChannelCurrentFile();
-  if (legacyChannelCurrentFile) {
-    candidates.push({ file: legacyChannelCurrentFile, allowMissingChannel: false });
-  }
-
-  if (getAilyBuilderChannel() === "stable") {
-    const legacyCurrentFile = getLegacyAilyBuilderCurrentFile();
-    if (legacyCurrentFile) {
-      candidates.push({ file: legacyCurrentFile, allowMissingChannel: true });
-    }
-  }
-
-  return candidates;
-}
-
-function readCurrentAilyBuilderInfo() {
-  for (const candidate of getAilyBuilderCurrentFileCandidates()) {
-    const current = readCurrentAilyBuilderInfoFromFile(candidate.file, candidate.allowMissingChannel);
-    if (current) {
-      return current;
-    }
-  }
-  return null;
-}
-
-function getCurrentAilyBuilderPrefix() {
-  const current = readCurrentAilyBuilderInfo();
-  return current ? current.prefix : null;
-}
-
-function writeCurrentAilyBuilderInfo(version) {
-  const channel = getAilyBuilderChannel();
-  const packageName = getAilyBuilderPackageName();
-  const prefix = getAilyBuilderVersionPrefix(version);
-  const packagePath = getNpmAilyBuilderPath(version);
-  const currentFile = getAilyBuilderCurrentFile();
-  if (!prefix || !packagePath || !currentFile) {
-    return;
-  }
-  fs.mkdirSync(path.dirname(currentFile), { recursive: true });
-  fs.writeFileSync(currentFile, JSON.stringify({
-    channel,
-    version: normalizeAilyBuilderVersion(version),
-    packageName,
-    prefix,
-    path: packagePath,
-    updatedAt: new Date().toISOString(),
-  }, null, 2));
+  return packageJson?.version || null;
 }
 
 function resolveAilyBuilderPath(childPath) {
-  const npmBuilderPath = getNpmAilyBuilderPath();
-  if (npmBuilderPath && isAilyBuilderInstallComplete(npmBuilderPath)) {
-    return npmBuilderPath;
-  }
-
-  const legacyNpmBuilderPath = getAilyBuilderChannel() === "stable" ? getLegacyNpmAilyBuilderPath() : null;
-  if (legacyNpmBuilderPath && isAilyBuilderInstallComplete(legacyNpmBuilderPath)) {
-    return legacyNpmBuilderPath;
-  }
-
-  const bundledBuilderPath = getAilyBuilderChannel() === "stable" ? path.join(childPath, "aily-builder") : null;
-  if (isAilyBuilderInstallComplete(bundledBuilderPath)) {
-    return bundledBuilderPath;
-  }
-
-  return npmBuilderPath || bundledBuilderPath;
-}
-
-function resolveAilyBuilderCommand(childPath) {
-  const npmBuilderPath = getNpmAilyBuilderPath();
-  if (isAilyBuilderInstallComplete(npmBuilderPath)) {
-    return `node "${path.join(npmBuilderPath, "index.js")}"`;
-  }
-
-  const legacyNpmBuilderPath = getAilyBuilderChannel() === "stable" ? getLegacyNpmAilyBuilderPath() : null;
-  if (legacyNpmBuilderPath && isAilyBuilderInstallComplete(legacyNpmBuilderPath)) {
-    return `node "${path.join(legacyNpmBuilderPath, "index.js")}"`;
-  }
-
-  const bundledBuilderPath = getAilyBuilderChannel() === "stable" ? path.join(childPath, "aily-builder") : null;
-  if (isAilyBuilderInstallComplete(bundledBuilderPath)) {
-    return `node "${path.join(bundledBuilderPath, "index.js")}"`;
-  }
-
-  return "aily-builder";
+  return getNpmAilyBuilderPath(childPath) || "";
 }
 
 function getNpmExecutablePath(childPath) {
@@ -1111,131 +910,33 @@ function getNpmExecutablePath(childPath) {
 let ailyBuilderInstallPromise = null;
 let ailyBuilderInstallKey = null;
 
-function sendAilyBuilderFooterState(state) {
-  if (!isRendererReady || !mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) {
-    pendingAilyBuilderFooterState = state;
-    return;
-  }
-  mainWindow.webContents.send("state-update", state);
-  pendingAilyBuilderFooterState = null;
-}
-
-function getAilyBuilderDisplayName(channel = getAilyBuilderChannel()) {
-  return normalizeAilyBuilderChannel(channel) === "next" ? "aily-builder-next" : "aily-builder";
-}
-
-function getAilyBuilderFooterLang() {
-  const locale = String(process.env.AILY_SYSTEM_LANG || app.getLocale() || "").toLowerCase();
-  return locale.startsWith("zh") ? "zh" : "en";
-}
-
-function getAilyBuilderDisplayLabel(options = {}) {
-  const name = options.name || getAilyBuilderDisplayName(options.channel);
-  return options.version ? `${name}@${options.version}` : name;
-}
-
-function formatAilyBuilderFooterText(phase, options = {}) {
-  const label = getAilyBuilderDisplayLabel(options);
-  const lang = getAilyBuilderFooterLang();
-  const messages = {
-    zh: {
-      checking: `正在检查 ${label} 更新...`,
-      available: `发现 ${label}，准备后台更新...`,
-      installing: `正在后台安装 ${label}...`,
-      updated: `${label} 更新完成`,
-      installed: `${label} 安装完成`,
-      failed: `${label} 更新失败，继续使用当前版本`,
-      default: `${label} 状态更新中...`,
-    },
-    en: {
-      checking: `Checking ${label} updates...`,
-      available: `${label} update found, preparing background update...`,
-      installing: `Installing ${label} in the background...`,
-      updated: `${label} update complete`,
-      installed: `${label} installation complete`,
-      failed: `${label} update failed, continuing with the current version`,
-      default: `${label} status updating...`,
-    },
-  };
-  const langMessages = messages[lang] || messages.en;
-  switch (phase) {
-    case "checking":
-      return langMessages.checking;
-    case "available":
-      return langMessages.available;
-    case "installing":
-      return langMessages.installing;
-    case "updated":
-      return langMessages.updated;
-    case "installed":
-      return langMessages.installed;
-    case "failed":
-      return langMessages.failed;
-    default:
-      return langMessages.default;
-  }
-}
-
-function formatAilyBuilderNextConfigMissingText() {
-  return getAilyBuilderFooterLang() === "zh"
-    ? "未获取到 aily-builder-next 更新配置"
-    : "aily-builder-next update config was not found";
-}
-
-function limitLogText(text, maxLength = 12000) {
-  const value = String(text || "");
-  if (value.length <= maxLength) {
-    return value;
-  }
-  return `${value.slice(0, maxLength)}\n... truncated ${value.length - maxLength} chars`;
-}
-
-function logAilyBuilderInstallEvent(event, data = {}, state = "doing") {
-  const detail = `[AILY_BUILDER_INSTALL_${event}] ${JSON.stringify(data, null, 2)}`;
-  if (state === "error") {
-    console.error(detail);
-  } else if (state === "warn") {
-    console.warn(detail);
-  } else {
-    console.info(detail);
-  }
-}
-
 function quoteWindowsShellPath(filePath) {
   return `"${String(filePath).replace(/"/g, '""')}"`;
 }
 
-function notifyAilyBuilderFooter(phase, options = {}) {
-  const stateByPhase = {
-    failed: "warn",
-    updated: "done",
-    installed: "done",
-  };
-  sendAilyBuilderFooterState({
-    state: stateByPhase[phase] || "doing",
-    text: formatAilyBuilderFooterText(phase, options),
-    timeout: options.timeout ?? (phase === "updated" || phase === "installed" ? 5000 : 300000),
+function runAilyBuilderNpm(childPath, npmArgs) {
+  const npmPath = getNpmExecutablePath(childPath);
+  const npmCommand = isWin32 ? quoteWindowsShellPath(npmPath) : npmPath;
+  return new Promise((resolve) => {
+    const child = require("child_process").spawn(npmCommand, npmArgs, {
+      env: getAilyBuilderNpmEnv(),
+      shell: isWin32,
+      windowsHide: true,
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout?.on("data", (chunk) => { stdout += chunk.toString(); });
+    child.stderr?.on("data", (chunk) => { stderr += chunk.toString(); });
+    child.on("error", (error) => resolve({ code: -1, stdout, stderr, error: error.message }));
+    child.on("close", (code) => resolve({ code, stdout, stderr, error: "" }));
   });
 }
 
-function createAilyBuilderInstallOptions(options = {}) {
-  return {
-    notifyFooter: options.notifyFooter !== false,
-    reason: options.reason || "update",
-  };
-}
-
-function installAilyBuilderFromNpm(childPath, version = AILY_BUILDER_DEFAULT_VERSION, options = {}) {
-  const installOptions = createAilyBuilderInstallOptions(options);
-  const targetChannel = getAilyBuilderChannel();
-  const targetVersion = normalizeAilyBuilderVersion(version);
-  const targetInstallKey = `${targetChannel}:${targetVersion}`;
-  const targetPrefix = getAilyBuilderVersionPrefix(targetVersion);
-  const targetPath = getNpmAilyBuilderPath(targetVersion);
-  if (!targetPath) {
-    if (installOptions.notifyFooter) {
-      notifyAilyBuilderFooter("failed", { channel: targetChannel, version: targetVersion, timeout: 10000 });
-    }
+function installAilyBuilderFromNpm(childPath, options = {}) {
+  const channel = getAilyBuilderChannel();
+  const packageName = getAilyBuilderPackageName(channel);
+  let targetPath = getNpmAilyBuilderPath(childPath, channel);
+  if (!packageName) {
     return Promise.resolve({
       ok: false,
       path: "",
@@ -1243,494 +944,119 @@ function installAilyBuilderFromNpm(childPath, version = AILY_BUILDER_DEFAULT_VER
     });
   }
 
-  if (targetChannel === "next" && !ailyBuilderUpdateConfigLoaded) {
-    if (installOptions.notifyFooter) {
-      sendAilyBuilderFooterState({
-        state: "warn",
-        text: formatAilyBuilderNextConfigMissingText(),
-        timeout: 10000,
-      });
-    }
-    return Promise.resolve({
-      ok: false,
-      path: targetPath,
-      error: "未获取到 aily-builder-next 更新配置，无法安装 next 版本",
-    });
+  const installedVersion = getInstalledAilyBuilderVersion(targetPath);
+  if (!options.force && installedVersion && isAilyBuilderInstallComplete(targetPath)) {
+    return Promise.resolve({ ok: true, path: targetPath, version: installedVersion, installed: false });
   }
 
-  if (isAilyBuilderInstallComplete(targetPath)) {
-    writeCurrentAilyBuilderInfo(targetVersion);
-    return Promise.resolve({ ok: true, path: targetPath, version: targetVersion, installed: false });
-  }
-
+  const installKey = channel;
   if (ailyBuilderInstallPromise) {
-    if (ailyBuilderInstallKey === targetInstallKey) {
-      return ailyBuilderInstallPromise;
-    }
-    return ailyBuilderInstallPromise.then(() => installAilyBuilderFromNpm(childPath, targetVersion, installOptions));
+    return ailyBuilderInstallKey === installKey
+      ? ailyBuilderInstallPromise
+      : ailyBuilderInstallPromise.then(() => installAilyBuilderFromNpm(childPath, options));
   }
 
-  const packageName = getAilyBuilderPackageName();
-  const spec = `${packageName}@${targetVersion}`;
-  const npmPath = getNpmExecutablePath(childPath);
-  const npmCommand = isWin32 ? quoteWindowsShellPath(npmPath) : npmPath;
-  fs.mkdirSync(targetPrefix, { recursive: true });
-  const npmArgs = ["install", spec, "--save-exact", "--prefix", targetPrefix];
+  // 不指定版本，npm 按默认 dist-tag 安装 latest。
+  const npmArgs = ["i", packageName, "-g"];
   if (process.env.AILY_NPM_REGISTRY) {
     npmArgs.push("--registry", process.env.AILY_NPM_REGISTRY);
   }
 
-  ailyBuilderInstallKey = targetInstallKey;
-  if (installOptions.notifyFooter) {
-    notifyAilyBuilderFooter("installing", { channel: targetChannel, version: targetVersion });
-  }
-  ailyBuilderInstallPromise = new Promise((resolve) => {
-    logAilyBuilderInstallEvent("START", {
-      channel: targetChannel,
-      version: targetVersion,
-      packageName,
-      spec,
-      npmPath,
-      npmCommand,
-      npmArgs,
-      targetPrefix,
-      targetPath,
-      childPath,
-      reason: installOptions.reason,
-      env: {
-        AILY_NPM_REGISTRY: process.env.AILY_NPM_REGISTRY || "",
-        AILY_APPDATA_PATH: process.env.AILY_APPDATA_PATH || "",
-        AILY_CHILD_PATH: process.env.AILY_CHILD_PATH || "",
-        PATH: process.env.PATH || "",
-        SystemRoot: process.env.SystemRoot || "",
-        ComSpec: process.env.ComSpec || "",
-      },
-    });
-    const child = require("child_process").spawn(npmCommand, npmArgs, {
-      env: process.env,
-      shell: isWin32,
-      windowsHide: true,
-    });
-
-    let stdout = "";
-    let stderr = "";
-    child.stdout?.on("data", (chunk) => {
-      const text = chunk.toString();
-      stdout += text;
-    });
-    child.stderr?.on("data", (chunk) => {
-      const text = chunk.toString();
-      stderr += text;
-    });
-    child.on("error", (error) => {
-      if (installOptions.notifyFooter) {
-        notifyAilyBuilderFooter("failed", { channel: targetChannel, version: targetVersion, timeout: 10000 });
-      }
-      logAilyBuilderInstallEvent("SPAWN_ERROR", {
-        channel: targetChannel,
-        version: targetVersion,
-        npmPath,
-        npmCommand,
-        npmArgs,
-        error: error?.message || String(error),
-        stack: error?.stack || "",
-      }, "error");
-      resolve({ ok: false, path: targetPath, error: error.message });
-    });
-    child.on("close", (code) => {
-      logAilyBuilderInstallEvent(code === 0 ? "CLOSE" : "CLOSE_ERROR", {
-        channel: targetChannel,
-        version: targetVersion,
-        code,
-        npmPath,
-        npmCommand,
-        npmArgs,
-        targetPath,
-        stdout: limitLogText(stdout),
-        stderr: limitLogText(stderr),
-      }, code === 0 ? "doing" : "error");
+  ailyBuilderInstallKey = installKey;
+  ailyBuilderInstallPromise = runAilyBuilderNpm(childPath, npmArgs)
+    .then(({ code, stdout, stderr, error }) => {
       if (code !== 0) {
-        if (installOptions.notifyFooter) {
-          notifyAilyBuilderFooter("failed", { channel: targetChannel, version: targetVersion, timeout: 10000 });
-        }
-        resolve({
+        return {
           ok: false,
           path: targetPath,
-          error: stderr || stdout || `npm install exited with ${code}`,
-        });
-        return;
+          error: error || stderr || stdout || `npm install exited with ${code}`,
+        };
       }
-
+      targetPath = getNpmAilyBuilderPath(childPath, channel);
       const ok = isAilyBuilderInstallComplete(targetPath);
-      if (ok) {
-        writeCurrentAilyBuilderInfo(targetVersion);
-      }
-      if (!ok) {
-        logAilyBuilderInstallEvent("VALIDATION_FAILED", {
-          channel: targetChannel,
-          version: targetVersion,
-          targetPath,
-          requiredFiles: [
-            path.join(targetPath, "index.js"),
-            path.join(targetPath, "node_modules/tree-sitter/build/Release/tree_sitter_runtime_binding.node"),
-            path.join(targetPath, "node_modules/tree-sitter-cpp/build/Release/tree_sitter_cpp_binding.node"),
-          ].map((filePath) => ({
-            path: filePath,
-            exists: fs.existsSync(filePath),
-          })),
-        }, "error");
-      }
-      if (installOptions.notifyFooter) {
-        const successPhase = installOptions.reason === "channel-switch" || installOptions.reason === "install"
-          ? "installed"
-          : "updated";
-        notifyAilyBuilderFooter(ok ? successPhase : "failed", {
-          channel: targetChannel,
-          version: targetVersion,
-          timeout: ok ? 5000 : 10000,
-        });
-      }
-      resolve({
+      return {
         ok,
         path: targetPath,
-        version: targetVersion,
+        version: getInstalledAilyBuilderVersion(targetPath),
         installed: ok,
-        error: ok ? "" : `${spec} 安装完成但缺少 aily-builder 关键文件`,
-      });
+        error: ok ? "" : `@aily-project/aily-builder 安装完成但缺少 index.js`,
+      };
+    })
+    .finally(() => {
+      ailyBuilderInstallPromise = null;
+      ailyBuilderInstallKey = null;
     });
-  }).finally(() => {
-    ailyBuilderInstallPromise = null;
-    ailyBuilderInstallKey = null;
-  });
 
   return ailyBuilderInstallPromise;
 }
 
-function ensureAilyBuilderFromNpm(childPath, options = {}) {
-  const installOptions = createAilyBuilderInstallOptions(options);
-  const targetVersion = getAilyBuilderTargetVersion();
-  const currentInfo = readCurrentAilyBuilderInfo();
-  const currentVersion = currentInfo?.version || null;
-  const currentIsOlder = currentVersion && compareSemver(currentVersion, targetVersion) < 0;
-  const npmBuilderPath = currentInfo?.path || getNpmAilyBuilderPath(targetVersion);
-  if (npmBuilderPath && isAilyBuilderInstallComplete(npmBuilderPath)) {
-    if (!currentInfo) {
-      writeCurrentAilyBuilderInfo(targetVersion);
-    }
-    applyAilyBuilderCommandEnv(childPath);
-    if (currentIsOlder) {
-      console.warn(`aily-builder 可用版本 ${currentVersion} 低于目标版本 ${targetVersion}，后台更新`);
-      installAilyBuilderFromNpm(childPath, targetVersion, installOptions).then((installResult) => {
-        if (installResult.ok) {
-          applyAilyBuilderCommandEnv(childPath);
-          console.log(`aily-builder npm 后台更新完成: ${installResult.path}`);
-          return;
-        }
-        console.error(`aily-builder npm 后台更新失败: ${installResult.error}`);
-      });
-    }
-    return { ok: true, path: npmBuilderPath, version: currentVersion || targetVersion, installed: false };
+
+function uninstallAilyBuilderFromNpm(childPath, channel) {
+  const packageName = getAilyBuilderPackageName(channel);
+  const packagePath = getNpmAilyBuilderPath(childPath, channel);
+  if (!packageName || !isAilyBuilderInstallComplete(packagePath)) {
+    return Promise.resolve({ ok: true, path: packagePath, uninstalled: false });
   }
 
-  const packageName = getAilyBuilderPackageName();
-  const fallbackPath = resolveAilyBuilderPath(childPath);
-  applyAilyBuilderCommandEnv(childPath);
+  const npmArgs = ["uninstall", packageName, "-g"];
+  if (process.env.AILY_NPM_REGISTRY) {
+    npmArgs.push("--registry", process.env.AILY_NPM_REGISTRY);
+  }
 
-  console.warn(`未找到可用的 aily-builder，后台从 npm 安装: ${packageName}@${targetVersion}`);
-  installAilyBuilderFromNpm(childPath, targetVersion, {
-    ...installOptions,
-    reason: installOptions.reason === "update" ? "install" : installOptions.reason,
-  }).then((installResult) => {
-    if (installResult.ok) {
-      applyAilyBuilderCommandEnv(childPath);
-      console.log(`aily-builder npm 后台安装完成: ${installResult.path}`);
-      return;
-    }
-    console.error(`aily-builder npm 后台安装失败: ${installResult.error}`);
-  });
-
-  return {
-    ok: isAilyBuilderInstallComplete(fallbackPath),
-    path: fallbackPath,
-    installed: false,
-  };
+  return runAilyBuilderNpm(childPath, npmArgs).then(({ code, stdout, stderr, error }) => ({
+      ok: code === 0,
+      path: packagePath,
+      uninstalled: code === 0,
+      error: code === 0 ? "" : error || stderr || stdout || `npm uninstall exited with ${code}`,
+    }));
 }
 
-async function waitForAilyBuilderFromNpm(childPath, version = AILY_BUILDER_DEFAULT_VERSION) {
-  const targetVersion = normalizeAilyBuilderVersion(version || getAilyBuilderTargetVersion());
-  const currentInfo = readCurrentAilyBuilderInfo();
-  const currentIsUsable = currentInfo && isAilyBuilderInstallComplete(currentInfo.path);
-  const currentSatisfiesTarget = currentIsUsable && compareSemver(currentInfo.version, targetVersion) >= 0;
-
-  if (currentSatisfiesTarget || (currentIsUsable && !ailyBuilderUpdateRequired)) {
-    applyAilyBuilderCommandEnv(childPath);
-    return { ok: true, path: currentInfo.path, version: currentInfo.version, installed: false };
+async function ensureAilyBuilderFromNpm(childPath, options = {}) {
+  const channel = getAilyBuilderChannel();
+  const otherChannel = channel === "next" ? "stable" : "next";
+  const otherResult = await uninstallAilyBuilderFromNpm(childPath, otherChannel);
+  if (!otherResult.ok) {
+    return otherResult;
   }
 
-  if (getAilyBuilderChannel() === "next" && !ailyBuilderUpdateConfigLoaded) {
-    return {
-      ok: false,
-      path: "",
-      error: "未获取到 aily-builder-next 更新配置，无法安装 next 版本",
-    };
-  }
+  const targetPath = getNpmAilyBuilderPath(childPath, channel);
+  const installedVersion = getInstalledAilyBuilderVersion(targetPath);
+  const force = options.force || otherResult.uninstalled;
+  const result = isAilyBuilderInstallComplete(targetPath) &&
+    installedVersion &&
+    !force
+    ? { ok: true, path: targetPath, version: installedVersion, installed: false }
+    : await installAilyBuilderFromNpm(childPath, { ...options, force });
 
-  const legacyNpmBuilderPath = getAilyBuilderChannel() === "stable" ? getLegacyNpmAilyBuilderPath() : null;
-  if (isAilyBuilderInstallComplete(legacyNpmBuilderPath) && !ailyBuilderUpdateRequired) {
-    applyAilyBuilderCommandEnv(childPath);
-    return {
-      ok: true,
-      path: legacyNpmBuilderPath,
-      version: getInstalledAilyBuilderVersion(legacyNpmBuilderPath),
-      installed: false,
-    };
-  }
-
-  const bundledBuilderPath = getAilyBuilderChannel() === "stable" ? path.join(childPath, "aily-builder") : null;
-  if (isAilyBuilderInstallComplete(bundledBuilderPath) && !ailyBuilderUpdateRequired) {
-    applyAilyBuilderCommandEnv(childPath);
-    return { ok: true, path: bundledBuilderPath, installed: false };
-  }
-
-  const installResult = await installAilyBuilderFromNpm(childPath, targetVersion);
-  if (installResult.ok) {
+  if (result.ok) {
     applyAilyBuilderCommandEnv(childPath);
   }
-  return installResult;
+  return result;
 }
 
 function getAilyBuilderStatus(childPath) {
   const channel = getAilyBuilderChannel();
-  const targetVersion = getAilyBuilderTargetVersion();
-  const currentInfo = readCurrentAilyBuilderInfo();
-  const legacyPath = channel === "stable" ? getLegacyNpmAilyBuilderPath() : null;
-  const bundledPath = channel === "stable" ? path.join(childPath, "aily-builder") : null;
   const activePath = resolveAilyBuilderPath(childPath);
   const installed = isAilyBuilderInstallComplete(activePath);
-  const activeVersion =
-    currentInfo?.version ||
-    (isAilyBuilderInstallComplete(legacyPath) ? getInstalledAilyBuilderVersion(legacyPath) : null) ||
-    (isAilyBuilderInstallComplete(bundledPath) ? getInstalledAilyBuilderVersion(bundledPath) : null);
-  const updateAvailable = !!activeVersion && compareSemver(activeVersion, targetVersion) < 0;
+  const activeVersion = getInstalledAilyBuilderVersion(activePath);
 
   return {
     channel,
-    key: getAilyBuilderUpdateKey(channel),
+    key: getAilyBuilderChannelConfig(channel).key,
     packageName: getAilyBuilderPackageName(),
     installed,
     installedVersion: activeVersion,
-    targetVersion,
-    required: ailyBuilderUpdateRequired,
-    updateAvailable,
     installing: !!ailyBuilderInstallPromise,
     installingKey: ailyBuilderInstallKey,
-    path: activePath,
-    command: process.env.AILY_BUILDER_COMMAND || resolveAilyBuilderCommand(childPath),
-    configLoaded: ailyBuilderUpdateConfigLoaded,
-    error: channel === "next" && !ailyBuilderUpdateConfigLoaded && !installed
-      ? "未获取到 aily-builder-next 更新配置"
-      : "",
+    configLoaded: true,
+    error: "",
   };
-}
-
-function buildPackageUpdatesManifestUrl(baseUrl, manifest) {
-  const file = String(manifest || PACKAGE_UPDATES_DEFAULT_MANIFEST).trim();
-  if (/^https?:\/\//i.test(file)) {
-    return file;
-  }
-  const base = String(baseUrl || "").replace(/\/+$/, "");
-  return base ? `${base}/${file.replace(/^\/+/, "")}` : "";
-}
-
-function normalizePackageUpdateEntries(manifest) {
-  if (!manifest || typeof manifest !== "object") {
-    return [];
-  }
-  if (Array.isArray(manifest.packages)) {
-    return manifest.packages;
-  }
-  const entries = [];
-  const ailyBuilder = manifest["aily-builder"] || manifest.ailyBuilder || manifest.aily_builder;
-  if (ailyBuilder) {
-    entries.push({
-      key: "aily-builder",
-      ...ailyBuilder,
-    });
-  }
-  return entries;
-}
-
-function applyAilyBuilderUpdateConfig(config = {}) {
-  const packageName = getAilyBuilderPackageFromUpdateEntry(config);
-  if (packageName) {
-    process.env.AILY_BUILDER_PACKAGE = packageName;
-  }
-  if (config.version) {
-    ailyBuilderTargetVersion = normalizeAilyBuilderVersion(config.version);
-    process.env.AILY_BUILDER_TARGET_VERSION = ailyBuilderTargetVersion;
-  }
-  if (typeof config.required === "boolean") {
-    ailyBuilderUpdateRequired = config.required;
-    process.env.AILY_BUILDER_REQUIRED = ailyBuilderUpdateRequired ? "true" : "false";
-  }
-  ailyBuilderUpdateConfigLoaded = true;
-}
-
-function getPackageUpdatePlatformKey() {
-  if (process.platform === "darwin") {
-    return "mac";
-  }
-  if (process.platform === "win32") {
-    return "win";
-  }
-  return `${process.platform}-${process.arch}`;
-}
-
-function getAilyBuilderPackageFromUpdateEntry(entry = {}) {
-  const platformKey = getPackageUpdatePlatformKey();
-  if (Object.prototype.hasOwnProperty.call(entry, platformKey)) {
-    return entry[platformKey] || "";
-  }
-  if (entry.npmPackages && Object.prototype.hasOwnProperty.call(entry.npmPackages, platformKey)) {
-    return entry.npmPackages[platformKey] || "";
-  }
-  return entry[platformKey] ||
-    entry.npmPackages?.[platformKey] ||
-    entry.npmPackage ||
-    entry.package ||
-    entry.packageName ||
-    "";
-}
-
-function isAilyBuilderUpdateEntry(entry = {}) {
-  const key = entry.key || entry.name;
-  const platformKey = getPackageUpdatePlatformKey();
-  const hasExplicitPlatformPackage =
-    Object.prototype.hasOwnProperty.call(entry, platformKey) ||
-    (entry.npmPackages && Object.prototype.hasOwnProperty.call(entry.npmPackages, platformKey));
-  const packageName = getAilyBuilderPackageFromUpdateEntry(entry);
-  return key === getAilyBuilderUpdateKey() && (!hasExplicitPlatformPackage || !!packageName);
-}
-
-function shouldInstallRequiredAilyBuilderUpdate(status) {
-  return !!status &&
-    !status.error &&
-    status.required &&
-    !status.installing &&
-    (!status.installed || status.updateAvailable);
-}
-
-function installRequiredAilyBuilderUpdate(childPath, status) {
-  const reason = status.installed ? "update" : "install";
-  installAilyBuilderFromNpm(childPath, status.targetVersion, { reason }).then((installResult) => {
-    if (installResult.ok) {
-      applyAilyBuilderCommandEnv(childPath);
-      console.log(`required ${status.key} 更新完成: ${installResult.path}`);
-      return;
-    }
-    console.error(`required ${status.key} 更新失败: ${installResult.error}`);
-  });
-}
-
-async function fetchPackageUpdatesManifest() {
-  if (!packageUpdatesManifestUrl || typeof fetch !== "function") {
-    return null;
-  }
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 10000);
-  try {
-    const response = await fetch(packageUpdatesManifestUrl, {
-      cache: "no-store",
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-    return await response.json();
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-async function checkPackageUpdatesFromManifest() {
-  const childPath = process.env.AILY_CHILD_PATH;
-  if (!childPath) {
-    throw new Error("AILY_CHILD_PATH 未设置");
-  }
-
-  const result = {
-    manifestUrl: packageUpdatesManifestUrl,
-    packages: [],
-    ailyBuilder: null,
-  };
-
-  let manifest = null;
-  try {
-    manifest = await fetchPackageUpdatesManifest();
-  } catch (error) {
-    result.error = error.message;
-  }
-
-  const entries = normalizePackageUpdateEntries(manifest);
-  for (const entry of entries) {
-    if (isAilyBuilderUpdateEntry(entry)) {
-      applyAilyBuilderUpdateConfig(entry);
-      const status = getAilyBuilderStatus(childPath);
-      result.ailyBuilder = status;
-      if (status.updateAvailable) {
-        notifyAilyBuilderFooter("available", {
-          channel: status.channel,
-          version: status.targetVersion,
-          name: status.key,
-          timeout: 10000,
-        });
-      }
-      if (shouldInstallRequiredAilyBuilderUpdate(status)) {
-        installRequiredAilyBuilderUpdate(childPath, status);
-      }
-      result.packages.push({
-        key: status.key,
-        platform: getPackageUpdatePlatformKey(),
-        npmPackage: getAilyBuilderPackageName(),
-        status,
-      });
-    }
-  }
-
-  if (!result.ailyBuilder) {
-    result.ailyBuilder = getAilyBuilderStatus(childPath);
-    result.packages.push({
-      key: result.ailyBuilder.key,
-      status: result.ailyBuilder,
-    });
-  }
-
-  return result;
-}
-
-function checkAilyBuilderChannelUpdatesInBackground(childPath, options = {}) {
-  checkPackageUpdatesFromManifest()
-    .then(() => {
-      if (options.install) {
-        ensureAilyBuilderFromNpm(childPath, { reason: "channel-switch" });
-      }
-      applyAilyBuilderCommandEnv(childPath);
-    })
-    .catch((error) => {
-      console.error("后台检查 aily-builder 更新失败:", error);
-    });
 }
 
 // 监听渲染进程就绪事件
 ipcMain.on('renderer-ready', () => {
   console.log('渲染进程已就绪');
   isRendererReady = true;
-
-  if (pendingAilyBuilderFooterState) {
-    const state = pendingAilyBuilderFooterState;
-    pendingAilyBuilderFooterState = null;
-    sendAilyBuilderFooterState(state);
-  }
 
   // 检查是否有待处理的OAuth回调
   if (global.pendingOAuthCallback) {
@@ -1991,12 +1317,10 @@ function installChildEnv(childPath, options) {
 
   const packages = [
     { name: "node", afterExtract: afterNodeInstall },
-    { name: "aily-builder" },
     { name: "probe-rs" },
   ];
   const validators = {
     node: isNodeInstallComplete,
-    "aily-builder": isAilyBuilderInstallComplete,
     "probe-rs": isProbeRsInstallComplete,
   };
 
@@ -2005,15 +1329,6 @@ function installChildEnv(childPath, options) {
     const archivePath =
       findLatestVersionFile(sourceDir, pkg.name) ||
       findLatestVersionFile(path.join(childPath, platformDir), pkg.name);
-    if (pkg.name === "aily-builder") {
-      const npmBuilderPath = getNpmAilyBuilderPath();
-      if (npmBuilderPath && isAilyBuilderInstallComplete(npmBuilderPath)) {
-        continue;
-      }
-      if (!archivePath && !isAilyBuilderInstallComplete(targetPath)) {
-        continue;
-      }
-    }
     if (z7Path) {
       extract7zPackage(z7Path, archivePath, targetPath, pkg.name, validators[pkg.name]);
     } else {
@@ -2220,17 +1535,13 @@ function applyChildToolEnv(childPath) {
     customPath = appendPathSegment(customPath, '/bin');
   }
 
-  const ailyBuilderPath = resolveAilyBuilderPath(childPath);
-  const npmAilyBuilderBinPath = getNpmAilyBuilderBinPath();
-  const ninjaPath = isAilyBuilderInstallComplete(ailyBuilderPath) ? path.join(ailyBuilderPath, "ninja") : "";
+  const npmAilyBuilderBinPath = getNpmAilyBuilderBinPath(childPath);
   const probeRsDir = path.join(childPath, "probe-rs");
   const z7Path = path.join(childPath, isWin32 ? "7za.exe" : "7zz");
   const rgPath = path.join(childPath, isWin32 ? "rg.exe" : "rg");
   const probeRsPath = path.join(probeRsDir, `probe-rs${isWin32 ? ".exe" : ""}`);
 
   customPath = appendPathSegment(customPath, npmAilyBuilderBinPath, { requireExists: false });
-  customPath = appendPathSegment(customPath, ailyBuilderPath);
-  customPath = appendPathSegment(customPath, ninjaPath);
   customPath = appendPathSegment(customPath, probeRsDir);
 
   process.env.PATH = customPath;
@@ -2238,9 +1549,6 @@ function applyChildToolEnv(childPath) {
   process.env.AILY_7ZA_PATH = fs.existsSync(z7Path) ? z7Path : path.join(childPath, isWin32 ? "7za.exe" : "7zz");
   process.env.AILY_RG_PATH = fs.existsSync(rgPath) ? rgPath : path.join(childPath, isWin32 ? "rg.exe" : "rg");
   process.env.AILY_PROBE_RS_PATH = probeRsPath;
-  process.env.AILY_BUILDER_PATH = ailyBuilderPath;
-  process.env.AILY_BUILDER_BIN_PATH = npmAilyBuilderBinPath || "";
-  process.env.AILY_BUILDER_COMMAND = resolveAilyBuilderCommand(childPath);
 }
 
 function runInstallEnv(childPath) {
@@ -2479,41 +1787,18 @@ function loadEnv() {
   process.env.AILY_TOOL_WEB = regionConfig.tool_web || '';
 
   process.env.AILY_PROJECT_PATH = conf["project_path"];
-  const ailyBuilderConfig = conf.ailyBuilder || conf.aily_builder || {};
   setAilyBuilderChannel(conf.labs?.ailyBuilderNext ? "next" : "stable");
-  ailyBuilderTargetVersion = normalizeAilyBuilderVersion(
-    process.env.AILY_BUILDER_VERSION || ailyBuilderConfig.version || AILY_BUILDER_DEFAULT_VERSION
-  );
-  ailyBuilderUpdateRequired = process.env.AILY_BUILDER_REQUIRED === "true" || ailyBuilderConfig.required === true;
-  process.env.AILY_BUILDER_TARGET_VERSION = ailyBuilderTargetVersion;
-  process.env.AILY_BUILDER_REQUIRED = ailyBuilderUpdateRequired ? "true" : "false";
-  ailyBuilderUpdateConfigLoaded = getAilyBuilderChannel() === "stable";
-  const packageUpdatesConfig = conf.packageUpdates || conf.package_updates || {};
-  const packageUpdatesManifest = process.env.AILY_PACKAGE_UPDATES_MANIFEST || packageUpdatesConfig.manifest || PACKAGE_UPDATES_DEFAULT_MANIFEST;
-  packageUpdatesManifestUrl = process.env.AILY_PACKAGE_UPDATES_MANIFEST_URL ||
-    packageUpdatesConfig.manifestUrl ||
-    packageUpdatesConfig.manifest_url ||
-    buildPackageUpdatesManifestUrl(regionConfig.updater, packageUpdatesManifest);
-  process.env.AILY_PACKAGE_UPDATES_MANIFEST = packageUpdatesManifest;
-  process.env.AILY_PACKAGE_UPDATES_MANIFEST_URL = packageUpdatesManifestUrl;
 
-  const hasNpmAilyBuilder = isAilyBuilderInstallComplete(getNpmAilyBuilderPath());
+  // child 目录只管理 Node、7z、probe-rs 等随应用分发的工具；
+  // aily-builder 始终由 npm 全局安装，并统一通过 aily-builder 命令调用。
 
-  // macOS 生产/开发均走异步自解压，完成后再次覆盖 child 环境变量；Windows 生产包由 NSIS 预解压。
-  // aily-builder 需要在窗口创建前优先准备到用户目录，避免 preload 拿到旧 child 路径。
-  if (hasNpmAilyBuilder) {
-    if (isDarwin || serve) {
-      applyChildToolEnv(childPath);
-      setImmediate(() => {
-        runInstallEnv(childPath);
-      });
-    } else {
-      runInstallEnv(childPath);
+  // 必须先让 child Node 可用，再检查并后台安装全局 builder，保证 preload 能拿到统一命令。
+  runInstallEnv(childPath);
+  ensureAilyBuilderFromNpm(childPath).then((result) => {
+    if (!result.ok) {
+      console.error(`aily-builder 初始化失败: ${result.error || "未知错误"}`);
     }
-  } else {
-    runInstallEnv(childPath);
-    ensureAilyBuilderFromNpm(childPath);
-  }
+  }).catch((error) => console.error("aily-builder 初始化失败:", error));
 
   // 当前系统语言
   process.env.AILY_SYSTEM_LANG = app.getLocale();
@@ -3431,20 +2716,17 @@ ipcMain.handle("aily-builder-status", async () => {
   return getAilyBuilderStatus(childPath);
 });
 
-ipcMain.handle("aily-builder-channel-set", async (event, { channel, install } = {}) => {
+ipcMain.handle("aily-builder-channel-set", async (event, { channel } = {}) => {
   const childPath = process.env.AILY_CHILD_PATH;
   if (!childPath) {
     throw new Error("AILY_CHILD_PATH 未设置");
   }
 
   setAilyBuilderChannel(channel);
-  const normalizedChannel = getAilyBuilderChannel();
-  if (normalizedChannel === "next") {
-    checkAilyBuilderChannelUpdatesInBackground(childPath, { install });
-  } else if (install) {
-    ensureAilyBuilderFromNpm(childPath, { reason: "channel-switch" });
+  const result = await ensureAilyBuilderFromNpm(childPath, { reason: "channel-switch" });
+  if (!result.ok) {
+    throw new Error(result.error || "aily-builder npm 安装失败");
   }
-  applyAilyBuilderCommandEnv(childPath);
   return getAilyBuilderStatus(childPath);
 });
 
@@ -3452,45 +2734,36 @@ ipcMain.handle("aily-builder-channel-get", async () => {
   return getAilyBuilderChannel();
 });
 
-ipcMain.handle("package-updates-check", async () => {
-  return checkPackageUpdatesFromManifest();
-});
-
-ipcMain.handle("aily-builder-ensure", async (event, { version } = {}) => {
+ipcMain.handle("aily-builder-ensure", async () => {
   const childPath = process.env.AILY_CHILD_PATH;
   if (!childPath) {
     throw new Error("AILY_CHILD_PATH 未设置");
   }
 
-  const result = await waitForAilyBuilderFromNpm(childPath, version || getAilyBuilderTargetVersion());
+  const result = await ensureAilyBuilderFromNpm(childPath);
   if (!result.ok) {
     throw new Error(result.error || "aily-builder npm 安装失败");
   }
 
   return {
-    path: result.path,
-    command: process.env.AILY_BUILDER_COMMAND,
-    version: result.version || version,
+    version: result.version,
     status: getAilyBuilderStatus(childPath),
   };
 });
 
-ipcMain.handle("aily-builder-update", async (event, { version } = {}) => {
+ipcMain.handle("aily-builder-update", async () => {
   const childPath = process.env.AILY_CHILD_PATH;
   if (!childPath) {
     throw new Error("AILY_CHILD_PATH 未设置");
   }
 
-  const result = await installAilyBuilderFromNpm(childPath, version || getAilyBuilderTargetVersion(), { reason: "manual" });
+  const result = await ensureAilyBuilderFromNpm(childPath, { reason: "manual", force: true });
   if (!result.ok) {
     throw new Error(result.error || "aily-builder npm 安装失败");
   }
 
-  applyAilyBuilderCommandEnv(childPath);
   return {
-    path: result.path,
-    command: process.env.AILY_BUILDER_COMMAND,
-    version: result.version || version,
+    version: result.version,
     status: getAilyBuilderStatus(childPath),
   };
 });

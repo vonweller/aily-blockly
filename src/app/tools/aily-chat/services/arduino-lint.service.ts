@@ -410,7 +410,7 @@ export class ArduinoLintService {
     }
 
     // 构建完整的 lint 命令
-    const builderCommand = AilyHost.get().path.getAilyBuilderCommand?.() || 'aily-builder';
+    const builderCommand = 'aily-builder';
     const lintCommandParts = [
       builderCommand,
       lintParam,
@@ -684,44 +684,7 @@ export class ArduinoLintService {
    */
   isAvailable(): boolean {
     try {
-      // console.log('🔍 检查 aily-builder 可用性...');
-      
-      // 检查 AilyHost.get().path 是否存在
-      if (!AilyHost.get().path) {
-        // console.warn('❌ window.path 不存在');
-        return false;
-      }
-      
-      // 检查 getAilyBuilderCommand 方法
-      if (typeof AilyHost.get().path.getAilyBuilderCommand === 'function') {
-        const ailyBuilderCommand = AilyHost.get().path.getAilyBuilderCommand();
-        if (ailyBuilderCommand) {
-          return true;
-        }
-      }
-
-      if (typeof AilyHost.get().path.getAilyBuilderPath !== 'function') {
-        return false;
-      }
-      
-      const ailyBuilderPath = AilyHost.get().path.getAilyBuilderPath();
-      // console.log('- aily-builder 路径:', ailyBuilderPath);
-      
-      if (!ailyBuilderPath) {
-        // console.warn('❌ aily-builder 路径为空');
-        return false;
-      }
-      
-      // 检查 isExists 方法
-      if (typeof AilyHost.get().path.isExists !== 'function') {
-        // console.warn('❌ window.path.isExists 方法不存在');
-        return false;
-      }
-      
-      const indexJsExists = AilyHost.get().path.isExists(ailyBuilderPath + '/index.js');
-      // console.log('- index.js 存在:', indexJsExists);
-      
-      return indexJsExists;
+      return !!AilyHost.get().path;
     } catch (error) {
       console.warn('检查 aily-builder 可用性失败:', error);
       return false;

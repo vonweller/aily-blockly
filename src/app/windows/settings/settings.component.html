@@ -178,15 +178,12 @@
                 <div class="builder-setting-inline">
                   <div class="builder-version">
                   <strong>{{ getAilyBuilderDisplayName() }}</strong>
-                  @if (hasAilyBuilderUpdate() && ailyBuilderStatus?.targetVersion) {
-                  <span class="version">→ {{ ailyBuilderStatus.targetVersion }}</span>
-                  }
                   </div>
                   <div class="builder-update-row">
                     @if (getAilyBuilderStatusText()) {
                     <span class="builder-status" [ngClass]="{
                       updating: isAilyBuilderUpdateLoading(),
-                      warning: hasAilyBuilderUpdate() || !ailyBuilderStatus?.installed
+                      warning: !ailyBuilderStatus?.installed
                     }">{{ getAilyBuilderStatusText() }}</span>
                     }
                     @if (shouldShowAilyBuilderUpdateButton()) {

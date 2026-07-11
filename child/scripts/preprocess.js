@@ -52,8 +52,6 @@ async function main() {
         code,
         appDataPath,
         za7Path,
-        ailyBuilderPath,
-        ailyBuilderCommand,
         devmode,
         partitionFilePath: customPartitionFilePath
     } = config;
@@ -276,7 +274,7 @@ async function main() {
         const preprocessCachePath = path.join(tempPath, 'preprocess.json');
         
         logger.log('开始预编译...');
-        const builderCommand = ailyBuilderCommand || process.env.AILY_BUILDER_COMMAND || `node "${path.join(ailyBuilderPath, 'index.js')}"`;
+        const builderCommand = 'aily-builder';
         const pre_args = [
             'preprocess',
             // `...parseArgs(compilerParam)`,

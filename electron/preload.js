@@ -9,21 +9,6 @@ const { tmpdir } = require("os");
 
 // 单双杠虽不影响实用性，为了路径规范好看，还是单独使用
 const pt = process.platform === "win32" ? "\\" : "/"
-const ailyBuilderEnv = {
-  path: process.env.AILY_BUILDER_PATH,
-  command: process.env.AILY_BUILDER_COMMAND,
-};
-
-function updateAilyBuilderEnv(result) {
-  if (result?.path) {
-    ailyBuilderEnv.path = result.path;
-  }
-  if (result?.command) {
-    ailyBuilderEnv.command = result.command;
-  }
-  return result;
-}
-
 contextBridge.exposeInMainWorld("electronAPI", {
   ipcRenderer: {
     send: (channel, data) => ipcRenderer.send(channel, data),
@@ -34,8 +19,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
     getUserHome: () => require("os").homedir(),
     getAilyChildPath: () => process.env.AILY_CHILD_PATH,
     getAppDataPath: () => process.env.AILY_APPDATA_PATH,
-    getAilyBuilderPath: () => ailyBuilderEnv.path,
-    getAilyBuilderCommand: () => ailyBuilderEnv.command || "aily-builder",
     getAilyBuilderCachePath: () => process.env.AILY_BUILDER_CACHE_PATH,
     getAilyBuilderBuildPath: () => process.env.AILY_BUILDER_BUILD_PATH,
     getUserDocuments: () => require("os").homedir() + `${pt}Documents`,
@@ -220,10 +203,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
     },
   },
   builder: {
-    status: () => ipcRenderer.invoke("aily-builder-status").then(updateAilyBuilderEnv),
-    update: (version) => ipcRenderer.invoke("aily-builder-update", { version }).then(updateAilyBuilderEnv),
-    ensure: (version) => ipcRenderer.invoke("aily-builder-ensure", { version }).then(updateAilyBuilderEnv),
-    setChannel: (channel, options = {}) => ipcRenderer.invoke("aily-builder-channel-set", { channel, ...options }).then(updateAilyBuilderEnv),
+    status: () => ipcRenderer.invoke("aily-builder-status"),
+    update: () => ipcRenderer.invoke("aily-builder-update"),
+    ensure: () => ipcRenderer.invoke("aily-builder-ensure"),
+    setChannel: (channel, options = {}) => ipcRenderer.invoke("aily-builder-channel-set", { channel, ...options }),
     getChannel: () => ipcRenderer.invoke("aily-builder-channel-get"),
     init: (data) => {
       return new Promise((resolve, reject) => {
@@ -235,14 +218,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
     },
     codeGen: (data) => ipcRenderer.invoke("builder-codeGen", data),
     build: (data) => ipcRenderer.invoke("builder-build", data),
-  },
-  packageUpdates: {
-    check: () => ipcRenderer.invoke("package-updates-check").then((result) => {
-      if (result?.ailyBuilder) {
-        updateAilyBuilderEnv(result.ailyBuilder);
-      }
-      return result;
-    }),
   },
   uploader: {
     upload: (data) => ipcRenderer.invoke("uploader-upload", data),

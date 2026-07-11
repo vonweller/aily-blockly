@@ -7720,22 +7720,6 @@ export async function getWorkspaceOverviewTool(args?: any): Promise<ToolUseResul
             // console.log('- Angular injector: ❌ 获取失败 -', error.message);
           }
           
-          // 检查 aily-builder 路径
-          let ailyBuilderAvailable = false;
-          try {
-            if ((window as any)['path']) {
-              const path = (window as any)['path'].getAilyBuilderPath();
-              ailyBuilderAvailable = !!path;
-              // console.log('- aily-builder 路径:', path || '❌ 未设置');
-              if (path) {
-                const exists = (window as any)['path'].isExists(path + '/index.js');
-                // console.log('- index.js 存在:', exists ? '✅' : '❌');
-              }
-            }
-          } catch (error) {
-            // console.log('- aily-builder 检查: ❌ 失败 -', error.message);
-          }
-          
           // 如果环境不就绪，等待更长时间
           if (!injectorAvailable) {
             // console.log('⏳ Angular 环境未就绪，等待 5 秒...');

@@ -70,7 +70,7 @@ export class ArduinoSyntaxTool {
         // console.log('- 服务状态:', status);
         return {
           is_error: true,
-          content: '❌ **aily-builder 不可用**\n\n可能原因：\n1. aily-builder 未正确安装\n2. 路径配置错误\n3. Electron 环境未准备就绪\n\n请检查：\n- window.path 对象是否存在\n- getAilyBuilderPath() 是否返回有效路径\n- aily-builder/index.js 文件是否存在'
+          content: '❌ **aily-builder 不可用**\n\n可能原因：\naily-builder 尚未安装完成\n请检查：\n- 等待安装完成后重试\n- 在终端运行 `aily-builder --version` 确认命令可用'
         };
       }
 

@@ -262,15 +262,13 @@ export class _BuilderService {
         if (!code) {
           return;
         }
-        let ailyBuilderRuntime: { ailyBuilderPath: string; ailyBuilderCommand: string };
         try {
-          ailyBuilderRuntime = await this.getAilyBuilderRuntimeConfig();
+          await this.ensureAilyBuilderReady();
         } catch (error) {
           console.warn('aily-builder 未准备完成，跳过本次后台预处理:', error);
           return;
         }
         const currentProjectPath = this.projectService.currentProjectPath;
-        const { ailyBuilderPath, ailyBuilderCommand } = ailyBuilderRuntime;
         const boardModule = await this.projectService.getBoardModule();
         const appDataPath = window['path'].getAppDataPath();
         const ailyChildPath = window['path'].getAilyChildPath();
@@ -278,7 +276,6 @@ export class _BuilderService {
         // 参数校验：检查所有必需参数是否存在
         const missingParams: string[] = [];
         if (!currentProjectPath) missingParams.push('currentProjectPath');
-        if (!ailyBuilderPath) missingParams.push('ailyBuilderPath');
         if (!boardModule) missingParams.push('boardModule');
         if (!appDataPath) missingParams.push('appDataPath');
         if (!ailyChildPath) missingParams.push('ailyChildPath');
@@ -287,8 +284,6 @@ export class _BuilderService {
           console.error('[后台预处理] 参数校验失败，缺少以下参数:', missingParams.join(', '));
           console.error('[后台预处理] 参数详情:', {
             currentProjectPath,
-            ailyBuilderPath,
-            ailyBuilderCommand,
             boardModule,
             appDataPath,
             ailyChildPath
@@ -303,8 +298,6 @@ export class _BuilderService {
           code,
           appDataPath,
           za7Path: this.platformService.za7,
-          ailyBuilderPath,
-          ailyBuilderCommand,
           devmode: this.configService.data.devmode || false,
           partitionFilePath: this.electronService.pathJoin(currentProjectPath, 'partitions.csv')
         };
@@ -562,56 +555,13 @@ export class _BuilderService {
     }
   }
 
-  private async getAilyBuilderRuntimeConfig(): Promise<{ ailyBuilderPath: string; ailyBuilderCommand: string }> {
-    await this.ensureAilyBuilderReady();
-    return {
-      ailyBuilderPath: window['path'].getAilyBuilderPath(),
-      ailyBuilderCommand: window['path'].getAilyBuilderCommand()
-    };
-  }
-
-  private async invalidateBuildCacheIfBuilderChanged(tempPath: string, buildPath: string): Promise<void> {
-    const configFilePath = this.electronService.pathJoin(tempPath, 'build-config.json');
-    if (!window['path'].isExists(configFilePath)) {
-      return;
-    }
-
-    try {
-      const buildConfig = JSON.parse(window['fs'].readFileSync(configFilePath, 'utf8'));
-      const currentBuilder = await this.getAilyBuilderRuntimeConfig();
-      if (
-        buildConfig.ailyBuilderPath !== currentBuilder.ailyBuilderPath ||
-        buildConfig.ailyBuilderCommand !== currentBuilder.ailyBuilderCommand
-      ) {
-        this.removeDirIfExists(tempPath);
-        this.removeDirIfExists(buildPath);
-        console.log('aily-builder 已切换，清除旧构建缓存');
-      }
-    } catch (error) {
-      console.warn('检查 aily-builder 构建缓存状态失败:', error);
-    }
-  }
-
-  private removeDirIfExists(dirPath: string): void {
-    if (!window['path'].isExists(dirPath)) {
-      return;
-    }
-
-    try {
-      window['fs'].rmdirSync(dirPath);
-    } catch (error) {
-      console.warn('删除目录失败:', dirPath, error);
-    }
-  }
-
   /**
    * 运行预编译脚本（同步等待完成）
    */
   private async runPreprocess(): Promise<void> {
-    const ailyBuilderRuntime = await this.getAilyBuilderRuntimeConfig();
+    await this.ensureAilyBuilderReady();
 
     const currentProjectPath = this.projectService.currentProjectPath;
-    const { ailyBuilderPath, ailyBuilderCommand } = ailyBuilderRuntime;
     const boardModule = await this.projectService.getBoardModule();
     const appDataPath = window['path'].getAppDataPath();
     const ailyChildPath = window['path'].getAilyChildPath();
@@ -624,7 +574,6 @@ export class _BuilderService {
     // 参数校验：检查所有必需参数是否存在
     const missingParams: string[] = [];
     if (!currentProjectPath) missingParams.push('currentProjectPath');
-    if (!ailyBuilderPath) missingParams.push('ailyBuilderPath');
     if (!boardModule) missingParams.push('boardModule');
     if (!appDataPath) missingParams.push('appDataPath');
     if (!ailyChildPath) missingParams.push('ailyChildPath');
@@ -634,8 +583,6 @@ export class _BuilderService {
       console.error(errorMsg);
       console.error('[同步预处理] 参数详情:', {
         currentProjectPath,
-        ailyBuilderPath,
-        ailyBuilderCommand,
         boardModule,
         appDataPath,
         ailyChildPath
@@ -656,8 +603,6 @@ export class _BuilderService {
       code,
       appDataPath,
       za7Path: this.platformService.za7,
-      ailyBuilderPath,
-      ailyBuilderCommand,
       devmode: this.configService.data.devmode || false,
       partitionFilePath: this.electronService.pathJoin(currentProjectPath, 'partitions.csv')
     };
@@ -948,8 +893,6 @@ export class _BuilderService {
           }
         }
 
-        await this.invalidateBuildCacheIfBuilderChanged(tempPath, buildPath);
-
         // 4. 检查是否存在预编译缓存文件，如果不存在则启动预编译
         if (!window['path'].isExists(preprocessCachePath)) {
           this.safeUpdateNotice({
@@ -1054,7 +997,7 @@ export class _BuilderService {
           const boardModule = await this.projectService.getBoardModule();
           const boardName = boardModule.replace('@aily-project/board-', '');
           const configFilePath = this.electronService.pathJoin(tempPath, 'build-config.json');
-          const ailyBuilderRuntime = await this.getAilyBuilderRuntimeConfig();
+          await this.ensureAilyBuilderReady();
 
           // 更新配置文件中的 code（compile.js 会负责写入 sketch 文件）
           let buildConfig: any = {};
@@ -1062,8 +1005,8 @@ export class _BuilderService {
             buildConfig = JSON.parse(window['fs'].readFileSync(configFilePath, 'utf8'));
           }
           buildConfig.code = code;
-          buildConfig.ailyBuilderPath = ailyBuilderRuntime.ailyBuilderPath;
-          buildConfig.ailyBuilderCommand = ailyBuilderRuntime.ailyBuilderCommand;
+          delete buildConfig.ailyBuilderPath;
+          delete buildConfig.ailyBuilderCommand;
           window['fs'].writeFileSync(configFilePath, JSON.stringify(buildConfig, null, 2));
 
           // 运行编译脚本
