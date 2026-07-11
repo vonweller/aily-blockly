@@ -126,6 +126,7 @@ export class SettingsComponent implements OnDestroy {
   ailyBuilderStatus: any = null;
   ailyBuilderUpdating = false;
   ailyBuilderChannelSwitching = false;
+  applying = false;
   private ailyBuilderStatusTimer: ReturnType<typeof setTimeout> | null = null;
   private initialAilyBuilderNext = false;
 
@@ -530,17 +531,26 @@ export class SettingsComponent implements OnDestroy {
   }
 
   async apply() {
-    await this.configService.applyResourceSourceRuntimeSelection();
-    const ailyBuilderChannelChanged = this.labsConfig.ailyBuilderNext !== this.initialAilyBuilderNext;
-    // 保存到config.json，如有需要立即加载的，再加载
-    await this.configService.save();
-    if (ailyBuilderChannelChanged) {
-      await this.syncAilyBuilderChannel({ install: true });
+    if (this.applying) {
+      return;
     }
-    this.initialAilyBuilderNext = !!this.labsConfig.ailyBuilderNext;
-    window['ipcRenderer'].send('setting-changed', { action: 'devmode-changed', data: this.configData.devmode });
-    // 保存完毕后关闭窗口
-    this.uiService.closeWindow();
+
+    this.applying = true;
+    try {
+      await this.configService.applyResourceSourceRuntimeSelection();
+      const ailyBuilderChannelChanged = this.labsConfig.ailyBuilderNext !== this.initialAilyBuilderNext;
+      // 保存到config.json，如有需要立即加载的，再加载
+      await this.configService.save();
+      if (ailyBuilderChannelChanged) {
+        await this.syncAilyBuilderChannel({ install: true });
+      }
+      this.initialAilyBuilderNext = !!this.labsConfig.ailyBuilderNext;
+      window['ipcRenderer'].send('setting-changed', { action: 'devmode-changed', data: this.configData.devmode });
+      // 保存完毕后关闭窗口
+      this.uiService.closeWindow();
+    } finally {
+      this.applying = false;
+    }
   }
 
   onThemeChange(value: string) {

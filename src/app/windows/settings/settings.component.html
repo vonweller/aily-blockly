@@ -260,7 +260,7 @@
     <div class="window-footer">
       <div class="btns">
         <button nz-button nzType="default" (click)="cancel()">{{ 'SETTINGS.BUTTONS.CANCEL' | translate }}</button>
-        <button nz-button nzType="primary" (click)="apply()">{{ 'SETTINGS.BUTTONS.APPLY' | translate }}</button>
+        <button nz-button nzType="primary" [nzLoading]="applying" (click)="apply()">{{ 'SETTINGS.BUTTONS.APPLY' | translate }}</button>
       </div>
     </div>
   </div>
