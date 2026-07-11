@@ -30,6 +30,7 @@ import { Subscription } from 'rxjs';
 import { BleOtaDeviceItem, UploaderBleService } from '../../../services/uploader-ble.service';
 import { ToolI18nService } from '../../../services/tool-i18n.service';
 import { CmdOutput, CmdService } from '../../../services/cmd.service';
+import { BlocklyService } from '../../../editors/blockly-editor/services/blockly.service';
 
 interface NetworkOtaTarget {
   id: string;
@@ -140,7 +141,8 @@ export class HeaderComponent implements OnInit, OnDestroy {
     private ngZone: NgZone,
     private appStoreService: AppStoreService,
     private toolI18n: ToolI18nService,
-    private cmdService: CmdService
+    private cmdService: CmdService,
+    private blocklyService: BlocklyService
   ) { }
 
   ngOnInit(): void {
@@ -707,6 +709,7 @@ export class HeaderComponent implements OnInit, OnDestroy {
   }
 
   updateSubscription: any = null;
+  private workspaceImageExporting = false;
 
   async process(item: IMenuItem, event = null) {
     switch (item.action) {
@@ -732,6 +735,9 @@ export class HeaderComponent implements OnInit, OnDestroy {
         if (path) {
           this.projectService.saveAs(path);
         }
+        break;
+      case 'workspace-export-image':
+        await this.exportWorkspaceImage();
         break;
       case 'project-close':
         if (this.isLoaded()) { // 只在已加载项目时检查
@@ -819,6 +825,56 @@ export class HeaderComponent implements OnInit, OnDestroy {
         console.log('未处理的操作:', item.action);
         break;
     }
+  }
+
+  private async exportWorkspaceImage(): Promise<void> {
+    if (this.workspaceImageExporting) {
+      return;
+    }
+
+    this.workspaceImageExporting = true;
+    try {
+      const workspaceSvg = await this.blocklyService.createWorkspaceImageExportSvg();
+      if (!workspaceSvg) {
+        this.message.warning(this.translate.instant('MENU.IMAGE_EXPORT_EMPTY'));
+        return;
+      }
+
+      const filePath = await window['ipcRenderer'].invoke('select-folder-saveAs', {
+        suggestedName: this.getWorkspaceSvgExportFilename(),
+        title: this.translate.instant('MENU.IMAGE_EXPORT'),
+        filters: [
+          { name: 'SVG 文件', extensions: ['svg'] },
+          { name: '所有文件', extensions: ['*'] },
+        ],
+      });
+      if (!filePath) {
+        return;
+      }
+
+      window['fs'].writeFileSync(this.ensureSvgFileExtension(filePath), workspaceSvg);
+      this.message.success(this.translate.instant('MENU.IMAGE_EXPORT_SUCCESS'));
+    } catch (error) {
+      console.error('Export Blockly workspace image failed:', error);
+      this.message.error(this.translate.instant('MENU.IMAGE_EXPORT_FAILED'));
+    } finally {
+      this.workspaceImageExporting = false;
+    }
+  }
+
+  private getWorkspaceSvgExportFilename(): string {
+    const projectName = String(this.projectData.name || 'blockly-workspace')
+      .replace(/[\\/:*?"<>|]/g, '_')
+      .trim();
+    return `${projectName || 'blockly-workspace'}.svg`;
+  }
+
+  private ensureSvgFileExtension(filePath: string): string {
+    if (/\.svg$/i.test(filePath)) {
+      return filePath;
+    }
+
+    return `${filePath}.svg`;
   }
 
   private resolveActionErrorState(err: any, nestedKeys: string[] = []): RunState['state'] {

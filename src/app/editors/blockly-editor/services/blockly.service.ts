@@ -11,6 +11,7 @@ import { BlockCodeMapping, CodeLineRange } from '../components/blockly/generator
 import { convertBlockTreeToAbs, convertAbiToAbsWithLineMap } from '../../../tools/aily-chat/public-api';
 import { BlockSearcher } from '../components/blockly/plugins/toolbox-search/src/block_searcher';
 import { dragSelectionWeakMap } from '../components/blockly/plugins/workspace-multiselect/index.js';
+import { exportWorkspaceToSvg } from './workspace-svg-exporter';
 
 export interface BlockContextLabel {
   label: string;
@@ -352,6 +353,13 @@ export class BlocklyService {
       filter((workspace): workspace is Blockly.WorkspaceSvg => !!workspace),
       take(1),
     ));
+  }
+
+  /** 生成当前工作区的独立 SVG；具体导出细节由 workspace-svg-exporter 负责。 */
+  async createWorkspaceImageExportSvg(): Promise<string | null> {
+    const workspace = await this.waitForWorkspace();
+    this.hideChaff(true);
+    return exportWorkspaceToSvg(workspace);
   }
 
   registerExternalToolboxHost(host: HTMLElement | null) {
