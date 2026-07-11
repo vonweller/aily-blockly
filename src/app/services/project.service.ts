@@ -489,7 +489,6 @@ export class ProjectService {
       name: 'aily blockly',
     };
     this.stateSubject.next('default');
-    this.uiService.closeTerminal();
     // this.currentProjectPath = (await window['env'].get("AILY_PROJECT_PATH")).replace('%HOMEPATH%\\Documents', window['path'].getUserDocuments());
     this.router.navigate(['/main/guide'], { replaceUrl: true });
   }
