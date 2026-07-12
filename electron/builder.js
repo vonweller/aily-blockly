@@ -18,8 +18,8 @@ const CHANNELS = {
   next: {
     key: "aily-builder-next",
     platformPackages: {
-      "darwin-arm64": "@aily-project/aily-builder-next-darwin-arm64",
-      "win32-x64": "@aily-project/aily-builder-next-win32-x64",
+      "darwin-arm64": "@aily-project/aily-builder-next",
+      "win32-x64": "@aily-project/aily-builder-next",
     },
   },
 };
