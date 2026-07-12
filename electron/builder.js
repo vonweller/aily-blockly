@@ -56,9 +56,18 @@ function getPackageName(value = getChannel()) {
   return getChannelConfig(value).platformPackages[platformKey] || "";
 }
 
+function getConfiguredPrefix() {
+  if (process.env.AILY_NPM_PREFIX) {
+    return process.env.AILY_NPM_PREFIX;
+  }
+  return process.env.AILY_APPDATA_PATH
+    ? path.join(process.env.AILY_APPDATA_PATH, "npm-global")
+    : "";
+}
+
 function getNpmEnv() {
   const env = { ...process.env };
-  const npmPrefix = process.env.AILY_NPM_PREFIX || process.env.AILY_APPDATA_PATH;
+  const npmPrefix = getConfiguredPrefix();
   if (npmPrefix) {
     env.npm_config_prefix = npmPrefix;
   }
@@ -99,7 +108,7 @@ function quoteWindowsShellPath(filePath) {
 }
 
 function getAilyBuilderCommandPath() {
-  const prefix = process.env.AILY_NPM_PREFIX || process.env.AILY_APPDATA_PATH || "";
+  const prefix = getConfiguredPrefix();
   if (!prefix) {
     return "";
   }
@@ -486,17 +495,21 @@ async function waitForReady() {
     }
   }
 
-  if (startupResult?.ok) {
-    return startupResult;
-  }
-
   const commandState = probeAilyBuilderCommand();
   if (commandState.ok) {
     startupPromise = Promise.resolve(rememberReadyResult(commandState));
     return commandState;
   }
 
-  return startupResult || initializedResult || commandState;
+  const lastKnownResult = startupResult || initializedResult;
+  const failureResult = rememberReadyResult({
+    ...commandState,
+    error: lastKnownResult && !lastKnownResult.ok && lastKnownResult.error
+      ? lastKnownResult.error
+      : commandState.error,
+  });
+  startupPromise = Promise.resolve(failureResult);
+  return failureResult;
 }
 
 function getStatus() {

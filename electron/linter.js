@@ -18,7 +18,12 @@ let getMainWindow = () => null;
 let handlersRegistered = false;
 
 function getConfiguredPrefix() {
-  return process.env.AILY_NPM_PREFIX || process.env.AILY_APPDATA_PATH || "";
+  if (process.env.AILY_NPM_PREFIX) {
+    return process.env.AILY_NPM_PREFIX;
+  }
+  return process.env.AILY_APPDATA_PATH
+    ? path.join(process.env.AILY_APPDATA_PATH, "npm-global")
+    : "";
 }
 
 function getNpmEnv() {
@@ -405,17 +410,21 @@ async function waitForReady() {
     }
   }
 
-  if (startupResult?.ok) {
-    return startupResult;
-  }
-
   const commandState = probeAilyLinterCommand();
   if (commandState.ok) {
     startupPromise = Promise.resolve(rememberReadyResult(commandState));
     return commandState;
   }
 
-  return startupResult || initializedResult || commandState;
+  const lastKnownResult = startupResult || initializedResult;
+  const failureResult = rememberReadyResult({
+    ...commandState,
+    error: lastKnownResult && !lastKnownResult.ok && lastKnownResult.error
+      ? lastKnownResult.error
+      : commandState.error,
+  });
+  startupPromise = Promise.resolve(failureResult);
+  return failureResult;
 }
 
 function getStatus() {

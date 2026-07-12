@@ -1462,8 +1462,15 @@ function loadEnv() {
   } catch (e) {
     console.error('清理代理环境变量失败:', e);
   }
-  // 全局npm包路径
-  process.env.AILY_NPM_PREFIX = process.env.AILY_APPDATA_PATH;
+  // aily-builder / aily-linter 使用独立的 npm 全局 prefix。
+  // AppData 根目录本身是开发板、SDK 和工具包的普通 npm 项目；两者共用
+  // node_modules 时，开发板依赖的 npm install/uninstall 会清理掉全局工具。
+  process.env.AILY_NPM_PREFIX = path.join(process.env.AILY_APPDATA_PATH, "npm-global");
+  try {
+    fs.mkdirSync(process.env.AILY_NPM_PREFIX, { recursive: true });
+  } catch (error) {
+    console.error("创建应用 npm 全局目录失败:", error);
+  }
   process.env.npm_config_prefix = process.env.AILY_NPM_PREFIX;
   // 默认全局编译器路径
   process.env.AILY_COMPILERS_PATH = path.join(process.env.AILY_APPDATA_PATH, "tools",);
