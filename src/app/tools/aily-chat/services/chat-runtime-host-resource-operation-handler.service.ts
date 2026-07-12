@@ -203,7 +203,7 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
       case 'diagnostics':
         return this.runDiagnosticsOperation(request);
       case 'session-title':
-        return this.prepareSubmittedTurnTitle(request);
+        return this.applySubmittedTurnTitle(request);
       case 'save-current-session':
       case 'history-persistence':
         return this.persistHostSessionRecord(request);
@@ -216,29 +216,38 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
     }
   }
 
-  private prepareSubmittedTurnTitle(request: ChatRuntimeHostResourceOperationRequest): {
-    readonly scheduled: true;
+  private async applySubmittedTurnTitle(request: ChatRuntimeHostResourceOperationRequest): Promise<{
+    readonly applied: boolean;
     readonly sessionId: string;
     readonly kind: ChatRuntimeHostResourceOperationRequest['kind'];
-  } {
-    const sessionId = this.requireSessionId(request, 'submitted turn title');
-    const payload = this.requirePayloadAdapter(request.payload, 'chatTitle', 'submitted turn title');
-    const requestText = this.normalizeSessionId(payload.requestText ?? payload.requestContent);
-    if (!requestText) {
+  }> {
+    const sessionId = this.requireSessionId(request, 'generated session title');
+    const payload = this.requirePayloadAdapter(request.payload, 'chatTitle', 'generated session title');
+    if (payload.action !== 'applyGeneratedTitle') {
       throw new HostResourceOperationError(
-        '[AilyChat][RuntimeHost] submitted turn title requires request text.',
+        `[AilyChat][RuntimeHost] Unsupported session title action: ${String(payload.action || '<missing>')}.`,
+        'resource_operation_payload_invalid',
+        false,
+      );
+    }
+    const title = this.normalizeSessionId(payload.title);
+    if (!title) {
+      throw new HostResourceOperationError(
+        '[AilyChat][RuntimeHost] generated session title requires title text.',
         'resource_operation_payload_missing',
         false,
       );
     }
-    const displayText = this.normalizeSessionId(payload.displayContent) || requestText;
-    this.submittedTurnTitleService.prepareSubmittedTurnTitle({
+    const applied = this.submittedTurnTitleService.applyGeneratedTitle({
       sessionId,
-      requestText,
-      displayText,
+      title,
+      source: 'generated',
     });
+    if (applied) {
+      await this.chatHistoryService.updateTitleAsync(sessionId, title, { source: 'generated' });
+    }
     return {
-      scheduled: true,
+      applied,
       sessionId,
       kind: request.kind,
     };
@@ -713,6 +722,8 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
     readonly isLoggedIn: boolean;
     readonly userId: string | null;
     readonly maxRequests: number;
+    readonly memoryToolEnabled: boolean;
+    readonly repositoryMemoryEnabled: boolean;
   } {
     if (!AilyHost.isInitialized()) {
       return {
@@ -721,6 +732,8 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
         isLoggedIn: false,
         userId: null,
         maxRequests: this.normalizeMaxRequests(this.chatConfigService.maxRequests),
+        memoryToolEnabled: this.chatConfigService.memoryToolEnabled !== false,
+        repositoryMemoryEnabled: this.chatConfigService.repositoryMemoryEnabled === true,
       };
     }
 
@@ -737,6 +750,8 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
       isLoggedIn: Boolean(auth?.isLoggedIn),
       userId: userId || null,
       maxRequests: this.normalizeMaxRequests(this.chatConfigService.maxRequests),
+      memoryToolEnabled: this.chatConfigService.memoryToolEnabled !== false,
+      repositoryMemoryEnabled: this.chatConfigService.repositoryMemoryEnabled === true,
     };
   }
 
@@ -1226,12 +1241,12 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
     return [];
   }
 
-  private persistHostSessionRecord(request: ChatRuntimeHostResourceOperationRequest): {
+  private async persistHostSessionRecord(request: ChatRuntimeHostResourceOperationRequest): Promise<{
     readonly saved: true;
     readonly sessionId: string;
     readonly kind: ChatRuntimeHostResourceOperationRequest['kind'];
     readonly metadataOnly?: true;
-  } {
+  }> {
     const record = this.readLiveHostSessionRecord(request.payload);
     const sessionId = this.normalizeSessionId(record?.sessionId || request.sessionId);
     if (!record || !sessionId) {
@@ -1252,7 +1267,7 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
     };
 
     if (request.kind === 'history-persistence') {
-      this.chatHistoryService.saveHostRecordMetadataOnly(normalizedRecord);
+      await this.chatHistoryService.saveHostRecordMetadataOnlyAsync(normalizedRecord);
       return {
         saved: true,
         sessionId,
@@ -1261,7 +1276,7 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
       };
     }
 
-    this.chatHistoryService.saveHostRecord(normalizedRecord);
+    await this.chatHistoryService.saveHostRecordAsync(normalizedRecord);
 
     return {
       saved: true,

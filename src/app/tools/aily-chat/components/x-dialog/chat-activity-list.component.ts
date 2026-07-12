@@ -1,4 +1,14 @@
-import { ChangeDetectionStrategy, Component, EventEmitter, Input, Output, forwardRef } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  ChangeDetectorRef,
+  Component,
+  EventEmitter,
+  Input,
+  Output,
+  QueryList,
+  ViewChildren,
+  forwardRef,
+} from '@angular/core';
 import { CommonModule } from '@angular/common';
 
 import { ChatActivityItemComponent } from './chat-activity-item.component';
@@ -15,6 +25,7 @@ import type { ActivityGroupDisplayItem } from './chat-activity-group.types';
         <aily-chat-activity-item
           [item]="item"
           [sessionId]="sessionId"
+          [impliedWordLoadRate]="impliedWordLoadRate"
           [first]="first"
           [last]="last"
           [only]="count === 1"
@@ -45,5 +56,49 @@ import type { ActivityGroupDisplayItem } from './chat-activity-group.types';
 export class ChatActivityListComponent {
   @Input() items: readonly ActivityGroupDisplayItem[] = [];
   @Input() sessionId = '';
+  @Input() impliedWordLoadRate: number | undefined;
   @Output() contentDelta = new EventEmitter<void>();
+
+  @ViewChildren(forwardRef(() => ChatActivityItemComponent))
+  private itemRenderers!: QueryList<ChatActivityItemComponent>;
+
+  constructor(private readonly cdr: ChangeDetectorRef) {}
+
+  /** Apply a response-part revision without checking the parent group subtree. */
+  applyItemsPatch(
+    items: readonly ActivityGroupDisplayItem[],
+    sessionId: string,
+    impliedWordLoadRate: number | undefined,
+  ): boolean {
+    const sameStructure = this.items.length === items.length
+      && this.items.every((item, index) => item.id === items[index]?.id);
+
+    this.items = items;
+    this.sessionId = sessionId;
+    this.impliedWordLoadRate = impliedWordLoadRate;
+
+    if (!sameStructure) {
+      this.cdr.detectChanges();
+      return true;
+    }
+
+    const renderers = this.itemRenderers?.toArray() ?? [];
+    if (renderers.length !== items.length) {
+      return false;
+    }
+
+    for (let index = 0; index < items.length; index += 1) {
+      if (!renderers[index]?.applyVisibleActivityItemPatch({
+        item: items[index],
+        sessionId,
+        impliedWordLoadRate,
+        first: index === 0,
+        last: index === items.length - 1,
+        only: items.length === 1,
+      })) {
+        return false;
+      }
+    }
+    return true;
+  }
 }

@@ -63,6 +63,7 @@ export interface HostSessionPersistenceBridgeOptions {
     options?: { readonly dataAvailable?: boolean },
   ) => void;
   writeIndex: () => void;
+  writeIndexAsync?: () => Promise<void>;
   markIndexDirty: () => void;
   hasDirtyIndex: () => boolean;
   isSamePath: (a: string | null | undefined, b: string | null | undefined) => boolean;
@@ -94,6 +95,30 @@ export class HostSessionPersistenceBridge {
     ChatPerformanceTracer.runWithSurface('history_save', () => {
       this.saveHostRecordCore(record);
     }, 'full');
+  }
+
+  async saveHostRecordAsync(record: LiveHostSessionRecord): Promise<void> {
+    const { sessionId } = record;
+    if (!sessionId) {
+      return;
+    }
+    this.options.ensureIndexLoaded();
+    if (this.shouldRejectRecordOwnerMismatch(record, 'saveHostRecordAsync')) {
+      return;
+    }
+
+    const hostRecord = this.materializeHostRecord(record);
+    const messageCount = countHostRecordMessages(hostRecord);
+    if (messageCount === 0) {
+      return;
+    }
+    this.sessionCache.set(sessionId, hostRecord);
+    const existingEntry = this.options.findIndexEntry(sessionId);
+    const messageCountChanged = !existingEntry || existingEntry.messageCount !== messageCount;
+    this.options.upsertIndexEntry(sessionId, hostRecord.metadata, messageCount, messageCountChanged);
+    await this.hostRecordStore.writeOrThrowAsync(sessionId, hostRecord);
+    await this.writeIndexAsync();
+    this.dirtySessions.delete(sessionId);
   }
 
   private saveHostRecordCore(
@@ -133,6 +158,22 @@ export class HostSessionPersistenceBridge {
     ChatPerformanceTracer.runWithSurface('history_save', () => {
       this.saveHostRecordMetadataOnlyCore(record);
     }, 'metadata-only');
+  }
+
+  async saveHostRecordMetadataOnlyAsync(record: LiveHostSessionRecord): Promise<void> {
+    const { sessionId } = record;
+    if (!sessionId || record.sessionId !== sessionId) {
+      return;
+    }
+    this.options.ensureIndexLoaded();
+    const metadata = this.retainDurableTitle(
+      this.applyPendingTitle(this.hostRecordStore.createFullMetadata(record.metadata)),
+    );
+    const existingEntry = this.options.findIndexEntry(sessionId);
+    const messageCount = existingEntry?.messageCount ?? countHostRecordMessages(record);
+    const dataAvailable = existingEntry?.dataAvailable ?? messageCount > 0;
+    this.options.upsertIndexEntry(sessionId, metadata, messageCount, true, { dataAvailable });
+    await this.writeIndexAsync();
   }
 
   private saveHostRecordMetadataOnlyCore(
@@ -243,6 +284,63 @@ export class HostSessionPersistenceBridge {
       normalizedSessionId,
       previousPolicy === 'authoritative' ? 'authoritative' : nextPolicy,
     );
+  }
+
+  async updateTitleAsync(sessionId: string, title: string, options?: SessionTitleUpdateOptions): Promise<void> {
+    this.options.ensureIndexLoaded();
+    const now = Date.now();
+    const nextTitle = typeof title === 'string' ? title.trim() : '';
+    if (!nextTitle) {
+      return;
+    }
+    const nextSource = normalizePersistedChatSessionTitleSource(options?.source) ?? 'legacy-custom';
+    const entry = this.options.findIndexEntry(sessionId);
+    if (entry) {
+      entry.title = nextTitle;
+      entry.titleSource = nextSource;
+      entry.updatedAt = now;
+      this.options.markIndexDirty();
+
+      const cached = this.sessionCache.get(sessionId);
+      if (cached) {
+        cached.metadata.title = nextTitle;
+        cached.metadata.titleSource = nextSource;
+        cached.metadata.updatedAt = now;
+        await this.hostRecordStore.writeAsync(sessionId, cached);
+      } else {
+        this.pendingTitles.set(sessionId, { title: nextTitle, source: nextSource });
+      }
+      await this.writeIndexAsync();
+      return;
+    }
+
+    const fallbackRecord = this.tryLoadLiveHostRecord(sessionId) ?? null;
+    if (!fallbackRecord || countHostRecordMessages(fallbackRecord) === 0) {
+      this.pendingTitles.set(sessionId, { title: nextTitle, source: nextSource });
+      return;
+    }
+    const nextRecord: HostSessionRecord = {
+      ...fallbackRecord,
+      metadata: {
+        ...fallbackRecord.metadata,
+        title: nextTitle,
+        titleSource: nextSource,
+        updatedAt: now,
+      },
+    };
+    const messageCount = countHostRecordMessages(nextRecord);
+    this.sessionCache.set(sessionId, nextRecord);
+    this.options.upsertIndexEntry(sessionId, nextRecord.metadata, messageCount, true);
+    await this.hostRecordStore.writeAsync(sessionId, nextRecord);
+    await this.writeIndexAsync();
+  }
+
+  private async writeIndexAsync(): Promise<void> {
+    if (this.options.writeIndexAsync) {
+      await this.options.writeIndexAsync();
+      return;
+    }
+    this.options.writeIndex();
   }
 
   loadHostRecord(sessionId: string, projectPathHint?: string | null): HostSessionRecord | null {

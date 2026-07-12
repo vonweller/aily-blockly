@@ -4,6 +4,8 @@ import { TranslateService } from '@ngx-translate/core';
 import type { AskUserAnswer, AskUserFullResponse, AskUserQuestion, AskUserPresentationContext } from '../core/ask-user';
 import { AilyHost } from '../core/host';
 import type { IFileWatchHandle } from '../core/host-api';
+import { readToolApprovalCommand } from '../core/tool-approval-input';
+import { isTerminalCommandToolName, normalizeReadSideToolName } from '../core/tool-name-normalizer';
 import type { ToolApprovalAction, ToolApprovalRequest, ToolApprovalScope } from '../helpers/tool-approval-ui';
 import { resolveBlocklyArtifactReferenceTarget } from '../helpers/chat-artifact-reference';
 import {
@@ -16,15 +18,29 @@ import {
 import type {
   ChatRuntimeHostInteractionRequest,
   ChatRuntimeHostInteractionSnapshot,
+  ChatRuntimeHostSessionProcessSummary,
 } from '../core/chat-runtime-host-contract';
 import type { ChatRuntimeOwnerInteractionHostPort } from './chat-runtime-owner-ports';
 import { isAilyCategoryDebugEnabled } from '../core/chat-debug-flags';
+import { ChatRuntimeOwnerToolApprovalPolicyService } from './chat-runtime-owner-tool-approval-policy.service';
 
 function shouldTraceRuntimeInteraction(): boolean {
   return isAilyCategoryDebugEnabled('aily.chat.traceRuntimeInteraction', [
     '__AILY_CHAT_TRACE_RUNTIME_INTERACTION__',
     'AILY_CHAT_TRACE_RUNTIME_INTERACTION',
   ]);
+}
+
+function escapeRegExpCharacters(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function normalizeTerminalCommand(command: unknown): string {
+  return typeof command === 'string' ? command.trim() : '';
+}
+
+function buildExactTerminalRule(command: string): string {
+  return `/^${escapeRegExpCharacters(command)}$/`;
 }
 
 export interface RuntimeQuestionWidgetState {
@@ -175,6 +191,7 @@ interface PlanReviewFileSyncState {
 export class ChatRuntimeInteractionHostService implements ChatRuntimeOwnerInteractionHostPort {
   private readonly destroyRef = inject(DestroyRef);
   private readonly translate = inject(TranslateService);
+  private readonly toolApprovalPolicy = inject(ChatRuntimeOwnerToolApprovalPolicyService);
   private readonly _questionEntries = signal<Record<string, QuestionRuntimeEntry | undefined>>({});
   private readonly _confirmationEntries = signal<Record<string, readonly ConfirmationRuntimeEntry[] | undefined>>({});
   private readonly _confirmationActiveIndices = signal<Record<string, number | undefined>>({});
@@ -182,6 +199,10 @@ export class ChatRuntimeInteractionHostService implements ChatRuntimeOwnerIntera
   private readonly _approvalStates = new Map<string, RuntimeApprovalState>();
   private readonly _planReviewFileSyncs = new Map<string, PlanReviewFileSyncState>();
   private readonly _backgroundCommandSessions = new Set<string>();
+  private readonly _remoteProcessInventories = new Map<string, {
+    readonly processInventoryRevision: number;
+    readonly processes: readonly ChatRuntimeHostSessionProcessSummary[];
+  }>();
   private readonly snapshotListeners = new Set<RuntimeInteractionSnapshotListener>();
   private readonly remoteResolvers = new Map<string, RuntimeInteractionRemoteResolver>();
   private interactionRevision = 0;
@@ -297,6 +318,20 @@ export class ChatRuntimeInteractionHostService implements ChatRuntimeOwnerIntera
       if (typeof key === 'string' && key.startsWith(`${sessionId}::`)) {
         this._backgroundCommandSessions.add(key);
       }
+    }
+
+    if (Array.isArray(snapshot.processes)) {
+      this._remoteProcessInventories.set(sessionId, {
+        processInventoryRevision: typeof snapshot.processInventoryRevision === 'number'
+          ? snapshot.processInventoryRevision
+          : snapshot.revision,
+        processes: snapshot.processes.filter(this.isProcessSummary),
+      });
+    } else if (typeof snapshot.processInventoryRevision === 'number') {
+      this._remoteProcessInventories.set(sessionId, {
+        processInventoryRevision: snapshot.processInventoryRevision,
+        processes: [],
+      });
     }
   }
 
@@ -724,7 +759,12 @@ export class ChatRuntimeInteractionHostService implements ChatRuntimeOwnerIntera
 
     const target = queue[targetIndex];
     if (target.kind === 'approval') {
-      this.resolveApprovalState(normalizedSessionId, target.toolCallId ?? target.id, result);
+      const approvalState = this.resolveApprovalState(normalizedSessionId, target.toolCallId ?? target.id, result);
+      this.rememberResolvedApproval(
+        normalizedSessionId,
+        approvalState?.request ?? this.createApprovalRequestFromConfirmation(target),
+        result,
+      );
     }
     if (shouldTraceRuntimeInteraction()) {
       console.info('[AilyChat][RuntimeApprovalQueue]', {
@@ -867,6 +907,115 @@ export class ChatRuntimeInteractionHostService implements ChatRuntimeOwnerIntera
     this._approvalStates.set(key, resolved);
     this.logApprovalState('resolved', resolved);
     return resolved;
+  }
+
+  private createApprovalRequestFromConfirmation(entry: ConfirmationRuntimeEntry): ToolApprovalRequest | undefined {
+    if (entry.kind !== 'approval') {
+      return undefined;
+    }
+
+    const toolCallId = (entry.toolCallId || entry.id || '').trim();
+    const toolName = (entry.toolName || entry.data.toolName || '').trim();
+    if (!toolCallId || !toolName) {
+      return undefined;
+    }
+
+    return {
+      approvalTraceId: entry.approvalTraceId || entry.data.approvalTraceId,
+      toolCallId,
+      toolName,
+      title: entry.data.title,
+      subtitle: entry.data.subtitle,
+      message: entry.data.message,
+      actions: entry.data.actions,
+      primaryScope: entry.data.primaryScope,
+      args: entry.data.args,
+    };
+  }
+
+  private rememberResolvedApproval(
+    sessionId: string,
+    request: ToolApprovalRequest | undefined,
+    result: RuntimeConfirmationDecision,
+  ): void {
+    if (!request || result.approved !== true) {
+      return;
+    }
+
+    const normalizedScope = result.scope === 'session-safe' ? 'session-all-terminal' : result.scope ?? 'once';
+    if (normalizedScope === 'once') {
+      return;
+    }
+
+    const toolName = normalizeReadSideToolName(request.toolName);
+    const args = request.args && typeof request.args === 'object'
+      ? request.args as Record<string, unknown>
+      : {};
+    const combinationKey = typeof request.approveCombination?.key === 'string'
+      ? request.approveCombination.key.trim()
+      : '';
+    const isCombinationApproval = !!combinationKey && result.actionId?.startsWith('combination:');
+
+    if (isCombinationApproval) {
+      if (normalizedScope === 'session') {
+        this.toolApprovalPolicy.addSessionToolApprovalCombinationKey(sessionId, combinationKey);
+        return;
+      }
+
+      if (normalizedScope === 'workspace'
+        && this.toolApprovalPolicy.addWorkspaceToolApprovalCombinationKey(this.resolveCurrentProjectPath(), combinationKey)) {
+        this.toolApprovalPolicy.save();
+      }
+      return;
+    }
+
+    if (isTerminalCommandToolName(toolName)) {
+      if (normalizedScope === 'session-all-terminal') {
+        this.toolApprovalPolicy.setSessionTerminalAutoApproval(sessionId, true);
+        return;
+      }
+
+      const command = normalizeTerminalCommand(readToolApprovalCommand(toolName, args, request.message));
+      if (!command) {
+        return;
+      }
+
+      const exactRule = buildExactTerminalRule(command);
+      if (normalizedScope === 'session') {
+        this.toolApprovalPolicy.addSessionTerminalApprovalRule(sessionId, exactRule);
+        return;
+      }
+
+      if (normalizedScope === 'workspace') {
+        const currentAllowList = this.toolApprovalPolicy.terminalAllowList ?? [];
+        if (!currentAllowList.includes(exactRule)) {
+          this.toolApprovalPolicy.terminalAllowList = [...currentAllowList, exactRule];
+          this.toolApprovalPolicy.save();
+        }
+      }
+      return;
+    }
+
+    if (!toolName) {
+      return;
+    }
+
+    if (normalizedScope === 'session') {
+      this.toolApprovalPolicy.addSessionToolApprovalRule(sessionId, toolName);
+      return;
+    }
+
+    if (normalizedScope === 'workspace'
+      && this.toolApprovalPolicy.addWorkspaceToolApprovalRule(this.resolveCurrentProjectPath(), toolName)) {
+      this.toolApprovalPolicy.save();
+    }
+  }
+
+  private resolveCurrentProjectPath(): string {
+    const host = AilyHost.get();
+    return host.project.currentProjectPath
+      || host.project.projectRootPath
+      || '';
   }
 
   private createRemoteConfirmationResolver(
@@ -1149,6 +1298,11 @@ export class ChatRuntimeInteractionHostService implements ChatRuntimeOwnerIntera
     const question = (this.stripQuestionEntry(this._questionEntries()[sessionId]) as unknown) as Readonly<Record<string, unknown>> | null;
     const confirmationSnapshot = (confirmationQueue.map(entry => this.stripConfirmationEntry(entry)) as unknown) as ReadonlyArray<Readonly<Record<string, unknown>>>;
     const activePlanReview = (this.stripPlanReviewEntry(this._planReviewEntries()[sessionId]) as unknown) as Readonly<Record<string, unknown>> | null;
+    const remoteProcessInventory = this._remoteProcessInventories.get(sessionId);
+    const processes = this.mergeProcessSummaries(
+      listBlocklyCommandSessionSnapshots(sessionId),
+      remoteProcessInventory?.processes ?? [],
+    );
     return {
       sessionId,
       revision: this.interactionRevision,
@@ -1161,9 +1315,45 @@ export class ChatRuntimeInteractionHostService implements ChatRuntimeOwnerIntera
       backgroundProcessIds: [...this._backgroundCommandSessions]
         .filter(key => key.startsWith(`${sessionId}::`))
         .map(key => key.slice(`${sessionId}::`.length)),
-      processInventoryRevision: this.interactionRevision,
-      processes: listBlocklyCommandSessionSnapshots(sessionId),
+      processInventoryRevision: remoteProcessInventory?.processInventoryRevision ?? this.interactionRevision,
+      processes,
     };
+  }
+
+  private mergeProcessSummaries(
+    localProcesses: readonly ChatRuntimeHostSessionProcessSummary[],
+    remoteProcesses: readonly ChatRuntimeHostSessionProcessSummary[],
+  ): readonly ChatRuntimeHostSessionProcessSummary[] {
+    const merged = new Map<string, ChatRuntimeHostSessionProcessSummary>();
+    for (const process of localProcesses) {
+      if (this.isProcessSummary(process)) {
+        merged.set(process.processId, process);
+      }
+    }
+    for (const process of remoteProcesses) {
+      if (!this.isProcessSummary(process)) {
+        continue;
+      }
+      const existing = merged.get(process.processId);
+      merged.set(process.processId, existing
+        ? {
+            ...existing,
+            ...process,
+            outputFilePath: process.outputFilePath ?? existing.outputFilePath,
+          }
+        : process);
+    }
+    return [...merged.values()].sort((left, right) => right.startedAt - left.startedAt);
+  }
+
+  private isProcessSummary(value: unknown): value is ChatRuntimeHostSessionProcessSummary {
+    const record = value as Partial<ChatRuntimeHostSessionProcessSummary> | null | undefined;
+    return !!record
+      && typeof record === 'object'
+      && typeof record.processId === 'string'
+      && record.processId.trim().length > 0
+      && typeof record.sessionId === 'string'
+      && record.sessionId.trim().length > 0;
   }
 
   private stripQuestionEntry(entry: QuestionRuntimeEntry | undefined): RuntimeQuestionWidgetState | null {

@@ -51,10 +51,15 @@ export interface StreamingOption {
   /**
    * VS Code/Copilot-style streaming buffer mode.
    * - paragraph: render at paragraph boundaries, with an escape hatch for long tails.
+   * - word: reveal words by an estimated VS Code/Copilot-style words/sec rate.
    * - off: render every rAF-coalesced update immediately.
    * @default paragraph
    */
-  buffering?: 'paragraph' | 'off';
+  buffering?: 'paragraph' | 'word' | 'off';
+  /**
+   * Estimated output rate used by word buffering, in words/sec.
+   */
+  impliedWordLoadRate?: number;
   /**
    * 未完成的 Markdown 格式转换为自定义加载组件的映射配置
    */

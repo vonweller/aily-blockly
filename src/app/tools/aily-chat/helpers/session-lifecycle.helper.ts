@@ -24,6 +24,7 @@ import type {
 } from '../services/chat-history.service';
 import type {
   ChatSessionModelCreateProps,
+  ChatSessionModelAcquireOptions,
   ChatSessionModelReference,
   ChatSessionRequestListTransactionResult,
 } from '../services/chat-session-model-store.service';
@@ -151,7 +152,7 @@ type SessionLifecycleContext = ChatViewWriteBridgeContext
     >;
     readonly hostResponseProjection?: HostSessionSaveContext['hostResponseProjection'];
     acquireExistingSessionModel?(sessionId?: string | null): ChatSessionModelReference | undefined;
-    acquireSessionModel?(props: ChatSessionModelCreateProps): ChatSessionModelReference;
+    acquireSessionModel?(props: ChatSessionModelCreateProps, options?: ChatSessionModelAcquireOptions): ChatSessionModelReference;
     attachSessionViewModel?(sessionId?: string | null): ChatSessionViewModel | null;
     detachSessionViewModel?(sessionId?: string | null): void;
     readCurrentViewSessionResource?(): string | null;
@@ -269,6 +270,7 @@ export class SessionLifecycleHelper {
   private readonly _entryCoordinator: ChatSessionEntryCoordinator;
   private readonly sessionModelReferences = new Map<string, ChatSessionModelReference>();
   private readonly sessionModelPreloadPromises = new Map<string, Promise<boolean>>();
+  private readonly pendingFreshSessionShellFinalizers = new Map<string, () => void>();
   private sessionActivationRequestId = 0;
 
   constructor(private ctx: SessionLifecycleContext) {
@@ -303,44 +305,10 @@ export class SessionLifecycleHelper {
       },
       enterEntryState: (options) => this.enterEntryState(options),
       enterBlankSessionShell: (options) => this.enterBlankSessionShell(options),
-      startSession: () => this.startSession(),
+      startSession: (options) => this.startSession(options),
       restorePersistedSessionTarget: () => this.restorePersistedSessionTarget(),
       requestSessionListRefresh: (input) => this.requestSessionListRefresh(input),
     });
-  }
-
-  private warmupHardwareIndexForAI(debugSource: string): void {
-    void (async () => {
-      try {
-        console.info('[SessionLifecycle][debug] warm hardware index in background', {
-          debugSource,
-        });
-        const config = AilyHost.get().config;
-        if (config.scheduleHardwareIndexRefreshForAI) {
-          config.scheduleHardwareIndexRefreshForAI(debugSource, { force: true });
-          return;
-        }
-        await config.loadHardwareIndexForAI?.();
-      } catch (err) {
-        console.warn('[AilyChat] 加载硬件索引失败:', err);
-      }
-    })();
-  }
-
-  private initializeMcpInBackground(debugSource: string): void {
-    if (this.ctx.mcpInitialized) {
-      return;
-    }
-
-    this.ctx.mcpInitialized = true;
-    void (async () => {
-      try {
-        await this.ctx.mcpService.init();
-        this.warmupHardwareIndexForAI(debugSource);
-      } catch (err) {
-        console.warn('[AilyChat] MCP 初始化失败:', err);
-      }
-    })();
   }
 
   private get hostSessionItemController(): HostSessionItemController {
@@ -1230,10 +1198,11 @@ export class SessionLifecycleHelper {
 
   // ==================== 会话启动 ====================
 
-  async startSession(): Promise<string | null> {
+  async startSession(options: { readonly deferShellFinalization?: boolean } = {}): Promise<string | null> {
     if (this.ctx.isSessionStarting) {
       return Promise.resolve(this.resolveCurrentViewSessionResource() || null);
     }
+    const bootstrapStartedAt = performance.now();
     this.ctx.isSessionStarting = true;
     this.ctx.isCancelled = false;
 
@@ -1248,16 +1217,7 @@ export class SessionLifecycleHelper {
     this.ctx.repetitionDetectionService.resetAll();
     this.ctx.legacyActivatedDeferredTools.clear();
     SkillRegistry.clearSessionState('startSession');
-
-    // 初始化 Skills 系统（扫描全局 + 项目级 skills）
-    const projectRoot = AilyHost.get().project?.currentProjectPath || AilyHost.get().project?.projectRootPath;
-    SkillRegistry.initialize(projectRoot, {
-      debugSource: 'startSession',
-      userSkillFolders: this.ctx.ailyChatConfigService?.userSkillFolders,
-      projectSkillFolders: this.ctx.ailyChatConfigService?.projectSkillFolders,
-    }).catch(err => {
-      console.warn('[AilyChat] Skills 初始化失败:', err);
-    });
+    const resetCompletedAt = performance.now();
 
     this.ctx.isCompleted = false;
 
@@ -1275,37 +1235,74 @@ export class SessionLifecycleHelper {
       projectPath: this.ctx.chatService.currentSessionPath || null,
       sessionType: DEFAULT_CHAT_SESSION_TYPE,
       inputState: { providerOptions: canonicalProviderOptions, selectedMode: freshSelectedMode },
-    });
+    }, { suppressCreatedEvent: true });
+    const modelCreatedAt = performance.now();
     this.ctx.attachSessionViewModel?.(pendingSessionId);
     this.ctx.markVisibleSessionProjectionOwner?.(pendingSessionId);
     applyCurrentSessionTitle(this.ctx.chatService, { text: '', source: 'empty' });
     this.applySessionType(DEFAULT_CHAT_SESSION_TYPE);
     this.applySessionProviderOptions(canonicalProviderOptions);
-    this.hostSessionItemController.createNewChatSessionItem(pendingSessionId, {
-      projectPath: this.ctx.chatService.currentSessionPath || null,
-      agentRuntimeMode,
-      agentRuntimeModeSource: this.ctx.chatService.currentAgentRuntimeModeSource,
-    });
-    this.persistSessionEntryTarget(this.buildFreshSessionEntryTarget(pendingSessionId, freshSelectedMode));
-    this.requestSessionListRefresh({
-      reason: 'state',
-      scope: 'summary',
-      priority: 'after-paint',
-    });
-
-    this.initializeMcpInBackground('startSession');
-    this.scheduleRuntimeExecutorPrewarm(pendingSessionId, canonicalProviderOptions, agentRuntimeMode);
-
-    if (!this.isVisibleSessionStartupOwner(pendingSessionId)) {
-      return pendingSessionId;
+    const viewAttachedAt = performance.now();
+    const finalizeShell = () => {
+      this.hostSessionItemController.createNewChatSessionItem(pendingSessionId, {
+        projectPath: this.ctx.chatService.currentSessionPath || null,
+        agentRuntimeMode,
+        agentRuntimeModeSource: this.ctx.chatService.currentAgentRuntimeModeSource,
+      });
+      this.persistSessionEntryTarget(this.buildFreshSessionEntryTarget(pendingSessionId, freshSelectedMode));
+      this.requestSessionListRefresh({
+        reason: 'state',
+        scope: 'summary',
+        priority: 'after-paint',
+      });
+    };
+    if (options.deferShellFinalization) {
+      this.pendingFreshSessionShellFinalizers.set(pendingSessionId, finalizeShell);
+    } else {
+      finalizeShell();
     }
-    await this.ctx.chatService.syncResolvedActiveModelFromContextInfo?.(pendingSessionId);
+    const shellScheduledAt = performance.now();
 
     this.ctx.isSessionStarting = false;
+    this.scheduleRuntimeBackgroundActivation(
+      pendingSessionId,
+      canonicalProviderOptions,
+      agentRuntimeMode,
+    );
+    console.info(
+      '[AilyChat][SessionBootstrapScalar]',
+      [
+        `sessionId=${pendingSessionId}`,
+        `resetMs=${(resetCompletedAt - bootstrapStartedAt).toFixed(1)}`,
+        `modelMs=${(modelCreatedAt - resetCompletedAt).toFixed(1)}`,
+        `viewMs=${(viewAttachedAt - modelCreatedAt).toFixed(1)}`,
+        `shellScheduleMs=${(shellScheduledAt - viewAttachedAt).toFixed(1)}`,
+        `deferred=${String(options.deferShellFinalization === true)}`,
+        `totalMs=${(performance.now() - bootstrapStartedAt).toFixed(1)}`,
+      ].join(' '),
+    );
     return pendingSessionId;
   }
 
-  private scheduleRuntimeExecutorPrewarm(
+  completeFreshSessionShellBootstrap(sessionId: string | null | undefined): void {
+    const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!targetSessionId) {
+      return;
+    }
+    const finalize = this.pendingFreshSessionShellFinalizers.get(targetSessionId);
+    if (!finalize) {
+      return;
+    }
+    this.pendingFreshSessionShellFinalizers.delete(targetSessionId);
+    const startedAt = performance.now();
+    finalize();
+    console.info(
+      '[AilyChat][SessionBootstrapScalar]',
+      `sessionId=${targetSessionId} shellFinalizationMs=${(performance.now() - startedAt).toFixed(1)} phase=after-request-paint`,
+    );
+  }
+
+  private scheduleRuntimeBackgroundActivation(
     sessionId: string,
     providerOptions: HostSessionProviderOptions,
     agentRuntimeMode: ChatAgentRuntimeMode,
@@ -1315,7 +1312,24 @@ export class SessionLifecycleHelper {
       return;
     }
 
-    const startPrewarm = () => {
+    const startActivation = async () => {
+      try {
+        if (this.isVisibleSessionStartupOwner(targetSessionId)) {
+          await this.ctx.chatService.syncResolvedActiveModelFromContextInfo?.(targetSessionId);
+        }
+      } catch (error) {
+        ChatPerformanceTracer.increment('runtime_executor.model_resolution.failed');
+        if (isAilyCategoryDebugEnabled('aily.chat.traceRuntimeExecutorPrewarm', [
+          '__AILY_CHAT_TRACE_RUNTIME_EXECUTOR_PREWARM__',
+          'AILY_CHAT_TRACE_RUNTIME_EXECUTOR_PREWARM',
+        ])) {
+          console.warn('[AilyChat][RuntimeExecutorPrewarm] model resolution failed', {
+            sessionId: targetSessionId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+
       const startedAt = performance.now();
       ChatPerformanceTracer.increment('runtime_executor.prewarm.started');
       const prewarmRuntime = this.ctx.prewarmRuntimeExecutor;
@@ -1368,23 +1382,25 @@ export class SessionLifecycleHelper {
     const scheduleWhenIdle = typeof runtimeGlobal.requestIdleCallback === 'function'
       ? runtimeGlobal.requestIdleCallback.bind(runtimeGlobal)
       : null;
-    if (scheduleWhenIdle) {
-      scheduleWhenIdle(() => {
-        setTimeout(startPrewarm, 0);
-      }, { timeout: 1200 });
-      return;
-    }
-    const scheduleAfterPaint = typeof runtimeGlobal.requestAnimationFrame === 'function'
-      ? runtimeGlobal.requestAnimationFrame.bind(runtimeGlobal)
-      : null;
-    if (scheduleAfterPaint) {
-      scheduleAfterPaint(() => {
-        setTimeout(startPrewarm, 0);
-      });
-      return;
-    }
+    this.ctx.ngZone.runOutsideAngular(() => {
+      if (scheduleWhenIdle) {
+        scheduleWhenIdle(() => {
+          setTimeout(() => void startActivation(), 0);
+        }, { timeout: 1200 });
+        return;
+      }
+      const scheduleAfterPaint = typeof runtimeGlobal.requestAnimationFrame === 'function'
+        ? runtimeGlobal.requestAnimationFrame.bind(runtimeGlobal)
+        : null;
+      if (scheduleAfterPaint) {
+        scheduleAfterPaint(() => {
+          setTimeout(() => void startActivation(), 0);
+        });
+        return;
+      }
 
-    setTimeout(startPrewarm, 0);
+      setTimeout(() => void startActivation(), 0);
+    });
   }
 
   private isVisibleSessionStartupOwner(sessionId: string): boolean {
@@ -2642,7 +2658,10 @@ export class SessionLifecycleHelper {
       : '';
   }
 
-  private acquireSessionModel(props: ChatSessionModelCreateProps): void {
+  private acquireSessionModel(
+    props: ChatSessionModelCreateProps,
+    options: ChatSessionModelAcquireOptions = {},
+  ): void {
     const sessionId = typeof props.sessionResource === 'string'
       ? props.sessionResource.trim()
       : '';
@@ -2654,7 +2673,7 @@ export class SessionLifecycleHelper {
     this.sessionModelReferences.set(sessionId, this.ctx.acquireSessionModel({
       ...props,
       sessionResource: sessionId,
-    }));
+    }, options));
   }
 
   private commitVisibleSessionShell(options: {
@@ -2767,17 +2786,6 @@ export class SessionLifecycleHelper {
     this.ctx.repetitionDetectionService.resetAll();
     this.ctx.legacyActivatedDeferredTools.clear();
     SkillRegistry.clearSessionState(`startSessionWithId:${sessionId}`);
-
-    const projectRoot = AilyHost.get().project?.currentProjectPath || AilyHost.get().project?.projectRootPath;
-    SkillRegistry.initialize(projectRoot, {
-      debugSource: `startSessionWithId:${sessionId}`,
-      userSkillFolders: this.ctx.ailyChatConfigService?.userSkillFolders,
-      projectSkillFolders: this.ctx.ailyChatConfigService?.projectSkillFolders,
-    }).catch(err => {
-      console.warn('[AilyChat] Skills 初始化失败:', err);
-    });
-
-    this.initializeMcpInBackground(`startSessionWithId:${sessionId}`);
 
     if (activationRequestId !== undefined) {
       this.throwIfSessionActivationSuperseded(activationRequestId);

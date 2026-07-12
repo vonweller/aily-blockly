@@ -25,13 +25,11 @@ import {
   CHAT_RUNTIME_OWNER_RUNTIME_CONTROLLER,
   CHAT_RUNTIME_OWNER_SESSION_MODEL,
   CHAT_RUNTIME_OWNER_SESSION_CONTEXT,
-  CHAT_RUNTIME_OWNER_SUBMITTED_TURN_TITLE,
   CHAT_RUNTIME_OWNER_TURN_STARTUP_EDIT_LIFECYCLE,
   type ChatRuntimeOwnerSubmittedTurnLifecyclePort,
   type ChatRuntimeOwnerRuntimeControllerPort,
   type ChatRuntimeOwnerSessionContextPort,
   type ChatRuntimeOwnerSessionModelPort,
-  type ChatRuntimeOwnerSubmittedTurnTitlePort,
   type ChatRuntimeOwnerTurnStartupEditLifecyclePort,
 } from './chat-runtime-owner-ports';
 import { projectRuntimeStateToRuntimeController } from '../helpers/chat-runtime-owner-projection';
@@ -56,9 +54,6 @@ export class ChatRuntimeOwnerSubmittedTurnLifecycleService implements ChatRuntim
   private readonly chatSessionModelStore = inject(ChatSessionModelStoreService);
   private readonly ownerSessionContext = inject<ChatRuntimeOwnerSessionContextPort>(CHAT_RUNTIME_OWNER_SESSION_CONTEXT);
   private readonly ownerSessionModel = inject<ChatRuntimeOwnerSessionModelPort>(CHAT_RUNTIME_OWNER_SESSION_MODEL);
-  private readonly submittedTurnTitle = inject<ChatRuntimeOwnerSubmittedTurnTitlePort>(
-    CHAT_RUNTIME_OWNER_SUBMITTED_TURN_TITLE,
-  );
   private readonly turnStartupEditLifecycle = inject<ChatRuntimeOwnerTurnStartupEditLifecyclePort>(
     CHAT_RUNTIME_OWNER_TURN_STARTUP_EDIT_LIFECYCLE,
   );
@@ -113,26 +108,11 @@ export class ChatRuntimeOwnerSubmittedTurnLifecycleService implements ChatRuntim
       { slowThresholdMs: 24, counterPrefix: 'submitted_turn.hydrate_history' },
     );
 
-    const displayText = request.displayText ?? request.requestText;
-    const titleDispatchStartedAt = Date.now();
-    this.submittedTurnTitle.prepareSubmittedTurnTitle({
-      sessionId: targetSessionId,
-      requestText: request.requestText,
-      displayText,
-      owner,
-    });
-    const titleDispatchMs = Date.now() - titleDispatchStartedAt;
-    ChatPerformanceTracer.recordDuration(
-      'submitted_turn_title_dispatch',
-      titleDispatchMs,
-      `session=${targetSessionId}`,
-      { slowThresholdMs: 16, counterPrefix: 'submitted_turn.title_dispatch' },
-    );
     const elapsedMs = Date.now() - startedAt;
     ChatPerformanceTracer.recordDuration(
       'submitted_turn_prepare_total',
       elapsedMs,
-      `session=${targetSessionId},ensureAgentMs=${ensureAgentMs},hydrateMs=${hydrateMs},titleDispatchMs=${titleDispatchMs}`,
+      `session=${targetSessionId},ensureAgentMs=${ensureAgentMs},hydrateMs=${hydrateMs}`,
       { slowThresholdMs: 32, counterPrefix: 'submitted_turn.prepare_total' },
     );
     this.logSubmittedTurnStartupLatency({
@@ -140,7 +120,6 @@ export class ChatRuntimeOwnerSubmittedTurnLifecycleService implements ChatRuntim
       hydratedTurnCount,
       hydrateMs,
       ensureAgentMs,
-      titleDispatchMs,
       elapsedMs,
     });
   }
@@ -536,7 +515,6 @@ export class ChatRuntimeOwnerSubmittedTurnLifecycleService implements ChatRuntim
     readonly hydratedTurnCount: number;
     readonly hydrateMs: number;
     readonly ensureAgentMs: number;
-    readonly titleDispatchMs: number;
     readonly elapsedMs: number;
   }): void {
     if (input.elapsedMs < 50 && input.ensureAgentMs < 50) {

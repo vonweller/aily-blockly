@@ -777,6 +777,11 @@ class ChatRuntimeHostSessionStore {
       : [];
     const nextTurn = turns.find(candidate => this.normalizeActiveTurnId(candidate && candidate.turnId) === normalizedTurnId) || null;
     const changedParts = collectChangedTurnParts(beforeTurn, nextTurn);
+    const sourceEventType = typeof renderEvent?.type === 'string' ? renderEvent.type : null;
+    const sourceEventTimestamp = Number.isFinite(Number(renderEvent?.timestamp))
+      ? Number(renderEvent.timestamp)
+      : null;
+    const hostPublishedAt = Date.now();
     const transcriptEvent = changedParts.length > 0 && nextTurn
       ? {
           kind: 'part-transcript',
@@ -786,12 +791,20 @@ class ChatRuntimeHostSessionStore {
           parts: clonePayload(changedParts),
           turn: clonePayload(nextTurn),
           ...(readTurnStatus(nextTurn) ? { status: readTurnStatus(nextTurn) } : {}),
+          ...(sourceEventType ? { sourceEventType } : {}),
+          ...(sourceEventTimestamp !== null ? { sourceEventTimestamp } : {}),
+          hostPublishedAt,
         }
-      : this.buildTurnTranscriptEvent(
-        transcript,
-        payload && payload.turnId,
-        payload && payload.revision,
-      );
+      : {
+          ...this.buildTurnTranscriptEvent(
+            transcript,
+            payload && payload.turnId,
+            payload && payload.revision,
+          ),
+          ...(sourceEventType ? { sourceEventType } : {}),
+          ...(sourceEventTimestamp !== null ? { sourceEventTimestamp } : {}),
+          hostPublishedAt,
+        };
     const interactionEvents = this.cacheInteractionFromRenderEvent({
       sessionId,
       revision: Number(payload && payload.revision) || Number(transcript && transcript.revision) || 0,
@@ -1354,6 +1367,30 @@ class ChatRuntimeHostSessionStore {
     if (!this.isCurrentRuntimeOwnerTurn(sessionId, payloadTurnId)
       && !this.isCurrentRuntimeOwnerTurn(sessionId, turnId)
       && !this.isCurrentRuntimeOwnerTurn(sessionId, visibleTurnId)) {
+      if (payload && payload.renderEvent && this.canApplySettledRuntimeOwnerResponseMetadata({
+        sessionId,
+        turnId: visibleTurnId || renderEventTurnId || turnId,
+        renderEvent: payload.renderEvent,
+      })) {
+        const settledMetadataEvent = this.cacheRuntimeOwnerRenderEvent({
+          ...payload,
+          sessionId,
+          turnId: visibleTurnId || renderEventTurnId || turnId,
+        });
+        const modelRouting = payload.renderEvent.modelRouting && typeof payload.renderEvent.modelRouting === 'object'
+          ? payload.renderEvent.modelRouting
+          : null;
+        console.info(
+          '[AilyChat][SettledResponseMetadataScalar]',
+          [
+            `sessionId=${sessionId}`,
+            `turnId=${visibleTurnId || renderEventTurnId || turnId}`,
+            `selectedPreset=${normalizeOptionalString(modelRouting && modelRouting.selectedPresetId) || '<none>'}`,
+            `billing=${normalizeOptionalString(payload.renderEvent.modelBillingLabel) || normalizeOptionalString(modelRouting && modelRouting.modelBillingLabel) || '<none>'}`,
+          ].join(' '),
+        );
+        return settledMetadataEvent;
+      }
       if (payload && payload.renderEvent && this.acceptRuntimeOwnerServiceOwnedResponseProgress({
         sessionId,
         turnId: visibleTurnId || renderEventTurnId || turnId,
@@ -2504,6 +2541,33 @@ class ChatRuntimeHostSessionStore {
       return true;
     }
     return false;
+  }
+
+  canApplySettledRuntimeOwnerResponseMetadata({ sessionId, turnId, renderEvent }) {
+    const normalizedSessionId = normalizeSessionId(sessionId);
+    const normalizedTurnId = this.normalizeActiveTurnId(turnId);
+    if (!normalizedSessionId
+      || !normalizedTurnId
+      || !renderEvent
+      || renderEvent.type !== 'turn_end'
+      || !this.hasHostSession(normalizedSessionId)) {
+      return false;
+    }
+
+    const state = this.buildSessionState(normalizedSessionId);
+    if (!state
+      || state.requestInProgress === true
+      || this.isHostTerminalStatus(state.status)) {
+      return false;
+    }
+
+    const transcript = this.transcriptBuilder.buildTranscriptSnapshot(normalizedSessionId);
+    const turns = Array.isArray(transcript && transcript.turnResponses)
+      ? transcript.turnResponses
+      : [];
+    const existingTurn = turns.find(candidate =>
+      this.normalizeActiveTurnId(candidate && candidate.turnId) === normalizedTurnId);
+    return readTurnStatus(existingTurn) === 'completed';
   }
 
   isCurrentRuntimeOwnerTurn(sessionId, turnId) {

@@ -508,7 +508,11 @@ export class ChatService {
         `[AilyChat][ModelState] modelCatalogChanged -> refreshCurrentModelRuntimeMetadata currentModel=${this.currentModel?.model ?? ''}/${this.currentModel?.presetId ?? ''}/${this.currentModel?.name ?? ''}`,
       );
       this.refreshCurrentModelRuntimeMetadata();
-      this.notifySessionInputStateChanged();
+      // A catalog refresh changes the model provider options, not the durable
+      // mode/permission state of every tracked session. Keep this on the
+      // provider-options channel so the current/blank input models refresh
+      // without rebuilding persisted session list items.
+      this.sessionProviderOptionsChangedSubject.next();
     });
   }
 

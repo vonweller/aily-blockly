@@ -152,6 +152,7 @@
     "watch": "ng build --watch --configuration development",
     "guard:aily-chat-mainline": "node scripts/guard-aily-chat-mainline.js",
     "smoke:chat-runtime-host-owner": "node scripts/smoke-chat-runtime-host-process-owner.js",
+    "smoke:chat-memory-asset-chronicle": "node scripts/smoke-chat-memory-asset-chronicle.mjs",
     "test:aily-chat-mainline": "ng test --watch=false --browsers=ChromeHeadless --include src/app/tools/aily-chat/aily-chat.component.spec.ts --include src/app/tools/aily-chat/helpers/chat-component-view-model.spec.ts --include src/app/tools/aily-chat/helpers/lex-stream.helper.spec.ts --include src/app/tools/aily-chat/services/chat-engine.service.spec.ts --include src/app/tools/aily-chat/services/interaction-budget-snapshot.spec.ts --include src/app/tools/aily-chat/helpers/host-turn-response-state.spec.ts --include src/app/tools/aily-chat/helpers/host-session-restore-bridge.spec.ts --include src/app/tools/aily-chat/helpers/session-lifecycle.helper.spec.ts",
     "setup:child-repos": "node scripts/setup-child-repos.js",
     "electron": "concurrently \"npm start\" \"wait-on tcp:4200 && node ./scripts/run-electron-dev.js --serve\"",
