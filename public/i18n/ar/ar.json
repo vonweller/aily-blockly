@@ -221,6 +221,7 @@
         },
         "TFTESPI_ANIMATION": {
             "UPLOAD_TOOLTIP": "التنسيقات المدعومة: MP4 وGIF",
+            "LABEL_COLOR_MODE": "اللون",
             "WORKER_ERROR_UNSUPPORTED_FILE_TYPE": "يتم دعم ملفات MP4 وGIF فقط"
         },
         "U8G2_ANIMATION": {

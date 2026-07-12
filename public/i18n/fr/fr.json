@@ -221,6 +221,7 @@
         },
         "TFTESPI_ANIMATION": {
             "UPLOAD_TOOLTIP": "Formats pris en charge : MP4, GIF",
+            "LABEL_COLOR_MODE": "Couleur",
             "WORKER_ERROR_UNSUPPORTED_FILE_TYPE": "Seuls les fichiers MP4 et GIF sont pris en charge"
         },
         "U8G2_ANIMATION": {

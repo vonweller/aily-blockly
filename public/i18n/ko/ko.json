@@ -221,6 +221,7 @@
         },
         "TFTESPI_ANIMATION": {
             "UPLOAD_TOOLTIP": "지원 형식: MP4, GIF",
+            "LABEL_COLOR_MODE": "색상",
             "WORKER_ERROR_UNSUPPORTED_FILE_TYPE": "MP4 또는 GIF 파일만 지원합니다"
         },
         "U8G2_ANIMATION": {

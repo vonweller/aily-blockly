@@ -221,6 +221,7 @@
         },
         "TFTESPI_ANIMATION": {
             "UPLOAD_TOOLTIP": "Поддерживаемые форматы: MP4, GIF",
+            "LABEL_COLOR_MODE": "Цвет",
             "WORKER_ERROR_UNSUPPORTED_FILE_TYPE": "Поддерживаются только файлы MP4 и GIF"
         },
         "U8G2_ANIMATION": {

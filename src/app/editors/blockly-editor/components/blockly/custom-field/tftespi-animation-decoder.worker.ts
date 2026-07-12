@@ -1,5 +1,8 @@
 import { createFile, DataStream } from 'mp4box';
 
+type AnimationFormat = 'rgb565' | 'rgb332';
+type AnimationEncoding = 'rgb565-be-base64' | 'rgb332-base64';
+
 interface DecodeRequest {
     type: 'decode';
     requestId: number;
@@ -10,6 +13,7 @@ interface DecodeRequest {
     height: number;
     fps: number;
     maxFrames: number;
+    format?: AnimationFormat;
 }
 
 interface DecodeOptions {
@@ -17,12 +21,12 @@ interface DecodeOptions {
     height: number;
     fps: number;
     maxFrames: number;
+    format: AnimationFormat;
+    encoding: AnimationEncoding;
 }
 
 interface DecodeResult extends DecodeOptions {
     version: 1;
-    format: 'rgb565';
-    encoding: 'rgb565-be-base64';
     frames: string[];
     sourceName: string;
     sourceType: string;
@@ -35,10 +39,11 @@ const DEFAULT_MAX_FRAMES = 10;
 const DEFAULT_WIDTH = 160;
 const DEFAULT_HEIGHT = 120;
 const DEFAULT_FPS = 10;
+const DEFAULT_FORMAT: AnimationFormat = 'rgb565';
 const MAX_DIMENSION = 16_384;
 const MAX_FPS = 30;
 const MAX_FRAMES = 300;
-const MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
+const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const BASE64_CHUNK_BYTES = 32 * 1024;
 
 class LocalizedWorkerError extends Error {
@@ -90,14 +95,22 @@ function getUtf8ByteLength(value: unknown) {
     return new TextEncoder().encode(JSON.stringify(value)).byteLength;
 }
 
-function getFrameByteLength(width: number, height: number) {
+function normalizeAnimationFormat(value: unknown): AnimationFormat {
+    return value === 'rgb332' ? 'rgb332' : DEFAULT_FORMAT;
+}
+
+function getAnimationEncoding(format: AnimationFormat): AnimationEncoding {
+    return format === 'rgb332' ? 'rgb332-base64' : 'rgb565-be-base64';
+}
+
+function getFrameByteLength(width: number, height: number, format: AnimationFormat) {
     const pixelCount = width * height;
-    const frameByteLength = pixelCount * 2;
+    const frameByteLength = pixelCount * (format === 'rgb332' ? 1 : 2);
     if (!Number.isSafeInteger(pixelCount) || !Number.isSafeInteger(frameByteLength)) {
         throw createWorkerError(
             'WORKER_ERROR_FRAME_TOO_LARGE',
-            { width, height, size: frameByteLength, maxSize: MAX_OUTPUT_BYTES },
-            'The requested RGB565 frame is too large.',
+            { width, height, mode: format.toUpperCase(), size: frameByteLength, maxSize: MAX_OUTPUT_BYTES },
+            `The requested ${format.toUpperCase()} frame is too large.`,
         );
     }
     return frameByteLength;
@@ -113,15 +126,17 @@ function getMaxFramesForOutputBudget(
     height: number,
     fps: number,
     sourceType: string,
+    format: AnimationFormat,
 ) {
-    const encodedFrameLength = getBase64Length(getFrameByteLength(width, height));
+    const encoding = getAnimationEncoding(format);
+    const encodedFrameLength = getBase64Length(getFrameByteLength(width, height, format));
     const emptyEnvelope = {
         type: 'done',
         requestId: request.requestId,
         result: {
             version: 1,
-            format: 'rgb565',
-            encoding: 'rgb565-be-base64',
+            format,
+            encoding,
             width,
             height,
             fps,
@@ -138,8 +153,8 @@ function getMaxFramesForOutputBudget(
     if (oneFrameOutputBytes > MAX_OUTPUT_BYTES) {
         throw createWorkerError(
             'WORKER_ERROR_FRAME_TOO_LARGE',
-            { width, height, size: oneFrameOutputBytes, maxSize: MAX_OUTPUT_BYTES },
-            'A single RGB565 frame exceeds the 2 MiB output limit.',
+            { width, height, mode: format.toUpperCase(), size: oneFrameOutputBytes, maxSize: MAX_OUTPUT_BYTES },
+            `A single ${format.toUpperCase()} frame exceeds the 8 MiB output limit.`,
         );
     }
 
@@ -153,19 +168,22 @@ function normalizeDecodeOptions(request: DecodeRequest, sourceType: string): Dec
     const width = normalizeInteger(request.width, DEFAULT_WIDTH, 1, MAX_DIMENSION);
     const height = normalizeInteger(request.height, DEFAULT_HEIGHT, 1, MAX_DIMENSION);
     const fps = normalizeInteger(request.fps, DEFAULT_FPS, 1, MAX_FPS);
+    const format = normalizeAnimationFormat(request.format);
     const requestedMaxFrames = normalizeInteger(
         request.maxFrames,
         DEFAULT_MAX_FRAMES,
         1,
         MAX_FRAMES,
     );
-    const outputBudgetFrames = getMaxFramesForOutputBudget(request, width, height, fps, sourceType);
+    const outputBudgetFrames = getMaxFramesForOutputBudget(request, width, height, fps, sourceType, format);
 
     return {
         width,
         height,
         fps,
         maxFrames: Math.min(requestedMaxFrames, outputBudgetFrames),
+        format,
+        encoding: getAnimationEncoding(format),
     };
 }
 
@@ -178,13 +196,14 @@ function bytesToBase64(bytes: Uint8Array) {
     return btoa(binary);
 }
 
-class Rgb565FrameRenderer {
+class PackedRgbFrameRenderer {
     private readonly canvas: OffscreenCanvas;
     private readonly context: OffscreenCanvasRenderingContext2D;
 
     constructor(
         private readonly width: number,
         private readonly height: number,
+        private readonly format: AnimationFormat,
     ) {
         this.canvas = new OffscreenCanvas(width, height);
         const context = this.canvas.getContext('2d', { willReadFrequently: true });
@@ -201,20 +220,24 @@ class Rgb565FrameRenderer {
         this.context.drawImage(frame, 0, 0, this.width, this.height);
 
         const rgba = this.context.getImageData(0, 0, this.width, this.height).data;
-        const rgb565 = new Uint8Array(this.width * this.height * 2);
+        const packed = new Uint8Array(getFrameByteLength(this.width, this.height, this.format));
 
-        for (let sourceIndex = 0, targetIndex = 0; sourceIndex < rgba.length; sourceIndex += 4, targetIndex += 2) {
+        for (let sourceIndex = 0, pixelIndex = 0; sourceIndex < rgba.length; sourceIndex += 4, pixelIndex++) {
             const alpha = rgba[sourceIndex + 3];
             const red = alpha === 255 ? rgba[sourceIndex] : Math.round(rgba[sourceIndex] * alpha / 255);
             const green = alpha === 255 ? rgba[sourceIndex + 1] : Math.round(rgba[sourceIndex + 1] * alpha / 255);
             const blue = alpha === 255 ? rgba[sourceIndex + 2] : Math.round(rgba[sourceIndex + 2] * alpha / 255);
-            const pixel = ((red & 0xf8) << 8) | ((green & 0xfc) << 3) | (blue >> 3);
-
-            rgb565[targetIndex] = pixel >> 8;
-            rgb565[targetIndex + 1] = pixel & 0xff;
+            if (this.format === 'rgb332') {
+                packed[pixelIndex] = (red & 0xe0) | ((green & 0xe0) >> 3) | (blue >> 6);
+            } else {
+                const pixel = ((red & 0xf8) << 8) | ((green & 0xfc) << 3) | (blue >> 3);
+                const targetIndex = pixelIndex * 2;
+                packed[targetIndex] = pixel >> 8;
+                packed[targetIndex + 1] = pixel & 0xff;
+            }
         }
 
-        return bytesToBase64(rgb565);
+        return bytesToBase64(packed);
     }
 }
 
@@ -323,8 +346,6 @@ function createDecodeResult(
 ): DecodeResult {
     return {
         version: 1,
-        format: 'rgb565',
-        encoding: 'rgb565-be-base64',
         ...options,
         frames,
         sourceName,
@@ -362,7 +383,7 @@ async function decodeMp4(request: DecodeRequest): Promise<DecodeResult> {
         }
     }
 
-    const renderer = new Rgb565FrameRenderer(options.width, options.height);
+    const renderer = new PackedRgbFrameRenderer(options.width, options.height, options.format);
     const frames: string[] = [];
     const intervalUs = MICROSECONDS_PER_SECOND / options.fps;
     const sampleDurations = new Map<number, number>();
@@ -473,7 +494,7 @@ async function decodeGif(request: DecodeRequest): Promise<DecodeResult> {
 
     const sourceType = request.mimeType || 'image/gif';
     const options = normalizeDecodeOptions(request, sourceType);
-    const renderer = new Rgb565FrameRenderer(options.width, options.height);
+    const renderer = new PackedRgbFrameRenderer(options.width, options.height, options.format);
     const decoder = new ImageDecoderCtor({
         data: new Uint8Array(request.buffer),
         type: 'image/gif',

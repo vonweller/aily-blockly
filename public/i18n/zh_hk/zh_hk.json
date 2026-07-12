@@ -222,6 +222,7 @@
         },
         "TFTESPI_ANIMATION": {
             "UPLOAD_TOOLTIP": "支援格式：MP4、GIF",
+            "LABEL_COLOR_MODE": "色彩",
             "WORKER_ERROR_UNSUPPORTED_FILE_TYPE": "僅支援 MP4 或 GIF 檔案"
         },
         "U8G2_ANIMATION": {

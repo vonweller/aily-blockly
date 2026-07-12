@@ -221,6 +221,7 @@
         },
         "TFTESPI_ANIMATION": {
             "UPLOAD_TOOLTIP": "Unterstützte Formate: MP4, GIF",
+            "LABEL_COLOR_MODE": "Farbe",
             "WORKER_ERROR_UNSUPPORTED_FILE_TYPE": "Nur MP4- und GIF-Dateien werden unterstützt"
         },
         "U8G2_ANIMATION": {

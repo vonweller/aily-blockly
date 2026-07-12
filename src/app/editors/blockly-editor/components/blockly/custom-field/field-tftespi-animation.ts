@@ -15,6 +15,7 @@ const BLOCKLY_MESSAGE_NAMES = [
   'LABEL_HEIGHT',
   'LABEL_FPS',
   'LABEL_MAX_FRAMES',
+  'LABEL_COLOR_MODE',
   'EMPTY',
 ] as const;
 
@@ -29,12 +30,13 @@ const DEFAULT_MESSAGES: Record<string, string> = {
   LABEL_HEIGHT: 'H',
   LABEL_FPS: 'FPS',
   LABEL_MAX_FRAMES: 'Frames',
+  LABEL_COLOR_MODE: 'Color',
   EMPTY: 'No animation uploaded',
   STATUS_READING_FILE: 'Reading {{name}}...',
   STATUS_SAVING_FILE: 'Saving {{name}}...',
   STATUS_DECODING: 'Converting animation...',
   STATUS_REDECODING: 'Re-converting {{name}}...',
-  STATUS_INFO: '{{sourcePrefix}}{{frames}} frames | {{width}}x{{height}} | {{fps}} FPS | RGB565 | {{dataSize}}',
+  STATUS_INFO: '{{sourcePrefix}}{{frames}} frames | {{width}}x{{height}} | {{fps}} FPS | {{mode}} | {{dataSize}}',
   ERROR_FILE_SIZE_EXCEEDED: 'Source file must not exceed {{maxSize}} (current: {{currentSize}})',
   ERROR_DECODE_FAILED: 'Animation conversion failed',
   ERROR_REDECODE_FAILED: 'Animation re-conversion failed',
@@ -62,7 +64,7 @@ const DEFAULT_MESSAGES: Record<string, string> = {
   WORKER_STATUS_DECODE_IMAGE_FRAME: 'Converting {{format}} frame {{current}}/{{total}}',
   WORKER_ERROR_IMAGE_NO_VALID_FRAMES: '{{format}} decoded successfully, but no usable frames were produced',
   WORKER_ERROR_UNSUPPORTED_FILE_TYPE: 'Only MP4 and GIF files are supported',
-  WORKER_ERROR_FRAME_TOO_LARGE: 'A {{width}}x{{height}} RGB565 frame exceeds the {{maxSize}} output budget ({{size}})',
+  WORKER_ERROR_FRAME_TOO_LARGE: 'A {{width}}x{{height}} {{mode}} frame exceeds the {{maxSize}} output budget ({{size}})',
 };
 
 let animationTranslator: AnimationTranslator | null = null;
@@ -109,10 +111,13 @@ export function setTftEsPiAnimationFieldTranslator(translator: AnimationTranslat
 
 applyBlocklyMessages();
 
+export type TftEsPiAnimationFormat = 'rgb565' | 'rgb332';
+export type TftEsPiAnimationEncoding = 'rgb565-be-base64' | 'rgb332-base64';
+
 export interface TftEsPiAnimationValue {
   version: 1;
-  format: 'rgb565';
-  encoding: 'rgb565-be-base64';
+  format: TftEsPiAnimationFormat;
+  encoding: TftEsPiAnimationEncoding;
   width: number;
   height: number;
   fps: number;
@@ -153,6 +158,7 @@ export interface FieldTftEsPiAnimationFromJsonConfig extends Blockly.FieldConfig
   height?: number;
   fps?: number;
   maxFrames?: number;
+  format?: TftEsPiAnimationFormat;
   fieldHeight?: number;
 }
 
@@ -160,12 +166,13 @@ const DEFAULT_WIDTH = 160;
 const DEFAULT_HEIGHT = 120;
 const DEFAULT_FPS = 10;
 const DEFAULT_MAX_FRAMES = 10;
+const DEFAULT_FORMAT: TftEsPiAnimationFormat = 'rgb565';
 const MAX_WIDTH = 480;
 const MAX_HEIGHT = 480;
 const MAX_FPS = 30;
 const MAX_FRAMES = 300;
-const MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
-const MAX_SOURCE_FILE_SIZE_BYTES = 12 * 1024 * 1024;
+const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
+const MAX_SOURCE_FILE_SIZE_BYTES = 100 * 1024 * 1024;
 const DEFAULT_FIELD_HEIGHT = 40;
 const MAX_FIELD_WIDTH = 72;
 const INPUT_DEBOUNCE_MS = 350;
@@ -189,8 +196,24 @@ function base64ToBytes(base64: string) {
   return bytes;
 }
 
-function getMaxFramesForDimensions(width: number, height: number) {
-  const frameBytes = Math.max(1, width * height * 2);
+function normalizeAnimationFormat(value: unknown, fallback = DEFAULT_FORMAT): TftEsPiAnimationFormat {
+  return value === 'rgb332' || value === 'rgb565' ? value : fallback;
+}
+
+function getAnimationEncoding(format: TftEsPiAnimationFormat): TftEsPiAnimationEncoding {
+  return format === 'rgb332' ? 'rgb332-base64' : 'rgb565-be-base64';
+}
+
+function getBytesPerPixel(format: TftEsPiAnimationFormat) {
+  return format === 'rgb332' ? 1 : 2;
+}
+
+function getFrameByteLength(width: number, height: number, format: TftEsPiAnimationFormat) {
+  return Math.max(1, width * height * getBytesPerPixel(format));
+}
+
+function getMaxFramesForDimensions(width: number, height: number, format: TftEsPiAnimationFormat) {
+  const frameBytes = getFrameByteLength(width, height, format);
   const encodedFrameBytes = Math.ceil(frameBytes / 3) * 4 + 3;
   return Math.max(1, Math.min(MAX_FRAMES, Math.floor((MAX_OUTPUT_BYTES - 1024) / encodedFrameBytes)));
 }
@@ -201,6 +224,7 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
   private imgHeight = DEFAULT_HEIGHT;
   private fps = DEFAULT_FPS;
   private maxFrames = DEFAULT_MAX_FRAMES;
+  private pixelFormat = DEFAULT_FORMAT;
   private readonly fieldHeight: number;
   private blockDisplayImage: SVGImageElement | null = null;
   private blockPreviewDataUrl = '';
@@ -214,6 +238,7 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
   private heightInput: HTMLInputElement | null = null;
   private fpsInput: HTMLInputElement | null = null;
   private maxFramesInput: HTMLInputElement | null = null;
+  private formatSelect: HTMLSelectElement | null = null;
   private settingsTimer: ReturnType<typeof setTimeout> | null = null;
   private sourceRedecodeTimer: ReturnType<typeof setTimeout> | null = null;
   private activeDecodeTask: ActiveDecodeTask | null = null;
@@ -349,22 +374,25 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
     this.widthInput = this.createNumberInput(this.imgWidth, 1, MAX_WIDTH);
     this.heightInput = this.createNumberInput(this.imgHeight, 1, MAX_HEIGHT);
     this.fpsInput = this.createNumberInput(this.fps, 1, MAX_FPS);
+    this.formatSelect = this.createFormatSelect(this.pixelFormat);
     this.maxFramesInput = this.createNumberInput(
       this.maxFrames,
       1,
-      getMaxFramesForDimensions(this.imgWidth, this.imgHeight),
+      getMaxFramesForDimensions(this.imgWidth, this.imgHeight, this.pixelFormat),
     );
     settings.append(
       this.createNumberControl(Blockly.Msg['TFTESPI_ANIMATION_LABEL_WIDTH'], this.widthInput),
       this.createNumberControl(Blockly.Msg['TFTESPI_ANIMATION_LABEL_HEIGHT'], this.heightInput),
       this.createNumberControl(Blockly.Msg['TFTESPI_ANIMATION_LABEL_FPS'], this.fpsInput),
       this.createNumberControl(Blockly.Msg['TFTESPI_ANIMATION_LABEL_MAX_FRAMES'], this.maxFramesInput),
+      this.createNumberControl(Blockly.Msg['TFTESPI_ANIMATION_LABEL_COLOR_MODE'], this.formatSelect),
     );
     for (const input of [this.widthInput, this.heightInput, this.fpsInput, this.maxFramesInput]) {
       input.addEventListener('input', () => this.scheduleSettingsCommit());
       input.addEventListener('change', () => this.commitSettings());
       input.addEventListener('blur', () => this.commitSettings());
     }
+    this.formatSelect.addEventListener('change', () => this.commitSettings());
     toolbar.appendChild(settings);
 
     const actions = this.createElement('div', 'tftEsPiAnimationActions');
@@ -397,8 +425,8 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
     preview.appendChild(this.previewCanvas);
 
     const playback = this.createElement('div', 'tftEsPiAnimationPlayback');
-    this.playButton = this.createButton(
-      Blockly.Msg['TFTESPI_ANIMATION_BUTTON_PLAY_TEST'],
+    this.playButton = this.createIconButton(
+      'fa-light fa-play',
       () => this.togglePreview(),
       Blockly.Msg['TFTESPI_ANIMATION_PLAY_TEST_TOOLTIP'],
     );
@@ -418,7 +446,22 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
     this.updateControlsFromValue();
     this.renderPreviewFrame(0);
     this.updateStatusFromValue();
+    this.syncDropdownWidthToToolbar(editor, toolbar);
     return editor;
+  }
+
+  private syncDropdownWidthToToolbar(editor: HTMLElement, toolbar: HTMLElement) {
+    requestAnimationFrame(() => {
+      if (!editor.isConnected) return;
+
+      const toolbarWidth = Math.ceil(toolbar.getBoundingClientRect().width || toolbar.scrollWidth);
+      if (toolbarWidth <= 0) return;
+
+      const style = getComputedStyle(editor);
+      const horizontalPadding = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+      editor.style.width = `${Math.ceil(toolbarWidth + horizontalPadding)}px`;
+      if (this.isDropdownOpen()) Blockly.DropDownDiv.repositionForWindowResize();
+    });
   }
 
   private createNumberInput(value: number, min: number, max: number) {
@@ -431,7 +474,19 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
     return input;
   }
 
-  private createNumberControl(label: string, input: HTMLInputElement) {
+  private createFormatSelect(value: TftEsPiAnimationFormat) {
+    const select = document.createElement('select');
+    for (const format of ['rgb565', 'rgb332'] as const) {
+      const option = document.createElement('option');
+      option.value = format;
+      option.textContent = format.toUpperCase();
+      select.appendChild(option);
+    }
+    select.value = value;
+    return select;
+  }
+
+  private createNumberControl(label: string, input: HTMLElement) {
     const wrapper = this.createElement('label', 'tftEsPiAnimationNumberControl');
     const labelElement = document.createElement('span');
     labelElement.textContent = label;
@@ -442,8 +497,23 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
   private createButton(text: string, callback: () => void, title?: string) {
     const button = document.createElement('button');
     button.type = 'button';
+    button.className = 'tftEsPiAnimationButton';
     button.textContent = text;
     if (title) button.title = title;
+    button.addEventListener('click', callback);
+    return button;
+  }
+
+  private createIconButton(iconClassName: string, callback: () => void, label: string) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'tftEsPiAnimationButton tftEsPiAnimationIconButton';
+    button.title = label;
+    button.setAttribute('aria-label', label);
+
+    const icon = document.createElement('i');
+    icon.className = iconClassName;
+    button.appendChild(icon);
     button.addEventListener('click', callback);
     return button;
   }
@@ -464,11 +534,14 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
     const width = this.clampInput(this.widthInput, current.width, 1, MAX_WIDTH);
     const height = this.clampInput(this.heightInput, current.height, 1, MAX_HEIGHT);
     const fps = this.clampInput(this.fpsInput, current.fps, 1, MAX_FPS);
-    const maxAllowedFrames = getMaxFramesForDimensions(width, height);
+    const format = normalizeAnimationFormat(this.formatSelect?.value, current.format);
+    const maxAllowedFrames = getMaxFramesForDimensions(width, height, format);
     if (this.maxFramesInput) this.maxFramesInput.max = String(maxAllowedFrames);
     const maxFrames = this.clampInput(this.maxFramesInput, current.maxFrames, 1, maxAllowedFrames);
     const dimensionsChanged = width !== current.width || height !== current.height;
-    const settingsChanged = dimensionsChanged || fps !== current.fps || maxFrames !== current.maxFrames;
+    const formatChanged = format !== current.format;
+    const requiresRedecode = dimensionsChanged || formatChanged;
+    const settingsChanged = requiresRedecode || fps !== current.fps || maxFrames !== current.maxFrames;
     if (!settingsChanged) return;
 
     const nextValue: TftEsPiAnimationValue = {
@@ -477,7 +550,9 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
       height,
       fps,
       maxFrames,
-      frames: dimensionsChanged
+      format,
+      encoding: getAnimationEncoding(format),
+      frames: requiresRedecode
         ? []
         : current.frames.slice(0, maxFrames),
     };
@@ -530,7 +605,7 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
         mimeType: file.type || this.inferMimeType(file.name),
         buffer,
         sourcePath,
-      }, value.width, value.height, value.fps, value.maxFrames, decodeVersion);
+      }, value.width, value.height, value.fps, value.maxFrames, value.format, decodeVersion);
     } catch (error: any) {
       if (error instanceof AnimationDecodeCancelledError) return;
       if (!this.isUploadOperationCurrent(uploadRequestId, decodeVersion)) return;
@@ -546,6 +621,7 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
     height: number,
     fps: number,
     maxFrames: number,
+    format: TftEsPiAnimationFormat,
     expectedVersion: number,
   ) {
     if (!this.isDecodeVersionCurrent(expectedVersion)) return;
@@ -624,6 +700,7 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
           height,
           fps,
           maxFrames,
+          format,
         }, [source.buffer]);
       });
     } catch (error) {
@@ -671,7 +748,7 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
         mimeType: value.sourceType || this.inferMimeType(value.sourcePath),
         buffer: this.readSourceFileBuffer(sourceFilePath, fsApi),
         sourcePath: value.sourcePath,
-      }, value.width, value.height, value.fps, value.maxFrames, decodeVersion);
+      }, value.width, value.height, value.fps, value.maxFrames, value.format, decodeVersion);
     } catch (error: any) {
       if (error instanceof AnimationDecodeCancelledError) return;
       this.setStatus(error?.message || translateMessage('ERROR_REDECODE_FAILED'), true);
@@ -788,7 +865,9 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
       return;
     }
     this.currentFrame = Math.min(frames.length - 1, Math.max(0, Math.floor(frameIndex)));
-    if (this.previewCanvas) this.drawFrameToCanvas(this.previewCanvas, frames[this.currentFrame], value.width, value.height);
+    if (this.previewCanvas) {
+      this.drawFrameToCanvas(this.previewCanvas, frames[this.currentFrame], value.width, value.height, value.format);
+    }
     if (this.frameRangeInput) {
       this.frameRangeInput.max = String(Math.max(0, frames.length - 1));
       this.frameRangeInput.value = String(this.currentFrame);
@@ -798,20 +877,33 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
     this.updatePlayButton();
   }
 
-  private drawFrameToCanvas(canvas: HTMLCanvasElement, encodedFrame: string, width: number, height: number) {
+  private drawFrameToCanvas(
+    canvas: HTMLCanvasElement,
+    encodedFrame: string,
+    width: number,
+    height: number,
+    format: TftEsPiAnimationFormat,
+  ) {
     const bytes = base64ToBytes(encodedFrame);
-    if (bytes.length !== width * height * 2) return;
+    if (bytes.length !== getFrameByteLength(width, height, format)) return;
     canvas.width = width;
     canvas.height = height;
     const context = canvas.getContext('2d');
     if (!context) return;
     const imageData = context.createImageData(width, height);
     for (let pixel = 0; pixel < width * height; pixel++) {
-      const colour = (bytes[pixel * 2] << 8) | bytes[pixel * 2 + 1];
       const target = pixel * 4;
-      imageData.data[target] = Math.round(((colour >> 11) & 0x1f) * 255 / 31);
-      imageData.data[target + 1] = Math.round(((colour >> 5) & 0x3f) * 255 / 63);
-      imageData.data[target + 2] = Math.round((colour & 0x1f) * 255 / 31);
+      if (format === 'rgb332') {
+        const colour = bytes[pixel];
+        imageData.data[target] = Math.round(((colour >> 5) & 0x07) * 255 / 7);
+        imageData.data[target + 1] = Math.round(((colour >> 2) & 0x07) * 255 / 7);
+        imageData.data[target + 2] = Math.round((colour & 0x03) * 255 / 3);
+      } else {
+        const colour = (bytes[pixel * 2] << 8) | bytes[pixel * 2 + 1];
+        imageData.data[target] = Math.round(((colour >> 11) & 0x1f) * 255 / 31);
+        imageData.data[target + 1] = Math.round(((colour >> 5) & 0x3f) * 255 / 63);
+        imageData.data[target + 2] = Math.round((colour & 0x1f) * 255 / 31);
+      }
       imageData.data[target + 3] = 255;
     }
     context.putImageData(imageData, 0, 0);
@@ -832,7 +924,7 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
       const value = this.getValue();
       const canvas = document.createElement('canvas');
       if (value.frames.length > 0) {
-        this.drawFrameToCanvas(canvas, value.frames[0], value.width, value.height);
+        this.drawFrameToCanvas(canvas, value.frames[0], value.width, value.height, value.format);
       } else {
         this.drawEmptyCanvas(canvas, value.width, value.height);
       }
@@ -872,10 +964,18 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
   private updatePlayButton() {
     if (!this.playButton) return;
     const value = this.getValue();
-    this.playButton.disabled = value.frames.length <= 1;
-    this.playButton.textContent = this.playActive
+    const label = this.playActive
       ? Blockly.Msg['TFTESPI_ANIMATION_BUTTON_STOP_PLAY_TEST']
       : Blockly.Msg['TFTESPI_ANIMATION_BUTTON_PLAY_TEST'];
+    this.playButton.disabled = value.frames.length <= 1;
+    this.playButton.title = this.playActive
+      ? Blockly.Msg['TFTESPI_ANIMATION_BUTTON_STOP_PLAY_TEST']
+      : Blockly.Msg['TFTESPI_ANIMATION_PLAY_TEST_TOOLTIP'];
+    this.playButton.setAttribute('aria-label', label);
+    this.playButton.setAttribute('aria-pressed', String(this.playActive));
+
+    const icon = this.playButton.querySelector('i');
+    if (icon) icon.className = this.playActive ? 'fa-light fa-stop' : 'fa-light fa-play';
   }
 
   private updateControlsFromValue() {
@@ -883,8 +983,9 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
     if (this.widthInput) this.widthInput.value = String(value.width);
     if (this.heightInput) this.heightInput.value = String(value.height);
     if (this.fpsInput) this.fpsInput.value = String(value.fps);
+    if (this.formatSelect) this.formatSelect.value = value.format;
     if (this.maxFramesInput) {
-      this.maxFramesInput.max = String(getMaxFramesForDimensions(value.width, value.height));
+      this.maxFramesInput.max = String(getMaxFramesForDimensions(value.width, value.height, value.format));
       this.maxFramesInput.value = String(value.maxFrames);
     }
     this.renderPreviewFrame(this.currentFrame);
@@ -900,8 +1001,8 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
         width: value.width,
         height: value.height,
         fps: value.fps,
-        mode: 'RGB565',
-        dataSize: this.formatDataSize(value.width * value.height * 2 * value.frames.length),
+        mode: value.format.toUpperCase(),
+        dataSize: this.formatDataSize(getFrameByteLength(value.width, value.height, value.format) * value.frames.length),
       })
       : Blockly.Msg['TFTESPI_ANIMATION_EMPTY'];
     this.setStatus(message);
@@ -932,6 +1033,7 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
       height: this.imgHeight,
       fps: this.fps,
       maxFrames: this.maxFrames,
+      format: this.pixelFormat,
     }), !this.isDropdownOpen());
   }
 
@@ -939,16 +1041,17 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
     const width = this.normalizeNumber(config?.width, DEFAULT_WIDTH, 1, MAX_WIDTH);
     const height = this.normalizeNumber(config?.height, DEFAULT_HEIGHT, 1, MAX_HEIGHT);
     const fps = this.normalizeNumber(config?.fps, DEFAULT_FPS, 1, MAX_FPS);
+    const format = normalizeAnimationFormat(config?.format);
     const maxFrames = this.normalizeNumber(
       config?.maxFrames,
       DEFAULT_MAX_FRAMES,
       1,
-      getMaxFramesForDimensions(width, height),
+      getMaxFramesForDimensions(width, height, format),
     );
     return {
       version: 1,
-      format: 'rgb565',
-      encoding: 'rgb565-be-base64',
+      format,
+      encoding: getAnimationEncoding(format),
       width,
       height,
       fps,
@@ -963,7 +1066,11 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
   ): TftEsPiAnimationValue {
     const fallback = this.createEmptyValue(config);
     if (!value || typeof value !== 'object') return fallback;
-    if (value.version !== 1 || value.format !== 'rgb565' || value.encoding !== 'rgb565-be-base64') {
+    if (value.version !== 1 || (value.format !== 'rgb565' && value.format !== 'rgb332')) {
+      return fallback;
+    }
+    const format = value.format;
+    if (value.encoding !== getAnimationEncoding(format)) {
       return fallback;
     }
     const width = this.normalizeNumber(value.width, fallback.width, 1, MAX_WIDTH);
@@ -973,9 +1080,9 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
       value.maxFrames,
       fallback.maxFrames,
       1,
-      getMaxFramesForDimensions(width, height),
+      getMaxFramesForDimensions(width, height, format),
     );
-    const expectedBase64Length = Math.ceil(width * height * 2 / 3) * 4;
+    const expectedBase64Length = Math.ceil(getFrameByteLength(width, height, format) / 3) * 4;
     const frames = Array.isArray(value.frames)
       ? value.frames
         .filter((frame): frame is string => (
@@ -987,8 +1094,8 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
       : [];
     return {
       version: 1,
-      format: 'rgb565',
-      encoding: 'rgb565-be-base64',
+      format,
+      encoding: getAnimationEncoding(format),
       width,
       height,
       fps,
@@ -1015,6 +1122,7 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
     this.imgHeight = value.height;
     this.fps = value.fps;
     this.maxFrames = value.maxFrames;
+    this.pixelFormat = value.format;
   }
 
   private valuesEqual(left: TftEsPiAnimationValue | null, right: TftEsPiAnimationValue | null) {
@@ -1049,6 +1157,7 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
     this.heightInput = null;
     this.fpsInput = null;
     this.maxFramesInput = null;
+    this.formatSelect = null;
     Blockly.DropDownDiv.getContentDiv().classList.remove('contains-tftespi-animation-editor');
   }
 
@@ -1134,97 +1243,143 @@ Blockly.fieldRegistry.register('field_tftespi_animation', FieldTftEsPiAnimation)
 Blockly.Css.register(`
 .tftEsPiAnimationEditor {
   align-items: stretch;
-  background: #25282b;
-  border-radius: 8px;
-  color: #f2f2f2;
+  background: #2a2a2a;
+  box-sizing: border-box;
+  color: #f4f4f4;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  max-width: min(94vw, 760px);
-  padding: 10px;
+  gap: 10px;
+  max-width: min(94vw, 880px);
+  padding: 5px 10px;
+  width: max-content;
 }
 .tftEsPiAnimationToolbar {
   align-items: center;
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 8px;
   justify-content: space-between;
+  max-width: 100%;
+  width: max-content;
 }
 .tftEsPiAnimationSettings,
-.tftEsPiAnimationActions,
-.tftEsPiAnimationPlayback {
+.tftEsPiAnimationActions {
   align-items: center;
-  display: flex;
+  display: inline-flex;
+  flex-wrap: nowrap;
   gap: 6px;
 }
+.tftEsPiAnimationActions { margin-left: auto; }
 .tftEsPiAnimationNumberControl {
   align-items: center;
   display: inline-flex;
-  font-size: 12px;
-  gap: 3px;
+  gap: 4px;
 }
-.tftEsPiAnimationNumberControl input {
-  background: #181a1c;
-  border: 1px solid #555;
+.tftEsPiAnimationNumberControl span {
+  color: #e8e8e8;
+  font-size: 12px;
+  line-height: 1;
+}
+.tftEsPiAnimationNumberControl input,
+.tftEsPiAnimationNumberControl select {
+  background: #fff;
+  border: 1px solid #777;
   border-radius: 4px;
-  color: #fff;
+  box-sizing: border-box;
+  color: #222;
+  font-size: 12px;
   height: 26px;
   padding: 0 4px;
-  width: 58px;
+  text-align: center;
+  width: 48px;
 }
-.tftEsPiAnimationActions button,
-.tftEsPiAnimationPlayback button {
-  background: #00a8bd;
-  border: 0;
+.tftEsPiAnimationNumberControl select { width: 78px; }
+.tftEsPiAnimationButton {
+  background: #333;
+  border: 1px solid #666;
   border-radius: 4px;
   color: #fff;
   cursor: pointer;
-  min-height: 28px;
-  padding: 4px 9px;
+  font-size: 12px;
+  height: 26px;
+  margin: 0;
+  padding: 0 10px;
 }
-.tftEsPiAnimationActions button:hover,
-.tftEsPiAnimationPlayback button:hover {
-  background: #00bfd6;
+.tftEsPiAnimationButton:hover {
+  background: #444;
+  border-color: #888;
 }
-.tftEsPiAnimationPlayback button:disabled {
-  cursor: default;
-  opacity: .45;
+.tftEsPiAnimationButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+.tftEsPiAnimationIconButton {
+  align-items: center;
+  display: inline-flex;
+  justify-content: center;
+  padding: 0;
+  width: 26px;
+}
+.tftEsPiAnimationIconButton i {
+  font-size: 12px;
+  line-height: 1;
 }
 .tftEsPiAnimationStatus {
-  color: #c6d1d5;
+  color: #cfcfcf;
   font-size: 12px;
+  line-height: 1.4;
+  max-width: 100%;
   min-height: 18px;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.tftEsPiAnimationStatus.is-error { color: #ff8c8c; }
+.tftEsPiAnimationStatus.is-error { color: #ffb3b3; }
 .tftEsPiAnimationPreview {
   align-items: center;
-  background: #111;
-  border-radius: 5px;
+  background: #1b1b1b;
+  border: 1px solid #666;
+  border-radius: 4px;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   gap: 8px;
   min-height: 150px;
   padding: 8px;
+  width: 100%;
 }
 .tftEsPiAnimationCanvas {
-  background: #000;
+  background: #151515;
+  border: 1px solid #444;
+  display: block;
   image-rendering: pixelated;
-  max-height: min(48vh, 360px);
+  max-height: 190px;
   max-width: min(86vw, 640px);
   object-fit: contain;
 }
-.tftEsPiAnimationPlayback { width: min(100%, 620px); }
-.tftEsPiAnimationPlayback input[type='range'] { flex: 1; min-width: 120px; }
+.tftEsPiAnimationPlayback {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  width: min(100%, 620px);
+}
+.tftEsPiAnimationPlayback input[type='range'] {
+  accent-color: #4db6ac;
+  flex: 1;
+  min-width: 120px;
+}
 .tftEsPiAnimationFrameIndex {
-  color: #c8c8c8;
+  color: #cfcfcf;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
   min-width: 54px;
   text-align: right;
 }
 .blocklyDropDownContent.contains-tftespi-animation-editor {
+  background: #2a2a2a;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
   max-height: none;
   overflow: visible;
 }

@@ -221,6 +221,7 @@
         },
         "TFTESPI_ANIMATION": {
             "UPLOAD_TOOLTIP": "対応形式：MP4、GIF",
+            "LABEL_COLOR_MODE": "色",
             "WORKER_ERROR_UNSUPPORTED_FILE_TYPE": "MP4 または GIF ファイルのみ対応しています"
         },
         "U8G2_ANIMATION": {
