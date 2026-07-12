@@ -27,6 +27,9 @@ const CHANNELS = {
 let channel = "stable";
 let installPromise = null;
 let installKey = null;
+let mutationPromise = null;
+let startupPromise = null;
+let startupResult = null;
 let getMainWindow = () => null;
 let handlersRegistered = false;
 
@@ -55,8 +58,9 @@ function getPackageName(value = getChannel()) {
 
 function getNpmEnv() {
   const env = { ...process.env };
-  if (process.env.AILY_APPDATA_PATH) {
-    env.npm_config_prefix = process.env.AILY_APPDATA_PATH;
+  const npmPrefix = process.env.AILY_NPM_PREFIX || process.env.AILY_APPDATA_PATH;
+  if (npmPrefix) {
+    env.npm_config_prefix = npmPrefix;
   }
   return env;
 }
@@ -92,6 +96,71 @@ function getNpmExecutable(childPath) {
 
 function quoteWindowsShellPath(filePath) {
   return `"${String(filePath).replace(/"/g, '""')}"`;
+}
+
+function getAilyBuilderCommandPath() {
+  const prefix = process.env.AILY_NPM_PREFIX || process.env.AILY_APPDATA_PATH || "";
+  if (!prefix) {
+    return "";
+  }
+
+  const candidates = isWin32
+    ? [
+      path.join(prefix, "aily-builder.cmd"),
+      path.join(prefix, "aily-builder.exe"),
+      path.join(prefix, "aily-builder"),
+    ]
+    : [path.join(prefix, "bin", "aily-builder")];
+  return candidates.find((candidate) => fs.existsSync(candidate)) || "";
+}
+
+function parseBuilderVersion(output) {
+  const text = String(output || "").trim();
+  if (!text) {
+    return null;
+  }
+  const versionMatch = text.match(/\b\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\b/);
+  return versionMatch ? versionMatch[0] : text.split(/\r?\n/)[0].trim();
+}
+
+function probeAilyBuilderCommand() {
+  const commandPath = getAilyBuilderCommandPath();
+  if (!commandPath) {
+    return {
+      ok: false,
+      path: "",
+      version: null,
+      installed: false,
+      error: "aily-builder 命令不存在",
+    };
+  }
+
+  const command = isWin32 ? quoteWindowsShellPath(commandPath) : commandPath;
+  const result = spawnSync(command, ["--version"], {
+    env: getNpmEnv(),
+    shell: isWin32,
+    windowsHide: true,
+    encoding: "utf8",
+    timeout: 5000,
+  });
+  const output = `${result.stdout || ""}\n${result.stderr || ""}`.trim();
+  if (result.status !== 0) {
+    return {
+      ok: false,
+      path: commandPath,
+      version: null,
+      installed: false,
+      error: result.error?.message || output || `aily-builder --version exited with ${result.status}`,
+    };
+  }
+
+  return {
+    ok: true,
+    path: commandPath,
+    version: parseBuilderVersion(output),
+    installed: false,
+    error: "",
+  };
 }
 
 function readNpmGlobalValue(childPath, args) {
@@ -202,9 +271,8 @@ function runNpm(childPath, npmArgs) {
   });
 }
 
-function installFromNpm(childPath, options = {}) {
-  const activeChannel = getChannel();
-  let packageState = getInstalledPackageState(childPath, activeChannel);
+function installFromNpm(childPath, targetChannel, options = {}) {
+  let packageState = getInstalledPackageState(childPath, targetChannel);
   if (!packageState.packageName) {
     return Promise.resolve({
       ok: false,
@@ -223,17 +291,20 @@ function installFromNpm(childPath, options = {}) {
   }
 
   if (installPromise) {
-    return installKey === activeChannel
+    return installKey === targetChannel
       ? installPromise
-      : installPromise.then(() => installFromNpm(childPath, options));
+      : installPromise.then(() => installFromNpm(childPath, targetChannel, options));
   }
 
   const npmArgs = ["i", packageState.packageName, "-g"];
+  if (options.force) {
+    npmArgs.push("--force");
+  }
   if (process.env.AILY_NPM_REGISTRY) {
     npmArgs.push("--registry", process.env.AILY_NPM_REGISTRY);
   }
 
-  installKey = activeChannel;
+  installKey = targetChannel;
   installPromise = runNpm(childPath, npmArgs)
     .then(({ code, stdout, stderr, error }) => {
       if (code !== 0) {
@@ -244,7 +315,7 @@ function installFromNpm(childPath, options = {}) {
         };
       }
 
-      packageState = getInstalledPackageState(childPath, activeChannel);
+      packageState = getInstalledPackageState(childPath, targetChannel);
       return {
         ok: packageState.complete,
         path: packageState.path,
@@ -280,15 +351,15 @@ function uninstallFromNpm(childPath, value) {
   }));
 }
 
-async function ensure(childPath, options = {}) {
-  const activeChannel = getChannel();
-  const otherChannel = activeChannel === "next" ? "stable" : "next";
+async function installSelectedChannel(childPath, options = {}) {
+  const targetChannel = normalizeChannel(options.channel || getChannel());
+  const otherChannel = targetChannel === "next" ? "stable" : "next";
   const otherResult = await uninstallFromNpm(childPath, otherChannel);
   if (!otherResult.ok) {
     return otherResult;
   }
 
-  const packageState = getInstalledPackageState(childPath, activeChannel);
+  const packageState = getInstalledPackageState(childPath, targetChannel);
   const force = options.force || otherResult.uninstalled;
   const result = packageState.complete && packageState.version && !force
     ? {
@@ -297,7 +368,7 @@ async function ensure(childPath, options = {}) {
       version: packageState.version,
       installed: false,
     }
-    : await installFromNpm(childPath, { ...options, force });
+    : await installFromNpm(childPath, targetChannel, { ...options, force });
 
   if (result.ok) {
     applyCommandEnv(childPath);
@@ -305,19 +376,142 @@ async function ensure(childPath, options = {}) {
   return result;
 }
 
-function getStatus(childPath) {
+function rememberReadyResult(result) {
+  startupResult = result;
+  return result;
+}
+
+function queueMutation(task) {
+  const previousMutation = mutationPromise;
+  const operation = (previousMutation
+    ? previousMutation.catch(() => undefined)
+    : Promise.resolve())
+    .then(task);
+  const trackedOperation = operation.finally(() => {
+    if (mutationPromise === trackedOperation) {
+      mutationPromise = null;
+    }
+  });
+  mutationPromise = trackedOperation;
+  return trackedOperation;
+}
+
+function performInstallMutation(childPath, options) {
+  return queueMutation(async () => {
+    let installResult;
+    try {
+      installResult = await installSelectedChannel(childPath, options);
+    } catch (error) {
+      installResult = {
+        ok: false,
+        path: "",
+        version: null,
+        installed: false,
+        error: error?.message || String(error),
+      };
+    }
+
+    const commandState = probeAilyBuilderCommand();
+    const readyResult = commandState.ok
+      ? { ...commandState, installed: !!installResult.installed }
+      : {
+        ...commandState,
+        error: installResult.error || commandState.error,
+      };
+    rememberReadyResult(readyResult);
+    return { installResult, readyResult };
+  });
+}
+
+function initialize(childPath) {
+  if (startupPromise) {
+    return startupPromise;
+  }
+
+  startupPromise = (async () => {
+    const commandState = probeAilyBuilderCommand();
+    if (commandState.ok) {
+      return rememberReadyResult(commandState);
+    }
+
+    const { readyResult } = await performInstallMutation(childPath, {
+      channel: getChannel(),
+      force: true,
+      reason: "startup",
+    });
+    return readyResult;
+  })().catch((error) => rememberReadyResult({
+    ok: false,
+    path: "",
+    version: null,
+    installed: false,
+    error: error?.message || String(error),
+  }));
+
+  return startupPromise;
+}
+
+async function waitForReady() {
+  let initializedResult = startupResult;
+  if (startupPromise) {
+    try {
+      initializedResult = await startupPromise;
+    } catch (error) {
+      initializedResult = rememberReadyResult({
+        ok: false,
+        path: "",
+        version: null,
+        installed: false,
+        error: error?.message || String(error),
+      });
+    }
+  }
+
+  while (mutationPromise) {
+    const pendingMutation = mutationPromise;
+    try {
+      const mutationResult = await pendingMutation;
+      initializedResult = mutationResult.readyResult;
+    } catch (error) {
+      initializedResult = rememberReadyResult({
+        ok: false,
+        path: "",
+        version: null,
+        installed: false,
+        error: error?.message || String(error),
+      });
+    }
+    if (mutationPromise === pendingMutation) {
+      break;
+    }
+  }
+
+  if (startupResult?.ok) {
+    return startupResult;
+  }
+
+  const commandState = probeAilyBuilderCommand();
+  if (commandState.ok) {
+    startupPromise = Promise.resolve(rememberReadyResult(commandState));
+    return commandState;
+  }
+
+  return startupResult || initializedResult || commandState;
+}
+
+function getStatus() {
   const activeChannel = getChannel();
-  const packageState = getInstalledPackageState(childPath, activeChannel);
+  const commandState = probeAilyBuilderCommand();
   return {
     channel: activeChannel,
     key: getChannelConfig(activeChannel).key,
-    packageName: packageState.packageName,
-    installed: packageState.complete,
-    installedVersion: packageState.version,
-    installing: !!installPromise,
+    packageName: getPackageName(activeChannel),
+    installed: commandState.ok,
+    installedVersion: commandState.version,
+    installing: !!mutationPromise || (!!startupPromise && !startupResult),
     installingKey: installKey,
     configLoaded: true,
-    error: "",
+    error: commandState.ok ? "" : (startupResult?.error || commandState.error),
   };
 }
 
@@ -338,39 +532,48 @@ function registerHandlers(mainWindowProvider) {
   }
   handlersRegistered = true;
 
-  ipcMain.handle("aily-builder-status", async () => getStatus(requireChildPath()));
-  ipcMain.handle("aily-builder-channel-get", async () => getChannel());
+  ipcMain.handle("aily-builder-status", async () => getStatus());
   ipcMain.handle("aily-builder-channel-set", async (event, { channel: value } = {}) => {
     const childPath = requireChildPath();
-    setChannel(value);
-    const result = await ensure(childPath, { reason: "channel-switch" });
+    const targetChannel = setChannel(value);
+    const { installResult, readyResult } = await performInstallMutation(childPath, {
+      channel: targetChannel,
+      reason: "channel-switch",
+      force: true,
+    });
+    const result = installResult.ok ? readyResult : installResult;
     if (!result.ok) {
       throw new Error(result.error || "aily-builder npm 安装失败");
     }
-    return getStatus(childPath);
+    return getStatus();
   });
-  ipcMain.handle("aily-builder-ensure", async () => {
-    const childPath = requireChildPath();
-    const result = await ensure(childPath);
+  ipcMain.handle("aily-builder-wait-ready", async () => {
+    const result = await waitForReady();
     if (!result.ok) {
-      throw new Error(result.error || "aily-builder npm 安装失败");
+      throw new Error(result.error || "aily-builder 未安装或启动初始化失败");
     }
-    return { version: result.version, status: getStatus(childPath) };
+    return { version: result.version };
   });
   ipcMain.handle("aily-builder-update", async () => {
     const childPath = requireChildPath();
-    const result = await ensure(childPath, { reason: "manual", force: true });
+    const { installResult, readyResult } = await performInstallMutation(childPath, {
+      channel: getChannel(),
+      reason: "manual",
+      force: true,
+    });
+    const result = installResult.ok ? readyResult : installResult;
     if (!result.ok) {
       throw new Error(result.error || "aily-builder npm 安装失败");
     }
-    return { version: result.version, status: getStatus(childPath) };
+    return { version: result.version, status: getStatus() };
   });
 }
 
 module.exports = {
   applyCommandEnv,
   configureCacheEnvironment,
-  ensure,
+  initialize,
   registerHandlers,
   setChannel,
+  waitForReady,
 };

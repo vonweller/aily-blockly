@@ -374,7 +374,6 @@ export class SettingsComponent implements OnDestroy {
 
   shouldShowAilyBuilderUpdateButton() {
     return !!this.ailyBuilderStatus &&
-      !this.ailyBuilderStatus.error &&
       (!this.ailyBuilderStatus.installed || this.ailyBuilderUpdating || this.ailyBuilderStatus.installing);
   }
 

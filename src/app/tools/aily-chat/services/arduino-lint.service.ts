@@ -405,8 +405,8 @@ export class ArduinoLintService {
     const sdkPath = await window["env"].get('AILY_SDK_PATH') + `/${sdk}`;
     const toolsPath = await window["env"].get('AILY_TOOLS_PATH');
 
-    if (window['builder']?.ensure) {
-      await window['builder'].ensure();
+    if (window['builder']?.waitForReady) {
+      await window['builder'].waitForReady();
     }
 
     // 构建完整的 lint 命令

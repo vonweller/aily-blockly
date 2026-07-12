@@ -206,19 +206,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   builder: {
     status: () => ipcRenderer.invoke("aily-builder-status"),
     update: () => ipcRenderer.invoke("aily-builder-update"),
-    ensure: () => ipcRenderer.invoke("aily-builder-ensure"),
+    waitForReady: () => ipcRenderer.invoke("aily-builder-wait-ready"),
     setChannel: (channel, options = {}) => ipcRenderer.invoke("aily-builder-channel-set", { channel, ...options }),
-    getChannel: () => ipcRenderer.invoke("aily-builder-channel-get"),
-    init: (data) => {
-      return new Promise((resolve, reject) => {
-        ipcRenderer
-          .invoke("builder-init", data)
-          .then((result) => resolve(result))
-          .catch((error) => reject(error));
-      });
-    },
-    codeGen: (data) => ipcRenderer.invoke("builder-codeGen", data),
-    build: (data) => ipcRenderer.invoke("builder-build", data),
   },
   uploader: {
     upload: (data) => ipcRenderer.invoke("uploader-upload", data),

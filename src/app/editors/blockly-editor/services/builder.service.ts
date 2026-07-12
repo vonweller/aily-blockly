@@ -263,7 +263,7 @@ export class _BuilderService {
           return;
         }
         try {
-          await this.ensureAilyBuilderReady();
+          await this.waitForAilyBuilderReady();
         } catch (error) {
           console.warn('aily-builder 未准备完成，跳过本次后台预处理:', error);
           return;
@@ -549,9 +549,9 @@ export class _BuilderService {
     return !!(this.preprocessProcess || this.preprocessStreamId);
   }
 
-  private async ensureAilyBuilderReady(): Promise<void> {
-    if (window['builder']?.ensure) {
-      await window['builder'].ensure();
+  private async waitForAilyBuilderReady(): Promise<void> {
+    if (window['builder']?.waitForReady) {
+      await window['builder'].waitForReady();
     }
   }
 
@@ -559,7 +559,7 @@ export class _BuilderService {
    * 运行预编译脚本（同步等待完成）
    */
   private async runPreprocess(): Promise<void> {
-    await this.ensureAilyBuilderReady();
+    await this.waitForAilyBuilderReady();
 
     const currentProjectPath = this.projectService.currentProjectPath;
     const boardModule = await this.projectService.getBoardModule();
@@ -997,7 +997,7 @@ export class _BuilderService {
           const boardModule = await this.projectService.getBoardModule();
           const boardName = boardModule.replace('@aily-project/board-', '');
           const configFilePath = this.electronService.pathJoin(tempPath, 'build-config.json');
-          await this.ensureAilyBuilderReady();
+          await this.waitForAilyBuilderReady();
 
           // 更新配置文件中的 code（compile.js 会负责写入 sketch 文件）
           let buildConfig: any = {};

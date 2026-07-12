@@ -1463,6 +1463,7 @@ function loadEnv() {
   }
   // 全局npm包路径
   process.env.AILY_NPM_PREFIX = process.env.AILY_APPDATA_PATH;
+  process.env.npm_config_prefix = process.env.AILY_NPM_PREFIX;
   // 默认全局编译器路径
   process.env.AILY_COMPILERS_PATH = path.join(process.env.AILY_APPDATA_PATH, "tools",);
   // 默认全局烧录器路径
@@ -1483,9 +1484,9 @@ function loadEnv() {
   // child 目录只管理 Node、7z、probe-rs 等随应用分发的工具；
   // aily-builder 始终由 npm 全局安装，并统一通过 aily-builder 命令调用。
 
-  // 必须先让 child Node 可用，再检查并后台安装全局 builder，保证 preload 能拿到统一命令。
+  // 必须先让 child Node 可用，再进行一次启动初始化；仅缺少可用命令时才安装 builder。
   runInstallEnv(childPath);
-  builder.ensure(childPath).then((result) => {
+  builder.initialize(childPath).then((result) => {
     if (!result.ok) {
       console.error(`aily-builder 初始化失败: ${result.error || "未知错误"}`);
     }

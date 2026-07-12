@@ -265,15 +265,15 @@ function killRegisteredProcessTree(pid, label) {
     if (isWin32) {
       exec(`taskkill /PID ${pid} /T /F`, (error, stdout, stderr) => {
         const success = !error;
-        console.info('[PROC_TRACE][PROCESS_TREE_KILL]', {
-          label,
-          pid,
-          method: 'taskkill',
-          success,
-          durationMs: Date.now() - startedAt,
-          error: error?.message || '',
-          stderr: stderr?.trim?.() || ''
-        });
+        // console.info('[PROC_TRACE][PROCESS_TREE_KILL]', {
+        //   label,
+        //   pid,
+        //   method: 'taskkill',
+        //   success,
+        //   durationMs: Date.now() - startedAt,
+        //   error: error?.message || '',
+        //   stderr: stderr?.trim?.() || ''
+        // });
         resolve(success);
       });
       return;
