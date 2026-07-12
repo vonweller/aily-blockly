@@ -219,6 +219,10 @@
             "LIB_MANAGER_TITLE": "Gestionnaire de bibliothèques",
             "LIB_MANAGER_DESC": "Cliquez ici pour ouvrir le gestionnaire de bibliothèques. Vous pouvez installer et supprimer des bibliothèques d'extension afin d'ajouter plus de blocs à votre projet."
         },
+        "TFTESPI_ANIMATION": {
+            "UPLOAD_TOOLTIP": "Formats pris en charge : MP4, GIF",
+            "WORKER_ERROR_UNSUPPORTED_FILE_TYPE": "Seuls les fichiers MP4 et GIF sont pris en charge"
+        },
         "U8G2_ANIMATION": {
             "BUTTON_UPLOAD": "Importer",
             "UPLOAD_TOOLTIP": "Formats pris en charge : MP4, GIF, PNG",

@@ -219,6 +219,10 @@
             "LIB_MANAGER_TITLE": "라이브러리 관리자",
             "LIB_MANAGER_DESC": "여기를 클릭해 라이브러리 관리자를 엽니다. 확장 라이브러리를 설치하거나 제거해 프로젝트에 더 많은 블록을 추가할 수 있습니다."
         },
+        "TFTESPI_ANIMATION": {
+            "UPLOAD_TOOLTIP": "지원 형식: MP4, GIF",
+            "WORKER_ERROR_UNSUPPORTED_FILE_TYPE": "MP4 또는 GIF 파일만 지원합니다"
+        },
         "U8G2_ANIMATION": {
             "BUTTON_UPLOAD": "업로드",
             "UPLOAD_TOOLTIP": "지원 형식: MP4, GIF, PNG",

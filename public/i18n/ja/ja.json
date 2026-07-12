@@ -219,6 +219,10 @@
             "LIB_MANAGER_TITLE": "ライブラリマネージャー",
             "LIB_MANAGER_DESC": "ここをクリックしてライブラリマネージャーを開きます。拡張ライブラリのインストールや削除を行い、プロジェクトにさらに多くのブロックを追加できます。"
         },
+        "TFTESPI_ANIMATION": {
+            "UPLOAD_TOOLTIP": "対応形式：MP4、GIF",
+            "WORKER_ERROR_UNSUPPORTED_FILE_TYPE": "MP4 または GIF ファイルのみ対応しています"
+        },
         "U8G2_ANIMATION": {
             "BUTTON_UPLOAD": "アップロード",
             "UPLOAD_TOOLTIP": "対応形式: MP4、GIF、PNG",

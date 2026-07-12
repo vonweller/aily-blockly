@@ -220,6 +220,10 @@
             "LIB_MANAGER_TITLE": "庫管理器",
             "LIB_MANAGER_DESC": "點擊這裡打開庫管理器，可以安裝、移除各種功能擴展庫，為你的項目添加更多積木。"
         },
+        "TFTESPI_ANIMATION": {
+            "UPLOAD_TOOLTIP": "支援格式：MP4、GIF",
+            "WORKER_ERROR_UNSUPPORTED_FILE_TYPE": "僅支援 MP4 或 GIF 檔案"
+        },
         "U8G2_ANIMATION": {
             "BUTTON_UPLOAD": "上傳",
             "UPLOAD_TOOLTIP": "支援格式：MP4、GIF、PNG",

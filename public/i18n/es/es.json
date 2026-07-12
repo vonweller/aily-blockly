@@ -219,6 +219,10 @@
             "LIB_MANAGER_TITLE": "Gestor de bibliotecas",
             "LIB_MANAGER_DESC": "Haz clic aquí para abrir el gestor de bibliotecas. Puedes instalar y desinstalar bibliotecas de extensión para agregar más bloques a tu proyecto."
         },
+        "TFTESPI_ANIMATION": {
+            "UPLOAD_TOOLTIP": "Formatos compatibles: MP4, GIF",
+            "WORKER_ERROR_UNSUPPORTED_FILE_TYPE": "Solo se admiten archivos MP4 y GIF"
+        },
         "U8G2_ANIMATION": {
             "BUTTON_UPLOAD": "Subir",
             "UPLOAD_TOOLTIP": "Formatos compatibles: MP4, GIF, PNG",

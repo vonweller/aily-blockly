@@ -219,6 +219,10 @@
             "LIB_MANAGER_TITLE": "Менеджер библиотек",
             "LIB_MANAGER_DESC": "Нажмите здесь, чтобы открыть менеджер библиотек. В нем можно устанавливать и удалять библиотеки расширений, добавляя в проект больше блоков."
         },
+        "TFTESPI_ANIMATION": {
+            "UPLOAD_TOOLTIP": "Поддерживаемые форматы: MP4, GIF",
+            "WORKER_ERROR_UNSUPPORTED_FILE_TYPE": "Поддерживаются только файлы MP4 и GIF"
+        },
         "U8G2_ANIMATION": {
             "BUTTON_UPLOAD": "Загрузить",
             "UPLOAD_TOOLTIP": "Поддерживаемые форматы: MP4, GIF, PNG",
