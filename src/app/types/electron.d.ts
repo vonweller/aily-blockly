@@ -20,6 +20,7 @@ declare global {
       subWindow: any;
       codeViewer: any;
       builder: any;
+      linter: any;
       uploader: any;
       fs: any;
       ble: any;

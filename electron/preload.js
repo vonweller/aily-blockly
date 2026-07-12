@@ -209,6 +209,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
     waitForReady: () => ipcRenderer.invoke("aily-builder-wait-ready"),
     setChannel: (channel, options = {}) => ipcRenderer.invoke("aily-builder-channel-set", { channel, ...options }),
   },
+  linter: {
+    status: () => ipcRenderer.invoke("aily-linter-status"),
+    update: () => ipcRenderer.invoke("aily-linter-update"),
+    waitForReady: () => ipcRenderer.invoke("aily-linter-wait-ready"),
+  },
   uploader: {
     upload: (data) => ipcRenderer.invoke("uploader-upload", data),
   },

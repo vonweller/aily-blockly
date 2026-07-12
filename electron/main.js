@@ -8,6 +8,7 @@ const { app, BrowserWindow, ipcMain, dialog, screen, shell, Menu } = require("el
 const { isWin32, isDarwin, isLinux } = require("./platform");
 const projectLock = require("./project-lock");
 const builder = require("./builder");
+const linter = require("./linter");
 
 // 设置应用名称，用于 Windows 系统通知显示
 app.setName("aily blockly");
@@ -1482,15 +1483,22 @@ function loadEnv() {
   builder.setChannel(conf.labs?.ailyBuilderNext ? "next" : "stable");
 
   // child 目录只管理 Node、7z、probe-rs 等随应用分发的工具；
-  // aily-builder 始终由 npm 全局安装，并统一通过 aily-builder 命令调用。
+  // aily-builder 与 aily-linter 由 npm 安装到应用专用的全局 prefix。
 
-  // 必须先让 child Node 可用，再进行一次启动初始化；仅缺少可用命令时才安装 builder。
+  // 必须先让 child Node 可用，再进行一次启动初始化；仅缺少可用命令时才安装。
+  // 两个 npm 全局安装串行执行，避免同时修改同一个 prefix。
   runInstallEnv(childPath);
-  builder.initialize(childPath).then((result) => {
+  const builderInitialization = builder.initialize(childPath);
+  builderInitialization.then((result) => {
     if (!result.ok) {
       console.error(`aily-builder 初始化失败: ${result.error || "未知错误"}`);
     }
   }).catch((error) => console.error("aily-builder 初始化失败:", error));
+  linter.initialize(childPath, builderInitialization).then((result) => {
+    if (!result.ok) {
+      console.error(`aily-linter 初始化失败: ${result.error || "未知错误"}`);
+    }
+  }).catch((error) => console.error("aily-linter 初始化失败:", error));
 
   // 当前系统语言
   process.env.AILY_SYSTEM_LANG = app.getLocale();
@@ -1765,6 +1773,7 @@ function createWindow() {
   registerProbeRsHandlers(mainWindow);
   registerBleHandlers();
   builder.registerHandlers(() => mainWindow);
+  linter.registerHandlers(() => mainWindow);
 
   // 检查是否有待处理的OAuth回调
   // 注意：这里不再使用 setTimeout 自动发送，而是等待 renderer-ready 事件

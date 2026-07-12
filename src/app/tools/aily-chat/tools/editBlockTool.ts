@@ -7745,7 +7745,7 @@ export async function getWorkspaceOverviewTool(args?: any): Promise<ToolUseResul
               
               if (syntaxCheckResult) {
                 const content = syntaxCheckResult.content || '';
-                const isValid = !syntaxCheckResult.is_error && content.includes('✅ **Arduino代码语法检查通过**');
+                const isValid = !syntaxCheckResult.is_error && content.includes('✅ **代码语法检查通过**');
                 
                 // 从内容中提取错误和警告信息
                 const errors: any[] = [];
@@ -7819,7 +7819,7 @@ export async function getWorkspaceOverviewTool(args?: any): Promise<ToolUseResul
               
               const lintStartTime = Date.now();
               const lintServiceResult = await arduinoLintService.checkSyntax(generatedCode, {
-                mode: 'ast-grep',
+                mode: 'fast',
                 format: 'json'
               });
               const lintDuration = Date.now() - lintStartTime;
@@ -7840,11 +7840,11 @@ export async function getWorkspaceOverviewTool(args?: any): Promise<ToolUseResul
                 notes: lintServiceResult.notes || [],
                 duration: lintDuration,
                 language: 'arduino',
-                toolUsed: 'aily-builder-lint',
-                mode: lintServiceResult.mode || 'ast-grep'
+                toolUsed: 'aily-linter',
+                mode: lintServiceResult.mode || 'fast'
               };
               
-              // // console.log('✅ Arduino语法检测完成 (aily-builder):', {
+              // // console.log('✅ Arduino语法检测完成 (aily-linter):', {
               //   isValid: lintResult.isValid,
               //   errorCount: lintResult.errors.length,
               //   warningCount: lintResult.warnings.length,
@@ -7860,7 +7860,7 @@ export async function getWorkspaceOverviewTool(args?: any): Promise<ToolUseResul
                   column: 1,
                   message: '编译失败，但未提供具体错误信息。请检查代码语法和依赖项。',
                   severity: 'error',
-                  source: 'aily-builder-lint'
+                  source: 'aily-linter'
                 });
               }
             }           
