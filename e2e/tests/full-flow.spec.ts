@@ -204,8 +204,9 @@ test.describe('全流程：创建或加载项目 → 编译', () => {
     const failures: Array<{ project: ProjectPlazaCandidate; message: string }> = [];
     for (const project of projects) {
       await test.step(`加载并编译 ${project.name}`, async () => {
-        const launched = await launchAilyElectron();
+        let launched: Awaited<ReturnType<typeof launchAilyElectron>> | undefined;
         try {
+          launched = await launchAilyElectron();
           const isolatedWin = await getMainWindow(launched.app);
           const pageLog = attachDiagnostics(isolatedWin);
           await cleanAilyBuilderArtifacts();
@@ -218,7 +219,12 @@ test.describe('全流程：创建或加载项目 → 编译', () => {
             `[project-plaza] ${project.name} (ID: ${project.id || '缺失'}) 编译失败：${message}`,
           );
         } finally {
-          await launched.close();
+          if (launched) {
+            await launched.close().catch((error) => {
+              const message = error instanceof Error ? error.message : String(error);
+              console.log(`[project-plaza] ${project.name} Electron 关闭失败，继续下一个项目：${message}`);
+            });
+          }
         }
       });
     }
@@ -844,8 +850,11 @@ async function waitForCompileDone(
   let compileResult = '';
   let lastError = '';
   let lastStatusLine = '';
-  let sawCompileStart = false;
   while (Date.now() < compileDeadline) {
+    if (win.isClosed()) {
+      throw new Error(`${attemptLabel}期间 Electron 页面意外关闭。`);
+    }
+
     const title = (await noticeTitle.innerText().catch(() => '')) || '';
     const text = (await noticeText.innerText().catch(() => '')) || '';
     const doneBox = await win.locator('app-notification .box.done').count();
@@ -859,29 +868,25 @@ async function waitForCompileDone(
       lastStatusLine = statusLine;
     }
 
-    if (loading > 0 || /编译命令完成|编译命令执行完成|编译耗时|编译失败，耗时|编译错误，耗时/.test(compileLogs)) {
-      sawCompileStart = true;
-    }
-
-    const successByNotice = /编译完成/.test(title) || /Flash|RAM/.test(text);
+    const successByNotice = doneBox > 0 || /编译完成/.test(title) || /Flash|RAM/.test(text);
     const successByLog =
       /编译命令完成：\s*buildCompleted=\s*true\s+isErrored=\s*false/.test(compileLogs) ||
       /lastBuildStatus:\s*success/.test(compileLogs) ||
       /编译耗时:\s*\d/.test(compileLogs);
     const noticeChanged = `${title}\n${text}` !== noticeBeforeCompile;
 
-    if ((sawCompileStart && noticeChanged && successByNotice) || successByLog) {
+    if ((noticeChanged && successByNotice) || successByLog) {
       compileResult = 'done';
       break;
     }
 
-    const failureByNotice = /编译失败|预编译失败/.test(title);
+    const failureByNotice = errBox > 0 || /编译失败|预编译失败/.test(title);
     const failureByLog =
       /buildCompleted=\s*false|isErrored=\s*true|lastBuildStatus:\s*error/.test(compileLogs) ||
       /编译失败，耗时|编译未完成，耗时|编译过程中发生错误|Cannot start build from state/.test(
         compileLogs,
       );
-    if ((sawCompileStart && noticeChanged && failureByNotice) || failureByLog) {
+    if ((noticeChanged && failureByNotice) || failureByLog) {
       compileResult = 'error';
       lastError = `title="${title.trim()}" text="${text.trim()}"`;
       break;
