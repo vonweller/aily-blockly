@@ -541,7 +541,11 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
 
   private async submitPublishFromDialogWithGithubRetry(item: BlocklyToolboxFacadeItem, publishResult: LibraryPublishDialogResult, allowGithubBindRetry: boolean): Promise<LibraryPublishSubmitResult> {
     try {
-      const accepted = await this.submitLibraryWithExistingConfirmation(item, publishResult.packageJsonPatch);
+      const accepted = await this.submitLibraryWithExistingConfirmation(
+        item,
+        publishResult.packageJsonPatch,
+        publishResult.prDescription,
+      );
       if (!accepted) {
         return { success: false };
       }
@@ -640,9 +644,13 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
     await this.projectService.projectOpen(projectPath, { reason: 'reload' });
   }
 
-  private async submitLibraryWithExistingConfirmation(item: BlocklyToolboxFacadeItem, packageJsonPatch: Record<string, unknown>): Promise<boolean> {
+  private async submitLibraryWithExistingConfirmation(
+    item: BlocklyToolboxFacadeItem,
+    packageJsonPatch: Record<string, unknown>,
+    prDescription: string,
+  ): Promise<boolean> {
     try {
-      await this.submitLibraryRequest(item, false, packageJsonPatch);
+      await this.submitLibraryRequest(item, false, packageJsonPatch, prDescription);
       return true;
     } catch (error) {
       if (this.isExistingLibrarySubmissionError(error)) {
@@ -651,7 +659,7 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
           return false;
         }
 
-        await this.submitLibraryRequest(item, true, packageJsonPatch);
+        await this.submitLibraryRequest(item, true, packageJsonPatch, prDescription);
         return true;
       }
 
@@ -711,7 +719,12 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
     return baseMessage;
   }
 
-  private async submitLibraryRequest(item: BlocklyToolboxFacadeItem, confirmExisting: boolean, packageJsonPatch: Record<string, unknown>): Promise<void> {
+  private async submitLibraryRequest(
+    item: BlocklyToolboxFacadeItem,
+    confirmExisting: boolean,
+    packageJsonPatch: Record<string, unknown>,
+    prDescription: string,
+  ): Promise<void> {
     const loadingMessage = this.message.loading(this.translate.instant('LIBRARY_PUBLISH.SUBMITTING', {
       name: this.getLibraryDisplayName(item),
     }), { nzDuration: 0 });
@@ -720,7 +733,7 @@ export class BlocklyToolboxPaneComponent implements OnInit, AfterViewInit, OnDes
         name: item.libraryName || '',
         path: item.libraryPath || '',
         source: 'declared',
-      }, confirmExisting, packageJsonPatch));
+      }, confirmExisting, packageJsonPatch, prDescription));
     } finally {
       if (loadingMessage.messageId) {
         this.message.remove(loadingMessage.messageId);
