@@ -243,6 +243,7 @@ export interface HostSessionRecordStoreOptions {
  */
 export class HostSessionRecordStore {
   private readonly operationLogs = new Map<string, HostSessionOperationLog>();
+  private readonly asyncWriteQueues = new Map<string, Promise<void>>();
 
   constructor(private readonly options: HostSessionRecordStoreOptions) {}
 
@@ -750,6 +751,36 @@ export class HostSessionRecordStore {
     };
   }
 
+  async writeAsync(sessionId: string, data: HostSessionRecord): Promise<void> {
+    try {
+      await this.writeOrThrowAsync(sessionId, data);
+    } catch (error) {
+      console.warn(`[ChatHistory] Failed to write host persistence record (${sessionId}):`, error);
+    }
+  }
+
+  async writeOrThrowAsync(sessionId: string, data: HostSessionRecord): Promise<void> {
+    if (!this.hasFs()) return;
+
+    let projectPath = data.metadata.projectPath;
+    if (projectPath) {
+      const rootPath = this.options.getGlobalProjectRootPath();
+      if (rootPath && this.options.isSamePath(projectPath, rootPath)) {
+        projectPath = null;
+        data.metadata.projectPath = null;
+      }
+    }
+
+    const dir = projectPath
+      ? this.options.joinPath(projectPath, this.options.projectChatDir)
+      : this.options.getGlobalChatDataDir();
+    const filePath = this.options.joinPath(dir, `${sessionId}.jsonl`);
+    await this.enqueueAsyncWrite(filePath, async () => {
+      await this.ensureDirAsync(dir);
+      await this.writeOperationLogAsync(filePath, data);
+    });
+  }
+
   private normalizeCheckpointTimelineEntries(value: unknown): HostSessionCheckpointTimelineEntrySidecar[] | undefined {
     if (!Array.isArray(value)) {
       return undefined;
@@ -920,10 +951,53 @@ export class HostSessionRecordStore {
     AilyHost.get().fs.appendFileSync(path, content);
   }
 
+  private async fileExistsAsync(path: string): Promise<boolean> {
+    const fs = AilyHost.get().fs;
+    if (typeof fs.exists === 'function') {
+      return fs.exists(path);
+    }
+    return this.fileExists(path);
+  }
+
+  private async readFileAsync(path: string): Promise<string> {
+    const fs = AilyHost.get().fs;
+    if (typeof fs.readFile === 'function') {
+      return fs.readFile(path, 'utf-8');
+    }
+    return this.readFileSync(path);
+  }
+
+  private async writeFileAsync(path: string, content: string): Promise<void> {
+    const fs = AilyHost.get().fs;
+    if (typeof fs.writeFile === 'function') {
+      await fs.writeFile(path, content, 'utf-8');
+      return;
+    }
+    this.writeFileSync(path, content);
+  }
+
+  private async appendFileAsync(path: string, content: string): Promise<void> {
+    const fs = AilyHost.get().fs;
+    if (typeof fs.appendFile === 'function') {
+      await fs.appendFile(path, content, 'utf-8');
+      return;
+    }
+    this.appendFileSync(path, content);
+  }
+
   private ensureDir(dirPath: string): void {
     if (!this.fileExists(dirPath)) {
       AilyHost.get().fs.mkdirSync(dirPath, { recursive: true });
     }
+  }
+
+  private async ensureDirAsync(dirPath: string): Promise<void> {
+    const fs = AilyHost.get().fs;
+    if (typeof fs.mkdir === 'function') {
+      await fs.mkdir(dirPath, { recursive: true });
+      return;
+    }
+    this.ensureDir(dirPath);
   }
 
   private writeOperationLog(filePath: string, data: HostSessionRecord): void {
@@ -947,6 +1021,25 @@ export class HostSessionRecordStore {
     log.confirmWrite();
   }
 
+  private async writeOperationLogAsync(filePath: string, data: HostSessionRecord): Promise<void> {
+    const log = await this.getOperationLogAsync(filePath);
+    if (!(await this.fileExistsAsync(filePath))) {
+      await this.writeFileAsync(filePath, log.createInitial(data));
+      return;
+    }
+
+    const result = log.write(data);
+    if (!result.data) {
+      return;
+    }
+    if (result.op === 'replace') {
+      await this.writeFileAsync(filePath, result.data);
+    } else {
+      await this.appendFileAsync(filePath, result.data);
+    }
+    log.confirmWrite();
+  }
+
   private getOperationLog(filePath: string): HostSessionOperationLog {
     let log = this.operationLogs.get(filePath);
     if (!log) {
@@ -957,5 +1050,30 @@ export class HostSessionRecordStore {
       this.operationLogs.set(filePath, log);
     }
     return log;
+  }
+
+  private async getOperationLogAsync(filePath: string): Promise<HostSessionOperationLog> {
+    let log = this.operationLogs.get(filePath);
+    if (!log) {
+      log = new HostSessionOperationLog();
+      if (await this.fileExistsAsync(filePath)) {
+        log.read(await this.readFileAsync(filePath));
+      }
+      this.operationLogs.set(filePath, log);
+    }
+    return log;
+  }
+
+  private async enqueueAsyncWrite(filePath: string, operation: () => Promise<void>): Promise<void> {
+    const previous = this.asyncWriteQueues.get(filePath) ?? Promise.resolve();
+    const next = previous.catch(() => undefined).then(operation);
+    this.asyncWriteQueues.set(filePath, next);
+    try {
+      await next;
+    } finally {
+      if (this.asyncWriteQueues.get(filePath) === next) {
+        this.asyncWriteQueues.delete(filePath);
+      }
+    }
   }
 }

@@ -1,4 +1,6 @@
-import { Injectable, ElementRef } from '@angular/core';
+import { Injectable, ElementRef, NgZone, Optional } from '@angular/core';
+
+import { ChatPerformanceTracer } from './chat-perf-tracer';
 
 export type ChatRevealTarget =
   | 'current-response'
@@ -48,6 +50,8 @@ export class ScrollManagerService {
 
   private containerRef: ElementRef | null = null;
   private revealHostDelegate: ChatRevealHostDelegate | null = null;
+
+  constructor(@Optional() private readonly ngZone: NgZone | null = null) {}
 
   /**
    * Canonical follow-bottom state, aligned with VS Code chat list terminology.
@@ -109,6 +113,11 @@ export class ScrollManagerService {
       return;
     }
 
+    if (behavior === 'auto') {
+      this.ensureFollowBottomLoop('auto');
+      return;
+    }
+
     this.scrollToBottom(behavior);
   }
 
@@ -130,6 +139,9 @@ export class ScrollManagerService {
   }
 
   handleContentHeightChange(): void {
+    const startedAt = typeof performance !== 'undefined' && typeof performance.now === 'function'
+      ? performance.now()
+      : Date.now();
     const element = this.containerRef?.nativeElement as HTMLElement | undefined;
     if (!element) {
       return;
@@ -149,10 +161,12 @@ export class ScrollManagerService {
         this._lastHeight = currentHeight;
         this._lastAtBottom = this._lastAtBottom ?? this.isAtBottom(element);
         this.updateFollowBottomAffordance(element);
+        this.recordScrollHeightUpdateDuration(startedAt, currentHeight, shouldFollow);
         return;
       }
 
       this.ensureFollowBottomLoop('auto');
+      this.recordScrollHeightUpdateDuration(startedAt, currentHeight, shouldFollow);
       return;
     }
 
@@ -160,6 +174,51 @@ export class ScrollManagerService {
     this._lastHeight = currentHeight;
     this._lastAtBottom = this.isAtBottom(element);
     this.updateFollowBottomAffordance(element);
+    this.recordScrollHeightUpdateDuration(startedAt, currentHeight, shouldFollow);
+  }
+
+  /**
+   * Item-local height notification from the mounted chat row renderer.
+   * Equivalent to VS Code ChatListWidget.updateElementHeight(element): the
+   * row has already been measured, so this path only preserves bottom-follow
+   * and never re-queries response rows or recalculates their min height.
+   */
+  handleItemHeightChange(_itemId: string, _height: number): void {
+    const startedAt = typeof performance !== 'undefined' && typeof performance.now === 'function'
+      ? performance.now()
+      : Date.now();
+    const element = this.containerRef?.nativeElement as HTMLElement | undefined;
+    if (!element) {
+      return;
+    }
+
+    const shouldFollow = this.scrollLock && this._pendingExchangeTimeouts.size === 0;
+    if (shouldFollow) {
+      // Keep the ResizeObserver/list-item update callback measurement-only.
+      // Bottom reveal is performed by the existing coalesced list-layout loop,
+      // avoiding a scrollHeight read followed by scrollTo in the same frame.
+      this.ensureFollowBottomLoop('auto');
+    } else if (this.scrollLock) {
+      this._followBottomAfterExchangeReveal = true;
+    }
+
+    this.recordScrollHeightUpdateDuration(startedAt, this._lastHeight ?? 0, shouldFollow);
+  }
+
+  private recordScrollHeightUpdateDuration(startedAt: number, currentHeight: number, shouldFollow: boolean): void {
+    const durationMs = Math.max(0, (typeof performance !== 'undefined' && typeof performance.now === 'function'
+      ? performance.now()
+      : Date.now()) - startedAt);
+    ChatPerformanceTracer.recordDuration(
+      'scroll_height_update',
+      durationMs,
+      `height=${currentHeight},follow=${shouldFollow},lock=${this.scrollLock}`,
+      { slowThresholdMs: 16 },
+    );
+    if (durationMs >= 50) {
+      ChatPerformanceTracer.increment('scroll_height_update.hard_regression');
+      ChatPerformanceTracer.mark('scroll_height_update_hard_regression', `${durationMs.toFixed(1)}ms height=${currentHeight}`);
+    }
   }
 
   /**
@@ -422,27 +481,31 @@ export class ScrollManagerService {
   }
 
   private scheduleExchangeAttempt(callback: () => void, delayMs: number): void {
-    const handle = setTimeout(() => {
+    const handle = this.runOutsideAngular(() => setTimeout(() => {
       this._pendingExchangeTimeouts.delete(handle);
       callback();
-    }, delayMs);
+    }, delayMs));
     this._pendingExchangeTimeouts.add(handle);
   }
 
   private scheduleBottomScrollAttempt(callback: () => void, delayMs: number): void {
-    const handle = setTimeout(() => {
+    const handle = this.runOutsideAngular(() => setTimeout(() => {
       this._pendingScrollTimeouts.delete(handle);
       callback();
-    }, delayMs);
+    }, delayMs));
     this._pendingScrollTimeouts.add(handle);
   }
 
   private scheduleTargetRevealAttempt(callback: () => void, delayMs: number): void {
-    const handle = setTimeout(() => {
+    const handle = this.runOutsideAngular(() => setTimeout(() => {
       this._pendingTargetRevealTimeouts.delete(handle);
       callback();
-    }, delayMs);
+    }, delayMs));
     this._pendingTargetRevealTimeouts.add(handle);
+  }
+
+  private runOutsideAngular<T>(work: () => T): T {
+    return this.ngZone ? this.ngZone.runOutsideAngular(work) : work();
   }
 
   private cancelPendingExchangeReveal(): void {
@@ -516,12 +579,14 @@ export class ScrollManagerService {
   private scheduleFollowBottomFrame(callback: () => void): void {
     if (typeof globalThis.requestAnimationFrame === 'function') {
       this._followBottomFrameUsesRaf = true;
-      this._followBottomFrameHandle = globalThis.requestAnimationFrame(callback);
+      this._followBottomFrameHandle = this.runOutsideAngular(
+        () => globalThis.requestAnimationFrame(callback),
+      );
       return;
     }
 
     this._followBottomFrameUsesRaf = false;
-    this._followBottomFrameHandle = setTimeout(callback, 16);
+    this._followBottomFrameHandle = this.runOutsideAngular(() => setTimeout(callback, 16));
   }
 
   private cancelFollowBottomLoop(): void {
@@ -558,9 +623,10 @@ export class ScrollManagerService {
       return;
     }
 
-    const dialogs = Array.from(element.querySelectorAll<HTMLElement>('.dialog-box'));
-    const latestIndex = dialogs.indexOf(latestResponse);
-    const secondToLast = latestIndex > 0 ? dialogs[latestIndex - 1] : null;
+    let secondToLast = latestResponse.previousElementSibling as HTMLElement | null;
+    while (secondToLast && !secondToLast.classList.contains('dialog-box')) {
+      secondToLast = secondToLast.previousElementSibling as HTMLElement | null;
+    }
     const secondToLastHeight = secondToLast ? Math.min(secondToLast.offsetHeight || 150, 200) : 150;
     const minHeight = Math.max(element.clientHeight - (secondToLastHeight + 10), 0);
     element.style.setProperty('--chat-current-response-min-height', `${minHeight}px`);

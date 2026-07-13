@@ -155,10 +155,15 @@ function withRequestListTransactionEffects(
 }
 
 export type ChatSessionModelStoreChangeKind = 'created' | 'updated' | 'disposed';
+export type ChatSessionModelStoreChangeReason =
+  | ChatSessionRequestListTransactionResult['kind']
+  | 'metadata'
+  | 'turnDelta';
 
 export interface ChatSessionModelStoreChangedEvent {
   readonly sessionResource: ChatSessionResource;
   readonly kind: ChatSessionModelStoreChangeKind;
+  readonly reason?: ChatSessionModelStoreChangeReason;
 }
 
 export interface ChatSessionModelReference {
@@ -1023,6 +1028,10 @@ export class ChatSessionModel {
   }
 }
 
+export interface ChatSessionModelAcquireOptions {
+  readonly suppressCreatedEvent?: boolean;
+}
+
 function cloneTurnResponses(turnResponses: readonly TurnResponseTurn[] | null | undefined): TurnResponseTurn[] {
   return Array.isArray(turnResponses)
     ? turnResponses.map(turnResponse => cloneTurnResponse(turnResponse))
@@ -1319,7 +1328,10 @@ export class ChatSessionModelStoreService {
     return model ? this.createReference(model) : undefined;
   }
 
-  acquireOrCreate(props: ChatSessionModelCreateProps): ChatSessionModelReference {
+  acquireOrCreate(
+    props: ChatSessionModelCreateProps,
+    options: ChatSessionModelAcquireOptions = {},
+  ): ChatSessionModelReference {
     const normalizedResource = normalizeChatSessionResource(props.sessionResource);
     if (!normalizedResource) {
       throw new Error('ChatSessionModelStore.acquireOrCreate requires a sessionResource');
@@ -1333,7 +1345,9 @@ export class ChatSessionModelStoreService {
       });
       this.models.set(normalizedResource, model);
       this.pendingDispose.delete(normalizedResource);
-      this.changedSubject.next({ sessionResource: normalizedResource, kind: 'created' });
+      if (!options.suppressCreatedEvent) {
+        this.changedSubject.next({ sessionResource: normalizedResource, kind: 'created' });
+      }
     } else {
       model.updateMetadata(props);
       this.changedSubject.next({ sessionResource: normalizedResource, kind: 'updated' });
@@ -1401,7 +1415,11 @@ export class ChatSessionModelStoreService {
 
     const result = model.replaceAllTurnResponsesTransaction(turnResponses);
     if (result) {
-      this.changedSubject.next({ sessionResource: model.sessionResource, kind: 'updated' });
+      this.changedSubject.next({
+        sessionResource: model.sessionResource,
+        kind: 'updated',
+        reason: 'replaceAll',
+      });
     }
     return result;
   }
@@ -1449,7 +1467,13 @@ export class ChatSessionModelStoreService {
         : 'appendTransientTurn',
     );
     if (result) {
-      this.changedSubject.next({ sessionResource: model.sessionResource, kind: 'updated' });
+      this.changedSubject.next({
+        sessionResource: model.sessionResource,
+        kind: 'updated',
+        reason: typeof status === 'string' && status !== 'streaming'
+          ? 'appendCompletedTurn'
+          : 'appendTransientTurn',
+      });
     }
     return result?.turnResponses ?? null;
   }
@@ -1465,7 +1489,7 @@ export class ChatSessionModelStoreService {
 
     const result = model.appendTurnTransaction(turnResponse, 'appendCompletedTurn');
     if (result) {
-      this.changedSubject.next({ sessionResource: model.sessionResource, kind: 'updated' });
+      this.changedSubject.next({ sessionResource: model.sessionResource, kind: 'updated', reason: 'appendCompletedTurn' });
     }
     return result;
   }
@@ -1481,7 +1505,7 @@ export class ChatSessionModelStoreService {
 
     const result = model.appendTurnTransaction(turnResponse, 'appendTransientTurn');
     if (result) {
-      this.changedSubject.next({ sessionResource: model.sessionResource, kind: 'updated' });
+      this.changedSubject.next({ sessionResource: model.sessionResource, kind: 'updated', reason: 'appendTransientTurn' });
     }
     return result;
   }
@@ -1543,7 +1567,7 @@ export class ChatSessionModelStoreService {
       syncPartStore: false,
     });
     model.upsertTurnResponseParts(turnResponse.turnId, parts);
-    this.changedSubject.next({ sessionResource: model.sessionResource, kind: 'updated' });
+    this.changedSubject.next({ sessionResource: model.sessionResource, kind: 'updated', reason: 'turnDelta' });
     return nextTurnResponses;
   }
 

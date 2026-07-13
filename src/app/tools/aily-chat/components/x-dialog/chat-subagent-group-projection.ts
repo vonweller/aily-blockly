@@ -522,7 +522,7 @@ function buildActivityGroupRevision(parts: readonly ChatPart[]): string {
   return parts.map((part, index) => buildActivityPartRevision(part, index)).join('|');
 }
 
-function buildActivityPartRevision(part: ChatPart, index: number): string {
+export function buildActivityPartRevision(part: ChatPart, index: number): string {
   const base = `${buildChatPartIdentity(part, index)}:${part.type}`;
   switch (part.type) {
     case 'thinking':
@@ -583,7 +583,15 @@ function buildActivityPartRevision(part: ChatPart, index: number): string {
         contentProgressKey(part),
       ].join(':');
     default:
-      return base;
+      return `${base}:${fingerprintText(stableRevisionJson(part))}`;
+  }
+}
+
+function stableRevisionJson(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? '';
+  } catch {
+    return String(value ?? '');
   }
 }
 

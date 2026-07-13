@@ -53,6 +53,11 @@ import type { HostResponseVoteDirection } from '../../helpers/host-turn-response
 import { ChatRuntimeInteractionHostService } from '../../services/chat-runtime-interaction-host.service';
 import type { WorkspaceCheckpointPresentationMode } from '../../services/edit-checkpoint.service';
 import { ChatEngineService } from '../../services/chat-engine.service';
+import {
+  appendMarkdownContent,
+  getMarkdownContentLength,
+  storeMarkdownContent,
+} from '../../core/markdown-content-store';
 
 const EMPTY_PROGRESS_MESSAGES: readonly NonNullable<TurnResponseTurn['response']['progressMessages']>[number][] = [];
 const EMPTY_CHAT_PARTS: readonly ChatPart[] = [];
@@ -118,11 +123,11 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
   @Output() editAddFile = new EventEmitter<DialogTurnContext>();
   @Output() editAddFolder = new EventEmitter<DialogTurnContext>();
   @Output() taskAction = new EventEmitter<ChatTaskActionDetail>();
-  @Output() contentDelta = new EventEmitter<void>();
+  @Output() contentDelta = new EventEmitter<ChatDialogItemHeightChange>();
 
   @ViewChild('editTextarea') editTextareaRef?: ElementRef<HTMLTextAreaElement>;
   @ViewChild('editInputBox') editInputBoxRef?: ElementRef<HTMLElement>;
-  @ViewChild('contentRoot') contentRootRef?: ElementRef<HTMLElement>;
+  @ViewChild(ChatMessagePartsComponent) private messagePartsComponent?: ChatMessagePartsComponent;
 
   streamContent = signal('');
   streamingConfig = signal<StreamingOption>({ hasNextChunk: false, enableAnimation: false });
@@ -138,6 +143,7 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
   showEditAddList = false;
   isViewportVisible = true;
   private lastRenderedContentHeight = 0;
+  private lastEmittedItemHeight = 0;
   private visibilityObserver: IntersectionObserver | null = null;
   private contentResizeObserver: ResizeObserver | null = null;
   private contentDeltaFrameId: number | null = null;
@@ -147,7 +153,15 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
   private _effectivePartsDoing = false;
   private _effectivePartsConfirmationActive = false;
   private _effectivePartsItemId = '';
+  private _effectivePartsItemRef: ChatVisibleTranscriptDialogItem | null = null;
   private _effectivePartsCache = [] as RenderableChatPart[];
+  private fallbackMarkdownProjection: {
+    readonly itemId: string;
+    readonly partId: string;
+    readonly contentRef: string;
+    readonly content: string;
+    readonly part: ChatPart;
+  } | null = null;
   private renderStateItemId: string | null = null;
   private hostTextDeltaVisibilityTurnId: string | null = null;
   private feedbackItemId: string | null = null;
@@ -300,6 +314,7 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
     const hasActiveConfirmationCarousel = this.hasActiveConfirmationCarousel;
     const itemId = this.item.id;
     if (itemId === this._effectivePartsItemId
+      && this.item === this._effectivePartsItemRef
       && itemParts === this._effectivePartsSource
       && progressMessages === this._effectiveProgressMessagesSource
       && doing === this._effectivePartsDoing
@@ -308,13 +323,16 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
     }
 
     this._effectivePartsItemId = itemId;
+    this._effectivePartsItemRef = this.item;
     this._effectivePartsSource = itemParts;
     this._effectiveProgressMessagesSource = progressMessages;
     this._effectivePartsDoing = doing;
     this._effectivePartsConfirmationActive = hasActiveConfirmationCarousel;
     const visibleItemParts = filterTerminalOwnedToolCalls(itemParts.filter(isVisibleResponsePart));
+    const assistantFallbackPart = this.createAssistantFallbackMarkdownPart(visibleItemParts);
     this._effectivePartsCache = [
       ...visibleItemParts,
+      ...(assistantFallbackPart ? [assistantFallbackPart] : []),
       ...buildRenderableProgressParts(response, visibleItemParts, doing, hasActiveConfirmationCarousel),
     ];
     return this._effectivePartsCache;
@@ -369,7 +387,10 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
   }
 
   get showAssistantModelBadge(): boolean {
-    return this.role === 'aily' && !this.effectiveDoing && !!this.assistantModelBadgeLabel;
+    return this.role === 'aily'
+      && !this.effectiveDoing
+      && !!this.assistantModelBadgeLabel
+      && (this.canShowActions || this.canShowLimitActions);
   }
 
   get messageTimeLabel(): string | null {
@@ -1046,6 +1067,54 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
     return turnResponse ? getTurnResponseAssistantText(turnResponse) : '';
   }
 
+  private createAssistantFallbackMarkdownPart(visibleItemParts: readonly ChatPart[]): ChatPart | null {
+    if (this.role !== 'aily') {
+      return null;
+    }
+
+    if (visibleItemParts.some(part => part.type === 'markdown')) {
+      return null;
+    }
+
+    const content = preprocessHistoricalDialogContent(this.renderableAssistantFallbackContent);
+    if (this.isBlankContent(content)) {
+      this.fallbackMarkdownProjection = null;
+      return null;
+    }
+
+    const itemId = this.item.id;
+    const partId = `fallback-markdown:${itemId}`;
+    const contentRef = `visible-fallback-markdown:${itemId}`;
+    const previous = this.fallbackMarkdownProjection;
+    if (!previous || previous.itemId !== itemId || previous.partId !== partId || previous.contentRef !== contentRef) {
+      storeMarkdownContent(contentRef, content);
+    } else if (content !== previous.content) {
+      if (content.startsWith(previous.content)) {
+        appendMarkdownContent(contentRef, content.slice(previous.content.length));
+      } else {
+        storeMarkdownContent(contentRef, content);
+      }
+    }
+
+    const part: ChatPart = {
+      type: 'markdown',
+      partId,
+      content: this.effectiveDoing ? '' : content,
+      contentRef,
+      contentLength: getMarkdownContentLength(contentRef),
+      sourceAgentRole: 'main',
+      sequence: Number.MAX_SAFE_INTEGER - 1,
+    };
+    this.fallbackMarkdownProjection = {
+      itemId,
+      partId,
+      contentRef,
+      content,
+      part,
+    };
+    return part;
+  }
+
   private isBlankContent(content: string | null | undefined): boolean {
     return typeof content !== 'string' || content.trim().length === 0;
   }
@@ -1103,7 +1172,20 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
       hasNextChunk: this.effectiveDoing,
       enableAnimation,
       buffering: this.effectiveDoing ? 'off' : 'paragraph',
+      impliedWordLoadRate: this.item.contentUpdateTimings?.impliedWordLoadRate,
     };
+  }
+
+  private syncStreamingConfig(enableAnimation: boolean): void {
+    const next = this.createStreamingConfig(enableAnimation);
+    const current = this.streamingConfig();
+    if (current.hasNextChunk === next.hasNextChunk
+      && current.enableAnimation === next.enableAnimation
+      && current.buffering === next.buffering
+      && current.impliedWordLoadRate === next.impliedWordLoadRate) {
+      return;
+    }
+    this.streamingConfig.set(next);
   }
 
   ngOnChanges(changes: SimpleChanges) {
@@ -1119,25 +1201,92 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
       this.syncFeedbackStateFromItem();
       this.syncHostTextDeltaVisibility();
       if (!this.shouldRenderHeavyContent) {
-        this.streamingConfig.set(this.createStreamingConfig(false));
+        this.syncStreamingConfig(false);
         return;
       }
 
       // ★ Phase 2: aily 消息统一走 Part-based 渲染
       if (this.hasStructuredAilyContent) {
-        this.streamingConfig.set(this.createStreamingConfig(this.effectiveDoing));
+        this.syncStreamingConfig(this.effectiveDoing);
         return;
       }
 
       // User 消息 & fallback：预处理后由 x-markdown 渲染
       const content = this.renderableFallbackContent;
-      this.streamingConfig.set(this.createStreamingConfig(this.effectiveDoing));
+      this.syncStreamingConfig(this.effectiveDoing);
       const processed = preprocessHistoricalDialogContent(content);
       if (processed !== this.lastRaw) {
         this.lastRaw = processed;
         this.streamContent.set(processed);
       }
     }
+  }
+
+  applyVisibleTranscriptItemPatch(
+    nextItem: ChatVisibleTranscriptDialogItem,
+    options?: { readonly detectChanges?: boolean },
+  ): boolean {
+    if (!nextItem || nextItem.id !== this.item?.id) {
+      return false;
+    }
+
+    this.item = nextItem;
+    if (options?.detectChanges === false) {
+      if (this.hasStructuredAilyContent) {
+        return this.messagePartsComponent?.applyVisiblePartsPatch({
+          parts: this.effectiveParts,
+          doing: this.effectiveDoing,
+          turnResponse: this.activityTurnResponse,
+          impliedWordLoadRate: this.item.contentUpdateTimings?.impliedWordLoadRate,
+          detailProjectionEnabled: this.isViewportVisible,
+        }) ?? true;
+      }
+      return true;
+    }
+
+    this.syncRowLocalStateFromItemId();
+    this.syncFeedbackStateFromItem();
+    this.syncHostTextDeltaVisibility();
+    if (!this.shouldRenderHeavyContent) {
+      this.syncStreamingConfig(false);
+      this.cdr.detectChanges();
+      return true;
+    }
+
+    if (this.hasStructuredAilyContent) {
+      this.syncStreamingConfig(this.effectiveDoing);
+      this.messagePartsComponent?.applyVisiblePartsPatch({
+        parts: this.effectiveParts,
+        doing: this.effectiveDoing,
+        turnResponse: this.activityTurnResponse,
+        impliedWordLoadRate: this.item.contentUpdateTimings?.impliedWordLoadRate,
+        detailProjectionEnabled: this.isViewportVisible,
+      });
+      // The part renderer owns only the mounted part subtree. Row chrome such
+      // as footer model/billing metadata, completion time, feedback, and
+      // lifecycle classes belongs to this stable list item and must consume
+      // the same item revision even when the part delta was applied directly.
+      this.cdr.detectChanges();
+      return true;
+    }
+
+    const content = this.renderableFallbackContent;
+    this.syncStreamingConfig(this.effectiveDoing);
+    const processed = preprocessHistoricalDialogContent(content);
+    if (processed !== this.lastRaw) {
+      this.lastRaw = processed;
+      this.streamContent.set(processed);
+    }
+    this.cdr.detectChanges();
+    return true;
+  }
+
+  applySessionRequestState(requestInProgress: boolean): void {
+    if (this.isWaiting === requestInProgress) {
+      return;
+    }
+    this.isWaiting = requestInProgress;
+    this.cdr.detectChanges();
   }
 
   ngAfterViewInit(): void {
@@ -1169,14 +1318,17 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
 
     this.renderStateItemId = itemId;
     this._effectivePartsItemId = '';
+    this._effectivePartsItemRef = null;
     this._effectivePartsSource = EMPTY_CHAT_PARTS;
     this._effectiveProgressMessagesSource = EMPTY_PROGRESS_MESSAGES;
     this._effectivePartsDoing = false;
     this._effectivePartsConfirmationActive = false;
     this._effectivePartsCache = [];
+    this.fallbackMarkdownProjection = null;
     this.lastRaw = '';
     this.streamContent.set('');
     this.lastRenderedContentHeight = 0;
+    this.lastEmittedItemHeight = 0;
     this.forceCloseEditFromExclusiveLock();
   }
 
@@ -1242,10 +1394,7 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
       return;
     }
 
-    const element = this.contentRootRef?.nativeElement;
-    if (!element) {
-      return;
-    }
+    const element = this.hostElement.nativeElement;
 
     this.ngZone.runOutsideAngular(() => {
       this.contentResizeObserver = new ResizeObserver(entries => {
@@ -1259,14 +1408,27 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
           return;
         }
         this.lastRenderedContentHeight = nextHeight;
-        this.scheduleContentDelta();
+        this.emitMeasuredContentDelta(nextHeight);
       });
       this.contentResizeObserver.observe(element);
     });
   }
 
   handleStructuredContentDelta(): void {
+    // ResizeObserver is the row-height authority. Nested part notifications do
+    // not need a second measurement frame when the observer is available.
+    if (this.contentResizeObserver) {
+      return;
+    }
     this.scheduleContentDelta();
+  }
+
+  private emitMeasuredContentDelta(height: number): void {
+    if (!this.shouldRenderHeavyContent || height <= 0 || height === this.lastEmittedItemHeight) {
+      return;
+    }
+    this.lastEmittedItemHeight = height;
+    this.contentDelta.emit({ itemId: this.item.id, height });
   }
 
   private scheduleContentDelta(): void {
@@ -1277,7 +1439,8 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
     const emit = () => {
       this.contentDeltaFrameId = null;
       if (this.shouldRenderHeavyContent) {
-        this.contentDelta.emit();
+        const height = Math.ceil(this.hostElement.nativeElement.getBoundingClientRect().height || 0);
+        this.emitMeasuredContentDelta(height);
       }
     };
 
@@ -1302,7 +1465,7 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
   }
 
   private refreshRenderableContent(): void {
-    this.streamingConfig.set(this.createStreamingConfig(this.effectiveDoing));
+    this.syncStreamingConfig(this.effectiveDoing);
     if (this.hasStructuredAilyContent) {
       return;
     }
@@ -1325,7 +1488,16 @@ function isVisibleResponsePart(part: ChatPart): boolean {
   }
 
   const content = typeof part.content === 'string' ? part.content : '';
-  return content.trim().length > 0;
+  const contentRef = typeof part.contentRef === 'string' ? part.contentRef.trim() : '';
+  const contentLength = typeof part.contentLength === 'number' && Number.isFinite(part.contentLength)
+    ? part.contentLength
+    : 0;
+  return content.trim().length > 0 || contentRef.length > 0 || contentLength > 0;
+}
+
+export interface ChatDialogItemHeightChange {
+  readonly itemId: string;
+  readonly height: number;
 }
 
 function filterTerminalOwnedToolCalls(parts: readonly ChatPart[]): ChatPart[] {

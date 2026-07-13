@@ -206,6 +206,7 @@ export class RenderEventItemLifecycleNormalizer {
         output.push({ type: 'turnStarted', turnId: event.turnId, timestamp });
         return output;
 
+      case 'response_complete':
       case 'turn_end':
         output.push(...this.flushProposedPlanParsers(timestamp, event.type));
         output.push(...this.completeActiveTextItems(timestamp, 'completed', event.type));

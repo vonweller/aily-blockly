@@ -4,11 +4,13 @@
   OnChanges,
   SimpleChanges,
   ChangeDetectionStrategy,
-  ChangeDetectorRef,
   ElementRef,
+  EventEmitter,
   ViewChild,
   ViewContainerRef,
   OnDestroy,
+  NgZone,
+  Output,
   Type,
   Injector,
   ComponentRef,
@@ -22,6 +24,7 @@ import { MarkdownParser } from '../../core/parser';
 import { MarkdownRenderer } from '../../core/renderer';
 import {
   StreamCache,
+  WordBuffer,
   getParagraphBufferedMarkdown,
   getInitialCache,
   processStreamingContent,
@@ -57,6 +60,20 @@ interface MarkdownRenderTarget {
   revision: number;
 }
 
+export interface XMarkdownIncrementalFallbackEvent {
+  readonly previousLength: number;
+  readonly nextLength: number;
+  readonly reason: 'non-append';
+}
+
+export interface XMarkdownIncrementalRenderEvent {
+  readonly durationMs: number;
+  readonly markdownLength: number;
+  readonly renderedLength: number;
+  readonly buffering: NonNullable<StreamingOption['buffering']>;
+  readonly isFinalChunk: boolean;
+}
+
 @Component({
   selector: 'x-markdown',
   standalone: true,
@@ -75,6 +92,15 @@ export class XMarkdownComponent implements OnChanges, OnDestroy {
 
   /** Markdown 鍐呭 */
   @Input() content: string = '';
+
+  /** Stable external markdown content reference. Used for append-only streaming without passing large strings through Angular. */
+  @Input() contentRef?: string;
+
+  /** External markdown content revision signal. The renderer resolves content when this changes. */
+  @Input() contentLength?: number;
+
+  /** Resolves external markdown content by contentRef. Kept as a stable input owned by the host chat renderer. */
+  @Input() contentResolver?: (contentRef: string) => string;
 
   /** 娴佸紡娓叉煋閰嶇疆 */
   @Input() streaming?: StreamingOption;
@@ -106,6 +132,24 @@ export class XMarkdownComponent implements OnChanges, OnDestroy {
   /** 淇濇姢鑷畾涔夋爣绛炬崲琛岀 */
   @Input() protectCustomTagNewlines?: boolean;
 
+  /** Fires after markdown DOM is incrementally committed and its height may have changed. */
+  @Output() heightChange = new EventEmitter<void>();
+
+  /** Imperative content-part callback that bypasses Angular template listeners. */
+  @Input() heightChangeCallback?: () => void;
+
+  /** Fires when append-only incremental rendering must fall back to a reset/re-render path. */
+  @Output() incrementalFallback = new EventEmitter<XMarkdownIncrementalFallbackEvent>();
+
+  /** Imperative fallback callback for mounted list-item renderers. */
+  @Input() incrementalFallbackCallback?: (event: XMarkdownIncrementalFallbackEvent) => void;
+
+  /** Fires after an incremental markdown flush so the chat renderer can record scalar perf diagnostics. */
+  @Output() incrementalRender = new EventEmitter<XMarkdownIncrementalRenderEvent>();
+
+  /** Imperative render callback for mounted list-item renderers. */
+  @Input() incrementalRenderCallback?: (event: XMarkdownIncrementalRenderEvent) => void;
+
   // ===================== View =====================
 
   @ViewChild('markdownContainer', { static: true }) containerRef!: ElementRef<HTMLElement>;
@@ -128,8 +172,15 @@ export class XMarkdownComponent implements OnChanges, OnDestroy {
   private renderTarget: MarkdownRenderTarget | null = null;
   private lastRenderedHtml: string = '';
   private tempFingerprintByElement: WeakMap<Element, string> | null = null;
+  private incrementalLastMarkdown = '';
+  private incrementalRenderedMarkdown = '';
+  private incrementalPendingMarkdown: string | null = null;
+  private incrementalPendingIsFinal = false;
+  private incrementalRafHandle: number | null = null;
+  private incrementalActive = false;
+  private wordBuffer = new WordBuffer();
 
-  private cdr = inject(ChangeDetectorRef);
+  private ngZone = inject(NgZone);
   private appRef = inject(ApplicationRef);
   private viewContainerRef = inject(ViewContainerRef);
   private injector = inject(Injector);
@@ -147,8 +198,11 @@ export class XMarkdownComponent implements OnChanges, OnDestroy {
 
     const needsRendererRebuild =
       changes['components'] ||
-      changes['dompurifyConfig'] ||
-      changes['streaming'];
+      changes['dompurifyConfig'];
+
+    if (changes['contentRef']) {
+      this.resetIncrementalRenderer();
+    }
 
     if (needsParserRebuild || !this.parser) {
       this.parser = new MarkdownParser({
@@ -158,14 +212,15 @@ export class XMarkdownComponent implements OnChanges, OnDestroy {
         components: this.components,
         protectCustomTagNewlines: this.protectCustomTagNewlines,
       });
+      this.resetIncrementalRenderer();
     }
 
     if (needsRendererRebuild || !this.renderer) {
       this.renderer = new MarkdownRenderer({
         components: this.components,
         dompurifyConfig: this.dompurifyConfig,
-        streaming: this.streaming,
       });
+      this.resetIncrementalRenderer(false);
     }
 
     // Update class
@@ -176,10 +231,59 @@ export class XMarkdownComponent implements OnChanges, OnDestroy {
     this.processContent();
   }
 
+  /**
+   * Refresh an external append-only content reference without requiring the
+   * parent Angular view to rebuild the markdown part. This mirrors VS Code's
+   * chat content-part model: the stable markdown part owns its incremental DOM
+   * update after the host response model reports a new revision.
+   */
+  refreshExternalContent(contentLength?: number): void {
+    if (typeof contentLength === 'number' && Number.isFinite(contentLength)) {
+      this.contentLength = contentLength;
+    }
+    this.processContent();
+  }
+
   // ===================== Content Processing =====================
 
   private processContent(): void {
-    const rawContent = this.content || '';
+    const rawContent = this.resolveContent();
+    const isStreaming = this.streaming?.hasNextChunk === true;
+    if (isStreaming) {
+      this.scheduleIncrementalMarkdown(rawContent, false);
+      return;
+    }
+
+    if (
+      this.streaming?.buffering === 'word'
+      && this.incrementalActive
+      && rawContent
+      && rawContent.startsWith(this.incrementalLastMarkdown)
+    ) {
+      this.scheduleIncrementalMarkdown(rawContent, true);
+      return;
+    }
+
+    this.cancelIncrementalRender();
+    this.incrementalLastMarkdown = rawContent;
+    this.incrementalRenderedMarkdown = rawContent;
+    this.processContentNow(rawContent, true);
+  }
+
+  private resolveContent(): string {
+    const ref = typeof this.contentRef === 'string' ? this.contentRef.trim() : '';
+    if (ref && typeof this.contentResolver === 'function') {
+      try {
+        return this.contentResolver(ref) || this.content || '';
+      } catch {
+        return this.content || '';
+      }
+    }
+
+    return this.content || '';
+  }
+
+  private processContentNow(rawContent: string, isFinalChunk: boolean): void {
 
     // Streaming processing
     const result = processStreamingContent(rawContent, this.streamCache, {
@@ -187,9 +291,9 @@ export class XMarkdownComponent implements OnChanges, OnDestroy {
       components: this.components,
     });
     const shouldUseParagraphBuffer = this.streaming?.hasNextChunk === true
-      && this.streaming?.buffering !== 'off';
+      && (this.streaming?.buffering ?? 'paragraph') === 'paragraph';
     this.displayContent = shouldUseParagraphBuffer
-      ? getParagraphBufferedMarkdown(result.output, false)
+      ? getParagraphBufferedMarkdown(result.output, isFinalChunk)
       : result.output;
     this.streamCache = result.cache;
 
@@ -207,9 +311,142 @@ export class XMarkdownComponent implements OnChanges, OnDestroy {
     const cleanHtml = this.renderer.render(htmlString);
 
     this.commitRenderedHtml(cleanHtml);
+  }
 
+  private scheduleIncrementalMarkdown(rawContent: string, isFinalChunk: boolean): void {
+    if (!this.incrementalActive) {
+      this.incrementalActive = true;
+      this.incrementalLastMarkdown = '';
+      this.incrementalRenderedMarkdown = '';
+      this.streamCache = getInitialCache();
+      this.wordBuffer.reset();
+    }
 
-    this.cdr.markForCheck();
+    if (!rawContent.startsWith(this.incrementalLastMarkdown)) {
+      const event: XMarkdownIncrementalFallbackEvent = {
+        previousLength: this.incrementalLastMarkdown.length,
+        nextLength: rawContent.length,
+        reason: 'non-append',
+      };
+      this.incrementalFallbackCallback?.(event);
+      this.incrementalFallback.emit(event);
+      this.resetIncrementalRenderer();
+    }
+
+    this.incrementalLastMarkdown = rawContent;
+    this.incrementalPendingMarkdown = rawContent;
+    this.incrementalPendingIsFinal = this.incrementalPendingIsFinal || isFinalChunk;
+    this.scheduleIncrementalFlush();
+  }
+
+  private scheduleIncrementalFlush(): void {
+    if (this.incrementalRafHandle !== null) {
+      return;
+    }
+
+    this.ngZone.runOutsideAngular(() => {
+      const schedule = typeof globalThis.requestAnimationFrame === 'function'
+        ? globalThis.requestAnimationFrame.bind(globalThis)
+        : (callback: FrameRequestCallback) => globalThis.setTimeout(() => callback(Date.now()), 16) as unknown as number;
+      this.incrementalRafHandle = schedule(() => {
+        this.incrementalRafHandle = null;
+        this.flushIncrementalMarkdown();
+      });
+    });
+  }
+
+  private flushIncrementalMarkdown(): void {
+    const pendingMarkdown = this.incrementalPendingMarkdown;
+    const pendingIsFinal = this.incrementalPendingIsFinal;
+    this.incrementalPendingMarkdown = null;
+    this.incrementalPendingIsFinal = false;
+    if (pendingMarkdown === null) {
+      return;
+    }
+
+    let renderMarkdown = pendingMarkdown;
+    let renderIsFinal = pendingIsFinal;
+    if (this.streaming?.buffering === 'word') {
+      if (pendingIsFinal) {
+        // The response-model completion pass is also the final list-item diff.
+        // Do not keep draining a stale word-buffer after the host response has
+        // completed: commit the authoritative markdown through the existing
+        // morph target once, then discard the streaming presentation state.
+        this.wordBuffer.reset();
+      } else {
+        this.wordBuffer.setRate(this.streaming?.impliedWordLoadRate, false);
+        const filteredMarkdown = this.wordBuffer.filterFlush(pendingMarkdown);
+        if (filteredMarkdown === undefined) {
+          if (this.wordBuffer.needsNextFrame) {
+            this.incrementalPendingMarkdown = pendingMarkdown;
+            this.incrementalPendingIsFinal = false;
+            this.scheduleIncrementalFlush();
+          }
+          return;
+        }
+        renderMarkdown = filteredMarkdown;
+        renderIsFinal = false;
+      }
+    }
+
+    if (renderMarkdown === this.incrementalRenderedMarkdown) {
+      if (this.wordBuffer.needsNextFrame) {
+        this.incrementalPendingMarkdown = pendingMarkdown;
+        this.incrementalPendingIsFinal = pendingIsFinal;
+        this.scheduleIncrementalFlush();
+      }
+      return;
+    }
+
+    const flushStartedAt = typeof performance !== 'undefined' && typeof performance.now === 'function'
+      ? performance.now()
+      : Date.now();
+    this.incrementalRenderedMarkdown = renderMarkdown;
+    this.processContentNow(renderMarkdown, renderIsFinal);
+    const flushEndedAt = typeof performance !== 'undefined' && typeof performance.now === 'function'
+      ? performance.now()
+      : Date.now();
+    const event: XMarkdownIncrementalRenderEvent = {
+      durationMs: Math.max(0, flushEndedAt - flushStartedAt),
+      markdownLength: pendingMarkdown.length,
+      renderedLength: renderMarkdown.length,
+      buffering: this.streaming?.buffering ?? 'paragraph',
+      isFinalChunk: renderIsFinal,
+    };
+    this.incrementalRenderCallback?.(event);
+    this.incrementalRender.emit(event);
+
+    if (this.wordBuffer.needsNextFrame) {
+      this.incrementalPendingMarkdown = pendingMarkdown;
+      this.incrementalPendingIsFinal = pendingIsFinal;
+      this.scheduleIncrementalFlush();
+    }
+  }
+
+  private cancelIncrementalRender(): void {
+    if (this.incrementalRafHandle === null) {
+      return;
+    }
+
+    if (typeof globalThis.cancelAnimationFrame === 'function') {
+      globalThis.cancelAnimationFrame(this.incrementalRafHandle);
+    } else {
+      globalThis.clearTimeout(this.incrementalRafHandle);
+    }
+    this.incrementalRafHandle = null;
+    this.incrementalPendingMarkdown = null;
+    this.incrementalPendingIsFinal = false;
+  }
+
+  private resetIncrementalRenderer(resetCache = true): void {
+    this.cancelIncrementalRender();
+    this.incrementalActive = false;
+    this.incrementalLastMarkdown = '';
+    this.incrementalRenderedMarkdown = '';
+    this.wordBuffer.reset();
+    if (resetCache) {
+      this.streamCache = getInitialCache();
+    }
   }
 
   private commitRenderedHtml(cleanHtml: string): void {
@@ -224,6 +461,8 @@ export class XMarkdownComponent implements OnChanges, OnDestroy {
     this.updateDom(cleanHtml);
     this.injectDynamicComponents();
     this.restoreAncestorScrollPositions(scrollSnapshot);
+    this.heightChangeCallback?.();
+    this.heightChange.emit();
   }
 
   private getRenderTarget(): MarkdownRenderTarget | null {
@@ -692,6 +931,7 @@ export class XMarkdownComponent implements OnChanges, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.cancelIncrementalRender();
     this.destroyInjectedComponents();
   }
 }

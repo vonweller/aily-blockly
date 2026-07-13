@@ -5,12 +5,11 @@ import type { Config as DOMPurifyConfig } from 'dompurify';
 type DOMPurifyInstance = { sanitize: (dirty: string, cfg?: DOMPurifyConfig) => string };
 const DOMPurify: DOMPurifyInstance =
   (DOMPurifyNS as unknown as { default?: DOMPurifyInstance }).default ?? (DOMPurifyNS as unknown as DOMPurifyInstance);
-import type { ComponentMap, StreamingOption } from '../interfaces';
+import type { ComponentMap } from '../interfaces';
 
 interface RendererOptions {
   components?: ComponentMap;
   dompurifyConfig?: DOMPurifyConfig;
-  streaming?: StreamingOption;
 }
 
 /**

@@ -1,5 +1,5 @@
 ﻿import { HttpClient, HttpErrorResponse, HttpResponse } from '@angular/common/http';
-import { Injectable, Optional } from '@angular/core';
+import { Injectable, NgZone, Optional } from '@angular/core';
 import { Subject, Observable, Subscription } from 'rxjs';
 import { distinctUntilChanged } from 'rxjs/operators';
 import type { PermissionPolicy, PermissionRuleInput } from 'aily-lex/agent/common/approvalProtocol';
@@ -486,6 +486,7 @@ export class AilyChatConfigService {
     constructor(
         private http: HttpClient,
         @Optional() private authService: AuthService | null = null,
+        @Optional() private ngZone: NgZone | null = null,
     ) {
         this.load();
         this.bindAuthReadyReload();
@@ -1942,7 +1943,10 @@ export class AilyChatConfigService {
             reason,
         });
 
-        this.http.get<RemoteModelCatalogResponse>(ChatAPI.modelCatalog, this.getRemoteModelCatalogRequestOptions()).subscribe({
+        this.runOutsideAngular(() => this.http.get<RemoteModelCatalogResponse>(
+            ChatAPI.modelCatalog,
+            this.getRemoteModelCatalogRequestOptions(),
+        ).subscribe({
             next: (response) => {
                 const responseBody = response.body;
                 const normalizedCatalog = this.normalizeRemoteModelCatalog(responseBody?.data);
@@ -1969,42 +1973,6 @@ export class AilyChatConfigService {
 
                 const modelIds = Object.keys(normalizedCatalog.catalog.models);
                 const presetIds = Object.keys(normalizedCatalog.catalog.modelPresets);
-                const modelMetadata = modelIds.reduce<Record<string, {
-                    displayName?: string;
-                    contextWindowTokens?: number;
-                    supportsReasoningEfforts?: readonly ReasoningEffortOption[];
-                    billingMultiplier?: number;
-                    billingLabelOverride?: string;
-                }>>((acc, modelId) => {
-                    const entry = normalizedCatalog.catalog.models[modelId];
-                    acc[modelId] = {
-                        displayName: entry.displayName,
-                        contextWindowTokens: entry.contextWindowTokens,
-                        supportsReasoningEfforts: entry.supportsReasoningEfforts,
-                        billingMultiplier: entry.billingMultiplier,
-                        billingLabelOverride: entry.billingLabelOverride,
-                    };
-                    return acc;
-                }, {});
-                const presetMetadata = presetIds.reduce<Record<string, {
-                    model?: string;
-                    displayName?: string;
-                    contextWindowTokens?: number;
-                    supportsReasoningEfforts?: readonly ReasoningEffortOption[];
-                    billingMultiplier?: number;
-                    billingLabelOverride?: string;
-                }>>((acc, presetId) => {
-                    const entry = normalizedCatalog.catalog.modelPresets[presetId];
-                    acc[presetId] = {
-                        model: entry.model,
-                        displayName: entry.displayName,
-                        contextWindowTokens: entry.contextWindowTokens,
-                        supportsReasoningEfforts: entry.supportsReasoningEfforts,
-                        billingMultiplier: entry.billingMultiplier,
-                        billingLabelOverride: entry.billingLabelOverride,
-                    };
-                    return acc;
-                }, {});
                 console.info('[AilyChatConfigService] 远端 model catalog 响应成功', {
                     url: ChatAPI.modelCatalog,
                     status: response.status,
@@ -2013,10 +1981,6 @@ export class AilyChatConfigService {
                     permissionsHash: normalizedCatalog.metadata.permissionsHash,
                     modelCount: modelIds.length,
                     presetCount: presetIds.length,
-                    modelIds,
-                    presetIds,
-                    modelMetadata,
-                    presetMetadata,
                 });
 
                 this.remoteModelCatalog = normalizedCatalog.catalog;
@@ -2075,7 +2039,11 @@ export class AilyChatConfigService {
                 });
                 this.modelCatalogChangedSubject.next();
             },
-        });
+        }));
+    }
+
+    private runOutsideAngular<T>(operation: () => T): T {
+        return this.ngZone ? this.ngZone.runOutsideAngular(operation) : operation();
     }
 
     private setRemoteModelCatalogStatus(
