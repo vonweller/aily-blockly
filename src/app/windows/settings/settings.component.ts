@@ -93,7 +93,7 @@ export class SettingsComponent implements OnDestroy {
       icon: 'fa-light fa-layer-group'
     },
     {
-      name: 'SETTINGS.SECTIONS.AILY_BUILDER',
+      name: 'SETTINGS.SECTIONS.AILY_TOOLS',
       icon: 'fa-light fa-hammer'
     },
     // {
@@ -103,10 +103,6 @@ export class SettingsComponent implements OnDestroy {
     {
       name: 'SETTINGS.SECTIONS.CACHE',
       icon: 'fa-light fa-broom'
-    },
-    {
-      name: 'SETTINGS.SECTIONS.LABS',
-      icon: 'fa-light fa-flask'
     },
     // {
     //   name: 'SETTINGS.SECTIONS.DEVMODE',
@@ -124,11 +120,11 @@ export class SettingsComponent implements OnDestroy {
   // 用于跟踪安装/卸载状态
   boardOperations = {};
   ailyBuilderStatus: any = null;
-  ailyBuilderUpdating = false;
-  ailyBuilderChannelSwitching = false;
+  ailyLinterStatus: any = null;
+  ailyToolsCheckingUpdates = false;
   applying = false;
   private ailyBuilderStatusTimer: ReturnType<typeof setTimeout> | null = null;
-  private initialAilyBuilderNext = false;
+  private ailyLinterStatusTimer: ReturnType<typeof setTimeout> | null = null;
 
   // 搜索关键字
   boardSearchKeyword: string = '';
@@ -274,13 +270,6 @@ export class SettingsComponent implements OnDestroy {
     return this.configService.data;
   }
 
-  get labsConfig() {
-    if (!this.configData.labs) {
-      this.configData.labs = {};
-    }
-    return this.configData.labs;
-  }
-
   appdata_path: string
 
   mcpServiceList = []
@@ -304,6 +293,7 @@ export class SettingsComponent implements OnDestroy {
     this.scrollElement?.removeEventListener('scroll', this.scrollHandler);
     this.clearScrollEndTimer();
     this.clearAilyBuilderStatusTimer();
+    this.clearAilyLinterStatusTimer();
     this._clearCacheSubscription?.unsubscribe();
     if (this._clearCacheLoadingRef) {
       this.message.remove(this._clearCacheLoadingRef);
@@ -319,8 +309,10 @@ export class SettingsComponent implements OnDestroy {
     this.scrollElement = this.scrollContainer?.SimpleBar?.getScrollElement() || null;
     this.scrollElement?.addEventListener('scroll', this.scrollHandler);
     await this.updateBoardList();
-    this.initialAilyBuilderNext = !!this.labsConfig.ailyBuilderNext;
-    await this.loadAilyBuilderStatus();
+    await Promise.all([
+      this.loadAilyBuilderStatus(),
+      this.loadAilyLinterStatus()
+    ]);
     this.loadCacheStats();
   }
 
@@ -351,87 +343,126 @@ export class SettingsComponent implements OnDestroy {
     }
   }
 
-  getAilyBuilderStatusText() {
-    if (!this.ailyBuilderStatus) {
-      return this.translateService.instant('SETTINGS.FIELDS.AILY_BUILDER_UNKNOWN');
+  async loadAilyLinterStatus() {
+    if (!window['linter']?.status) {
+      return;
     }
-    if (this.ailyBuilderUpdating || this.ailyBuilderStatus.installing) {
+    try {
+      this.ailyLinterStatus = await window['linter'].status();
+      if (this.ailyLinterStatus?.installing) {
+        this.scheduleAilyLinterStatusReload();
+      }
+    } catch (error) {
+      console.warn('加载 aily-linter 状态失败:', error);
+      this.ailyLinterStatus = null;
+    }
+  }
+
+  getAilyToolVersion(status: any) {
+    return status?.installedVersion || this.translateService.instant('SETTINGS.FIELDS.AILY_TOOL_UNKNOWN');
+  }
+
+  getAilyToolStatusText(status: any) {
+    if (!status) {
+      return this.translateService.instant('SETTINGS.FIELDS.AILY_TOOL_UNKNOWN');
+    }
+    if (this.ailyToolsCheckingUpdates || status.installing) {
       return '';
     }
-    if (this.ailyBuilderStatus.error) {
-      return this.ailyBuilderStatus.error;
+    if (status.error) {
+      return this.getAilyToolErrorText(status.error);
     }
-    if (!this.ailyBuilderStatus.installed) {
-      return this.translateService.instant('SETTINGS.FIELDS.AILY_BUILDER_NOT_INSTALLED');
+    if (!status.installed) {
+      return this.translateService.instant('SETTINGS.FIELDS.AILY_TOOL_NOT_INSTALLED');
     }
-    return this.translateService.instant('SETTINGS.FIELDS.AILY_BUILDER_UP_TO_DATE');
+    return '';
   }
 
-  isAilyBuilderUpdateLoading() {
-    return this.ailyBuilderUpdating ||
-      !!this.ailyBuilderStatus?.installing;
-  }
-
-  shouldShowAilyBuilderUpdateButton() {
-    return !!this.ailyBuilderStatus &&
-      (!this.ailyBuilderStatus.installed || this.ailyBuilderUpdating || this.ailyBuilderStatus.installing);
-  }
-
-  canUpdateAilyBuilderManually() {
-    return this.shouldShowAilyBuilderUpdateButton() &&
-      !this.isAilyBuilderUpdateLoading();
-  }
-
-  getAilyBuilderDisplayName() {
-    const status = this.ailyBuilderStatus;
-    if (!status) {
-      return this.translateService.instant('SETTINGS.FIELDS.AILY_BUILDER_UNKNOWN');
+  private getAilyToolErrorText(error: unknown) {
+    const text = String(error || '').trim();
+    const statusMatch = text.match(/(?:^|\r?\n)\s*npm (?:error|ERR!)\s+(\d{3})\b/im);
+    if (statusMatch) {
+      return `npm error ${statusMatch[1]}`;
     }
 
-    const name = status.channel === 'next' ? 'next' : 'stable';
-    const version = status.installedVersion;
-    return version ? `${name} @ ${version}` : name;
+    const codeMatch = text.match(/npm (?:error|ERR!)\s+(?:code\s+)?(E[A-Z0-9_]+)\b/i);
+    if (codeMatch) {
+      const code = /^E\d{3}$/i.test(codeMatch[1]) ? codeMatch[1].slice(1) : codeMatch[1];
+      return `npm error ${code}`;
+    }
+
+    return text;
   }
 
-  async updateAilyBuilder() {
-    if (!window['builder']?.update || !this.canUpdateAilyBuilderManually()) {
+  isAilyToolsUpdateLoading() {
+    return this.ailyToolsCheckingUpdates ||
+      !!this.ailyBuilderStatus?.installing ||
+      !!this.ailyLinterStatus?.installing;
+  }
+
+  canCheckAilyToolsUpdates() {
+    return !!window['builder']?.checkForUpdate &&
+      !!window['linter']?.checkForUpdate &&
+      !this.isAilyToolsUpdateLoading();
+  }
+
+  async checkAilyToolsUpdates() {
+    if (!this.canCheckAilyToolsUpdates()) {
       return;
     }
 
-    this.ailyBuilderUpdating = true;
-    try {
-      await window['builder'].update();
-      await this.loadAilyBuilderStatus();
-      this.message.success(this.translateService.instant('SETTINGS.FIELDS.AILY_BUILDER_UPDATE_DONE'));
-    } catch (error: any) {
-      console.error('aily-builder 更新失败:', error);
-      this.message.error(error?.message || this.translateService.instant('SETTINGS.FIELDS.AILY_BUILDER_UPDATE_FAILED'));
-    } finally {
-      this.ailyBuilderUpdating = false;
-    }
-  }
-
-  onAilyBuilderNextChange(enabled: boolean) {
-    this.labsConfig.ailyBuilderNext = enabled;
-  }
-
-  private async syncAilyBuilderChannel(options: { install?: boolean } = {}) {
-    if (!window['builder']?.setChannel || this.ailyBuilderChannelSwitching) {
-      return;
-    }
-
-    this.ailyBuilderChannelSwitching = true;
-    try {
-      const channel = this.labsConfig.ailyBuilderNext ? 'next' : 'stable';
-      this.ailyBuilderStatus = await window['builder'].setChannel(channel, options);
-      if (this.shouldPollAilyBuilderStatus()) {
-        this.scheduleAilyBuilderStatusReload();
+    this.ailyToolsCheckingUpdates = true;
+    const updatedTools: string[] = [];
+    const failedTools: string[] = [];
+    const tools = [
+      {
+        name: 'aily-builder',
+        api: window['builder'],
+        setStatus: (status: any) => this.ailyBuilderStatus = status
+      },
+      {
+        name: 'aily-linter',
+        api: window['linter'],
+        setStatus: (status: any) => this.ailyLinterStatus = status
       }
-    } catch (error: any) {
-      console.error('aily-builder channel 切换失败:', error);
-      this.message.error(error?.message || this.translateService.instant('SETTINGS.FIELDS.AILY_BUILDER_UPDATE_FAILED'));
+    ];
+
+    for (const tool of tools) {
+      try {
+        const result = await tool.api.checkForUpdate();
+        if (result?.status) {
+          tool.setStatus(result.status);
+        }
+        if (result?.updated) {
+          updatedTools.push(tool.name);
+        }
+      } catch (error) {
+        console.error(`${tool.name} 检查更新失败:`, error);
+        failedTools.push(tool.name);
+      }
+    }
+
+    try {
+      await Promise.all([
+        this.loadAilyBuilderStatus(),
+        this.loadAilyLinterStatus()
+      ]);
+
+      if (updatedTools.length) {
+        this.message.success(this.translateService.instant('SETTINGS.FIELDS.AILY_TOOLS_UPDATE_DONE', {
+          tools: updatedTools.join(', ')
+        }));
+      } else if (!failedTools.length) {
+        this.message.success(this.translateService.instant('SETTINGS.FIELDS.AILY_TOOLS_UP_TO_DATE'));
+      }
+
+      if (failedTools.length) {
+        this.message.error(this.translateService.instant('SETTINGS.FIELDS.AILY_TOOLS_UPDATE_FAILED', {
+          tools: failedTools.join(', ')
+        }));
+      }
     } finally {
-      this.ailyBuilderChannelSwitching = false;
+      this.ailyToolsCheckingUpdates = false;
     }
   }
 
@@ -451,6 +482,21 @@ export class SettingsComponent implements OnDestroy {
     if (this.ailyBuilderStatusTimer) {
       clearTimeout(this.ailyBuilderStatusTimer);
       this.ailyBuilderStatusTimer = null;
+    }
+  }
+
+  private scheduleAilyLinterStatusReload() {
+    this.clearAilyLinterStatusTimer();
+    this.ailyLinterStatusTimer = setTimeout(() => {
+      this.ailyLinterStatusTimer = null;
+      this.loadAilyLinterStatus();
+    }, 2000);
+  }
+
+  private clearAilyLinterStatusTimer() {
+    if (this.ailyLinterStatusTimer) {
+      clearTimeout(this.ailyLinterStatusTimer);
+      this.ailyLinterStatusTimer = null;
     }
   }
 
@@ -523,9 +569,6 @@ export class SettingsComponent implements OnDestroy {
   }
 
   cancel() {
-    if (this.labsConfig.ailyBuilderNext !== this.initialAilyBuilderNext) {
-      this.labsConfig.ailyBuilderNext = this.initialAilyBuilderNext;
-    }
     this.uiService.closeWindow();
   }
 
@@ -537,13 +580,8 @@ export class SettingsComponent implements OnDestroy {
     this.applying = true;
     try {
       await this.configService.applyResourceSourceRuntimeSelection();
-      const ailyBuilderChannelChanged = this.labsConfig.ailyBuilderNext !== this.initialAilyBuilderNext;
       // 保存到config.json，如有需要立即加载的，再加载
       await this.configService.save();
-      if (ailyBuilderChannelChanged) {
-        await this.syncAilyBuilderChannel({ install: true });
-      }
-      this.initialAilyBuilderNext = !!this.labsConfig.ailyBuilderNext;
       window['ipcRenderer'].send('setting-changed', { action: 'devmode-changed', data: this.configData.devmode });
       // 保存完毕后关闭窗口
       this.uiService.closeWindow();
@@ -585,8 +623,8 @@ export class SettingsComponent implements OnDestroy {
   }
 
   async loadCacheStats() {
-    const buildPath = this.getCacheBuildPath();
-    if (!buildPath) {
+    const builderPath = this.getAilyBuilderPath();
+    if (!builderPath) {
       this.cacheStats = this.getEmptyCacheStats();
       this.cacheSizeLoading = false;
       return;
@@ -594,7 +632,7 @@ export class SettingsComponent implements OnDestroy {
 
     this.cacheSizeLoading = true;
     try {
-      this.cacheStats = this.calculateCacheStats(buildPath);
+      this.cacheStats = this.calculateCacheStats(builderPath);
     } catch (e) {
       console.error('Failed to load cache stats', e);
       this.cacheStats = this.getEmptyCacheStats();
@@ -603,29 +641,29 @@ export class SettingsComponent implements OnDestroy {
     }
   }
 
-  private getCacheBuildPath(): string | null {
-    const buildPath = window['path'].getAilyBuilderBuildPath();
-    if (!buildPath || !window['fs'].existsSync(buildPath)) {
+  private getAilyBuilderPath(): string | null {
+    const builderPath = window['path'].getAilyBuilderPath();
+    if (!builderPath || !window['fs'].existsSync(builderPath)) {
       return null;
     }
-    return buildPath;
+    return builderPath;
   }
 
   private getEmptyCacheStats(): CacheStats {
     return { totalFiles: 0, totalSizeFormatted: '0 B' };
   }
 
-  private calculateCacheStats(buildPath: string): CacheStats {
+  private calculateCacheStats(builderPath: string): CacheStats {
     let totalSize = 0;
     let totalFiles = 0;
-    const entries = window['fs'].readDirSync(buildPath);
+    const entries = window['fs'].readDirSync(builderPath);
 
     for (const entry of entries) {
       if (!entry._isDirectory) {
         continue;
       }
 
-      const dirPath = window['path'].join(buildPath, entry.name);
+      const dirPath = window['path'].join(builderPath, entry.name);
       const { size, count } = this.calcDirSize(dirPath);
       totalSize += size;
       totalFiles += count;
@@ -780,6 +818,11 @@ export class SettingsComponent implements OnDestroy {
   }
 
   openCacheFolder() {
-    this.electronService.openByExplorer(window['path'].getAilyBuilderBuildPath());
+    const builderPath = window['path'].getAilyBuilderPath();
+    if (!builderPath || !window['fs'].existsSync(builderPath)) {
+      this.message.info(this.translateService.instant('SETTINGS.FIELDS.CACHE_NOT_CREATED'));
+      return;
+    }
+    this.electronService.openByExplorer(builderPath);
   }
 }

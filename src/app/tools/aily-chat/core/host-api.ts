@@ -139,8 +139,7 @@ export interface IPathUtils {
   getAppDataPath(): string;
   getUserDocuments(): string;
   getUserHome(): string;
-  getAilyBuilderCachePath?(): string;
-  getAilyBuilderBuildPath?(): string;
+  getAilyBuilderPath?(): string;
   getAilyChildPath?(): string;
   getElectronPath?(): string;
 

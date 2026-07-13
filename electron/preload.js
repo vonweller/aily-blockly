@@ -20,8 +20,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     getUserHome: () => require("os").homedir(),
     getAilyChildPath: () => process.env.AILY_CHILD_PATH,
     getAppDataPath: () => process.env.AILY_APPDATA_PATH,
-    getAilyBuilderCachePath: () => process.env.AILY_BUILDER_CACHE_PATH,
-    getAilyBuilderBuildPath: () => process.env.AILY_BUILDER_BUILD_PATH,
+    getAilyBuilderPath: () => process.env.AILY_BUILDER_PATH,
     getUserDocuments: () => require("os").homedir() + `${pt}Documents`,
     isExists: (path) => existsSync(path),
     getElectronPath: () => {
@@ -205,12 +204,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
   builder: {
     status: () => ipcRenderer.invoke("aily-builder-status"),
+    checkForUpdate: () => ipcRenderer.invoke("aily-builder-check-update"),
     update: () => ipcRenderer.invoke("aily-builder-update"),
     waitForReady: () => ipcRenderer.invoke("aily-builder-wait-ready"),
-    setChannel: (channel, options = {}) => ipcRenderer.invoke("aily-builder-channel-set", { channel, ...options }),
   },
   linter: {
     status: () => ipcRenderer.invoke("aily-linter-status"),
+    checkForUpdate: () => ipcRenderer.invoke("aily-linter-check-update"),
     update: () => ipcRenderer.invoke("aily-linter-update"),
     waitForReady: () => ipcRenderer.invoke("aily-linter-wait-ready"),
   },
