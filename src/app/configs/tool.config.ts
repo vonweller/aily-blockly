@@ -56,6 +56,7 @@ const CHILD_TOOL_APP_OVERRIDES_BY_DIR: Record<string, Partial<ChildToolAppConfig
 };
 
 const CHILD_TOOL_STARTUP_TIMEOUT_MS_BY_DIR: Record<string, number> = {
+  'aily-chat': 30000,
   'ffs-manager': 10000
 };
 
