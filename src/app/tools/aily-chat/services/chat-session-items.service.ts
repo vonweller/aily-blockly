@@ -1219,6 +1219,9 @@ export class ChatSessionItemsService implements OnDestroy {
     if (!hostState) {
       return item;
     }
+    if (!item && !this.shouldProjectHostInventoryOnlySession(hostState)) {
+      return null;
+    }
     const hostItem = this.toHostInventorySessionListItem(hostState, item, projectPath, projectRootPath);
     return hostItem && this.isSessionItemInViewScope(hostItem, projectPath, projectRootPath)
       ? hostItem
@@ -1236,12 +1239,10 @@ export class ChatSessionItemsService implements OnDestroy {
       return null;
     }
     const status = this.toSessionListStatusFromHostState(state, existing?.status);
-    const latestRevisionTime = state.transcriptRevision > 0 ? state.transcriptRevision : undefined;
-    const timing = existing?.timing ?? (
-      latestRevisionTime !== undefined
-        ? { created: latestRevisionTime, updated: latestRevisionTime }
-        : undefined
-    );
+    // transcriptRevision is an ordering token, not wall-clock time. Session
+    // timing belongs to durable inventory; a host-only running row can render
+    // without a relative timestamp until that inventory exists.
+    const timing = existing?.timing;
 
     return this.toSessionListItem({
       sessionId,

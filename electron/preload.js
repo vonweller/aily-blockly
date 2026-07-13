@@ -875,7 +875,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
     listAllContentFiles: (searchPath, limit) => {
       return new Promise((resolve, reject) => {
         ipcRenderer
-          .invoke("ripgrep-list-files", searchPath, limit)
+          .invoke('ripgrep-list-files-v2', {
+            pattern: '**/*',
+            path: searchPath,
+            maxResults: limit,
+            includeHidden: true
+          })
           .then((result) => resolve(result))
           .catch((error) => reject(error));
       });
@@ -886,11 +891,26 @@ contextBridge.exposeInMainWorld("electronAPI", {
     searchContent: (params) => {
       return new Promise((resolve, reject) => {
         ipcRenderer
-          .invoke("ripgrep-search-content", params)
+          .invoke('ripgrep-search-text-v2', {
+            ...params,
+            includeHidden: true
+          })
           .then((result) => resolve(result))
           .catch((error) => reject(error));
       });
-    }
+    },
+    /**
+     * v2 path-only file search backed by `rg --files`.
+     */
+    listFiles: (params) => ipcRenderer.invoke('ripgrep-list-files-v2', params),
+    /**
+     * v2 structured content search backed by `rg --json`.
+     */
+    searchText: (params) => ipcRenderer.invoke('ripgrep-search-text-v2', params),
+    /**
+     * Cancel an active v2 search by request id.
+     */
+    cancelSearch: (requestId) => ipcRenderer.send('ripgrep-cancel-search', requestId)
   },
   // BLE API
   ble: {

@@ -1269,6 +1269,10 @@ export class SessionLifecycleHelper {
     };
     if (options.deferShellFinalization) {
       this.pendingFreshSessionShellFinalizers.set(pendingSessionId, finalizeShell);
+      // A provisionally bound model is the blank composer owner, not a history
+      // session. Keep that boundary explicit until the first request mutation
+      // finalizes the shell and makes it listable.
+      this.ctx.chatService.hasBlankSessionShell = true;
     } else {
       finalizeShell();
     }
@@ -1314,6 +1318,7 @@ export class SessionLifecycleHelper {
     this.pendingFreshSessionShellFinalizers.delete(targetSessionId);
     const startedAt = performance.now();
     finalize();
+    this.ctx.chatService.hasBlankSessionShell = false;
     console.info(
       '[AilyChat][SessionBootstrapScalar]',
       `sessionId=${targetSessionId} shellFinalizationMs=${(performance.now() - startedAt).toFixed(1)} phase=after-request-paint`,
