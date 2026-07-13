@@ -12,6 +12,7 @@ import { ToolContainerComponent } from '../../components/tool-container/tool-con
 import { ChildToolConfig, getChildToolConfig } from '../../configs/tool.config';
 import { ChildToolHostInfo, ChildToolProcessService } from '../../services/child-tool-process.service';
 import { LogService } from '../../services/log.service';
+import { ProjectService } from '../../services/project.service';
 import { ThemeService } from '../../services/theme.service';
 import { ToolI18nService } from '../../services/tool-i18n.service';
 import { UiService } from '../../services/ui.service';
@@ -19,6 +20,11 @@ import { UiService } from '../../services/ui.service';
 type HostStatus = 'idle' | 'starting' | 'ready' | 'error' | 'closed';
 type HostMessageState = 'success' | 'info' | 'warning' | 'error' | 'loading';
 type ChildLifecycleReason = 'close' | 'restart' | 'destroy';
+
+interface HostProjectContext {
+  workspace?: string | null;
+  version?: number;
+}
 
 interface NormalizedHostMessage {
   title: string;
@@ -71,7 +77,12 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   private beforeCloseNotified = false;
   private langSubscription: Subscription | null = null;
   private themeSubscription: Subscription | null = null;
+  private projectPathSubscription: Subscription | null = null;
   private toolSignalSubscription: Subscription | null = null;
+  private standaloneWorkspace: string | null | undefined;
+  private standaloneWorkspaceVersion = -1;
+  private projectContextListenerRegistered = false;
+  private projectContextListenerCleanup: (() => void) | null = null;
 
   constructor(
     private route: ActivatedRoute,
@@ -80,6 +91,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     private toolI18n: ToolI18nService,
     private sanitizer: DomSanitizer,
     private processService: ChildToolProcessService,
+    private projectService: ProjectService,
     private ngZone: NgZone,
     private translate: TranslateService,
     private themeService: ThemeService,
@@ -88,6 +100,11 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   ) {
     this.langSubscription = this.translate.onLangChange.subscribe(() => this.syncHostContext());
     this.themeSubscription = this.themeService.themeChanged$.subscribe(() => this.syncHostContext());
+    this.projectPathSubscription = this.projectService.currentProjectPath$.subscribe(() => {
+      if (this.initialized) {
+        this.syncHostContext(true);
+      }
+    });
   }
 
   get isStandalone(): boolean {
@@ -122,7 +139,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     }
 
     if (this.initialized && changes['active'] && this.active) {
-      this.syncHostContext();
+      this.syncHostContext(true);
     }
   }
 
@@ -132,8 +149,13 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     this.langSubscription = null;
     this.themeSubscription?.unsubscribe();
     this.themeSubscription = null;
+    this.projectPathSubscription?.unsubscribe();
+    this.projectPathSubscription = null;
     this.toolSignalSubscription?.unsubscribe();
     this.toolSignalSubscription = null;
+    this.projectContextListenerCleanup?.();
+    this.projectContextListenerCleanup = null;
+    this.projectContextListenerRegistered = false;
     this.destroyPenpalConnection();
     if (this.acquired && this.resolvedToolId) {
       void this.processService.release(this.resolvedToolId);
@@ -231,6 +253,8 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     this.titleKey = config.titleKey;
     this.routePath = config.routePath || `/child-tool/${config.id}`;
     this.currentUrl = this.router.url;
+
+    await this.initializeStandaloneProjectContext();
 
     this.log('config loaded', {
       id: config.id,
@@ -587,7 +611,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     }
   }
 
-  private async pushHostContext(): Promise<void> {
+  private async pushHostContext(refreshSnapshot = false): Promise<void> {
     if (!this.remoteApi?.setHostContext) {
       return;
     }
@@ -595,14 +619,17 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     const context = this.createHostContext();
     try {
       await Promise.resolve(this.remoteApi.setHostContext(context));
+      if (refreshSnapshot && typeof this.remoteApi.refreshHostSnapshot === 'function') {
+        await Promise.resolve(this.remoteApi.refreshHostSnapshot());
+      }
     } catch {
       // Keep iframe usable; a later sync or active switch will retry.
     }
   }
 
-  private syncHostContext(): void {
+  private syncHostContext(refreshSnapshot = false): void {
     if (this.remoteApi?.setHostContext) {
-      void this.pushHostContext();
+      void this.pushHostContext(refreshSnapshot);
     }
   }
 
@@ -662,26 +689,93 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
 
     try {
       const nextUrl = new URL(url);
-      nextUrl.searchParams.set('lang', context['lang']);
+      nextUrl.searchParams.set('lang', String(context['lang'] || 'en'));
       return nextUrl.toString();
     } catch {
       const separator = url.includes('?') ? '&' : '?';
       const query = new URLSearchParams({
-        lang: context['lang']
+        lang: String(context['lang'] || 'en')
       });
       return `${url}${separator}${query.toString()}`;
     }
   }
 
-  private createHostContext(): Record<string, string> {
+  private createHostContext(): Record<string, unknown> {
     return {
       toolId: this.resolvedToolId,
       contextId: this.hostContextId,
       version: String(++this.hostContextVersion),
       lang: this.normalizeLang(this.translate.currentLang || this.translate.defaultLang || 'en'),
       theme: this.normalizeTheme(this.themeService.theme()),
-      platform: (window as any).electronAPI?.platform?.type || 'browser'
+      platform: (window as any).electronAPI?.platform?.type || 'browser',
+      workspace: this.resolveHostWorkspace(),
+      capabilities: {
+        snapshotRefresh: true
+      }
     };
+  }
+
+  private async initializeStandaloneProjectContext(): Promise<void> {
+    if (!this.isStandalone) {
+      this.standaloneWorkspace = undefined;
+      this.standaloneWorkspaceVersion = -1;
+      this.projectContextListenerCleanup?.();
+      this.projectContextListenerCleanup = null;
+      this.projectContextListenerRegistered = false;
+      return;
+    }
+
+    const ipcRenderer = window['ipcRenderer'] || (window as any).electronAPI?.ipcRenderer;
+    if (!ipcRenderer?.invoke) {
+      return;
+    }
+
+    if (!this.projectContextListenerRegistered && ipcRenderer.on) {
+      const cleanup = ipcRenderer.on(
+        'host-project-context-changed',
+        (_event: unknown, context: HostProjectContext) => {
+          this.ngZone.run(() => this.applyStandaloneProjectContext(context, true));
+        }
+      );
+      if (typeof cleanup === 'function') {
+        this.projectContextListenerCleanup = cleanup;
+      }
+      this.projectContextListenerRegistered = true;
+    }
+
+    try {
+      const context = await ipcRenderer.invoke('host-project-context-get');
+      this.applyStandaloneProjectContext(context, false);
+    } catch {
+      // Older hosts do not expose project context; keep the local service fallback.
+    }
+  }
+
+  private applyStandaloneProjectContext(context: HostProjectContext, refreshSnapshot: boolean): void {
+    const version = Number(context?.version);
+    if (Number.isFinite(version) && version < this.standaloneWorkspaceVersion) {
+      return;
+    }
+
+    const rawWorkspace = typeof context?.workspace === 'string' ? context.workspace : '';
+    const workspace = rawWorkspace.trim() ? rawWorkspace : null;
+    const changed = this.standaloneWorkspace !== workspace;
+
+    this.standaloneWorkspace = workspace;
+    if (Number.isFinite(version)) {
+      this.standaloneWorkspaceVersion = version;
+    }
+
+    if (changed && refreshSnapshot) {
+      this.syncHostContext(true);
+    }
+  }
+
+  private resolveHostWorkspace(): string | null {
+    if (this.isStandalone && this.standaloneWorkspace !== undefined) {
+      return this.standaloneWorkspace;
+    }
+    return this.projectService.currentProjectPath || null;
   }
 
   private normalizeLang(lang: string): string {

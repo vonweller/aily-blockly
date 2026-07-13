@@ -922,6 +922,10 @@ let mainWindow;
 let userConf;
 let isProcessCleanupInProgress = false;
 let hasProcessCleanupCompleted = false;
+let projectContextState = {
+  workspace: null,
+  version: 0,
+};
 
 // === CLI Bridge：供外部 CLI 通过本地回环接口驱动主程序（附加能力） ===
 let cliBridge = null;
@@ -4198,6 +4202,31 @@ ipcMain.on("setting-changed", (event, data) => {
     }
   });
 });
+
+ipcMain.on("host-project-context-changed", (event, data = {}) => {
+  const senderWindow = BrowserWindow.fromWebContents(event.sender);
+  if (!mainWindow || senderWindow !== mainWindow) {
+    return;
+  }
+
+  const rawWorkspace = typeof data.workspace === "string" ? data.workspace : "";
+  projectContextState = {
+    workspace: rawWorkspace.trim() ? rawWorkspace : null,
+    version: projectContextState.version + 1,
+  };
+
+  BrowserWindow.getAllWindows().forEach((win) => {
+    try {
+      if (win && !win.isDestroyed() && win.webContents && !win.webContents.isDestroyed()) {
+        win.webContents.send("host-project-context-changed", projectContextState);
+      }
+    } catch (error) {
+      console.error("host-project-context-changed broadcast failed:", error.message);
+    }
+  });
+});
+
+ipcMain.handle("host-project-context-get", () => ({ ...projectContextState }));
 
 // OAuth状态管理的IPC处理器
 ipcMain.handle("oauth-register-state", (event, state) => {

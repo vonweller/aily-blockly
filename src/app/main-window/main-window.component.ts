@@ -109,6 +109,7 @@ export class MainWindowComponent implements OnDestroy {
   private oauthResultListener: (() => void) | null = null;
   private exampleListListener: (() => void) | null = null;
   private configNoticeSubscription: Subscription | null = null;
+  private projectContextSubscription: Subscription | null = null;
   private developmentModePreferencePromptOpen = false;
 
   // 首次开发模式选择（全屏引导）
@@ -144,6 +145,11 @@ export class MainWindowComponent implements OnDestroy {
     ]);
     this.uiService.init();
     this.projectService.init();
+    this.projectContextSubscription = this.projectService.currentProjectPath$.subscribe(workspace => {
+      window['ipcRenderer']?.send?.('host-project-context-changed', {
+        workspace: workspace || null
+      });
+    });
     this.updateService.init();
     this.npmService.init();
     await this.authService.initializeAuth();
@@ -226,6 +232,8 @@ export class MainWindowComponent implements OnDestroy {
   ngOnDestroy(): void {
     this.configNoticeSubscription?.unsubscribe();
     this.configNoticeSubscription = null;
+    this.projectContextSubscription?.unsubscribe();
+    this.projectContextSubscription = null;
     this.oauthResultListener?.();
     this.oauthResultListener = null;
     this.exampleListListener?.();
