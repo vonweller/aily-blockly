@@ -85,6 +85,9 @@ export class SchematicMcpRuntimeService {
         ...(typeof args['autoRoutingMode'] === 'boolean'
           ? { autoRoutingMode: args['autoRoutingMode'] }
           : {}),
+        ...(typeof args['autoSave'] === 'boolean'
+          ? { autoSave: args['autoSave'] }
+          : {}),
       };
 
       const windowOpened = await this.ensureCircuitWindowOpen(payload);
