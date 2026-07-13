@@ -188,7 +188,47 @@ async function applyUpdateManifestSourceBeforeCheck() {
   return null;
 }
 
-function getDownloadMirrorSources() {
+function getTargetUpdateBuildFlavor(updateInfo) {
+  if (!updateInfo) {
+    return null;
+  }
+
+  const declaredFlavor = String(
+    updateInfo.ailyBuildFlavor || updateInfo.buildFlavor || updateInfo.build_flavor || ''
+  ).trim().toLowerCase();
+  if (declaredFlavor === 'cn' || declaredFlavor === 'global') {
+    return declaredFlavor;
+  }
+
+  const filePaths = [];
+  if (Array.isArray(updateInfo.files)) {
+    for (const file of updateInfo.files) {
+      const filePath = typeof file === 'string' ? file : file && (file.url || file.path);
+      if (filePath) {
+        filePaths.push(String(filePath));
+      }
+    }
+  }
+  if (updateInfo.path) {
+    filePaths.push(String(updateInfo.path));
+  }
+
+  const normalizedPaths = filePaths.join('\n').toLowerCase();
+  if (normalizedPaths.includes('aily-blockly-cn-')) {
+    return 'cn';
+  }
+  if (normalizedPaths.includes('aily-blockly-')) {
+    return 'global';
+  }
+
+  return null;
+}
+
+function getDownloadMirrorSources(updateInfo) {
+  if (getTargetUpdateBuildFlavor(updateInfo) !== 'cn') {
+    return [];
+  }
+
   const config = loadMergedConfig();
   const strategy = config.update_download_strategy || {};
 
@@ -335,12 +375,15 @@ function getResolvedDownloadUrls(updateInfoAndProvider) {
 }
 
 function isCancellationError(error) {
+  if (isStrategyCancellationError(error)) {
+    return false;
+  }
+
   return Boolean(
     error &&
     (
       error.message === 'cancelled' ||
-      error.name === 'CancellationError' ||
-      String(error.message || error).toLowerCase().includes('cancelled')
+      error.name === 'CancellationError'
     )
   );
 }
@@ -576,14 +619,18 @@ async function downloadWithMirrors(mainWindow) {
     throw new Error('Please check update first');
   }
 
-  const mirrors = getDownloadMirrorSources();
+  const checkedInfo = baseUpdateInfoAndProvider.info;
+  const targetBuildFlavor = getTargetUpdateBuildFlavor(checkedInfo);
+  const mirrors = getDownloadMirrorSources(checkedInfo);
   if (mirrors.length === 0) {
-    return await downloadWithCurrentProvider();
+    logUpdater('download mirror fallback disabled for target', {
+      targetBuildFlavor: targetBuildFlavor || 'unknown',
+    });
+    return await downloadWithCurrentProvider(mainWindow);
   }
 
   const fallbackEnabled = shouldFallbackOnDownloadError();
   const originalUpdateInfoAndProvider = autoUpdater.updateInfoAndProvider;
-  const checkedInfo = baseUpdateInfoAndProvider.info;
   let lastError = null;
   let nextMirrorReason = null;
 
@@ -618,7 +665,7 @@ async function downloadWithMirrors(mainWindow) {
         });
       } catch (error) {
         lastError = error;
-        if (isCancellationError(error)) {
+        if (!isStrategyCancellationError(error) && isCancellationError(error)) {
           throw error;
         }
 
@@ -787,4 +834,12 @@ function registerUpdaterHandlers(mainWindow) {
 
 module.exports = {
   registerUpdaterHandlers,
+  __testing: {
+    createStrategyCancellationError,
+    downloadWithMirrors,
+    getDownloadMirrorSources,
+    getTargetUpdateBuildFlavor,
+    isCancellationError,
+    isStrategyCancellationError,
+  },
 };
