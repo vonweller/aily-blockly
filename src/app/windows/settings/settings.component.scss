@@ -129,6 +129,11 @@ textarea {
   }
 }
 
+.tool-update-btn.disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
 .tool-setting-inline {
   display: flex;
   align-items: center;

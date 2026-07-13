@@ -133,8 +133,9 @@
             <h2 class="section-title">
               <div style="position:relative;">
                 {{ 'SETTINGS.SECTIONS.DEPENDENCIES' | translate }}
-                <div class="btn ccenter link folder-open-btn" style="position: absolute;right: -30px; top:6px" (click)="openResources()"
-                  nz-tooltip [nzTooltipTitle]="'SETTINGS.FIELDS.OPEN_RESOURCE_FOLDER' | translate">
+                <div class="btn ccenter link folder-open-btn" style="position: absolute;right: -30px; top:6px"
+                  (click)="openResources()" nz-tooltip
+                  [nzTooltipTitle]="'SETTINGS.FIELDS.OPEN_RESOURCE_FOLDER' | translate">
                   <i class="fa-light fa-folder folder-icon folder-icon-close"></i>
                   <i class="fa-light fa-folder-open folder-icon folder-icon-open"></i>
                 </div>
@@ -172,11 +173,14 @@
           <!-- aily-tools 设置 -->
           <div id="SETTINGS.SECTIONS.AILY_TOOLS" class="section">
             <h2 class="section-title">
-              {{ 'SETTINGS.SECTIONS.AILY_TOOLS' | translate }}
-              <button nz-button nzSize="small" [nzLoading]="isAilyToolsUpdateLoading()"
-                [disabled]="!canCheckAilyToolsUpdates()" (click)="checkAilyToolsUpdates()">
-                {{ 'MENU.UPDATE' | translate }}
-              </button>
+              <div style="position:relative;">
+                {{ 'SETTINGS.SECTIONS.AILY_TOOLS' | translate }}
+                <div class="btn ccenter link tool-update-btn" style="position: absolute;right: -30px; top:6px"
+                  [class.disabled]="!canCheckAilyToolsUpdates()" (click)="checkAilyToolsUpdates()" nz-tooltip
+                  [nzTooltipTitle]="'MENU.UPDATE' | translate">
+                  <i class="fa-light fa-arrows-rotate" [class.fa-spin]="isAilyToolsUpdateLoading()"></i>
+                </div>
+              </div>
             </h2>
             <div class="right-inner">
               <div class="item tool-item">
@@ -214,8 +218,9 @@
             <h2 class="section-title">
               <div style="position:relative;">
                 {{ 'SETTINGS.SECTIONS.CACHE' | translate }}
-                <div class="btn ccenter link folder-open-btn" style="position: absolute;right: -30px; top:6px" (click)="openCacheFolder()"
-                  nz-tooltip [nzTooltipTitle]="'SETTINGS.FIELDS.OPEN_CACHE_FOLDER' | translate">
+                <div class="btn ccenter link folder-open-btn" style="position: absolute;right: -30px; top:6px"
+                  (click)="openCacheFolder()" nz-tooltip
+                  [nzTooltipTitle]="'SETTINGS.FIELDS.OPEN_CACHE_FOLDER' | translate">
                   <i class="fa-light fa-folder folder-icon folder-icon-close"></i>
                   <i class="fa-light fa-folder-open folder-icon folder-icon-open"></i>
                 </div>
@@ -234,8 +239,9 @@
                     (click)="clearCache('all')">{{ 'SETTINGS.FIELDS.CACHE_ALL' | translate }}</button>
                   <button nz-button nzSize="small" [disabled]="cacheClearing" [nzLoading]="cacheClearing === 'unused-7'"
                     (click)="clearCache('unused-7')">{{ 'SETTINGS.FIELDS.CACHE_ONE_MONTH' | translate }}</button>
-                  <button nz-button nzSize="small" [disabled]="cacheClearing" [nzLoading]="cacheClearing === 'unused-30'"
-                    (click)="clearCache('unused-30')">{{ 'SETTINGS.FIELDS.CACHE_THREE_MONTHS' | translate }}</button>
+                  <button nz-button nzSize="small" [disabled]="cacheClearing"
+                    [nzLoading]="cacheClearing === 'unused-30'" (click)="clearCache('unused-30')">{{
+                    'SETTINGS.FIELDS.CACHE_THREE_MONTHS' | translate }}</button>
                 </div>
               </div>
             </div>
@@ -256,7 +262,8 @@
     <div class="window-footer">
       <div class="btns">
         <button nz-button nzType="default" (click)="cancel()">{{ 'SETTINGS.BUTTONS.CANCEL' | translate }}</button>
-        <button nz-button nzType="primary" [nzLoading]="applying" (click)="apply()">{{ 'SETTINGS.BUTTONS.APPLY' | translate }}</button>
+        <button nz-button nzType="primary" [nzLoading]="applying" (click)="apply()">{{ 'SETTINGS.BUTTONS.APPLY' |
+          translate }}</button>
       </div>
     </div>
   </div>
