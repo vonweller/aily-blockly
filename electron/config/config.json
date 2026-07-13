@@ -8,6 +8,7 @@
     "darwin": "~/Library/aily-project"
   },
   "project_path": "%HOMEPATH%\\Documents\\aily-project",
+  "installed": "",
   "build_flavor": "cn",
   "region": "cn",
   "resource_source": "auto",
@@ -74,13 +75,6 @@
     "verbose": true,
     "warnings": "error"
   },
-  "ailyBuilder": {
-    "version": "1.2.4",
-    "required": false
-  },
-  "packageUpdates": {
-    "manifest": "package-updates.json"
-  },
   "upload": {
     "verbose": true,
     "warnings": "error"
@@ -89,8 +83,5 @@
   "devmode": false,
   "blockly": {
     "renderer": "thrasos"
-  },
-  "labs": {
-    "ailyBuilderNext": false
   }
 }

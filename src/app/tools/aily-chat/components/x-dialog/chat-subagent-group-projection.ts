@@ -227,7 +227,7 @@ function buildBaseRenderItems(parts: readonly RenderableChatPart[]): ChatRenderI
   return items;
 }
 
-function normalizePartForProjection(part: RenderableChatPart, index: number): RenderableChatPart {
+export function normalizePartForProjection(part: RenderableChatPart, index: number): RenderableChatPart {
   if (part.type !== 'thinking' || part.isComplete || part.contentRef || !part.content) {
     return part;
   }
@@ -518,7 +518,7 @@ function hasTerminalSpecificData(part: { readonly metadata?: Record<string, unkn
     && (toolSpecificData as Record<string, unknown>)['kind'] === 'terminal';
 }
 
-function buildActivityGroupRevision(parts: readonly ChatPart[]): string {
+export function buildActivityGroupRevision(parts: readonly ChatPart[]): string {
   return parts.map((part, index) => buildActivityPartRevision(part, index)).join('|');
 }
 

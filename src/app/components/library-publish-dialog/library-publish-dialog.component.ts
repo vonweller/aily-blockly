@@ -19,6 +19,7 @@ import { ConfigService } from '../../services/config.service';
 export interface LibraryPublishDialogResult {
   packageJsonPatch: Record<string, unknown>;
   localPackageJsonPatch: Record<string, unknown>;
+  prDescription: string;
   saveToLocalPackageJson: boolean;
 }
 
@@ -56,6 +57,7 @@ export class LibraryPublishDialogComponent {
   packageName = '';
   nickname = '';
   description = '';
+  prDescription = '';
   author = '';
   keywords = '';
   version = '';
@@ -68,7 +70,7 @@ export class LibraryPublishDialogComponent {
   packageNameValidationMessage = '';
   versionValidationMessage = '';
 
-  private readonly packageNamePattern = /^@aily-project\/lib-[a-zA-Z0-9._-]+$/;
+  private readonly packageNamePattern = /^@aily-project\/lib-[a-z0-9][a-z0-9-]*[a-z0-9]$/;
   private readonly packageNamePrefix = '@aily-project/lib-';
   private readonly versionPattern = /^\d+\.\d+\.\d+$/;
 
@@ -309,6 +311,7 @@ export class LibraryPublishDialogComponent {
         author: this.author.trim(),
         keywords: this.parseKeywords(),
       },
+      prDescription: this.prDescription.trim(),
       saveToLocalPackageJson: this.saveToLocalPackageJson,
     };
 

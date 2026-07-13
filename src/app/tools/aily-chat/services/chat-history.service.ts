@@ -952,8 +952,24 @@ export class ChatHistoryService implements OnDestroy {
     this.hostSessionPersistenceBridge.flushAll(options);
   }
 
+  async flushAllAsync(options?: HostSessionFlushOptions): Promise<void> {
+    try {
+      await this.hostSessionPersistenceBridge.flushAllAsync(options);
+    } catch (error) {
+      console.warn('[ChatHistory] Failed to flush sessions asynchronously:', error);
+    }
+  }
+
   flushSession(sessionId: string, options?: HostSessionFlushOptions): void {
     this.hostSessionPersistenceBridge.flushSession(sessionId, options);
+  }
+
+  async flushSessionAsync(sessionId: string, options?: HostSessionFlushOptions): Promise<void> {
+    try {
+      await this.hostSessionPersistenceBridge.flushSessionAsync(sessionId, options);
+    } catch (error) {
+      console.warn(`[ChatHistory] Failed to flush session asynchronously (${sessionId}):`, error);
+    }
   }
 
   scheduleRecoverySnapshotFlush(sessionId?: string): void {
@@ -1288,7 +1304,7 @@ export class ChatHistoryService implements OnDestroy {
     this.autoSaveTimer = setInterval(() => {
       if (this.hostSessionPersistenceBridge.hasDirtySessions() || this.indexDirty) {
         console.log(`[ChatHistory] 定时保存: ${this.hostSessionPersistenceBridge.getDirtySessionCount()} 个脏会话, 索引dirty=${this.indexDirty}`);
-        this.flushAll({
+        void this.flushAllAsync({
           shouldSkipSession: (sessionId, policy) => {
             const active = this.autoSaveSessionActiveProvider?.(sessionId) === true;
             if (active && policy === 'recovery-snapshot') {
@@ -1337,11 +1353,11 @@ export class ChatHistoryService implements OnDestroy {
       if (pendingRecoverySnapshotSessionIds.length > 0) {
         this.pendingRecoverySnapshotSessionIds.clear();
         for (const sessionId of pendingRecoverySnapshotSessionIds) {
-          this.flushSession(sessionId);
+          void this.flushSessionAsync(sessionId);
         }
       }
       if (this.hostSessionPersistenceBridge.hasDirtySessions() || this.indexDirty) {
-        this.flushAll({
+        void this.flushAllAsync({
           shouldSkipSession: (sessionId, policy) => this.shouldSkipActiveRecoverySnapshot(sessionId, policy),
         });
       }

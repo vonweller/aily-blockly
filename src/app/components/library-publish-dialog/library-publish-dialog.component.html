@@ -37,6 +37,12 @@
         [placeholder]="'LIBRARY_PUBLISH.DESCRIPTION_PLACEHOLDER' | translate"></textarea>
     </div>
 
+    <div class="form-item">
+      <label class="form-label">{{ 'LIBRARY_PUBLISH.FIELD_PR_DESCRIPTION' | translate }}</label>
+      <textarea class="form-control" nz-input [(ngModel)]="prDescription" rows="4" maxlength="2000"
+        [placeholder]="'LIBRARY_PUBLISH.PR_DESCRIPTION_PLACEHOLDER' | translate"></textarea>
+    </div>
+
     <div class="form-row">
       <div class="form-item">
         <label class="form-label">{{ 'LIBRARY_PUBLISH.FIELD_AUTHOR' | translate }}</label>

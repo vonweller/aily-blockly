@@ -21,7 +21,7 @@ import path from 'node:path';
  *   $env:AILY_E2E_BOARD_KEYWORDS = 'uno r4,esp32'
  *   npm run test:e2e:fast -- full-flow.spec.ts
  *
- * 本机需具备：内置工具链（child/node、child/aily-builder）、该开发板可安装
+ * 本机需具备：内置 Node 工具链（child/node）和全局安装的 aily-builder 命令、该开发板可安装
  * （网络/缓存），以及对应编译器与 SDK 已安装于应用数据目录下的 aily-project/tools 与 sdk。
  */
 const ENABLED = process.env['AILY_E2E_FULLFLOW'] === '1';

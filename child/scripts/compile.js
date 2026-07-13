@@ -53,9 +53,7 @@ async function main() {
     const {
         currentProjectPath,
         boardModule,
-        code,
-        ailyBuilderPath,
-        ailyBuilderCommand
+        code
     } = config;
 
     // 辅助函数：递归创建目录
@@ -134,9 +132,8 @@ async function main() {
             throw new Error('未找到板子类型(boardType)');
         }
 
-        // 5. 执行编译；Aily Code 时将 AILY_BUILDER_BUILD_PATH 指到 `.aily/build/<framework>`，
-        // 与 Electron 全局行为一致（aily-builder 可能在其下再分子目录，upload 递归查找固件）。
-        const builderCommand = ailyBuilderCommand || process.env.AILY_BUILDER_COMMAND || `node "${path.join(ailyBuilderPath, 'index.js')}"`;
+        // 5. 执行编译
+        const builderCommand = 'aily-builder';
         const args = [
             'compile',
             `"${compileSourcePath}"`,

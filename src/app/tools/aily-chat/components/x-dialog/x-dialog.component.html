@@ -129,15 +129,7 @@
         @if (shouldRenderHeavyContent) {
           @if (hasStructuredAilyContent) {
             <!-- ★ Phase 2: aily 消息统一走 Part-based 渲染 -->
-            <aily-chat-message-parts
-              [parts]="effectiveParts"
-              [sessionId]="sessionId"
-              [doing]="effectiveDoing"
-              [turnResponse]="activityTurnResponse"
-              [impliedWordLoadRate]="item.contentUpdateTimings?.impliedWordLoadRate"
-              [detailProjectionEnabled]="isViewportVisible"
-              (contentDelta)="handleStructuredContentDelta()"
-            />
+            <aily-chat-message-parts />
           } @else if (streamContent()) {
             <x-markdown
               [content]="streamContent()"
