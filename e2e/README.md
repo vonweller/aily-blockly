@@ -48,7 +48,7 @@ npm run test:e2e -- smoke.spec.ts
 | [tests/aily-chat.spec.ts](tests/aily-chat.spec.ts) | AI 聊天工具离线 UI | ✅ |
 | [tests/blockly-editor.spec.ts](tests/blockly-editor.spec.ts) | 打开项目、Blockly 工作区/工具箱 | ⏭️ 需环境变量 |
 | [tests/compile.spec.ts](tests/compile.spec.ts) | 点击编译并等待结果 | ⏭️ 需环境变量 |
-| [tests/full-flow.spec.ts](tests/full-flow.spec.ts) | 单开发板 / 全开发板：选择开发板 → 新建项目 → 编译 | ⏭️ 需环境变量 |
+| [tests/full-flow.spec.ts](tests/full-flow.spec.ts) | 单/全开发板连续编译两次；项目广场全量编译 | ⏭️ 需环境变量 |
 
 ## 环境受限的用例（默认自动跳过）
 
@@ -70,13 +70,20 @@ $env:AILY_E2E_BOARD_KEYWORD = 'uno r4' # 可选，默认 uno r4
 # 指定多个开发板时用逗号分隔；设置后优先于 AILY_E2E_BOARD_KEYWORD
 $env:AILY_E2E_BOARD_KEYWORDS = 'uno r4,esp32'
 # 可选：新电脑首次下载依赖较慢时可调大，单位毫秒
-$env:AILY_E2E_SINGLE_BOARD_TIMEOUT_MS = '2700000' # 默认 45 分钟
+$env:AILY_E2E_SINGLE_BOARD_TIMEOUT_MS = '3600000' # 默认 60 分钟
 $env:AILY_E2E_INSTALL_TIMEOUT_MS = '1800000'      # 默认 30 分钟
 $env:AILY_E2E_COMPILE_TIMEOUT_MS = '600000'       # 默认 10 分钟
 npm run test:e2e:fast -- full-flow.spec.ts
 
-# 全开发板全流程：会先清空 %LOCALAPPDATA%\aily-project，再逐个验证所有可创建开发板
+# 全开发板全流程：会先清空 %LOCALAPPDATA%\aily-project，再逐个验证所有可创建开发板，每块板连续编译两次
 $env:AILY_E2E_ALL_BOARDS = '1'
+npm run test:e2e:fast -- full-flow.spec.ts
+
+# 仅测试项目广场：不要同时设置 AILY_E2E_FULLFLOW / AILY_E2E_ALL_BOARDS
+# 测试会逐个下载、打开并编译所有公开项目；失败项目会在最后统一列出
+$env:AILY_E2E_PROJECT_PLAZA = '1'
+# 可选：单个广场项目下载并进入编辑器的超时，默认 5 分钟
+$env:AILY_E2E_PROJECT_PLAZA_LOAD_TIMEOUT_MS = '300000'
 npm run test:e2e:fast -- full-flow.spec.ts
 ```
 
@@ -86,11 +93,12 @@ macOS / Linux 下使用 `VAR=value` 前缀或 `export`：
 AILY_E2E_FULLFLOW=1 AILY_E2E_BOARD_KEYWORD='uno r4' npm run test:e2e:fast -- full-flow.spec.ts
 AILY_E2E_FULLFLOW=1 AILY_E2E_BOARD_KEYWORDS='uno r4,esp32' npm run test:e2e:fast -- full-flow.spec.ts
 AILY_E2E_ALL_BOARDS=1 npm run test:e2e:fast -- full-flow.spec.ts
+AILY_E2E_PROJECT_PLAZA=1 npm run test:e2e:fast -- full-flow.spec.ts
 ```
 
 > 说明：当前未覆盖「上传(upload)」流程，因为它需要连接真实外设，不便在 CI/本地稳定运行。
 
-> 全流程用例启动前会清空并重建应用数据目录（Windows 默认 `C:\Users\<user>\AppData\Local\aily-project`，macOS 默认 `~/Library/aily-project`），因此会删除已安装的开发板包、编译器与 SDK 缓存；每次创建并编译开发板前还会清理 `aily-builder` 的 `project` 与 `cache` 目录，避免不同架构开发板复用错误的预编译对象。随后使用页面生成的默认项目名，并在默认目录 `~/Documents/aily-project/<name>` 创建项目，测试结束后清理该项目目录。全开发板用例耗时很长，每个开发板会使用独立 Electron 实例隔离运行；单个开发板失败后会继续验证后续开发板，并在最后汇总失败清单。
+> 全流程用例启动前会清空并重建应用数据目录（Windows 默认 `C:\Users\<user>\AppData\Local\aily-project`，macOS 默认 `~/Library/aily-project`），因此会删除已安装的开发板包、编译器与 SDK 缓存；每次创建或加载并编译项目前还会清理 `aily-builder` 的 `project` 与 `cache` 目录，避免不同架构开发板复用错误的预编译对象。新建项目使用页面生成的默认项目名，项目广场项目则下载到默认项目目录；测试结束后都会清理。全开发板和项目广场用例耗时很长，每个条目会使用独立 Electron 实例隔离运行；单项失败后继续验证后续条目，并在最后汇总失败清单。开发板项目第一次编译成功后才执行第二次编译；第一次失败会记录为“第 1 次编译失败”并结束该板子的编译。
 
 ## 备注
 

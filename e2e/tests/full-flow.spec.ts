@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 /**
- * 全流程验证：选择板子 → 新建项目 → 编译。
+ * 全流程验证：选择板子 → 新建项目 → 连续编译两次，以及项目广场项目全量编译。
  *
  * 这是一条「重」用例，会真实地：
  *  - 执行 `npm install <board>`（需要网络或 npm 缓存命中）；
@@ -21,17 +21,25 @@ import path from 'node:path';
  *   $env:AILY_E2E_BOARD_KEYWORDS = 'uno r4,esp32'
  *   npm run test:e2e:fast -- full-flow.spec.ts
  *
+ *   # 项目广场全量编译（单个项目失败后继续，最后汇总）
+ *   $env:AILY_E2E_PROJECT_PLAZA = '1'
+ *   npm run test:e2e:fast -- full-flow.spec.ts
+ *
  * 本机需具备：内置 Node 工具链（child/node）和全局安装的 aily-builder 命令、该开发板可安装
  * （网络/缓存），以及对应编译器与 SDK 已安装于应用数据目录下的 aily-project/tools 与 sdk。
  */
 const ENABLED = process.env['AILY_E2E_FULLFLOW'] === '1';
 const ALL_BOARDS_ENABLED = process.env['AILY_E2E_ALL_BOARDS'] === '1';
+const PROJECT_PLAZA_ENABLED = process.env['AILY_E2E_PROJECT_PLAZA'] === '1';
 const BOARD_KEYWORD = process.env['AILY_E2E_BOARD_KEYWORD'] || 'uno r4';
 const BOARD_KEYWORDS = readBoardKeywords();
-const SINGLE_BOARD_TIMEOUT_MS = readTimeoutEnv('AILY_E2E_SINGLE_BOARD_TIMEOUT_MS', 45 * 60_000);
+const SINGLE_BOARD_TIMEOUT_MS = readTimeoutEnv('AILY_E2E_SINGLE_BOARD_TIMEOUT_MS', 60 * 60_000);
 const INSTALL_TIMEOUT_MS = readTimeoutEnv('AILY_E2E_INSTALL_TIMEOUT_MS', 30 * 60_000);
 const COMPILE_TIMEOUT_MS = readTimeoutEnv('AILY_E2E_COMPILE_TIMEOUT_MS', 10 * 60_000);
+const PROJECT_PLAZA_LOAD_TIMEOUT_MS = readTimeoutEnv('AILY_E2E_PROJECT_PLAZA_LOAD_TIMEOUT_MS', 5 * 60_000);
 const POLL_INTERVAL_MS = 250;
+const BOARD_COMPILE_ATTEMPTS = 2;
+const PROJECT_PLAZA_PAGE_SIZE = 100;
 
 type BoardCandidate = {
   name: string;
@@ -40,8 +48,16 @@ type BoardCandidate = {
 
 type BoardTarget = string | BoardCandidate;
 
+type ProjectPlazaCandidate = {
+  id: string;
+  name: string;
+  page: number;
+  index: number;
+};
+
 type PageLogBuffer = {
   messages: string[];
+  totalMessages: number;
 };
 
 function readTimeoutEnv(name: string, fallbackMs: number): number {
@@ -77,25 +93,27 @@ function readBoardKeywords(): string[] {
   return keywords;
 }
 
-test.describe('全流程：选板子 → 新建项目 → 编译', () => {
+test.describe('全流程：创建或加载项目 → 编译', () => {
   const projectDirs: string[] = [];
   const singleBoardTest = ENABLED ? test : test.skip;
   const allBoardsTest = ALL_BOARDS_ENABLED ? test : test.skip;
+  const projectPlazaTest = PROJECT_PLAZA_ENABLED ? test : test.skip;
 
   test.beforeAll(async () => {
-    if (ENABLED || ALL_BOARDS_ENABLED) {
+    if (ENABLED || ALL_BOARDS_ENABLED || PROJECT_PLAZA_ENABLED) {
       await cleanGlobalAilyProjectDir();
       await bootstrapAfterGlobalDataCleanup();
     }
   });
 
   test.afterAll(async () => {
+    test.setTimeout(30 * 60_000);
     for (const projectDir of projectDirs) {
       await rm(projectDir, { recursive: true, force: true }).catch(() => {});
     }
   });
 
-  singleBoardTest('应能让指定开发板从选板子一路走到编译完成', async ({ electronApp }) => {
+  singleBoardTest('应能让指定开发板从选板子一路走到连续编译两次', async ({ electronApp }) => {
     test.setTimeout(SINGLE_BOARD_TIMEOUT_MS * BOARD_KEYWORDS.length);
 
     if (BOARD_KEYWORDS.length === 1) {
@@ -128,12 +146,12 @@ test.describe('全流程：选板子 → 新建项目 → 编译', () => {
 
     expect(
       failures.map((failure) => `${failure.keyword}: ${failure.message}`),
-      '以下指定开发板未完成新建项目并编译',
+      '以下指定开发板未完成新建项目并连续编译两次',
     ).toEqual([]);
   });
 
-  allBoardsTest('应能让所有可创建开发板完成新建项目并编译', async ({ electronApp }) => {
-    // 每块板最多 7 分钟，给全量运行留足时间。
+  allBoardsTest('应能让所有可创建开发板完成新建项目并连续编译两次', async ({ electronApp }) => {
+    // 全量开发板安装与两轮真实编译耗时较长，给整批运行留足时间。
     test.setTimeout(24 * 60 * 60 * 1000);
 
     const win = await getMainWindow(electronApp);
@@ -141,6 +159,7 @@ test.describe('全流程：选板子 → 新建项目 → 编译', () => {
 
     const boards = await collectCreatableBoards(win);
     expect(boards.length, '至少应发现一个可创建的开发板').toBeGreaterThan(0);
+    test.setTimeout(Math.max(24 * 60 * 60 * 1000, boards.length * SINGLE_BOARD_TIMEOUT_MS));
     console.log(`[all-boards] 将验证 ${boards.length} 个可创建开发板。`);
     await closeAilyElectronApp(electronApp).catch(() => {});
 
@@ -164,7 +183,52 @@ test.describe('全流程：选板子 → 新建项目 → 编译', () => {
 
     expect(
       failures.map((failure) => `${failure.board.name} (${failure.board.label}): ${failure.message}`),
-      '以下开发板未完成新建项目并编译',
+      '以下开发板未完成新建项目并连续编译两次',
+    ).toEqual([]);
+  });
+
+  projectPlazaTest('应能让项目广场的所有项目完成编译', async ({ electronApp }) => {
+    test.setTimeout(24 * 60 * 60 * 1000);
+
+    const win = await getMainWindow(electronApp);
+    attachDiagnostics(win);
+
+    const projects = await collectProjectPlazaProjects(win);
+    expect(projects.length, '项目广场至少应返回一个项目').toBeGreaterThan(0);
+    const perProjectTimeout =
+      PROJECT_PLAZA_LOAD_TIMEOUT_MS + INSTALL_TIMEOUT_MS + COMPILE_TIMEOUT_MS + 2 * 60_000;
+    test.setTimeout(Math.max(24 * 60 * 60 * 1000, projects.length * perProjectTimeout));
+    console.log(`[project-plaza] 将验证 ${projects.length} 个项目。`);
+    await closeAilyElectronApp(electronApp).catch(() => {});
+
+    const failures: Array<{ project: ProjectPlazaCandidate; message: string }> = [];
+    for (const project of projects) {
+      await test.step(`加载并编译 ${project.name}`, async () => {
+        const launched = await launchAilyElectron();
+        try {
+          const isolatedWin = await getMainWindow(launched.app);
+          const pageLog = attachDiagnostics(isolatedWin);
+          await cleanAilyBuilderArtifacts();
+          await loadProjectPlazaProject(isolatedWin, project, pageLog, projectDirs);
+          await compileProject(isolatedWin, pageLog, `项目广场：${project.name}`, 1);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          failures.push({ project, message });
+          console.log(
+            `[project-plaza] ${project.name} (ID: ${project.id || '缺失'}) 编译失败：${message}`,
+          );
+        } finally {
+          await launched.close();
+        }
+      });
+    }
+
+    expect(
+      failures.map(
+        (failure) =>
+          `${failure.project.name} (ID: ${failure.project.id || '缺失'}, 第 ${failure.project.page} 页第 ${failure.project.index + 1} 个): ${failure.message}`,
+      ),
+      '以下项目广场项目编译失败',
     ).toEqual([]);
   });
 });
@@ -307,9 +371,10 @@ async function clickAfterOnboarding(
 }
 
 function attachDiagnostics(win: Awaited<ReturnType<typeof getMainWindow>>): PageLogBuffer {
-  const pageLog: PageLogBuffer = { messages: [] };
+  const pageLog: PageLogBuffer = { messages: [], totalMessages: 0 };
   win.on('console', (msg) => {
     const text = msg.text();
+    pageLog.totalMessages++;
     pageLog.messages.push(text);
     if (pageLog.messages.length > 500) {
       pageLog.messages.shift();
@@ -420,6 +485,143 @@ async function collectCreatableBoards(win: Awaited<ReturnType<typeof getMainWind
   });
 }
 
+async function collectProjectPlazaProjects(
+  win: Awaited<ReturnType<typeof getMainWindow>>,
+): Promise<ProjectPlazaCandidate[]> {
+  await dismissOnboardingIfVisible(win);
+  const firstResponsePromise = win.waitForResponse(
+    (response) => {
+      const url = new URL(response.url());
+      return url.pathname.endsWith('/api/v1/cloud/projects/public') && !url.searchParams.get('id');
+    },
+    { timeout: 60_000 },
+  );
+  await navigate(win, '/main/playground/list');
+
+  const initialResponse = await firstResponsePromise;
+  const responseUrl = new URL(initialResponse.url());
+  responseUrl.searchParams.set('page', '1');
+  responseUrl.searchParams.set('perPage', String(PROJECT_PLAZA_PAGE_SIZE));
+
+  const firstResponse = await win.request.get(responseUrl.toString());
+  const firstPage = await readProjectPlazaPage(firstResponse, 1);
+  const pageSize = firstPage.projects.length || 1;
+  const pageCount = Math.ceil(firstPage.total / pageSize);
+  const pages = [firstPage];
+
+  for (let page = 2; page <= pageCount; page++) {
+    responseUrl.searchParams.set('page', String(page));
+    const response = await win.request.get(responseUrl.toString());
+    pages.push(await readProjectPlazaPage(response, page));
+  }
+
+  const projects: ProjectPlazaCandidate[] = [];
+  const seenIds = new Set<string>();
+  for (const page of pages) {
+    page.projects.forEach((project, index) => {
+      const id = String(project?.id ?? project?.uuid ?? '').trim();
+      if (id && seenIds.has(id)) {
+        return;
+      }
+      if (id) {
+        seenIds.add(id);
+      }
+
+      projects.push({
+        id,
+        name: String(project?.nickname || project?.name || `未命名项目 ${id || `${page.page}-${index + 1}`}`),
+        page: page.page,
+        index,
+      });
+    });
+  }
+
+  if (projects.length !== firstPage.total) {
+    console.warn(
+      `[project-plaza] API 声明共有 ${firstPage.total} 个项目，实际收集到 ${projects.length} 个去重项目。`,
+    );
+  }
+  return projects;
+}
+
+async function readProjectPlazaPage(
+  response: {
+    ok: () => boolean;
+    status: () => number;
+    json: () => Promise<any>;
+  },
+  page: number,
+): Promise<{ page: number; projects: any[]; total: number }> {
+  if (!response.ok()) {
+    throw new Error(`[project-plaza] 获取第 ${page} 页失败：HTTP ${response.status()}。`);
+  }
+
+  const payload = await response.json();
+  if (payload?.status !== 200 || !Array.isArray(payload?.data?.list)) {
+    throw new Error(`[project-plaza] 第 ${page} 页返回格式异常：${JSON.stringify(payload).slice(0, 500)}`);
+  }
+
+  return {
+    page,
+    projects: payload.data.list,
+    total: Number(payload.data.total) || payload.data.list.length,
+  };
+}
+
+async function loadProjectPlazaProject(
+  win: Awaited<ReturnType<typeof getMainWindow>>,
+  project: ProjectPlazaCandidate,
+  pageLog: PageLogBuffer,
+  projectDirs: string[],
+): Promise<string> {
+  if (!project.id) {
+    throw new Error(
+      `[project-plaza] 项目缺少可用于加载的 id（第 ${project.page} 页第 ${project.index + 1} 个）。`,
+    );
+  }
+
+  await dismissOnboardingIfVisible(win);
+  await navigate(win, `/main/playground/list?id=${encodeURIComponent(project.id)}`);
+
+  const deadline = Date.now() + PROJECT_PLAZA_LOAD_TIMEOUT_MS;
+  let editorRoute = '';
+  while (Date.now() < deadline) {
+    editorRoute = await win.evaluate(() => window.location.hash);
+    if (/\/main\/(blockly|code)-editor/.test(editorRoute)) {
+      break;
+    }
+
+    const messageText =
+      (await win.locator('.ant-message-error').last().innerText().catch(() => '')) || '';
+    if (/加载示例失败|load example failed/i.test(messageText)) {
+      throw new Error(`[project-plaza] 加载项目失败：${messageText.trim()}`);
+    }
+    await win.waitForTimeout(POLL_INTERVAL_MS);
+  }
+
+  if (!/\/main\/(blockly|code)-editor/.test(editorRoute)) {
+    throw new Error(`[project-plaza] 加载项目超时（${PROJECT_PLAZA_LOAD_TIMEOUT_MS}ms）。`);
+  }
+
+  const projectDir = await win.evaluate(() => {
+    const route = new URL(window.location.hash.slice(1), 'https://e2e.local');
+    return route.searchParams.get('path') || '';
+  });
+  if (!projectDir) {
+    throw new Error('[project-plaza] 项目已进入编辑器，但路由中未找到项目路径。');
+  }
+  projectDirs.push(projectDir);
+
+  await expect(win.locator('app-header .project-box')).not.toHaveText('', { timeout: 30_000 });
+  if (/\/main\/blockly-editor/.test(editorRoute)) {
+    await waitForDependencyInstallDone(win, pageLog);
+  }
+
+  const compileBtn = win.locator('app-header app-act-btn[data-action="compile"]');
+  await expect(compileBtn).toBeVisible({ timeout: 60_000 });
+  return projectDir;
+}
+
 async function createProjectAndCompile(
   win: Awaited<ReturnType<typeof getMainWindow>>,
   boardTarget: BoardTarget,
@@ -475,14 +677,9 @@ async function createProjectAndCompile(
   // 6) 等待依赖安装完成后再点击编译；预编译可由后台完成，也可由编译流程同步接管。
   await waitForDependencyInstallDone(win, pageLog);
 
-  // 7) 点击编译按钮（仅在编辑器路由、项目已加载时显示）。
-  const compileBtn = win.locator('app-header app-act-btn[data-action="compile"]');
-  await expect(compileBtn).toBeVisible({ timeout: 60_000 });
-  const compileLogStart = pageLog.messages.length;
-  await dismissOnboardingIfVisible(win, 5_000);
-  await compileBtn.click();
-
-  await waitForCompileDone(win, pageLog, compileLogStart);
+  // 7) 首次完整编译成功后再执行第二次增量编译；首次失败时不再重试。
+  const boardName = typeof boardTarget === 'string' ? boardTarget : boardTarget.name;
+  await compileProject(win, pageLog, `${boardName} / ${projectName}`, BOARD_COMPILE_ATTEMPTS);
   return projectDir;
 }
 
@@ -543,6 +740,11 @@ async function waitForDependencyInstallDone(
     const installNoticeSettled = !/依赖安装中|Installing|installing/i.test(noticeText);
     const precompileStarted = /开始预编译|执行预编译|检测到依赖变化，准备重新预处理/.test(joined);
     const precompileDone = /后台预处理完成|同步预处理完成|发现预编译缓存|预编译完成/.test(joined);
+    const installFailed = /依赖安装失败|开发板依赖安装失败|installation failed/i.test(`${joined}\n${noticeText}`);
+
+    if (installFailed) {
+      throw new Error(`[e2e] 依赖安装失败：${noticeText.trim() || '请查看上方 [page] 日志。'}`);
+    }
 
     if (installDone && !sawInstallDoneAt) {
       sawInstallDoneAt = Date.now();
@@ -579,10 +781,59 @@ async function getNoticeText(win: Awaited<ReturnType<typeof getMainWindow>>): Pr
   return `${title}\n${text}`;
 }
 
+async function compileProject(
+  win: Awaited<ReturnType<typeof getMainWindow>>,
+  pageLog: PageLogBuffer,
+  projectLabel: string,
+  attempts: number,
+): Promise<void> {
+  const failures: Array<{ attempt: number; message: string }> = [];
+
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    const attemptLabel = attempts > 1 ? `第 ${attempt} 次编译` : '编译';
+    console.log(`[compile] ${projectLabel}：开始${attemptLabel}。`);
+    try {
+      await compileOnce(win, pageLog, attemptLabel);
+      console.log(`[compile] ${projectLabel}：${attemptLabel}成功。`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      failures.push({ attempt, message });
+      console.log(`[compile] ${projectLabel}：${attemptLabel}失败：${message}`);
+      break;
+    }
+  }
+
+  if (failures.length > 0) {
+    throw new Error(
+      failures
+        .map((failure) => `${attempts > 1 ? `第 ${failure.attempt} 次编译` : '编译'}失败：${failure.message}`)
+        .join('；'),
+    );
+  }
+}
+
+async function compileOnce(
+  win: Awaited<ReturnType<typeof getMainWindow>>,
+  pageLog: PageLogBuffer,
+  attemptLabel: string,
+): Promise<void> {
+  const compileBtn = win.locator('app-header app-act-btn[data-action="compile"]');
+  await expect(compileBtn).toBeVisible({ timeout: 60_000 });
+  await expect(compileBtn.locator('.lloading')).toHaveCount(0, { timeout: 15_000 });
+
+  const compileLogStart = pageLog.totalMessages;
+  const noticeBeforeCompile = await getNoticeText(win);
+  await dismissOnboardingIfVisible(win, 5_000);
+  await compileBtn.click();
+  await waitForCompileDone(win, pageLog, compileLogStart, noticeBeforeCompile, attemptLabel);
+}
+
 async function waitForCompileDone(
   win: Awaited<ReturnType<typeof getMainWindow>>,
   pageLog: PageLogBuffer,
   compileLogStart: number,
+  noticeBeforeCompile: string,
+  attemptLabel: string,
 ): Promise<void> {
   // 编译进度/结果通过 NoticeService 显示在 <app-notification>（非 footer）。
   // 成功：title="编译完成"、text 含 "Flash"；失败：title="编译失败"。
@@ -593,16 +844,23 @@ async function waitForCompileDone(
   let compileResult = '';
   let lastError = '';
   let lastStatusLine = '';
+  let sawCompileStart = false;
   while (Date.now() < compileDeadline) {
     const title = (await noticeTitle.innerText().catch(() => '')) || '';
     const text = (await noticeText.innerText().catch(() => '')) || '';
     const doneBox = await win.locator('app-notification .box.done').count();
     const errBox = await win.locator('app-notification .box.error').count();
-    const compileLogs = pageLog.messages.slice(compileLogStart).join('\n');
-    const statusLine = `[compile] title="${title.trim()}" text="${text.trim()}" done=${doneBox} err=${errBox}`;
+    const loading = await win.locator('app-header app-act-btn[data-action="compile"] .lloading').count();
+    const firstStoredMessage = pageLog.totalMessages - pageLog.messages.length;
+    const compileLogs = pageLog.messages.slice(Math.max(0, compileLogStart - firstStoredMessage)).join('\n');
+    const statusLine = `[compile:${attemptLabel}] title="${title.trim()}" text="${text.trim()}" loading=${loading} done=${doneBox} err=${errBox}`;
     if (statusLine !== lastStatusLine) {
       console.log(statusLine);
       lastStatusLine = statusLine;
+    }
+
+    if (loading > 0 || /编译命令完成|编译命令执行完成|编译耗时|编译失败，耗时|编译错误，耗时/.test(compileLogs)) {
+      sawCompileStart = true;
     }
 
     const successByNotice = /编译完成/.test(title) || /Flash|RAM/.test(text);
@@ -610,21 +868,29 @@ async function waitForCompileDone(
       /编译命令完成：\s*buildCompleted=\s*true\s+isErrored=\s*false/.test(compileLogs) ||
       /lastBuildStatus:\s*success/.test(compileLogs) ||
       /编译耗时:\s*\d/.test(compileLogs);
+    const noticeChanged = `${title}\n${text}` !== noticeBeforeCompile;
 
-    if (successByNotice || successByLog) {
+    if ((sawCompileStart && noticeChanged && successByNotice) || successByLog) {
       compileResult = 'done';
       break;
     }
 
-    if (/编译失败|预编译失败/.test(title) || /buildCompleted=\s*false|isErrored=\s*true|lastBuildStatus:\s*error/.test(compileLogs)) {
+    const failureByNotice = /编译失败|预编译失败/.test(title);
+    const failureByLog =
+      /buildCompleted=\s*false|isErrored=\s*true|lastBuildStatus:\s*error/.test(compileLogs) ||
+      /编译失败，耗时|编译未完成，耗时|编译过程中发生错误|Cannot start build from state/.test(
+        compileLogs,
+      );
+    if ((sawCompileStart && noticeChanged && failureByNotice) || failureByLog) {
       compileResult = 'error';
       lastError = `title="${title.trim()}" text="${text.trim()}"`;
       break;
     }
     await win.waitForTimeout(500);
   }
-  expect(
-    compileResult,
-    `编译未成功完成（请查看上方 [compile]/[page] 日志）。最后错误状态：${lastError || '无'}`,
-  ).toBe('done');
+  if (compileResult !== 'done') {
+    throw new Error(
+      `${attemptLabel}未成功完成（请查看上方 [compile:${attemptLabel}]/[page] 日志）。最后错误状态：${lastError || '超时或无明确错误'}`,
+    );
+  }
 }
