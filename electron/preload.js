@@ -205,12 +205,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
   builder: {
     status: () => ipcRenderer.invoke("aily-builder-status"),
+    checkForUpdate: () => ipcRenderer.invoke("aily-builder-check-update"),
     update: () => ipcRenderer.invoke("aily-builder-update"),
     waitForReady: () => ipcRenderer.invoke("aily-builder-wait-ready"),
-    setChannel: (channel, options = {}) => ipcRenderer.invoke("aily-builder-channel-set", { channel, ...options }),
   },
   linter: {
     status: () => ipcRenderer.invoke("aily-linter-status"),
+    checkForUpdate: () => ipcRenderer.invoke("aily-linter-check-update"),
     update: () => ipcRenderer.invoke("aily-linter-update"),
     waitForReady: () => ipcRenderer.invoke("aily-linter-wait-ready"),
   },

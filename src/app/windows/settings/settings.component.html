@@ -169,32 +169,42 @@
               </div>
             </div>
           </div>
-          <!-- aily-builder 设置 -->
-          <div id="SETTINGS.SECTIONS.AILY_BUILDER" class="section">
-            <h2 class="section-title">{{ 'SETTINGS.SECTIONS.AILY_BUILDER' | translate }}</h2>
+          <!-- aily-tools 设置 -->
+          <div id="SETTINGS.SECTIONS.AILY_TOOLS" class="section">
+            <h2 class="section-title">
+              {{ 'SETTINGS.SECTIONS.AILY_TOOLS' | translate }}
+              <button nz-button nzSize="small" [nzLoading]="isAilyToolsUpdateLoading()"
+                [disabled]="!canCheckAilyToolsUpdates()" (click)="checkAilyToolsUpdates()">
+                {{ 'MENU.UPDATE' | translate }}
+              </button>
+            </h2>
             <div class="right-inner">
-              <div class="item">
-                <div>{{ 'SETTINGS.FIELDS.AILY_BUILDER_CURRENT_VERSION' | translate }}:</div>
-                <div class="builder-setting-inline">
-                  <div class="builder-version">
-                  <strong>{{ getAilyBuilderDisplayName() }}</strong>
+              <div class="item tool-item">
+                <div>aily-builder</div>
+                <div class="tool-setting-inline">
+                  <div class="tool-version">
+                    <strong>&#64; {{ getAilyToolVersion(ailyBuilderStatus) }}</strong>
                   </div>
-                  <div class="builder-update-row">
-                    @if (getAilyBuilderStatusText()) {
-                    <span class="builder-status" [ngClass]="{
-                      updating: isAilyBuilderUpdateLoading(),
-                      warning: !ailyBuilderStatus?.installed
-                    }">{{ getAilyBuilderStatusText() }}</span>
-                    }
-                    @if (shouldShowAilyBuilderUpdateButton()) {
-                    <button nz-button nzSize="small" [nzLoading]="isAilyBuilderUpdateLoading()"
-                      [disabled]="!canUpdateAilyBuilderManually()" (click)="updateAilyBuilder()">
-                      @if (!isAilyBuilderUpdateLoading()) {
-                      {{ 'SETTINGS.FIELDS.AILY_BUILDER_UPDATE' | translate }}
-                      }
-                    </button>
-                    }
+                  @if (getAilyToolStatusText(ailyBuilderStatus)) {
+                  <span class="tool-status" [class.warning]="!ailyBuilderStatus?.installed"
+                    [class.error]="!!ailyBuilderStatus?.error">
+                    {{ getAilyToolStatusText(ailyBuilderStatus) }}
+                  </span>
+                  }
+                </div>
+              </div>
+              <div class="item tool-item">
+                <div>aily-linter</div>
+                <div class="tool-setting-inline">
+                  <div class="tool-version">
+                    <strong>&#64; {{ getAilyToolVersion(ailyLinterStatus) }}</strong>
                   </div>
+                  @if (getAilyToolStatusText(ailyLinterStatus)) {
+                  <span class="tool-status" [class.warning]="!ailyLinterStatus?.installed"
+                    [class.error]="!!ailyLinterStatus?.error">
+                    {{ getAilyToolStatusText(ailyLinterStatus) }}
+                  </span>
+                  }
                 </div>
               </div>
             </div>
@@ -227,20 +237,6 @@
                   <button nz-button nzSize="small" [disabled]="cacheClearing" [nzLoading]="cacheClearing === 'unused-30'"
                     (click)="clearCache('unused-30')">{{ 'SETTINGS.FIELDS.CACHE_THREE_MONTHS' | translate }}</button>
                 </div>
-              </div>
-            </div>
-          </div>
-          <!-- 实验室设置 -->
-          <div id="SETTINGS.SECTIONS.LABS" class="section">
-            <h2 class="section-title">{{ 'SETTINGS.SECTIONS.LABS' | translate }}</h2>
-            <div class="right-inner">
-              <div class="lab-feature-card">
-                <div class="lab-feature-content">
-                  <div class="lab-feature-title">{{ 'SETTINGS.FIELDS.AILY_BUILDER_NEXT_VERSION' | translate }}</div>
-                  <div class="lab-feature-desc">{{ 'SETTINGS.FIELDS.AILY_BUILDER_NEXT_VERSION_DESC' | translate }}</div>
-                </div>
-                <nz-switch [(ngModel)]="labsConfig.ailyBuilderNext" [nzLoading]="ailyBuilderChannelSwitching"
-                  (ngModelChange)="onAilyBuilderNextChange($event)"></nz-switch>
               </div>
             </div>
           </div>

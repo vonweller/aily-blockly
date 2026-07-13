@@ -1487,8 +1487,6 @@ function loadEnv() {
   process.env.AILY_TOOL_WEB = regionConfig.tool_web || '';
 
   process.env.AILY_PROJECT_PATH = conf["project_path"];
-  builder.setChannel(conf.labs?.ailyBuilderNext ? "next" : "stable");
-
   // child 目录只管理 Node、7z、probe-rs 等随应用分发的工具；
   // aily-builder 与 aily-linter 由 npm 安装到应用专用的全局 prefix。
 

@@ -3,6 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const { spawn, spawnSync } = require("child_process");
 const { ipcMain } = require("electron");
+const semver = require("semver");
 
 const { isWin32 } = require("./platform");
 
@@ -241,20 +242,53 @@ function runNpm(childPath, npmArgs) {
   });
 }
 
+function withConfiguredRegistry(npmArgs) {
+  const args = [...npmArgs];
+  if (process.env.AILY_NPM_REGISTRY) {
+    args.push("--registry", process.env.AILY_NPM_REGISTRY);
+  }
+  return args;
+}
+
+function parseNpmViewVersion(output) {
+  const text = String(output || "").trim();
+  let value = text;
+  try {
+    value = JSON.parse(text);
+  } catch (_) {
+    // npm may return plain text when JSON output is unavailable.
+  }
+  if (Array.isArray(value)) {
+    value = value[value.length - 1];
+  }
+  const version = semver.clean(String(value || "").trim());
+  if (!version) {
+    throw new Error(`Unable to parse the latest ${PACKAGE_NAME} version`);
+  }
+  return version;
+}
+
+async function getLatestVersion(childPath) {
+  const npmArgs = withConfiguredRegistry(["view", `${PACKAGE_NAME}@latest`, "version", "--json"]);
+  const { code, stdout, stderr, error } = await runNpm(childPath, npmArgs);
+  if (code !== 0) {
+    throw new Error(error || stderr || stdout || `npm view exited with ${code}`);
+  }
+  return parseNpmViewVersion(stdout);
+}
+
 function installFromNpm(childPath, options = {}) {
   if (installPromise) {
     return installPromise;
   }
 
-  const npmArgs = ["i", PACKAGE_NAME, "-g"];
+  const installTarget = options.targetVersion ? `${PACKAGE_NAME}@${options.targetVersion}` : PACKAGE_NAME;
+  const npmArgs = ["i", installTarget, "-g"];
   if (options.force) {
     npmArgs.push("--force");
   }
-  if (process.env.AILY_NPM_REGISTRY) {
-    npmArgs.push("--registry", process.env.AILY_NPM_REGISTRY);
-  }
 
-  installPromise = runNpm(childPath, npmArgs)
+  installPromise = runNpm(childPath, withConfiguredRegistry(npmArgs))
     .then(({ code, stdout, stderr, error }) => {
       if (code !== 0) {
         return {
@@ -443,6 +477,39 @@ function getStatus() {
   };
 }
 
+async function checkForUpdate(childPath) {
+  const currentState = probeAilyLinterCommand();
+  const currentVersion = semver.clean(String(currentState.version || "").trim());
+  const latestVersion = await getLatestVersion(childPath);
+
+  if (currentState.ok && currentVersion && !semver.gt(latestVersion, currentVersion)) {
+    return {
+      updated: false,
+      previousVersion: currentVersion,
+      version: currentVersion,
+      latestVersion,
+      status: getStatus(),
+    };
+  }
+
+  const { installResult, readyResult } = await performInstallMutation(childPath, {
+    reason: "check-update",
+    targetVersion: latestVersion,
+  });
+  const result = installResult.ok ? readyResult : installResult;
+  if (!result.ok) {
+    throw new Error(result.error || `${PACKAGE_NAME} npm installation failed`);
+  }
+
+  return {
+    updated: true,
+    previousVersion: currentVersion,
+    version: result.version,
+    latestVersion,
+    status: getStatus(),
+  };
+}
+
 function requireChildPath() {
   const childPath = process.env.AILY_CHILD_PATH;
   if (!childPath) {
@@ -461,6 +528,7 @@ function registerHandlers(mainWindowProvider) {
   handlersRegistered = true;
 
   ipcMain.handle("aily-linter-status", async () => getStatus());
+  ipcMain.handle("aily-linter-check-update", async () => checkForUpdate(requireChildPath()));
   ipcMain.handle("aily-linter-wait-ready", async () => {
     const result = await waitForReady();
     if (!result.ok) {
