@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, ChangeDetectorRef, Component, EventEmitter, Input, OnChanges, Output, SimpleChanges, ViewChild, forwardRef, inject } from '@angular/core';
+import { ChangeDetectionStrategy, ChangeDetectorRef, Component, Input, OnChanges, SimpleChanges, ViewChild, forwardRef, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { XMarkdownComponent } from 'ngx-x-markdown';
@@ -70,7 +70,7 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
               [data]="getThinkingViewerData()"
               [embedded]="true"
               [impliedWordLoadRate]="impliedWordLoadRate"
-              (contentDelta)="emitContentDelta()" />
+              [contentDeltaHandler]="contentDeltaHandler" />
           </div>
         } @else {
           <div
@@ -227,7 +227,7 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
                   [first]="nestedFirst"
                   [last]="nestedLast"
                   [only]="nestedCount === 1"
-                  (contentDelta)="emitContentDelta()" />
+                  [contentDeltaHandler]="contentDeltaHandler" />
               }
             </div>
           }
@@ -241,7 +241,7 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
                   [first]="subagentFirst"
                   [last]="subagentLast"
                   [only]="subagentCount === 1"
-                  (contentDelta)="emitContentDelta()" />
+                  [contentDeltaHandler]="contentDeltaHandler" />
               }
             </div>
           }
@@ -455,7 +455,7 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
                                   [output]="getTerminalOutputText(group)"
                                   [actions]="getTerminalToolbarActions()"
                                   (actionSelected)="handleTerminalToolbarAction($event)"
-                                  (contentDelta)="emitContentDelta()" />
+                                  [contentDeltaHandler]="contentDeltaHandler" />
                               } @else {
                                 @for (row of group.rows; track row.id) {
                                 <div class="cag-item-invocation-output" [attr.data-tone]="row.tone || 'neutral'" [attr.data-output-kind]="row.outputKind || 'default'">
@@ -584,8 +584,7 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
                                       <x-aily-mermaid-viewer
                                         [data]="{ code: row.outputCode || row.note || '' }"
                                         [streamStatus]="'done'"
-                                        [mermaidInstance]="mermaidInstance"
-                                        (contentDelta)="emitContentDelta()"></x-aily-mermaid-viewer>
+                                        [mermaidInstance]="mermaidInstance"></x-aily-mermaid-viewer>
                                       @if (row.outputLabel || row.outputMimeType) {
                                         <div class="cag-item-invocation-output-resource-meta">
                                           @if (row.outputLabel) {
@@ -2301,7 +2300,7 @@ export class ChatActivityItemComponent implements OnChanges {
   @Input() first = false;
   @Input() last = false;
   @Input() only = false;
-  @Output() contentDelta = new EventEmitter<void>();
+  @Input() contentDeltaHandler: (() => void) | undefined;
   @ViewChild(XAilyThinkViewerComponent) private thinkingViewer?: XAilyThinkViewerComponent;
 
   readonly componentMap: ComponentMap = { code: AilyChatCodeComponent };
@@ -2316,7 +2315,7 @@ export class ChatActivityItemComponent implements OnChanges {
   private mermaidLoading = false;
 
   emitContentDelta(): void {
-    this.contentDelta.emit();
+    this.contentDeltaHandler?.();
   }
 
   shouldRenderInlineApproval(): boolean {

@@ -202,7 +202,7 @@
           (editAddFile)="editResourceShellCoordinator.addFile($event)"
           (editAddFolder)="editResourceShellCoordinator.addFolder($event)"
           (taskAction)="handleDialogTaskAction($event)"
-          (contentDelta)="handleDialogContentDelta($event)" />
+          [contentHeightChangeHandler]="dialogContentHeightChangeHandler" />
         @if (vm.checkpointRestoreSurface; as checkpointRestoreSurface) {
           <div
             class="chat-checkpoint-restore-surface"

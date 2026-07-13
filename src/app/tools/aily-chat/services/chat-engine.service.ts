@@ -2009,7 +2009,7 @@ export class ChatEngineService implements IChatContext {
       flush: options?.flush ?? 'scheduled',
     });
     if (options?.flush === 'immediate') {
-      this.chatHistoryService.flushSession(sessionId);
+      void this.chatHistoryService.flushSessionAsync(sessionId);
       return;
     }
     this.chatHistoryService.scheduleRecoverySnapshotFlush(sessionId);
@@ -2162,6 +2162,7 @@ export class ChatEngineService implements IChatContext {
   private contextBudgetStateSubscription: Subscription | null = null;
   private runtimeModeCollectionSubscription: Subscription | null = null;
   private runtimeHostEventSubscription: ChatRuntimeHostEventSubscription | null = null;
+  private runtimeHostEventZoneBoundaryReported = false;
   private editDiffPreviewRequestSubscription: Subscription | null = null;
   private readonly runtimeHostSessionStates = new Map<string, ChatRuntimeHostSessionState>();
   private readonly runtimeHostStopActions = new Map<
@@ -2863,7 +2864,11 @@ export class ChatEngineService implements IChatContext {
           : null;
       },
       acquireExistingSessionModel: (sessionId) => thisEngine.chatSessionModelStore.acquireExisting(sessionId),
-      acquireSessionModel: (props, options) => thisEngine.chatSessionModelStore.acquireOrCreate(props, options),
+      acquireSessionModel: (props) => thisEngine.chatSessionModelStore.acquireOrCreate(props),
+      acquireProvisionalSessionModel: (props) => thisEngine.chatSessionModelStore.acquireOrCreate(
+        props,
+        { suppressCreatedEvent: true },
+      ),
       attachSessionViewModel: (sessionId) => thisEngine.chatSessionViewModelStore.attach(sessionId),
       detachSessionViewModel: (sessionId) => thisEngine.chatSessionViewModelStore.detach(sessionId),
       readCurrentViewSessionResource: () => thisEngine.chatSessionViewModelStore.currentSessionResource,
@@ -5497,8 +5502,21 @@ export class ChatEngineService implements IChatContext {
 
   private setupRuntimeHostEventSubscription(): void {
     this.runtimeHostEventSubscription?.dispose();
-    this.runtimeHostEventSubscription = this.runtimeHostForView().onEvent((event) => {
-      this.handleRuntimeHostEvent(event);
+    // Runtime-host revisions are model events. Register their IPC listener
+    // outside Angular so each token/part event cannot schedule an application
+    // tick. Visible list-item patches and explicit interaction/completion
+    // refreshes are the only renderer entry points.
+    this.ngZone.runOutsideAngular(() => {
+      this.runtimeHostEventSubscription = this.runtimeHostForView().onEvent((event) => {
+        if (!this.runtimeHostEventZoneBoundaryReported) {
+          this.runtimeHostEventZoneBoundaryReported = true;
+          console.info(
+            '[AilyChat][RuntimeHostEventZoneScalar]',
+            `inAngularZone=${NgZone.isInAngularZone()} kind=${event.kind}`,
+          );
+        }
+        this.handleRuntimeHostEvent(event);
+      });
     });
     this.traceRuntimeHostRoute('subscribe-view', null, {
       currentSessionId: this.chatService.currentSessionId || null,
