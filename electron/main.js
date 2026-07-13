@@ -9,6 +9,10 @@ const { isWin32, isDarwin, isLinux } = require("./platform");
 const projectLock = require("./project-lock");
 const builder = require("./builder");
 const linter = require("./linter");
+const {
+  markInstalledForAppVersion,
+  shouldInstallForAppVersion,
+} = require("./aily-tools-install-state");
 
 // 设置应用名称，用于 Windows 系统通知显示
 app.setName("aily blockly");
@@ -1490,16 +1494,39 @@ function loadEnv() {
   // child 目录只管理 Node、7z、probe-rs 等随应用分发的工具；
   // aily-builder 与 aily-linter 由 npm 安装到应用专用的全局 prefix。
 
-  // 必须先让 child Node 可用，再进行一次启动初始化；仅缺少可用命令时才安装。
-  // 两个 npm 全局安装串行执行，避免同时修改同一个 prefix。
+  // 必须先让 child Node 可用。首次启动和应用版本变化时安装 latest，
+  // 同一应用版本复用现有工具；两个 npm 全局安装串行执行。
   runInstallEnv(childPath);
-  const builderInitialization = builder.initialize(childPath);
+  const appVersion = app.getVersion();
+  const installLatest = shouldInstallForAppVersion(userConf, appVersion);
+  if (installLatest) {
+    try {
+      markInstalledForAppVersion(userConfigPath, appVersion);
+      userConf.installed = appVersion;
+      console.log(`aily blockly ${appVersion} will refresh aily-builder and aily-linter to latest`);
+    } catch (error) {
+      console.error("Failed to save aily tools refresh marker:", error);
+    }
+  }
+
+  const builderInitialization = builder.initialize(childPath, {
+    installLatest,
+  });
   builderInitialization.then((result) => {
+    if (installLatest && !result.startupInstallSucceeded) {
+      console.error(`aily-builder@latest startup install failed: ${result.startupInstallError || result.error || "unknown error"}`);
+    }
     if (!result.ok) {
       console.error(`aily-builder 初始化失败: ${result.error || "未知错误"}`);
     }
   }).catch((error) => console.error("aily-builder 初始化失败:", error));
-  linter.initialize(childPath, builderInitialization).then((result) => {
+  const linterInitialization = linter.initialize(childPath, builderInitialization, {
+    installLatest,
+  });
+  linterInitialization.then((result) => {
+    if (installLatest && !result.startupInstallSucceeded) {
+      console.error(`aily-linter@latest startup install failed: ${result.startupInstallError || result.error || "unknown error"}`);
+    }
     if (!result.ok) {
       console.error(`aily-linter 初始化失败: ${result.error || "未知错误"}`);
     }

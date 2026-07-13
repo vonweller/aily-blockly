@@ -1195,6 +1195,9 @@ interface ResourceSourceConfig {
 }
 
 interface AppConfig {
+  /** App version for which the managed aily tools were last refreshed. */
+  installed?: string;
+
   /** 语言设置，例如 "zh_CN" */
   lang: string;
 

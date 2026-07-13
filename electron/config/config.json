@@ -8,6 +8,7 @@
     "darwin": "~/Library/aily-project"
   },
   "project_path": "%HOMEPATH%\\Documents\\aily-project",
+  "installed": "",
   "build_flavor": "cn",
   "region": "cn",
   "resource_source": "auto",

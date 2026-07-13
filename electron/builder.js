@@ -316,7 +316,7 @@ function installFromNpm(childPath, options = {}) {
     return installPromise;
   }
 
-  const installTarget = options.targetVersion ? `${PACKAGE_NAME}@${options.targetVersion}` : PACKAGE_NAME;
+  const installTarget = `${PACKAGE_NAME}@${options.targetVersion || "latest"}`;
   const npmArgs = ["i", installTarget, "-g"];
   if (options.force) {
     npmArgs.push("--force");
@@ -413,28 +413,38 @@ function performInstallMutation(childPath, options) {
   });
 }
 
-function initialize(childPath) {
+function initialize(childPath, options = {}) {
   if (startupPromise) {
     return startupPromise;
   }
 
+  const installLatest = !!options.installLatest;
   startupPromise = (async () => {
     const commandState = getAilyBuilderReadyState(childPath);
-    if (commandState.ok) {
+    if (!installLatest) {
       return rememberReadyResult(commandState);
     }
 
-    const { readyResult } = await performInstallMutation(childPath, {
+    const { installResult, readyResult } = await performInstallMutation(childPath, {
       force: true,
       reason: "startup",
+      targetVersion: "latest",
     });
-    return readyResult;
+    return rememberReadyResult({
+      ...readyResult,
+      startupInstallAttempted: true,
+      startupInstallSucceeded: !!installResult.ok && !!installResult.installed && !!readyResult.ok,
+      startupInstallError: installResult.ok ? "" : (installResult.error || readyResult.error),
+    });
   })().catch((error) => rememberReadyResult({
     ok: false,
     path: "",
     version: null,
     installed: false,
     error: error?.message || String(error),
+    startupInstallAttempted: installLatest,
+    startupInstallSucceeded: false,
+    startupInstallError: error?.message || String(error),
   }));
 
   return startupPromise;

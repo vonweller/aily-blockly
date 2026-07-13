@@ -282,7 +282,7 @@ function installFromNpm(childPath, options = {}) {
     return installPromise;
   }
 
-  const installTarget = options.targetVersion ? `${PACKAGE_NAME}@${options.targetVersion}` : PACKAGE_NAME;
+  const installTarget = `${PACKAGE_NAME}@${options.targetVersion || "latest"}`;
   const npmArgs = ["i", installTarget, "-g"];
   if (options.force) {
     npmArgs.push("--force");
@@ -371,16 +371,17 @@ function performInstallMutation(childPath, options = {}) {
   });
 }
 
-function initialize(childPath, prerequisitePromise) {
+function initialize(childPath, prerequisitePromise, options = {}) {
   if (startupPromise) {
     return startupPromise;
   }
 
+  const installLatest = !!options.installLatest;
   setPrerequisite(prerequisitePromise);
   startupPromise = (async () => {
     applyCommandEnv();
     let commandState = probeAilyLinterCommand();
-    if (commandState.ok) {
+    if (!installLatest) {
       return rememberReadyResult(commandState);
     }
 
@@ -389,21 +390,26 @@ function initialize(childPath, prerequisitePromise) {
     await prerequisiteBarrier;
 
     commandState = probeAilyLinterCommand();
-    if (commandState.ok) {
-      return rememberReadyResult(commandState);
-    }
-
-    const { readyResult } = await performInstallMutation(childPath, {
-      force: false,
+    const { installResult, readyResult } = await performInstallMutation(childPath, {
+      force: installLatest,
       reason: "startup",
+      targetVersion: "latest",
     });
-    return readyResult;
+    return rememberReadyResult({
+      ...readyResult,
+      startupInstallAttempted: true,
+      startupInstallSucceeded: !!installResult.ok && !!installResult.installed && !!readyResult.ok,
+      startupInstallError: installResult.ok ? "" : (installResult.error || readyResult.error),
+    });
   })().catch((error) => rememberReadyResult({
     ok: false,
     path: "",
     version: null,
     installed: false,
     error: error?.message || String(error),
+    startupInstallAttempted: installLatest,
+    startupInstallSucceeded: false,
+    startupInstallError: error?.message || String(error),
   }));
 
   return startupPromise;
