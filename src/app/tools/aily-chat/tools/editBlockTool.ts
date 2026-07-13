@@ -7787,22 +7787,6 @@ export async function getWorkspaceOverviewTool(args?: any): Promise<ToolUseResul
             // console.log('- Angular injector: ❌ 获取失败 -', error.message);
           }
           
-          // 检查 aily-builder 路径
-          let ailyBuilderAvailable = false;
-          try {
-            if ((window as any)['path']) {
-              const path = (window as any)['path'].getAilyBuilderPath();
-              ailyBuilderAvailable = !!path;
-              // console.log('- aily-builder 路径:', path || '❌ 未设置');
-              if (path) {
-                const exists = (window as any)['path'].isExists(path + '/index.js');
-                // console.log('- index.js 存在:', exists ? '✅' : '❌');
-              }
-            }
-          } catch (error) {
-            // console.log('- aily-builder 检查: ❌ 失败 -', error.message);
-          }
-          
           // 如果环境不就绪，等待更长时间
           if (!injectorAvailable) {
             // console.log('⏳ Angular 环境未就绪，等待 5 秒...');
@@ -7828,7 +7812,7 @@ export async function getWorkspaceOverviewTool(args?: any): Promise<ToolUseResul
               
               if (syntaxCheckResult) {
                 const content = syntaxCheckResult.content || '';
-                const isValid = !syntaxCheckResult.is_error && content.includes('✅ **Arduino代码语法检查通过**');
+                const isValid = !syntaxCheckResult.is_error && content.includes('✅ **代码语法检查通过**');
                 
                 // 从内容中提取错误和警告信息
                 const errors: any[] = [];
@@ -7902,7 +7886,7 @@ export async function getWorkspaceOverviewTool(args?: any): Promise<ToolUseResul
               
               const lintStartTime = Date.now();
               const lintServiceResult = await arduinoLintService.checkSyntax(generatedCode, {
-                mode: 'ast-grep',
+                mode: 'fast',
                 format: 'json'
               });
               const lintDuration = Date.now() - lintStartTime;
@@ -7923,11 +7907,11 @@ export async function getWorkspaceOverviewTool(args?: any): Promise<ToolUseResul
                 notes: lintServiceResult.notes || [],
                 duration: lintDuration,
                 language: 'arduino',
-                toolUsed: 'aily-builder-lint',
-                mode: lintServiceResult.mode || 'ast-grep'
+                toolUsed: 'aily-linter',
+                mode: lintServiceResult.mode || 'fast'
               };
               
-              // // console.log('✅ Arduino语法检测完成 (aily-builder):', {
+              // // console.log('✅ Arduino语法检测完成 (aily-linter):', {
               //   isValid: lintResult.isValid,
               //   errorCount: lintResult.errors.length,
               //   warningCount: lintResult.warnings.length,
@@ -7943,7 +7927,7 @@ export async function getWorkspaceOverviewTool(args?: any): Promise<ToolUseResul
                   column: 1,
                   message: '编译失败，但未提供具体错误信息。请检查代码语法和依赖项。',
                   severity: 'error',
-                  source: 'aily-builder-lint'
+                  source: 'aily-linter'
                 });
               }
             }           

@@ -631,7 +631,6 @@ export class ProjectService {
       name: 'aily blockly',
     };
     this.stateSubject.next('default');
-    this.uiService.closeTerminal();
     // this.currentProjectPath = (await window['env'].get("AILY_PROJECT_PATH")).replace('%HOMEPATH%\\Documents', window['path'].getUserDocuments());
     this.router.navigate(['/main/guide'], { replaceUrl: true });
   }
@@ -2470,7 +2469,7 @@ export class ProjectService {
 
     // 使用统一的构建路径获取方法
     return window['path'].join(
-      window['path'].getAilyBuilderBuildPath(),
+      window['path'].getAilyBuilderPath(),
       uniqueSketchName
     );
   }

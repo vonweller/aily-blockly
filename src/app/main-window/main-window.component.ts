@@ -365,6 +365,7 @@ export class MainWindowComponent implements OnDestroy {
         case 'loaded':
           this.message.remove();
           this.message.success(this.translate.instant('MAIN_WINDOW.PROJECT_LOADED'));
+          void this.reloadTerminalAfterProjectOpen();
           break;
         case 'saving':
           this.message.loading(this.translate.instant('MAIN_WINDOW.PROJECT_SAVING'));
@@ -417,6 +418,18 @@ export class MainWindowComponent implements OnDestroy {
     this.showBbox = false;
     this.uiService.terminalIsOpen = false;
     this.uiService.currentBottomTab = '';
+  }
+
+  private async reloadTerminalAfterProjectOpen(): Promise<void> {
+    if (!this.showBbox || !this.terminalComponent) {
+      return;
+    }
+
+    try {
+      await this.terminalComponent.reload();
+    } catch (error) {
+      console.error('Failed to reload terminal after opening project:', error);
+    }
   }
 
   // 清空当前选中的组件

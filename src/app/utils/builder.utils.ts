@@ -10,7 +10,7 @@ export async function getDefaultBuildPath(sketchFilePath: string): Promise<strin
     const sketchMd5 = sketchMd5Value.slice(0, 8);
     const sketchName = window['path'].basename(sketchFilePath, '.ino');
     // 使用跨平台的路径拼接方式
-    return window['path'].join(window['path'].getAilyBuilderBuildPath(), `${sketchName}_${sketchMd5}`);
+    return window['path'].join(window['path'].getAilyBuilderPath(), `${sketchName}_${sketchMd5}`);
 }
 
 /**

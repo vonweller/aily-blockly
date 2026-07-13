@@ -1,6 +1,4 @@
-/**
- * Ripgrep 工具包装器 - 用于高速文件内容搜索
- */
+// 封装 ripgrep 可执行文件，提供高速文件内容搜索能力。
 
 const { execFile } = require('child_process');
 const path = require('path');

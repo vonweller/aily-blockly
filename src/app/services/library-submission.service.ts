@@ -16,6 +16,7 @@ import { PlatformService } from './platform.service';
 export interface LibrarySubmissionPayload {
   package: BlocklyLibrarySubmissionPackage;
   confirmExisting?: boolean;
+  prDescription?: string;
 }
 
 export interface LibrarySubmissionResult {
@@ -64,20 +65,23 @@ export class LibrarySubmissionService {
     private platformService: PlatformService,
   ) { }
 
-  submitLocalLibrary(projectPath: string, packageName: string, confirmExisting = false, packageJsonPatch?: Record<string, unknown>): Observable<LibrarySubmissionResponse> {
+  submitLocalLibrary(projectPath: string, packageName: string, confirmExisting = false, packageJsonPatch?: Record<string, unknown>, prDescription = ''): Observable<LibrarySubmissionResponse> {
     const bundle = this.blocklyLibraryPackageService.readLibrarySubmissionPackage(projectPath, packageName);
     this.applyPackageJsonPatch(bundle, packageJsonPatch);
-    return this.submitBundle(bundle, confirmExisting);
+    return this.submitBundle(bundle, confirmExisting, prDescription);
   }
 
-  submitLocalLibraryByRef(ref: BlocklyLibraryPackageRef, confirmExisting = false, packageJsonPatch?: Record<string, unknown>): Observable<LibrarySubmissionResponse> {
+  submitLocalLibraryByRef(ref: BlocklyLibraryPackageRef, confirmExisting = false, packageJsonPatch?: Record<string, unknown>, prDescription = ''): Observable<LibrarySubmissionResponse> {
     const bundle = this.blocklyLibraryPackageService.readLibrarySubmissionPackageByRef(ref);
     this.applyPackageJsonPatch(bundle, packageJsonPatch);
-    return this.submitBundle(bundle, confirmExisting);
+    return this.submitBundle(bundle, confirmExisting, prDescription);
   }
 
-  submitBundle(bundle: BlocklyLibrarySubmissionBundle, confirmExisting = false): Observable<LibrarySubmissionResponse> {
-    const payload: LibrarySubmissionPayload = { package: bundle.package };
+  submitBundle(bundle: BlocklyLibrarySubmissionBundle, confirmExisting = false, prDescription = ''): Observable<LibrarySubmissionResponse> {
+    const payload: LibrarySubmissionPayload = {
+      package: bundle.package,
+      prDescription: prDescription.trim(),
+    };
     if (confirmExisting) {
       payload.confirmExisting = true;
     }
