@@ -36,7 +36,12 @@ const BOARD_KEYWORDS = readBoardKeywords();
 const SINGLE_BOARD_TIMEOUT_MS = readTimeoutEnv('AILY_E2E_SINGLE_BOARD_TIMEOUT_MS', 60 * 60_000);
 const INSTALL_TIMEOUT_MS = readTimeoutEnv('AILY_E2E_INSTALL_TIMEOUT_MS', 30 * 60_000);
 const COMPILE_TIMEOUT_MS = readTimeoutEnv('AILY_E2E_COMPILE_TIMEOUT_MS', 10 * 60_000);
-const PROJECT_PLAZA_LOAD_TIMEOUT_MS = readTimeoutEnv('AILY_E2E_PROJECT_PLAZA_LOAD_TIMEOUT_MS', 5 * 60_000);
+const PROJECT_PLAZA_LOAD_TIMEOUT_MS = readTimeoutEnv('AILY_E2E_PROJECT_PLAZA_LOAD_TIMEOUT_MS', 3 * 60_000);
+const PROJECT_PLAZA_INSTALL_TIMEOUT_MS = readTimeoutEnv(
+  'AILY_E2E_PROJECT_PLAZA_INSTALL_TIMEOUT_MS',
+  5 * 60_000,
+);
+const PROJECT_PLAZA_CONCURRENCY = readPositiveIntegerEnv('AILY_E2E_PROJECT_PLAZA_CONCURRENCY', 2);
 const POLL_INTERVAL_MS = 250;
 const BOARD_COMPILE_ATTEMPTS = 2;
 const PROJECT_PLAZA_PAGE_SIZE = 100;
@@ -70,6 +75,20 @@ function readTimeoutEnv(name: string, fallbackMs: number): number {
   if (!Number.isFinite(value) || value <= 0) {
     console.warn(`[e2e] 忽略无效超时配置 ${name}=${raw}，使用默认值 ${fallbackMs}ms。`);
     return fallbackMs;
+  }
+  return value;
+}
+
+function readPositiveIntegerEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) {
+    return fallback;
+  }
+
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value <= 0) {
+    console.warn(`[e2e] 忽略无效配置 ${name}=${raw}，使用默认值 ${fallback}。`);
+    return fallback;
   }
   return value;
 }
@@ -195,46 +214,58 @@ test.describe('全流程：创建或加载项目 → 编译', () => {
 
     const projects = await collectProjectPlazaProjects(win);
     expect(projects.length, '项目广场至少应返回一个项目').toBeGreaterThan(0);
+    const workerCount = Math.min(PROJECT_PLAZA_CONCURRENCY, projects.length);
     const perProjectTimeout =
-      PROJECT_PLAZA_LOAD_TIMEOUT_MS + INSTALL_TIMEOUT_MS + COMPILE_TIMEOUT_MS + 2 * 60_000;
-    test.setTimeout(Math.max(24 * 60 * 60 * 1000, projects.length * perProjectTimeout));
-    console.log(`[project-plaza] 将验证 ${projects.length} 个项目。`);
+      PROJECT_PLAZA_LOAD_TIMEOUT_MS + PROJECT_PLAZA_INSTALL_TIMEOUT_MS + COMPILE_TIMEOUT_MS + 2 * 60_000;
+    test.setTimeout(
+      Math.max(24 * 60 * 60 * 1000, Math.ceil(projects.length / workerCount) * perProjectTimeout),
+    );
+    console.log(`[project-plaza] 将验证 ${projects.length} 个项目，并发数：${workerCount}。`);
     await closeAilyElectronApp(electronApp).catch(() => {});
 
     const failures: Array<{ project: ProjectPlazaCandidate; message: string }> = [];
-    for (const project of projects) {
-      await test.step(`加载并编译 ${project.name}`, async () => {
-        let launched: Awaited<ReturnType<typeof launchAilyElectron>> | undefined;
-        try {
-          launched = await launchAilyElectron();
-          const isolatedWin = await getMainWindow(launched.app);
-          const pageLog = attachDiagnostics(isolatedWin);
-          await cleanAilyBuilderArtifacts();
-          await loadProjectPlazaProject(isolatedWin, project, pageLog, projectDirs);
-          await compileProject(isolatedWin, pageLog, `项目广场：${project.name}`, 1);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          failures.push({ project, message });
-          console.log(
-            `[project-plaza] ${project.name} (ID: ${project.id || '缺失'}) 编译失败：${message}`,
-          );
-        } finally {
-          if (launched) {
-            await launched.close().catch((error) => {
-              const message = error instanceof Error ? error.message : String(error);
-              console.log(`[project-plaza] ${project.name} Electron 关闭失败，继续下一个项目：${message}`);
-            });
+    let nextProjectIndex = 0;
+    let completedProjects = 0;
+    const runWorker = async () => {
+      while (nextProjectIndex < projects.length) {
+        const projectIndex = nextProjectIndex++;
+        const project = projects[projectIndex];
+        const startedAt = Date.now();
+        await test.step(`[${projectIndex + 1}/${projects.length}] 加载并编译 ${project.name}`, async () => {
+          let launched: Awaited<ReturnType<typeof launchAilyElectron>> | undefined;
+          try {
+            launched = await launchAilyElectron();
+            const isolatedWin = await getMainWindow(launched.app);
+            const pageLog = attachDiagnostics(isolatedWin, `project-plaza:${project.name}`);
+            await loadProjectPlazaProject(isolatedWin, project, pageLog, projectDirs);
+            await compileProject(isolatedWin, pageLog, `项目广场：${project.name}`, 1);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            failures.push({ project, message });
+            console.log(`[project-plaza] ${project.name} (ID: ${project.id || '缺失'}) 失败：${message}`);
+          } finally {
+            if (launched) {
+              await launched.close().catch((error) => {
+                const message = error instanceof Error ? error.message : String(error);
+                console.log(`[project-plaza] ${project.name} Electron 关闭失败，继续下一个项目：${message}`);
+              });
+            }
           }
-        }
-      });
-    }
+        });
+        completedProjects++;
+        console.log(
+          `[project-plaza] 进度 ${completedProjects}/${projects.length}：${project.name}，耗时 ${formatDuration(Date.now() - startedAt)}。`,
+        );
+      }
+    };
+    await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
 
     expect(
       failures.map(
         (failure) =>
           `${failure.project.name} (ID: ${failure.project.id || '缺失'}, 第 ${failure.project.page} 页第 ${failure.project.index + 1} 个): ${failure.message}`,
       ),
-      '以下项目广场项目编译失败',
+      '以下项目广场项目加载或编译失败',
     ).toEqual([]);
   });
 });
@@ -376,8 +407,12 @@ async function clickAfterOnboarding(
   }
 }
 
-function attachDiagnostics(win: Awaited<ReturnType<typeof getMainWindow>>): PageLogBuffer {
+function attachDiagnostics(
+  win: Awaited<ReturnType<typeof getMainWindow>>,
+  label = '',
+): PageLogBuffer {
   const pageLog: PageLogBuffer = { messages: [], totalMessages: 0 };
+  const labelSuffix = label ? `:${label}` : '';
   win.on('console', (msg) => {
     const text = msg.text();
     pageLog.totalMessages++;
@@ -385,11 +420,19 @@ function attachDiagnostics(win: Awaited<ReturnType<typeof getMainWindow>>): Page
     if (pageLog.messages.length > 500) {
       pageLog.messages.shift();
     }
-    console.log(`[page:${msg.type()}] ${text}`);
+    console.log(`[page${labelSuffix}:${msg.type()}] ${text}`);
   });
-  win.on('pageerror', (err) => console.log(`[pageerror] ${err.message}`));
+  win.on('pageerror', (err) => {
+    const text = `[pageerror] ${err.message}`;
+    pageLog.totalMessages++;
+    pageLog.messages.push(text);
+    if (pageLog.messages.length > 500) {
+      pageLog.messages.shift();
+    }
+    console.log(`[pageerror${labelSuffix}] ${err.message}`);
+  });
   win.on('requestfailed', (request) => {
-    console.log(`[requestfailed] ${request.failure()?.errorText || 'unknown'} ${request.url()}`);
+    console.log(`[requestfailed${labelSuffix}] ${request.failure()?.errorText || 'unknown'} ${request.url()}`);
   });
   return pageLog;
 }
@@ -586,12 +629,13 @@ async function loadProjectPlazaProject(
     );
   }
 
+  const loadDeadline = Date.now() + PROJECT_PLAZA_LOAD_TIMEOUT_MS;
+  const loadLogStart = pageLog.totalMessages;
   await dismissOnboardingIfVisible(win);
   await navigate(win, `/main/playground/list?id=${encodeURIComponent(project.id)}`);
 
-  const deadline = Date.now() + PROJECT_PLAZA_LOAD_TIMEOUT_MS;
   let editorRoute = '';
-  while (Date.now() < deadline) {
+  while (Date.now() < loadDeadline) {
     editorRoute = await win.evaluate(() => window.location.hash);
     if (/\/main\/(blockly|code)-editor/.test(editorRoute)) {
       break;
@@ -618,14 +662,99 @@ async function loadProjectPlazaProject(
   }
   projectDirs.push(projectDir);
 
-  await expect(win.locator('app-header .project-box')).not.toHaveText('', { timeout: 30_000 });
   if (/\/main\/blockly-editor/.test(editorRoute)) {
-    await waitForDependencyInstallDone(win, pageLog);
+    await waitForBlocklyProjectLoaded(win, pageLog, loadLogStart, project.name, loadDeadline);
+    await waitForDependencyInstallDone(win, pageLog, PROJECT_PLAZA_INSTALL_TIMEOUT_MS);
+  } else {
+    const remainingLoadTime = Math.max(1, loadDeadline - Date.now());
+    await expect(win.locator('app-header .project-box')).not.toHaveText('', {
+      timeout: Math.min(30_000, remainingLoadTime),
+    });
   }
 
   const compileBtn = win.locator('app-header app-act-btn[data-action="compile"]');
   await expect(compileBtn).toBeVisible({ timeout: 60_000 });
   return projectDir;
+}
+
+async function waitForBlocklyProjectLoaded(
+  win: Awaited<ReturnType<typeof getMainWindow>>,
+  pageLog: PageLogBuffer,
+  loadLogStart: number,
+  projectName: string,
+  deadline: number,
+): Promise<void> {
+  let lastStatus = '';
+
+  while (Date.now() < deadline) {
+    if (win.isClosed()) {
+      throw new Error('[project-plaza] Blockly 项目加载期间 Electron 页面意外关闭。');
+    }
+
+    const [state, footerText] = await withTimeout(
+      Promise.all([
+        win.evaluate(() => {
+          const projectService = (window as any).projectService;
+          return String(projectService?.stateSubject?.value || '');
+        }),
+        win.locator('app-footer .state').innerText().catch(() => ''),
+      ]),
+      Math.max(1, deadline - Date.now()),
+      `[project-plaza] ${projectName} 的 Blockly 项目加载超过 ${PROJECT_PLAZA_LOAD_TIMEOUT_MS}ms。`,
+    );
+    const normalizedFooterText = footerText.trim();
+    const status = `state=${state || 'unknown'} footer="${normalizedFooterText}"`;
+    if (status !== lastStatus) {
+      console.log(`[project-plaza:load:${projectName}] ${status}`);
+      lastStatus = status;
+    }
+
+    if (state === 'loaded') {
+      return;
+    }
+    if (state === 'error') {
+      throw new Error(`[project-plaza] Blockly 项目加载失败，最后阶段：${normalizedFooterText || '未知'}。`);
+    }
+
+    const firstStoredMessage = pageLog.totalMessages - pageLog.messages.length;
+    const loadLogs = pageLog.messages.slice(Math.max(0, loadLogStart - firstStoredMessage)).join('\n');
+    if (/\[ProjectService\] project open completion timed out:|\[pageerror\]/i.test(loadLogs)) {
+      const lastError = loadLogs
+        .split('\n')
+        .filter((line) => /\[ProjectService\] project open completion timed out:|\[pageerror\]/i.test(line))
+        .at(-1);
+      throw new Error(`[project-plaza] Blockly 项目加载异常：${lastError}`);
+    }
+
+    await win.waitForTimeout(POLL_INTERVAL_MS);
+  }
+
+  throw new Error(
+    `[project-plaza] Blockly 项目加载超时（${PROJECT_PLAZA_LOAD_TIMEOUT_MS}ms），最后状态：${lastStatus || '未知'}。`,
+  );
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+}
+
+function formatDuration(durationMs: number): string {
+  const totalSeconds = Math.round(durationMs / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return minutes > 0 ? `${minutes}分${seconds}秒` : `${seconds}秒`;
 }
 
 async function createProjectAndCompile(
@@ -734,10 +863,11 @@ function normalizeBoardLabel(label: string): string {
 async function waitForDependencyInstallDone(
   win: Awaited<ReturnType<typeof getMainWindow>>,
   pageLog: PageLogBuffer,
+  timeoutMs = INSTALL_TIMEOUT_MS,
 ): Promise<void> {
   console.log('[e2e] 等待依赖安装完成后触发编译；后台预编译若未启动则交给编译流程处理。');
 
-  const deadline = Date.now() + INSTALL_TIMEOUT_MS;
+  const deadline = Date.now() + timeoutMs;
   let sawInstallDoneAt = 0;
   while (Date.now() < deadline) {
     const joined = pageLog.messages.join('\n');
@@ -778,7 +908,7 @@ async function waitForDependencyInstallDone(
     await win.waitForTimeout(POLL_INTERVAL_MS);
   }
 
-  throw new Error(`[e2e] 等待依赖安装完成超时（${INSTALL_TIMEOUT_MS}ms）。`);
+  throw new Error(`[e2e] 等待依赖安装完成超时（${timeoutMs}ms）。`);
 }
 
 async function getNoticeText(win: Awaited<ReturnType<typeof getMainWindow>>): Promise<string> {

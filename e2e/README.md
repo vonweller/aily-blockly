@@ -80,10 +80,16 @@ $env:AILY_E2E_ALL_BOARDS = '1'
 npm run test:e2e:fast -- full-flow.spec.ts
 
 # 仅测试项目广场：不要同时设置 AILY_E2E_FULLFLOW / AILY_E2E_ALL_BOARDS
-# 测试会逐个下载、打开并编译所有公开项目；失败项目会在最后统一列出
+# 测试会下载、打开并编译所有公开项目；失败项目会在最后统一列出
 $env:AILY_E2E_PROJECT_PLAZA = '1'
-# 可选：单个广场项目下载并进入编辑器的超时，默认 5 分钟
-$env:AILY_E2E_PROJECT_PLAZA_LOAD_TIMEOUT_MS = '300000'
+# 可选：单个广场项目下载、进入编辑器并完成加载的总超时，默认 3 分钟
+$env:AILY_E2E_PROJECT_PLAZA_LOAD_TIMEOUT_MS = '180000'
+# 可选：单个广场项目安装开发板依赖的超时，默认 5 分钟
+$env:AILY_E2E_PROJECT_PLAZA_INSTALL_TIMEOUT_MS = '300000'
+# 可选：单个项目编译超时，默认 10 分钟（与其他全流程用例共用）
+$env:AILY_E2E_COMPILE_TIMEOUT_MS = '600000'
+# 可选：同时执行的项目数，默认 2；资源有限或排查单项目时可设为 1
+$env:AILY_E2E_PROJECT_PLAZA_CONCURRENCY = '2'
 npm run test:e2e:fast -- full-flow.spec.ts
 ```
 
@@ -98,11 +104,11 @@ AILY_E2E_PROJECT_PLAZA=1 npm run test:e2e:fast -- full-flow.spec.ts
 
 > 说明：当前未覆盖「上传(upload)」流程，因为它需要连接真实外设，不便在 CI/本地稳定运行。
 
-> 全流程用例启动前会清空并重建应用数据目录（Windows 默认 `C:\Users\<user>\AppData\Local\aily-project`，macOS 默认 `~/Library/aily-project`），因此会删除已安装的开发板包、编译器与 SDK 缓存；每次创建或加载并编译项目前还会清理 `aily-builder` 的 `project` 与 `cache` 目录，避免不同架构开发板复用错误的预编译对象。新建项目使用页面生成的默认项目名，项目广场项目则下载到默认项目目录；测试结束后都会清理。全开发板和项目广场用例耗时很长，每个条目会使用独立 Electron 实例隔离运行；单项失败后继续验证后续条目，并在最后汇总失败清单。开发板项目第一次编译成功后才执行第二次编译；第一次失败会记录为“第 1 次编译失败”并结束该板子的编译。
+> 全流程用例启动前会清空并重建应用数据目录（Windows 默认 `C:\Users\<user>\AppData\Local\aily-project`，macOS 默认 `~/Library/aily-project`），因此会删除已安装的开发板包、编译器与 SDK 缓存。新建开发板项目前会清理 `aily-builder` 的临时项目与对象缓存；项目广场批量测试会保留 `aily-builder` 自身管理的哈希缓存，并默认用 2 个独立 Electron 并发执行。新建项目使用页面生成的默认项目名，项目广场项目则下载到默认项目目录；测试结束后都会清理。单项失败后继续验证后续条目，并在最后汇总失败清单。开发板项目第一次编译成功后才执行第二次编译；第一次失败会记录为“第 1 次编译失败”并结束该板子的编译。
 
 ## 备注
 
-- 测试串行执行（`workers: 1`），避免多个 Electron 实例相互干扰。
+- Playwright 用例仍串行执行（`workers: 1`）；项目广场用例内部默认并发处理 2 个隔离 Electron。
 - 选择器优先使用组件标签（如 `app-header`、`app-serial-monitor`）与稳定 CSS 类；
   应用目前几乎没有 `data-testid`，后续可逐步补充以提升稳定性。
 - `renderer/`、`test-results/`、`playwright-report/` 已加入 `.gitignore`。
