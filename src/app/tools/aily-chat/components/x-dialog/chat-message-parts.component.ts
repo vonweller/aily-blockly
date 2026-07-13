@@ -54,8 +54,6 @@ type MountedChatRenderItem = {
   standalone: true,
   imports: [
     CommonModule,
-    ChatActivityGroupComponent,
-    ChatMessagePartItemComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `<ng-container #renderHost />`,
