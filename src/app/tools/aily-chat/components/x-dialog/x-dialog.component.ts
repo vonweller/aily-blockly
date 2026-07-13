@@ -123,11 +123,20 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
   @Output() editAddFile = new EventEmitter<DialogTurnContext>();
   @Output() editAddFolder = new EventEmitter<DialogTurnContext>();
   @Output() taskAction = new EventEmitter<ChatTaskActionDetail>();
-  @Output() contentDelta = new EventEmitter<ChatDialogItemHeightChange>();
+  @Input() contentHeightChangeHandler: ((change: ChatDialogItemHeightChange) => void) | undefined;
 
   @ViewChild('editTextarea') editTextareaRef?: ElementRef<HTMLTextAreaElement>;
   @ViewChild('editInputBox') editInputBoxRef?: ElementRef<HTMLElement>;
-  @ViewChild(ChatMessagePartsComponent) private messagePartsComponent?: ChatMessagePartsComponent;
+  private messagePartsComponent?: ChatMessagePartsComponent;
+
+  @ViewChild(ChatMessagePartsComponent)
+  private set mountedMessagePartsComponent(component: ChatMessagePartsComponent | undefined) {
+    this.messagePartsComponent = component;
+    if (component && this.hasStructuredAilyContent) {
+      component.contentDeltaHandler = () => this.handleStructuredContentDelta();
+      this.patchMountedMessageParts(component);
+    }
+  }
 
   streamContent = signal('');
   streamingConfig = signal<StreamingOption>({ hasNextChunk: false, enableAnimation: false });
@@ -1233,13 +1242,9 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
     this.item = nextItem;
     if (options?.detectChanges === false) {
       if (this.hasStructuredAilyContent) {
-        return this.messagePartsComponent?.applyVisiblePartsPatch({
-          parts: this.effectiveParts,
-          doing: this.effectiveDoing,
-          turnResponse: this.activityTurnResponse,
-          impliedWordLoadRate: this.item.contentUpdateTimings?.impliedWordLoadRate,
-          detailProjectionEnabled: this.isViewportVisible,
-        }) ?? true;
+        return this.messagePartsComponent
+          ? this.patchMountedMessageParts(this.messagePartsComponent)
+          : true;
       }
       return true;
     }
@@ -1255,13 +1260,9 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
 
     if (this.hasStructuredAilyContent) {
       this.syncStreamingConfig(this.effectiveDoing);
-      this.messagePartsComponent?.applyVisiblePartsPatch({
-        parts: this.effectiveParts,
-        doing: this.effectiveDoing,
-        turnResponse: this.activityTurnResponse,
-        impliedWordLoadRate: this.item.contentUpdateTimings?.impliedWordLoadRate,
-        detailProjectionEnabled: this.isViewportVisible,
-      });
+      if (this.messagePartsComponent) {
+        this.patchMountedMessageParts(this.messagePartsComponent);
+      }
       // The part renderer owns only the mounted part subtree. Row chrome such
       // as footer model/billing metadata, completion time, feedback, and
       // lifecycle classes belongs to this stable list item and must consume
@@ -1279,6 +1280,17 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
     }
     this.cdr.detectChanges();
     return true;
+  }
+
+  private patchMountedMessageParts(component: ChatMessagePartsComponent): boolean {
+    return component.applyVisiblePartsPatch({
+      parts: this.effectiveParts,
+      doing: this.effectiveDoing,
+      sessionId: this.sessionId,
+      turnResponse: this.activityTurnResponse,
+      impliedWordLoadRate: this.item.contentUpdateTimings?.impliedWordLoadRate,
+      detailProjectionEnabled: this.isViewportVisible,
+    });
   }
 
   applySessionRequestState(requestInProgress: boolean): void {
@@ -1428,7 +1440,7 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
       return;
     }
     this.lastEmittedItemHeight = height;
-    this.contentDelta.emit({ itemId: this.item.id, height });
+    this.contentHeightChangeHandler?.({ itemId: this.item.id, height });
   }
 
   private scheduleContentDelta(): void {

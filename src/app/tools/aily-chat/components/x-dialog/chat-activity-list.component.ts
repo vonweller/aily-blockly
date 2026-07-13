@@ -2,9 +2,7 @@ import {
   ChangeDetectionStrategy,
   ChangeDetectorRef,
   Component,
-  EventEmitter,
   Input,
-  Output,
   QueryList,
   ViewChildren,
   forwardRef,
@@ -29,7 +27,7 @@ import type { ActivityGroupDisplayItem } from './chat-activity-group.types';
           [first]="first"
           [last]="last"
           [only]="count === 1"
-          (contentDelta)="contentDelta.emit()" />
+          [contentDeltaHandler]="contentDeltaHandler" />
       }
     </div>
   `,
@@ -57,7 +55,7 @@ export class ChatActivityListComponent {
   @Input() items: readonly ActivityGroupDisplayItem[] = [];
   @Input() sessionId = '';
   @Input() impliedWordLoadRate: number | undefined;
-  @Output() contentDelta = new EventEmitter<void>();
+  @Input() contentDeltaHandler: (() => void) | undefined;
 
   @ViewChildren(forwardRef(() => ChatActivityItemComponent))
   private itemRenderers!: QueryList<ChatActivityItemComponent>;
@@ -70,8 +68,11 @@ export class ChatActivityListComponent {
     sessionId: string,
     impliedWordLoadRate: number | undefined,
   ): boolean {
-    const sameStructure = this.items.length === items.length
-      && this.items.every((item, index) => item.id === items[index]?.id);
+    const previousItems = this.items;
+    const previousSessionId = this.sessionId;
+    const previousImpliedWordLoadRate = this.impliedWordLoadRate;
+    const sameStructure = previousItems.length === items.length
+      && previousItems.every((item, index) => item.id === items[index]?.id);
 
     this.items = items;
     this.sessionId = sessionId;
@@ -87,7 +88,12 @@ export class ChatActivityListComponent {
       return false;
     }
 
+    const sharedInputChanged = previousSessionId !== sessionId
+      || previousImpliedWordLoadRate !== impliedWordLoadRate;
     for (let index = 0; index < items.length; index += 1) {
+      if (!sharedInputChanged && previousItems[index] === items[index]) {
+        continue;
+      }
       if (!renderers[index]?.applyVisibleActivityItemPatch({
         item: items[index],
         sessionId,

@@ -24,7 +24,6 @@ import type {
 } from '../services/chat-history.service';
 import type {
   ChatSessionModelCreateProps,
-  ChatSessionModelAcquireOptions,
   ChatSessionModelReference,
   ChatSessionRequestListTransactionResult,
 } from '../services/chat-session-model-store.service';
@@ -152,7 +151,8 @@ type SessionLifecycleContext = ChatViewWriteBridgeContext
     >;
     readonly hostResponseProjection?: HostSessionSaveContext['hostResponseProjection'];
     acquireExistingSessionModel?(sessionId?: string | null): ChatSessionModelReference | undefined;
-    acquireSessionModel?(props: ChatSessionModelCreateProps, options?: ChatSessionModelAcquireOptions): ChatSessionModelReference;
+    acquireSessionModel?(props: ChatSessionModelCreateProps): ChatSessionModelReference;
+    acquireProvisionalSessionModel?(props: ChatSessionModelCreateProps): ChatSessionModelReference;
     attachSessionViewModel?(sessionId?: string | null): ChatSessionViewModel | null;
     detachSessionViewModel?(sessionId?: string | null): void;
     readCurrentViewSessionResource?(): string | null;
@@ -271,6 +271,7 @@ export class SessionLifecycleHelper {
   private readonly sessionModelReferences = new Map<string, ChatSessionModelReference>();
   private readonly sessionModelPreloadPromises = new Map<string, Promise<boolean>>();
   private readonly pendingFreshSessionShellFinalizers = new Map<string, () => void>();
+  private provisionalSessionBootstrapHandle: number | null = null;
   private sessionActivationRequestId = 0;
 
   constructor(private ctx: SessionLifecycleContext) {
@@ -387,7 +388,11 @@ export class SessionLifecycleHelper {
   }
 
   async initializeEntryInventory(options?: { readonly restorePersistedTarget?: boolean }): Promise<boolean> {
-    return this._entryCoordinator.initializeEntryInventory(options);
+    const restored = await this._entryCoordinator.initializeEntryInventory(options);
+    if (!restored && !this.resolveCurrentViewSessionResource()) {
+      this.scheduleProvisionalSessionBootstrap();
+    }
+    return restored;
   }
 
   async forkFromTurn(options: {
@@ -1224,18 +1229,24 @@ export class SessionLifecycleHelper {
     // VS Code creates the ChatModel/sessionResource synchronously, then activates the default agent in the background.
     // Keep our owner session id stable before any awaited provider/tool initialization so detach/save can target it.
     const pendingSessionId = this.createSessionId();
+    const sessionIdCreatedAt = performance.now();
     const providerOptions = this.resolveCurrentProjectProviderOptions();
+    const providerOptionsResolvedAt = performance.now();
     const agentRuntimeMode = this.applyAgentRuntimeMode(providerOptions);
+    const runtimeModeResolvedAt = performance.now();
     const canonicalProviderOptions = this.ctx.chatService.applySessionProviderOptions(providerOptions);
+    const providerOptionsAppliedAt = performance.now();
     const freshSelectedMode = this.resolveCurrentSelectedModeForFreshSession();
+    const selectedModeResolvedAt = performance.now();
     this.setActiveSessionId(pendingSessionId);
+    const sessionIdentitySetAt = performance.now();
     this.acquireSessionModel({
       sessionResource: pendingSessionId,
       title: { text: '', source: 'empty' },
       projectPath: this.ctx.chatService.currentSessionPath || null,
       sessionType: DEFAULT_CHAT_SESSION_TYPE,
       inputState: { providerOptions: canonicalProviderOptions, selectedMode: freshSelectedMode },
-    }, { suppressCreatedEvent: true });
+    }, { provisional: true });
     const modelCreatedAt = performance.now();
     this.ctx.attachSessionViewModel?.(pendingSessionId);
     this.ctx.markVisibleSessionProjectionOwner?.(pendingSessionId);
@@ -1274,6 +1285,13 @@ export class SessionLifecycleHelper {
       [
         `sessionId=${pendingSessionId}`,
         `resetMs=${(resetCompletedAt - bootstrapStartedAt).toFixed(1)}`,
+        `sessionIdMs=${(sessionIdCreatedAt - resetCompletedAt).toFixed(1)}`,
+        `providerOptionsMs=${(providerOptionsResolvedAt - sessionIdCreatedAt).toFixed(1)}`,
+        `runtimeModeMs=${(runtimeModeResolvedAt - providerOptionsResolvedAt).toFixed(1)}`,
+        `providerApplyMs=${(providerOptionsAppliedAt - runtimeModeResolvedAt).toFixed(1)}`,
+        `selectedModeMs=${(selectedModeResolvedAt - providerOptionsAppliedAt).toFixed(1)}`,
+        `sessionIdentityMs=${(sessionIdentitySetAt - selectedModeResolvedAt).toFixed(1)}`,
+        `modelAcquireMs=${(modelCreatedAt - sessionIdentitySetAt).toFixed(1)}`,
         `modelMs=${(modelCreatedAt - resetCompletedAt).toFixed(1)}`,
         `viewMs=${(viewAttachedAt - modelCreatedAt).toFixed(1)}`,
         `shellScheduleMs=${(shellScheduledAt - viewAttachedAt).toFixed(1)}`,
@@ -1507,6 +1525,7 @@ export class SessionLifecycleHelper {
   enterBlankSessionShell(options: { resetInitialization?: boolean; sessionId?: string | null; projectPath?: string | null } = {}): void {
     this.enterEntryState(options);
     this.ctx.chatService.hasBlankSessionShell = true;
+    this.scheduleProvisionalSessionBootstrap();
   }
 
   async returnToEntryInventory(options: { resetInitialization?: boolean; sessionId?: string | null; projectPath?: string | null } = {}): Promise<void> {
@@ -1525,6 +1544,7 @@ export class SessionLifecycleHelper {
     if (targetSessionId) {
       this.clearPersistedSessionEntryTarget(targetSessionId);
     }
+    this.scheduleProvisionalSessionBootstrap();
   }
 
   /** Detach the visible session surface without cancelling the host-owned runtime turn. */
@@ -1549,6 +1569,8 @@ export class SessionLifecycleHelper {
     if (currentSessionId && !this.hasSessionRuntimeOwner(currentSessionId)) {
       this.hostSessionItemController.discardChatSessionItem(currentSessionId);
       this.clearPersistedSessionEntryTarget(currentSessionId);
+      this.pendingFreshSessionShellFinalizers.delete(currentSessionId);
+      this.releaseSessionModelReference(currentSessionId);
     }
     if (currentSessionId) {
       this.ctx.detachSessionRuntimeView?.(currentSessionId);
@@ -1562,6 +1584,9 @@ export class SessionLifecycleHelper {
       scope: 'summary',
       priority: 'after-paint',
     });
+    // Match VS Code's ChatViewPane: once the blank input surface is visible,
+    // bind its real (but still empty/unpersisted) session model before submit.
+    this.scheduleProvisionalSessionBootstrap();
   }
 
   async ensureSessionReadyForSubmit(): Promise<string | null> {
@@ -1579,7 +1604,44 @@ export class SessionLifecycleHelper {
       return null;
     }
 
+    this.cancelProvisionalSessionBootstrap();
     return this._entryCoordinator.bootstrapNewSession();
+  }
+
+  private scheduleProvisionalSessionBootstrap(): void {
+    if (this.provisionalSessionBootstrapHandle !== null
+      || !this.ctx.isLoggedIn
+      || this.ctx.isSessionStarting
+      || this.resolveCurrentViewSessionResource()) {
+      return;
+    }
+
+    const bootstrap = () => {
+      this.provisionalSessionBootstrapHandle = null;
+      if (!this.ctx.isLoggedIn || this.ctx.isSessionStarting || this.resolveCurrentViewSessionResource()) {
+        return;
+      }
+      void this.startSession({ deferShellFinalization: true });
+    };
+    const scheduleAfterPaint = () => {
+      this.provisionalSessionBootstrapHandle = setTimeout(bootstrap, 0) as unknown as number;
+    };
+    if (typeof globalThis.requestAnimationFrame === 'function') {
+      this.provisionalSessionBootstrapHandle = globalThis.requestAnimationFrame(scheduleAfterPaint);
+    } else {
+      this.provisionalSessionBootstrapHandle = setTimeout(bootstrap, 16) as unknown as number;
+    }
+  }
+
+  private cancelProvisionalSessionBootstrap(): void {
+    if (this.provisionalSessionBootstrapHandle === null) {
+      return;
+    }
+    if (typeof globalThis.cancelAnimationFrame === 'function') {
+      globalThis.cancelAnimationFrame(this.provisionalSessionBootstrapHandle);
+    }
+    clearTimeout(this.provisionalSessionBootstrapHandle as unknown as ReturnType<typeof setTimeout>);
+    this.provisionalSessionBootstrapHandle = null;
   }
 
   async getHistory(): Promise<void> {
@@ -2312,6 +2374,7 @@ export class SessionLifecycleHelper {
       scope: 'summary',
       priority: 'after-paint',
     });
+    this.scheduleProvisionalSessionBootstrap();
   }
 
   private logSessionActivationScalar(
@@ -2660,7 +2723,7 @@ export class SessionLifecycleHelper {
 
   private acquireSessionModel(
     props: ChatSessionModelCreateProps,
-    options: ChatSessionModelAcquireOptions = {},
+    options: { readonly provisional?: boolean } = {},
   ): void {
     const sessionId = typeof props.sessionResource === 'string'
       ? props.sessionResource.trim()
@@ -2670,10 +2733,13 @@ export class SessionLifecycleHelper {
     }
 
     this.sessionModelReferences.get(sessionId)?.dispose();
-    this.sessionModelReferences.set(sessionId, this.ctx.acquireSessionModel({
+    const acquire = options.provisional && this.ctx.acquireProvisionalSessionModel
+      ? this.ctx.acquireProvisionalSessionModel
+      : this.ctx.acquireSessionModel;
+    this.sessionModelReferences.set(sessionId, acquire({
       ...props,
       sessionResource: sessionId,
-    }, options));
+    }));
   }
 
   private commitVisibleSessionShell(options: {

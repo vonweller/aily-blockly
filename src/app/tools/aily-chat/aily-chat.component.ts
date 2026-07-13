@@ -321,6 +321,7 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
   private syncViewRefreshRaf: number | null = null;
   private rendererStreamingSamplerActive = false;
   private rendererStreamingSamplerStopTimer: ReturnType<typeof setTimeout> | null = null;
+  private rendererStreamingCounterBaseline: Readonly<Record<string, number>> = {};
   private submitToFirstRenderSamplerStopTimer: ReturnType<typeof setTimeout> | null = null;
   private rendererStreamingBudgetStartedAt = 0;
   private submitToFirstRenderStartedAt: number | null = null;
@@ -1773,6 +1774,7 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
       if (!this.rendererStreamingSamplerActive) {
         this.rendererStreamingSamplerActive = true;
         this.rendererStreamingBudgetStartedAt = performance.now();
+        this.rendererStreamingCounterBaseline = ChatPerformanceTracer.snapshotCounters();
         this.clearSubmitToFirstRenderSamplerStopTimer();
         this.ngZone.runOutsideAngular(() => {
           // Submit and streaming are separate VS Code-style response-model
@@ -1805,6 +1807,7 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
           maxRecentLongTaskMs: 50,
           maxRecentLongTaskTotalMs: 120,
         });
+        const rendererStreamingCounters = ChatPerformanceTracer.snapshotCounters();
         if (!rendererStreamingBudget.ok) {
           console.warn(
             '[AilyChat][RendererStreamingJankScalar]',
@@ -1817,6 +1820,17 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
               `longTaskTotalMs=${rendererStreamingBudget.recentLongTasks.totalMs}`,
               `lagSurfaces=${summarizeLagSurfaces(rendererStreamingBudget.recentEventLoopLag.samples)}`,
               `lagDetails=${summarizeLagDetails(rendererStreamingBudget.recentEventLoopLag.samples)}`,
+              `actualDurations=${summarizeDurationCounterDeltas(
+                rendererStreamingCounters,
+                this.rendererStreamingCounterBaseline,
+                [
+                  'message_parts_incremental_patch_actual',
+                  'activity_group_refresh',
+                  'dialog_content_delta_flush',
+                  'scroll_height_update',
+                  'activity_group_scroll_sync',
+                ],
+              )}`,
               `violations=${rendererStreamingBudget.violations.join('|')}`,
             ].join(' '),
           );
@@ -1954,7 +1968,11 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
     this.conversationScrollCleanup = () => element.removeEventListener('scroll', listener);
   }
 
-  handleDialogContentDelta(change: ChatDialogItemHeightChange): void {
+  readonly dialogContentHeightChangeHandler = (change: ChatDialogItemHeightChange): void => {
+    this.handleDialogContentDelta(change);
+  };
+
+  private handleDialogContentDelta(change: ChatDialogItemHeightChange): void {
     const itemId = typeof change?.itemId === 'string' ? change.itemId.trim() : '';
     const height = typeof change?.height === 'number' && Number.isFinite(change.height)
       ? Math.ceil(change.height)
@@ -3032,6 +3050,23 @@ function summarizeLagDetails(samples: readonly Readonly<Record<string, unknown>>
     .join(',') || '<none>';
 }
 
+function summarizeDurationCounterDeltas(
+  counters: Readonly<Record<string, number>>,
+  baseline: Readonly<Record<string, number>>,
+  tags: readonly string[],
+): string {
+  const values: string[] = [];
+  for (const tag of tags) {
+    const prefix = `duration.${tag}`;
+    const count = Math.max(0, (counters[`${prefix}.count`] ?? 0) - (baseline[`${prefix}.count`] ?? 0));
+    const totalMs = Math.max(0, (counters[`${prefix}.totalMs`] ?? 0) - (baseline[`${prefix}.totalMs`] ?? 0));
+    if (count > 0 || totalMs > 0) {
+      values.push(`${tag}:${count}/${totalMs.toFixed(0)}`);
+    }
+  }
+  return values.join(',') || '<none>';
+}
+
 function canPatchVisibleTranscriptItemWithoutRowDetect(
   previousItem: ChatVisibleTranscriptDialogItem | null | undefined,
   nextItem: ChatVisibleTranscriptDialogItem,
@@ -3051,183 +3086,11 @@ function canPatchVisibleTranscriptItemWithoutRowDetect(
     || previousItem.turnModelBillingLabel !== nextItem.turnModelBillingLabel
     || previousItem.responseVote !== nextItem.responseVote
     || previousItem.isLastAily !== nextItem.isLastAily
-    || previousItem.showCheckpointRestore !== nextItem.showCheckpointRestore
-    || previousItem.parts.length !== nextItem.parts.length) {
+    || previousItem.showCheckpointRestore !== nextItem.showCheckpointRestore) {
     return false;
   }
 
-  let hasAppendOnlyExternalTextUpdate = false;
-  for (let index = 0; index < previousItem.parts.length; index += 1) {
-    const previousPart = previousItem.parts[index];
-    const nextPart = nextItem.parts[index];
-    if (isAppendOnlyExternalTextPartUpdate(previousPart, nextPart)) {
-      hasAppendOnlyExternalTextUpdate = true;
-      continue;
-    }
-    if (!isChatPartRowlessStable(previousPart, nextPart)) {
-      return false;
-    }
-  }
-
-  return hasAppendOnlyExternalTextUpdate || previousItem.content === nextItem.content;
-}
-
-function isAppendOnlyExternalTextPartUpdate(previousPart: ChatPart, nextPart: ChatPart): boolean {
-  if (previousPart.type !== nextPart.type) {
-    return false;
-  }
-  if (nextPart.type !== 'markdown' && nextPart.type !== 'thinking') {
-    return false;
-  }
-  if (previousPart.type !== 'markdown' && previousPart.type !== 'thinking') {
-    return false;
-  }
-  if (readTextPartIdentity(previousPart) !== readTextPartIdentity(nextPart)) {
-    return false;
-  }
-
-  const previousRef = previousPart.contentRef || '';
-  const nextRef = nextPart.contentRef || '';
-  if (!previousRef || previousRef !== nextRef) {
-    return false;
-  }
-
-  const previousLength = readTextPartLength(previousPart);
-  const nextLength = readTextPartLength(nextPart);
-  if (nextLength <= previousLength) {
-    return false;
-  }
-
-  if (nextPart.type === 'thinking') {
-    return previousPart.type === 'thinking'
-      && previousPart.isComplete === false
-      && nextPart.isComplete === false;
-  }
-
-  return true;
-}
-
-function isChatPartRowlessStable(previousPart: ChatPart, nextPart: ChatPart): boolean {
-  if (previousPart === nextPart) {
-    return true;
-  }
-  if (previousPart.type !== nextPart.type) {
-    return false;
-  }
-  return readChatPartRowlessSignature(previousPart) === readChatPartRowlessSignature(nextPart);
-}
-
-function readTextPartIdentity(part: Extract<ChatPart, { type: 'markdown' | 'thinking' }>): string {
-  return [
-    part.type,
-    part.partId || '',
-    part.contentRef || '',
-    part.sourceAgentRole || '',
-    part.subAgentInvocationId || '',
-    part.parentToolCallId || '',
-    part.sequence ?? '',
-  ].join('\u001f');
-}
-
-function readTextPartLength(part: Extract<ChatPart, { type: 'markdown' | 'thinking' }>): number {
-  if (typeof part.contentLength === 'number' && Number.isFinite(part.contentLength)) {
-    return part.contentLength;
-  }
-  return part.content?.length ?? 0;
-}
-
-function readChatPartRowlessSignature(part: ChatPart): string {
-  switch (part.type) {
-    case 'markdown':
-      return [
-        readTextPartIdentity(part),
-        readTextPartLength(part),
-        part.contentRef ? '' : part.content,
-      ].join('\u001f');
-    case 'thinking':
-      return [
-        readTextPartIdentity(part),
-        readTextPartLength(part),
-        part.contentRef ? '' : part.content,
-        part.isComplete ? 'complete' : 'streaming',
-      ].join('\u001f');
-    case 'tool_call':
-      return [
-        part.type,
-        part.partId || '',
-        part.toolCallId,
-        part.toolName,
-        part.state,
-        part.text,
-        stablePatchJson(part.args),
-        stablePatchJson(part.metadata),
-      ].join('\u001f');
-    case 'state':
-      return [
-        part.type,
-        part.stateId,
-        part.kind || '',
-        part.state,
-        part.progress ?? '',
-        part.text,
-        stablePatchJson(part.metadata),
-      ].join('\u001f');
-    case 'error':
-      return [
-        part.type,
-        part.partId || '',
-        part.severity || '',
-        part.message,
-        stablePatchJson(part.metadata),
-      ].join('\u001f');
-    case 'terminal':
-      return [
-        part.type,
-        part.partId || '',
-        part.processId || '',
-        part.outputSessionId || '',
-        part.terminalId || '',
-        part.toolCallId || '',
-        part.command,
-        part.cwd || '',
-        part.status || '',
-        part.exitCode ?? '',
-        part.isRunning ? 'running' : 'done',
-        part.bytesTotal ?? '',
-        part.output?.length ?? 0,
-        part.stderr?.length ?? 0,
-        part.lastOutputAt || '',
-        stablePatchJson(part.sourceToolCallIds),
-        stablePatchJson(part.metadata),
-      ].join('\u001f');
-    case 'plan':
-      return [
-        part.type,
-        part.partId || '',
-        part.status,
-        part.text,
-        stablePatchJson(part.steps),
-        stablePatchJson(part.assumptions),
-        stablePatchJson(part.verification),
-      ].join('\u001f');
-    default: {
-      const record = part as unknown as Record<string, unknown>;
-      return [
-        String(record['type'] || ''),
-        String(record['partId'] || record['questionId'] || record['confirmationId'] || ''),
-        stablePatchJson(record),
-      ].join('\u001f');
-    }
-  }
-}
-
-function stablePatchJson(value: unknown): string {
-  if (value === null || value === undefined) {
-    return '';
-  }
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
+  // The response content renderer owns every structured part mutation,
+  // including insert/remove/reorder. Row detection is reserved for row chrome.
+  return previousItem.parts.length > 0 && nextItem.parts.length > 0;
 }

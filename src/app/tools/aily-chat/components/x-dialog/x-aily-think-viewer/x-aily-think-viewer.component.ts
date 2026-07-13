@@ -1,8 +1,6 @@
 import {
   Component,
   Input,
-  Output,
-  EventEmitter,
   ViewChild,
   ElementRef,
   AfterViewChecked,
@@ -295,7 +293,7 @@ export class XAilyThinkViewerComponent implements AfterViewChecked, OnChanges, O
   } | null = null;
   @Input() embedded = false;
   @Input() impliedWordLoadRate: number | undefined;
-  @Output() contentDelta = new EventEmitter<void>();
+  @Input() contentDeltaHandler: (() => void) | undefined;
   @ViewChild('thinkBody') thinkBodyRef?: ElementRef<HTMLElement>;
   @ViewChild(XMarkdownComponent) private markdownComponent?: XMarkdownComponent;
 
@@ -578,7 +576,7 @@ export class XAilyThinkViewerComponent implements AfterViewChecked, OnChanges, O
     if (el && this.thinkStickToBottom) {
       el.scrollTop = el.scrollHeight;
     }
-    this.contentDelta.emit();
+    this.contentDeltaHandler?.();
   }
 
   ngAfterViewChecked(): void {

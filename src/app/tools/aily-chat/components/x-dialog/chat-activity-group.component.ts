@@ -18,11 +18,9 @@ import {
   ChangeDetectionStrategy,
   Component,
   ElementRef,
-  EventEmitter,
   Input,
   OnChanges,
   OnDestroy,
-  Output,
   SimpleChanges,
   ViewChild,
   inject,
@@ -145,7 +143,7 @@ import { storeThinkContent } from '../../core/think-content-store';
               [items]="displayItems"
               [sessionId]="sessionId"
               [impliedWordLoadRate]="impliedWordLoadRate"
-              (contentDelta)="emitContentDelta()" />
+              [contentDeltaHandler]="contentDeltaHandler" />
           }
         </div>
       }
@@ -394,7 +392,7 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked, 
   @Input() turnResponse: TurnResponseTurn | null = null;
   @Input() impliedWordLoadRate: number | undefined;
   @Input() detailProjectionEnabled = true;
-  @Output() contentDelta = new EventEmitter<void>();
+  @Input() contentDeltaHandler: (() => void) | undefined;
   @ViewChild('detailViewport') private detailViewportRef?: ElementRef<HTMLElement>;
   @ViewChild(ChatActivityListComponent) private activityListComponent?: ChatActivityListComponent;
 
@@ -679,7 +677,7 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked, 
   }
 
   emitContentDelta(): void {
-    this.contentDelta.emit();
+    this.contentDeltaHandler?.();
   }
 
   private _refresh(options?: { forceDetailProjection?: boolean }): void {
@@ -764,7 +762,10 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked, 
     }
 
     this.lastDetailProjectionKey = detailProjectionKey;
-    this.displayItems = this._attachTurnResponseContinuation(this.parts.flatMap((part, i) => this._buildItems(part, i, this.parts)));
+    const projectedItems = this._attachTurnResponseContinuation(
+      this.parts.flatMap((part, index) => this._buildRevisionedItems(part, index, this.parts)),
+    );
+    this.displayItems = reuseStableDisplayItems(this.displayItems, projectedItems);
     this._syncExpandedState();
     this.emitContentDelta();
     ChatPerformanceTracer.recordDuration(
@@ -818,6 +819,7 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked, 
 
       return {
         ...target,
+        revision: `${target.revision ?? target.id}:continuation:${buildContinuationProjectionKey(this.turnResponse)}`,
         detailSections,
         detailKind,
         invocationDetail: detailKind === 'invocation'
@@ -828,6 +830,18 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked, 
           : target.invocationDetail,
       };
     });
+  }
+
+  private _buildRevisionedItems(
+    part: ChatPart,
+    index: number,
+    groupParts: readonly ChatPart[],
+  ): ActivityGroupDisplayItem[] {
+    const sourceRevision = buildActivityPartDetailProjectionKey(part, index, this.doing);
+    return this._buildItems(part, index, groupParts).map((item, itemIndex) => ({
+      ...item,
+      revision: `${sourceRevision}:display:${itemIndex}`,
+    }));
   }
 
   private _syncExpandedState(): void {
@@ -1411,6 +1425,21 @@ function mergeStableGroupHeader(
   };
 }
 
+function reuseStableDisplayItems(
+  previousItems: readonly ActivityGroupDisplayItem[],
+  nextItems: readonly ActivityGroupDisplayItem[],
+): ActivityGroupDisplayItem[] {
+  if (previousItems.length === 0 || nextItems.length === 0) {
+    return [...nextItems];
+  }
+
+  const previousById = new Map(previousItems.map(item => [item.id, item]));
+  return nextItems.map((item) => {
+    const previous = previousById.get(item.id);
+    return previous?.revision === item.revision ? previous : item;
+  });
+}
+
 function buildActivityGroupDetailProjectionKey(
   parts: readonly ChatPart[],
   doing: boolean,
@@ -1424,12 +1453,24 @@ function buildActivityGroupDetailProjectionKey(
 
 function buildContinuationProjectionKey(turnResponse: TurnResponseTurn | null): string {
   const continuation = turnResponse?.response?.continuation;
+  if (!continuation) {
+    return '';
+  }
+  const pendingState = continuation.pendingState;
+  const budgets = continuation.budgets;
   return [
     turnResponse?.turnId ?? '',
-    getObjectIdentityKey(continuation),
-    typeof continuation === 'object' && continuation
-      ? ((continuation as unknown as Record<string, unknown>)['status'] ?? '')
-      : '',
+    continuation.interactionId ?? '',
+    continuation.stepIndex ?? '',
+    continuation.lease ?? '',
+    continuation.status ?? '',
+    continuation.stopReason ?? '',
+    continuation.hardStopReason ?? '',
+    pendingState?.['kind'] ?? '',
+    pendingState?.['requestId'] ?? '',
+    pendingState?.['sourceEvent'] ?? '',
+    budgets?.executionId ?? '',
+    budgets?.origin ?? '',
   ].join(':');
 }
 

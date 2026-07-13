@@ -132,6 +132,7 @@ export class ScrollManagerService {
       return;
     }
 
+    this.syncCurrentResponseMinHeight();
     const requestId = ++this._scrollRequestId;
     this.performBottomScroll(element, behavior, requestId);
     this.scheduleBottomScrollAttempt(() => this.performBottomScroll(element, 'auto', requestId), 16);
@@ -384,6 +385,7 @@ export class ScrollManagerService {
       return;
     }
 
+    this.syncCurrentResponseMinHeight();
     const requestId = ++this._scrollRequestId;
     this.scheduleBottomScrollAttempt(() => {
       this.performBottomScroll(element, behavior, requestId);
@@ -396,7 +398,6 @@ export class ScrollManagerService {
     }
 
     try {
-      this.syncCurrentResponseMinHeight();
       const scrollHeight = element.scrollHeight;
       const clientHeight = element.clientHeight;
       const maxScrollTop = Math.max(0, scrollHeight - clientHeight);
@@ -546,7 +547,10 @@ export class ScrollManagerService {
     }
 
     this._followBottomFrameRequestId = ++this._scrollRequestId;
-    this._followBottomLastHeight = element.scrollHeight;
+    // ResizeObserver already supplied the changed row height. Reading the
+    // whole container here forces layout in the observer frame; defer that
+    // read to the scheduled list-layout frame, as VS Code's list does.
+    this._followBottomLastHeight = this._lastHeight ?? -1;
     this._followBottomStableFrames = 0;
     this.scheduleFollowBottomFrame(() => this.runFollowBottomFrame(element, behavior, this._followBottomFrameRequestId));
   }
@@ -561,7 +565,7 @@ export class ScrollManagerService {
 
     this.performBottomScroll(element, behavior, requestId);
 
-    const currentHeight = element.scrollHeight;
+    const currentHeight = this._lastHeight ?? element.scrollHeight;
     const heightStable = currentHeight === this._followBottomLastHeight;
     const atBottom = this.isAtBottom(element, 4);
     this._followBottomStableFrames = heightStable && atBottom
