@@ -2966,10 +2966,14 @@ function buildForkSkillResult(
 }
 
 function createBlocklySearchExtension(): {
+  supportsIncludeIgnoredFiles?: boolean;
+  supportsFileSearchIncludeIgnoredFiles?: boolean;
+  supportsTextSearchIncludeIgnoredFiles?: boolean;
   searchFiles?(input: {
     pattern: string;
     cwd: string;
     maxResults: number;
+    includeIgnoredFiles?: boolean;
     signal?: AbortSignal;
   }): Promise<string[]>;
   searchText?(input: {
@@ -2977,21 +2981,29 @@ function createBlocklySearchExtension(): {
     isRegexp: boolean;
     includePattern?: string;
     maxResults: number;
+    includeIgnoredFiles?: boolean;
     cwd: string;
+    signal?: AbortSignal;
   }): Promise<Array<{ file: string; line: number; content: string }>>;
 } | null {
   const ripgrep = (window as any)?.electronAPI?.ripgrep;
+  const hasListFiles = typeof ripgrep?.listFiles === 'function';
+  const hasSearchText = typeof ripgrep?.searchText === 'function';
   const hasSearchContent = typeof ripgrep?.searchContent === 'function';
   const hasListAllContentFiles = typeof ripgrep?.listAllContentFiles === 'function';
-  if (!hasSearchContent && !hasListAllContentFiles) {
+  if (!hasListFiles && !hasSearchText && !hasSearchContent && !hasListAllContentFiles) {
     return null;
   }
 
   const searchExtension: {
+    supportsIncludeIgnoredFiles?: boolean;
+    supportsFileSearchIncludeIgnoredFiles?: boolean;
+    supportsTextSearchIncludeIgnoredFiles?: boolean;
     searchFiles?: (input: {
       pattern: string;
       cwd: string;
       maxResults: number;
+      includeIgnoredFiles?: boolean;
       signal?: AbortSignal;
     }) => Promise<string[]>;
     searchText?: (input: {
@@ -2999,11 +3011,39 @@ function createBlocklySearchExtension(): {
       isRegexp: boolean;
       includePattern?: string;
       maxResults: number;
+      includeIgnoredFiles?: boolean;
       cwd: string;
+      signal?: AbortSignal;
     }) => Promise<Array<{ file: string; line: number; content: string }>>;
-  } = {};
+  } = {
+    supportsIncludeIgnoredFiles: hasListFiles && hasSearchText,
+    supportsFileSearchIncludeIgnoredFiles: hasListFiles,
+    supportsTextSearchIncludeIgnoredFiles: hasSearchText,
+  };
 
-  if (hasListAllContentFiles) {
+  if (hasListFiles) {
+    searchExtension.searchFiles = async (input) => {
+      const result = await invokeCancelableBlocklyRipgrep(
+        ripgrep,
+        'listFiles',
+        {
+          pattern: input.pattern,
+          path: input.cwd,
+          maxResults: input.maxResults,
+          includeIgnoredFiles: input.includeIgnoredFiles ?? false,
+          includeHidden: true,
+        },
+        input.signal,
+      );
+      if (!result?.success) {
+        if (result?.cancelled || input.signal?.aborted) {
+          throw new DOMException('Search cancelled', 'AbortError');
+        }
+        throw new Error(result?.error || 'Blockly ripgrep file search failed');
+      }
+      return Array.isArray(result.files) ? result.files.map((file: unknown) => String(file)) : [];
+    };
+  } else if (hasListAllContentFiles) {
     searchExtension.searchFiles = async (input) => {
       const matchesEverything = input.pattern === '**/*' || input.pattern === '**' || input.pattern === '*';
       const regex = matchesEverything ? null : globToRegex(input.pattern);
@@ -3041,7 +3081,41 @@ function createBlocklySearchExtension(): {
     };
   }
 
-  if (hasSearchContent) {
+  if (hasSearchText) {
+    searchExtension.searchText = async (input) => {
+      const result = await invokeCancelableBlocklyRipgrep(
+        ripgrep,
+        'searchText',
+        {
+          pattern: input.query,
+          path: input.cwd,
+          include: input.includePattern,
+          isRegex: input.isRegexp,
+          maxResults: input.maxResults,
+          ignoreCase: true,
+          includeIgnoredFiles: input.includeIgnoredFiles ?? false,
+          includeHidden: true,
+          maxLineLength: 500,
+        },
+        input.signal,
+      );
+      if (!result?.success) {
+        if (result?.cancelled || input.signal?.aborted) {
+          throw new DOMException('Search cancelled', 'AbortError');
+        }
+        throw new Error(result?.error || 'Blockly ripgrep text search failed');
+      }
+      return Array.isArray(result.matches)
+        ? result.matches
+          .filter((match: any) => !!match?.file)
+          .map((match: any) => ({
+            file: String(match.file),
+            line: Number(match.line || 0),
+            content: String(match.content || ''),
+          }))
+        : [];
+    };
+  } else if (hasSearchContent) {
     searchExtension.searchText = async (input) => {
       const result = await ripgrep.searchContent({
         pattern: input.query,
@@ -3072,6 +3146,28 @@ function createBlocklySearchExtension(): {
   }
 
   return searchExtension;
+}
+
+let blocklyRipgrepRequestSequence = 0;
+
+async function invokeCancelableBlocklyRipgrep(
+  ripgrep: any,
+  method: 'listFiles' | 'searchText',
+  params: Record<string, unknown>,
+  signal?: AbortSignal,
+): Promise<any> {
+  if (signal?.aborted) {
+    throw new DOMException('Search cancelled', 'AbortError');
+  }
+
+  const requestId = `blockly-search-${Date.now()}-${++blocklyRipgrepRequestSequence}`;
+  const onAbort = () => ripgrep.cancelSearch?.(requestId);
+  signal?.addEventListener('abort', onAbort, { once: true });
+  try {
+    return await ripgrep[method]({ ...params, requestId });
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
+  }
 }
 
 function appendSearchFileMatches(
@@ -3716,19 +3812,19 @@ function checkNpmUninstallSafety(command: string): string | null {
         }
       }
     } catch (e) {
-      console.warn('[LexStream] npm uninstall 安全检查失�?', libPackageName, e);
+      console.warn('[LexStream] npm uninstall 安全检查失败', libPackageName, e);
     }
   }
 
   if (libsInUse.length > 0) {
-    return `无法卸载以下库，因为项目代码正在使用它们�?{libsInUse.join(', ')}。请先删除相关代码块后再尝试卸载。`;
+    return `无法卸载以下库，因为项目代码正在使用它们：${libsInUse.join(', ')}。请先删除相关代码块后再尝试卸载。`;
   }
 
   for (const libPackageName of uniqueLibs) {
     try {
       host.blockly.unloadLibrary(libPackageName, projectPath);
     } catch (e: any) {
-      console.warn('[LexStream] 库卸载失�?', libPackageName, e);
+      console.warn('[LexStream] 库卸载失败', libPackageName, e);
     }
   }
   return null;
@@ -3767,7 +3863,7 @@ async function loadNpmLibraries(command: string): Promise<void> {
         const pkgJson = JSON.parse(host.fs.readFileSync(pkgJsonPath, 'utf-8'));
         if (pkgJson?.name) libsToLoad.push(pkgJson.name);
       } catch (e) {
-        console.warn('[LexStream] 读取本地�?package.json 失败:', token, e);
+        console.warn('[LexStream] 读取本地包 package.json 失败:', token, e);
       }
     }
   }
@@ -3777,10 +3873,10 @@ async function loadNpmLibraries(command: string): Promise<void> {
     try {
       await host.blockly.loadLibrary(libPackageName, projectPath);
       if (isLexBootstrapTraceEnabled()) {
-        console.log('[LexStream] npm 库加载成�?', libPackageName);
+        console.log('[LexStream] npm 库加载成功', libPackageName);
       }
     } catch (e: any) {
-      console.warn('[LexStream] npm 库加载失�?', libPackageName, e);
+      console.warn('[LexStream] npm 库加载失败', libPackageName, e);
     }
   }
 }
