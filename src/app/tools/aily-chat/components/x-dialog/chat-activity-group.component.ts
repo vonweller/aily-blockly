@@ -14,6 +14,7 @@
 
 import {
   AfterViewChecked,
+  ChangeDetectorRef,
   ChangeDetectionStrategy,
   Component,
   ElementRef,
@@ -140,7 +141,11 @@ import { storeThinkContent } from '../../core/think-content-store';
           [class.cag-detail-viewport-fixed]="useFixedViewport"
           (scroll)="onDetailViewportScroll()">
           @if (displayItems.length) {
-            <aily-chat-activity-list [items]="displayItems" [sessionId]="sessionId" (contentDelta)="emitContentDelta()" />
+            <aily-chat-activity-list
+              [items]="displayItems"
+              [sessionId]="sessionId"
+              [impliedWordLoadRate]="impliedWordLoadRate"
+              (contentDelta)="emitContentDelta()" />
           }
         </div>
       }
@@ -382,13 +387,16 @@ import { storeThinkContent } from '../../core/think-content-store';
   `],
 })
 export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked, OnDestroy {
+  @Input() renderItemId = '';
   @Input() parts: readonly ChatPart[] = [];
   @Input() doing = false;
   @Input() sessionId = '';
   @Input() turnResponse: TurnResponseTurn | null = null;
+  @Input() impliedWordLoadRate: number | undefined;
   @Input() detailProjectionEnabled = true;
   @Output() contentDelta = new EventEmitter<void>();
   @ViewChild('detailViewport') private detailViewportRef?: ElementRef<HTMLElement>;
+  @ViewChild(ChatActivityListComponent) private activityListComponent?: ChatActivityListComponent;
 
   expanded = false;
   groupState: 'doing' | 'done' | 'error' = 'doing';
@@ -400,6 +408,7 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked, 
   private lastViewportScrollHeight = 0;
   private ignoreNextViewportScroll = false;
   private readonly runtimeInteractionHost = inject(ChatRuntimeInteractionHostService, { optional: true });
+  private readonly cdr = inject(ChangeDetectorRef, { optional: true });
   private detailViewportSyncScheduled = false;
   private detailViewportFrameId: number | null = null;
   private detailViewportTimerId: ReturnType<typeof setTimeout> | null = null;
@@ -439,6 +448,180 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked, 
     this.detailViewportFrameId = null;
     this.detailViewportTimerId = null;
     this.detailViewportSyncScheduled = false;
+  }
+
+  /** Keep the mounted group and spinner DOM while applying a new part revision. */
+  applyVisibleGroupPatch(input: {
+    readonly parts: readonly ChatPart[];
+    readonly doing: boolean;
+    readonly sessionId: string;
+    readonly turnResponse: TurnResponseTurn | null;
+    readonly impliedWordLoadRate?: number;
+    readonly detailProjectionEnabled: boolean;
+  }): boolean {
+    return ChatPerformanceTracer.runWithSurface(
+      'chat_projection',
+      () => this.applyVisibleGroupPatchInternal(input),
+      'activity_group_incremental_patch',
+    );
+  }
+
+  private applyVisibleGroupPatchInternal(input: {
+    readonly parts: readonly ChatPart[];
+    readonly doing: boolean;
+    readonly sessionId: string;
+    readonly turnResponse: TurnResponseTurn | null;
+    readonly impliedWordLoadRate?: number;
+    readonly detailProjectionEnabled: boolean;
+  }): boolean {
+    const wasDoing = this.doing;
+    const incompleteThinkingBefore = this.parts.filter(
+      part => part.type === 'thinking' && part.isComplete === false,
+    ).length;
+    if (this.tryApplyStreamingThinkingRevision(input)) {
+      return true;
+    }
+    const previousShellSignature = this.readShellSignature();
+    this.parts = input.parts;
+    this.doing = input.doing;
+    this.sessionId = input.sessionId;
+    this.turnResponse = input.turnResponse;
+    this.impliedWordLoadRate = input.impliedWordLoadRate;
+    this.detailProjectionEnabled = input.detailProjectionEnabled;
+    this._refresh();
+    const shellChanged = previousShellSignature !== this.readShellSignature();
+    if (!shellChanged) {
+      if (!this.expanded || this.displayItems.length === 0) {
+        this.reportFinalGroupRevision(wasDoing, input, incompleteThinkingBefore);
+        return true;
+      }
+      if (this.activityListComponent?.applyItemsPatch(
+        this.displayItems,
+        this.sessionId,
+        this.impliedWordLoadRate,
+      )) {
+        this.reportFinalGroupRevision(wasDoing, input, incompleteThinkingBefore);
+        return true;
+      }
+    }
+    this.cdr?.detectChanges();
+    this.reportFinalGroupRevision(wasDoing, input, incompleteThinkingBefore);
+    return true;
+  }
+
+  private reportFinalGroupRevision(
+    wasDoing: boolean,
+    input: {
+      readonly parts: readonly ChatPart[];
+      readonly doing: boolean;
+      readonly sessionId: string;
+      readonly turnResponse: TurnResponseTurn | null;
+    },
+    incompleteThinkingBefore: number,
+  ): void {
+    if (!wasDoing || input.doing) {
+      return;
+    }
+    const incompleteThinkingAfter = input.parts.filter(
+      part => part.type === 'thinking' && part.isComplete === false,
+    ).length;
+    console.info(
+      '[AilyChat][ActivityGroupFinalRenderScalar]',
+      [
+        `session=${input.sessionId || 'unknown'}`,
+        `turn=${input.turnResponse?.turnId || input.turnResponse?.response?.id || 'unknown'}`,
+        `parts=${input.parts.length}`,
+        `incompleteThinkingBefore=${incompleteThinkingBefore}`,
+        `incompleteThinkingAfter=${incompleteThinkingAfter}`,
+        `state=${this.groupState}`,
+        `wallAt=${Date.now()}`,
+      ].join(' '),
+    );
+  }
+
+  private tryApplyStreamingThinkingRevision(input: {
+    readonly parts: readonly ChatPart[];
+    readonly doing: boolean;
+    readonly sessionId: string;
+    readonly turnResponse: TurnResponseTurn | null;
+    readonly impliedWordLoadRate?: number;
+    readonly detailProjectionEnabled: boolean;
+  }): boolean {
+    if (!this.doing || !input.doing
+      || !this.expanded
+      || !this.activityListComponent
+      || this.parts.length !== input.parts.length
+      || buildContinuationProjectionKey(this.turnResponse) !== buildContinuationProjectionKey(input.turnResponse)) {
+      return false;
+    }
+
+    let thinkingIndex = -1;
+    for (let index = 0; index < input.parts.length; index += 1) {
+      const previousPart = this.parts[index];
+      const nextPart = input.parts[index];
+      if (!previousPart || !nextPart) {
+        return false;
+      }
+      if (previousPart.type === 'thinking' && nextPart.type === 'thinking'
+        && previousPart.isComplete === false && nextPart.isComplete === false
+        && !!previousPart.contentRef && previousPart.contentRef === nextPart.contentRef
+        && buildChatPartIdentity(previousPart, index) === buildChatPartIdentity(nextPart, index)) {
+        const previousLength = previousPart.contentLength ?? previousPart.content.length;
+        const nextLength = nextPart.contentLength ?? nextPart.content.length;
+        if (nextLength < previousLength || thinkingIndex >= 0) {
+          return false;
+        }
+        thinkingIndex = index;
+        continue;
+      }
+      if (buildActivityPartDetailProjectionKey(previousPart, index, true)
+        !== buildActivityPartDetailProjectionKey(nextPart, index, true)) {
+        return false;
+      }
+    }
+
+    if (thinkingIndex < 0) {
+      return false;
+    }
+    const nextThinking = input.parts[thinkingIndex] as ThinkingPart;
+    const displayItemId = buildChatPartIdentity(nextThinking, thinkingIndex);
+    const displayItemIndex = this.displayItems.findIndex(item => item.id === displayItemId && item.kind === 'thinking');
+    if (displayItemIndex < 0) {
+      return false;
+    }
+
+    const presentation = buildThinkingActivityPresentation(nextThinking);
+    const nextDisplayItems = [...this.displayItems];
+    nextDisplayItems[displayItemIndex] = {
+      ...nextDisplayItems[displayItemIndex],
+      thinking: presentation.thinking,
+    };
+    this.parts = input.parts;
+    this.sessionId = input.sessionId;
+    this.turnResponse = input.turnResponse;
+    this.impliedWordLoadRate = input.impliedWordLoadRate;
+    this.detailProjectionEnabled = input.detailProjectionEnabled;
+    this.displayItems = nextDisplayItems;
+    return this.activityListComponent.applyItemsPatch(
+      nextDisplayItems,
+      input.sessionId,
+      input.impliedWordLoadRate,
+    );
+  }
+
+  private readShellSignature(): string {
+    const header = this.groupHeader;
+    return [
+      this.expanded ? '1' : '0',
+      this.groupState,
+      header.kind,
+      header.title,
+      header.detail ?? '',
+      header.titleDetail ?? '',
+      this.useFixedViewport ? '1' : '0',
+      this.showDetailViewportTopFade ? '1' : '0',
+      this.showDetailViewportBottomFade ? '1' : '0',
+    ].join('\u0000');
   }
 
   toggle(): void {

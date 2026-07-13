@@ -411,6 +411,16 @@ export class LexRenderEventBridge {
       return;
     }
 
+    if (event.type === 'response_complete') {
+      this.syncCurrentTurn(event.timestamp, 'completed');
+      this.invalidateVisibleProjection();
+      this._projectionSync.projectCanonicalChanges(this._currentTurn, this._streamBuilder, lifecycleEvents, {
+        syncContent: true,
+        applyTurnCompletion: true,
+      });
+      return;
+    }
+
     if (event.type === 'turn_end') {
       const snapshotOptions: PendingLiveTurnSnapshotOptions = {
         fallbackStatus: isIntermediateToolTurnEnd(event) ? this.resolveLiveFallbackStatus() : 'completed',

@@ -533,11 +533,13 @@ function registerCmdHandlers(mainWindow) {
         if (result.shouldLogOutput) {
           logCommandOutput(streamId, 'stdout', output, senderWindow);
         }
-        sendCmdData(senderWindow, `cmd-data-${streamId}`, {
-          type: 'stdout',
-          data: output,
-          streamId
-        });
+        if (options.forwardStdout !== false) {
+          sendCmdData(senderWindow, `cmd-data-${streamId}`, {
+            type: 'stdout',
+            data: output,
+            streamId
+          });
+        }
       });
 
       // 监听错误输出

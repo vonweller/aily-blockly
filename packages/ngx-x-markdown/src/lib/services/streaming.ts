@@ -247,6 +247,129 @@ export function getParagraphBufferedMarkdown(fullMarkdown: string, isFinalChunk:
   return renderable;
 }
 
+export interface WordCountResult {
+  value: string;
+  returnedWordCount: number;
+  totalWordCount: number;
+  isFullString: boolean;
+}
+
+const r = String.raw;
+const linkPattern =
+  r`(?<!\\)` +
+  r`(!?\[` +
+  r`(?:` +
+  r`[^\[\]\\]|` +
+  r`\\.|` +
+  r`\[[^\[\]]*\]` +
+  r`)*` +
+  r`\])` +
+  r`(\(\s*)` +
+  r`(` +
+  r`[^\s\(\)<](?:[^\s\(\)]|\([^\s\(\)]*?\))*|` +
+  r`<(?:\\[<>]|[^<>])+>` +
+  r`)` +
+  r`\s*(?:"[^"]*"|'[^']*'|\([^\(\)]*\))?\s*` +
+  r`\)`;
+const inlineMathPattern = r`(?:\${1,2}[^$]{1,10000}?\${1,2}|\\\([\s\S]{1,10000}?\\\)|\\\[[\s\S]{1,10000}?\\\])`;
+
+export function getNWords(str: string, numWordsToCount: number): WordCountResult {
+  const backtick = '`';
+  const wordRegExp = new RegExp(
+    `(?:${linkPattern})|(?:${inlineMathPattern})|\\p{sc=Han}|=+|\\++|-+|[^\\s\\|\\p{sc=Han}|=|\\+|\\-|${backtick}]+`,
+    'gu',
+  );
+  const allWordMatches = Array.from(str.matchAll(wordRegExp));
+  const targetWords = allWordMatches.slice(0, numWordsToCount);
+  const lastTarget = targetWords.at(-1);
+  const endIndex = numWordsToCount >= allWordMatches.length
+    ? str.length
+    : lastTarget
+      ? lastTarget.index + lastTarget[0].length
+      : 0;
+  const value = str.substring(0, endIndex);
+
+  return {
+    value,
+    returnedWordCount: targetWords.length === 0 ? (value.length ? 1 : 0) : targetWords.length,
+    totalWordCount: allWordMatches.length,
+    isFullString: endIndex >= str.length,
+  };
+}
+
+const WORD_BUFFER_MIN_RATE = 40;
+const WORD_BUFFER_MAX_RATE = 2000;
+const WORD_BUFFER_MIN_RATE_AFTER_COMPLETE = 80;
+const WORD_BUFFER_DEFAULT_RATE = 8;
+
+export class WordBuffer {
+  private fullMarkdown = '';
+  private revealedWordCount = 0;
+  private lastCommittedMarkdown = '';
+  private needsFrame = false;
+  private lastCommitTime = 0;
+  private rate = WORD_BUFFER_DEFAULT_RATE;
+
+  get needsNextFrame(): boolean {
+    return this.needsFrame;
+  }
+
+  setRate(rate: number | undefined, isComplete: boolean): void {
+    if (isComplete) {
+      this.rate = typeof rate === 'number'
+        ? Math.min(Math.max(rate, WORD_BUFFER_MIN_RATE_AFTER_COMPLETE), WORD_BUFFER_MAX_RATE)
+        : WORD_BUFFER_MIN_RATE_AFTER_COMPLETE;
+      return;
+    }
+
+    this.rate = typeof rate === 'number'
+      ? Math.min(Math.max(rate, WORD_BUFFER_MIN_RATE), WORD_BUFFER_MAX_RATE)
+      : WORD_BUFFER_DEFAULT_RATE;
+  }
+
+  reset(): void {
+    this.fullMarkdown = '';
+    this.revealedWordCount = 0;
+    this.lastCommittedMarkdown = '';
+    this.needsFrame = false;
+    this.lastCommitTime = 0;
+    this.rate = WORD_BUFFER_DEFAULT_RATE;
+  }
+
+  filterFlush(markdown: string): string | undefined {
+    this.fullMarkdown = markdown;
+
+    const now = Date.now();
+    if (this.lastCommitTime === 0) {
+      this.lastCommitTime = now;
+      this.revealedWordCount = 1;
+    } else {
+      const elapsed = now - this.lastCommitTime;
+      const newWords = Math.floor(elapsed / 1000 * this.rate);
+      if (newWords > 0) {
+        this.revealedWordCount += newWords;
+        this.lastCommitTime = now;
+      }
+    }
+
+    const result = getNWords(this.fullMarkdown, this.revealedWordCount);
+    if (result.isFullString) {
+      this.needsFrame = false;
+      this.revealedWordCount = result.returnedWordCount;
+      this.lastCommittedMarkdown = this.fullMarkdown;
+      return this.fullMarkdown;
+    }
+
+    this.needsFrame = true;
+    if (result.value.length <= this.lastCommittedMarkdown.length) {
+      return undefined;
+    }
+
+    this.lastCommittedMarkdown = result.value;
+    return result.value;
+  }
+}
+
 // ===================== Main Streaming Processor =====================
 
 /**

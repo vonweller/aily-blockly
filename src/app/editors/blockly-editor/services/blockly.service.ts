@@ -200,18 +200,31 @@ export class BlocklyService {
   private toolboxSortOrder: string[] = [];
   private loadLibraryFinishedLoadingSubject = new Subject<void>();
 
-  aiWaiting = false;
   private _aiWriting = new BehaviorSubject<boolean>(false);
   aiWriting$ = this._aiWriting.asObservable();
+  private _aiExecutionActive = new BehaviorSubject<boolean>(false);
+  aiExecutionActive$ = this._aiExecutionActive.asObservable();
   private _aiWaiting = new BehaviorSubject<boolean>(false);
   aiWaiting$ = this._aiWaiting.asObservable();
+
+  get aiWaiting() {
+    return this._aiExecutionActive.value;
+  }
+
+  set aiWaiting(value: boolean) {
+    if (this._aiExecutionActive.value !== value) {
+      this._aiExecutionActive.next(value);
+    }
+  }
 
   get aiWaitWriting() {
     return this._aiWaiting.value;
   }
 
   set aiWaitWriting(value: boolean) {
-    this._aiWaiting.next(value);
+    if (this._aiWaiting.value !== value) {
+      this._aiWaiting.next(value);
+    }
   }
 
   markWorkspaceCodeDirty(): void {

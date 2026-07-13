@@ -9,6 +9,7 @@ import type {
   ChatSelectedMode,
 } from '../core/chat-mode';
 import type { ChatRuntimeOwnerScheduler } from '../core/chat-runtime-owner-scheduler';
+import type { PersistedChatSessionTitleSource } from '../core/chat-session-title';
 import type { AskUserFullResponse, AskUserPresentationContext, AskUserQuestion } from '../core/ask-user';
 import type {
   ChatRuntimeHostInteractionRequest,
@@ -165,15 +166,14 @@ export interface ChatRuntimeOwnerSubmittedTurnLifecyclePort {
   completeSubmittedTurn(sessionId?: string | null): Promise<void>;
 }
 
-export interface ChatRuntimeOwnerSubmittedTurnTitleInput {
+export interface ChatRuntimeOwnerGeneratedTitleInput {
   readonly sessionId: string;
-  readonly requestText: string;
-  readonly displayText: string;
-  readonly owner?: LexOwnerFacade;
+  readonly title: string;
+  readonly source: PersistedChatSessionTitleSource;
 }
 
 export interface ChatRuntimeOwnerSubmittedTurnTitlePort {
-  prepareSubmittedTurnTitle(input: ChatRuntimeOwnerSubmittedTurnTitleInput): void;
+  applyGeneratedTitle(input: ChatRuntimeOwnerGeneratedTitleInput): boolean;
 }
 
 export interface ChatRuntimeOwnerSaveCurrentSessionInput {

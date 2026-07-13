@@ -27,7 +27,10 @@ import {
 import { AilyChatLanguageModelsService } from './aily-chat-language-models.service';
 import { ChatDebugBrowserService } from './chat-debug-browser.service';
 import { ChatSessionItemsService, type ChatSessionListLoadState } from './chat-session-items.service';
-import { ChatSessionModelStoreService } from './chat-session-model-store.service';
+import {
+  ChatSessionModelStoreService,
+  type ChatSessionModelStoreChangedEvent,
+} from './chat-session-model-store.service';
 import { ChatSessionRuntimeStoreService } from './chat-session-runtime-store.service';
 import { ChatSessionViewModelStoreService, type ChatSessionViewModel } from './chat-session-view-model-store.service';
 import { ChatSessionsControlService } from './chat-sessions-control.service';
@@ -209,6 +212,9 @@ export class ChatViewService {
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe((event) => {
         if (event.sessionResource === this.currentViewSessionResource) {
+          if (this.isLiveTranscriptOnlyModelChange(event)) {
+            return;
+          }
           this.scheduleSessionModelViewRefresh();
         }
       });
@@ -700,6 +706,11 @@ export class ChatViewService {
   private refreshSessionViewModel(): void {
     this.emitPaneDiagnostics();
     this.sessionViewModelChangedSubject.next();
+  }
+
+  private isLiveTranscriptOnlyModelChange(event: ChatSessionModelStoreChangedEvent): boolean {
+    return event.kind === 'updated'
+      && (event.reason === 'appendTransientTurn' || event.reason === 'turnDelta');
   }
 
   private scheduleSessionModelViewRefresh(): void {

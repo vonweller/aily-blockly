@@ -450,6 +450,7 @@ export class ChatHistoryService implements OnDestroy {
       upsertIndexEntry: (sessionId, metadata, messageCount, updateTimestamp, options) =>
         this.upsertIndexEntry(sessionId, metadata, messageCount, updateTimestamp, options),
       writeIndex: () => this.writeIndex(),
+      writeIndexAsync: () => this.writeIndexAsync(),
       markIndexDirty: () => { this.indexDirty = true; },
       hasDirtyIndex: () => this.indexDirty,
       isSamePath: (a, b) => this.isSamePath(a ?? null, b ?? null),
@@ -564,6 +565,13 @@ export class ChatHistoryService implements OnDestroy {
     }
   }
 
+  async saveHostRecordAsync(record: LiveHostSessionRecord): Promise<void> {
+    await this.hostSessionPersistenceBridge.saveHostRecordAsync(record);
+    if (record.sessionId) {
+      this.emitHostSessionChanged({ sessionId: record.sessionId, scope: 'persisted', kind: 'updated' });
+    }
+  }
+
   /**
    * 仅保存宿主会话元数据/索引，不重写完整 transcript 数据文件。
    * 对齐 VS Code `storeSessionsMetadataOnly(...)`：用于标题、模式、草稿/输入状态等
@@ -571,6 +579,13 @@ export class ChatHistoryService implements OnDestroy {
    */
   saveHostRecordMetadataOnly(record: LiveHostSessionRecord): void {
     this.hostSessionPersistenceBridge.saveHostRecordMetadataOnly(record);
+    if (record.sessionId) {
+      this.emitHostSessionChanged({ sessionId: record.sessionId, scope: 'persisted', kind: 'updated' });
+    }
+  }
+
+  async saveHostRecordMetadataOnlyAsync(record: LiveHostSessionRecord): Promise<void> {
+    await this.hostSessionPersistenceBridge.saveHostRecordMetadataOnlyAsync(record);
     if (record.sessionId) {
       this.emitHostSessionChanged({ sessionId: record.sessionId, scope: 'persisted', kind: 'updated' });
     }
@@ -594,6 +609,13 @@ export class ChatHistoryService implements OnDestroy {
     this.hostSessionPersistenceBridge.markDirty(sessionId, options);
     if (policy === 'authoritative') {
       this.scheduleSaveStateFlush();
+    }
+  }
+
+  async updateTitleAsync(sessionId: string, title: string, options?: SessionTitleUpdateOptions): Promise<void> {
+    await this.hostSessionPersistenceBridge.updateTitleAsync(sessionId, title, options);
+    if (sessionId) {
+      this.emitHostSessionChanged({ sessionId, scope: 'persisted', kind: 'updated' });
     }
   }
 
@@ -1278,6 +1300,12 @@ export class ChatHistoryService implements OnDestroy {
         });
       }
     }, 30000); // 30s
+  }
+
+  private async writeIndexAsync(): Promise<void> {
+    if (await this.indexStore.writeIndexesAsync(this.index)) {
+      this.indexDirty = false;
+    }
   }
 
   private stopAutoSave(): void {

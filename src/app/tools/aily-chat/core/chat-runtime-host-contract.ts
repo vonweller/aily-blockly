@@ -234,6 +234,9 @@ export interface ChatRuntimeHostTurnTranscriptEvent extends ChatRuntimeHostEvent
   readonly kind: 'turn-transcript';
   readonly turnId: string;
   readonly turn: TurnResponseTurn;
+  readonly sourceEventType?: string;
+  readonly sourceEventTimestamp?: number;
+  readonly hostPublishedAt?: number;
 }
 
 export interface ChatRuntimeHostPartTranscriptEvent extends ChatRuntimeHostEventBase {
@@ -242,6 +245,9 @@ export interface ChatRuntimeHostPartTranscriptEvent extends ChatRuntimeHostEvent
   readonly parts: readonly TurnResponsePart[];
   readonly turn?: TurnResponseTurn;
   readonly status?: TurnResponseStatus;
+  readonly sourceEventType?: string;
+  readonly sourceEventTimestamp?: number;
+  readonly hostPublishedAt?: number;
 }
 
 export interface ChatRuntimeHostSessionStateEvent extends ChatRuntimeHostEventBase {

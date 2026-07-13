@@ -1821,6 +1821,17 @@ function materializeRenderEventTurn(turn, state, event) {
     case 'subagent_end':
       parts = upsertSubagentToolCallPart(parts, event);
       return withResponsePatch(turn, timestamp, { parts, status: 'streaming' });
+    case 'response_complete':
+      parts = completeThinkingPart(parts, event);
+      {
+        const planResult = materializePlanTurnParts(parts, turn);
+        parts = planResult.parts.map(part => completeOpenResponsePart(part, timestamp));
+        return withResponsePatch(turn, timestamp, {
+          parts,
+          status: 'completed',
+          ...(planResult.resultText !== undefined ? { resultText: planResult.resultText } : {}),
+        });
+      }
     case 'turn_end':
       parts = completeThinkingPart(parts, event);
       {

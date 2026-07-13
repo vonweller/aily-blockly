@@ -32,6 +32,40 @@ const NATIVE_RUNTIME_PACKAGES = new Set([
   'serialport',
 ]);
 
+function readCliListOption(name) {
+  const values = [];
+  const args = process.argv.slice(2);
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    const prefix = `--${name}=`;
+    if (arg.startsWith(prefix)) {
+      values.push(arg.slice(prefix.length));
+      continue;
+    }
+    if (arg === `--${name}` && args[index + 1] && !args[index + 1].startsWith('--')) {
+      values.push(args[index + 1]);
+      index += 1;
+    }
+  }
+
+  return values
+    .flatMap((value) => String(value || '').split(','))
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+function hasCliFlag(name) {
+  return process.argv.slice(2).some((arg) => arg === `--${name}` || arg.startsWith(`--${name}=`));
+}
+
+function createToolNameFilter(toolNames) {
+  if (!toolNames || toolNames.length === 0) {
+    return null;
+  }
+  return new Set(toolNames);
+}
+
 function run(command, cwd) {
   console.log(`\n> (${path.relative(rootDir, cwd)}) ${command}\n`);
   execSync(command, { cwd, stdio: 'inherit' });
@@ -135,13 +169,17 @@ function recoverNativeToolDist(repoDir, toolName) {
   return true;
 }
 
-function buildSubappTools(repoDir) {
+function buildSubappTools(repoDir, selectedToolNames = null) {
+  const selected = createToolNameFilter(selectedToolNames);
   const toolNames = listToolProjects(repoDir, SUBAPP_REPO.skipDirNames)
     .map((toolDir) => path.basename(toolDir));
+  const targetToolNames = selected
+    ? toolNames.filter((toolName) => selected.has(toolName))
+    : toolNames;
   const built = [];
   const skipped = [];
 
-  for (const toolName of toolNames) {
+  for (const toolName of targetToolNames) {
     const buildCommand = `npm run ${SUBAPP_REPO.buildScript} -- ${JSON.stringify(toolName)}`;
 
     if (runOptional(buildCommand, repoDir)) {
@@ -158,8 +196,12 @@ function buildSubappTools(repoDir) {
     skipped.push(toolName);
   }
 
+  if (!targetToolNames.length) {
+    throw new Error(`No matching subapp tools found${selected ? `: ${Array.from(selected).join(', ')}` : ''}`);
+  }
+
   if (!built.length) {
-    throw new Error('No subapp tools were built or recovered');
+    throw new Error(`No subapp tools were built or recovered${selected ? `: ${Array.from(selected).join(', ')}` : ''}`);
   }
 
   if (skipped.length) {
@@ -214,8 +256,10 @@ function listToolProjects(repoDir, skipDirNames) {
     .filter((toolDir) => fs.existsSync(path.join(toolDir, 'package.json')));
 }
 
-function installSubappToolProjects(repoDir) {
-  const toolDirs = listToolProjects(repoDir, SUBAPP_REPO.skipDirNames);
+function installSubappToolProjects(repoDir, selectedToolNames = null) {
+  const selected = createToolNameFilter(selectedToolNames);
+  const toolDirs = listToolProjects(repoDir, SUBAPP_REPO.skipDirNames)
+    .filter((toolDir) => !selected || selected.has(path.basename(toolDir)));
 
   for (const toolDir of toolDirs) {
     run('npm install', toolDir);
@@ -227,7 +271,7 @@ function installSubappToolProjects(repoDir) {
   }
 }
 
-function syncBuiltTools(repoDir, builtToolNames, toolsDir) {
+function syncBuiltTools(repoDir, builtToolNames, toolsDir, options = {}) {
   if (!builtToolNames.length) {
     throw new Error('No built subapp tools to sync');
   }
@@ -247,6 +291,10 @@ function syncBuiltTools(repoDir, builtToolNames, toolsDir) {
     console.log(`[copy] ${path.relative(rootDir, sourceDir)} -> ${path.relative(rootDir, targetDir)}`);
   }
 
+  if (options.removeStale === false) {
+    return;
+  }
+
   for (const entry of fs.readdirSync(toolsDir, { withFileTypes: true })) {
     if (!entry.isDirectory() || builtToolNames.includes(entry.name)) {
       continue;
@@ -258,17 +306,20 @@ function syncBuiltTools(repoDir, builtToolNames, toolsDir) {
   }
 }
 
-function setupSubapp() {
+function setupSubapp(options = {}) {
   console.log('\n[subapp] preparing aily-subapp child tools...');
   ensureRepoDir(SUBAPP_REPO.name, SUBAPP_REPO.url, SUBAPP_REPO.branch);
 
   const repoDir = path.join(childDir, SUBAPP_REPO.name);
   const toolsDir = path.join(childDir, 'tools');
+  const selectedToolNames = options.toolNames || null;
 
   run('npm install', repoDir);
-  installSubappToolProjects(repoDir);
-  const builtToolNames = buildSubappTools(repoDir);
-  syncBuiltTools(repoDir, builtToolNames, toolsDir);
+  installSubappToolProjects(repoDir, selectedToolNames);
+  const builtToolNames = buildSubappTools(repoDir, selectedToolNames);
+  syncBuiltTools(repoDir, builtToolNames, toolsDir, {
+    removeStale: !selectedToolNames,
+  });
 
   console.log(`\n[subapp] copied ${builtToolNames.length} tool(s) to ${path.relative(rootDir, toolsDir)}`);
 }
@@ -284,6 +335,17 @@ function installRootLocalDependency(relativePath) {
 }
 
 function main() {
+  const subappOnlyTools = readCliListOption('subapp-only');
+  if (subappOnlyTools.length > 0) {
+    setupSubapp({ toolNames: subappOnlyTools });
+    console.log('\n[done] selected subapp child tools ready.');
+    return;
+  }
+
+  if (hasCliFlag('subapp-only')) {
+    throw new Error('--subapp-only requires at least one tool name');
+  }
+
   for (const repo of REPOS) {
     const { repoDir, existed } = ensureRepoDir(repo.name, repo.url, repo.branch);
 

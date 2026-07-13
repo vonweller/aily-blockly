@@ -424,6 +424,7 @@ export class RenderEventPartAdapter {
 
       // ---- Turn lifecycle (non-Part) ----
       case 'turn_begin':
+      case 'response_complete':
       case 'turn_end':
       case 'session_meta':
         // These are lifecycle signals, not rendered as Parts.
