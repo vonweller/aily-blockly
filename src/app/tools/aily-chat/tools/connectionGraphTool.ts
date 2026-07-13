@@ -47,14 +47,6 @@ function joinHostPath(...parts: string[]): string {
   return parts.join('/').replace(/\/+/g, '/');
 }
 
-function syncProjectServiceProjectPath(projectService: ProjectService, projectPath: string): void {
-  const normalizedPath = normalizeProjectPath(projectPath);
-  if (!normalizedPath || projectService.currentProjectPath === normalizedPath) {
-    return;
-  }
-  projectService.currentProjectPath = normalizedPath;
-}
-
 function resolveProjectPath(projectService: ProjectService): string | null {
   const host = AilyHost.get();
   const runtimeWorkspace = readChatRuntimeWorkspaceEnvironment();
@@ -73,7 +65,6 @@ function resolveProjectPath(projectService: ProjectService): string | null {
   for (const candidate of candidates) {
     try {
       if (host.fs.existsSync(joinHostPath(candidate, 'package.json'))) {
-        syncProjectServiceProjectPath(projectService, candidate);
         return candidate;
       }
     } catch {
