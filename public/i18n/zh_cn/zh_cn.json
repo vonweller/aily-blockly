@@ -375,6 +375,7 @@
             "CLEAR_CACHE": "清除缓存",
             "CACHE_SIZE": "缓存大小",
             "CACHE_LOADING": "获取中...",
+            "CACHE_NOT_CREATED": "暂无缓存目录",
             "CACHE_ALL": "全部清除",
             "CACHE_ONE_MONTH": "最近7天未使用",
             "CACHE_THREE_MONTHS": "最近30天未使用",

@@ -623,8 +623,8 @@ export class SettingsComponent implements OnDestroy {
   }
 
   async loadCacheStats() {
-    const buildPath = this.getCacheBuildPath();
-    if (!buildPath) {
+    const builderPath = this.getAilyBuilderPath();
+    if (!builderPath) {
       this.cacheStats = this.getEmptyCacheStats();
       this.cacheSizeLoading = false;
       return;
@@ -632,7 +632,7 @@ export class SettingsComponent implements OnDestroy {
 
     this.cacheSizeLoading = true;
     try {
-      this.cacheStats = this.calculateCacheStats(buildPath);
+      this.cacheStats = this.calculateCacheStats(builderPath);
     } catch (e) {
       console.error('Failed to load cache stats', e);
       this.cacheStats = this.getEmptyCacheStats();
@@ -641,29 +641,29 @@ export class SettingsComponent implements OnDestroy {
     }
   }
 
-  private getCacheBuildPath(): string | null {
-    const buildPath = window['path'].getAilyBuilderBuildPath();
-    if (!buildPath || !window['fs'].existsSync(buildPath)) {
+  private getAilyBuilderPath(): string | null {
+    const builderPath = window['path'].getAilyBuilderPath();
+    if (!builderPath || !window['fs'].existsSync(builderPath)) {
       return null;
     }
-    return buildPath;
+    return builderPath;
   }
 
   private getEmptyCacheStats(): CacheStats {
     return { totalFiles: 0, totalSizeFormatted: '0 B' };
   }
 
-  private calculateCacheStats(buildPath: string): CacheStats {
+  private calculateCacheStats(builderPath: string): CacheStats {
     let totalSize = 0;
     let totalFiles = 0;
-    const entries = window['fs'].readDirSync(buildPath);
+    const entries = window['fs'].readDirSync(builderPath);
 
     for (const entry of entries) {
       if (!entry._isDirectory) {
         continue;
       }
 
-      const dirPath = window['path'].join(buildPath, entry.name);
+      const dirPath = window['path'].join(builderPath, entry.name);
       const { size, count } = this.calcDirSize(dirPath);
       totalSize += size;
       totalFiles += count;
@@ -818,6 +818,11 @@ export class SettingsComponent implements OnDestroy {
   }
 
   openCacheFolder() {
-    this.electronService.openByExplorer(window['path'].getAilyBuilderBuildPath());
+    const builderPath = window['path'].getAilyBuilderPath();
+    if (!builderPath || !window['fs'].existsSync(builderPath)) {
+      this.message.info(this.translateService.instant('SETTINGS.FIELDS.CACHE_NOT_CREATED'));
+      return;
+    }
+    this.electronService.openByExplorer(builderPath);
   }
 }

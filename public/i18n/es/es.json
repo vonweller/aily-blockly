@@ -342,6 +342,7 @@
             "CLEAR_CACHE": "Limpiar caché",
             "CACHE_SIZE": "Tamaño de caché",
             "CACHE_LOADING": "Cargando...",
+            "CACHE_NOT_CREATED": "La carpeta de caché aún no se ha creado",
             "CACHE_ALL": "Limpiar todo",
             "CACHE_ONE_MONTH": "Sin usar en los últimos 7 días",
             "CACHE_THREE_MONTHS": "Sin usar en los últimos 30 días",

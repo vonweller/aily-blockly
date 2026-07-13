@@ -342,6 +342,7 @@
             "CLEAR_CACHE": "Cache leeren",
             "CACHE_SIZE": "Cache-Größe",
             "CACHE_LOADING": "Laden...",
+            "CACHE_NOT_CREATED": "Der Cache-Ordner wurde noch nicht erstellt",
             "CACHE_ALL": "Alles löschen",
             "CACHE_ONE_MONTH": "Seit 7 Tagen ungenutzt",
             "CACHE_THREE_MONTHS": "Seit 30 Tagen ungenutzt",

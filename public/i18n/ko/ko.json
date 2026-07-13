@@ -338,7 +338,8 @@
             "AILY_TOOLS_UP_TO_DATE": "모든 Aily 도구가 최신 상태입니다",
             "AILY_TOOLS_UPDATE_DONE": "{{tools}} 업데이트 완료",
             "AILY_TOOLS_UPDATE_FAILED": "{{tools}} 업데이트 실패",
-            "OPEN_CACHE_FOLDER": "캐시 폴더 열기"
+            "OPEN_CACHE_FOLDER": "캐시 폴더 열기",
+            "CACHE_NOT_CREATED": "캐시 폴더가 아직 생성되지 않았습니다"
         },
         "BUTTONS": {
             "CANCEL": "취소",

@@ -342,6 +342,7 @@
             "CLEAR_CACHE": "Limpar cache",
             "CACHE_SIZE": "Tamanho do cache",
             "CACHE_LOADING": "Carregando...",
+            "CACHE_NOT_CREATED": "A pasta de cache ainda não foi criada",
             "CACHE_ALL": "Limpar tudo",
             "CACHE_ONE_MONTH": "Sem uso nos últimos 7 dias",
             "CACHE_THREE_MONTHS": "Sem uso nos últimos 30 dias",

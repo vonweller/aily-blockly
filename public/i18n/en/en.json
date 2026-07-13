@@ -380,6 +380,7 @@
             "CLEAR_CACHE": "Clear Cache",
             "CACHE_SIZE": "Cache Size",
             "CACHE_LOADING": "Loading...",
+            "CACHE_NOT_CREATED": "The cache folder has not been created yet",
             "CACHE_ALL": "Clear All",
             "CACHE_ONE_MONTH": "Unused in Last 7 Days",
             "CACHE_THREE_MONTHS": "Unused in Last 30 Days",

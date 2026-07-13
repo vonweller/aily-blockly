@@ -37,21 +37,13 @@ function getNpmEnv() {
 }
 
 function configureCacheEnvironment() {
+  // Builder data/cache root; npm installation is managed separately by AILY_NPM_PREFIX.
   if (process.platform === "win32") {
-    process.env.AILY_BUILDER_CACHE_PATH = path.join(os.homedir(), "AppData", "Local", "aily-builder");
+    process.env.AILY_BUILDER_PATH = path.join(os.homedir(), "AppData", "Local", "aily-builder");
   } else if (process.platform === "darwin") {
-    process.env.AILY_BUILDER_CACHE_PATH = path.join(os.homedir(), "Library", "Caches", "aily-builder");
+    process.env.AILY_BUILDER_PATH = path.join(os.homedir(), "Library", "Caches", "aily-builder");
   } else {
-    process.env.AILY_BUILDER_CACHE_PATH = path.join(os.homedir(), ".cache", "aily-builder");
-  }
-  process.env.AILY_BUILDER_BUILD_PATH = path.join(process.env.AILY_BUILDER_CACHE_PATH, "cache");
-
-  for (const targetPath of [process.env.AILY_BUILDER_CACHE_PATH, process.env.AILY_BUILDER_BUILD_PATH]) {
-    try {
-      fs.mkdirSync(targetPath, { recursive: true });
-    } catch (error) {
-      console.error(`Failed to create aily-builder path: ${targetPath}`, error);
-    }
+    process.env.AILY_BUILDER_PATH = path.join(os.homedir(), ".cache", "aily-builder");
   }
 }
 

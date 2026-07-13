@@ -342,6 +342,7 @@
             "CLEAR_CACHE": "Vider le cache",
             "CACHE_SIZE": "Taille du cache",
             "CACHE_LOADING": "Chargement...",
+            "CACHE_NOT_CREATED": "Le dossier de cache n'a pas encore été créé",
             "CACHE_ALL": "Tout effacer",
             "CACHE_ONE_MONTH": "Inutilisé depuis 7 jours",
             "CACHE_THREE_MONTHS": "Inutilisé depuis 30 jours",

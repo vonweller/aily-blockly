@@ -342,6 +342,7 @@
             "CLEAR_CACHE": "キャッシュをクリア",
             "CACHE_SIZE": "キャッシュサイズ",
             "CACHE_LOADING": "読み込み中...",
+            "CACHE_NOT_CREATED": "キャッシュフォルダーはまだ作成されていません",
             "CACHE_ALL": "すべてクリア",
             "CACHE_ONE_MONTH": "過去7日間未使用",
             "CACHE_THREE_MONTHS": "過去30日間未使用",

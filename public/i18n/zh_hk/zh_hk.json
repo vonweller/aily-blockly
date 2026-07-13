@@ -343,6 +343,7 @@
             "CLEAR_CACHE": "清除緩存",
             "CACHE_SIZE": "緩存大小",
             "CACHE_LOADING": "獲取中...",
+            "CACHE_NOT_CREATED": "暫無緩存資料夾",
             "CACHE_ALL": "全部清除",
             "CACHE_ONE_MONTH": "最近7天未使用",
             "CACHE_THREE_MONTHS": "最近30天未使用",

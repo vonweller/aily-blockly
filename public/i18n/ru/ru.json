@@ -342,6 +342,7 @@
             "CLEAR_CACHE": "Очистить кэш",
             "CACHE_SIZE": "Размер кэша",
             "CACHE_LOADING": "Загрузка...",
+            "CACHE_NOT_CREATED": "Папка кэша ещё не создана",
             "CACHE_ALL": "Очистить всё",
             "CACHE_ONE_MONTH": "Не использовалось 7 дней",
             "CACHE_THREE_MONTHS": "Не использовалось 30 дней",

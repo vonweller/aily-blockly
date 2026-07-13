@@ -2156,7 +2156,7 @@ export class ProjectService {
 
     // 使用统一的构建路径获取方法
     return window['path'].join(
-      window['path'].getAilyBuilderBuildPath(),
+      window['path'].getAilyBuilderPath(),
       uniqueSketchName
     );
   }
