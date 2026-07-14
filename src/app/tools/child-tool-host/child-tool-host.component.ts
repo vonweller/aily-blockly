@@ -11,6 +11,7 @@ import { SubWindowComponent } from '../../components/sub-window/sub-window.compo
 import { ToolContainerComponent } from '../../components/tool-container/tool-container.component';
 import { ChildToolConfig, getChildToolConfig } from '../../configs/tool.config';
 import { ChildToolHostInfo, ChildToolProcessService } from '../../services/child-tool-process.service';
+import { ChildAppHostRegistryService } from '../../services/child-app-host-registry.service';
 import { LogService } from '../../services/log.service';
 import { ProjectService } from '../../services/project.service';
 import { ThemeService } from '../../services/theme.service';
@@ -84,6 +85,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   private standaloneWorkspaceVersion = -1;
   private projectContextListenerRegistered = false;
   private projectContextListenerCleanup: (() => void) | null = null;
+  private unregisterHostController: (() => void) | null = null;
 
   constructor(
     private route: ActivatedRoute,
@@ -97,7 +99,8 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     private translate: TranslateService,
     private themeService: ThemeService,
     private message: NzMessageService,
-    private logService: LogService
+    private logService: LogService,
+    private childHostRegistry: ChildAppHostRegistryService,
   ) {
     this.langSubscription = this.translate.onLangChange.subscribe(() => this.syncHostContext());
     this.themeSubscription = this.themeService.themeChanged$.subscribe(() => this.syncHostContext());
@@ -158,25 +161,27 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     this.projectContextListenerCleanup = null;
     this.projectContextListenerRegistered = false;
     this.destroyPenpalConnection();
+    this.unregisterHostController?.();
+    this.unregisterHostController = null;
     if (this.acquired && this.resolvedToolId) {
       void this.processService.release(this.resolvedToolId);
       this.acquired = false;
     }
   }
 
-  async close(): Promise<void> {
-    if (this.closing) return;
+  async close(): Promise<Record<string, unknown>> {
+    if (this.closing) return { ok: false, message: '子应用正在关闭' };
     this.closing = true;
 
     const canClose = await this.notifyChildBeforeClose('close');
     if (!canClose) {
       this.closing = false;
-      return;
+      return { ok: false, message: '子应用拒绝关闭，可能存在未完成操作。' };
     }
 
     if (this.isStandalone) {
       window['iWindow']?.close?.();
-      return;
+      return { ok: true, toolId: this.resolvedToolId, action: 'close', mode: 'window' };
     }
 
     if (this.resolvedToolId) {
@@ -184,11 +189,14 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     } else {
       this.closing = false;
     }
+    return { ok: true, toolId: this.resolvedToolId, action: 'close', mode: 'embedded' };
   }
 
-  async restart(): Promise<void> {
-    if (!this.config) return;
-    if (!await this.notifyChildBeforeClose('restart')) return;
+  async restart(): Promise<Record<string, unknown>> {
+    if (!this.config) return { ok: false, message: '子应用配置未就绪' };
+    if (!await this.notifyChildBeforeClose('restart')) {
+      return { ok: false, message: '子应用拒绝重启，可能存在未完成操作。' };
+    }
 
     this.destroyPenpalConnection();
     this.serverInfo = null;
@@ -196,6 +204,39 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     this.frameLoaded = false;
     this.hostStatus = 'closed';
     await this.startServer(true);
+    const restartedStatus = this.hostStatus as HostStatus;
+    return restartedStatus === 'ready'
+      ? { ok: true, toolId: this.resolvedToolId, action: 'restart', host: this.hostAutomationStatus() }
+      : { ok: false, toolId: this.resolvedToolId, action: 'restart', message: this.errorMessage || '子应用重启失败' };
+  }
+
+  async detach(): Promise<Record<string, unknown>> {
+    if (!this.config) return { ok: false, message: '子应用配置未就绪' };
+    if (this.isStandalone) {
+      return { ok: true, toolId: this.resolvedToolId, action: 'detach', message: '子应用已经处于独立窗口模式。' };
+    }
+    if (!await this.notifyChildBeforeClose('close')) {
+      return { ok: false, message: '子应用拒绝切换到独立窗口，可能存在未完成操作。' };
+    }
+
+    const opened = this.uiService.openToolWindow(this.resolvedToolId, { title: this.getToolDisplayName() });
+    if (!opened) {
+      return { ok: false, message: `无法为子应用创建独立窗口: ${this.resolvedToolId}` };
+    }
+    this.uiService.closeTool(this.resolvedToolId);
+    return { ok: true, toolId: this.resolvedToolId, action: 'detach', mode: 'window' };
+  }
+
+  async embed(): Promise<Record<string, unknown>> {
+    if (!this.isStandalone) {
+      return { ok: true, toolId: this.resolvedToolId, action: 'embed', message: '子应用已经处于内嵌模式。' };
+    }
+    if (!await this.notifyChildBeforeClose('close')) {
+      return { ok: false, message: '子应用拒绝放回内嵌，可能存在未完成操作。' };
+    }
+
+    window['iWindow']?.goMain?.(this.routePath);
+    return { ok: true, toolId: this.resolvedToolId, action: 'embed', mode: 'embedded' };
   }
 
   onFrameLoad(event: Event): void {
@@ -255,6 +296,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     this.titleKey = config.titleKey;
     this.routePath = config.routePath || `/child-tool/${config.id}`;
     this.currentUrl = this.router.url;
+    this.registerHostController();
 
     await this.initializeStandaloneProjectContext();
 
@@ -268,6 +310,29 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     await this.toolI18n.load(config.id);
     this.log('i18n loaded');
     await this.startServer(false);
+  }
+
+  private registerHostController(): void {
+    this.unregisterHostController?.();
+    this.unregisterHostController = this.childHostRegistry.register(this.resolvedToolId, {
+      status: () => this.hostAutomationStatus(),
+      restart: () => this.restart(),
+      close: () => this.close(),
+      detach: () => this.detach(),
+      embed: () => this.embed(),
+    });
+  }
+
+  private hostAutomationStatus(): Record<string, unknown> {
+    return {
+      status: this.hostStatus,
+      frameLoaded: this.frameLoaded,
+      penpalState: this.penpalState,
+      closing: this.closing,
+      error: this.errorMessage || null,
+      pid: this.serverInfo?.pid ?? null,
+      port: this.serverInfo?.port ?? null,
+    };
   }
 
   private async startServer(restart: boolean): Promise<void> {

@@ -185,7 +185,7 @@ export class ChildToolProcessService implements OnDestroy {
 
     try {
       if (streamId) {
-        const result = await window['childToolSession']?.release?.(config.id);
+        const result = await window['childToolSession']?.release?.({ toolId: config.id, streamId });
         if (!result?.success) {
           await window['cmd']?.kill?.(streamId);
         }
