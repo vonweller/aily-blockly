@@ -1018,7 +1018,7 @@ async function handleCliBridgeCommand(action, payload) {
     case 'blockly-live-operation': {
       const dir = requestedPath ? path.resolve(requestedPath) : getOpenedProjectPathFromWindow();
       const operation = payload && payload.operation;
-      if (!dir && operation !== 'search_boards_libraries' && operation !== 'project_create') return { ok: false, message: '当前没有打开的项目,且未提供 path' };
+      if (!dir && operation !== 'search_boards_libraries' && operation !== 'project_create' && operation !== 'app_info') return { ok: false, message: '当前没有打开的项目,且未提供 path' };
       const liveOperationTimeoutMs = operation === 'project_build'
         ? 620000
         : operation === 'project_create'

@@ -17,6 +17,7 @@ export interface ChildToolConfig {
   id: string;
   titleKey: string;
   namespace: string;
+  version?: string;
   app?: ChildToolAppConfig;
   childDir?: string;
   entry?: string;
@@ -180,6 +181,7 @@ function createChildToolConfigFromDirectory(
     id,
     titleKey,
     namespace,
+    version: typeof packageJson?.version === 'string' ? packageJson.version : '',
     app: {
       name: titleKey,
       description: descriptionKey,

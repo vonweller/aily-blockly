@@ -1,5 +1,6 @@
 import { Injectable, NgZone } from '@angular/core';
 import * as Blockly from 'blockly';
+import packageJson from '../../../package.json';
 
 import { _ProjectService } from '../editors/blockly-editor/services/project.service';
 import { BlocklyService } from '../editors/blockly-editor/services/blockly.service';
@@ -7,6 +8,7 @@ import { ConfigService } from './config.service';
 import { ElectronService } from './electron.service';
 import { ProjectService } from './project.service';
 import { BuilderService } from './builder.service';
+import { ThemeService } from './theme.service';
 import { AbsAutoSyncService } from '../tools/aily-chat/services/abs-auto-sync.service';
 import {
   connectBlocksSimpleTool,
@@ -44,6 +46,7 @@ export class BlocklyLiveOperationBridgeService {
     private readonly blocklyService: BlocklyService,
     private readonly electronService: ElectronService,
     private readonly builderService: BuilderService,
+    private readonly themeService: ThemeService,
     private readonly absAutoSyncService: AbsAutoSyncService,
     private readonly ngZone: NgZone,
   ) {}
@@ -91,6 +94,9 @@ export class BlocklyLiveOperationBridgeService {
   }
 
   private async execute(payload: BlocklyLiveOperationPayload): Promise<Record<string, any>> {
+    if (payload.operation === 'app_info') {
+      return this.executeAppInfo();
+    }
     if (payload.operation === 'search_boards_libraries') {
       return this.executeSearchBoardsLibraries(payload.params || {});
     }
@@ -153,6 +159,80 @@ export class BlocklyLiveOperationBridgeService {
       metadata: toolResult.metadata,
       toolResult,
     };
+  }
+
+  private async executeAppInfo(): Promise<Record<string, any>> {
+    const config = this.configService.data || {};
+    const buildFlavor = config.build_flavor === 'global' ? 'global' : 'cn';
+    const uiTheme = this.themeService.theme();
+    const [builderStatus, linterStatus] = await Promise.all([
+      this.readAilyToolStatus('aily-builder', window['builder']),
+      this.readAilyToolStatus('aily-linter', window['linter']),
+    ]);
+
+    return {
+      ok: true,
+      operation: 'app_info',
+      app: {
+        name: packageJson.productName || packageJson.name,
+        version: packageJson.version,
+        buildFlavor,
+        edition: buildFlavor === 'global' ? 'international' : 'domestic',
+        editionLabel: buildFlavor === 'global' ? '国际版' : '国内版',
+      },
+      tools: {
+        'aily-builder': builderStatus,
+        'aily-linter': linterStatus,
+      },
+      settings: {
+        uiTheme,
+        developmentMode: this.configService.getDevelopmentModePreference(),
+        coderEnabled: this.configService.isCoderEnabled(),
+        blocklyTheme: this.themeService.getBlocklyThemeId(),
+        blocklyRenderer: config.blockly?.renderer || 'thrasos',
+        blocklyMinimap: config.blockly?.minimap ?? null,
+        language: config.lang || config.selectedLanguage || null,
+        region: config.region || null,
+        officialRegion: config.official_region || null,
+        resourceSource: config.resource_source || 'auto',
+        projectFolder: config.project_path || null,
+      },
+      runtime: {
+        platform: window['platform']?.type || null,
+        versions: (window['electronAPI'] as any)?.versions?.() || null,
+      },
+    };
+  }
+
+  private async readAilyToolStatus(name: string, api: any): Promise<Record<string, any>> {
+    if (!api?.status) {
+      return {
+        name,
+        installed: false,
+        version: null,
+        installing: false,
+        error: '状态接口不可用',
+      };
+    }
+
+    try {
+      const status = await api.status();
+      return {
+        name,
+        installed: status?.installed === true,
+        version: status?.installedVersion || null,
+        installing: status?.installing === true,
+        error: status?.error || null,
+      };
+    } catch (error) {
+      return {
+        name,
+        installed: false,
+        version: null,
+        installing: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
   }
 
   private async executeAbiAdd(params: Record<string, any>): Promise<ToolUseResult> {
