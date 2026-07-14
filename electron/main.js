@@ -1117,11 +1117,11 @@ function normalizeBuildFlavor(flavor) {
     : DEFAULT_BUILD_FLAVOR;
 }
 
-let cachedPackagedBuildFlavor;
+let cachedPackagedMetadata;
 
-function getPackagedBuildFlavor() {
-  if (cachedPackagedBuildFlavor !== undefined) {
-    return cachedPackagedBuildFlavor;
+function getPackagedMetadata() {
+  if (cachedPackagedMetadata !== undefined) {
+    return cachedPackagedMetadata;
   }
 
   const candidatePaths = [];
@@ -1139,16 +1139,43 @@ function getPackagedBuildFlavor() {
       }
 
       const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
-      cachedPackagedBuildFlavor = packageJson.ailyBuildFlavor;
-      return cachedPackagedBuildFlavor;
+      cachedPackagedMetadata = packageJson;
+      return cachedPackagedMetadata;
     } catch (error) {
-      console.warn('读取构建版型失败:', error.message || error);
+      console.warn('读取打包元数据失败:', error.message || error);
     }
   }
 
-  cachedPackagedBuildFlavor = null;
-  return cachedPackagedBuildFlavor;
+  cachedPackagedMetadata = null;
+  return cachedPackagedMetadata;
 }
+
+function getPackagedBuildFlavor() {
+  return getPackagedMetadata()?.ailyBuildFlavor;
+}
+
+function configurePackagedChatExecutionHost() {
+  const packageMetadata = getPackagedMetadata();
+  const configuredMode = typeof packageMetadata?.ailyChatExecutionHost === 'string'
+    ? packageMetadata.ailyChatExecutionHost.trim()
+    : '';
+  const configuredRuntimeModule = typeof packageMetadata?.ailyChatExecutionHostRuntimeModule === 'string'
+    ? packageMetadata.ailyChatExecutionHostRuntimeModule.trim()
+    : '';
+
+  if (!configuredMode || !configuredRuntimeModule) {
+    return;
+  }
+
+  if (!process.env.AILY_CHAT_EXECUTION_HOST) {
+    process.env.AILY_CHAT_EXECUTION_HOST = configuredMode;
+  }
+  if (!process.env.AILY_CHAT_EXECUTION_HOST_RUNTIME_MODULE) {
+    process.env.AILY_CHAT_EXECUTION_HOST_RUNTIME_MODULE = path.resolve(app.getAppPath(), configuredRuntimeModule);
+  }
+}
+
+configurePackagedChatExecutionHost();
 
 function getBuildFlavor(conf) {
   return normalizeBuildFlavor(process.env.AILY_BUILD_FLAVOR || getPackagedBuildFlavor() || conf?.build_flavor);
@@ -3249,6 +3276,30 @@ cleanupOldInstances();
 // Ripgrep 搜索功能
 // ============================================
 const ripgrep = require('./ripgrep');
+const activeRipgrepSearches = new Map();
+
+function createRipgrepSearchController(requestId) {
+  const normalizedRequestId = typeof requestId === 'string' ? requestId.trim() : '';
+  const controller = new AbortController();
+  if (normalizedRequestId) {
+    activeRipgrepSearches.get(normalizedRequestId)?.abort();
+    activeRipgrepSearches.set(normalizedRequestId, controller);
+  }
+  return {
+    controller,
+    dispose() {
+      if (normalizedRequestId && activeRipgrepSearches.get(normalizedRequestId) === controller) {
+        activeRipgrepSearches.delete(normalizedRequestId);
+      }
+    }
+  };
+}
+
+ipcMain.on('ripgrep-cancel-search', (_event, requestId) => {
+  const normalizedRequestId = typeof requestId === 'string' ? requestId.trim() : '';
+  if (!normalizedRequestId) return;
+  activeRipgrepSearches.get(normalizedRequestId)?.abort();
+});
 
 // 检查 ripgrep 是否可用
 ipcMain.handle("ripgrep-check-available", async (event) => {
@@ -3303,6 +3354,40 @@ ipcMain.handle("ripgrep-search-content", async (event, params) => {
       matches: [],
       error: error.message
     };
+  }
+});
+
+// v2 file search: path glob only, backed by `rg --files`.
+ipcMain.handle('ripgrep-list-files-v2', async (_event, params = {}) => {
+  const search = createRipgrepSearchController(params.requestId);
+  try {
+    return await ripgrep.listFiles(params, { signal: search.controller.signal });
+  } catch (error) {
+    return {
+      success: false,
+      files: [],
+      numFiles: 0,
+      error: error?.message || String(error)
+    };
+  } finally {
+    search.dispose();
+  }
+});
+
+// v2 content search: structured, globally bounded `rg --json` results.
+ipcMain.handle('ripgrep-search-text-v2', async (_event, params = {}) => {
+  const search = createRipgrepSearchController(params.requestId);
+  try {
+    return await ripgrep.searchText(params, { signal: search.controller.signal });
+  } catch (error) {
+    return {
+      success: false,
+      matches: [],
+      numMatches: 0,
+      error: error?.message || String(error)
+    };
+  } finally {
+    search.dispose();
   }
 });
 

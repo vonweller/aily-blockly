@@ -6,6 +6,7 @@
 /out-tsc
 /bazel-out
 /out
+/electron/chat-runtime-lex-execution-runtime.bundle.mjs
 
 # Node
 /node_modules

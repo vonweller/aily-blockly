@@ -20,7 +20,7 @@ import { TranslateService } from '@ngx-translate/core';
 import { NoticeService } from './notice.service';
 import { NzModalRef, NzModalService } from 'ng-zorro-antd/modal';
 import { AppDataResourceLockService } from './appdata-resource-lock.service';
-import { ChatService } from '../tools/aily-chat/services/chat.service';
+import { ChatRuntimeHostInventoryService } from '../tools/aily-chat/services/chat-runtime-host-inventory.service';
 import {
   readPlatformRefFromProjectAci,
   resolveEffectiveBoardDependencies,
@@ -194,13 +194,23 @@ export class ProjectService {
     private translate: TranslateService,
     private noticeService: NoticeService,
     private appDataResourceLock: AppDataResourceLockService,
-    private chatService: ChatService,
+    private chatRuntimeHostInventory: ChatRuntimeHostInventoryService,
     private injector: Injector,
   ) {
   }
 
   private hasBlockingChatRequest(): boolean {
-    return this.chatService?.isWaiting === true;
+    const projectPath = this.normalizeProjectPath(this.currentProjectPath);
+    return this.chatRuntimeHostInventory.readSnapshot().sessions.some(session => {
+      if (session.requestInProgress !== true) {
+        return false;
+      }
+
+      const sessionProjectPath = this.normalizeProjectPath(session.projectPath);
+      return projectPath
+        ? sessionProjectPath === projectPath
+        : sessionProjectPath.length === 0;
+    });
   }
 
   private shouldBlockForChatRequest(reason?: ProjectActivationReason): boolean {
