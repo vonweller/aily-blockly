@@ -18,6 +18,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
+function isCanonicalHostSessionSnapshot(value: unknown): value is HostSessionRecord {
+  return isRecord(value)
+    && isRecord(value['metadata'])
+    && Array.isArray(value['turnResponses']);
+}
+
 function clonePersistedValue<T>(value: T): T {
   if (Array.isArray(value)) {
     return value.map(item => clonePersistedValue(item)) as T;
@@ -76,7 +82,15 @@ export class HostSessionOperationLog {
       }
 
       lineCount++;
-      const entry = JSON.parse(line) as HostSessionOperationLogEntry;
+      const parsed = JSON.parse(line) as unknown;
+      if (isCanonicalHostSessionSnapshot(parsed)) {
+        if (lineCount !== 1 || state) {
+          throw new Error('Canonical host session snapshot must be the first operation-log entry');
+        }
+        state = clonePersistedValue(parsed);
+        continue;
+      }
+      const entry = parsed as HostSessionOperationLogEntry;
       switch (entry.kind) {
         case 'initial':
           state = clonePersistedValue(entry.v);

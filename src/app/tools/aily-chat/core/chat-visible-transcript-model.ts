@@ -98,7 +98,10 @@ export class ChatVisibleTranscriptModel {
   private readonly dialogItemCache = new Map<string, ChatVisibleTranscriptDialogItemRecord>();
   private readonly streamStatsTrackers = new Map<string, ChatStreamStatsTracker>();
   private orderedIds: string[] = [];
+  private readonly orderedIndexById = new Map<string, number>();
   private readonly changes: ChatVisibleTranscriptChange[] = [];
+  private firstUserItemId: string | null = null;
+  private lastAilyItemId: string | null = null;
   private projectedFirstUserItemId: string | null = null;
   private projectedLastAilyItemId: string | null = null;
 
@@ -119,6 +122,8 @@ export class ChatVisibleTranscriptModel {
   replaceFromSessionModel(turnResponses: readonly TurnResponseTurn[] | null | undefined): readonly ChatVisibleTranscriptChange[] {
     const nextIds: string[] = [];
     const expectedIds = new Set<string>();
+    let firstUserItemId: string | null = null;
+    let lastAilyItemId: string | null = null;
 
     for (const turn of turnResponses ?? []) {
       const request = this.upsertTurnRequestInternal(turn, { recordOrder: false });
@@ -126,6 +131,10 @@ export class ChatVisibleTranscriptModel {
       nextIds.push(request.id, response.id);
       expectedIds.add(request.id);
       expectedIds.add(response.id);
+      firstUserItemId ??= request.id;
+      if (response.turnContext?.turnResponse) {
+        lastAilyItemId = response.id;
+      }
     }
 
     for (const itemId of [...this.records.keys()]) {
@@ -141,6 +150,9 @@ export class ChatVisibleTranscriptModel {
     }
 
     this.orderedIds = nextIds;
+    this.rebuildOrderedIndex();
+    this.firstUserItemId = firstUserItemId;
+    this.lastAilyItemId = lastAilyItemId;
     return this.peekChanges();
   }
 
@@ -169,7 +181,7 @@ export class ChatVisibleTranscriptModel {
       contentUpdateTimings: undefined,
     });
     if (options.recordOrder) {
-      this.ensureOrderedItem(item.id);
+      this.ensureOrderedItem(item);
     }
     return item;
   }
@@ -201,7 +213,7 @@ export class ChatVisibleTranscriptModel {
       ),
     });
     if (options.recordOrder) {
-      this.ensureOrderedItem(item.id);
+      this.ensureOrderedItem(item);
     }
     return item;
   }
@@ -253,44 +265,26 @@ export class ChatVisibleTranscriptModel {
       return [];
     }
 
-    let firstUserIndex = -1;
-    let lastAilyIndex = -1;
-    const indexByItemId = new Map<string, number>();
-    for (let index = 0; index < this.orderedIds.length; index += 1) {
-      const itemId = this.orderedIds[index];
-      indexByItemId.set(itemId, index);
-      const item = this.records.get(itemId)?.item;
-      if (!item) {
-        continue;
-      }
-      if (firstUserIndex < 0 && item.role === 'user') {
-        firstUserIndex = index;
-      }
-      if (item.role === 'aily' && !!item.turnContext?.turnResponse) {
-        lastAilyIndex = index;
-      }
-    }
-
-    const firstUserItemId = firstUserIndex >= 0 ? this.orderedIds[firstUserIndex] : null;
-    const lastAilyItemId = lastAilyIndex >= 0 ? this.orderedIds[lastAilyIndex] : null;
+    const firstUserItemId = this.firstUserItemId;
+    const lastAilyItemId = this.lastAilyItemId;
 
     // List presentation state belongs to the stable row model as well. When a
     // new turn is appended, update only the row that previously owned the
     // first/last presentation flag instead of rescanning or rebuilding rows.
     if (this.projectedFirstUserItemId
       && this.projectedFirstUserItemId !== firstUserItemId
-      && indexByItemId.has(this.projectedFirstUserItemId)) {
+      && this.orderedIndexById.has(this.projectedFirstUserItemId)) {
       uniqueChanges.set(this.projectedFirstUserItemId, 'updated');
     }
     if (this.projectedLastAilyItemId
       && this.projectedLastAilyItemId !== lastAilyItemId
-      && indexByItemId.has(this.projectedLastAilyItemId)) {
+      && this.orderedIndexById.has(this.projectedLastAilyItemId)) {
       uniqueChanges.set(this.projectedLastAilyItemId, 'updated');
     }
 
     const patches: ChatVisibleTranscriptDialogItemPatch[] = [];
     for (const [itemId, kind] of uniqueChanges) {
-      const index = indexByItemId.get(itemId) ?? -1;
+      const index = this.orderedIndexById.get(itemId) ?? -1;
       const item = index >= 0 ? this.records.get(itemId)?.item : undefined;
       if (!item) {
         continue;
@@ -300,8 +294,8 @@ export class ChatVisibleTranscriptModel {
         index,
         kind,
         item: this.toDialogItem(item, {
-          isLastAily: index === lastAilyIndex,
-          isFirstUserTurn: index === firstUserIndex,
+          isLastAily: itemId === lastAilyItemId,
+          isFirstUserTurn: itemId === firstUserItemId,
         }),
       });
     }
@@ -357,15 +351,12 @@ export class ChatVisibleTranscriptModel {
 
   toDialogItems(): readonly ChatVisibleTranscriptDialogItem[] {
     const items = this.getItems();
-    const firstUserIndex = items.findIndex(item => item.role === 'user');
-    const lastAilyIndex = findLastIndex(items, item => item.role === 'aily' && !!item.turnContext?.turnResponse);
+    this.projectedFirstUserItemId = this.firstUserItemId;
+    this.projectedLastAilyItemId = this.lastAilyItemId;
 
-    this.projectedFirstUserItemId = firstUserIndex >= 0 ? items[firstUserIndex].id : null;
-    this.projectedLastAilyItemId = lastAilyIndex >= 0 ? items[lastAilyIndex].id : null;
-
-    return items.map((item, index) => this.toDialogItem(item, {
-      isLastAily: index === lastAilyIndex,
-      isFirstUserTurn: index === firstUserIndex,
+    return items.map(item => this.toDialogItem(item, {
+      isLastAily: item.id === this.lastAilyItemId,
+      isFirstUserTurn: item.id === this.firstUserItemId,
     }));
   }
 
@@ -504,9 +495,23 @@ export class ChatVisibleTranscriptModel {
     return tracker.data;
   }
 
-  private ensureOrderedItem(itemId: string): void {
-    if (!this.orderedIds.includes(itemId)) {
-      this.orderedIds = [...this.orderedIds, itemId];
+  private ensureOrderedItem(item: ChatVisibleTranscriptItem): void {
+    if (this.orderedIndexById.has(item.id)) {
+      return;
+    }
+    this.orderedIndexById.set(item.id, this.orderedIds.length);
+    this.orderedIds = [...this.orderedIds, item.id];
+    if (item.role === 'user') {
+      this.firstUserItemId ??= item.id;
+    } else if (item.turnContext?.turnResponse) {
+      this.lastAilyItemId = item.id;
+    }
+  }
+
+  private rebuildOrderedIndex(): void {
+    this.orderedIndexById.clear();
+    for (let index = 0; index < this.orderedIds.length; index += 1) {
+      this.orderedIndexById.set(this.orderedIds[index], index);
     }
   }
 

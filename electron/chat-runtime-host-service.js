@@ -47,6 +47,12 @@ const ALLOWED_METHODS = new Set([
   'readSessionState',
   'readSessionInventory',
   'readTranscript',
+  'readSessionTurnPage',
+  'readCheckpointNavigationState',
+  'mutateSessionRequestList',
+  'restoreSessionCheckpoint',
+  'redoSessionCheckpoint',
+  'forkSession',
   'awaitRequestCompletion',
   'runWorkspaceFinalizeBoundaryProbe',
   'readInteractionSnapshot',
@@ -61,6 +67,12 @@ const EXECUTION_HOST_ALLOWED_METHODS = new Set([
   'readSessionState',
   'readSessionInventory',
   'readTranscript',
+  'readSessionTurnPage',
+  'readCheckpointNavigationState',
+  'mutateSessionRequestList',
+  'restoreSessionCheckpoint',
+  'redoSessionCheckpoint',
+  'forkSession',
   'awaitRequestCompletion',
   'runWorkspaceFinalizeBoundaryProbe',
   'readInteractionSnapshot',
@@ -210,6 +222,23 @@ function traceActiveTurnDurability(phase, payload = {}) {
   }
 }
 
+function isCheckpointOwnedTurn(turn) {
+  const metadata = turn && turn.request && turn.request.metadata;
+  return metadata && typeof metadata === 'object' && [
+    'checkpointId',
+    'checkpointNamespace',
+    'checkpointRef',
+    'checkpointRefs',
+    'startCheckpointRef',
+    'additionalCheckpointRefs',
+    'additionalStartCheckpointRefs',
+  ].some(key => metadata[key] !== undefined && metadata[key] !== null);
+}
+
+function hasCheckpointOwnedTurn(turns) {
+  return (Array.isArray(turns) ? turns : []).some(isCheckpointOwnedTurn);
+}
+
 class ChatRuntimeHostProcessService {
   constructor(options = {}) {
     if (!options.BrowserWindow) {
@@ -330,6 +359,15 @@ class ChatRuntimeHostProcessService {
     if (method === 'runWorkspaceFinalizeBoundaryProbe') {
       return Promise.resolve();
     }
+    if (method === 'mutateSessionRequestList') {
+      return this.handleMutateSessionRequestList(args);
+    }
+    if (method === 'restoreSessionCheckpoint' || method === 'redoSessionCheckpoint') {
+      return this.handleCheckpointMutation(method, args);
+    }
+    if (method === 'forkSession') {
+      return this.handleForkSession(args);
+    }
     const hostResult = this.hostSessionStore.readHostCommandResult(method, args);
     if (hostResult !== HOST_SESSION_STORE_MISS) {
       return hostResult;
@@ -357,6 +395,15 @@ class ChatRuntimeHostProcessService {
     }
     if (method === 'runWorkspaceFinalizeBoundaryProbe') {
       return Promise.resolve();
+    }
+    if (method === 'mutateSessionRequestList') {
+      return this.handleMutateSessionRequestList(args);
+    }
+    if (method === 'restoreSessionCheckpoint' || method === 'redoSessionCheckpoint') {
+      return this.handleCheckpointMutation(method, args);
+    }
+    if (method === 'forkSession') {
+      return this.handleForkSession(args);
     }
 
     const hostResult = this.hostSessionStore.readHostCommandResult(method, args);
@@ -541,12 +588,12 @@ class ChatRuntimeHostProcessService {
     return undefined;
   }
 
-  async persistHostSessionRecord(sessionId, reason, statePatch) {
+  async persistHostSessionRecord(sessionId, reason, statePatch, options) {
     const normalizedSessionId = normalizeSessionId(sessionId);
     if (!normalizedSessionId) {
       return false;
     }
-    const record = this.hostSessionStore.buildLiveHostSessionRecord(normalizedSessionId, statePatch);
+    const record = this.hostSessionStore.buildLiveHostSessionRecord(normalizedSessionId, statePatch, options);
     if (!record) {
       return false;
     }
@@ -559,6 +606,7 @@ class ChatRuntimeHostProcessService {
       payload: {
         adapter: 'chatHistory',
         record,
+        ...(options && options.allowEmptyTranscript === true ? { allowEmptyTranscript: true } : {}),
       },
     };
     if (this.resourceOperationHandler) {
@@ -567,6 +615,111 @@ class ChatRuntimeHostProcessService {
       await this.dispatchResourceOperationToRegisteredHandler(request);
     }
     return true;
+  }
+
+  async handleMutateSessionRequestList(args) {
+    const request = args && args[0];
+    const sessionId = normalizeSessionId(request && request.sessionId);
+    const previousTranscript = this.hostSessionStore.buildTranscriptSnapshot(sessionId);
+    const result = this.hostSessionStore.mutateSessionRequestList(request);
+    try {
+      await this.persistHostSessionRecord(result.sessionId, 'request-list-mutation', {
+        requestInProgress: false,
+        activeTurnId: null,
+      }, {
+        allowEmptyTranscript: true,
+      });
+      return result;
+    } catch (error) {
+      if (previousTranscript) {
+        this.hostSessionStore.rollbackSessionRequestListMutation(previousTranscript, result.revision);
+      }
+      throw error;
+    }
+  }
+
+  async handleCheckpointMutation(method, args) {
+    const request = args && args[0] && typeof args[0] === 'object' ? args[0] : {};
+    const mutation = method === 'restoreSessionCheckpoint'
+      ? this.hostSessionStore.restoreSessionCheckpoint(request)
+      : this.hostSessionStore.redoSessionCheckpoint(request);
+    try {
+      await this.persistHostSessionRecord(mutation.sessionId, method, {
+        requestInProgress: false,
+        activeTurnId: null,
+        status: 'completed',
+      }, {
+        allowEmptyTranscript: true,
+      });
+      const { previousTranscript: _previousTranscript, previousTimeline: _previousTimeline, ...result } = mutation;
+      return result;
+    } catch (error) {
+      this.hostSessionStore.rollbackCheckpointMutation(mutation);
+      throw error;
+    }
+  }
+
+  async handleForkSession(args) {
+    const request = args && args[0] && typeof args[0] === 'object' ? args[0] : {};
+    const prepared = this.hostSessionStore.prepareForkSession(request);
+    try {
+      let forkedTurns = prepared.turnResponses;
+      if (hasCheckpointOwnedTurn(forkedTurns)) {
+        const checkpointTurns = prepared.turnResponses.filter(isCheckpointOwnedTurn);
+        const metadataResult = await this.handleRequestResourceOperation([{
+          sessionId: prepared.targetSessionId,
+          kind: 'edit-tracking',
+          label: 'Forking checkpoint metadata',
+          detail: 'Host-owned session fork is cloning request checkpoint metadata.',
+          payload: {
+            adapter: 'editTracking',
+            action: 'forkRequestCheckpointMetadata',
+            sourceSessionResource: prepared.sourceSessionId,
+            targetSessionResource: prepared.targetSessionId,
+            retainedTurnResponses: checkpointTurns,
+          },
+        }]);
+        const adjusted = metadataResult && metadataResult.result && metadataResult.result.forkedTurnResponses;
+        if (!Array.isArray(adjusted) || adjusted.length !== checkpointTurns.length) {
+          throw new Error('[AilyChat][RuntimeHost] Checkpoint metadata fork did not return the checkpoint request set.');
+        }
+        const adjustedByTurnId = new Map(adjusted.map(turn => [turn && turn.turnId, turn]));
+        if (checkpointTurns.some(turn => !adjustedByTurnId.has(turn && turn.turnId))) {
+          throw new Error('[AilyChat][RuntimeHost] Checkpoint metadata fork changed stable turn identity.');
+        }
+        forkedTurns = prepared.turnResponses.map(turn => adjustedByTurnId.get(turn && turn.turnId) || turn);
+      }
+      if (!this.runtimeOwnerController.hasUsableRuntimeOwner()) {
+        throw new Error('[AilyChat][RuntimeHost] No registered runtime owner for session fork.');
+      }
+      const runtimeResult = await this.runtimeOwnerController.dispatchCommand('forkSession', [{
+        sourceSessionId: prepared.sourceSessionId,
+        targetSessionId: prepared.targetSessionId,
+        beforeTurnId: prepared.beforeTurnId,
+        retainedTurnIds: prepared.retainedTurnIds,
+        providerOptions: request.providerOptions || null,
+        agentRuntimeMode: request.agentRuntimeMode || null,
+        currentModel: request.currentModel || null,
+      }]);
+      if (!runtimeResult || runtimeResult.ensured !== true) {
+        throw new Error('[AilyChat][RuntimeHost] Runtime snapshot fork was not created.');
+      }
+      const result = this.hostSessionStore.commitForkSession(request, prepared, forkedTurns);
+      await this.persistHostSessionRecord(result.targetSessionId, 'session-fork');
+      return result;
+    } catch (error) {
+      this.hostSessionStore.rollbackForkSession(prepared.targetSessionId);
+      if (this.runtimeOwnerController.hasUsableRuntimeOwner()) {
+        try {
+          await this.runtimeOwnerController.dispatchCommand('disposeSessionResources', [{
+            sessionId: prepared.targetSessionId,
+          }]);
+        } catch {
+          // Preserve the original fork failure.
+        }
+      }
+      throw error;
+    }
   }
 
   handleDisposeSession(args) {

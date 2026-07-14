@@ -1,4 +1,5 @@
 import { exec as execCallback, execFile as execFileCallback } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -372,6 +373,62 @@ class LexExecutionRuntimeOwner {
     };
   }
 
+  async forkSession(command = {}) {
+    const sourceSessionId = normalizeSessionId(command.sourceSessionId);
+    const targetSessionId = normalizeSessionId(command.targetSessionId);
+    const beforeTurnId = normalizeTurnId(command.beforeTurnId);
+    if (!sourceSessionId || !targetSessionId || !beforeTurnId || sourceSessionId === targetSessionId) {
+      throw new Error('[AilyChat][ExecutionHost] forkSession requires distinct source/target sessions and a boundary turn.');
+    }
+    if (this.sessions.has(targetSessionId)) {
+      throw new Error(`[AilyChat][ExecutionHost] Fork target session already exists: ${targetSessionId}.`);
+    }
+    const source = this.sessions.get(sourceSessionId);
+    if (!source) {
+      throw new Error(`[AilyChat][ExecutionHost] Fork source runtime is unavailable: ${sourceSessionId}.`);
+    }
+    await source.handlePromise;
+    if (source.activeTurnPromise || source.activeAbortController) {
+      const error = new Error('[AilyChat][ExecutionHost] Cannot fork a running session.');
+      error.code = 'request_in_progress';
+      error.retryable = true;
+      throw error;
+    }
+    const readSnapshot = typeof source.handle?.getSessionSnapshot === 'function'
+      ? () => source.handle.getSessionSnapshot()
+      : () => source.handle?.saveSession?.();
+    const sourceSnapshot = readSnapshot();
+    if (!sourceSnapshot) {
+      throw new Error('[AilyChat][ExecutionHost] Fork source snapshot is unavailable.');
+    }
+    const retainedTurnIds = Array.isArray(command.retainedTurnIds)
+      ? command.retainedTurnIds.map(normalizeTurnId).filter(Boolean)
+      : [];
+    const forked = truncateSessionSnapshot(sourceSnapshot, {
+      kind: 'removeFrom',
+      turnId: beforeTurnId,
+      retainedTurnIds,
+      discardedTurnIds: [],
+    });
+    if (forked.afterTurnCount !== retainedTurnIds.length) {
+      throw new Error(
+        `[AilyChat][ExecutionHost] Fork snapshot boundary mismatch: expected ${retainedTurnIds.length}, got ${forked.afterTurnCount}.`,
+      );
+    }
+    const projectInfo = await this.readProjectInfo(sourceSessionId);
+    const target = await this.ensureSession(targetSessionId, {
+      sessionId: targetSessionId,
+      providerOptions: command.providerOptions || source.providerOptions || null,
+      currentModel: command.currentModel || source.currentModel || null,
+      initialSnapshot: forked.snapshot,
+    }, projectInfo);
+    return {
+      sessionId: targetSessionId,
+      ensured: Boolean(target?.handle),
+      executionHost: 'lex-headless',
+    };
+  }
+
   async startTurn(command = {}) {
     const sessionId = normalizeSessionId(command.sessionId || command.request?.sessionId);
     const turnId = normalizeTurnId(command.turnId || command.request?.activeResponseHandle);
@@ -611,7 +668,7 @@ class LexExecutionRuntimeOwner {
       titleGenerationStarted: false,
     };
     this.sessions.set(sessionId, session);
-    await this.createSessionRuntime(session, projectInfo);
+    await this.createSessionRuntime(session, projectInfo, command.initialSnapshot || null);
     return session;
   }
 
@@ -4954,6 +5011,49 @@ function resolveElectronChildToolSkillDirectories() {
   }
 }
 
+function createElectronChildToolInventorySignature() {
+  const childPath = resolveElectronAilyChildPath();
+  const toolsPath = childPath ? path.join(childPath, 'tools') : '';
+  if (!toolsPath || !fsSync.existsSync(toolsPath)) {
+    return '';
+  }
+
+  const fingerprints = [];
+  try {
+    const toolEntries = fsSync.readdirSync(toolsPath, { withFileTypes: true })
+      .filter(entry => entry.isDirectory())
+      .sort((left, right) => left.name.localeCompare(right.name));
+
+    for (const toolEntry of toolEntries) {
+      const toolPath = path.join(toolsPath, toolEntry.name);
+      fingerprints.push(`tool:${toolEntry.name}`);
+      fingerprints.push(readElectronChildToolLifecycleFile(path.join(toolPath, 'package.json')));
+
+      const skillRoot = path.join(toolPath, 'skill');
+      if (!fsSync.existsSync(skillRoot)) continue;
+
+      for (const skillEntry of fsSync.readdirSync(skillRoot, { withFileTypes: true })
+        .filter(entry => entry.isDirectory())
+        .sort((left, right) => left.name.localeCompare(right.name))) {
+        fingerprints.push(`skill:${toolEntry.name}/${skillEntry.name}`);
+        fingerprints.push(readElectronChildToolLifecycleFile(path.join(skillRoot, skillEntry.name, 'SKILL.md')));
+      }
+    }
+  } catch (error) {
+    console.warn('[AilyChat][SkillRegistry] Failed to fingerprint child tool inventory:', error?.message || error);
+  }
+
+  return createHash('sha256').update(fingerprints.join('\0')).digest('hex');
+}
+
+function readElectronChildToolLifecycleFile(filePath) {
+  try {
+    return fsSync.readFileSync(filePath);
+  } catch {
+    return '';
+  }
+}
+
 function scanElectronSkillDirectory(skills, dir, origin) {
   if (!fsSync.existsSync(dir)) {
     return;
@@ -6540,6 +6640,7 @@ function normalizeApprovalsReviewer(providerOptions) {
 function createSessionRuntimeConfigKey(providerOptions, currentModel, cwd) {
   return JSON.stringify({
     cwd: normalizeString(cwd),
+    childToolInventory: createElectronChildToolInventorySignature(),
     permissionMode: normalizePermissionMode(providerOptions),
     permissionProfile: normalizePermissionProfile(providerOptions) || null,
     approvalPolicy: normalizeApprovalPolicy(providerOptions),

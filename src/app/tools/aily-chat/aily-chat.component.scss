@@ -255,6 +255,15 @@
     max-width: 100%;
     box-sizing: border-box;
 
+    .history-page-loading {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 24px;
+      color: var(--vscode-descriptionForeground, rgba(128, 128, 128, 0.9));
+      pointer-events: none;
+    }
+
     .dialog-virtual-row {
       min-width: 0;
       max-width: 100%;
