@@ -111,15 +111,16 @@ export class BlocklyEditorComponent implements OnInit, OnDestroy {
   ) { }
 
   ngOnInit(): void {
-    this.activatedRoute.queryParams.subscribe((params) => {
+    this.activatedRoute.queryParams.subscribe(async (params) => {
       if (params['path']) {
         console.log('project path', params['path']);
         try {
           this._projectService.currentProjectPath = params['path'];
           this.projectService.currentProjectPath = params['path'];
-          this.loadProject(params['path']);
+          await this.loadProject(params['path']);
         } catch (error) {
           console.error('加载项目失败', error);
+          this.projectService.stateSubject.next('error');
           this.message.error('加载项目失败，请检查项目文件是否完整');
         }
       } else {
@@ -203,6 +204,7 @@ export class BlocklyEditorComponent implements OnInit, OnDestroy {
             sendToLog: false,
           });
         }, 1000);
+        this.projectService.stateSubject.next('error');
         return;
       }
       setTimeout(() => {
