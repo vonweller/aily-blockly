@@ -1018,13 +1018,32 @@ async function handleCliBridgeCommand(action, payload) {
     case 'blockly-live-operation': {
       const dir = requestedPath ? path.resolve(requestedPath) : getOpenedProjectPathFromWindow();
       const operation = payload && payload.operation;
-      if (!dir && operation !== 'search_boards_libraries' && operation !== 'project_create' && operation !== 'app_info') return { ok: false, message: '当前没有打开的项目,且未提供 path' };
+      const projectOptionalOperations = new Set([
+        'search_boards_libraries',
+        'project_create',
+        'app_info',
+        'main_menu_list',
+        'main_menu_execute',
+        'child_app_list',
+        'child_app_get',
+        'child_app_open',
+        'child_app_control',
+        'child_app_window_list',
+        'child_app_window_set_bounds',
+        'child_app_window_arrange',
+      ]);
+      if (!dir && !projectOptionalOperations.has(operation)) return { ok: false, message: '当前没有打开的项目,且未提供 path' };
       const liveOperationTimeoutMs = operation === 'project_build'
         ? 620000
         : operation === 'project_create'
           ? 300000
           : operation === 'abs_apply'
             ? 120000
+            : operation === 'child_app_control'
+              || operation === 'child_app_open'
+              || operation === 'child_app_window_set_bounds'
+              || operation === 'child_app_window_arrange'
+              ? 120000
             : 12000;
       const result = await requestMainWindow(
         'cli-bridge:blockly-live-operation',

@@ -9,6 +9,7 @@ import { ElectronService } from './electron.service';
 import { ProjectService } from './project.service';
 import { BuilderService } from './builder.service';
 import { ThemeService } from './theme.service';
+import { MainUiAutomationService } from './main-ui-automation.service';
 import { AbsAutoSyncService } from '../tools/aily-chat/services/abs-auto-sync.service';
 import {
   connectBlocksSimpleTool,
@@ -48,6 +49,7 @@ export class BlocklyLiveOperationBridgeService {
     private readonly builderService: BuilderService,
     private readonly themeService: ThemeService,
     private readonly absAutoSyncService: AbsAutoSyncService,
+    private readonly mainUiAutomationService: MainUiAutomationService,
     private readonly ngZone: NgZone,
   ) {}
 
@@ -102,6 +104,33 @@ export class BlocklyLiveOperationBridgeService {
     }
     if (payload.operation === 'project_create') {
       return this.executeProjectCreate(payload.params || {});
+    }
+    if (payload.operation === 'main_menu_list') {
+      return this.mainUiAutomationService.listMainMenu(payload.params || {});
+    }
+    if (payload.operation === 'main_menu_execute') {
+      return this.mainUiAutomationService.executeMainMenu(payload.params || {});
+    }
+    if (payload.operation === 'child_app_list') {
+      return this.mainUiAutomationService.listChildApps(payload.params || {});
+    }
+    if (payload.operation === 'child_app_get') {
+      return this.mainUiAutomationService.getChildApp(payload.params || {});
+    }
+    if (payload.operation === 'child_app_open') {
+      return this.mainUiAutomationService.openChildApp(payload.params || {});
+    }
+    if (payload.operation === 'child_app_control') {
+      return this.mainUiAutomationService.controlChildApp(payload.params || {});
+    }
+    if (payload.operation === 'child_app_window_list') {
+      return this.mainUiAutomationService.listChildAppWindows();
+    }
+    if (payload.operation === 'child_app_window_set_bounds') {
+      return this.mainUiAutomationService.setChildAppWindowBounds(payload.params || {});
+    }
+    if (payload.operation === 'child_app_window_arrange') {
+      return this.mainUiAutomationService.arrangeChildAppWindows(payload.params || {});
     }
 
     const requestedProject = this.normalizePath(payload.path);
