@@ -62,6 +62,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   frameLoaded = false;
   errorMessage = '';
   serverInfo: ChildToolHostInfo | null = null;
+  childVersion = '';
   closing = false;
 
   private config: ChildToolConfig | null = null;
@@ -250,6 +251,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
 
     this.config = config;
     this.resolvedToolId = config.id;
+    this.childVersion = config.version || '';
     this.titleKey = config.titleKey;
     this.routePath = config.routePath || `/child-tool/${config.id}`;
     this.currentUrl = this.router.url;
