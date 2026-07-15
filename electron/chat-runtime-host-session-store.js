@@ -617,7 +617,13 @@ class ChatRuntimeHostSessionStore {
       return null;
     }
     const checkpointId = normalizeOptionalString(input.checkpointId);
+    const turnId = normalizeOptionalString(input.turnId);
     const cloneEntry = checkpoint => checkpoint ? clonePayload(checkpoint) : null;
+    const requestedCheckpoint = checkpointId
+      ? timeline.checkpoints.find(checkpoint => checkpoint.checkpointId === checkpointId)
+      : turnId
+        ? timeline.checkpoints.find(checkpoint => checkpoint.turnId === turnId || checkpoint.requestId === turnId)
+        : null;
     return {
       sessionId,
       revision: Number(transcript.revision) || 0,
@@ -627,9 +633,7 @@ class ChatRuntimeHostSessionStore {
       canRedo: timeline.currentCheckpointIndex + 1 < timeline.checkpoints.length,
       currentCheckpoint: cloneEntry(timeline.checkpoints[timeline.currentCheckpointIndex]),
       nextCheckpoint: cloneEntry(timeline.checkpoints[timeline.currentCheckpointIndex + 1]),
-      requestedCheckpoint: checkpointId
-        ? cloneEntry(timeline.checkpoints.find(checkpoint => checkpoint.checkpointId === checkpointId))
-        : null,
+      requestedCheckpoint: cloneEntry(requestedCheckpoint),
     };
   }
 

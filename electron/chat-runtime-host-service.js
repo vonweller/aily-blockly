@@ -262,9 +262,6 @@ class ChatRuntimeHostProcessService {
     this.resourceOperationHandlerRenderer = null;
     this.resourceOperationCommandSeed = 0;
     this.pendingResourceOperationCommands = new Map();
-    this.resourceOperationCommandTimeoutMs = Number.isFinite(options.commandTimeoutMs)
-      ? options.commandTimeoutMs
-      : DEFAULT_COMMAND_TIMEOUT_MS;
   }
 
   setMainWindow(mainWindow) {
@@ -862,12 +859,7 @@ class ChatRuntimeHostProcessService {
 
     const requestId = this.nextResourceOperationCommandId(request.kind);
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pendingResourceOperationCommands.delete(requestId);
-        reject(new Error(`[AilyChat][RuntimeHost] Runtime resource operation timed out: ${request.kind}`));
-      }, this.resourceOperationCommandTimeoutMs);
-
-      this.pendingResourceOperationCommands.set(requestId, { resolve, reject, timer, request });
+      this.pendingResourceOperationCommands.set(requestId, { resolve, reject, request });
       resourceHandlerWebContents.send(RESOURCE_HANDLER_COMMAND_CHANNEL, { requestId, request });
     });
   }
@@ -881,7 +873,6 @@ class ChatRuntimeHostProcessService {
         return;
       }
 
-      clearTimeout(pending.timer);
       this.pendingResourceOperationCommands.delete(requestId);
       if (payload.ok === false) {
         const error = new Error(payload.error?.message || '[AilyChat][RuntimeHost] Runtime resource operation failed.');
@@ -909,7 +900,6 @@ class ChatRuntimeHostProcessService {
     error.code = 'resource_handler_lost';
     error.retryable = true;
     for (const [requestId, pending] of this.pendingResourceOperationCommands) {
-      clearTimeout(pending.timer);
       pending.reject(error);
       this.pendingResourceOperationCommands.delete(requestId);
     }

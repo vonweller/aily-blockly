@@ -64,10 +64,6 @@ interface ProjectCreationOptions {
   sessionResource?: string | null;
 }
 
-interface ProjectCloseOptions {
-  activationReason?: ProjectActivationReason;
-}
-
 @Injectable({
   providedIn: 'root',
 })
@@ -458,11 +454,6 @@ export class ProjectService {
       return false;
     }
 
-    const closeResult = await this.close({ activationReason });
-    if (closeResult === false) {
-      return false;
-    }
-    await new Promise(resolve => setTimeout(resolve, 100));
     // 判断路径是否存在
     if (!this.electronService.exists(projectPath)) {
       this.removeRecentlyProject({ path: projectPath })
@@ -493,6 +484,17 @@ export class ProjectService {
         this.message.error(this.translate.instant('PROJECT.LOCK_ACQUIRE_FAILED'));
         this.stateSubject.next('default');
         return;
+      }
+    }
+
+    if (this.electronService.isElectron
+      && previousProjectPath
+      && !this.isSameProjectPath(previousProjectPath, projectPath)
+      && window['projectLock']) {
+      try {
+        await window['projectLock'].release(previousProjectPath);
+      } catch (e) {
+        console.warn('project-lock release:', e);
       }
     }
 
@@ -622,8 +624,8 @@ export class ProjectService {
     this.addRecentlyProject({ name: this.currentPackageData.name, path: path, nickname: this.currentPackageData.nickname || this.currentPackageData.name });
   }
 
-  async close(options: ProjectCloseOptions = {}) {
-    if (this.shouldBlockForChatRequest(options.activationReason)) {
+  async close() {
+    if (this.shouldBlockForChatRequest()) {
       this.warnBlockingChatRequest();
       return false;
     }
@@ -635,6 +637,7 @@ export class ProjectService {
         console.warn('project-lock release:', e);
       }
     }
+    this.uiService.closeTerminal();
     this.currentProjectPath = '';
     void window['ipcRenderer']?.invoke?.('logger-set-project-path', '').catch(() => undefined);
     this.currentPackageData = {
@@ -643,6 +646,7 @@ export class ProjectService {
     this.stateSubject.next('default');
     // this.currentProjectPath = (await window['env'].get("AILY_PROJECT_PATH")).replace('%HOMEPATH%\\Documents', window['path'].getUserDocuments());
     this.router.navigate(['/main/guide'], { replaceUrl: true });
+    return true;
   }
 
   /** 项目已被其他实例占用时的操作：取消 / 前置其他进程 / 强制打开 */

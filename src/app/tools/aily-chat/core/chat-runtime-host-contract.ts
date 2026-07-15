@@ -125,6 +125,7 @@ export interface ChatRuntimeHostCheckpointMutationRequest {
 export interface ChatRuntimeHostCheckpointNavigationRequest {
   readonly sessionId: ChatRuntimeHostSessionId;
   readonly checkpointId?: string;
+  readonly turnId?: string;
 }
 
 export interface ChatRuntimeHostCheckpointNavigationEntry {

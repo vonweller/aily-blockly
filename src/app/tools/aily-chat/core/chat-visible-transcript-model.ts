@@ -126,7 +126,7 @@ export class ChatVisibleTranscriptModel {
     let lastAilyItemId: string | null = null;
 
     for (const turn of turnResponses ?? []) {
-      const request = this.upsertTurnRequestInternal(turn, { recordOrder: false });
+      const request = this.insertTurnRequestInternal(turn, { recordOrder: false });
       const response = this.upsertTurnResponseInternal(turn, { recordOrder: false });
       nextIds.push(request.id, response.id);
       expectedIds.add(request.id);
@@ -160,16 +160,25 @@ export class ChatVisibleTranscriptModel {
     return this.replaceFromSessionModel(runtimeState?.turnResponses ?? []);
   }
 
-  upsertTurnRequest(turn: TurnResponseTurn): ChatVisibleTranscriptItem {
-    return this.upsertTurnRequestInternal(turn, { recordOrder: true });
+  insertTurnRequest(turn: TurnResponseTurn): ChatVisibleTranscriptItem {
+    return this.insertTurnRequestInternal(turn, { recordOrder: true });
   }
 
-  private upsertTurnRequestInternal(
+  private insertTurnRequestInternal(
     turn: TurnResponseTurn,
     options: { recordOrder: boolean },
   ): ChatVisibleTranscriptItem {
+    const itemId = chatVisibleRequestItemId(turn.turnId);
+    const existing = this.records.get(itemId)?.item;
+    if (existing?.kind === 'request') {
+      if (options.recordOrder) {
+        this.ensureOrderedItem(existing);
+      }
+      return existing;
+    }
+
     const item = this.upsertItem({
-      id: chatVisibleRequestItemId(turn.turnId),
+      id: itemId,
       kind: 'request',
       role: 'user',
       turnId: turn.turnId,
@@ -609,7 +618,8 @@ function createItemSignature(item: Omit<ChatVisibleTranscriptItem, 'revision'>):
       item.turnResponse?.request.content ?? '',
       item.turnResponse?.request.displayContent ?? '',
       item.turnResponse?.createdAt ?? '',
-      stableSmallJson(item.turnResponse?.request?.metadata ?? null),
+      stableSmallJson(item.turnResponse?.request?.attachments ?? null),
+      stableSmallJson(selectRequestPresentationMetadata(item.turnResponse?.request?.metadata)),
     ].join('\u001f');
   }
 
@@ -631,6 +641,34 @@ function createItemSignature(item: Omit<ChatVisibleTranscriptItem, 'revision'>):
     item.contentUpdateTimings?.lastWordCount ?? '',
     item.parts.map(createPartRevisionSignature).join('\u001e'),
   ].join('\u001f');
+}
+
+function selectRequestPresentationMetadata(
+  metadata: TurnResponseTurn['request']['metadata'] | null | undefined,
+): Record<string, unknown> | null {
+  if (!metadata || typeof metadata !== 'object') {
+    return null;
+  }
+
+  const presentationKeys = [
+    'agentId',
+    'command',
+    'commandKind',
+    'explicitAgentInvocation',
+    'modeId',
+    'modeInfo',
+    'modelRouting',
+    'parsedParts',
+    'requestRouting',
+    'userSelectedTools',
+  ] as const;
+  const selected: Record<string, unknown> = {};
+  for (const key of presentationKeys) {
+    if (metadata[key] !== undefined) {
+      selected[key] = metadata[key];
+    }
+  }
+  return Object.keys(selected).length > 0 ? selected : null;
 }
 
 function createPartRevisionSignature(part: ChatPart): string {

@@ -202,26 +202,6 @@ function createRuntimeViewId(scope: string): ChatRuntimeHostViewId {
   return `${normalizedScope}:${Date.now().toString(36)}:${chatRuntimeViewIdSeed.toString(36)}`;
 }
 
-function createRuntimeHostShellStateKey(
-  state: ChatRuntimeHostSessionState | null | undefined,
-  runtimeViewId: ChatRuntimeHostViewId,
-): string {
-  if (!state) {
-    return '';
-  }
-
-  return JSON.stringify({
-    status: state.status,
-    requestInProgress: state.requestInProgress,
-    activeTurnId: state.activeTurnId ?? null,
-    attachedView: Array.isArray(state.attachedViewIds)
-      && state.attachedViewIds.includes(runtimeViewId),
-    selectedMode: state.selectedMode ?? null,
-    providerOptions: state.providerOptions ?? null,
-    currentModel: state.currentModel ?? null,
-  });
-}
-
 function createRuntimeHostRequestStateKey(
   state: ChatRuntimeHostSessionState | null | undefined,
   runtimeViewId: ChatRuntimeHostViewId,
@@ -6915,7 +6895,7 @@ export class ChatEngineService implements IChatContext {
 
     const shouldFollow = this.captureRuntimeHostProjectionShouldFollow(targetSessionId);
     for (const turn of turnResponses) {
-      this.visibleTranscriptModel.upsertTurnRequest(turn);
+      this.visibleTranscriptModel.insertTurnRequest(turn);
       this.visibleTranscriptModel.upsertTurnResponse(turn);
     }
     const changes = this.visibleTranscriptModel.drainChanges();
@@ -6972,7 +6952,7 @@ export class ChatEngineService implements IChatContext {
         continue;
       }
       if (event.turn && !this.visibleTranscriptModel.getResponseItem(turnId)) {
-        this.visibleTranscriptModel.upsertTurnRequest(event.turn);
+        this.visibleTranscriptModel.insertTurnRequest(event.turn);
         this.visibleTranscriptModel.upsertTurnResponse(event.turn);
         continue;
       }
@@ -7330,8 +7310,8 @@ export class ChatEngineService implements IChatContext {
     state: ChatRuntimeHostSessionState,
   ): void {
     const previousState = this.readRuntimeHostSessionState(sessionId);
-    const shellStateChanged = createRuntimeHostShellStateKey(previousState, this.runtimeViewId)
-      !== createRuntimeHostShellStateKey(state, this.runtimeViewId);
+    const terminalRequestEdge = previousState?.requestInProgress === true
+      && state.requestInProgress === false;
     const requestStateChanged = createRuntimeHostRequestStateKey(previousState, this.runtimeViewId)
       !== createRuntimeHostRequestStateKey(state, this.runtimeViewId);
     const configurationStateChanged = createRuntimeHostConfigurationStateKey(previousState)
@@ -7369,8 +7349,8 @@ export class ChatEngineService implements IChatContext {
       patch,
       options: {
         reason: 'state',
-        highFrequency: !shellStateChanged,
-        listAffecting: shellStateChanged,
+        highFrequency: !terminalRequestEdge,
+        listAffecting: terminalRequestEdge,
       },
     });
 
@@ -8793,6 +8773,11 @@ Do not create non-existent boards and libraries.
 
     const visible = this.resolveCurrentViewSessionResource() === sessionId;
     if (visible) {
+      // The optimistic request/empty response pair is the newest member of the
+      // visible request list from its first frame. Host truth revises this same
+      // turn; it must not transfer ownership from a transcript-only overlay to
+      // the paged window after paint.
+      this.visibleTurnWindowModel.upsertLatestTurn(sessionId, turn);
       this.projectRuntimeHostVisibleTurnsNow(sessionId, [turn]);
       this._runtimeRequestStatePatch?.({
         sessionId,
@@ -8960,7 +8945,7 @@ Do not create non-existent boards and libraries.
 
       const runtimeMetadataStartedAt = performance.now();
       const runtimePrepared = options?.finalizeRuntimeMetadataAfterPaint
-        ? this.sendCoordinator.finalizeVisibleSend(prepared, targetSessionId)
+        ? this.sendCoordinator.finalizeVisibleSend(prepared)
         : prepared;
       const runtimeMetadataCompletedAt = performance.now();
       if (options?.finalizeRuntimeMetadataAfterPaint) {

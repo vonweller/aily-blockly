@@ -274,26 +274,32 @@ export class ChatSessionBoundaryController implements ChatSessionBoundaryActionC
   } | null> {
     const checkpointIdFromTarget = readCheckpointIdFromTarget(target);
     const targetTurnId = normalizeString(target.turnId);
-    if (!checkpointIdFromTarget) {
+    if (!checkpointIdFromTarget && !targetTurnId) {
       this.ctx.logBoundaryDiagnostic?.(
-        `target-checkpoint-missing; session=${sessionResource}; targetTurnId=${targetTurnId || 'none'}; `
+        `target-identity-missing; session=${sessionResource}; targetTurnId=none; `
         + 'targetCheckpointId=none',
       );
       return null;
     }
     const navigation = await this.readCheckpointNavigationState({
       sessionId: sessionResource,
-      checkpointId: checkpointIdFromTarget,
+      ...(checkpointIdFromTarget
+        ? { checkpointId: checkpointIdFromTarget }
+        : { turnId: targetTurnId }),
     });
     if (!navigation?.requestedCheckpoint) {
       this.blockUnavailable({
         action: 'restoreCheckpoint',
         reason: 'checkpoint-unavailable',
-        checkpointId: checkpointIdFromTarget,
+        checkpointId: checkpointIdFromTarget || undefined,
       });
       return null;
     }
-    return { checkpointId: checkpointIdFromTarget, target, navigation };
+    return {
+      checkpointId: navigation.requestedCheckpoint.checkpointId,
+      target,
+      navigation,
+    };
   }
 
   private async readCheckpointNavigationState(
