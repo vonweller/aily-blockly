@@ -55,6 +55,16 @@
         "CDC_ON_BOOT": "USB 시리얼 통신",
         "PSRAM": "PSRAM"
     },
+    "WIO_TERMINAL": {
+        "ROLE": "역할",
+        "CACHE": "캐시",
+        "CPU_SPEED": "CPU 속도",
+        "OPTIMIZATION": "최적화",
+        "MAX_QSPI": "최대 QSPI 속도",
+        "USB_STACK": "USB 스택",
+        "DEBUG": "디버그",
+        "TX_RX_LED": "TX/RX LED"
+    },
     "STM32": {
         "BOARD": "개발 보드 모델 선택",
         "USB": "USB 설정",

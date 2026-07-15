@@ -55,6 +55,16 @@
         "CDC_ON_BOOT": "USB CDC при загрузке",
         "PSRAM": "PSRAM"
     },
+    "WIO_TERMINAL": {
+        "ROLE": "Роль",
+        "CACHE": "Кэш",
+        "CPU_SPEED": "Частота CPU",
+        "OPTIMIZATION": "Оптимизация",
+        "MAX_QSPI": "Максимальная частота QSPI",
+        "USB_STACK": "Стек USB",
+        "DEBUG": "Отладка",
+        "TX_RX_LED": "Индикатор TX/RX"
+    },
     "STM32": {
         "BOARD": "Выбор модели платы",
         "USB": "Настройки USB",
