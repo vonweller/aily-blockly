@@ -313,7 +313,7 @@ export class RenderEventItemLifecycleNormalizer {
         return output;
 
       case 'todo_update':
-        output.push(...this.upsertStateItem(`todo:${event.sessionId}`, 'state', event, timestamp, undefined, event.summary, todoStatePayload(event)));
+        output.push(...this.upsertStateItem(`todo:${event.sessionId}`, 'state', event, timestamp, 'completed', event.summary, todoStatePayload(event)));
         return output;
 
       case 'question_request':
@@ -652,7 +652,7 @@ export class RenderEventItemLifecycleNormalizer {
   ): CanonicalRenderLifecycleEvent[] {
     const output = this.ensureItem(itemId, itemKind, event, timestamp);
     output.push(this.deltaFor(itemId, itemKind, timestamp, 'update', event.type, text, structuredPayload));
-    if (completeAs) {
+    if (completeAs && !this.completedItems.has(itemId)) {
       output.push(this.completeItem(itemId, itemKind, timestamp, completeAs, event.type));
     }
     return output;
@@ -1068,7 +1068,7 @@ function todoStatePayload(event: Extract<RenderEvent, { type: 'todo_update' }>):
     type: 'state',
     stateId: `todo-${event.sessionId}`,
     text: event.summary,
-    state: 'info',
+    state: Array.isArray(event.items) && event.items.length > 0 ? 'done' : 'info',
     kind: 'todo',
     metadata: boundedRecord({
       sessionId: event.sessionId,

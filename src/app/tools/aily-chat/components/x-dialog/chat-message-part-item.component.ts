@@ -940,7 +940,7 @@ export class ChatMessagePartItemComponent implements OnChanges {
 
     const qp = this.part as QuestionPart;
     const hasAnswers = !!qp.answers && Object.keys(qp.answers).length > 0;
-    const isHistory = !!qp.isHistory || hasAnswers;
+    const isHistory = !!qp.isHistory || hasAnswers || !this.doing;
     const answersSignature = stringifyQuestionAnswers(qp.answers);
     const cached = this.questionDataCache.get(this.part);
     if (
@@ -970,16 +970,7 @@ export class ChatMessagePartItemComponent implements OnChanges {
       return false;
     }
 
-    if (data.isHistory) {
-      return true;
-    }
-
-    const answers = data.answers;
-    if (!!answers && Object.keys(answers).length > 0) {
-      return true;
-    }
-
-    return Array.isArray(data.questions) && data.questions.length > 0;
+    return data.isHistory;
   }
 
   isInteractiveInlineQuestion(): boolean {

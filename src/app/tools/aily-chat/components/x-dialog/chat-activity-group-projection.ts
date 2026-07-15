@@ -463,8 +463,6 @@ export function buildToolActivityDisplayItem(
   const subtitle = pendingApproval
     ? approval.subtitle
     : (toolInvocationSummary?.subtitle || approval?.subtitle);
-  const askUserAnswerChildren = buildAskUserAnswerChildren(part);
-
   return {
     id: options?.id || buildChatPartIdentity(part, 0),
     kind: 'activity',
@@ -494,61 +492,11 @@ export function buildToolActivityDisplayItem(
       invocationDetail,
       detailKind: 'invocation',
     }) : undefined,
-    children: askUserAnswerChildren,
+    children: undefined,
     detailSections,
     detailExpanded: false,
     detailKind: detailSections?.length ? 'invocation' : undefined,
   };
-}
-
-function buildAskUserAnswerChildren(part: ToolCallPart): ActivityGroupDisplayChild[] | undefined {
-  const normalizedToolName = normalizeReadSideToolName(part.toolName);
-  if (normalizedToolName !== 'ask_questions' && normalizedToolName !== 'ask_user') {
-    return undefined;
-  }
-
-  const metadata = asRecord(part.metadata);
-  const directPayload = asRecord(metadata?.['askUserQuestionAnswer']);
-  const resultPayload = asRecord(asRecord(asRecord(metadata?.['result'])?.['metadata'])?.['askUserQuestionAnswer']);
-  const answers = asRecord((directPayload || resultPayload)?.['answers']);
-  if (!answers) {
-    return undefined;
-  }
-
-  const args = asRecord(part.args);
-  const rawQuestions = Array.isArray(args?.['questions'])
-    ? args?.['questions'] as unknown[]
-    : args?.['question']
-      ? [args]
-      : [];
-  const questions = rawQuestions.map(asRecord).filter((question): question is Record<string, unknown> => !!question);
-  const children: ActivityGroupDisplayChild[] = [];
-  Object.entries(answers).forEach(([answerKey, rawAnswer], index) => {
-    const answer = asRecord(rawAnswer);
-    if (!answer) {
-      return;
-    }
-    const question = questions.find(candidate => [
-      asString(candidate['id']),
-      asString(candidate['header']),
-      asString(candidate['question']),
-    ].includes(answerKey));
-    const selected = Array.isArray(answer['selected'])
-      ? answer['selected'].map(asString).filter(Boolean)
-      : [];
-    const freeText = asString(answer['freeText']);
-    const content = answer['skipped'] === true
-      ? '已跳过'
-      : [...selected, freeText].filter(Boolean).join('；') || '已回答';
-    children.push({
-      id: `${part.toolCallId}:answer:${index}`,
-      kind: 'detail',
-      title: asString(question?.['header']) || asString(question?.['question']) || answerKey,
-      content,
-      tone: 'success',
-    });
-  });
-  return children.length > 0 ? children : undefined;
 }
 
 export function buildConfirmationActivityDisplayItem(
