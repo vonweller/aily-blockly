@@ -12,6 +12,7 @@ import { ToolContainerComponent } from '../../components/tool-container/tool-con
 import { ChildToolConfig, getChildToolConfig } from '../../configs/tool.config';
 import { ChildToolHostInfo, ChildToolProcessService } from '../../services/child-tool-process.service';
 import { ChildAppHostRegistryService } from '../../services/child-app-host-registry.service';
+import { ElectronService } from '../../services/electron.service';
 import { LogService } from '../../services/log.service';
 import { ProjectService } from '../../services/project.service';
 import { ThemeService } from '../../services/theme.service';
@@ -101,6 +102,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     private message: NzMessageService,
     private logService: LogService,
     private childHostRegistry: ChildAppHostRegistryService,
+    private electronService: ElectronService,
   ) {
     this.langSubscription = this.translate.onLangChange.subscribe(() => this.syncHostContext());
     this.themeSubscription = this.themeService.themeChanged$.subscribe(() => this.syncHostContext());
@@ -410,6 +412,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
         childError: (error: any) => {
           this.ngZone.run(() => this.handleChildError(error));
         },
+        notifyUserInteraction: (payload: any) => this.notifyUserInteraction(payload),
         reportHostMessage: (payload: any) => this.ngZone.run(() => this.reportHostMessage(payload)),
         requestClose: () => {
           this.ngZone.run(() => {
@@ -777,8 +780,34 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       platform: (window as any).electronAPI?.platform?.type || 'browser',
       workspace: this.resolveHostWorkspace(),
       capabilities: {
-        snapshotRefresh: true
+        snapshotRefresh: true,
+        userInteractionNotifications: true
       }
+    };
+  }
+
+  private async notifyUserInteraction(payload: any): Promise<Record<string, unknown>> {
+    if (this.electronService.isWindowFocused() && !this.electronService.isWindowMinimized()) {
+      return { ok: true, notified: false, reason: 'foreground' };
+    }
+
+    const title = String(payload?.title || 'Aily').trim().slice(0, 120) || 'Aily';
+    const body = String(payload?.body || '').trim().slice(0, 500);
+    if (!body) {
+      return { ok: false, notified: false, reason: 'empty-body' };
+    }
+
+    await this.electronService.requestWindowAttention().catch(() => undefined);
+    const platform = (window as any).electronAPI?.platform?.type;
+    const result = await this.electronService.notify(title, body, {
+      silent: false,
+      timeoutType: 'never',
+      ...(platform === 'linux' ? { urgency: 'critical' as const } : {}),
+    });
+    return {
+      ok: result?.success !== false,
+      notified: result?.success !== false,
+      key: String(payload?.key || ''),
     };
   }
 
