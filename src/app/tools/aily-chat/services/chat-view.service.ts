@@ -453,9 +453,11 @@ export class ChatViewService {
       paneSurface,
       showConversation: paneSurface === 'chat',
       guideSurface: this.buildGuideSurfaceModel(
-        paneSurface === 'entry' || paneSurface === 'welcome'
-          ? paneSurface
-          : null,
+        paneSurface === 'entry' || paneSurface === 'blank-session'
+          ? 'entry'
+          : paneSurface === 'welcome'
+            ? 'welcome'
+            : null,
       ),
       loadingSurface: paneSurface === 'session-loading' ? this.buildLoadingSurfaceModel() : null,
       showSidebarSessionList,
@@ -657,7 +659,7 @@ export class ChatViewService {
       variant: 'entry',
       groups: this.sessionListGroups,
       loadState: this.chatSessionItemsService.sessionListLoadState,
-      hostClasses: this.currentPaneSurface === 'entry'
+      hostClasses: this.currentPaneSurface === 'entry' || this.currentPaneSurface === 'blank-session'
         ? ['entry-session-control', 'entry-guide-stacked']
         : ['entry-session-control'],
     };

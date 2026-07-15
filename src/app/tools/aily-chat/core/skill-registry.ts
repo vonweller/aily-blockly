@@ -1410,7 +1410,7 @@ function buildSkillsListingInstruction(input: {
   readonly hasReadFileTool: boolean;
 }): string {
   if (input.hasLoadSkillTool) {
-    return 'Review the listed skills first and directly call load_skill with action="load" and the exact skill name when one clearly matches the task. Use action="search" only as a fallback when no currently listed skill clearly fits or when you need to discover an additional skill. Searching does not load a skill; after search, you must call load_skill again with action="load" and an exact name before claiming a skill is loaded.';
+    return 'The listed skills are discovery metadata, not loaded instructions. When a listed skill clearly applies to the current task, call load_skill with action="load" and the exact skill name before relying on it. Do not load unrelated skills. Use action="search" only when no listed skill clearly fits or an additional skill must be discovered. Searching does not load a skill; after search, call load_skill again with action="load" and an exact name before claiming a skill is loaded.';
   }
 
   if (input.hasReadFileTool) {

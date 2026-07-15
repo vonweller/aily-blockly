@@ -599,6 +599,20 @@ function getChatPartStableKey(part: ChatPart): string | undefined {
 }
 
 function createItemSignature(item: Omit<ChatVisibleTranscriptItem, 'revision'>): string {
+  if (item.kind === 'request') {
+    return [
+      item.id,
+      item.kind,
+      item.role,
+      item.turnId,
+      item.contentPreview,
+      item.turnResponse?.request.content ?? '',
+      item.turnResponse?.request.displayContent ?? '',
+      item.turnResponse?.createdAt ?? '',
+      stableSmallJson(item.turnResponse?.request?.metadata ?? null),
+    ].join('\u001f');
+  }
+
   const responseModel = item.turnResponse?.responseModel;
   return [
     item.id,
