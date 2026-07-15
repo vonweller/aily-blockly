@@ -507,6 +507,14 @@ export class HeaderComponent implements OnInit, OnDestroy {
       // console.log('ESP32配置选项:', esp32config);
     }
 
+    // 添加 Wio Terminal 相关配置选项
+    else if (this.projectService.currentBoardConfig['type']?.split(':').pop() === 'seeed_wio_terminal') {
+      const wioTerminalConfig = await this.projectService.updateWioTerminalConfigMenu('seeed_wio_terminal');
+      if (wioTerminalConfig) {
+        portList0 = portList0.concat(wioTerminalConfig);
+      }
+    }
+
     // 添加STM32相关配置选项
     else if (core.indexOf('stm32') > -1) {
       // 异步检测调试探针，完成后更新缓存并重建列表

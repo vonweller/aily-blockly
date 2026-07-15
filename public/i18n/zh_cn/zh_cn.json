@@ -87,6 +87,16 @@
         "CDC_ON_BOOT": "USB模拟串口",
         "PSRAM": "PSRAM"
     },
+    "WIO_TERMINAL": {
+        "ROLE": "角色",
+        "CACHE": "缓存",
+        "CPU_SPEED": "CPU 频率",
+        "OPTIMIZATION": "编译优化",
+        "MAX_QSPI": "QSPI 最高频率",
+        "USB_STACK": "USB 协议栈",
+        "DEBUG": "调试",
+        "TX_RX_LED": "TX/RX 指示灯"
+    },
     "STM32": {
         "BOARD": "开发板型号选择",
         "USB": "USB配置"
