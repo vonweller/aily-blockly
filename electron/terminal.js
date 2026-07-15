@@ -157,6 +157,18 @@ function registerTerminalHandlers(mainWindow) {
         deleteTerminalEntry(ptyProcess);
       });
       // 当前win10上有问题，所以先固定一个terminal
+      const previousTerminal = terminals.get("currentPid");
+      if (previousTerminal && previousTerminal !== ptyProcess) {
+        console.info('[PROC_TRACE][PTY_REPLACE]', {
+          previousPid: previousTerminal.pid,
+          nextPid: ptyProcess.pid
+        });
+        // 旧 PTY 在异步终止期间仍保留登记，确保应用退出清理可以再次兜底。
+        terminals.delete("currentPid");
+        terminals.set(previousTerminal.pid, previousTerminal);
+        void killRegisteredProcessTree(previousTerminal.pid, `pty:replace:${previousTerminal.pid}`)
+          .finally(() => deleteTerminalEntry(previousTerminal));
+      }
       terminals.set("currentPid", ptyProcess);
 
       // terminals.set(ptyProcess.pid, ptyProcess);
