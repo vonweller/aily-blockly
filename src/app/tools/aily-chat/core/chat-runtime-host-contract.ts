@@ -27,7 +27,8 @@ export type ChatRuntimeHostSessionStatus =
   | 'needs_input'
   | 'completed'
   | 'cancelled'
-  | 'failed';
+  | 'failed'
+  | 'disposed';
 
 export interface ChatRuntimeHostModelSelectionSnapshot {
   readonly model?: string;

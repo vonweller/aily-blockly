@@ -2601,13 +2601,10 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
         return this.runReturnAwareEntryState(this.chatService.currentSessionId);
       },
       onEnterEntryState: (sessionId?: string | null) => this.runReturnAwareEntryState(sessionId),
-      onDeleteSession: (sessionId: string) => {
+      isSessionRequestInProgress: (sessionId: string) => this.engine.isSessionRequestInProgress(sessionId),
+      onDeleteSession: async (sessionId: string) => {
         this.closeDebugBrowser();
-        return this.engine.deleteSessionAction(sessionId);
-      },
-      onDeleteSessionRuntime: (sessionId: string) => {
-        this.closeDebugBrowser();
-        this.engine.disposeSessionRuntime(sessionId);
+        return await this.engine.deleteSessionAction(sessionId);
       },
       onDetectChanges: () => this.cdr.markForCheck(),
       onUpdateTitle: (title: string) => {

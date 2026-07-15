@@ -55,7 +55,7 @@ export function turnResponsePartsToDisplayChatParts(
     return [];
   }
 
-  return hydrateQuestionAnswersFromAskUserToolMetadata(projectTurnResponseDisplayParts(parts))
+  return coalesceAnsweredAskUserParts(projectTurnResponseDisplayParts(parts))
     .flatMap(part => turnResponsePartToChatParts(part));
 }
 
@@ -230,7 +230,7 @@ function readString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-export function hydrateQuestionAnswersFromAskUserToolMetadata(
+export function coalesceAnsweredAskUserParts(
   parts: readonly TurnResponsePart[],
 ): readonly TurnResponsePart[] {
   const askUserPayloads = parts
@@ -243,13 +243,9 @@ export function hydrateQuestionAnswersFromAskUserToolMetadata(
     return parts;
   }
 
-  const nextParts = parts.map(part => ({ ...part })) as TurnResponsePart[];
-  const matchedPayloadIndexes = new Set<number>();
-  const duplicateQuestionPartIndexes = new Set<number>();
-  let changed = false;
-
-  for (let partIndex = 0; partIndex < nextParts.length; partIndex++) {
-    const part = nextParts[partIndex] as Partial<TurnResponseQuestionPart> | undefined;
+  const answeredQuestionPartIndexes = new Set<number>();
+  for (let partIndex = 0; partIndex < parts.length; partIndex++) {
+    const part = parts[partIndex] as Partial<TurnResponseQuestionPart> | undefined;
     if (part?.type !== 'question') {
       continue;
     }
@@ -259,35 +255,11 @@ export function hydrateQuestionAnswersFromAskUserToolMetadata(
     if (!matchingPayload) {
       continue;
     }
-
-    if (matchedPayloadIndexes.has(matchingPayload.partIndex)) {
-      duplicateQuestionPartIndexes.add(partIndex);
-      changed = true;
-      continue;
-    }
-
-    if (!part.answers || !answersMatchQuestions(matchingPayload.answers, part)) {
-      nextParts[partIndex] = mergeQuestionPartWithAskUserPayload(part, matchingPayload);
-      changed = true;
-    }
-    matchedPayloadIndexes.add(matchingPayload.partIndex);
+    answeredQuestionPartIndexes.add(partIndex);
   }
-
-  const withSynthesizedQuestions: TurnResponsePart[] = [];
-  for (let partIndex = 0; partIndex < nextParts.length; partIndex++) {
-    if (duplicateQuestionPartIndexes.has(partIndex)) {
-      continue;
-    }
-    withSynthesizedQuestions.push(nextParts[partIndex]);
-    const payload = askUserPayloads.find(item => item.partIndex === partIndex);
-    if (!payload || matchedPayloadIndexes.has(partIndex) || payload.questions.length === 0) {
-      continue;
-    }
-    withSynthesizedQuestions.push(createAnsweredQuestionPartFromAskUserPayload(payload));
-    changed = true;
-  }
-
-  return changed ? withSynthesizedQuestions : parts;
+  return answeredQuestionPartIndexes.size > 0
+    ? parts.filter((_, index) => !answeredQuestionPartIndexes.has(index))
+    : parts;
 }
 
 export function chatPartToTurnResponsePart(part: ChatPart): TurnResponsePart {
@@ -922,42 +894,6 @@ function normalizeAskUserOptions(options: unknown): TurnResponseQuestionPart['qu
     .filter((option): option is NonNullable<TurnResponseQuestionPart['questions'][number]['options']>[number] => !!option);
 
   return normalized.length > 0 ? normalized : undefined;
-}
-
-function createAnsweredQuestionPartFromAskUserPayload(payload: AskUserQuestionPayload): TurnResponsePart {
-  return {
-    type: 'question',
-    partId: payload.toolCallId ? `question:${payload.toolCallId}` : undefined,
-    questions: payload.questions,
-    answers: cloneQuestionAnswers(payload.answers),
-    isHistory: true,
-    metadata: {
-      askUserQuestionAnswer: payload.metadata?.['askUserQuestionAnswer'],
-      materializedFromAskUserToolCall: true,
-      ...(payload.toolCallId ? { sourceToolCallId: payload.toolCallId } : {}),
-    },
-  } satisfies TurnResponseQuestionPart;
-}
-
-function mergeQuestionPartWithAskUserPayload(
-  part: Partial<TurnResponseQuestionPart>,
-  payload: AskUserQuestionPayload,
-): TurnResponsePart {
-  const existingQuestions = Array.isArray(part.questions) ? part.questions : [];
-  return {
-    ...part,
-    questions: existingQuestions.length > 0 ? existingQuestions : payload.questions,
-    answers: cloneQuestionAnswers(payload.answers),
-    isHistory: true,
-    metadata: {
-      ...(part.metadata && typeof part.metadata === 'object' && !Array.isArray(part.metadata)
-        ? part.metadata
-        : {}),
-      askUserQuestionAnswer: payload.metadata?.['askUserQuestionAnswer'],
-      materializedFromAskUserToolCall: true,
-      ...(payload.toolCallId ? { sourceToolCallId: payload.toolCallId } : {}),
-    },
-  } as TurnResponsePart;
 }
 
 function questionPartMatchesAskUserPayload(

@@ -489,6 +489,29 @@ class LexExecutionRuntimeOwner {
     return this.createSessionState(session, 'running', true, turnId);
   }
 
+  readSessionExecutionState(command = {}) {
+    const sessionId = normalizeSessionId(command.sessionId);
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      return {
+        sessionId,
+        exists: false,
+        requestInProgress: false,
+        activeTurnId: null,
+      };
+    }
+
+    const requestInProgress = !!session.activeAbortController && !!session.activeTurnPromise;
+    return {
+      sessionId,
+      exists: true,
+      requestInProgress,
+      activeTurnId: requestInProgress ? session.activeTurnId || null : null,
+      responseCompleted: requestInProgress && session.responseCompletedTurnId === session.activeTurnId,
+      revision: Number(session.revision) || 0,
+    };
+  }
+
   applyProtocolTruncation(session, protocolTruncation) {
     const truncation = normalizeProtocolTruncation(protocolTruncation);
     if (!truncation || !session?.handle) {

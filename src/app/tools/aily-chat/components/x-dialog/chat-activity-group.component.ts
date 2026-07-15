@@ -639,7 +639,7 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked, 
   }
 
   get isGroupSpinning(): boolean {
-    return this.doing;
+    return this.groupState === 'doing';
   }
 
   get isFirstItemNotTool(): boolean {
@@ -648,7 +648,7 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked, 
   }
 
   get useFixedViewport(): boolean {
-    return this.doing;
+    return this.groupState === 'doing';
   }
 
   get groupIconClass(): string {
@@ -728,8 +728,7 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked, 
     if (!headerCacheHit) {
       this.lastProjectionKey = projectionKey;
       const pres = buildActivityGroupPresentation(this.parts);
-      const settledState = pres.state === 'doing' ? 'done' : pres.state;
-      this.groupState = this.doing ? 'doing' : settledState;
+      this.groupState = pres.state;
       this.groupHeader = mergeStableGroupHeader(this.groupHeader, pres.header);
     }
 
@@ -845,7 +844,7 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked, 
   }
 
   private _syncExpandedState(): void {
-    const shouldAutoExpand = this.doing || this.hasActivePendingInlineApproval();
+    const shouldAutoExpand = this.groupState === 'doing' || this.hasActivePendingInlineApproval();
     if (shouldAutoExpand === this.lastAutoExpanded) {
       return;
     }

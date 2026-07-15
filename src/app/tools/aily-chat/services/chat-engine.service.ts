@@ -4636,6 +4636,10 @@ export class ChatEngineService implements IChatContext {
       || this.readRuntimeHostSessionState(targetSessionId)?.requestInProgress === true;
   }
 
+  isSessionRequestInProgress(sessionId?: string | null): boolean {
+    return this.readVisibleSessionRequestInProgress(sessionId);
+  }
+
   private readPendingFollowupYieldRequested(sessionId?: string | null): boolean {
     const targetSessionId = resolveOptionalUiSessionOwner(this, sessionId);
     if (!targetSessionId) {
@@ -7910,7 +7914,7 @@ export class ChatEngineService implements IChatContext {
     return interrupted;
   }
 
-  private teardownSessionRuntime(sessionId: string): boolean {
+  async deleteSessionAction(sessionId?: string | null): Promise<boolean> {
     const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
     if (!targetSessionId) {
       return false;
@@ -7918,34 +7922,18 @@ export class ChatEngineService implements IChatContext {
 
     this.replacePendingFollowupQueue(targetSessionId, []);
     this.syncPendingFollowupRuntimeState(targetSessionId);
-    this.dispatchRuntimeHostCommand('dispose runtime session', (host) => host.disposeSession(targetSessionId));
-    return true;
-  }
-
-  private disposeRuntimeSessionAction(sessionId?: string | null): boolean {
-    const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
-    if (!targetSessionId) {
-      return false;
+    if (this.readVisibleSessionRequestInProgress(targetSessionId)) {
+      await this.stopRuntimeSessionWithBarrier(targetSessionId);
     }
-
-    return this.teardownSessionRuntime(targetSessionId);
-  }
-
-  disposeSessionRuntime(sessionId?: string | null): boolean {
-    return this.disposeRuntimeSessionAction(sessionId);
-  }
-
-  deleteSessionAction(sessionId?: string | null): boolean {
-    const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
-    if (!targetSessionId) {
-      return false;
-    }
-
-    this.disposeRuntimeSessionAction(targetSessionId);
+    await this.dispatchRuntimeHostCommandAsync(
+      'dispose runtime session',
+      host => host.disposeSession(targetSessionId),
+    );
     this.session.releaseSessionModelReference(targetSessionId);
     this.chatSessionViewModelStore.detach(targetSessionId);
     this.chatSessionModelStore.disposeSession(targetSessionId);
     this.chatSessionItemsService.sessionItemController.deleteChatSessionItem(targetSessionId);
+    this.runtimeHostSessionStates.delete(targetSessionId);
     return true;
   }
 
