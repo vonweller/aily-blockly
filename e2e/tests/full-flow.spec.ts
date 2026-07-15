@@ -31,6 +31,7 @@ import path from 'node:path';
 const ENABLED = process.env['AILY_E2E_FULLFLOW'] === '1';
 const ALL_BOARDS_ENABLED = process.env['AILY_E2E_ALL_BOARDS'] === '1';
 const PROJECT_PLAZA_ENABLED = process.env['AILY_E2E_PROJECT_PLAZA'] === '1';
+const CLEAR_APPDATA = process.env['AILY_E2E_CLEAR_APPDATA'] === '1';
 const BOARD_KEYWORD = process.env['AILY_E2E_BOARD_KEYWORD'] || 'uno r4';
 const BOARD_KEYWORDS = readBoardKeywords();
 const SINGLE_BOARD_TIMEOUT_MS = readTimeoutEnv('AILY_E2E_SINGLE_BOARD_TIMEOUT_MS', 60 * 60_000);
@@ -119,10 +120,17 @@ test.describe('全流程：创建或加载项目 → 编译', () => {
   const projectPlazaTest = PROJECT_PLAZA_ENABLED ? test : test.skip;
 
   test.beforeAll(async () => {
-    if (ENABLED || ALL_BOARDS_ENABLED || PROJECT_PLAZA_ENABLED) {
-      await cleanGlobalAilyProjectDir();
-      await bootstrapAfterGlobalDataCleanup();
+    if (!(ENABLED || ALL_BOARDS_ENABLED || PROJECT_PLAZA_ENABLED)) {
+      return;
     }
+
+    if (!CLEAR_APPDATA) {
+      console.log('[e2e] 保留现有应用数据；如需清空，请设置 AILY_E2E_CLEAR_APPDATA=1。');
+      return;
+    }
+
+    await cleanGlobalAilyProjectDir();
+    await bootstrapAfterGlobalDataCleanup();
   });
 
   test.afterAll(async () => {
