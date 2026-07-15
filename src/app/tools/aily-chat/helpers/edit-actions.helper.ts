@@ -45,7 +45,6 @@ import type { ChatTaskActionDetail } from './chat-task-action-coordinator';
 import type { TurnSnapshot } from '../services/edit-checkpoint.service';
 import type { IWorkspaceCheckpointProvider } from '../services/edit-checkpoint.service';
 import type {
-  ChatSessionPreparedRedoTransaction,
   ChatSessionRequestListTransactionResult,
 } from '../services/chat-session-model-store.service';
 import {
@@ -135,22 +134,19 @@ type EditActionsContext = ChatViewWriteBridgeContext
     commitCheckpointRestoreRequestListTransaction?(
       sessionId: string | null | undefined,
       checkpointId: string | null | undefined,
-    ): ChatSessionRequestListTransactionResult | null | undefined;
+    ): Promise<ChatSessionRequestListTransactionResult | null | undefined> | ChatSessionRequestListTransactionResult | null | undefined;
+    commitCheckpointRestoreByIdentity?(
+      sessionId: string | null | undefined,
+      checkpointId: string,
+    ): Promise<unknown | null | undefined> | unknown | null | undefined;
     rollbackCheckpointRestoreRequestListTransaction?(
       sessionId: string | null | undefined,
       committed: ChatSessionRequestListTransactionResult | null | undefined,
     ): ChatSessionRequestListTransactionResult | null | undefined;
-    prepareCheckpointRedoRequestListTransaction?(
+    commitCheckpointRedoByIdentity?(
       sessionId: string | null | undefined,
-    ): ChatSessionPreparedRedoTransaction | null;
-    commitCheckpointRedoRequestListTransaction?(
-      sessionId: string | null | undefined,
-      prepared: ChatSessionPreparedRedoTransaction | null | undefined,
-    ): ChatSessionRequestListTransactionResult | null | undefined;
-    rollbackCheckpointRedoRequestListTransaction?(
-      sessionId: string | null | undefined,
-      prepared: ChatSessionPreparedRedoTransaction | null | undefined,
-    ): ChatSessionRequestListTransactionResult | null | undefined;
+      checkpointId: string,
+    ): Promise<unknown | null | undefined> | unknown | null | undefined;
     applyRequestListTransactionEffects?(
       sessionId: string,
       transaction: ChatSessionRequestListTransactionResult,
@@ -334,12 +330,16 @@ export class EditActionsHelper {
       liveTurnIds: liveTurnResponses.map(turn => turn.turnId ?? null),
       liveCheckpointIds: liveTurnResponses.map(turn => turn.request?.metadata?.checkpointId ?? null),
     });
-    const restoreResult = await this.checkpointReplayCoordinator.restoreCheckpoint(snapshot.checkpointId, {
-      turnId: truncatedTurnId,
-      listIndex,
-      captureRedoTurns,
-      truncateLiveTurnResponses,
-    });
+    const restoreResult = await this.checkpointReplayCoordinator.restoreCheckpointByIdentity(
+      snapshot.checkpointId,
+      async () => {
+        const sessionId = this.resolveCurrentSessionResource();
+        const committed = await this.ctx.commitCheckpointRestoreByIdentity?.(sessionId, snapshot.checkpointId);
+        if (!committed) {
+          throw new Error('Checkpoint restore host commit did not return a result');
+        }
+      },
+    );
 
     if (restoreResult.ok === false) {
       console.warn('[restoreToCheckpoint] 回滚文件部分失败:', restoreResult.detailErrors);
@@ -746,33 +746,28 @@ export class EditActionsHelper {
   /**
    * 重做文件变更（Redo，恢复被撤销的文件状态）
    */
-  async redoEdits(): Promise<void> {
+  async redoEdits(checkpointId?: string): Promise<void> {
     if (this.ctx.isWaiting) { this.ctx.message.warning('正在处理中，请稍候...'); return; }
 
     this.refreshWorkspaceCheckpointAccess();
 
-    const checkpointRedoTransaction = this.prepareCurrentSessionCheckpointRedoTransaction();
-    const checkpointRedoTurnResponses = checkpointRedoTransaction
-      ? checkpointRedoTransaction.turnResponses
-      : [];
-    const hasCheckpointRedoChat = checkpointRedoTransaction !== null && checkpointRedoTurnResponses.length > 0;
+    const normalizedCheckpointId = typeof checkpointId === 'string' ? checkpointId.trim() : '';
+    const hasCheckpointRedoChat = normalizedCheckpointId.length > 0;
 
     if (!hasCheckpointRedoChat && !this.ctx.editCheckpointService.canRedo) {
       this.ctx.message.info('没有可重做的文件变更');
       return;
     }
 
-    const previousTurnResponses = [...this.readCurrentSessionTurnResponses()];
-
     if (hasCheckpointRedoChat) {
-      const checkpointRedoResult = await this.checkpointReplayCoordinator.redoCheckpoint(
-        checkpointRedoTurnResponses,
-        previousTurnResponses,
-        {
-          applyCheckpointTimelineCommit: () =>
-            this.commitCurrentSessionCheckpointRedoTransaction(checkpointRedoTransaction),
-          rollbackCheckpointTimelineCommit: () =>
-            this.rollbackCurrentSessionCheckpointRedoTransaction(checkpointRedoTransaction),
+      const checkpointRedoResult = await this.checkpointReplayCoordinator.redoCheckpointByIdentity(
+        normalizedCheckpointId,
+        async () => {
+          const sessionId = this.resolveCurrentSessionResource();
+          const committed = await this.ctx.commitCheckpointRedoByIdentity?.(sessionId, normalizedCheckpointId);
+          if (!committed) {
+            throw new Error('Checkpoint redo host commit did not return a result');
+          }
         },
       );
       if (checkpointRedoResult.ok === false) {
@@ -802,66 +797,6 @@ export class EditActionsHelper {
     return sessionId ? this.ctx.readSessionCheckpointTimelineState?.(sessionId) ?? null : null;
   }
 
-  private prepareCurrentSessionCheckpointRedoTransaction(): ChatSessionPreparedRedoTransaction | null {
-    const sessionId = this.resolveCurrentSessionResource();
-    if (!sessionId) {
-      return null;
-    }
-
-    return this.ctx.prepareCheckpointRedoRequestListTransaction?.(sessionId) ?? null;
-  }
-
-  private commitCurrentSessionCheckpointRedoTransaction(
-    prepared: ChatSessionPreparedRedoTransaction | null,
-  ): ChatSessionRequestListTransactionResult | null {
-    if (!prepared) {
-      return null;
-    }
-
-    const committed = this.ctx.commitCheckpointRedoRequestListTransaction?.(
-      prepared.sessionResource,
-      prepared,
-    );
-    if (committed?.turnResponses) {
-      console.info('[AilyChat][RequestListBranchTrace]', {
-        phase: 'checkpoint-redo-commit',
-        sessionId: prepared.sessionResource,
-        requestListRevision: committed.revision ?? null,
-        retainedTurnIds: committed.retainedTurnIds ?? summarizeTurnResponseIds(committed.turnResponses),
-        restoredTurnIds: committed.restoredTurnIds ?? prepared.restoredTurnIds ?? [],
-        canonicalTurnIds: summarizeTurnResponseIds(committed.turnResponses),
-      });
-      return committed;
-    }
-
-    return null;
-  }
-
-  private rollbackCurrentSessionCheckpointRedoTransaction(
-    prepared: ChatSessionPreparedRedoTransaction | null,
-  ): ChatSessionRequestListTransactionResult | null {
-    if (!prepared) {
-      return null;
-    }
-
-    const rolledBack = this.ctx.rollbackCheckpointRedoRequestListTransaction?.(
-      prepared.sessionResource,
-      prepared,
-    );
-    if (rolledBack?.turnResponses) {
-      console.info('[AilyChat][RequestListBranchTrace]', {
-        phase: 'checkpoint-redo-rollback',
-        sessionId: prepared.sessionResource,
-        requestListRevision: rolledBack.revision ?? null,
-        retainedTurnIds: rolledBack.retainedTurnIds ?? summarizeTurnResponseIds(rolledBack.turnResponses),
-        restoredTurnIds: rolledBack.restoredTurnIds ?? [],
-        canonicalTurnIds: summarizeTurnResponseIds(rolledBack.turnResponses),
-      });
-      return rolledBack;
-    }
-
-    return null;
-  }
 
   /**
    * 接受单个文件�?AI 编辑

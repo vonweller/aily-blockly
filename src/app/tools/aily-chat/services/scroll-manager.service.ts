@@ -7,7 +7,7 @@ export type ChatRevealTarget =
   | 'pending-confirmation'
   | 'pending-question'
   | 'pending-plan-review'
-  | 'checkpoint-anchor';
+  | { readonly kind: 'turn'; readonly turnId: string };
 
 export interface ChatRevealOptions {
   readonly behavior?: ScrollBehavior;
@@ -96,16 +96,19 @@ export class ScrollManagerService {
   }
 
   captureAutoScrollState(): boolean {
-    const element = this.containerRef?.nativeElement as HTMLElement | undefined;
-    if (!element || !this.scrollLock) {
+    if (!this.containerRef?.nativeElement || !this.scrollLock) {
       return false;
     }
 
+    // Preserve the list-owned follow contract across the gap between a
+    // content-part DOM commit and the coalesced list-layout frame. VS Code
+    // captures this state before updateElementHeight; the lock is our
+    // equivalent and is cleared only by an actual user scroll.
     if (this._pendingExchangeTimeouts.size > 0) {
       return false;
     }
 
-    return this.isAtBottom(element);
+    return true;
   }
 
   scrollToBottomIfNeeded(shouldFollow: boolean, behavior: string = 'auto'): void {
@@ -659,13 +662,16 @@ export class ScrollManagerService {
   }
 
   private findRevealTargetElement(container: HTMLElement, target: ChatRevealTarget): HTMLElement | null {
+    if (typeof target !== 'string') {
+      const turnId = target.turnId.trim();
+      return turnId
+        ? [...container.querySelectorAll<HTMLElement>('[data-turn-id]')]
+          .find(element => element.dataset['turnId'] === turnId) ?? null
+        : null;
+    }
     switch (target) {
       case 'current-response':
         return container.querySelector<HTMLElement>('.dialog-box.chat-most-recent-response');
-      case 'checkpoint-anchor':
-        return this.normalizeRevealElement(container.querySelector<HTMLElement>(
-          '.chat-checkpoint-restore-surface, .dialog-box.user.has-turn-actions, .user-turn-actions',
-        ));
       case 'pending-confirmation':
         return this.normalizeRevealElement(container.querySelector<HTMLElement>(
           '.cag-item-pending-approval, .cag-item-confirmation-widget, .chat-confirmation-widget2, x-aily-confirmation-viewer',

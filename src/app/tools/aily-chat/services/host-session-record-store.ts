@@ -43,6 +43,7 @@ import {
   readChatAgentRuntimeModeSourceFromMetadata,
 } from '../core/chat-agent-runtime-mode';
 import { HostSessionOperationLog } from './host-session-operation-log';
+import { ChatPerformanceTracer } from './chat-perf-tracer';
 
 import type {
   HostSessionRecord,
@@ -400,9 +401,32 @@ export class HostSessionRecordStore {
           continue;
         }
 
+        const readStartedAt = performance.now();
         const content = this.readFileSync(filePath);
-        const log = this.getOperationLog(filePath);
-        const parsed = log.read(content);
+        ChatPerformanceTracer.recordDuration(
+          'host_record_file_read',
+          performance.now() - readStartedAt,
+          `bytes=${content.length}`,
+          { slowThresholdMs: 16 },
+        );
+
+        let log = this.operationLogs.get(filePath);
+        if (!log) {
+          log = new HostSessionOperationLog();
+          this.operationLogs.set(filePath, log);
+        }
+        const parseStartedAt = performance.now();
+        let parsed: HostSessionRecord;
+        try {
+          parsed = log.read(content);
+        } finally {
+          ChatPerformanceTracer.recordDuration(
+            'host_record_operation_log_parse',
+            performance.now() - parseStartedAt,
+            `bytes=${content.length}`,
+            { slowThresholdMs: 16 },
+          );
+        }
 
         if (Array.isArray(parsed)) {
           console.warn(`[ChatHistory] 忽略旧版 chatList-only 宿主持久化记录 (${filePath})`);
@@ -410,7 +434,17 @@ export class HostSessionRecordStore {
         }
 
         if (parsed.metadata && Array.isArray(parsed.turnResponses)) {
-          return this.normalizeRecord(parsed, sessionId, projectPath);
+          const normalizeStartedAt = performance.now();
+          try {
+            return this.normalizeRecord(parsed, sessionId, projectPath);
+          } finally {
+            ChatPerformanceTracer.recordDuration(
+              'host_record_normalize',
+              performance.now() - normalizeStartedAt,
+              `turns=${parsed.turnResponses.length}`,
+              { slowThresholdMs: 16 },
+            );
+          }
         }
       } catch (error) {
         console.warn(`[ChatHistory] 读取宿主持久化记录失败 (${filePath}):`, error);
@@ -514,7 +548,9 @@ export class HostSessionRecordStore {
     const runtimeTruth = normalizeHostSessionTurnRuntimeTruth(turn.runtimeTruth)
       ?? readHostSessionTurnRuntimeTruthFromMetadata(turn.request?.metadata);
     const responseParts = this.materializeEnvelopePlanPart(
-      turn.response.parts.map(part => clonePersistedValue(part)),
+      turn.response.parts
+        .filter(part => !this.isScopedSubagentPlanPart(part))
+        .map(part => clonePersistedValue(part)),
       planPart,
     );
 
@@ -597,15 +633,7 @@ export class HostSessionRecordStore {
     if (!part || part['type'] !== 'plan') {
       return undefined;
     }
-    const metadata = isRecord(part['metadata']) ? part['metadata'] : undefined;
-    if (
-      part['sourceAgentRole'] === 'subagent'
-      || typeof part['subAgentInvocationId'] === 'string'
-      || typeof part['parentToolCallId'] === 'string'
-      || metadata?.['sourceAgentRole'] === 'subagent'
-      || typeof metadata?.['subAgentInvocationId'] === 'string'
-      || typeof metadata?.['parentToolCallId'] === 'string'
-    ) {
+    if (this.isScopedSubagentPlanPart(part)) {
       return undefined;
     }
 
@@ -629,6 +657,20 @@ export class HostSessionRecordStore {
         ? { source: part['source'] }
         : {}),
     };
+  }
+
+  private isScopedSubagentPlanPart(value: unknown): boolean {
+    const part = isRecord(value) ? value : undefined;
+    if (!part || part['type'] !== 'plan') {
+      return false;
+    }
+    const metadata = isRecord(part['metadata']) ? part['metadata'] : undefined;
+    return part['sourceAgentRole'] === 'subagent'
+      || typeof part['subAgentInvocationId'] === 'string'
+      || typeof part['parentToolCallId'] === 'string'
+      || metadata?.['sourceAgentRole'] === 'subagent'
+      || typeof metadata?.['subAgentInvocationId'] === 'string'
+      || typeof metadata?.['parentToolCallId'] === 'string';
   }
 
   private findPersistedTurnPlanPart(parts: readonly TurnResponseTurn['response']['parts'][number][]): PlanPart | undefined {

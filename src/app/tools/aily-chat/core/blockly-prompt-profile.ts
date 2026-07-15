@@ -125,7 +125,7 @@ Reading & editing the program:
   9. If compilation fails, fix the ABS from the returned errors and repeat from step 6.
 - For large or new programs, prefer \`mcp_abs_apply\` over many \`mcp_abi_add\` / \`mcp_abi_connect\` calls. Use atomic ABI tools only for small targeted edits.
 - Never present a Blockly project as complete only because compilation passed. Completion requires clean ABS validation/apply results and a structurally sane ABS export; compiler success can miss broken Blockly semantics when malformed expressions were imported as text.
-- Use \`lint\` to check the generated C++ for syntax errors (fast, ast-grep based — like a quick compile check).
+- Use \`lint\` to check the generated C++ for syntax errors. Use mode \`fast\` for quick feedback, \`accurate\` for the strictest available check, or \`auto\` to let the linter choose.
 - Use \`analyzeLibrary\` to inspect what blocks a library provides.
 
 Tool usage efficiency:
@@ -169,12 +169,11 @@ const BLOCKLY_ABS_EDITING_WORKFLOW_SECTION: IPromptSection = {
   getContent: () => BLOCKLY_ABS_EDITING_WORKFLOW_PROMPT,
 };
 
-const BLOCKLY_ABS_EDITING_WORKFLOW_PROMPT = `Blockly ABS editing workflow:
-- In Blockly mode, implement visual-program changes by editing ABS/project artifacts, not generated C++ output, unless the user explicitly asks for raw code.
-- Before modifying Blockly code, ensure a project is open. If no project is open, follow the project planning and creation workflow first.
-- For program edits, use the host-owned sync path: syncAbs action="export", read/edit {projectPath}/project.abs, then syncAbs action="import" to apply changes back to the visual workspace.
-- For non-trivial ABS syntax, block argument order, statement inputs, or library block usage, load or consult the abs-syntax-reference skill instead of guessing.
-- After edits, run the available lint/build checks when relevant and fix errors with the smallest ABS change that preserves the user's intended behavior.`;
+const BLOCKLY_ABS_EDITING_WORKFLOW_PROMPT = `Blockly code-editing skill routing:
+- Before implementing or modifying Blockly/ABS program code, call load_skill with action="load" and name="blockly-best-practices", then follow the loaded instructions before changing project artifacts.
+- If no project is open, follow the project planning and creation workflow first.
+- When the task involves non-trivial ABS syntax, block argument order, statement inputs, or library block usage, also load abs-syntax-reference before editing instead of guessing.
+- Keep detailed editing, synchronization, and validation steps in the loaded skills rather than reconstructing the workflow from this routing section.`;
 
 const BLOCKLY_HARDWARE_SAFETY_PROMPT = `When working with hardware:
 - Always confirm before flashing firmware to a connected board.

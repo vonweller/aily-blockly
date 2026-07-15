@@ -565,8 +565,11 @@ export class ChatHistoryService implements OnDestroy {
     }
   }
 
-  async saveHostRecordAsync(record: LiveHostSessionRecord): Promise<void> {
-    await this.hostSessionPersistenceBridge.saveHostRecordAsync(record);
+  async saveHostRecordAsync(
+    record: LiveHostSessionRecord,
+    options?: { readonly allowEmptyTranscript?: boolean },
+  ): Promise<void> {
+    await this.hostSessionPersistenceBridge.saveHostRecordAsync(record, options);
     if (record.sessionId) {
       this.emitHostSessionChanged({ sessionId: record.sessionId, scope: 'persisted', kind: 'updated' });
     }

@@ -179,6 +179,11 @@
       @if (paneStageSurface.showConversation) {
       <!-- <ngx-simplebar #simplebarRef [options]="options"> -->
       <div class="dialogs" #dialogsContent>
+        @if (isLoadingOlderVisibleTurns) {
+          <div class='history-page-loading' role='status' aria-live='polite'>
+            <i class='codicon codicon-loading codicon-modifier-spin'></i>
+          </div>
+        }
         <aily-chat-transcript-list-renderer
           [items]="renderedDialogItems"
           [topSpacerHeight]="dialogVirtualTopSpacerHeight"
