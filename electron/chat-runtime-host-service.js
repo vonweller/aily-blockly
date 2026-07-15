@@ -264,6 +264,7 @@ class ChatRuntimeHostProcessService {
     this.resourceOperationCommandSeed = 0;
     this.pendingResourceOperationCommands = new Map();
     this.pendingExecutionStarts = new Map();
+    this.pendingExecutionTurnIds = new Map();
     this.showSystemNotification = typeof options.showSystemNotification === 'function'
       ? options.showSystemNotification
       : showNotification;
@@ -480,6 +481,7 @@ class ChatRuntimeHostProcessService {
     }
     await this.reconcileSessionExecutionState(submittedSessionId);
     const runningState = this.hostSessionStore.beginSubmittedTurn(request);
+    this.pendingExecutionTurnIds.set(runningState.sessionId, runningState.activeTurnId);
     const requestMetadata = request && request.requestMetadata && typeof request.requestMetadata === 'object'
       ? request.requestMetadata
       : request && request.metadata && typeof request.metadata === 'object'
@@ -520,8 +522,15 @@ class ChatRuntimeHostProcessService {
         transcriptRevision: Number(runningState.transcriptRevision) || 0,
       });
     } catch (error) {
+      this.clearPendingExecutionTransition(runningState.sessionId, runningState.activeTurnId);
       await this.failSubmittedTurnWithError(runningState.sessionId, error);
       throw error;
+    }
+    const currentState = this.hostSessionStore.buildSessionState(runningState.sessionId);
+    if (currentState?.requestInProgress !== true
+      || currentState.activeTurnId !== runningState.activeTurnId) {
+      this.clearPendingExecutionTransition(runningState.sessionId, runningState.activeTurnId);
+      return currentState;
     }
     this.replayTranscriptForAttachedSession(runningState.sessionId);
     this.broadcastSessionState('runtime-status', runningState);
@@ -545,6 +554,7 @@ class ChatRuntimeHostProcessService {
       },
     };
     if (!this.dispatchSubmittedTurnStart(startTurnCommand, runningState.sessionId)) {
+      this.clearPendingExecutionTransition(runningState.sessionId, runningState.activeTurnId);
       const error = new Error('[AilyChat][RuntimeHost] No registered runtime owner.');
       error.code = 'runtime_owner_unavailable';
       error.retryable = true;
@@ -580,6 +590,7 @@ class ChatRuntimeHostProcessService {
     const requestedTurnId = normalizeSessionId(stopCommand && stopCommand.turnId);
     const previousState = this.hostSessionStore.buildSessionState(sessionId);
     const targetTurnId = requestedTurnId || (previousState && previousState.activeTurnId) || null;
+    this.clearPendingExecutionTransition(sessionId, targetTurnId);
     const stoppedTranscript = this.hostSessionStore.cancelRunningTurn(
       sessionId,
       targetTurnId,
@@ -1077,6 +1088,7 @@ class ChatRuntimeHostProcessService {
         if (this.pendingExecutionStarts.get(sessionId) === startPromise) {
           this.pendingExecutionStarts.delete(sessionId);
         }
+        this.clearPendingExecutionTransition(sessionId, command.turnId);
       });
     this.pendingExecutionStarts.set(sessionId, startPromise);
     void startPromise.catch(error => {
@@ -1109,6 +1121,11 @@ class ChatRuntimeHostProcessService {
     const ownerRequestInProgress = ownerState?.requestInProgress === true;
     const hostTurnId = typeof hostState?.activeTurnId === 'string' ? hostState.activeTurnId.trim() : '';
     const ownerTurnId = typeof ownerState?.activeTurnId === 'string' ? ownerState.activeTurnId.trim() : '';
+    const pendingExecutionTurnId = this.pendingExecutionTurnIds.get(normalizedSessionId) || '';
+    const executionStartPending = hostRequestInProgress
+      && !ownerRequestInProgress
+      && !!hostTurnId
+      && pendingExecutionTurnId === hostTurnId;
     const turnMismatch = hostRequestInProgress
       && ownerRequestInProgress
       && !!hostTurnId
@@ -1122,7 +1139,7 @@ class ChatRuntimeHostProcessService {
       }]);
     }
 
-    if (hostRequestInProgress && (!ownerRequestInProgress || turnMismatch)) {
+    if (hostRequestInProgress && (!ownerRequestInProgress || turnMismatch) && !executionStartPending) {
       const error = new Error(turnMismatch
         ? '[AilyChat][RuntimeHost] Execution owner turn identity diverged from the canonical response model.'
         : '[AilyChat][RuntimeHost] Execution owner no longer has the canonical active turn.');
@@ -1131,7 +1148,8 @@ class ChatRuntimeHostProcessService {
       await this.failSubmittedTurnWithError(normalizedSessionId, error);
     }
 
-    const staleGateCleared = ownerRequestInProgress !== hostRequestInProgress || turnMismatch;
+    const staleGateCleared = !executionStartPending
+      && (ownerRequestInProgress !== hostRequestInProgress || turnMismatch);
     if (staleGateCleared) {
       console.warn('[AilyChat][ExecutionStateReconciled]', JSON.stringify({
         sessionId: normalizedSessionId,
@@ -1142,7 +1160,15 @@ class ChatRuntimeHostProcessService {
         turnMismatch,
       }));
     }
-    return { staleGateCleared };
+    return { staleGateCleared, executionStartPending };
+  }
+
+  clearPendingExecutionTransition(sessionId, turnId) {
+    const pendingTurnId = this.pendingExecutionTurnIds.get(sessionId);
+    if (!pendingTurnId || (turnId && pendingTurnId !== turnId)) {
+      return;
+    }
+    this.pendingExecutionTurnIds.delete(sessionId);
   }
 
   async dispatchRuntimeOwnerCommandAndWaitIfAvailable(method, args, sessionId) {
