@@ -212,7 +212,7 @@ export class ChatViewService {
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe((event) => {
         if (event.sessionResource === this.currentViewSessionResource) {
-          if (this.isLiveTranscriptOnlyModelChange(event)) {
+          if (this.isAttachedRendererOwnedModelChange(event)) {
             return;
           }
           this.scheduleSessionModelViewRefresh();
@@ -710,9 +710,12 @@ export class ChatViewService {
     this.sessionViewModelChangedSubject.next();
   }
 
-  private isLiveTranscriptOnlyModelChange(event: ChatSessionModelStoreChangedEvent): boolean {
+  private isAttachedRendererOwnedModelChange(event: ChatSessionModelStoreChangedEvent): boolean {
     return event.kind === 'updated'
-      && (event.reason === 'appendTransientTurn' || event.reason === 'turnDelta');
+      && (event.reason === 'appendTransientTurn'
+        || event.reason === 'turnDelta'
+        || event.reason === 'inputDraft'
+        || event.reason === 'projection');
   }
 
   private scheduleSessionModelViewRefresh(): void {

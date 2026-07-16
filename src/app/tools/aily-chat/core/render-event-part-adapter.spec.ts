@@ -1785,6 +1785,32 @@ describe('RenderEventPartAdapter', () => {
     ]);
   });
 
+  it('completes the todo invocation when the separate todo state is published', () => {
+    processCurrent({
+      type: 'tool_call_begin',
+      toolCallId: 'todo-call-1',
+      toolName: 'manage_todo_list',
+      args: { todoList: [{ id: 1, title: 'Build project', status: 'in-progress' }] },
+      timestamp: 1,
+    } as any);
+
+    processCurrent({
+      type: 'todo_update',
+      sessionId: 'sess-1',
+      summary: 'Todo list updated',
+      items: [{ id: 1, title: 'Build project', status: 'in-progress' }],
+      timestamp: 2,
+    } as any);
+
+    const parts = store.getPartsForHandle(currentHandle);
+    const invocation = parts.find(part => part.type === 'tool_call') as any;
+    const todoState = parts.find(part => part.type === 'state') as any;
+    expect(invocation.state).toBe('done');
+    expect(invocation.metadata.toolSpecificData.kind).toBe('todoList');
+    expect(todoState.state).toBe('done');
+    expect(todoState.metadata.listState).toBe('doing');
+  });
+
   it('projects todo updates with missing items as an empty canonical todo state', () => {
     expect(() => processCurrent({
       type: 'todo_update',

@@ -787,6 +787,7 @@ export class RenderEventPartAdapter {
       }
 
       this._store.patchToolCallForHandle(handle, part.toolCallId, {
+        state: 'done',
         metadata: {
           toolSpecificData: buildTodoToolSpecificData(todoMetadata),
         },

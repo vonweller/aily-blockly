@@ -71,6 +71,8 @@ export interface ChatVisibleTranscriptDialogItemPatch {
   readonly index: number;
   readonly item: ChatVisibleTranscriptDialogItem;
   readonly kind: ChatVisibleTranscriptChangeKind;
+  /** Response-model parts changed by the originating host delta. */
+  readonly changedParts?: readonly ChatPart[];
 }
 
 interface ChatVisibleTranscriptItemRecord {

@@ -820,14 +820,14 @@ export class ChatMessagePartItemComponent implements OnChanges {
   private updateStreamingConfig(): void {
     if (this.streamingConfig.hasNextChunk === this.doing
       && this.streamingConfig.enableAnimation === false
-      && this.streamingConfig.buffering === 'word'
+      && this.streamingConfig.buffering === 'paragraph'
       && this.streamingConfig.impliedWordLoadRate === this.impliedWordLoadRate) {
       return;
     }
     this.streamingConfig = {
       hasNextChunk: this.doing,
       enableAnimation: false,
-      buffering: 'word',
+      buffering: 'paragraph',
       impliedWordLoadRate: this.impliedWordLoadRate,
     };
   }

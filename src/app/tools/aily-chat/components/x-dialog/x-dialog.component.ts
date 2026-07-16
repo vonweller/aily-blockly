@@ -1180,7 +1180,10 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
     return {
       hasNextChunk: this.effectiveDoing,
       enableAnimation,
-      buffering: this.effectiveDoing ? 'off' : 'paragraph',
+      // Match VS Code's IncrementalDOMMorpher default: active markdown is
+      // committed at stable block boundaries instead of reparsing the full
+      // growing document for every host revision.
+      buffering: 'paragraph',
       impliedWordLoadRate: this.item.contentUpdateTimings?.impliedWordLoadRate,
     };
   }
@@ -1233,7 +1236,10 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
 
   applyVisibleTranscriptItemPatch(
     nextItem: ChatVisibleTranscriptDialogItem,
-    options?: { readonly detectChanges?: boolean },
+    options?: {
+      readonly detectChanges?: boolean;
+      readonly changedParts?: readonly ChatPart[];
+    },
   ): boolean {
     if (!nextItem || nextItem.id !== this.item?.id) {
       return false;
@@ -1243,7 +1249,7 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
     if (options?.detectChanges === false) {
       if (this.hasStructuredAilyContent) {
         return this.messagePartsComponent
-          ? this.patchMountedMessageParts(this.messagePartsComponent)
+          ? this.patchMountedMessageParts(this.messagePartsComponent, options?.changedParts)
           : true;
       }
       return true;
@@ -1261,7 +1267,7 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
     if (this.hasStructuredAilyContent) {
       this.syncStreamingConfig(this.effectiveDoing);
       if (this.messagePartsComponent) {
-        this.patchMountedMessageParts(this.messagePartsComponent);
+        this.patchMountedMessageParts(this.messagePartsComponent, options?.changedParts);
       }
       // The part renderer owns only the mounted part subtree. Row chrome such
       // as footer model/billing metadata, completion time, feedback, and
@@ -1282,9 +1288,13 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
     return true;
   }
 
-  private patchMountedMessageParts(component: ChatMessagePartsComponent): boolean {
+  private patchMountedMessageParts(
+    component: ChatMessagePartsComponent,
+    changedParts?: readonly ChatPart[],
+  ): boolean {
     return component.applyVisiblePartsPatch({
       parts: this.effectiveParts,
+      changedParts,
       doing: this.effectiveDoing,
       sessionId: this.sessionId,
       turnResponse: this.activityTurnResponse,

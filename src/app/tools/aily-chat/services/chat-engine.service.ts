@@ -413,6 +413,7 @@ import {
   ChatVisibleTranscriptModel,
   type ChatVisibleTranscriptChange,
 } from '../core/chat-visible-transcript-model';
+import { turnResponsePartsToDisplayChatParts } from '../core/turn-response-part-mapper';
 import type { IChatContext } from '../core/chat-context';
 import type { DialogTurnContext } from '../core/user-turn-action-target';
 import { EditActionsHelper, type RestoreCheckpointConfirmation } from '../helpers/edit-actions.helper';
@@ -1818,32 +1819,11 @@ export class ChatEngineService implements IChatContext {
     const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
     const draftText = typeof value === 'string' ? value : '';
     const modelStore = (this as unknown as {
-      chatSessionModelStore?: Pick<ChatSessionModelStoreService, 'get' | 'updateMetadata'>;
+      chatSessionModelStore?: Pick<ChatSessionModelStoreService, 'get' | 'updateInputDraft'>;
     }).chatSessionModelStore;
     const model = targetSessionId ? modelStore?.get?.(targetSessionId) : undefined;
-    if (targetSessionId && model) {
-      if (typeof modelStore?.updateMetadata === 'function') {
-        modelStore.updateMetadata(targetSessionId, {
-          inputState: {
-            ...model.inputState,
-            draftText,
-          },
-        });
-        return true;
-      }
-
-      if (typeof (model as unknown as { updateMetadata?: unknown }).updateMetadata === 'function') {
-        (model as unknown as { updateMetadata: (patch: ChatSessionModelMetadataPatch) => void }).updateMetadata({
-          inputState: {
-            ...model.inputState,
-            draftText,
-          },
-        });
-        return true;
-      } else {
-        // Prototype-style test doubles may expose read-only model slices. Treat
-        // them as no-model legacy seams rather than writing a parallel truth.
-      }
+    if (targetSessionId && model && modelStore) {
+      return modelStore.updateInputDraft(targetSessionId, draftText);
     }
 
     if (Object.prototype.hasOwnProperty.call(this, 'inputValue')) {
@@ -6950,11 +6930,13 @@ export class ChatEngineService implements IChatContext {
     const startedAt = typeof performance !== 'undefined' && typeof performance.now === 'function'
       ? performance.now()
       : Date.now();
+    const changedPartsByTurnId = new Map<string, ReturnType<typeof turnResponsePartsToDisplayChatParts>>();
     for (const event of events) {
       const turnId = typeof event.turnId === 'string' ? event.turnId.trim() : '';
       if (!turnId) {
         continue;
       }
+      changedPartsByTurnId.set(turnId, turnResponsePartsToDisplayChatParts(event.parts));
       if (event.turn && !this.visibleTranscriptModel.getResponseItem(turnId)) {
         this.visibleTranscriptModel.insertTurnRequest(event.turn);
         this.visibleTranscriptModel.upsertTurnResponse(event.turn);
@@ -6967,7 +6949,12 @@ export class ChatEngineService implements IChatContext {
     if (changes.length === 0) {
       return;
     }
-    const patches = this.visibleTranscriptModel.toDialogItemPatches(changes);
+    const patches = this.visibleTranscriptModel.toDialogItemPatches(changes).map(patch => {
+      const changedParts = patch.item.role === 'aily'
+        ? changedPartsByTurnId.get(patch.item.turnId ?? '')
+        : undefined;
+      return changedParts?.length ? { ...patch, changedParts } : patch;
+    });
     const previousItems = this.dialogItemsCache?.sessionResource === targetSessionId
       ? this.dialogItemsCache.items
       : null;
@@ -7871,6 +7858,12 @@ export class ChatEngineService implements IChatContext {
       : '';
     if (!targetSessionId) {
       return false;
+    }
+
+    // Cancellation is a session-owned, idempotent operation. Repeated UI,
+    // queue, or shutdown callers join the already-dispatched stop boundary.
+    if (this.stoppingRuntimeSessionIds.has(targetSessionId)) {
+      return true;
     }
 
     const runtimeState = this.readRuntimeHostSessionState(targetSessionId);
