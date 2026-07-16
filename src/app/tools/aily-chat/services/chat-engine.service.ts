@@ -1288,10 +1288,6 @@ export class ChatEngineService implements IChatContext {
     readCurrentSessionResource: () => this.resolveCurrentViewSessionResource(),
     readCheckpointNavigationState: (request) =>
       this.runtimeHostForView().readCheckpointNavigationState(request),
-    getRequestCheckpointMetadataByCheckpointId: (checkpointId) =>
-      this.editCheckpointService.getRequestCheckpointMetadataByCheckpointId(checkpointId),
-    getSettledRequestCheckpointMetadataByCheckpointId: (checkpointId) =>
-      this.editCheckpointService.getSettledRequestCheckpointMetadataByCheckpointId(checkpointId),
     getWorkspaceCheckpointPresentationMode: () => this.workspaceCheckpointPresentationMode,
     ensureWorkspaceCheckpointPresentationMode: () => (
       this.workspaceCheckpointProvider.ensurePresentationMode?.() ?? this.workspaceCheckpointPresentationMode
@@ -1866,6 +1862,13 @@ export class ChatEngineService implements IChatContext {
     if (!targetSessionId) {
       this.detachVisibleTranscript();
       return null;
+    }
+
+    const currentAttachment = this.visibleTranscriptAttachment;
+    if (currentAttachment?.sessionId === targetSessionId
+      && currentAttachment.model === this.visibleTranscriptModel
+      && this.isVisibleTranscriptAttachmentCurrent(currentAttachment)) {
+      return currentAttachment;
     }
 
     const currentGeneration = Number.isFinite(this.visibleTranscriptAttachmentGeneration)
@@ -5411,52 +5414,6 @@ export class ChatEngineService implements IChatContext {
     return true;
   }
 
-  private async commitRestoredCheckpointForwardBranchBeforeUserTurn(sessionId?: string | null): Promise<boolean> {
-    const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
-    if (!targetSessionId) {
-      return false;
-    }
-
-    const model = this.chatSessionModelStore?.get?.(targetSessionId);
-    const getCheckpointTimelineState = (model as unknown as {
-      getCheckpointTimelineState?: ChatSessionModel['getCheckpointTimelineState'];
-    } | undefined)?.getCheckpointTimelineState;
-    const checkpointTimelineState = model && typeof getCheckpointTimelineState === 'function'
-      ? getCheckpointTimelineState.call(model)
-      : null;
-    const transaction = this.chatSessionModelStore?.commitRestoredCheckpointForwardBranch?.(targetSessionId) ?? null;
-    if (!model || !transaction) {
-      console.info('[AilyChat][CheckpointRestoreTrace]', {
-        phase: 'commit-forward-branch-skip',
-        sessionId: targetSessionId,
-        hasModel: !!model,
-        hasRequestListTransaction: !!transaction,
-        timeline: this.summarizeCheckpointTimelineForTrace(checkpointTimelineState),
-      });
-      return false;
-    }
-
-    const turnResponses = transaction.effects.executionHost.hydrateTurnResponses;
-    const protocolTruncation = transaction.effects.executionHost.protocolTruncation;
-    console.info('[AilyChat][CheckpointRestoreTrace]', {
-      phase: 'commit-forward-branch',
-      sessionId: targetSessionId,
-      beforeTimeline: this.summarizeCheckpointTimelineForTrace(checkpointTimelineState),
-      afterTimeline: this.summarizeCheckpointTimelineForTrace(transaction.checkpointTimelineState),
-      retainedTurnIds: transaction.retainedTurnIds,
-      discardedTurnIds: transaction.discardedTurnIds,
-      protocolTruncation,
-      transactionKind: transaction.kind,
-      transactionRevision: transaction.revision,
-    });
-
-    await this.requestHostEditTrackingRestore(targetSessionId, turnResponses);
-
-    this.applyRequestListTransactionEffects(targetSessionId, transaction);
-    this.triggerSyncDetectChanges?.();
-    return true;
-  }
-
   private async commitCheckpointRestoreThroughHost(
     sessionId: string | null | undefined,
     checkpointId: string | null | undefined,
@@ -8864,9 +8821,7 @@ Do not create non-existent boards and libraries.
         throw new Error('executePreparedUserSend requires the target session to be attached before submit.');
       }
 
-      const checkpointStartedAt = performance.now();
-      await this.commitRestoredCheckpointForwardBranchBeforeUserTurn(targetSessionId);
-      const checkpointMs = performance.now() - checkpointStartedAt;
+      const checkpointMs = 0;
       this.markVisibleSessionProjectionOwner(targetSessionId);
 
       if (options?.resetPreparedUserTurnState) {
