@@ -2451,6 +2451,12 @@ class ChatRuntimeHostSessionStore {
       throw error;
     }
     const checkpointTimeline = this.checkpointTimelines.get(sessionId);
+    const checkpointProtocolTruncation = checkpointTimeline
+      ? this.buildCheckpointProtocolTruncation(
+          checkpointTimeline,
+          this.buildTranscriptSnapshot(sessionId),
+        )
+      : undefined;
     if (checkpointTimeline) {
       // VS Code splices the disabled forward checkpoint branch when a new
       // request starts after restore. The visible canonical transcript already
@@ -2458,9 +2464,15 @@ class ChatRuntimeHostSessionStore {
       // the atomic model-side commit before seeding the new request.
       this.checkpointTimelines.delete(sessionId);
     }
+    const effectiveRequest = checkpointTimeline
+      ? {
+          ...request,
+          protocolTruncation: checkpointProtocolTruncation,
+        }
+      : request;
     const activeTurnId = this.normalizeActiveTurnId(request && request.activeResponseHandle)
       || this.createSubmittedTurnId(sessionId);
-    const submittedRequest = this.buildSubmittedRequestWithStableId(request, activeTurnId);
+    const submittedRequest = this.buildSubmittedRequestWithStableId(effectiveRequest, activeTurnId);
     this.cacheSubmittedTurnInventoryMetadata(sessionId, submittedRequest);
     this.activeSubmittedRequests.set(sessionId, clonePayload(submittedRequest));
     const transcript = this.transcriptBuilder.seedSubmittedTurn({
@@ -2469,7 +2481,9 @@ class ChatRuntimeHostSessionStore {
       request: submittedRequest,
       revision: Number(previousState && previousState.transcriptRevision) || 0,
       timestamp: Date.now(),
-      protocolTruncation: request && request.protocolTruncation ? request.protocolTruncation : null,
+      protocolTruncation: submittedRequest && submittedRequest.protocolTruncation
+        ? submittedRequest.protocolTruncation
+        : null,
     });
     const nextState = {
       ...previousState,
@@ -2493,6 +2507,27 @@ class ChatRuntimeHostSessionStore {
     };
     this.sessionStates.set(sessionId, clonePayload(nextState));
     return clonePayload(nextState);
+  }
+
+  buildCheckpointProtocolTruncation(timeline, transcript) {
+    const retainedTurnIds = (transcript && Array.isArray(transcript.turnResponses)
+      ? transcript.turnResponses
+      : [])
+      .map(turn => normalizeOptionalString(turn && turn.turnId))
+      .filter(Boolean);
+    const discardedTurnIds = (timeline && Array.isArray(timeline.turnResponses)
+      ? timeline.turnResponses.slice(timeline.currentTurnResponseCount)
+      : [])
+      .map(turn => normalizeOptionalString(turn && turn.turnId))
+      .filter(Boolean);
+    return discardedTurnIds.length > 0
+      ? {
+          kind: 'removeFrom',
+          turnId: discardedTurnIds[0],
+          retainedTurnIds,
+          discardedTurnIds,
+        }
+      : null;
   }
 
   buildSubmittedRequestWithStableId(request, activeTurnId) {

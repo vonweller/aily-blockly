@@ -69,7 +69,7 @@ export interface ChatTranscriptPatchResult {
             (editModelToggle)="editModelToggle.emit($event)"
             (editAddFile)="editAddFile.emit($event)"
             (editAddFolder)="editAddFolder.emit($event)"
-            (taskAction)="taskAction.emit($event)"
+            (taskAction)="emitTaskAction($event)"
             [contentHeightChangeHandler]="rowContentHeightChangeHandler" />
         </div>
       }
@@ -477,6 +477,13 @@ export class ChatTranscriptListRendererComponent implements AfterViewInit, OnDes
         this.rowHeightByItemId.delete(itemId);
       }
     }
+  }
+
+  emitTaskAction(detail: ChatTaskActionDetail): void {
+    this.taskAction.emit({
+      ...detail,
+      sessionResource: detail.sessionResource?.trim() || this.sessionId.trim(),
+    });
   }
 }
 

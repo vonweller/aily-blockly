@@ -387,6 +387,7 @@ export class SessionLifecycleHelper {
   }
 
   async forkFromTurn(options: {
+    sourceSessionId?: string;
     turnId: string;
     requestContent: string;
     displayContent: string;
@@ -397,7 +398,7 @@ export class SessionLifecycleHelper {
       return false;
     }
 
-    const sourceSessionId = this.resolveCurrentViewSessionResource();
+    const sourceSessionId = options.sourceSessionId?.trim() || this.resolveCurrentViewSessionResource();
     if (!sourceSessionId) {
       this.ctx.message.warning('当前没有可分叉的会话');
       return false;
@@ -1854,6 +1855,12 @@ export class SessionLifecycleHelper {
     const hasDurableTurnResponses = Array.isArray(durableTurnResponses) && durableTurnResponses.length > 0;
 
     if (!hasDurableTurnResponses) {
+      const hasExplicitDurableRecord = !!restoreRequest.hostRecord
+        || !!restoreRequest.sessionContent.hostRecord;
+      if (hasExplicitDurableRecord) {
+        return Array.isArray(model.turnResponses) && model.turnResponses.length === 0;
+      }
+
       const modelTurns = model.turnResponses;
       if (Array.isArray(modelTurns) && modelTurns.length > 0) {
         return true;
@@ -1864,7 +1871,7 @@ export class SessionLifecycleHelper {
         return true;
       }
 
-      return true;
+      return false;
     }
 
     if (this.turnResponsesExactlyMatchDurableSession(model.turnResponses, durableTurnResponses)) {
