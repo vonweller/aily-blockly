@@ -5,11 +5,13 @@
   (goMainEvent)="returnStandaloneSurfaceToEntryInventory()"
   (closeEvent)="returnStandaloneSurfaceToMain()">
   <ng-container header-title-prefix>
-    <aily-chat-session-title-control
-      [surface]="sessionTitleSurfaceModel"
-      [surfaceClickEnabled]="viewState.isSessionTitleSurfaceClickEnabled"
-      (actionRequested)="handleSessionTitleActionRequested($event)"
-      (surfaceClicked)="focusChatInputFromTitleControl()"></aily-chat-session-title-control>
+    @if (sessionTitleSurfaceModel.shouldRender) {
+      <aily-chat-session-title-control
+        [surface]="sessionTitleSurfaceModel"
+        [surfaceClickEnabled]="viewState.isSessionTitleSurfaceClickEnabled"
+        (actionRequested)="handleSessionTitleActionRequested($event)"
+        (surfaceClicked)="focusChatInputFromTitleControl()"></aily-chat-session-title-control>
+    }
   </ng-container>
   <ng-container header-btns>
     <ng-container *ngTemplateOutlet="hostHeaderActionsTemplate"></ng-container>
@@ -19,11 +21,13 @@
 } @else {
 <app-tool-container [title]="currentPaneTitle ? '' : ('AILY_CHAT.SERVICE_TITLE' | translate)" (closeEvent)="surfaceShellCoordinator.close()">
   <ng-container header-title-prefix>
-    <aily-chat-session-title-control
-      [surface]="sessionTitleSurfaceModel"
-      [surfaceClickEnabled]="viewState.isSessionTitleSurfaceClickEnabled"
-      (actionRequested)="handleSessionTitleActionRequested($event)"
-      (surfaceClicked)="focusChatInputFromTitleControl()"></aily-chat-session-title-control>
+    @if (sessionTitleSurfaceModel.shouldRender) {
+      <aily-chat-session-title-control
+        [surface]="sessionTitleSurfaceModel"
+        [surfaceClickEnabled]="viewState.isSessionTitleSurfaceClickEnabled"
+        (actionRequested)="handleSessionTitleActionRequested($event)"
+        (surfaceClicked)="focusChatInputFromTitleControl()"></aily-chat-session-title-control>
+    }
   </ng-container>
   <ng-container header-btns>
     <ng-container *ngTemplateOutlet="hostHeaderActionsTemplate"></ng-container>
