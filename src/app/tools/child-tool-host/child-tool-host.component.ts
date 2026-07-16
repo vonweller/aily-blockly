@@ -6,12 +6,13 @@ import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { Connection, WindowMessenger, connect } from 'penpal';
-import { Subscription } from 'rxjs';
+import { firstValueFrom, Subscription } from 'rxjs';
 import { SubWindowComponent } from '../../components/sub-window/sub-window.component';
 import { ToolContainerComponent } from '../../components/tool-container/tool-container.component';
 import { ChildToolConfig, getChildToolConfig } from '../../configs/tool.config';
 import { ChildToolHostInfo, ChildToolProcessService } from '../../services/child-tool-process.service';
 import { ChildAppHostRegistryService } from '../../services/child-app-host-registry.service';
+import { AuthService } from '../../services/auth.service';
 import { ElectronService } from '../../services/electron.service';
 import { LogService } from '../../services/log.service';
 import { ProjectService } from '../../services/project.service';
@@ -102,6 +103,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     private message: NzMessageService,
     private logService: LogService,
     private childHostRegistry: ChildAppHostRegistryService,
+    private authService: AuthService,
     private electronService: ElectronService,
   ) {
     this.langSubscription = this.translate.onLangChange.subscribe(() => this.syncHostContext());
@@ -427,6 +429,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
         openExternal: (url: string) => {
           (window as any).electronAPI?.other?.openByBrowser?.(url);
         },
+        startGithubLogin: (payload: { inviteCode?: string } = {}) => this.startGithubLogin(payload),
         sendToolSignal: async (signal: string, payload: any = {}) => {
           return await this.sendToolSignalFromChild(signal, payload);
         }
@@ -781,9 +784,27 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       workspace: this.resolveHostWorkspace(),
       capabilities: {
         snapshotRefresh: true,
-        userInteractionNotifications: true
+        userInteractionNotifications: true,
+        hostGithubLogin: this.resolvedToolId === 'aily-chat'
       }
     };
+  }
+
+  private async startGithubLogin(payload: { inviteCode?: string } = {}): Promise<Record<string, unknown>> {
+    if (this.resolvedToolId !== 'aily-chat') {
+      throw new Error('GitHub login is only available to Aily Chat');
+    }
+
+    const inviteCode = typeof payload?.inviteCode === 'string'
+      ? payload.inviteCode.trim().slice(0, 11)
+      : '';
+    const response = await firstValueFrom(this.authService.startGitHubOAuth(inviteCode || undefined));
+    if (!response?.authorization_url) {
+      throw new Error('GitHub authorization URL is unavailable');
+    }
+
+    this.electronService.openUrl(response.authorization_url);
+    return { ok: true, state: response.state };
   }
 
   private async notifyUserInteraction(payload: any): Promise<Record<string, unknown>> {
