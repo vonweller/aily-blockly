@@ -558,11 +558,26 @@ export class SerialMonitorComponent {
     this.cd.detectChanges();
   }
 
-  selectBaud(item) {
+  async selectBaud(item) {
     this.cancelUploadReconnect();
-    this.currentBaudRate = item.name;
     this.closeBaudList();
+
+    const nextBaudRate = String(item.name);
+    if (nextBaudRate === this.currentBaudRate) {
+      return;
+    }
+
+    if (this.serialMonitorService.isPortConnected()) {
+      const updated = await this.serialMonitorService.updateBaudRate(Number(item.value ?? item.name));
+      if (!updated) {
+        this.cd.detectChanges();
+        return;
+      }
+    }
+
+    this.currentBaudRate = nextBaudRate;
     this.saveSerialConfig();
+    this.cd.detectChanges();
   }
 
   async switchPort() {

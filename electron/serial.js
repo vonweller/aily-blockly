@@ -185,6 +185,11 @@ function createThrottledSerialPort(options, flushInterval = DEFAULT_FLUSH_INTERV
      * 设置串口信号 (DTR/RTS 等)
      */
     set: (options, callback) => port.set(options, callback),
+
+    /**
+     * 在保持串口打开的情况下更新波特率
+     */
+    update: (options, callback) => port.update(options, callback),
     
     /**
      * 获取 DTR 信号状态

@@ -329,6 +329,52 @@ export class SerialMonitorService {
   }
 
   /**
+   * 在不关闭串口的情况下切换波特率
+   */
+  updateBaudRate(baudRate: number): Promise<boolean> {
+    if (!this.isConnected || !this.serialPort) {
+      this.message.warning('串口未连接，请先打开串口');
+      return Promise.resolve(false);
+    }
+
+    if (!Number.isFinite(baudRate) || baudRate <= 0) {
+      this.message.error('无效的串口波特率');
+      return Promise.resolve(false);
+    }
+
+    if (typeof this.serialPort.update !== 'function') {
+      this.message.error('当前串口不支持直接切换波特率');
+      return Promise.resolve(false);
+    }
+
+    return new Promise((resolve) => {
+      try {
+        this.serialPort.update({ baudRate }, (err: any) => {
+          if (err) {
+            console.error('切换串口波特率失败:', err);
+            this.message.error(`切换串口波特率失败: ${err.message || err}`);
+            resolve(false);
+            return;
+          }
+
+          this.dataList.push({
+            time: new Date().toLocaleTimeString(),
+            data: Buffer.from(`[波特率已切换: ${baudRate}]`),
+            dir: 'SYS',
+            isError: false
+          });
+          this.dataUpdated.next();
+          resolve(true);
+        });
+      } catch (error) {
+        console.error('切换串口波特率失败:', error);
+        this.message.error(`切换串口波特率失败: ${error.message || error}`);
+        resolve(false);
+      }
+    });
+  }
+
+  /**
    * 断开串口连接
    */
   disconnect(): Promise<boolean> {
