@@ -34,6 +34,7 @@ import { AilyHost } from '../core/host';
 import { SkillRegistry } from '../core/skill-registry';
 import {
   readHostSessionRestoreFailureDetails,
+  sanitizeHostRecordForRestore,
   type RuntimeRestoreHostRecordRequest,
   type HostSessionRestoreFailureDetails,
   type HostSessionRestoreOptions,
@@ -84,6 +85,7 @@ import {
   type HostSessionContentMetadataSource,
 } from './host-session-content-provider';
 import type { TurnResponseTurn } from 'aily-lex/browser';
+import { buildTurnResponseLexSessionSnapshot } from './lex-agent-bootstrap';
 import type { ChatSessionItemsService } from '../services/chat-session-items.service';
 import { ChatSessionEntryCoordinator } from './chat-session-entry-coordinator';
 import { ChatPerformanceTracer } from '../services/chat-perf-tracer';
@@ -94,6 +96,9 @@ import type {
   ChatRuntimeHostForkSessionResult,
   ChatRuntimeHostPrewarmRequest,
   ChatRuntimeHostPrewarmResult,
+  ChatRuntimeHostRestoreRuntimeSessionRequest,
+  ChatRuntimeHostRestoreRuntimeSessionResult,
+  ChatRuntimeHostSessionExecutionState,
 } from '../core/chat-runtime-host-contract';
 
 type LexInteractionAction = NonNullable<import('aily-lex/browser').TurnRequest['metadata']>['interactionAction'];
@@ -167,6 +172,12 @@ type SessionLifecycleContext = ChatViewWriteBridgeContext
     readSessionCheckpointTimelineState?(sessionId?: string | null): import('./session-checkpoint-timeline-model').SessionCheckpointTimelineState | null;
     hasSessionRuntimeHandle?(sessionId?: string | null): boolean;
     prewarmRuntimeExecutor?(request: ChatRuntimeHostPrewarmRequest): Promise<ChatRuntimeHostPrewarmResult>;
+    restoreRuntimeSessionExecutor?(
+      request: ChatRuntimeHostRestoreRuntimeSessionRequest,
+    ): Promise<ChatRuntimeHostRestoreRuntimeSessionResult>;
+    readExecutionRuntimeSessionState?(
+      sessionId: string,
+    ): Promise<ChatRuntimeHostSessionExecutionState>;
     projectRestoredRuntimeAuxiliary?(sessionId: string, auxiliary: HostSessionRecord['auxiliary'] | null | undefined): void;
     detachSessionRuntimeView?(sessionId?: string | null): boolean;
     attachSessionView?(sessionId?: string | null): Promise<void>;
@@ -1695,6 +1706,16 @@ export class SessionLifecycleHelper {
       throw this.createSessionRestoreError('host-restore', restoreRequest.diagnostics, error);
     }
 
+    if (options.preserveActiveResponseState !== true) {
+      await this.restoreExecutionRuntimeSession(
+        sessionId,
+        sanitizeHostRecordForRestore(hostRecordToRestore),
+        providerOptions,
+        restoreRequest.sessionContent.metadata,
+      );
+      this.throwIfSessionActivationSuperseded(activationRequestId);
+    }
+
     await this.ctx.attachSessionView?.(sessionId);
     this.throwIfSessionActivationSuperseded(activationRequestId);
     this.commitVisibleSessionShell({
@@ -1815,6 +1836,23 @@ export class SessionLifecycleHelper {
         ?? model.turnResponses,
     );
 
+    const durableHostRecord = restoreRequest.hostRecord
+      ?? restoreRequest.sessionContent.hostRecord
+      ?? null;
+    if (durableHostRecord) {
+      const executionState = await this.readExecutionRuntimeSessionState(sessionId);
+      this.throwIfSessionActivationSuperseded(activationRequestId);
+      if (!executionState.requestInProgress) {
+        await this.restoreExecutionRuntimeSession(
+          sessionId,
+          sanitizeHostRecordForRestore(durableHostRecord),
+          providerOptions,
+          restoreRequest.sessionContent.metadata,
+        );
+        this.throwIfSessionActivationSuperseded(activationRequestId);
+      }
+    }
+
     await this.ctx.attachSessionView?.(sessionId);
     this.throwIfSessionActivationSuperseded(activationRequestId);
     this.commitVisibleSessionShell({
@@ -1836,6 +1874,56 @@ export class SessionLifecycleHelper {
       priority: 'after-paint',
     });
     return true;
+  }
+
+  private async restoreExecutionRuntimeSession(
+    sessionId: string,
+    hostRecord: HostSessionRecord,
+    providerOptions: HostSessionProviderOptions,
+    metadata?: HostSessionContentMetadataSource | null,
+  ): Promise<void> {
+    const turnResponses = Array.isArray(hostRecord.turnResponses)
+      ? hostRecord.turnResponses
+      : [];
+    if (turnResponses.length === 0) {
+      return;
+    }
+    const restoreRuntimeSession = this.ctx.restoreRuntimeSessionExecutor;
+    if (typeof restoreRuntimeSession !== 'function') {
+      throw new Error('[SessionLifecycle] Execution owner does not support canonical session restore.');
+    }
+    const snapshot = buildTurnResponseLexSessionSnapshot(turnResponses, sessionId, hostRecord);
+    if (!snapshot) {
+      throw new Error(`[SessionLifecycle] Unable to build the canonical runtime snapshot for ${sessionId}.`);
+    }
+    const agentRuntimeMode = this.resolveAgentRuntimeMode(providerOptions, metadata).mode;
+    const result = await restoreRuntimeSession({
+      sessionId,
+      snapshot,
+      turnResponses,
+      providerOptions,
+      agentRuntimeMode,
+      currentModel: this.ctx.currentModel ?? null,
+    });
+    if (result.sessionId !== sessionId || result.turnCount !== turnResponses.length) {
+      throw new Error(
+        `[SessionLifecycle] Execution owner restored an invalid request list for ${sessionId}: expected ${turnResponses.length}, got ${result.turnCount}.`,
+      );
+    }
+  }
+
+  private async readExecutionRuntimeSessionState(
+    sessionId: string,
+  ): Promise<ChatRuntimeHostSessionExecutionState> {
+    const readState = this.ctx.readExecutionRuntimeSessionState;
+    if (typeof readState !== 'function') {
+      throw new Error('[SessionLifecycle] Execution owner does not expose canonical session state.');
+    }
+    const state = await readState(sessionId);
+    if (!state || state.sessionId !== sessionId) {
+      throw new Error(`[SessionLifecycle] Execution owner returned invalid session state for ${sessionId}.`);
+    }
+    return state;
   }
 
   private existingSessionModelCanSatisfyRestore(
@@ -2655,13 +2743,7 @@ export class SessionLifecycleHelper {
     providerOptions: HostSessionProviderOptions,
     metadata?: HostSessionContentMetadataSource | null,
   ): ChatAgentRuntimeMode {
-    const resolution = resolveChatAgentRuntimeModeForProject({
-      projectPath: providerOptions.folderPath ?? this.resolveCurrentProjectPath(),
-      metadata,
-      userPreferenceMode: this.ctx.getDevelopmentModePreferenceRuntimeMode?.(),
-      fallback: providerOptions.folderPath ? 'coder' : 'unbound',
-      requireExistingProjectPath: Boolean(metadata && providerOptions.folderPath),
-    });
+    const resolution = this.resolveAgentRuntimeMode(providerOptions, metadata);
     if (typeof this.ctx.chatService.setCurrentAgentRuntimeMode === 'function') {
       this.ctx.chatService.setCurrentAgentRuntimeMode(resolution.mode, resolution.source);
     } else {
@@ -2675,6 +2757,19 @@ export class SessionLifecycleHelper {
       projectPath: resolution.projectPath,
     });
     return resolution.mode;
+  }
+
+  private resolveAgentRuntimeMode(
+    providerOptions: HostSessionProviderOptions,
+    metadata?: HostSessionContentMetadataSource | null,
+  ): ReturnType<typeof resolveChatAgentRuntimeModeForProject> {
+    return resolveChatAgentRuntimeModeForProject({
+      projectPath: providerOptions.folderPath ?? this.resolveCurrentProjectPath(),
+      metadata,
+      userPreferenceMode: this.ctx.getDevelopmentModePreferenceRuntimeMode?.(),
+      fallback: providerOptions.folderPath ? 'coder' : 'unbound',
+      requireExistingProjectPath: Boolean(metadata && providerOptions.folderPath),
+    });
   }
 
   private applySessionType(sessionType: unknown): void {

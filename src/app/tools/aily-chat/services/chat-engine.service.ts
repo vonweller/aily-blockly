@@ -3015,6 +3015,8 @@ export class ChatEngineService implements IChatContext {
       buildExecutionSaveTarget: (sessionId) => thisEngine.buildExecutionSaveTarget(sessionId),
       hasSessionRuntimeHandle: (sessionId) => !!thisEngine.lexStream.agent.getHandle?.(sessionId),
       prewarmRuntimeExecutor: (request) => thisEngine.runtimeHostForView().prewarmRuntime(request),
+      restoreRuntimeSessionExecutor: (request) => thisEngine.runtimeHostForView().restoreRuntimeSession(request),
+      readExecutionRuntimeSessionState: (sessionId) => thisEngine.runtimeHostForView().readSessionExecutionState(sessionId),
       projectRestoredRuntimeAuxiliary: (sessionId, auxiliary) => thisEngine.projectRestoredRuntimeAuxiliary(sessionId, auxiliary),
       detachSessionRuntimeView: (sessionId) => thisEngine.detachSessionRuntimeView(sessionId),
       attachSessionView: (sessionId) => thisEngine.attachSessionView(sessionId),
