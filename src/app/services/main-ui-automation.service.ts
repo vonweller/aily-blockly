@@ -377,6 +377,7 @@ export class MainUiAutomationService {
       title: this.titleOf(config),
       titleKey: config.titleKey,
       description: this.descriptionOf(config),
+      icon: config.app?.icon || 'fa-light fa-puzzle-piece',
       version: config.version || null,
       available: config.app?.available !== false,
       enabled: config.app?.enabled !== false,
