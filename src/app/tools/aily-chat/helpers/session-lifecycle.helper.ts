@@ -1455,13 +1455,11 @@ export class SessionLifecycleHelper {
     const restoreRequest = this.hostSessionItemController.resolveSessionSwitchRestoreRequest(targetSessionId, {
       fallbackProjectPath: switchOptions.fallbackProjectPath ?? entryProjectPath ?? this.resolveCurrentProjectPath(),
       hostRecordOverride: switchOptions.hostRecordOverride,
-      deferHostRecord: switchOptions.hostRecordOverride === undefined,
     });
 
-    await this.activateSessionFromRestoreRequest(restoreRequest, {
+    return this.activateSessionFromRestoreRequest(restoreRequest, {
       preferDetachedRuntimeAttach: true,
     });
-    return true;
   }
 
   async preloadSessionModel(
@@ -1501,7 +1499,6 @@ export class SessionLifecycleHelper {
     const entryProjectPath = this.ctx.chatHistoryService.findEntry(sessionId)?.projectPath ?? null;
     const restoreRequest = this.hostSessionItemController.resolveSessionSwitchRestoreRequest(sessionId, {
       fallbackProjectPath: options.fallbackProjectPath ?? entryProjectPath ?? this.resolveCurrentProjectPath(),
-      deferHostRecord: true,
     });
     const hostRecord = restoreRequest.hostRecord ?? restoreRequest.sessionContent.hostRecord ?? null;
 
@@ -1572,20 +1569,9 @@ export class SessionLifecycleHelper {
       readonly ensureManagedItem?: boolean;
       readonly preferDetachedRuntimeAttach?: boolean;
     } = {},
-  ): Promise<void> {
+  ): Promise<boolean> {
     const activationRequestId = ++this.sessionActivationRequestId;
     this.logSessionActivationScalar('activation-start', restoreRequest);
-    if (this.shouldRejectMissingRestoreRecord(restoreRequest)) {
-      console.warn('[SessionLifecycle][recoverable-missing-record]', {
-        sessionId: restoreRequest.target.sessionId,
-        projectPath: restoreRequest.diagnostics.projectPath ?? null,
-        requestSource: restoreRequest.diagnostics.requestSource,
-        hostRecordSource: restoreRequest.diagnostics.hostRecordSource,
-        metadataSource: restoreRequest.diagnostics.metadataSource,
-      });
-      this.discardMissingRestoreTarget(restoreRequest);
-      return;
-    }
 
     this.resetForSessionActivation({ clearVisibleProjection: false });
 
@@ -1610,7 +1596,7 @@ export class SessionLifecycleHelper {
     }
 
     if (await this.attachExistingSessionModelFromRestoreRequest(restoreRequest, activationRequestId)) {
-      return;
+      return true;
     }
 
     if (options.preferDetachedRuntimeAttach === true
@@ -1618,7 +1604,19 @@ export class SessionLifecycleHelper {
         allowIdleContent: !restoreRequest.hostRecord,
       })) {
       await this.reattachDetachedRuntimeSession(restoreRequest, activationRequestId);
-      return;
+      return true;
+    }
+
+    if (this.shouldRejectMissingRestoreRecord(restoreRequest)) {
+      console.warn('[SessionLifecycle][recoverable-missing-record]', {
+        sessionId: restoreRequest.target.sessionId,
+        projectPath: restoreRequest.diagnostics.projectPath ?? null,
+        requestSource: restoreRequest.diagnostics.requestSource,
+        hostRecordSource: restoreRequest.diagnostics.hostRecordSource,
+        metadataSource: restoreRequest.diagnostics.metadataSource,
+      });
+      this.discardMissingRestoreTarget(restoreRequest);
+      return false;
     }
 
     const runtimeRestoreHostRecord = this.shouldUseRuntimeRestoreHostRecord(
@@ -1635,10 +1633,11 @@ export class SessionLifecycleHelper {
         activationRequestId,
         { preserveActiveResponseState: !!runtimeRestoreHostRecord },
       );
-      return;
+      return true;
     }
 
     await this.attachBlankSessionModelFromRestoreRequest(restoreRequest, activationRequestId);
+    return true;
   }
 
   private async restoreDurableSessionModelFromRestoreRequest(
@@ -2159,6 +2158,10 @@ export class SessionLifecycleHelper {
       return false;
     }
 
+    if (this.ctx.hasSessionRuntimeHandle?.(normalizedSessionId) === true) {
+      return true;
+    }
+
     const runtimeState = this.ctx.readSessionRuntimeState?.(normalizedSessionId);
     if (!runtimeState) {
       return false;
@@ -2473,14 +2476,12 @@ export class SessionLifecycleHelper {
     }
     const restoreRequest = this.hostSessionItemController.resolveSessionEntryRestoreRequest(target, {
       fallbackProjectPath: target.projectPath ?? this.resolveCurrentProjectPath(),
-      deferHostRecord: true,
     });
 
-    await this.activateSessionFromRestoreRequest(restoreRequest, {
+    return this.activateSessionFromRestoreRequest(restoreRequest, {
       ensureManagedItem: true,
       preferDetachedRuntimeAttach: true,
     });
-    return true;
   }
 
   private buildFreshSessionEntryTarget(
