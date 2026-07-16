@@ -48,7 +48,9 @@ function showNotification(options, browserWindow) {
       // 监听通知点击事件
       notification.on('click', () => {
         if (browserWindow && !browserWindow.isDestroyed()) {
-          if (browserWindow.isMinimized()) browserWindow.restore();
+          if (browserWindow.isMinimized()) {
+            browserWindow.restore();
+          }
           browserWindow.show();
           browserWindow.focus();
           browserWindow.flashFrame(false);
