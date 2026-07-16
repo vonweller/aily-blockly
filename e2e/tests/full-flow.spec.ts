@@ -6,13 +6,18 @@ import {
 } from '../error-decision';
 import { extractCompileDiagnostic } from '../compile-diagnostic';
 import { FullFlowCheckpoint, shouldStopOnError } from '../full-flow-checkpoint';
+import {
+  readProjectPlazaSampleRate,
+  readProjectPlazaSkipProjectIds,
+  selectProjectPlazaSample,
+} from '../project-plaza-selection';
 import { readFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
 /**
- * 全流程验证：选择板子 → 新建项目 → 连续编译两次，以及项目广场项目全量编译。
+ * 全流程验证：选择板子 → 新建项目 → 连续编译两次，以及项目广场项目全量或抽样编译。
  *
  * 这是一条「重」用例，会真实地：
  *  - 执行 `npm install <board>`（需要网络或 npm 缓存命中）；
@@ -52,6 +57,13 @@ const PROJECT_PLAZA_INSTALL_TIMEOUT_MS = readTimeoutEnv(
   5 * 60_000,
 );
 const PROJECT_PLAZA_CONCURRENCY = readPositiveIntegerEnv('AILY_E2E_PROJECT_PLAZA_CONCURRENCY', 2);
+const PROJECT_PLAZA_SAMPLE_RATE = readProjectPlazaSampleRate(
+  process.env['AILY_E2E_PROJECT_PLAZA_SAMPLE_RATE'],
+);
+const PROJECT_PLAZA_SAMPLE_SEED = process.env['AILY_E2E_PROJECT_PLAZA_SAMPLE_SEED'];
+const PROJECT_PLAZA_SKIP_PROJECT_IDS = readProjectPlazaSkipProjectIds(
+  process.env['AILY_E2E_PROJECT_PLAZA_SKIP_PROJECT_IDS'],
+);
 const POLL_INTERVAL_MS = 250;
 const BOARD_COMPILE_ATTEMPTS = 2;
 const PROJECT_PLAZA_PAGE_SIZE = 100;
@@ -338,7 +350,7 @@ test.describe('全流程：创建或加载项目 → 编译', () => {
     ).toEqual([]);
   });
 
-  projectPlazaTest('应能让项目广场的所有项目完成编译', async ({ electronApp }) => {
+  projectPlazaTest('应能让项目广场选定的项目完成编译', async ({ electronApp }) => {
     test.setTimeout(24 * 60 * 60 * 1000);
 
     const win = await getMainWindow(electronApp);
@@ -347,37 +359,69 @@ test.describe('全流程：创建或加载项目 → 编译', () => {
     const projects = await collectProjectPlazaProjects(win);
     expect(projects.length, '项目广场至少应返回一个项目').toBeGreaterThan(0);
 
-    const checkpoint = new FullFlowCheckpoint('project-plaza');
-    const checkpointRun = await checkpoint.begin(
-      projects.map((project) => ({
-        key: project.id || `missing:${project.page}:${project.index}:${project.name}`,
-        label: `${project.name} (ID: ${project.id || '缺失'})`,
-        project,
-      })),
+    const allCandidates = projects.map((project) => ({
+      key: project.id || `missing:${project.page}:${project.index}:${project.name}`,
+      label: `${project.name} (ID: ${project.id || '缺失'})`,
+      project,
+    }));
+    const selectedCandidates = selectProjectPlazaSample(
+      allCandidates,
+      PROJECT_PLAZA_SAMPLE_RATE,
+      PROJECT_PLAZA_SAMPLE_SEED,
     );
+    if (PROJECT_PLAZA_SAMPLE_RATE < 1) {
+      console.log(
+        `[project-plaza] 随机抽样 ${selectedCandidates.length}/${allCandidates.length} 个项目，` +
+          `比例=${PROJECT_PLAZA_SAMPLE_RATE}，seed=${PROJECT_PLAZA_SAMPLE_SEED}。`,
+      );
+      console.log(
+        `[project-plaza] 抽样项目：${selectedCandidates.map(({ label }) => label).join('；')}`,
+      );
+    }
+
+    const checkpoint = new FullFlowCheckpoint('project-plaza');
+    const checkpointRun = await checkpoint.begin(selectedCandidates);
     if (checkpointRun.resumed) {
       console.log(
         `[project-plaza] 从断点继续，剩余 ${checkpointRun.remaining.length}/${checkpointRun.total} 项：${checkpoint.filePath}`,
       );
     }
-    if (checkpointRun.remaining.length === 0) {
+
+    let remainingProjects = checkpointRun.remaining;
+    const projectIssueSkips = remainingProjects.filter(
+      ({ candidate }) => candidate.project.id && PROJECT_PLAZA_SKIP_PROJECT_IDS.has(candidate.project.id),
+    );
+    if (projectIssueSkips.length > 0) {
+      console.log(
+        `[project-plaza] 根据 AI 已确认的项目自身问题跳过 ${projectIssueSkips.length} 个项目：` +
+          projectIssueSkips.map(({ label }) => label).join('；'),
+      );
+      await checkpoint.applyBatch({
+        succeededKeys: projectIssueSkips.map(({ key }) => key),
+        failures: [],
+      });
+      const skippedKeys = new Set(projectIssueSkips.map(({ key }) => key));
+      remainingProjects = remainingProjects.filter(({ key }) => !skippedKeys.has(key));
+    }
+
+    if (remainingProjects.length === 0) {
       await checkpoint.clear();
       return;
     }
 
     const workerCount = INTERACTIVE_ERROR_DECISIONS
       ? 1
-      : Math.min(PROJECT_PLAZA_CONCURRENCY, checkpointRun.remaining.length);
+      : Math.min(PROJECT_PLAZA_CONCURRENCY, remainingProjects.length);
     const perProjectTimeout =
       PROJECT_PLAZA_LOAD_TIMEOUT_MS + PROJECT_PLAZA_INSTALL_TIMEOUT_MS + COMPILE_TIMEOUT_MS + 2 * 60_000;
     test.setTimeout(
       Math.max(
         24 * 60 * 60 * 1000,
-        Math.ceil(checkpointRun.remaining.length / workerCount) * perProjectTimeout,
+        Math.ceil(remainingProjects.length / workerCount) * perProjectTimeout,
       ),
     );
     console.log(
-      `[project-plaza] 将验证 ${checkpointRun.remaining.length} 个项目，并发数：${workerCount}${INTERACTIVE_ERROR_DECISIONS ? '（交互决策模式）' : ''}。`,
+      `[project-plaza] 将验证 ${remainingProjects.length} 个项目，并发数：${workerCount}${INTERACTIVE_ERROR_DECISIONS ? '（交互决策模式）' : ''}。`,
     );
     await closeAilyElectronApp(electronApp);
 
@@ -394,9 +438,9 @@ test.describe('全流程：创建或加载项目 → 编译', () => {
     let completedProjects = 0;
     let stopRequested = false;
     const runWorker = async () => {
-      while (!stopRequested && nextProjectIndex < checkpointRun.remaining.length) {
+      while (!stopRequested && nextProjectIndex < remainingProjects.length) {
         const projectIndex = nextProjectIndex++;
-        const item = checkpointRun.remaining[projectIndex];
+        const item = remainingProjects[projectIndex];
         const project = item.candidate.project;
         const startedAt = Date.now();
         try {
@@ -476,7 +520,7 @@ test.describe('全流程：创建或加载项目 → 编译', () => {
         }
         completedProjects++;
         console.log(
-          `[project-plaza] 本次进度 ${completedProjects}/${checkpointRun.remaining.length}：${project.name}，耗时 ${formatDuration(Date.now() - startedAt)}。`,
+          `[project-plaza] 本次进度 ${completedProjects}/${remainingProjects.length}：${project.name}，耗时 ${formatDuration(Date.now() - startedAt)}。`,
         );
       }
     };

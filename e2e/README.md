@@ -3,6 +3,8 @@
 使用 [Playwright](https://playwright.dev/) 的 `_electron` API 对 aily-blockly 桌面应用做端到端测试。
 测试直接启动 `electron/main.js` 主进程，针对 **生产构建产物** 运行。
 
+需要由 AI 按改动/发布类型选择测试、执行并汇报时，使用 [AI 执行手册](AI-RUNBOOK.md)。
+
 ## 快速开始：运行命令与场景
 
 所有命令均在项目根目录执行。`npm run test:e2e* -- ...` 中 `--` 后面的参数会原样传给 Playwright。
@@ -34,7 +36,7 @@
 npm run test:e2e -- smoke.spec.ts guide.spec.ts project-new.spec.ts tools.spec.ts aily-chat.spec.ts
 
 # 只运行编译诊断、错误决策与断点逻辑回归
-npm run test:e2e:fast -- compile-diagnostic.spec.ts electron-app-cleanup.spec.ts error-decision.spec.ts full-flow-checkpoint.spec.ts
+npm run test:e2e:fast -- compile-diagnostic.spec.ts electron-app-cleanup.spec.ts error-decision.spec.ts full-flow-checkpoint.spec.ts project-plaza-selection.spec.ts
 ```
 
 ### PowerShell：按场景运行
@@ -85,6 +87,19 @@ npm run test:e2e:fast -- full-flow.spec.ts
 $env:AILY_E2E_PROJECT_PLAZA = '1'
 npm run test:e2e:fast -- full-flow.spec.ts
 ```
+
+测试 `aily-builder` 时，从项目广场随机抽取 50%，并记录 seed 以支持断点续跑：
+
+```powershell
+Remove-Item e2e\.artifacts\full-flow-checkpoints\project-plaza.json* -Force -ErrorAction SilentlyContinue
+$env:AILY_E2E_PROJECT_PLAZA = '1'
+$env:AILY_E2E_PROJECT_PLAZA_SAMPLE_RATE = '0.5'
+$env:AILY_E2E_PROJECT_PLAZA_SAMPLE_SEED = [guid]::NewGuid().ToString('N')
+$env:AILY_E2E_STOP_ON_ERROR = '0'
+npm run test:e2e:fast -- full-flow.spec.ts
+```
+
+如果 AI 根据编译诊断和对照项目确认失败只由项目自身导致，可在复用同一 seed 的续跑中设置 `AILY_E2E_PROJECT_PLAZA_SKIP_PROJECT_IDS=id1,id2`。测试会从 checkpoint 移除这些项目且不再编译。builder、环境或无法确定归因的错误不得加入跳过列表；完整规则见 [AI 执行手册](AI-RUNBOOK.md#ai-错误归因与自动跳过规则)。
 
 全流程默认在交互终端中将错误正文标红并提示选择。编译失败时会自动读取通知中的“查看详情”日志，优先显示带源码位置的编译器根因；确实没有捕获到具体诊断时才回退到退出码。选择前只输出一次完整错误，编译层和场景层不再重复正文；测试结束时 Playwright 仍会在正式失败报告中保留该错误。输入 `c` 将当前项视为已处理并继续，但该错误仍进入最终汇总并使本次测试失败；输入 `a` 或直接回车会中止并保留断点。如需关闭颜色，PowerShell 设置 `$env:NO_COLOR = '1'`，macOS / Linux 设置 `NO_COLOR=1`。无人值守或希望自动跑完再汇总时，在上述任一全流程命令前增加：
 
@@ -145,7 +160,7 @@ AILY_E2E_PROJECT_PLAZA=1 AILY_E2E_STOP_ON_ERROR=0 npm run test:e2e:fast -- full-
 rm -rf e2e/.artifacts/full-flow-checkpoints
 ```
 
-需要长期保留变量时也可先执行 `export NAME=value`。切换全流程模式时建议使用新终端；至少应先执行 `unset AILY_E2E_FULLFLOW AILY_E2E_BOARD_KEYWORD AILY_E2E_BOARD_KEYWORDS AILY_E2E_ALL_BOARDS AILY_E2E_PROJECT_PLAZA AILY_E2E_CLEAR_APPDATA AILY_E2E_STOP_ON_ERROR` 清除可能影响下一次运行的配置。
+需要长期保留变量时也可先执行 `export NAME=value`。切换全流程模式时建议使用新终端；至少应先执行 `unset AILY_E2E_FULLFLOW AILY_E2E_BOARD_KEYWORD AILY_E2E_BOARD_KEYWORDS AILY_E2E_ALL_BOARDS AILY_E2E_PROJECT_PLAZA AILY_E2E_PROJECT_PLAZA_SAMPLE_RATE AILY_E2E_PROJECT_PLAZA_SAMPLE_SEED AILY_E2E_PROJECT_PLAZA_SKIP_PROJECT_IDS AILY_E2E_CLEAR_APPDATA AILY_E2E_STOP_ON_ERROR` 清除可能影响下一次运行的配置。
 
 ### 全流程可选配置
 
@@ -161,6 +176,9 @@ rm -rf e2e/.artifacts/full-flow-checkpoints
 | `AILY_E2E_PROJECT_PLAZA_LOAD_TIMEOUT_MS` | `180000` | 单个广场项目下载并进入编辑器的超时（3 分钟） |
 | `AILY_E2E_PROJECT_PLAZA_INSTALL_TIMEOUT_MS` | `300000` | 单个广场项目安装依赖的超时（5 分钟） |
 | `AILY_E2E_PROJECT_PLAZA_CONCURRENCY` | `2` | 项目广场并发数；交互错误决策模式临时降为 `1` |
+| `AILY_E2E_PROJECT_PLAZA_SAMPLE_RATE` | `1` | 项目广场抽样比例，范围 `(0, 1]`；builder 验证设为 `0.5` |
+| `AILY_E2E_PROJECT_PLAZA_SAMPLE_SEED` | 未设置 | 抽样比例小于 `1` 时必填；相同 seed 稳定选择同一批项目 |
+| `AILY_E2E_PROJECT_PLAZA_SKIP_PROJECT_IDS` | 未设置 | 逗号分隔的项目 ID；仅填写 AI 已确认属于项目自身问题的失败项 |
 
 `E2E_SKIP_BUILD` 和 `AILY_E2E_INTERACTIVE_DECISIONS` 由 [run-e2e.mjs](../scripts/run-e2e.mjs) 自动管理，不需要手动设置。
 
@@ -189,9 +207,10 @@ rm -rf e2e/.artifacts/full-flow-checkpoints
 | [tests/electron-app-cleanup.spec.ts](tests/electron-app-cleanup.spec.ts) | Electron 退出清理生命周期 | ✅ |
 | [tests/error-decision.spec.ts](tests/error-decision.spec.ts) | 失败后继续/中止决策逻辑 | ✅ |
 | [tests/full-flow-checkpoint.spec.ts](tests/full-flow-checkpoint.spec.ts) | 全流程断点保存、恢复与清理 | ✅ |
+| [tests/project-plaza-selection.spec.ts](tests/project-plaza-selection.spec.ts) | 项目广场可复现抽样与项目跳过配置 | ✅ |
 | [tests/blockly-editor.spec.ts](tests/blockly-editor.spec.ts) | 打开项目、Blockly 工作区/工具箱 | ⏭️ 需环境变量 |
 | [tests/compile.spec.ts](tests/compile.spec.ts) | 点击编译并等待结果 | ⏭️ 需环境变量 |
-| [tests/full-flow.spec.ts](tests/full-flow.spec.ts) | 单/全开发板连续编译两次；项目广场全量编译 | ⏭️ 需环境变量 |
+| [tests/full-flow.spec.ts](tests/full-flow.spec.ts) | 单/全开发板连续编译两次；项目广场全量或抽样编译 | ⏭️ 需环境变量 |
 
 ## 失败处理与断点续跑
 
@@ -199,7 +218,7 @@ rm -rf e2e/.artifacts/full-flow-checkpoints
 
 CI、输入或输出不是 TTY，或者直接调用 Playwright CLI 时不会等待输入，而是直接中止并保留断点。设置 `AILY_E2E_STOP_ON_ERROR=0` 后不会显示提示，测试会自动执行所有条目并在最后汇总错误；成功项会从断点移除，失败项留待下次重试。
 
-断点保存在 `e2e/.artifacts/full-flow-checkpoints/`。再次运行相同模式时会从剩余条目继续；所有待处理项均从断点移除后（全部成功，或在交互提示中选择继续将失败项视为已处理）自动删除对应断点。如需从头运行，删除整个 `full-flow-checkpoints` 目录；若只重置单个模式，需同时删除对应的 `.json` 与 `.json.bak` 文件。项目广场在交互决策模式下会临时使用单并发，以便逐项处理错误；其他情况下使用 `AILY_E2E_PROJECT_PLAZA_CONCURRENCY`（默认 `2`）。遇错中止时只停止派发新项目，已经启动的项目会完成收尾，不会被强制终止。
+断点保存在 `e2e/.artifacts/full-flow-checkpoints/`。再次运行相同模式时会从剩余条目继续；所有待处理项均从断点移除后（全部成功，或在交互提示中选择继续将失败项视为已处理）自动删除对应断点。如需从头运行，删除整个 `full-flow-checkpoints` 目录；若只重置单个模式，需同时删除对应的 `.json` 与 `.json.bak` 文件。项目广场抽样续跑必须复用原来的 sample rate 和 seed，否则 checkpoint 会因候选集合变化而失效。AI 确认是项目自身问题后，可通过 `AILY_E2E_PROJECT_PLAZA_SKIP_PROJECT_IDS` 将对应项目从断点移除并跳过编译。项目广场在交互决策模式下会临时使用单并发，以便逐项处理错误；其他情况下使用 `AILY_E2E_PROJECT_PLAZA_CONCURRENCY`（默认 `2`）。遇错中止时只停止派发新项目，已经启动的项目会完成收尾，不会被强制终止。
 
 > 说明：当前未覆盖「上传(upload)」流程，因为它需要连接真实外设，不便在 CI/本地稳定运行。
 
