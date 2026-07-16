@@ -435,6 +435,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
         selectChatResources: () => this.selectChatResources(),
         listChildApps: (payload: { limit?: number } = {}) => this.listChatChildApps(payload),
         openChildApp: (payload: { toolId?: string; mode?: 'embedded' | 'window' } = {}) => this.openChatChildApp(payload),
+        writeClipboardText: (payload: { text?: string } = {}) => this.writeClipboardText(payload),
         sendToolSignal: async (signal: string, payload: any = {}) => {
           return await this.sendToolSignalFromChild(signal, payload);
         }
@@ -795,13 +796,26 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
         hostGithubLogin: isAilyChat,
         resourcePicker: isAilyChat
           && typeof (window as any).dialog?.selectFiles === 'function',
-        childAppMenu: isAilyChat
+        childAppMenu: isAilyChat,
+        clipboardWrite: isAilyChat
       }
     };
   }
 
   private isAilyChatTool(): boolean {
     return this.resolvedToolId === 'aily-chat' || this.resolvedToolId === 'aily-chat-react';
+  }
+
+  private async writeClipboardText(payload: { text?: string }): Promise<Record<string, unknown>> {
+    if (!this.isAilyChatTool()) {
+      return { ok: false, message: 'Clipboard access is only available to Aily Chat' };
+    }
+    const text = typeof payload?.text === 'string' ? payload.text : '';
+    if (!text) {
+      return { ok: false, message: 'Clipboard text is empty' };
+    }
+    await this.electronService.clipboardWriteText(text);
+    return { ok: true };
   }
 
   private async selectChatResources(): Promise<Record<string, unknown>> {
