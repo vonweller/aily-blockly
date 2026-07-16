@@ -371,17 +371,6 @@ export const APP_LIST: AppItem[] = [
     icon: 'fa-light fa-user',
     enabled: true,
     lock: true
-  },
-  {
-    id: 'simulator',
-    name: 'MENU.SIMULATOR',
-    description: 'APP_STORE.SIMULATOR_DESC',
-    action: 'tool-open',
-    data: { type: 'tool', data: 'simulator' },
-    icon: 'fa-light fa-atom',
-    router: ['/main/blockly-editor'],
-    dev: true,
-    enabled: false
   }
 ];
 

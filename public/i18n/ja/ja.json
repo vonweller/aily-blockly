@@ -24,7 +24,6 @@
         "MQTT_DEBUGGER": "MQTT Debugger",
         "NETWORK_DEBUGGER": "Network Debugger",
         "FFS_MANAGER": "FFSマネージャー",
-        "SIMULATOR": "シミュレータ",
         "AI": "AI",
         "MODEL_STORE": "モデルストア",
         "APP_STORE": "アプリストア",

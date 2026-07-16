@@ -24,7 +24,6 @@
         "MQTT_DEBUGGER": "MQTT Debugger",
         "NETWORK_DEBUGGER": "Network Debugger",
         "FFS_MANAGER": "Gestionnaire FFS",
-        "SIMULATOR": "Simulateur",
         "AI": "IA",
         "MODEL_STORE": "Magasin de Modèles",
         "APP_STORE": "Magasin d'Applications",

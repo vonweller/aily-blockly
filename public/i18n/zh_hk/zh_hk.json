@@ -24,7 +24,6 @@
         "MQTT_DEBUGGER": "MQTT調試器",
         "NETWORK_DEBUGGER": "網絡調試器",
         "FFS_MANAGER": "FFS管理器",
-        "SIMULATOR": "模擬器",
         "AI": "AI",
         "AI_NEW": "AI（Beta）",
         "MODEL_STORE": "模型商店",
