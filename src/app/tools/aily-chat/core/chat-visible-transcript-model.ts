@@ -71,6 +71,8 @@ export interface ChatVisibleTranscriptDialogItemPatch {
   readonly index: number;
   readonly item: ChatVisibleTranscriptDialogItem;
   readonly kind: ChatVisibleTranscriptChangeKind;
+  /** Response-model parts changed by the originating host delta. */
+  readonly changedParts?: readonly ChatPart[];
 }
 
 interface ChatVisibleTranscriptItemRecord {
@@ -97,6 +99,7 @@ export class ChatVisibleTranscriptModel {
   private readonly records = new Map<string, ChatVisibleTranscriptItemRecord>();
   private readonly dialogItemCache = new Map<string, ChatVisibleTranscriptDialogItemRecord>();
   private readonly streamStatsTrackers = new Map<string, ChatStreamStatsTracker>();
+  private readonly streamPartWordCounts = new Map<string, Map<string, number>>();
   private orderedIds: string[] = [];
   private readonly orderedIndexById = new Map<string, number>();
   private readonly changes: ChatVisibleTranscriptChange[] = [];
@@ -144,6 +147,7 @@ export class ChatVisibleTranscriptModel {
         this.dialogItemCache.delete(itemId);
         if (removedTurnId && !expectedIds.has(chatVisibleResponseItemId(removedTurnId))) {
           this.streamStatsTrackers.delete(removedTurnId);
+          this.streamPartWordCounts.delete(removedTurnId);
         }
         this.pushChange('removed', itemId);
       }
@@ -218,7 +222,7 @@ export class ChatVisibleTranscriptModel {
       contentUpdateTimings: this.updateStreamStats(
         turn.turnId,
         turn.response.status,
-        collectChatPartStreamingText(parts, contentPreview),
+        turn.response.parts,
       ),
     });
     if (options.recordOrder) {
@@ -239,21 +243,23 @@ export class ChatVisibleTranscriptModel {
     }
 
     const nextParts = mergeChatParts(existing.parts, turnResponsePartsToChatParts(parts));
-    const contentPreview = collectChatPartAssistantPreview(nextParts, existing.contentPreview);
     return this.upsertItem({
       id: existing.id,
       kind: 'response',
       role: 'aily',
       turnId: existing.turnId,
       status: existing.status,
-      contentPreview,
+      // The response row is part-owned while streaming. Materializing the
+      // complete assistant text here would copy every growing markdown part
+      // before the mounted content-part renderer sees the delta.
+      contentPreview: existing.contentPreview,
       parts: nextParts,
       turnResponse: existing.turnResponse,
       turnContext: existing.turnContext,
       contentUpdateTimings: this.updateStreamStats(
         turnId,
         existing.status,
-        collectChatPartStreamingText(nextParts, contentPreview),
+        parts,
       ),
     });
   }
@@ -326,7 +332,7 @@ export class ChatVisibleTranscriptModel {
       role: 'aily',
       turnId: existing.turnId,
       status,
-      contentPreview: existing.contentPreview,
+      contentPreview: collectChatPartAssistantPreview(existing.parts, existing.contentPreview),
       parts: existing.parts,
       turnResponse: existing.turnResponse
         ? {
@@ -348,12 +354,9 @@ export class ChatVisibleTranscriptModel {
             },
           })
         : existing.turnContext,
-      contentUpdateTimings: this.updateStreamStats(
-        turnId,
-        status,
-        collectChatPartStreamingText(existing.parts, existing.contentPreview),
-      ) ?? existing.contentUpdateTimings,
+      contentUpdateTimings: existing.contentUpdateTimings,
     });
+    this.streamPartWordCounts.delete(turnId);
     this.pushChange('completed', item.id);
     return item;
   }
@@ -489,7 +492,7 @@ export class ChatVisibleTranscriptModel {
   private updateStreamStats(
     turnId: string,
     status: TurnResponseStatus,
-    markdown: string,
+    parts: readonly TurnResponsePart[],
   ): ChatStreamStats | undefined {
     let tracker = this.streamStatsTrackers.get(turnId);
     if (!tracker && status === 'streaming') {
@@ -500,7 +503,25 @@ export class ChatVisibleTranscriptModel {
       return undefined;
     }
 
-    tracker.update(countChatMarkdownWords(markdown));
+    let partWordCounts = this.streamPartWordCounts.get(turnId);
+    if (!partWordCounts) {
+      partWordCounts = new Map<string, number>();
+      this.streamPartWordCounts.set(turnId, partWordCounts);
+    }
+    for (let index = 0; index < parts.length; index += 1) {
+      const part = parts[index];
+      if (part.type !== 'markdown' && part.type !== 'thinking') {
+        continue;
+      }
+      const persistedPartId = (part as unknown as { readonly partId?: unknown }).partId;
+      const partId = typeof persistedPartId === 'string'
+        ? persistedPartId
+        : `${part.type}:legacy:${index}`;
+      partWordCounts.set(partId, countChatMarkdownWords(part.content));
+    }
+    const totalWordCount = Array.from(partWordCounts.values())
+      .reduce((total, count) => total + count, 0);
+    tracker.update(totalWordCount);
     return tracker.data;
   }
 
@@ -575,16 +596,6 @@ function collectChatPartAssistantPreview(parts: readonly ChatPart[], fallback: s
   return content || fallback;
 }
 
-function collectChatPartStreamingText(parts: readonly ChatPart[], fallback: string): string {
-  const content = parts
-    .filter((part): part is Extract<ChatPart, { type: 'markdown' | 'thinking' }> => (
-      part.type === 'markdown' || part.type === 'thinking'
-    ))
-    .map(part => part.content)
-    .join('');
-  return content || fallback;
-}
-
 function turnResponsePartsToChatParts(parts: readonly TurnResponsePart[]): readonly ChatPart[] {
   return turnResponsePartsToDisplayChatParts(parts);
 }
@@ -630,7 +641,6 @@ function createItemSignature(item: Omit<ChatVisibleTranscriptItem, 'revision'>):
     item.role,
     item.turnId,
     item.status,
-    item.contentPreview,
     item.turnResponse?.response.status ?? '',
     item.turnResponse?.updatedAt ?? '',
     stableSmallJson(item.turnResponse?.request?.metadata ?? null),

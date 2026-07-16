@@ -489,6 +489,29 @@ class LexExecutionRuntimeOwner {
     return this.createSessionState(session, 'running', true, turnId);
   }
 
+  readSessionExecutionState(command = {}) {
+    const sessionId = normalizeSessionId(command.sessionId);
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      return {
+        sessionId,
+        exists: false,
+        requestInProgress: false,
+        activeTurnId: null,
+      };
+    }
+
+    const requestInProgress = !!session.activeAbortController && !!session.activeTurnPromise;
+    return {
+      sessionId,
+      exists: true,
+      requestInProgress,
+      activeTurnId: requestInProgress ? session.activeTurnId || null : null,
+      responseCompleted: requestInProgress && session.responseCompletedTurnId === session.activeTurnId,
+      revision: Number(session.revision) || 0,
+    };
+  }
+
   applyProtocolTruncation(session, protocolTruncation) {
     const truncation = normalizeProtocolTruncation(protocolTruncation);
     if (!truncation || !session?.handle) {
@@ -504,7 +527,7 @@ class LexExecutionRuntimeOwner {
       return;
     }
 
-    session.pendingApprovals?.clear?.();
+    session.pendingConfirmations?.clear?.();
     session.handle.restoreSession(result.snapshot);
     session.revision += 1;
 
@@ -572,9 +595,9 @@ class LexExecutionRuntimeOwner {
       return null;
     }
     if (request.kind === 'confirmation.resolve' || request.kind === 'confirmation.action') {
-      const pending = session.pendingApprovals?.get(interactionId);
+      const pending = session.pendingConfirmations?.get(interactionId);
       if (pending) {
-        session.pendingApprovals.delete(interactionId);
+        session.pendingConfirmations.delete(interactionId);
         pending.resolve(normalizeApprovalDecision(request.payload));
         return this.createInteractionSnapshot(session);
       }
@@ -659,7 +682,7 @@ class LexExecutionRuntimeOwner {
       handlePromise: null,
       cwd: null,
       adapter: null,
-      pendingApprovals: new Map(),
+      pendingConfirmations: new Map(),
       pendingQuestions: new Map(),
       commandProcesses: new Map(),
       completionChain: Promise.resolve(),
@@ -694,7 +717,7 @@ class LexExecutionRuntimeOwner {
     session.runtimeConfigKey = nextConfig.runtimeConfigKey;
     session.handle = null;
     session.adapter = null;
-    session.pendingApprovals?.clear?.();
+    session.pendingConfirmations?.clear?.();
     session.pendingQuestions?.clear?.();
     session.commandProcesses = session.commandProcesses instanceof Map ? session.commandProcesses : new Map();
     await this.createSessionRuntime(session, projectInfo, snapshot);
@@ -746,6 +769,9 @@ class LexExecutionRuntimeOwner {
       approvalPolicy: normalizeApprovalPolicy(providerOptions),
       approvalsReviewer: normalizeApprovalsReviewer(providerOptions),
       strictAutoReview: normalizeApprovalsReviewer(providerOptions) === 'auto_review',
+      hooks: {
+        askHandler: request => this.requestConfirmation(session, request),
+      },
       approvalHandler: approvalRequest => this.requestApproval(session, approvalRequest),
       approvalPreflightHandler: approvalRequest => this.requestApprovalPreflight(session, approvalRequest),
       additionalDeferredGroups: ELECTRON_BLOCKLY_DEFERRED_GROUPS,
@@ -986,7 +1012,7 @@ class LexExecutionRuntimeOwner {
   requestApproval(session, approvalRequest) {
     const interaction = createApprovalInteraction(session, approvalRequest);
     const approvalPromise = new Promise(resolve => {
-      session.pendingApprovals.set(interaction.id, { resolve });
+      session.pendingConfirmations.set(interaction.id, { resolve });
     });
     const snapshot = this.createInteractionSnapshot(session, [interaction]);
     this.emit({
@@ -997,6 +1023,41 @@ class LexExecutionRuntimeOwner {
       interaction: snapshot,
     });
     return approvalPromise;
+  }
+
+  requestConfirmation(session, request) {
+    const interaction = createConfirmationInteraction(session, request);
+    const signal = session.activeAbortController?.signal;
+    if (signal?.aborted) {
+      return Promise.resolve(false);
+    }
+    const confirmationPromise = new Promise(resolve => {
+      let settled = false;
+      const cleanup = () => {
+        session.pendingConfirmations.delete(interaction.id);
+        signal?.removeEventListener?.('abort', onAbort);
+      };
+      const settle = decision => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanup();
+        resolve(decision);
+      };
+      const onAbort = () => settle({ approved: false, reason: 'aborted' });
+      signal?.addEventListener?.('abort', onAbort, { once: true });
+      session.pendingConfirmations.set(interaction.id, { resolve: settle });
+    });
+    const snapshot = this.createInteractionSnapshot(session, [interaction]);
+    this.emit({
+      kind: 'turnInteractionRequested',
+      sessionId: session.sessionId,
+      turnId: session.activeTurnId || interaction.id,
+      revision: snapshot.revision,
+      interaction: snapshot,
+    });
+    return confirmationPromise.then(decision => decision.approved);
   }
 
   async requestApprovalPreflight(session, approvalRequest) {
@@ -3964,6 +4025,46 @@ function createApprovalInteraction(session, request) {
       ...(request?.approveCombination && typeof request.approveCombination === 'object'
         ? { approveCombination: request.approveCombination }
         : {}),
+    },
+  };
+}
+
+function createConfirmationInteraction(session, request) {
+  const requestId = normalizeString(request?.toolCallId) || `confirmation-${Date.now()}`;
+  const toolName = normalizeString(request?.toolName) || undefined;
+  const input = readApprovalRecord(request?.toolInput) || normalizeApprovalInput(request);
+  const actions = Array.isArray(request?.actions)
+    ? request.actions.map(action => ({
+      ...(normalizeString(action?.id) ? { id: normalizeString(action.id) } : {}),
+      scope: normalizeString(action?.scope) || 'once',
+      label: normalizeString(action?.label) || 'Continue',
+      ...(normalizeString(action?.description) ? { description: normalizeString(action.description) } : {}),
+      ...(normalizeString(action?.tooltip) ? { tooltip: normalizeString(action.tooltip) } : {}),
+      ...(Boolean(action?.disabled) ? { disabled: true } : {}),
+      ...(Boolean(action?.isSecondary) ? { isSecondary: true } : {}),
+      ...(Object.prototype.hasOwnProperty.call(action || {}, 'resolves') ? { resolves: Boolean(action.resolves) } : {}),
+    }))
+    : [];
+  return {
+    sessionId: session.sessionId,
+    id: requestId,
+    kind: 'confirmation',
+    partId: requestId,
+    askId: requestId,
+    ...(toolName ? { toolName } : {}),
+    data: {
+      kind: 'confirmation',
+      partId: requestId,
+      askId: requestId,
+      ...(toolName ? { toolName } : {}),
+      title: normalizeString(request?.title) || 'Continue?',
+      subtitle: normalizeString(request?.subtitle) || '',
+      message: normalizeString(request?.description) || normalizeString(request?.message) || '',
+      args: input,
+      actions,
+      primaryScope: normalizeString(request?.primaryScope) || 'once',
+      primaryLabel: 'Continue',
+      rejectLabel: 'Cancel',
     },
   };
 }

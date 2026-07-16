@@ -42,7 +42,10 @@ import {
   readChatAgentRuntimeModeFromMetadata,
   readChatAgentRuntimeModeSourceFromMetadata,
 } from '../core/chat-agent-runtime-mode';
-import { HostSessionOperationLog } from './host-session-operation-log';
+import {
+  HOST_SESSION_OPERATION_LOG_COMPACT_AFTER_BYTES,
+  HostSessionOperationLog,
+} from './host-session-operation-log';
 import { ChatPerformanceTracer } from './chat-perf-tracer';
 
 import type {
@@ -427,6 +430,14 @@ export class HostSessionRecordStore {
             { slowThresholdMs: 16 },
           );
         }
+        if (content.length >= HOST_SESSION_OPERATION_LOG_COMPACT_AFTER_BYTES) {
+          try {
+            this.writeFileSync(filePath, log.createInitial(parsed));
+          } catch (error) {
+            log.read(content);
+            console.warn(`[ChatHistory] Failed to compact oversized host session operation log (${filePath}):`, error);
+          }
+        }
 
         if (Array.isArray(parsed)) {
           console.warn(`[ChatHistory] 忽略旧版 chatList-only 宿主持久化记录 (${filePath})`);
@@ -762,8 +773,13 @@ export class HostSessionRecordStore {
       : '';
     const markerCheckpointCount = normalizedCheckpointTimeline?.checkpoints?.length
       ?? normalizedCheckpointTimeline?.turnResponses.length
-      ?? 0;
-    const markerTurnResponseCount = normalizedCheckpointTimeline?.turnResponses.length ?? 0;
+      ?? (typeof checkpointMarker?.currentCheckpointIndex === 'number'
+        ? Math.max(0, Math.trunc(checkpointMarker.currentCheckpointIndex) + 1)
+        : 0);
+    const markerTurnResponseCount = normalizedCheckpointTimeline?.turnResponses.length
+      ?? (typeof checkpointMarker?.currentTurnResponseCount === 'number'
+        ? Math.max(0, Math.trunc(checkpointMarker.currentTurnResponseCount))
+        : 0);
     const normalizedCheckpointMarker = checkpointMarkerSessionResource
       && typeof checkpointMarker?.currentCheckpointIndex === 'number'
       && Number.isFinite(checkpointMarker.currentCheckpointIndex)

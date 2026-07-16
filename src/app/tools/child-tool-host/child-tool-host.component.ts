@@ -6,14 +6,16 @@ import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { Connection, WindowMessenger, connect } from 'penpal';
-import { Subscription } from 'rxjs';
+import { firstValueFrom, Subscription } from 'rxjs';
 import { SubWindowComponent } from '../../components/sub-window/sub-window.component';
 import { ToolContainerComponent } from '../../components/tool-container/tool-container.component';
 import { ChildToolConfig, getChildToolConfig } from '../../configs/tool.config';
 import { ChildToolHostInfo, ChildToolProcessService } from '../../services/child-tool-process.service';
 import { ChildAppHostRegistryService } from '../../services/child-app-host-registry.service';
+import { AuthService } from '../../services/auth.service';
 import { ElectronService } from '../../services/electron.service';
 import { LogService } from '../../services/log.service';
+import { MainUiAutomationService } from '../../services/main-ui-automation.service';
 import { ProjectService } from '../../services/project.service';
 import { ThemeService } from '../../services/theme.service';
 import { ToolI18nService } from '../../services/tool-i18n.service';
@@ -102,7 +104,9 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     private message: NzMessageService,
     private logService: LogService,
     private childHostRegistry: ChildAppHostRegistryService,
+    private authService: AuthService,
     private electronService: ElectronService,
+    private mainUiAutomation: MainUiAutomationService,
   ) {
     this.langSubscription = this.translate.onLangChange.subscribe(() => this.syncHostContext());
     this.themeSubscription = this.themeService.themeChanged$.subscribe(() => this.syncHostContext());
@@ -427,6 +431,10 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
         openExternal: (url: string) => {
           (window as any).electronAPI?.other?.openByBrowser?.(url);
         },
+        startGithubLogin: (payload: { inviteCode?: string } = {}) => this.startGithubLogin(payload),
+        selectChatResources: () => this.selectChatResources(),
+        listChildApps: (payload: { limit?: number } = {}) => this.listChatChildApps(payload),
+        openChildApp: (payload: { toolId?: string; mode?: 'embedded' | 'window' } = {}) => this.openChatChildApp(payload),
         sendToolSignal: async (signal: string, payload: any = {}) => {
           return await this.sendToolSignalFromChild(signal, payload);
         }
@@ -771,6 +779,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   private createHostContext(): Record<string, unknown> {
+    const isAilyChat = this.isAilyChatTool();
     return {
       toolId: this.resolvedToolId,
       contextId: this.hostContextId,
@@ -778,12 +787,159 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       lang: this.normalizeLang(this.translate.currentLang || this.translate.defaultLang || 'en'),
       theme: this.normalizeTheme(this.themeService.theme()),
       platform: (window as any).electronAPI?.platform?.type || 'browser',
+      embedded: !this.isStandalone,
       workspace: this.resolveHostWorkspace(),
       capabilities: {
         snapshotRefresh: true,
-        userInteractionNotifications: true
+        userInteractionNotifications: true,
+        hostGithubLogin: isAilyChat,
+        resourcePicker: isAilyChat
+          && typeof (window as any).dialog?.selectFiles === 'function',
+        childAppMenu: isAilyChat
       }
     };
+  }
+
+  private isAilyChatTool(): boolean {
+    return this.resolvedToolId === 'aily-chat' || this.resolvedToolId === 'aily-chat-react';
+  }
+
+  private async selectChatResources(): Promise<Record<string, unknown>> {
+    if (!this.isAilyChatTool()) {
+      return { ok: false, message: 'Resource selection is only available to Aily Chat' };
+    }
+    const dialog = (window as any).dialog;
+    const fs = (window as any).fs;
+    if (!dialog?.selectFiles || !fs?.isDirectory) {
+      return { ok: false, message: 'Host file picker is unavailable' };
+    }
+    const result = await dialog.selectFiles({
+      title: '选择文件或文件夹',
+      properties: ['openFile', 'openDirectory', 'multiSelections'],
+    });
+    if (result?.canceled || !Array.isArray(result?.filePaths)) {
+      return { ok: true, resources: [] };
+    }
+    const resources = result.filePaths
+      .slice(0, 12)
+      .map((path: string) => this.createChatResource(path, fs));
+    return { ok: true, resources };
+  }
+
+  private createChatResource(path: string, fs: any): Record<string, unknown> {
+    const name = String(path).split(/[/\\]/).pop() || path;
+    if (!fs.isDirectory(path)) {
+      return this.createChatFileResource(path, name, fs);
+    }
+
+    return {
+      type: 'folder',
+      path,
+      name,
+      children: this.collectChatFolderFiles(path, fs),
+    };
+  }
+
+  private collectChatFolderFiles(rootPath: string, fs: any): Record<string, unknown>[] {
+    const resources: Record<string, unknown>[] = [];
+    const pending = [rootPath];
+    const ignoredDirectories = new Set(['.git', 'node_modules', 'dist', 'build']);
+
+    while (pending.length && resources.length < 36) {
+      const directory = pending.shift()!;
+      let entries: Array<{ name: string; _isDirectory?: boolean; _isFile?: boolean }> = [];
+      try {
+        entries = fs.readDirSync(directory);
+      } catch {
+        continue;
+      }
+
+      for (const entry of entries) {
+        if (resources.length >= 36) break;
+        if (entry.name.startsWith('.') && entry.name !== '.env') continue;
+        const separator = String(directory).includes('\\') ? '\\' : '/';
+        const childPath = `${directory}${separator}${entry.name}`;
+        if (entry._isDirectory) {
+          if (!ignoredDirectories.has(entry.name)) pending.push(childPath);
+          continue;
+        }
+        if (entry._isFile !== false) {
+          resources.push(this.createChatFileResource(childPath, entry.name, fs));
+        }
+      }
+    }
+
+    return resources;
+  }
+
+  private createChatFileResource(path: string, name: string, fs: any): Record<string, unknown> {
+    const maxInlineBytes = 96 * 1024;
+    let size = 0;
+    try {
+      size = Number(fs.statSync(path)?.size) || 0;
+    } catch {
+      return { type: 'file', path, name, content: `[${name}: failed to inspect]` };
+    }
+
+    let content = `[${name}: binary, ${size} bytes]`;
+    if (size > maxInlineBytes) {
+      content = `[${name}: ${size} bytes, too large to inline]`;
+    } else if (this.isChatTextFile(name)) {
+      try {
+        content = String(fs.readFileSync(path, 'utf8'));
+      } catch {
+        content = `[${name}: failed to read]`;
+      }
+    }
+
+    return { type: 'file', path, name, size, content };
+  }
+
+  private isChatTextFile(name: string): boolean {
+    const extension = String(name).toLowerCase().split('.').pop() || '';
+    return new Set([
+      'c', 'cc', 'cpp', 'css', 'csv', 'env', 'h', 'hpp', 'html', 'ino', 'java', 'js',
+      'json', 'jsx', 'log', 'md', 'mjs', 'py', 'rs', 'scss', 'sh', 'svg', 'toml',
+      'ts', 'tsx', 'txt', 'vue', 'xml', 'yaml', 'yml',
+    ]).has(extension);
+  }
+
+  private async listChatChildApps(payload: { limit?: number } = {}): Promise<Record<string, unknown>> {
+    if (!this.isAilyChatTool()) {
+      return { ok: false, message: 'Child app listing is only available to Aily Chat' };
+    }
+    return this.mainUiAutomation.listChildApps({
+      limit: Math.max(1, Math.min(12, Number(payload?.limit) || 6)),
+    });
+  }
+
+  private async openChatChildApp(
+    payload: { toolId?: string; mode?: 'embedded' | 'window' } = {},
+  ): Promise<Record<string, unknown>> {
+    if (!this.isAilyChatTool()) {
+      return { ok: false, message: 'Opening child apps is only available to Aily Chat' };
+    }
+    return this.mainUiAutomation.openChildApp({
+      toolId: String(payload?.toolId || ''),
+      mode: payload?.mode === 'window' ? 'window' : 'embedded',
+    });
+  }
+
+  private async startGithubLogin(payload: { inviteCode?: string } = {}): Promise<Record<string, unknown>> {
+    if (!this.isAilyChatTool()) {
+      throw new Error('GitHub login is only available to Aily Chat');
+    }
+
+    const inviteCode = typeof payload?.inviteCode === 'string'
+      ? payload.inviteCode.trim().slice(0, 11)
+      : '';
+    const response = await firstValueFrom(this.authService.startGitHubOAuth(inviteCode || undefined));
+    if (!response?.authorization_url) {
+      throw new Error('GitHub authorization URL is unavailable');
+    }
+
+    this.electronService.openUrl(response.authorization_url);
+    return { ok: true, state: response.state };
   }
 
   private async notifyUserInteraction(payload: any): Promise<Record<string, unknown>> {
