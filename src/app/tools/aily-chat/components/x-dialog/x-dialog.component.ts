@@ -734,14 +734,22 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
   onRestoreCheckpoint(): void {
     const target = this.effectiveTurnContext;
     if (!target || this.checkpointActionDisabled) return;
-    const detail: ChatTaskActionDetail = { action: 'restoreCheckpoint', target };
+    const detail: ChatTaskActionDetail = {
+      action: 'restoreCheckpoint',
+      target,
+      sessionResource: this.sessionId,
+    };
     this.taskAction.emit(detail);
   }
 
   onForkSession(): void {
     const target = this.effectiveTurnContext;
     if (!target || this.forkSessionActionDisabled) return;
-    const detail: ChatTaskActionDetail = { action: 'forkSession', target };
+    const detail: ChatTaskActionDetail = {
+      action: 'forkSession',
+      target,
+      sessionResource: this.sessionId,
+    };
     this.taskAction.emit(detail);
   }
 

@@ -2507,10 +2507,10 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
     return changed;
   }
 
-  handleCheckpointRestoreSurfaceAction(event?: Event): void {
+  handleCheckpointRestoreSurfaceAction(event?: Event, sessionResource?: string): void {
     event?.preventDefault();
     event?.stopPropagation();
-    this.handleDialogTaskAction({ action: 'redoEdits' });
+    this.handleDialogTaskAction({ action: 'redoEdits', sessionResource });
   }
 
   handleDialogTaskAction(detail?: ChatTaskActionDetail): void {
