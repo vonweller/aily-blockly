@@ -921,12 +921,52 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
     return this.viewState.paneStageSurfaceModel;
   }
 
-  async onComposerAddFileRequest(): Promise<void> {
-    await this.resourceManager.addFileResources();
+  async onComposerAddFileOrFolderRequest(): Promise<void> {
+    await this.resourceManager.addFileOrFolderResources();
   }
 
-  async onComposerAddFolderRequest(): Promise<void> {
-    await this.resourceManager.addFolderResource();
+  get contextMenuItems(): IMenuItem[] {
+    const runningProcessCount = this.getRunningProcessCount();
+    return [
+      {
+        name: this.translate.instant('AILY_CHAT.ADD_FILE_OR_FOLDER'),
+        action: 'context-add-file-or-folder',
+        icon: 'fa-light fa-paperclip',
+      },
+      {
+        name: this.translate.instant('AILY_CHAT.PROCESS_TITLE'),
+        text: runningProcessCount > 0 ? String(runningProcessCount) : '',
+        action: 'context-open-process-manager',
+        icon: 'fa-light fa-square-terminal',
+      },
+      {
+        name: this.translate.instant('AILY_CHAT.MEMORY_TITLE'),
+        action: 'context-manage-memory',
+        icon: 'fa-light fa-brain',
+      },
+    ];
+  }
+
+  toggleComposerContextMenu(event: MouseEvent): void {
+    this.vm.closeSessionPicker();
+    this.menuManager.toggleContextMenu(event, this.contextMenuItems);
+  }
+
+  handleContextMenuClick(item: IMenuItem): void {
+    this.menuManager.closeAll();
+    switch (item.action) {
+      case 'context-add-file-or-folder':
+        void this.onComposerAddFileOrFolderRequest();
+        return;
+      case 'context-open-process-manager':
+        this.openProcessManagerDialog();
+        return;
+      case 'context-manage-memory':
+        this.memoryShellCoordinator.requestManageMemories();
+        return;
+      default:
+        return;
+    }
   }
 
   get sessionPickerSurfaceModel(): ChatPaneSessionPickerSurfaceModel | null {
@@ -1098,19 +1138,9 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
     ChatPerformanceTracer.stopEventLoopLagSampler();
   }
 
-  shouldShowProcessEntryButton(): boolean {
-    return this.readVisibleProcessScopeProcesses().some(process => process.removed !== true);
-  }
-
   getRunningProcessCount(): number {
     return this.readVisibleProcessScopeProcesses()
       .filter(process => process.removed !== true && process.running === true)
-      .length;
-  }
-
-  getProcessEntryBadgeCount(): number {
-    return this.readVisibleProcessScopeProcesses()
-      .filter(process => process.removed !== true)
       .length;
   }
 

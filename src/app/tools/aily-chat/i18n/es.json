@@ -10,6 +10,7 @@
         "ADD_CONTEXT": "Agregar contexto",
         "ADD_FILE": "Agregar archivo",
         "ADD_FOLDER": "Agregar carpeta",
+        "ADD_FILE_OR_FOLDER": "Agregar archivos y carpetas",
         "MANAGE_MEMORY": "Manage Memory",
         "MANAGE_MEMORY_CREATE": "Add Memory",
         "MEMORY_TITLE": "Memory",

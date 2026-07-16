@@ -10,6 +10,7 @@
         "ADD_CONTEXT": "添加上下文",
         "ADD_FILE": "添加文件",
         "ADD_FOLDER": "添加文件夹",
+        "ADD_FILE_OR_FOLDER": "添加文件和文件夹",
         "MANAGE_MEMORY": "管理记忆",
         "MANAGE_MEMORY_CREATE": "添加记忆",
         "MEMORY_TITLE": "记忆管理",

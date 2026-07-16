@@ -10,6 +10,7 @@
         "ADD_CONTEXT": "コンテキストを追加",
         "ADD_FILE": "ファイルを追加",
         "ADD_FOLDER": "フォルダを追加",
+        "ADD_FILE_OR_FOLDER": "ファイルとフォルダを追加",
         "MANAGE_MEMORY": "Manage Memory",
         "MANAGE_MEMORY_CREATE": "Add Memory",
         "MEMORY_TITLE": "Memory",
