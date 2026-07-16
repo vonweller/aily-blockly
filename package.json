@@ -163,6 +163,7 @@
     "smoke:chat-memory-asset-chronicle": "node scripts/smoke-chat-memory-asset-chronicle.mjs",
     "test:aily-chat-mainline": "ng test --watch=false --browsers=ChromeHeadless --include src/app/tools/aily-chat/aily-chat.component.spec.ts --include src/app/tools/aily-chat/helpers/chat-component-view-model.spec.ts --include src/app/tools/aily-chat/helpers/lex-stream.helper.spec.ts --include src/app/tools/aily-chat/services/chat-engine.service.spec.ts --include src/app/tools/aily-chat/services/interaction-budget-snapshot.spec.ts --include src/app/tools/aily-chat/helpers/host-turn-response-state.spec.ts --include src/app/tools/aily-chat/helpers/host-session-restore-bridge.spec.ts --include src/app/tools/aily-chat/helpers/session-lifecycle.helper.spec.ts",
     "setup:child-repos": "node scripts/setup-child-repos.js",
+    "setup:child-repos:dev": "node scripts/setup-child-repos.js --dev",
     "electron": "concurrently \"npm start\" \"wait-on tcp:4200 && node ./scripts/run-electron-dev.js --serve\"",
     "electron:worker": "powershell -ExecutionPolicy Bypass -File ./scripts/run-electron-lex-execution-host.ps1 -Mode worker",
     "electron:worker:mac": "node ./scripts/run-electron-lex-execution-host.js --mode worker",

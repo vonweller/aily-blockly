@@ -343,7 +343,8 @@ function setupAilyChat() {
   );
 
   run(AILY_CHAT_REPO.setupCommand, repoDir);
-  run(`npm run ${AILY_CHAT_REPO.buildScript}`, repoDir);
+  const buildArgs = hasCliFlag('dev') ? ' -- --dev' : '';
+  run(`npm run ${AILY_CHAT_REPO.buildScript}${buildArgs}`, repoDir);
 
   const sourceDir = path.join(repoDir, AILY_CHAT_REPO.outputDir);
   const toolsDir = path.join(childDir, 'tools');
