@@ -1,6 +1,4 @@
 import type { ToolUseResult } from '../core/tool-types';
-import { AilyHost } from '../core/host';
-import type { EditingTimelineWriter } from '../services/editing-timeline-recording-bridge';
 
 interface GetBoardConfigInput {
     /** 不需要参数，自动获取当前开发板的配置 */
@@ -11,12 +9,6 @@ interface SetBoardConfigInput {
     config_key: string;
     /** 配置项的值（对应选项的 data 字段） */
     config_value: string;
-}
-
-interface BoardConfigInvocationContext {
-    turnId?: string;
-    toolCallId?: string;
-    timelineWriter?: EditingTimelineWriter;
 }
 
 /**
@@ -147,7 +139,6 @@ export async function setBoardConfigTool(
     projectService: any,
     builderService: any,
     input: SetBoardConfigInput,
-    invocationContext?: BoardConfigInvocationContext,
 ): Promise<ToolUseResult> {
     const { config_key, config_value } = input;
 
@@ -172,11 +163,6 @@ export async function setBoardConfigTool(
     }
 
     try {
-        const packageJsonPath = `${projectService.currentProjectPath}/package.json`;
-        const fileSystem = AilyHost.get().fs;
-        const existedBefore = fileSystem.existsSync(packageJsonPath);
-        const beforeContent = existedBefore ? fileSystem.readFileSync(packageJsonPath, 'utf8') : null;
-
         // 读取并更新 package.json 中的 projectConfig
         const packageJson = await projectService.getPackageJson();
         packageJson['projectConfig'] = packageJson['projectConfig'] || {};
@@ -185,20 +171,6 @@ export async function setBoardConfigTool(
         packageJson['projectConfig'][config_key] = config_value;
 
         await projectService.setPackageJson(packageJson);
-
-        if (invocationContext?.timelineWriter?.recordFileWrite && invocationContext.turnId && fileSystem.existsSync(packageJsonPath)) {
-            const afterContent = fileSystem.readFileSync(packageJsonPath, 'utf8');
-            if (!existedBefore || beforeContent !== afterContent) {
-                await invocationContext.timelineWriter.recordFileWrite({
-                    turnId: invocationContext.turnId,
-                    toolCallId: invocationContext.toolCallId,
-                    filePath: packageJsonPath,
-                    existedBefore,
-                    beforeContent,
-                    afterContent,
-                });
-            }
-        }
 
         // 如果是 STM32 的 pnum 配置变更，处理引脚配置同步
         const boardConfig = projectService.currentBoardConfig;

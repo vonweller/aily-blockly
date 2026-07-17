@@ -31,6 +31,11 @@ export class ElectronService {
     return window['fs'].readFileSync(filePath, 'utf8');
   }
 
+  readFileBytes(filePath: string): Uint8Array {
+    const data = window['fs'].readFileBuffer(filePath);
+    return data instanceof Uint8Array ? data : new Uint8Array(data);
+  }
+
   async readFileAsync(filePath: string, encoding = 'utf8'): Promise<string> {
     const fsApi = window['fs'];
     if (fsApi?.readFile) {
@@ -52,6 +57,10 @@ export class ElectronService {
    */
   writeFile(filePath: string, content: string) {
     window['fs'].writeFileSync(filePath, content);
+  }
+
+  writeFileBytes(filePath: string, content: Uint8Array) {
+    window['fs'].writeFileBuffer(filePath, content);
   }
 
   /**

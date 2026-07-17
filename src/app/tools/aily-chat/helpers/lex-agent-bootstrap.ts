@@ -1346,134 +1346,6 @@ export function buildExternalHostAPI(
       : host.path?.getUserHome?.() ?? '';
     return home ? joinProjectPath(home, 'aily-project') : '';
   };
-  const readBoardCandidates = (board: string) => {
-    const normalizedBoard = board.trim();
-    const candidates = new Set<string>();
-    if (normalizedBoard) {
-      candidates.add(normalizedBoard);
-      if (!normalizedBoard.startsWith('@aily-project/')) {
-        candidates.add(`@aily-project/${normalizedBoard}`);
-        candidates.add(`@aily-project/board-${normalizedBoard.replace(/^board-/, '')}`);
-      }
-    }
-    return [...candidates];
-  };
-  const resolveBoardForProjectCreate = (board: string) => {
-    let parsedBoard: Record<string, unknown> | undefined;
-    try {
-      const parsed = JSON.parse(board);
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        parsedBoard = parsed as Record<string, unknown>;
-      }
-    } catch {
-      parsedBoard = undefined;
-    }
-
-    if (parsedBoard) {
-      const parsedName = typeof parsedBoard['name'] === 'string' ? parsedBoard['name'].trim() : '';
-      if (parsedName) {
-        return {
-          ...parsedBoard,
-          name: parsedName,
-          nickname: typeof parsedBoard['nickname'] === 'string' ? parsedBoard['nickname'] : parsedName,
-          version: typeof parsedBoard['version'] === 'string' ? parsedBoard['version'] : 'latest',
-        };
-      }
-    }
-
-    const config = host.config as unknown as Record<string, unknown> | undefined;
-    const validateBoard = config && typeof config['validateBoard'] === 'function'
-      ? config['validateBoard'] as (boardName: string) => { exists?: boolean; board?: unknown }
-      : undefined;
-    for (const candidate of readBoardCandidates(board)) {
-      const validation = validateBoard?.call(config, candidate);
-      if (validation?.exists && validation.board && typeof validation.board === 'object') {
-        return validation.board as Record<string, unknown>;
-      }
-    }
-
-    const boardDict = config?.['boardDict'] && typeof config['boardDict'] === 'object'
-      ? config['boardDict'] as Record<string, unknown>
-      : undefined;
-    for (const candidate of readBoardCandidates(board)) {
-      const dictBoard = boardDict?.[candidate];
-      if (dictBoard && typeof dictBoard === 'object') {
-        return dictBoard as Record<string, unknown>;
-      }
-    }
-
-    const boardList = Array.isArray(config?.['boardList'])
-      ? config?.['boardList'] as Record<string, unknown>[]
-      : typeof config?.['getBoardsList'] === 'function'
-        ? (config['getBoardsList'] as () => unknown[]).call(config).filter(item => item && typeof item === 'object') as Record<string, unknown>[]
-        : [];
-    const normalizedCandidates = readBoardCandidates(board).map(candidate => candidate.toLowerCase());
-    const listBoard = boardList.find(item => {
-      const names = [
-        typeof item['name'] === 'string' ? item['name'] : '',
-        typeof item['nickname'] === 'string' ? item['nickname'] : '',
-        typeof item['displayName'] === 'string' ? item['displayName'] : '',
-      ].map(value => value.trim().toLowerCase()).filter(Boolean);
-      return names.some(name => normalizedCandidates.includes(name));
-    });
-    if (listBoard) {
-      return listBoard;
-    }
-
-    throw new Error(`Board not found for project creation: ${board}`);
-  };
-  const createProjectFromLegacyProjectService = typeof (host.project as any)?.projectNew === 'function'
-    ? async (name: string, board: string, path?: string) => {
-        const basePath = normalizeProjectCreateBasePath(path);
-        if (!basePath) {
-          throw new Error('Project creation requires a target project root path.');
-        }
-        const boardInfo = resolveBoardForProjectCreate(board);
-        const boardName = typeof boardInfo['name'] === 'string' ? boardInfo['name'] : board;
-        const boardNickname = typeof boardInfo['nickname'] === 'string'
-          ? boardInfo['nickname']
-          : typeof boardInfo['displayName'] === 'string'
-            ? boardInfo['displayName']
-            : boardName;
-        const boardVersion = typeof boardInfo['version'] === 'string' && boardInfo['version'].trim()
-          ? boardInfo['version'].trim()
-          : 'latest';
-        const devmode = Array.isArray(boardInfo['mode']) && typeof boardInfo['mode'][0] === 'string'
-          ? boardInfo['mode'][0]
-          : typeof boardInfo['mode'] === 'string'
-            ? boardInfo['mode']
-            : undefined;
-        const result = await (host.project as any).projectNew({
-          name,
-          path: basePath,
-          board: {
-            ...boardInfo,
-            name: boardName,
-            nickname: boardNickname,
-            version: boardVersion,
-          },
-          ...(devmode ? { devmode } : {}),
-        }, {
-          activationReason: 'chat-tool-create',
-          sessionResource: options.sessionId || null,
-        });
-        if (result === false) {
-          throw new Error('Project service returned false while creating project.');
-        }
-        (host.config as any)?.recordBoardUsage?.(boardName);
-        const projectPath = joinProjectPath(basePath, name.replace(/\s/g, '_'));
-        return {
-          projectOpened: true,
-          projectPath,
-          projectName: name,
-          board: {
-            name: boardName,
-            nickname: boardNickname,
-            version: boardVersion,
-          },
-        };
-      }
-    : undefined;
   const hasBuilder = typeof host.builder?.build === 'function';
   const hasBoardSearch = !!(
     host.config?.getHardwareCategories
@@ -1554,12 +1426,17 @@ export function buildExternalHostAPI(
     },
     getProjectPath: () => prjPath(),
     getBoard: () => host.project.currentBoard,
-    createProject: host.project.createProject || createProjectFromLegacyProjectService
-      ? async (name: string, board: string, path?: string) => {
-          const createProject = host.project.createProject ?? createProjectFromLegacyProjectService!;
+    createProject: typeof host.project.createProject === 'function'
+      ? async (name: string, board: string, path?: string, invocationContext?: unknown) => {
+          const createProject = host.project.createProject!;
           const basePath = normalizeProjectCreateBasePath(path ?? prjPath());
           const projectName = resolveUniqueProjectCreateName(basePath, name);
-          const result = await createProject(projectName, board, basePath);
+          const result = await (createProject as unknown as (
+            projectName: string,
+            board: string,
+            basePath: string,
+            context?: unknown,
+          ) => Promise<unknown>)(projectName, board, basePath, invocationContext);
           const resultRecord = result && typeof result === 'object'
             ? result as Record<string, unknown>
             : null;
@@ -1573,7 +1450,7 @@ export function buildExternalHostAPI(
               : basePath
                 ? joinProjectPath(basePath, normalizeProjectCreateDirectoryName(projectName))
                 : '';
-          const response = resultRecord
+          const response: Record<string, unknown> & { path: string } = resultRecord
             ? {
                 ...resultRecord,
                 path: typeof resultRecord['path'] === 'string' && resultRecord['path'].trim()
@@ -1585,7 +1462,13 @@ export function buildExternalHostAPI(
                   : projectName,
                 ...(projectName !== String(name || '').trim() ? { requestedProjectName: String(name || '').trim() } : {}),
               }
-            : result;
+            : {
+                path: projectPath,
+                projectPath,
+                projectName,
+                result,
+                ...(projectName !== String(name || '').trim() ? { requestedProjectName: String(name || '').trim() } : {}),
+              };
           if (projectPath) {
             createdProjectPath = projectPath;
             await options.onProjectCreated?.(projectPath, response);

@@ -75,6 +75,9 @@ export class EditingTimelineRepository {
 
     const normalized = this.normalizeState(state, state.sessionId, state.workspaceRoot);
     normalized.updatedAt = this.now();
+    if (normalized.version === 2) {
+      normalized.revision = (normalized.revision ?? 0) + 1;
+    }
 
     try {
       const dir = this.getSessionDir(normalized.workspaceRoot, normalized.sessionId);
@@ -112,7 +115,10 @@ export class EditingTimelineRepository {
     const now = this.now();
 
     return {
-      version: 1,
+      version: state.version === 2 ? 2 : 1,
+      ...(state.version === 2
+        ? { revision: this.asNonNegativeNumber(state.revision) ?? 0 }
+        : {}),
       sessionId: this.asNonEmptyString(state.sessionId) ?? sessionId,
       workspaceRoot: this.asNonEmptyString(state.workspaceRoot) ?? workspaceRoot,
       checkpoints: this.asCheckpoints(state.checkpoints),
@@ -151,6 +157,7 @@ export class EditingTimelineRepository {
         startedAt: this.asNumber(scope.startedAt) ?? this.now(),
         ...(this.asNumber(scope.completedAt) !== undefined ? { completedAt: this.asNumber(scope.completedAt)! } : {}),
         status: this.asRequestStatus(scope.status),
+        ...(this.asRequestOutcome(scope.outcome) ? { outcome: this.asRequestOutcome(scope.outcome)! } : {}),
         ...(this.asNumber(scope.firstEpoch) !== undefined ? { firstEpoch: this.asNumber(scope.firstEpoch)! } : {}),
         ...(this.asNumber(scope.lastEpoch) !== undefined ? { lastEpoch: this.asNumber(scope.lastEpoch)! } : {}),
         checkpointIds: this.asStringArray(scope.checkpointIds),
@@ -291,6 +298,12 @@ export class EditingTimelineRepository {
     return raw === 'completed' || raw === 'restored' || raw === 'discarded' ? raw : 'open';
   }
 
+  private asRequestOutcome(raw: unknown): TimelineRequestScope['outcome'] {
+    return raw === 'completed' || raw === 'cancelled' || raw === 'error' || raw === 'disposed'
+      ? raw
+      : undefined;
+  }
+
   private asContentKind(raw: unknown): 'text' | 'binary' | 'notebook' {
     return raw === 'binary' || raw === 'notebook' ? raw : 'text';
   }
@@ -307,6 +320,11 @@ export class EditingTimelineRepository {
 
   private asNumber(raw: unknown): number | undefined {
     return typeof raw === 'number' && Number.isFinite(raw) ? raw : undefined;
+  }
+
+  private asNonNegativeNumber(raw: unknown): number | undefined {
+    const value = this.asNumber(raw);
+    return value !== undefined && value >= 0 ? value : undefined;
   }
 
   private asNonEmptyString(raw: unknown): string | undefined {

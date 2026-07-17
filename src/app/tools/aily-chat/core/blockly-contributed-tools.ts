@@ -206,7 +206,7 @@ export function createBlocklyToolProvider(hostAPI: IExternalHostAPI, options?: B
     }): Promise<ToolResultContent> {
       // External tools call handlers directly; no blockly-side runtime registry remains here.
       if (runtimeMode === 'blockly' && isLegacyHostExternalToolName(toolName)) {
-        return invokeLegacyHostExternalTool(toolName, input as Record<string, unknown>, invocationContext);
+        return invokeLegacyHostExternalTool(toolName, input as Record<string, unknown>, hostAPI, invocationContext);
       }
 
       const handler = handlers[toolName];

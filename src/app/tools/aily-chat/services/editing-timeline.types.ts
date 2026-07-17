@@ -1,5 +1,6 @@
 export interface EditingSessionTimelineState {
-  version: 1;
+  version: 1 | 2;
+  revision?: number;
   sessionId: string;
   workspaceRoot: string;
   checkpoints: TimelineCheckpoint[];
@@ -26,6 +27,7 @@ export interface TimelineRequestScope {
   startedAt: number;
   completedAt?: number;
   status: 'open' | 'completed' | 'restored' | 'discarded';
+  outcome?: 'completed' | 'cancelled' | 'error' | 'disposed';
   firstEpoch?: number;
   lastEpoch?: number;
   checkpointIds: string[];

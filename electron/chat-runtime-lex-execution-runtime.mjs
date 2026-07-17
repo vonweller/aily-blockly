@@ -8,10 +8,14 @@ import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
+import { createWorkerExternalEditService } from './chat-runtime-external-edit-capture.mjs';
+
 import {
   AilyServicesEndpoint,
   OpenAIEndpoint,
   PromptLayer,
+  EditingTimelineOwner,
+  TrackedWorkspaceChangeCollector,
   createAgentHandleAsync,
   createBlocklyHostBridge,
 } from 'aily-lex';
@@ -341,6 +345,14 @@ class LexExecutionRuntimeOwner {
     this.requestResourceOperation = requestResourceOperation
       ? async request => {
         const result = await requestResourceOperation(request);
+        try {
+          await this.commitResourceMutationBatch(request, result);
+        } catch (error) {
+          if (error && typeof error === 'object') {
+            error.resourceOperationResult = result;
+          }
+          throw error;
+        }
         this.indexResourceOperation(request).catch(error => {
           console.warn('[AilyChat][ChronicleIndexFailed]', error?.message || error);
         });
@@ -349,6 +361,28 @@ class LexExecutionRuntimeOwner {
       : null;
     this.listeners = new Set();
     this.sessions = new Map();
+  }
+
+  async commitResourceMutationBatch(request, result) {
+    const operationResult = result?.result ?? result;
+    const batch = operationResult?.mutationBatch;
+    if (!batch) {
+      return;
+    }
+    const sessionId = normalizeString(request?.sessionId);
+    const turnId = normalizeString(request?.turnId);
+    const toolCallId = normalizeString(request?.toolCallId);
+    const session = this.sessions.get(sessionId);
+    if (!session?.editingTimeline) {
+      throw new Error('[AilyChat][ExecutionHost] Workspace mutation has no canonical editing timeline owner.');
+    }
+    if (!turnId || session.activeTurnId !== turnId) {
+      throw new Error('[AilyChat][ExecutionHost] Workspace mutation is outside the canonical active turn.');
+    }
+    if (!toolCallId) {
+      throw new Error('[AilyChat][ExecutionHost] Workspace mutation has no canonical tool call identity.');
+    }
+    await session.editingTimeline.recordMutationBatch(batch);
   }
 
   onEvent(listener) {
@@ -537,6 +571,12 @@ class LexExecutionRuntimeOwner {
     session.activeTurnId = turnId;
     session.responseCompletedTurnId = null;
     session.revision += 1;
+    await session.editingTimeline?.beginRequest?.({
+      requestId: turnId,
+      turnId,
+      checkpointId: normalizeString(request?.metadata?.checkpointId) || `checkpoint:${turnId}`,
+      label: `Request ${turnId}`,
+    });
     this.emitRuntimeStatus(session, 'running', true);
 
     const text = typeof request.requestText === 'string'
@@ -544,8 +584,10 @@ class LexExecutionRuntimeOwner {
       : String(request.displayText || '');
     this.prepareSubmittedTurnTitle(session, request, text);
 
+    let editingTimelineOutcome = 'completed';
     const turnPromise = this.runTurn(session, turnId, request, text, abortController)
       .catch(error => {
+        editingTimelineOutcome = abortController.signal.aborted ? 'cancelled' : 'error';
         if (!abortController.signal.aborted && session.responseCompletedTurnId !== turnId) {
           this.emit({
             kind: 'turnError',
@@ -556,7 +598,15 @@ class LexExecutionRuntimeOwner {
           });
         }
       })
-      .finally(() => {
+      .finally(async () => {
+        try {
+          if (abortController.signal.aborted) {
+            editingTimelineOutcome = 'cancelled';
+          }
+          await session.editingTimeline?.finishRequest?.(turnId, editingTimelineOutcome);
+        } catch (error) {
+          console.warn('[AilyChat][EditingTimelineCompleteRequestFailed]', error?.message || error);
+        }
         if (session.activeTurnPromise === turnPromise) {
           const responseAlreadyCompleted = session.responseCompletedTurnId === turnId;
           session.activeAbortController = null;
@@ -648,6 +698,9 @@ class LexExecutionRuntimeOwner {
       session.activeAbortController.abort(createAbortError('[AilyChat][ExecutionHost] Session disposed.'));
     }
     try {
+      if (session?.activeTurnId) {
+        await session.editingTimeline?.finishRequest?.(session.activeTurnId, 'disposed');
+      }
       session?.handle?.dispose?.();
     } finally {
       this.sessions.delete(sessionId);
@@ -662,6 +715,9 @@ class LexExecutionRuntimeOwner {
         session.activeAbortController.abort(createAbortError('[AilyChat][ExecutionHost] Runtime owner disposed.'));
       }
       try {
+        if (session?.activeTurnId) {
+          await session.editingTimeline?.finishRequest?.(session.activeTurnId, 'disposed');
+        }
         session?.handle?.dispose?.();
       } catch {
         // Best-effort cleanup while the worker process is shutting down.
@@ -838,6 +894,8 @@ class LexExecutionRuntimeOwner {
     const searchExtension = createElectronSearchExtension();
     const webFetchBridgeExtension = createElectronWebFetchBridgeExtension();
     const webSearchBridgeExtension = createElectronWebSearchBridgeExtension();
+    const editingTimeline = createElectronEditingTimelineOwner(sessionId, resolvedCwd);
+    session.editingTimeline = editingTimeline;
     const bridge = createBlocklyHostBridge({
       hostAPI,
       endpoint,
@@ -857,6 +915,8 @@ class LexExecutionRuntimeOwner {
         },
         memoryStorage: createMemoryStorageExtension(resolvedCwd, this.env),
         memoryFeatureConfig: createMemoryFeatureConfigExtension(runtimeConfig),
+        editingTimeline,
+        workspaceChangeCollector: new TrackedWorkspaceChangeCollector(),
         diagnostics: createDiagnosticsExtension(sessionId, this.requestResourceOperation),
         skillManager: createElectronSkillManager(skillRegistry, session),
         workspaceReadAccess: createElectronWorkspaceReadAccess(skillRegistry),
@@ -883,6 +943,14 @@ class LexExecutionRuntimeOwner {
       skillRegistry,
       historySearchAvailable: Boolean(this.sessionIndex),
     });
+    const externalEdits = createWorkerExternalEditService({
+      sessionId,
+      timeline: editingTimeline,
+      getActiveTurnId: () => session.activeTurnId,
+      getWorkspaceRoot: () => session.cwd || resolvedCwd,
+    });
+    session.externalEdits = externalEdits;
+    agentBridge.hostAccess.registerExtension?.('externalEdits', externalEdits);
     session.adapter = agentBridge.hostAccess;
 
     const sessionStoreSqlTool = this.sessionIndex
@@ -1240,7 +1308,7 @@ class LexExecutionRuntimeOwner {
         projectInfo,
         result => this.applyProjectCreatedScope(session, result),
       ),
-      builder: createExternalBuilder(sessionId, this.requestResourceOperation, projectInfo, readCwd),
+      builder: createExternalBuilder(sessionId, this.requestResourceOperation, projectInfo, readCwd, session),
       blockly: createExternalBlockly(sessionId, this.requestResourceOperation),
       connectionGraph: createExternalConnectionGraph(sessionId, this.requestResourceOperation),
       boardSearch: createExternalBoardSearch(sessionId, this.requestResourceOperation),
@@ -1436,7 +1504,9 @@ class LexExecutionRuntimeOwner {
 function createExternalFileSystem() {
   return {
     readFile: (filePath, encoding = 'utf-8') => fs.readFile(filePath, encoding),
+    readFileBytes: async filePath => new Uint8Array(await fs.readFile(filePath)),
     writeFile: (filePath, content, encoding = 'utf-8') => fs.writeFile(filePath, content, encoding),
+    writeFileBytes: (filePath, content) => fs.writeFile(filePath, content),
     exists: async filePath => {
       try {
         await fs.access(filePath);
@@ -1795,6 +1865,46 @@ function createSyncFsExtension() {
   return {
     readFileAsBase64: filePath => fsSync.readFileSync(String(filePath || '')).toString('base64'),
   };
+}
+
+export function createElectronEditingTimelineOwner(sessionId, workspaceRoot) {
+  return new EditingTimelineOwner({
+    sessionId,
+    workspaceRoot,
+    storage: {
+      join: (...parts) => path.join(...parts),
+      exists: async filePath => {
+        try {
+          await fs.access(filePath);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      readFile: async filePath => new Uint8Array(await fs.readFile(filePath)),
+      writeFile: async (filePath, content) => {
+        await fs.mkdir(path.dirname(filePath), { recursive: true });
+        await fs.writeFile(filePath, Buffer.from(content));
+      },
+      mkdir: dirPath => fs.mkdir(dirPath, { recursive: true }).then(() => undefined),
+      replaceFile: async (sourcePath, targetPath) => {
+        try {
+          await fs.rename(sourcePath, targetPath);
+        } catch (error) {
+          if (error?.code !== 'EEXIST' && error?.code !== 'EPERM') {
+            throw error;
+          }
+          await fs.rm(targetPath, { force: true });
+          await fs.rename(sourcePath, targetPath);
+        }
+      },
+      deleteFile: filePath => fs.rm(filePath, { force: true }),
+      hash: content => createHash('sha256').update(content).digest('hex'),
+    },
+    onDiagnostic: diagnostic => {
+      console.info('[AilyChat][EditingTimelineRevision]', JSON.stringify(diagnostic));
+    },
+  });
 }
 
 function createBinaryWriteExtension() {
@@ -5871,7 +5981,7 @@ async function invokeElectronBlocklyTool(toolName, input, hostAPI, context = {})
     case 'project':
       return invokeElectronProjectTool(input, hostAPI, context);
     case 'buildProject':
-      return invokeElectronBuildProjectTool(hostAPI);
+      return invokeElectronBuildProjectTool(hostAPI, context);
     case 'boardSearch':
       return invokeElectronBoardSearchTool(input, hostAPI);
     case 'search_boards_libraries':
@@ -5887,13 +5997,13 @@ async function invokeElectronBlocklyTool(toolName, input, hostAPI, context = {})
     case 'get_board_parameters':
       return toolText(formatExternalResult(await readBoardParameters(hostAPI.project, input.parameters)));
     case 'syncAbs':
-      return invokeElectronSyncAbsTool(input, hostAPI);
+      return invokeElectronSyncAbsTool(input, hostAPI, context);
     case 'analyzeLibrary':
       return invokeElectronAnalyzeLibraryTool(input, hostAPI);
     case 'lint':
-      return invokeElectronLintTool(input, hostAPI);
+      return invokeElectronLintTool(input, hostAPI, context);
     case 'save_arch':
-      return invokeElectronSaveArchTool(input, hostAPI);
+      return invokeElectronSaveArchTool(input, hostAPI, context);
     case 'generate_schematic':
     case 'get_pinmap_summary':
     case 'get_component_catalog':
@@ -5973,7 +6083,7 @@ async function invokeElectronProjectTool(input, hostAPI, context = {}) {
       name: normalizeString(input.name),
       board,
       path: normalizeString(input.path),
-    })));
+    }, context)));
   }
   if (action === 'reload') {
     return toolText(formatExternalResult(await hostAPI.project.reloadProject()));
@@ -5983,7 +6093,7 @@ async function invokeElectronProjectTool(input, hostAPI, context = {}) {
     if (!board) {
       return toolError('project switch_board requires board.');
     }
-    return toolText(formatExternalResult(await hostAPI.project.switchBoard(board)));
+    return toolText(formatExternalResult(await hostAPI.project.switchBoard(board, context)));
   }
   if (action === 'get_board_config') {
     return toolText(formatExternalResult(await readBoardParameters(hostAPI.project, input.parameters)));
@@ -5993,7 +6103,7 @@ async function invokeElectronProjectTool(input, hostAPI, context = {}) {
     if (!config) {
       return toolError('project set_board_config requires config_key/config_value or a single-entry config object.');
     }
-    return toolText(formatExternalResult(await hostAPI.project.setBoardConfig(config)));
+    return toolText(formatExternalResult(await hostAPI.project.setBoardConfig(config, context)));
   }
   return toolError(`Project action "${action || '<missing>'}" is not migrated to the Electron execution host yet.`);
 }
@@ -6036,12 +6146,12 @@ function readProjectConfigInput(input) {
   return normalizedKey ? { [normalizedKey]: String(entryValue ?? '') } : null;
 }
 
-async function invokeElectronBuildProjectTool(hostAPI) {
+async function invokeElectronBuildProjectTool(hostAPI, context = {}) {
   const projectPath = hostAPI.project?.getProjectPath?.();
   if (!projectPath) {
     return toolError('No active project is available for build.');
   }
-  return toolText(formatExternalResult(await hostAPI.builder.build({ projectPath })));
+  return toolText(formatExternalResult(await hostAPI.builder.build({ projectPath }, context)));
 }
 
 async function invokeElectronBoardSearchTool(input, hostAPI) {
@@ -6064,13 +6174,13 @@ async function invokeElectronBoardSearchTool(input, hostAPI) {
   return toolError(`Unknown boardSearch action: ${action || '<missing>'}`);
 }
 
-async function invokeElectronLintTool(input, hostAPI) {
+async function invokeElectronLintTool(input, hostAPI, context = {}) {
   const requestedMode = normalizeString(input?.mode);
   const mode = requestedMode === 'accurate' || requestedMode === 'auto' ? requestedMode : 'fast';
 
   const generatedCode = typeof hostAPI.blockly.getGeneratedCode === 'function'
     ? await hostAPI.blockly.getGeneratedCode()
-    : await hostAPI.blockly.exportAbs();
+    : await hostAPI.blockly.exportAbs(context);
   if (!normalizeString(generatedCode)) {
     return toolText('No generated code to lint (workspace is empty).');
   }
@@ -6081,7 +6191,7 @@ async function invokeElectronLintTool(input, hostAPI) {
   return toolText(formatExternalResult(result));
 }
 
-async function invokeElectronSyncAbsTool(input, hostAPI) {
+async function invokeElectronSyncAbsTool(input, hostAPI, context = {}) {
   if (typeof hostAPI.blockly?.syncAbs !== 'function') {
     return toolError('ABS sync is not available in this environment.');
   }
@@ -6093,14 +6203,14 @@ async function invokeElectronSyncAbsTool(input, hostAPI) {
     operation,
     ...(typeof input.includeHeader === 'boolean' ? { includeHeader: input.includeHeader } : {}),
     ...(typeof input.content === 'string' ? { pendingAbsContent: input.content } : {}),
-  });
+  }, context);
   if (result?.is_error) {
     return toolError(result.content || 'syncAbs failed.');
   }
   return toolText(result?.content || formatExternalResult(result), result?.metadata);
 }
 
-async function invokeElectronSaveArchTool(input, hostAPI) {
+export async function invokeElectronSaveArchTool(input, hostAPI, context = {}) {
   const code = normalizeString(input?.code);
   if (!code) {
     return toolError('save_arch requires code.');
@@ -6130,14 +6240,55 @@ async function invokeElectronSaveArchTool(input, hostAPI) {
 
   const archPath = path.join(targetDir, 'arch.md');
   const content = `\`\`\`mermaid\n${code}\n\`\`\`\n`;
+  const turnId = normalizeString(context?.trace?.turnId || context?.turnId);
+  const toolCallId = normalizeString(context?.toolCallId || context?.trace?.toolCallId);
+  const editingTimeline = context?.host?.getExtension?.('editingTimeline');
+  if (!turnId || !toolCallId || typeof editingTimeline?.recordFileWrite !== 'function') {
+    return toolError('save_arch requires the canonical editing timeline turn context.');
+  }
+
+  let existedBefore = false;
+  let beforeContent = null;
+  try {
+    beforeContent = await fs.readFile(archPath, 'utf8');
+    existedBefore = true;
+  } catch (error) {
+    if (error?.code !== 'ENOENT') {
+      throw error;
+    }
+  }
+
   await fs.mkdir(path.dirname(archPath), { recursive: true });
   await hostAPI.fs.writeFile(archPath, content, 'utf-8');
-  await hostAPI.chronicle?.indexWorkspaceArtifact?.({
-    filePath: archPath,
-    content,
-    title: 'Architecture diagram',
-    artifactKind: 'mermaid',
-  });
+  try {
+    await editingTimeline.recordFileWrite({
+      turnId,
+      toolCallId,
+      mutationId: `save-arch:${turnId}:${toolCallId}`,
+      filePath: archPath,
+      existedBefore,
+      beforeContent,
+      afterContent: content,
+    });
+  } catch (error) {
+    if (existedBefore) {
+      await fs.writeFile(archPath, beforeContent ?? '', 'utf8');
+    } else {
+      await fs.rm(archPath, { force: true });
+    }
+    throw error;
+  }
+
+  try {
+    await hostAPI.chronicle?.indexWorkspaceArtifact?.({
+      filePath: archPath,
+      content,
+      title: 'Architecture diagram',
+      artifactKind: 'mermaid',
+    });
+  } catch (error) {
+    console.warn('[AilyChat][ChronicleArtifactIndexFailed]', error?.message || error);
+  }
   return toolText(`Saved architecture diagram to ${archPath}.`, {
     path: archPath,
     filePath: archPath,
@@ -6286,7 +6437,7 @@ function toolError(text) {
   };
 }
 
-function createExternalProject(sessionId, requestResourceOperation, initialProjectInfo, onProjectCreated) {
+export function createExternalProject(sessionId, requestResourceOperation, initialProjectInfo, onProjectCreated) {
   let projectInfo = normalizeProjectInfo(initialProjectInfo);
   return {
     getProjectInfo: async () => {
@@ -6300,7 +6451,7 @@ function createExternalProject(sessionId, requestResourceOperation, initialProje
     getBoardJson: async () => requestProjectInfo(sessionId, requestResourceOperation, 'getBoardJson'),
     getBoardModule: async () => requestProjectInfo(sessionId, requestResourceOperation, 'getBoardModule'),
     getBoardPackageJson: async () => requestProjectInfo(sessionId, requestResourceOperation, 'getBoardPackageJson'),
-    createProject: async options => {
+    createProject: async (options, context = {}) => {
       if (!requestResourceOperation) {
         throw new Error('Project creation requires a host resource operation bridge.');
       }
@@ -6310,28 +6461,76 @@ function createExternalProject(sessionId, requestResourceOperation, initialProje
       if (!board) {
         throw new Error('createProject requires board.');
       }
-      const result = await requestResourceOperation({
-        sessionId,
-        kind: 'project-info',
-        payload: {
-          adapter: 'project',
-          action: 'createProject',
-          ...(name ? { name } : {}),
-          board,
-          ...(targetPath ? { path: targetPath } : {}),
-        },
-      });
+      const turnId = normalizeString(context?.trace?.turnId || context?.turnId);
+      const toolCallId = normalizeString(context?.toolCallId || context?.trace?.toolCallId);
+      let result;
+      try {
+        result = await requestResourceOperation({
+          sessionId,
+          turnId,
+          toolCallId,
+          kind: 'project-info',
+          payload: {
+            adapter: 'project',
+            action: 'createProject',
+            ...(name ? { name } : {}),
+            board,
+            ...(targetPath ? { path: targetPath } : {}),
+          },
+        });
+      } catch (error) {
+        const failedResult = error?.resourceOperationResult?.result ?? error?.resourceOperationResult;
+        const failedTransactionId = normalizeString(failedResult?.mutationBatch?.transactionId);
+        if (failedTransactionId) {
+          try {
+            await requestResourceOperation({
+              sessionId,
+              turnId,
+              toolCallId,
+              kind: 'project-info',
+              payload: {
+                adapter: 'project',
+                action: 'discardCreatedProject',
+                transactionId: failedTransactionId,
+              },
+            });
+          } catch {
+            // Preserve the canonical timeline commit error.
+          }
+        }
+        throw error;
+      }
       const projectResult = result?.result ?? result;
+      let finalProjectResult = projectResult;
       if (projectResult && typeof projectResult === 'object') {
-        projectInfo = normalizeProjectInfo(projectResult);
+        const transactionId = normalizeString(projectResult?.mutationBatch?.transactionId);
+        if (!transactionId) {
+          throw new Error('Created project has no canonical workspace mutation transaction.');
+        }
+        const activation = await requestResourceOperation({
+          sessionId,
+          turnId,
+          toolCallId,
+          kind: 'project-info',
+          payload: {
+            adapter: 'project',
+            action: 'activateCreatedProject',
+            transactionId,
+          },
+        });
+        const activationResult = activation?.result ?? activation;
+        finalProjectResult = { ...projectResult, ...activationResult };
+        projectInfo = normalizeProjectInfo(finalProjectResult);
         await onProjectCreated?.(projectInfo);
       }
-      return projectResult;
+      return finalProjectResult;
     },
     reloadProject: async () => requestProjectInfo(sessionId, requestResourceOperation, 'reloadProject'),
-    switchBoard: async board => {
+    switchBoard: async (board, context = {}) => {
       const result = await requestResourceOperation({
         sessionId,
+        turnId: normalizeString(context?.trace?.turnId || context?.turnId),
+        toolCallId: normalizeString(context?.toolCallId || context?.trace?.toolCallId),
         kind: 'project-info',
         payload: {
           adapter: 'project',
@@ -6341,9 +6540,11 @@ function createExternalProject(sessionId, requestResourceOperation, initialProje
       });
       return result?.result ?? result;
     },
-    setBoardConfig: async config => {
+    setBoardConfig: async (config, context = {}) => {
       const result = await requestResourceOperation({
         sessionId,
+        turnId: normalizeString(context?.trace?.turnId || context?.turnId),
+        toolCallId: normalizeString(context?.toolCallId || context?.trace?.toolCallId),
         kind: 'project-info',
         payload: {
           adapter: 'project',
@@ -6356,36 +6557,85 @@ function createExternalProject(sessionId, requestResourceOperation, initialProje
   };
 }
 
-function createExternalBuilder(sessionId, requestResourceOperation, initialProjectInfo, readCwd) {
+function createExternalBuilder(sessionId, requestResourceOperation, initialProjectInfo, readCwd, session) {
   return {
-    build: async options => {
+    build: async (options, context = {}) => {
       const projectInfo = normalizeProjectInfo(initialProjectInfo);
       const projectPath = normalizeString(options?.projectPath)
         || normalizeString(projectInfo.projectPath || projectInfo.path || projectInfo.rootPath)
         || normalizeString(typeof readCwd === 'function' ? readCwd() : '');
-      const result = await requestResourceOperation({
-        sessionId,
-        kind: 'project-build',
-        payload: {
-          adapter: 'builder',
-          action: 'build',
-          projectPath,
-        },
+      const externalEditOperation = await startWorkerExternalEdits(session, context, {
+        roots: [projectPath],
+        source: 'build',
+        command: 'build project',
       });
-      return normalizeBuildResult(result?.result ?? result);
+      let externalEditsStopped = false;
+      try {
+        const result = await requestResourceOperation({
+          sessionId,
+          kind: 'project-build',
+          payload: {
+            adapter: 'builder',
+            action: 'build',
+            projectPath,
+          },
+        });
+        const captureResult = await session.externalEdits.stopExternalEdits({
+          operationId: externalEditOperation.operationId,
+        });
+        externalEditsStopped = true;
+        const normalized = normalizeBuildResult(result?.result ?? result);
+        const warnings = formatWorkerExternalEditWarnings(externalEditOperation, captureResult);
+        return warnings
+          ? { ...normalized, output: `${normalized.output || ''}${warnings}` }
+          : normalized;
+      } finally {
+        if (!externalEditsStopped) {
+          await session.externalEdits.stopExternalEdits({ operationId: externalEditOperation.operationId });
+        }
+      }
     },
   };
 }
 
+async function startWorkerExternalEdits(session, context, input) {
+  if (!session?.externalEdits) {
+    throw new Error('The worker external-edit owner is unavailable.');
+  }
+  const requestId = normalizeString(context?.turnId || context?.trace?.turnId);
+  const toolCallId = normalizeString(context?.toolCallId || context?.trace?.toolCallId);
+  if (!requestId || !toolCallId) {
+    throw new Error('External edit capture requires canonical turn/tool identity.');
+  }
+  return session.externalEdits.startExternalEdits({
+    requestId,
+    toolCallId,
+    operationId: `external:${requestId}:${toolCallId}:${input.source}`,
+    roots: input.roots,
+    source: input.source,
+    command: input.command,
+  });
+}
+
+function formatWorkerExternalEditWarnings(start, result) {
+  const warnings = [...(start?.warnings || []), ...(result?.warnings || [])]
+    .filter((value, index, values) => value && values.indexOf(value) === index);
+  return warnings.length > 0
+    ? `\n\nExternal workspace capture warnings:\n${warnings.map(value => `- ${value}`).join('\n')}`
+    : '';
+}
+
 function createExternalBlockly(sessionId, requestResourceOperation) {
   return {
-    syncAbs: async args => {
+    syncAbs: async (args, context = {}) => {
       const operation = normalizeString(args?.operation);
       if (operation !== 'export' && operation !== 'import' && operation !== 'status') {
         throw new Error('syncAbs requires operation to be "export", "import", or "status".');
       }
       const result = await requestResourceOperation({
         sessionId,
+        turnId: normalizeString(context?.trace?.turnId || context?.turnId),
+        toolCallId: normalizeString(context?.toolCallId || context?.trace?.toolCallId),
         kind: operation === 'import'
           ? 'workspace-mutation'
           : operation === 'export'
@@ -6402,9 +6652,11 @@ function createExternalBlockly(sessionId, requestResourceOperation) {
       });
       return result?.result ?? result;
     },
-    exportAbs: async () => {
+    exportAbs: async (context = {}) => {
       const result = await requestResourceOperation({
         sessionId,
+        turnId: normalizeString(context?.trace?.turnId || context?.turnId),
+        toolCallId: normalizeString(context?.toolCallId || context?.trace?.toolCallId),
         kind: 'file-write',
         payload: {
           adapter: 'syncAbs',
@@ -6716,13 +6968,13 @@ function createExternalConnectionGraph(sessionId, requestResourceOperation) {
   const call = async (action, args = {}, context = {}) => {
     const result = await requestResourceOperation({
       sessionId,
+      turnId: normalizeString(context?.trace?.turnId || context?.turnId),
+      toolCallId: normalizeString(context?.toolCallId || context?.trace?.toolCallId),
       kind: 'connection-graph',
       payload: {
         adapter: 'connectionGraph',
         action,
         args,
-        turnId: normalizeString(context?.trace?.turnId || context?.turnId),
-        toolCallId: normalizeString(context?.toolCallId || context?.trace?.toolCallId),
       },
     });
     return result?.result ?? result;

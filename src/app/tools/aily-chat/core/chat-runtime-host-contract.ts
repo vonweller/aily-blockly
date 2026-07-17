@@ -697,11 +697,49 @@ export type ChatRuntimeHostResourceOperationPayload =
 export interface ChatRuntimeHostResourceOperationRequest {
   readonly id?: string;
   readonly sessionId: ChatRuntimeHostSessionId;
+  readonly turnId?: string;
+  readonly toolCallId?: string;
   readonly kind: ChatRuntimeHostResourceRequestKind;
   readonly label?: string;
   readonly detail?: string;
   readonly resource?: Readonly<Record<string, unknown>>;
   readonly payload?: ChatRuntimeHostResourceOperationPayload;
+}
+
+export interface ChatRuntimeHostWorkspaceMutationReceipt {
+  readonly sessionId: ChatRuntimeHostSessionId;
+  readonly turnId: string;
+  readonly toolCallId: string;
+  readonly transactionId: string;
+  readonly operationId: string;
+  readonly sequence: number;
+  readonly operationKind: 'create' | 'delete' | 'replace';
+  readonly filePath: string;
+  readonly existedBefore: boolean;
+  readonly contentKind: 'text' | 'binary' | 'notebook';
+  readonly beforeContent?: string | null;
+  readonly afterContent?: string | null;
+  readonly beforeBytes?: Uint8Array | null;
+  readonly afterBytes?: Uint8Array | null;
+}
+
+export interface ChatRuntimeHostWorkspaceMutationReceiptInput {
+  readonly filePath: string;
+  readonly existedBefore: boolean;
+  readonly contentKind: 'text' | 'binary' | 'notebook';
+  readonly beforeContent?: string | null;
+  readonly afterContent?: string | null;
+  readonly beforeBytes?: Uint8Array | null;
+  readonly afterBytes?: Uint8Array | null;
+}
+
+export interface ChatRuntimeHostWorkspaceMutationBatch {
+  readonly sessionId: ChatRuntimeHostSessionId;
+  readonly turnId: string;
+  readonly toolCallId: string;
+  readonly transactionId: string;
+  readonly status: 'committed';
+  readonly receipts: readonly ChatRuntimeHostWorkspaceMutationReceipt[];
 }
 
 export interface ChatRuntimeHostResourceOperationResult {

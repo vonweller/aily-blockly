@@ -377,6 +377,9 @@ export class EditCheckpointService {
   /**
    * 记录一次文件编辑（在工具实际写盘前调用）。
    * 仅捕获内存级基线，磁盘备份由 lex FileHistory.trackEdit 负责。
+   *
+   * @deprecated Renderer compatibility projection only. The execution-host
+   * editing timeline owns canonical mutation history; do not add new callers.
    */
   recordEdit(filePath: string, type: 'create' | 'modify' | 'delete'): void {
     const fs = AilyHost.get().fs;

@@ -20,6 +20,7 @@ import {
   runSyncAbsFileConcreteHandler,
   type SyncAbsArgs,
 } from '../tools/syncAbsFileTool';
+import { ChatRuntimeHostWorkspaceMutationTransaction } from './chat-runtime-host-workspace-mutation-transaction';
 import { analyzeLibraryBlocksTool } from '../tools/editBlockTool';
 import { reloadProjectTool } from '../tools/reloadProjectTool';
 import { switchBoardTool } from '../tools/switchBoardTool';
@@ -108,6 +109,7 @@ type HostResourceOperationPayload = {
   readonly configValue?: unknown;
   readonly config_key?: unknown;
   readonly config_value?: unknown;
+  readonly transactionId?: unknown;
 };
 
 class HostResourceOperationError extends Error {
@@ -124,6 +126,12 @@ class HostResourceOperationError extends Error {
 export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy {
   private registration: ElectronChatRuntimeResourceOperationHandlerRegistration | null = null;
   private registrationPromise: Promise<void> | null = null;
+  private readonly pendingProjectCreations = new Map<string, {
+    readonly sessionId: string;
+    readonly turnId: string;
+    readonly toolCallId: string;
+    readonly projectPath: string;
+  }>();
 
   constructor(
     private readonly chatHistoryService: ChatHistoryService,
@@ -169,6 +177,10 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
     if (registration) {
       void registration.dispose();
     }
+    for (const pending of this.pendingProjectCreations.values()) {
+      this.deletePendingProjectDirectory(pending.projectPath);
+    }
+    this.pendingProjectCreations.clear();
   }
 
   private handleResourceOperation(request: ChatRuntimeHostResourceOperationRequest): unknown {
@@ -445,26 +457,58 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
   }
 
   private async runSyncAbsResourceOperation(request: ChatRuntimeHostResourceOperationRequest) {
-    this.requireSessionId(request, 'syncAbs resource operation');
+    const sessionId = this.requireSessionId(request, 'syncAbs resource operation');
     const args = this.readSyncAbsArgs(request);
     this.assertSyncAbsKindMatchesRequest(request, args.operation);
-    const result = await runSyncAbsFileConcreteHandler(
-      args,
-      this.projectService,
-      this.electronService,
-      this.absAutoSyncService,
-      {
-        sessionId: request.sessionId,
-      },
-    );
+    const isMutation = args.operation === 'export' || args.operation === 'import';
+    const turnId = this.normalizeSessionId(request.turnId);
+    const toolCallId = this.normalizeSessionId(request.toolCallId);
+    if (isMutation && (!turnId || !toolCallId)) {
+      throw new HostResourceOperationError(
+        '[AilyChat][RuntimeHost] Mutating syncAbs operations require canonical turn and tool identities.',
+        'resource_operation_mutation_identity_missing',
+        false,
+      );
+    }
+    const transactionId = `syncabs:${turnId}:${toolCallId}`;
+    const mutationTransaction = isMutation
+      ? new ChatRuntimeHostWorkspaceMutationTransaction({
+          sessionId,
+          turnId,
+          toolCallId,
+          transactionId,
+        }, this.electronService)
+      : null;
+    let result;
+    try {
+      result = await runSyncAbsFileConcreteHandler(
+        args,
+        this.projectService,
+        this.electronService,
+        this.absAutoSyncService,
+        {
+          sessionId,
+          turnId,
+          toolCallId,
+          recordMutationReceipt: mutationTransaction?.record,
+        },
+      );
+    } catch (error) {
+      await mutationTransaction?.rollback();
+      throw error;
+    }
     if (result.is_error) {
+      await mutationTransaction?.rollback();
       throw new HostResourceOperationError(
         result.content || '[AilyChat][RuntimeHost] syncAbs resource operation failed.',
         'syncabs_operation_failed',
         false,
       );
     }
-    return result;
+    if (!mutationTransaction?.hasMutations) {
+      return result;
+    }
+    return { ...result, mutationBatch: mutationTransaction.createBatch() };
   }
 
   private async runProjectInfoOperation(request: ChatRuntimeHostResourceOperationRequest): Promise<unknown> {
@@ -475,6 +519,10 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
         return this.withRuntimeConfigSnapshot(this.buildProjectInfoSnapshot());
       case 'createProject':
         return await this.runProjectCreateOperation(request, payload);
+      case 'activateCreatedProject':
+        return await this.runProjectCreatedProjectActivation(request, payload);
+      case 'discardCreatedProject':
+        return this.runProjectCreatedProjectDiscard(request, payload);
       case 'getPackageJson':
         return typeof this.projectService.getPackageJson === 'function'
           ? await this.projectService.getPackageJson()
@@ -502,14 +550,21 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
             false,
           );
         }
-        return await switchBoardTool(this.projectService, { board_name: board });
+        return await this.runProjectDeclaredMutationOperation(request, 'switchBoard', [
+          'package.json',
+          '.temp/package.json',
+          'project.aci',
+        ], () => switchBoardTool(this.projectService, { board_name: board }));
       }
       case 'setBoardConfig': {
         const configEntry = this.readBoardConfigEntry(payload);
-        return await setBoardConfigTool(this.projectService, this.builderService, {
-          config_key: configEntry.key,
-          config_value: configEntry.value,
-        });
+        return await this.runProjectDeclaredMutationOperation(request, 'setBoardConfig', [
+          'package.json',
+          '.temp/package.json',
+        ], () => setBoardConfigTool(this.projectService, this.builderService, {
+            config_key: configEntry.key,
+            config_value: configEntry.value,
+          }));
       }
       default:
         throw new HostResourceOperationError(
@@ -520,10 +575,71 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
     }
   }
 
+  private async runProjectDeclaredMutationOperation(
+    request: ChatRuntimeHostResourceOperationRequest,
+    action: 'switchBoard' | 'setBoardConfig',
+    relativeFilePaths: readonly string[],
+    operation: () => Promise<unknown>,
+  ): Promise<unknown> {
+    const sessionId = this.requireSessionId(request, `project ${action}`);
+    const turnId = this.normalizeSessionId(request.turnId);
+    const toolCallId = this.normalizeSessionId(request.toolCallId);
+    if (!turnId || !toolCallId) {
+      throw new HostResourceOperationError(
+        `[AilyChat][RuntimeHost] Project ${action} requires canonical turn and tool identities.`,
+        'resource_operation_mutation_identity_missing',
+        false,
+      );
+    }
+    const projectPath = this.normalizeSessionId(this.projectService.currentProjectPath);
+    if (!projectPath) {
+      throw new HostResourceOperationError(
+        `[AilyChat][RuntimeHost] Project ${action} requires an active project.`,
+        'resource_operation_payload_invalid',
+        false,
+      );
+    }
+
+    const transaction = new ChatRuntimeHostWorkspaceMutationTransaction({
+      sessionId,
+      turnId,
+      toolCallId,
+      transactionId: `project:${turnId}:${toolCallId}:${action}`,
+    }, this.electronService);
+    await transaction.captureTextFiles(relativeFilePaths.map(filePath => this.joinProjectPath(projectPath, filePath)));
+
+    let result: unknown;
+    try {
+      result = await operation();
+      if (this.isToolUseError(result)) {
+        await transaction.rollback();
+        return result;
+      }
+      await transaction.recordCapturedTextFileChanges();
+    } catch (error) {
+      await transaction.rollback();
+      throw error;
+    }
+
+    return transaction.hasMutations
+      ? { ...(result && typeof result === 'object' ? result : { result }), mutationBatch: transaction.createBatch() }
+      : result;
+  }
+
   private async runProjectCreateOperation(
     request: ChatRuntimeHostResourceOperationRequest,
     payload: HostResourceOperationPayload,
   ): Promise<unknown> {
+    const sessionId = this.requireSessionId(request, 'project create');
+    const turnId = this.normalizeSessionId(request.turnId);
+    const toolCallId = this.normalizeSessionId(request.toolCallId);
+    if (!turnId || !toolCallId) {
+      throw new HostResourceOperationError(
+        '[AilyChat][RuntimeHost] Project create requires canonical turn and tool identities.',
+        'resource_operation_mutation_identity_missing',
+        false,
+      );
+    }
     const basePath = this.normalizeSessionId(payload.path)
       || this.normalizeSessionId(this.projectService.projectRootPath);
     if (!basePath) {
@@ -551,6 +667,20 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
       || boardName;
     const boardVersion = this.normalizeSessionId(boardInfo['version']) || 'latest';
     const devmode = this.resolveBoardDevelopmentMode(boardInfo);
+    const projectPath = this.joinProjectPath(basePath, projectName.replace(/\s/g, '_'));
+    if (this.projectPathExists(projectPath)) {
+      throw new HostResourceOperationError(
+        '[AilyChat][RuntimeHost] Project create target already exists.',
+        'project_create_target_exists',
+        false,
+      );
+    }
+    const transaction = new ChatRuntimeHostWorkspaceMutationTransaction({
+      sessionId,
+      turnId,
+      toolCallId,
+      transactionId: `project:${turnId}:${toolCallId}:createProject`,
+    }, this.electronService);
 
     const result = await this.projectService.projectNew({
       name: projectName,
@@ -565,18 +695,55 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
     }, {
       activationReason: 'chat-tool-create',
       sessionResource: request.sessionId ?? null,
+      deferActivation: true,
     });
     if (result === false) {
+      this.deletePendingProjectDirectory(projectPath);
       throw new HostResourceOperationError(
         '[AilyChat][RuntimeHost] Project service returned false while creating project.',
         'project_create_failed',
         false,
       );
     }
+    try {
+      for (const filePath of this.collectProjectCreatedFiles(projectPath)) {
+        const bytes = this.electronService.readFileBytes(filePath);
+        const textContent = this.decodeProjectTextFile(bytes);
+        transaction.record(textContent === null
+          ? {
+              filePath,
+              existedBefore: false,
+              contentKind: 'binary',
+              beforeBytes: null,
+              afterBytes: bytes,
+            }
+          : {
+              filePath,
+              existedBefore: false,
+              contentKind: 'text',
+              beforeContent: null,
+              afterContent: textContent,
+            });
+      }
+      if (!transaction.hasMutations) {
+        throw new Error('Created project contains no files.');
+      }
+    } catch (error) {
+      this.deletePendingProjectDirectory(projectPath);
+      throw error;
+    }
+
+    const mutationBatch = transaction.createBatch();
+    this.pendingProjectCreations.set(mutationBatch.transactionId, {
+      sessionId,
+      turnId,
+      toolCallId,
+      projectPath,
+    });
     this.configService.recordBoardUsage?.(boardName);
-    const projectPath = this.joinProjectPath(basePath, projectName.replace(/\s/g, '_'));
     return {
-      projectOpened: true,
+      projectOpened: false,
+      projectPrepared: true,
       projectPath,
       path: projectPath,
       projectName,
@@ -585,7 +752,106 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
         nickname: boardNickname,
         version: boardVersion,
       },
+      mutationBatch,
     };
+  }
+
+  private async runProjectCreatedProjectActivation(
+    request: ChatRuntimeHostResourceOperationRequest,
+    payload: HostResourceOperationPayload,
+  ): Promise<unknown> {
+    const pending = this.consumePendingProjectCreation(request, payload);
+    const activated = await this.projectService.activateCreatedProject(pending.projectPath, {
+      activationReason: 'chat-tool-create',
+      sessionResource: request.sessionId ?? null,
+    });
+    if (!activated) {
+      this.deletePendingProjectDirectory(pending.projectPath);
+      throw new HostResourceOperationError(
+        '[AilyChat][RuntimeHost] Created project could not be activated.',
+        'project_create_activation_failed',
+        false,
+      );
+    }
+    return {
+      projectOpened: true,
+      projectPath: pending.projectPath,
+      path: pending.projectPath,
+    };
+  }
+
+  private runProjectCreatedProjectDiscard(
+    request: ChatRuntimeHostResourceOperationRequest,
+    payload: HostResourceOperationPayload,
+  ): unknown {
+    const pending = this.consumePendingProjectCreation(request, payload);
+    this.deletePendingProjectDirectory(pending.projectPath);
+    return { discarded: true, projectPath: pending.projectPath };
+  }
+
+  private consumePendingProjectCreation(
+    request: ChatRuntimeHostResourceOperationRequest,
+    payload: HostResourceOperationPayload,
+  ): { readonly sessionId: string; readonly turnId: string; readonly toolCallId: string; readonly projectPath: string } {
+    const transactionId = this.normalizeSessionId(payload.transactionId);
+    const pending = this.pendingProjectCreations.get(transactionId);
+    if (!pending
+      || pending.sessionId !== this.normalizeSessionId(request.sessionId)
+      || pending.turnId !== this.normalizeSessionId(request.turnId)
+      || pending.toolCallId !== this.normalizeSessionId(request.toolCallId)) {
+      throw new HostResourceOperationError(
+        '[AilyChat][RuntimeHost] Created project transaction is missing or has stale identity.',
+        'project_create_transaction_stale',
+        false,
+      );
+    }
+    this.pendingProjectCreations.delete(transactionId);
+    return pending;
+  }
+
+  private collectProjectCreatedFiles(rootPath: string): string[] {
+    const files: string[] = [];
+    const visit = (directoryPath: string) => {
+      const entries = this.electronService.readDir(directoryPath) as Array<string | { name?: string; _isDirectory?: boolean }>;
+      for (const entry of entries) {
+        const name = typeof entry === 'string' ? entry : this.normalizeSessionId(entry.name);
+        if (!name) {
+          continue;
+        }
+        const childPath = this.joinProjectPath(directoryPath, name);
+        const isDirectory = typeof entry === 'object' && typeof entry._isDirectory === 'boolean'
+          ? entry._isDirectory
+          : this.electronService.isDirectory(childPath);
+        if (isDirectory) {
+          visit(childPath);
+        } else {
+          files.push(childPath);
+        }
+      }
+    };
+    visit(rootPath);
+    return files.sort((left, right) => left.localeCompare(right));
+  }
+
+  private decodeProjectTextFile(bytes: Uint8Array): string | null {
+    if (bytes.some(byte => byte === 0)) {
+      return null;
+    }
+    try {
+      return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    } catch {
+      return null;
+    }
+  }
+
+  private deletePendingProjectDirectory(projectPath: string): void {
+    try {
+      if (projectPath && this.electronService.exists(projectPath)) {
+        this.electronService.deleteDir(projectPath);
+      }
+    } catch (error) {
+      console.error('[AilyChat][RuntimeHost] Failed to discard uncommitted project directory:', error);
+    }
   }
 
   private resolveProjectCreateName(basePath: string, requestedName: unknown): string {
@@ -1023,43 +1289,93 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
   }
 
   private async runConnectionGraphOperation(request: ChatRuntimeHostResourceOperationRequest): Promise<unknown> {
-    this.requireSessionId(request, 'connection graph');
+    const sessionId = this.requireSessionId(request, 'connection graph');
     const payload = this.requirePayloadAdapter(request.payload, 'connectionGraph', 'connection graph');
     const action = typeof payload.action === 'string' ? payload.action : '';
     const args = payload.args && typeof payload.args === 'object' && !Array.isArray(payload.args)
       ? payload.args as Record<string, unknown>
       : {};
+    const usesWorkspaceMutation = action === 'generateConnectionGraph'
+      || action === 'getPinmapSummary'
+      || action === 'validateConnectionGraph'
+      || action === 'savePinmap'
+      || action === 'applySchematic';
+    const turnId = this.normalizeSessionId(request.turnId);
+    const toolCallId = this.normalizeSessionId(request.toolCallId);
+    if (usesWorkspaceMutation && (!turnId || !toolCallId)) {
+      throw new HostResourceOperationError(
+        '[AilyChat][RuntimeHost] Mutating connection graph operations require canonical turn and tool identities.',
+        'resource_operation_mutation_identity_missing',
+        false,
+      );
+    }
+    const mutationTransaction = usesWorkspaceMutation
+      ? new ChatRuntimeHostWorkspaceMutationTransaction({
+          sessionId,
+          turnId,
+          toolCallId,
+          transactionId: `connection-graph:${turnId}:${toolCallId}:${action}`,
+        }, this.electronService)
+      : null;
     const invocationContext = {
-      turnId: this.normalizeSessionId(payload.turnId),
-      toolCallId: this.normalizeSessionId(payload.toolCallId),
+      turnId,
+      toolCallId,
+      recordMutationReceipt: mutationTransaction?.record,
     };
 
-    switch (action) {
-      case 'generateConnectionGraph':
-        return generateConnectionGraphTool(this.connectionGraphService, this.projectService, args as never, invocationContext);
-      case 'getPinmapSummary':
-        return getPinmapSummaryTool(this.connectionGraphService, this.projectService, args as never);
-      case 'getProjectContext':
-        return getProjectContextTool(this.connectionGraphService, this.projectService, args as never);
-      case 'getSensorPinmapCatalog':
-        return getSensorPinmapCatalogTool(this.connectionGraphService, this.projectService, args as never);
-      case 'validateConnectionGraph':
-        return validateConnectionGraphTool(this.connectionGraphService, this.projectService, args as never, invocationContext);
-      case 'generatePinmap':
-        return generatePinmapTool(this.connectionGraphService, this.projectService, args as never);
-      case 'savePinmap':
-        return savePinmapTool(this.connectionGraphService, this.projectService, args as never, invocationContext);
-      case 'getCurrentSchematic':
-        return getCurrentSchematicTool(this.connectionGraphService, this.projectService, args);
-      case 'applySchematic':
-        return applySchematicTool(this.connectionGraphService, this.projectService, args as never, invocationContext);
-      default:
-        throw new HostResourceOperationError(
-          `[AilyChat][RuntimeHost] Unsupported connection graph action: ${String(payload.action || '<missing>')}.`,
-          'resource_operation_payload_invalid',
-          false,
-        );
+    let result: unknown;
+    try {
+      switch (action) {
+        case 'generateConnectionGraph':
+          result = await generateConnectionGraphTool(this.connectionGraphService, this.projectService, args as never, invocationContext);
+          break;
+        case 'getPinmapSummary':
+          result = await getPinmapSummaryTool(this.connectionGraphService, this.projectService, args as never, invocationContext);
+          break;
+        case 'getProjectContext':
+          result = await getProjectContextTool(this.connectionGraphService, this.projectService, args as never);
+          break;
+        case 'getSensorPinmapCatalog':
+          result = await getSensorPinmapCatalogTool(this.connectionGraphService, this.projectService, args as never);
+          break;
+        case 'validateConnectionGraph':
+          result = await validateConnectionGraphTool(this.connectionGraphService, this.projectService, args as never, invocationContext);
+          break;
+        case 'generatePinmap':
+          result = await generatePinmapTool(this.connectionGraphService, this.projectService, args as never);
+          break;
+        case 'savePinmap':
+          result = await savePinmapTool(this.connectionGraphService, this.projectService, args as never, invocationContext);
+          break;
+        case 'getCurrentSchematic':
+          result = await getCurrentSchematicTool(this.connectionGraphService, this.projectService, args);
+          break;
+        case 'applySchematic':
+          result = await applySchematicTool(this.connectionGraphService, this.projectService, args as never, invocationContext);
+          break;
+        default:
+          throw new HostResourceOperationError(
+            `[AilyChat][RuntimeHost] Unsupported connection graph action: ${String(payload.action || '<missing>')}.`,
+            'resource_operation_payload_invalid',
+            false,
+          );
+      }
+    } catch (error) {
+      await mutationTransaction?.rollback();
+      throw error;
     }
+
+    if (this.isToolUseError(result)) {
+      await mutationTransaction?.rollback();
+      return result;
+    }
+    if (!mutationTransaction?.hasMutations) {
+      return result;
+    }
+    return {
+      ...(result && typeof result === 'object' ? result : { content: result }),
+      mutationBatch: mutationTransaction.createBatch(),
+    };
   }
 
   private async runBoardSearchOperation(request: ChatRuntimeHostResourceOperationRequest): Promise<unknown> {
@@ -1646,6 +1962,14 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
         false,
       );
     }
+  }
+
+  private isToolUseError(result: unknown): boolean {
+    if (!result || typeof result !== 'object') {
+      return false;
+    }
+    const candidate = result as { readonly is_error?: unknown; readonly isError?: unknown };
+    return candidate.is_error === true || candidate.isError === true;
   }
 
   private requireSessionId(request: ChatRuntimeHostResourceOperationRequest, operation: string): string {

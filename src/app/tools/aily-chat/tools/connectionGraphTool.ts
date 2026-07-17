@@ -11,7 +11,7 @@ import {
 } from '../../../services/connection-graph.service';
 import { API, getServerUrl } from '../../../configs/api.config';
 import { AilyHost } from '../core/host';
-import type { EditingTimelineWriter } from '../services/editing-timeline-recording-bridge';
+import type { ChatRuntimeHostWorkspaceMutationReceiptInput } from '../core/chat-runtime-host-contract';
 
 /**
  * 解析后的组件实例信息（内部使用）
@@ -30,29 +30,23 @@ interface ParsedComponentInstance {
 export interface ConnectionGraphInvocationContext {
   turnId?: string;
   toolCallId?: string;
-  timelineWriter?: EditingTimelineWriter;
+  recordMutationReceipt?: (receipt: ChatRuntimeHostWorkspaceMutationReceiptInput) => void;
 }
 
-export async function saveTimelineAwareConnectionGraphTextFile(
+export async function saveConnectionGraphTextFileWithReceipt(
   filePath: string,
   content: string,
   save: () => boolean | Promise<boolean>,
   invocationContext?: ConnectionGraphInvocationContext,
 ): Promise<boolean> {
-  const timelineWriter = invocationContext?.timelineWriter;
-  const turnId = invocationContext?.turnId;
+  const recordMutationReceipt = invocationContext?.recordMutationReceipt;
   let existedBefore = false;
   let beforeContent: string | null = null;
 
-  if (timelineWriter?.recordFileWrite && turnId) {
+  if (recordMutationReceipt) {
     const fs = AilyHost.get().fs;
-    try {
-      existedBefore = fs.existsSync(filePath);
-      beforeContent = existedBefore ? fs.readFileSync(filePath, 'utf-8') : null;
-    } catch {
-      existedBefore = false;
-      beforeContent = null;
-    }
+    existedBefore = fs.existsSync(filePath);
+    beforeContent = existedBefore ? fs.readFileSync(filePath, 'utf-8') : null;
   }
 
   const saved = await Promise.resolve(save());
@@ -60,43 +54,30 @@ export async function saveTimelineAwareConnectionGraphTextFile(
     return false;
   }
 
-  if (!timelineWriter?.recordFileWrite || !turnId) {
-    return true;
-  }
-
-  try {
-    await timelineWriter.recordFileWrite({
-      turnId,
-      toolCallId: invocationContext?.toolCallId,
-      filePath,
-      existedBefore,
-      beforeContent,
-      afterContent: content,
-    });
-  } catch (error) {
-    console.warn('[connectionGraphTool] editing timeline recording failed:', error);
-  }
+  recordMutationReceipt?.({
+    filePath,
+    existedBefore,
+    contentKind: 'text',
+    beforeContent,
+    afterContent: content,
+  });
 
   return true;
 }
 
-function createConnectionGraphTimelineObserver(invocationContext?: ConnectionGraphInvocationContext) {
-  const timelineWriter = invocationContext?.timelineWriter;
-  const turnId = invocationContext?.turnId;
-  if (!timelineWriter?.recordFileWrite || !turnId) {
+function createConnectionGraphMutationObserver(invocationContext?: ConnectionGraphInvocationContext) {
+  const recordMutationReceipt = invocationContext?.recordMutationReceipt;
+  if (!recordMutationReceipt) {
     return undefined;
   }
 
   return (event: ConnectionGraphTextFileWriteEvent): void => {
-    void Promise.resolve(timelineWriter.recordFileWrite({
-      turnId,
-      toolCallId: invocationContext?.toolCallId,
+    recordMutationReceipt({
       filePath: event.filePath,
       existedBefore: event.existedBefore,
+      contentKind: 'text',
       beforeContent: event.beforeContent,
       afterContent: event.afterContent,
-    })).catch(error => {
-      console.warn('[connectionGraphTool] editing timeline recording failed:', error);
     });
   };
 }
@@ -178,6 +159,7 @@ export async function generateConnectionGraphTool(
         connectionGraphService,
         packagesBasePath,
         syncHints,
+        invocationContext,
       );
     }
 
@@ -809,6 +791,7 @@ async function trySyncPinmapComponentsFromApi(
   connectionGraphService: ConnectionGraphService,
   packagesBasePath: string,
   pinmapIdHints: string[],
+  invocationContext?: ConnectionGraphInvocationContext,
 ): Promise<number> {
   try {
     const host = AilyHost.get();
@@ -931,7 +914,10 @@ async function trySyncPinmapComponentsFromApi(
             pinmapId,
             config,
             packagesBasePath,
-            cloudVer,
+            {
+              catalogVersion: cloudVer,
+              onFileWrite: createConnectionGraphMutationObserver(invocationContext),
+            },
           );
           if (save.success) {
             synced++;
@@ -940,6 +926,7 @@ async function trySyncPinmapComponentsFromApi(
                 packageSlug,
                 save.resolvedPackagePath,
                 config,
+                createConnectionGraphMutationObserver(invocationContext),
               );
             }
           }
@@ -951,7 +938,10 @@ async function trySyncPinmapComponentsFromApi(
     }
 
     return synced;
-  } catch {
+  } catch (error) {
+    if (invocationContext?.recordMutationReceipt) {
+      throw error;
+    }
     return 0;
   }
 }
@@ -965,7 +955,8 @@ async function trySyncPinmapComponentsFromApi(
 export async function getPinmapSummaryTool(
   connectionGraphService: ConnectionGraphService,
   projectService: ProjectService,
-  input: { pinmapIds?: string[] }
+  input: { pinmapIds?: string[] },
+  invocationContext?: ConnectionGraphInvocationContext,
 ): Promise<ToolUseResult> {
   try {
     const boardPackagePath = await projectService.getBoardPackagePath();
@@ -991,6 +982,7 @@ export async function getPinmapSummaryTool(
         connectionGraphService,
         packagesBasePath,
         pinmapIdList,
+        invocationContext,
       );
     }
 
@@ -1576,7 +1568,7 @@ export async function validateConnectionGraphTool(
 
     // 7. 保存 AWS 和 JSON
     if (input.aws) {
-      await saveTimelineAwareConnectionGraphTextFile(
+      await saveConnectionGraphTextFileWithReceipt(
         awsFilePath,
         awsContent,
         () => connectionGraphService.saveAWSFile(awsContent),
@@ -1584,7 +1576,7 @@ export async function validateConnectionGraphTool(
       );
     }
     const jsonContent = JSON.stringify(jsonData, null, 2);
-    await saveTimelineAwareConnectionGraphTextFile(
+    await saveConnectionGraphTextFileWithReceipt(
       jsonFilePath,
       jsonContent,
       () => connectionGraphService.saveJSONFile(jsonData),
@@ -1874,7 +1866,7 @@ export async function savePinmapTool(
 
     // 保存 pinmap
     const saveResult = connectionGraphService.savePinmapConfig(input.pinmapId, config, packagesBasePath, {
-      onFileWrite: createConnectionGraphTimelineObserver(invocationContext),
+      onFileWrite: createConnectionGraphMutationObserver(invocationContext),
     });
 
     if (!saveResult.success) {
@@ -2009,7 +2001,7 @@ export async function applySchematicTool(
     if (input.aws) {
       awsContent = input.aws;
       // 同时保存 .aws 文件
-      await saveTimelineAwareConnectionGraphTextFile(
+      await saveConnectionGraphTextFileWithReceipt(
         awsFilePath,
         awsContent,
         () => connectionGraphService.saveAWSFile(awsContent),
@@ -2250,7 +2242,7 @@ export async function applySchematicTool(
 
     // 8. 保存 JSON
     const jsonContent = JSON.stringify(jsonData, null, 2);
-    await saveTimelineAwareConnectionGraphTextFile(
+    await saveConnectionGraphTextFileWithReceipt(
       jsonFilePath,
       jsonContent,
       () => connectionGraphService.saveJSONFile(jsonData),

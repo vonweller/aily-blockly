@@ -7,7 +7,6 @@
 import { convertAbiToAbs, convertAbsToAbi, inferFieldVariableType } from './abiAbsConverter';
 import { getActiveWorkspace, createBlockFromConfig } from './editBlockTool';
 import { AbsAutoSyncService } from '../services/abs-auto-sync.service';
-import type { EditingTimelineWriter } from '../services/editing-timeline-recording-bridge';
 import { loadProjectBlockDefinitions, parseAbs, BlocklyAbsParser } from './absParser';
 import {
   arduinoGenerator,
@@ -26,6 +25,7 @@ import {
 import type { EditorOperationEventSink } from './editorOperationEvents';
 import type {
   ChatRuntimeHostResourceRequestKind,
+  ChatRuntimeHostWorkspaceMutationReceiptInput,
 } from '../core/chat-runtime-host-contract';
 import { createElectronChatRuntimeHostTransport } from '../core/electron-chat-runtime-host-transport';
 
@@ -108,7 +108,7 @@ async function writeGeneratedSketchIno(
     { slowThresholdMs: 16 },
   );
   throwIfSyncAbsCancelled(invocationContext);
-  await writeTimelineAwareTextFile(sketchFilePath, generatedCode, electronService, invocationContext);
+  await writeTrackedTextFile(sketchFilePath, generatedCode, electronService, invocationContext);
 
   return {
     filePath: sketchFilePath,
@@ -147,7 +147,7 @@ export interface SyncAbsInvocationContext {
   toolCallId?: string;
   signal?: AbortSignal;
   isStale?: () => boolean;
-  timelineWriter?: EditingTimelineWriter;
+  recordMutationReceipt?: (receipt: ChatRuntimeHostWorkspaceMutationReceiptInput) => void;
   editorOperationQueue?: BlocklyEditorOperationQueue;
   progressSink?: EditorOperationEventSink;
   reportOperationProgress?: BlocklyEditorOperationProgressReporter;
@@ -256,7 +256,7 @@ export async function refreshBlocklyWorkspaceRenderInBatches(
   }
 }
 
-export async function writeTimelineAwareTextFile(
+async function writeTrackedTextFile(
   filePath: string,
   content: string,
   electronService: {
@@ -266,34 +266,24 @@ export async function writeTimelineAwareTextFile(
   },
   invocationContext?: SyncAbsInvocationContext,
 ): Promise<void> {
-  const timelineWriter = invocationContext?.timelineWriter;
-  const turnId = invocationContext?.turnId;
+  const recordMutationReceipt = invocationContext?.recordMutationReceipt;
   let existedBefore = false;
   let beforeContent: string | null = null;
 
-  if (timelineWriter?.recordFileWrite && turnId) {
+  if (recordMutationReceipt) {
     existedBefore = await Promise.resolve(electronService.exists(filePath));
     beforeContent = existedBefore ? await Promise.resolve(electronService.readFile(filePath)) : null;
   }
 
   await Promise.resolve(electronService.writeFile(filePath, content));
 
-  if (!timelineWriter?.recordFileWrite || !turnId) {
-    return;
-  }
-
-  try {
-    await timelineWriter.recordFileWrite({
-      turnId,
-      toolCallId: invocationContext?.toolCallId,
+  recordMutationReceipt?.({
       filePath,
       existedBefore,
+      contentKind: 'text',
       beforeContent,
       afterContent: content,
-    });
-  } catch (error) {
-    console.warn('[syncAbsFile] editing timeline recording failed:', error);
-  }
+  });
 }
 
 export async function backupAbiFileIfPresent(
@@ -315,7 +305,7 @@ export async function backupAbiFileIfPresent(
 
   const backupPath = `${abiFilePath}.backup`;
   const currentAbi = await Promise.resolve(electronService.readFile(abiFilePath));
-  await writeTimelineAwareTextFile(backupPath, currentAbi, electronService, invocationContext);
+  await writeTrackedTextFile(backupPath, currentAbi, electronService, invocationContext);
   projectService?.copyPackageJsonToTemp?.(projectService?.currentProjectPath);
   return backupPath;
 }
@@ -445,7 +435,7 @@ export async function syncAbsFileHandler(
     };
   }
 
-  const hostOperation = buildSyncAbsHostResourceOperation(args, projectService, sessionId);
+  const hostOperation = buildSyncAbsHostResourceOperation(args, projectService, sessionId, invocationContext);
   try {
     const result = await runtimeHost.requestResourceOperation(hostOperation);
     return normalizeSyncAbsHostOperationResult(result.result);
@@ -547,6 +537,7 @@ function buildSyncAbsHostResourceOperation(
   args: SyncAbsArgs,
   projectService: any,
   sessionId: string,
+  invocationContext?: SyncAbsInvocationContext,
 ) {
   const projectPath = projectService?.currentProjectPath || projectService?.projectRootPath || '';
   const absFilePath = projectPath ? `${projectPath}/project.abs` : '';
@@ -562,6 +553,8 @@ function buildSyncAbsHostResourceOperation(
 
   return {
     sessionId,
+    ...(invocationContext?.turnId ? { turnId: invocationContext.turnId } : {}),
+    ...(invocationContext?.toolCallId ? { toolCallId: invocationContext.toolCallId } : {}),
     kind,
     label: labels.startedLabel,
     detail: labels.detail,
@@ -664,7 +657,7 @@ async function exportToAbs(
     await reportSyncAbsImportProgress(invocationContext, 'Writing ABS file', 0.75, absFilePath);
     
     // 写入 ABS 文件
-    await writeTimelineAwareTextFile(absFilePath, absContent, electronService, invocationContext);
+    await writeTrackedTextFile(absFilePath, absContent, electronService, invocationContext);
 
     // 写盘后立即回读，确保返回给模型的是磁盘上可观察到的实际内容
     const readBackContent = await electronService.readFile(absFilePath);
@@ -742,7 +735,7 @@ async function importFromAbs(
     if (typeof pendingAbsContent === 'string' && pendingAbsContent.trim().length > 0) {
       await reportSyncAbsImportProgress(invocationContext, 'Writing pending ABS content', 0.05, absFilePath);
       throwIfSyncAbsCancelled(invocationContext);
-      await writeTimelineAwareTextFile(absFilePath, pendingAbsContent, electronService, invocationContext);
+      await writeTrackedTextFile(absFilePath, pendingAbsContent, electronService, invocationContext);
       throwIfSyncAbsCancelled(invocationContext);
     }
 
@@ -1180,7 +1173,7 @@ async function importFromAbs(
       { slowThresholdMs: 16 },
     );
     await checkpointSyncAbsFrameBudget(invocationContext, 'workspace-save.after');
-    await writeTimelineAwareTextFile(abiFilePath, JSON.stringify(abiJson), electronService, invocationContext);
+    await writeTrackedTextFile(abiFilePath, JSON.stringify(abiJson), electronService, invocationContext);
     await reportSyncAbsImportProgress(invocationContext, 'Saving generated project files', 0.85);
     throwIfSyncAbsCancelled(invocationContext);
 

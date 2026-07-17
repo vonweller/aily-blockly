@@ -5,10 +5,7 @@ import { getBlocklyContextSnapshotService } from './blockly-context-snapshot-ser
 import { searchBoardsLibrariesTool } from '../tools/searchBoardsLibrariesTool';
 import { getBoardParametersTool } from '../tools/getBoardParametersTool';
 import { getHardwareCategoriesTool } from '../tools/getHardwareCategoriesTools';
-import { setBoardConfigTool } from '../tools/boardConfigTool';
 import { reloadProjectTool } from '../tools/reloadProjectTool';
-import { switchBoardTool } from '../tools/switchBoardTool';
-import type { EditingTimelineWriter } from '../services/editing-timeline-recording-bridge';
 import { error, fromToolResult, text, type InvokeHandler } from './blockly-contributed-tool-runtime';
 
 type DeferredFactory = (group: string, reason: string) => { group: string; reason: string };
@@ -273,7 +270,6 @@ export function createBlocklyProjectDiscoveryHandlers(): Record<string, InvokeHa
       if (!hostAPI.project) return error('Project management is not available.');
       const projectService = createExternalProjectServiceView(hostAPI.project);
       const contextSnapshotService = getBlocklyContextSnapshotService();
-      const editingTimeline = invocationContext?.host?.getExtension<EditingTimelineWriter>('editingTimeline');
 
       const action = input['action'] as string;
       switch (action) {
@@ -312,7 +308,12 @@ export function createBlocklyProjectDiscoveryHandlers(): Record<string, InvokeHa
               return text('Project creation cancelled by user.');
             }
           }
-          const result = await hostAPI.project.createProject(name, board, typeof input['path'] === 'string' ? input['path'] : undefined);
+          const result = await (hostAPI.project.createProject as unknown as (
+            name: string,
+            board: string,
+            path: string | undefined,
+            context: typeof invocationContext,
+          ) => Promise<unknown>)(name, board, typeof input['path'] === 'string' ? input['path'] : undefined, invocationContext);
           contextSnapshotService.invalidate([
             'workspaceIdentity',
             'projectInfo',
@@ -353,32 +354,21 @@ export function createBlocklyProjectDiscoveryHandlers(): Record<string, InvokeHa
         case 'switch_board': {
           const board = input['board'] as string | undefined;
           if (!board) return error('board is required for switch_board.');
-          if (typeof hostAPI.project.switchBoard === 'function') {
-            await hostAPI.project.switchBoard(board);
-            contextSnapshotService.invalidate([
-              'boardInfo',
-              'libraryIndex',
-              'libraryReadmeRefs',
-              'workspaceArtifacts',
-              'workspaceState',
-            ], 'switch board');
-            return text(`Switched board to ${board}.`);
+          if (typeof hostAPI.project.switchBoard !== 'function') {
+            return error('Board switching requires the execution-host project mutation bridge.');
           }
-          const result = await switchBoardTool(projectService, { board_name: board }, {
-            turnId: invocationContext?.trace?.turnId,
-            toolCallId: invocationContext?.toolCallId,
-            timelineWriter: editingTimeline,
-          });
-          if (!result.is_error) {
-            contextSnapshotService.invalidate([
-              'boardInfo',
-              'libraryIndex',
-              'libraryReadmeRefs',
-              'workspaceArtifacts',
-              'workspaceState',
-            ], 'switch board');
-          }
-          return fromToolResult(result);
+          await (hostAPI.project.switchBoard as unknown as (
+            board: string,
+            context: typeof invocationContext,
+          ) => Promise<unknown>)(board, invocationContext);
+          contextSnapshotService.invalidate([
+            'boardInfo',
+            'libraryIndex',
+            'libraryReadmeRefs',
+            'workspaceArtifacts',
+            'workspaceState',
+          ], 'switch board');
+          return text(`Switched board to ${board}.`);
         }
         case 'get_board_config':
           return fromToolResult(await getBoardParametersTool.handler(projectService, { parameters: input['parameters'] as any }));
@@ -400,32 +390,19 @@ export function createBlocklyProjectDiscoveryHandlers(): Record<string, InvokeHa
             return error('set_board_config requires config_key/config_value, or a single-entry config object.');
           }
 
-          if (typeof hostAPI.project.setBoardConfig === 'function') {
-            await hostAPI.project.setBoardConfig({ [configKey]: configValue });
-            contextSnapshotService.invalidate([
-              'boardInfo',
-              'workspaceArtifacts',
-              'workspaceState',
-            ], 'set board config');
-            return text(`Updated board config ${configKey}.`);
+          if (typeof hostAPI.project.setBoardConfig !== 'function') {
+            return error('Board configuration requires the execution-host project mutation bridge.');
           }
-
-          const result = await setBoardConfigTool(projectService as any, hostAPI.builder as any, {
-            config_key: configKey,
-            config_value: configValue,
-          }, {
-            turnId: invocationContext?.trace?.turnId,
-            toolCallId: invocationContext?.toolCallId,
-            timelineWriter: editingTimeline,
-          });
-          if (!result.is_error) {
-            contextSnapshotService.invalidate([
-              'boardInfo',
-              'workspaceArtifacts',
-              'workspaceState',
-            ], 'set board config');
-          }
-          return fromToolResult(result);
+          await (hostAPI.project.setBoardConfig as unknown as (
+            config: Record<string, string>,
+            context: typeof invocationContext,
+          ) => Promise<unknown>)({ [configKey]: configValue }, invocationContext);
+          contextSnapshotService.invalidate([
+            'boardInfo',
+            'workspaceArtifacts',
+            'workspaceState',
+          ], 'set board config');
+          return text(`Updated board config ${configKey}.`);
         }
         default:
           return error(`Unknown action: ${action}`);
