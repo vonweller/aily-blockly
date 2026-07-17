@@ -593,9 +593,17 @@ export class ProjectService {
     });
 
     const abiIsExist = window['path'].isExists(projectPath + '/project.abi');
+    if (activationReason === 'reload') {
+      // Angular ignores navigation to the exact same route and query params. Move off the
+      // editor first so its services/workspace are destroyed and the project is really
+      // rebuilt from disk instead of remaining in the loading state until the timeout.
+      await this.router.navigate(['/main/guide'], { skipLocationChange: true });
+    }
+
+    let navigationCompleted: boolean;
     if (abiIsExist) {
       // 打开blockly编辑器
-      await this.router.navigate(['/main/blockly-editor'], {
+      navigationCompleted = await this.router.navigate(['/main/blockly-editor'], {
         queryParams: {
           path: projectPath
         },
@@ -603,12 +611,17 @@ export class ProjectService {
       });
     } else {
       // 打开代码编辑器
-      await this.router.navigate(['/main/code-editor-pro'], {
+      navigationCompleted = await this.router.navigate(['/main/code-editor-pro'], {
         queryParams: {
           path: projectPath
         },
         replaceUrl: true
       });
+    }
+
+    if (!navigationCompleted) {
+      this.stateSubject.next('error');
+      throw new Error(`Project editor navigation was not completed: ${projectPath}`);
     }
 
     await this.waitForProjectOpenCompletion(projectPath);
