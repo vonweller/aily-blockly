@@ -21,6 +21,7 @@ import {
 import { searchBoardsLibrariesTool } from '../tools/aily-chat/tools/searchBoardsLibrariesTool';
 import { buildProjectTool } from '../tools/aily-chat/tools/buildProjectTool';
 import { runSyncAbsFileConcreteHandler } from '../tools/aily-chat/tools/syncAbsFileTool';
+import { deleteBlockTool } from '../tools/aily-chat/tools/editBlockTool';
 import type { EditorOperationEvent, EditorOperationEventSink } from '../tools/aily-chat/tools/editorOperationEvents';
 import type { ToolUseResult } from '../tools/aily-chat/core/tool-types';
 
@@ -151,6 +152,9 @@ export class BlocklyLiveOperationBridgeService {
       case 'abi_add':
         toolResult = await this.executeAbiAdd(payload.params || {});
         break;
+      case 'abi_delete':
+        toolResult = await this.executeAbiDelete(payload.params || {});
+        break;
       case 'abi_connect':
         toolResult = await this.executeAbiConnect(payload.params || {});
         break;
@@ -275,6 +279,28 @@ export class BlocklyLiveOperationBridgeService {
       connect: params['parentId'] && placement ? this.connectFromPlacement(String(params['parentId']), placement) : undefined,
     };
     return createSingleBlockTool(createArgs);
+  }
+
+  private async executeAbiDelete(params: Record<string, any>): Promise<ToolUseResult> {
+    const id = String(params['id'] || '').trim();
+    if (!id) {
+      return { is_error: true, content: '缺少要删除的块 ID' };
+    }
+    const workspace = this.blocklyService.workspace
+      ?? (Blockly.getMainWorkspace() as Blockly.WorkspaceSvg | null);
+    if (!workspace?.getBlockById(id)) {
+      return { is_error: true, content: `未找到块: ${id}` };
+    }
+
+    const result = await deleteBlockTool({ blockId: id });
+    if (!result.is_error && workspace.getBlockById(id)) {
+      return {
+        ...result,
+        is_error: true,
+        content: `删除操作返回成功，但块仍存在于工作区: ${id}`,
+      };
+    }
+    return result;
   }
 
   private async executeAbiConnect(params: Record<string, any>): Promise<ToolUseResult> {

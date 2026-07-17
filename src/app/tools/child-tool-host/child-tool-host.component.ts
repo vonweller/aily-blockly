@@ -6,13 +6,14 @@ import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { Connection, WindowMessenger, connect } from 'penpal';
-import { firstValueFrom, Subscription } from 'rxjs';
+import { combineLatest, firstValueFrom, Subscription } from 'rxjs';
 import { SubWindowComponent } from '../../components/sub-window/sub-window.component';
 import { ToolContainerComponent } from '../../components/tool-container/tool-container.component';
 import { ChildToolConfig, getChildToolConfig } from '../../configs/tool.config';
 import { ChildToolHostInfo, ChildToolProcessService } from '../../services/child-tool-process.service';
 import { ChildAppHostRegistryService } from '../../services/child-app-host-registry.service';
 import { AuthService } from '../../services/auth.service';
+import { BlocklyService } from '../../editors/blockly-editor/services/blockly.service';
 import { ElectronService } from '../../services/electron.service';
 import { LogService } from '../../services/log.service';
 import { MainUiAutomationService } from '../../services/main-ui-automation.service';
@@ -80,9 +81,12 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   private readonly hostContextId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   private hostContextVersion = 0;
   private beforeCloseNotified = false;
+  private beforeCloseTask: Promise<boolean> | null = null;
+  private restartTask: Promise<Record<string, unknown>> | null = null;
   private langSubscription: Subscription | null = null;
   private themeSubscription: Subscription | null = null;
   private projectPathSubscription: Subscription | null = null;
+  private blockSelectionSubscription: Subscription | null = null;
   private toolSignalSubscription: Subscription | null = null;
   private standaloneWorkspace: string | null | undefined;
   private standaloneWorkspaceVersion = -1;
@@ -105,6 +109,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     private logService: LogService,
     private childHostRegistry: ChildAppHostRegistryService,
     private authService: AuthService,
+    private blocklyService: BlocklyService,
     private electronService: ElectronService,
     private mainUiAutomation: MainUiAutomationService,
   ) {
@@ -113,6 +118,14 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     this.projectPathSubscription = this.projectService.currentProjectPath$.subscribe(() => {
       if (this.initialized) {
         this.syncHostContext(true);
+      }
+    });
+    this.blockSelectionSubscription = combineLatest([
+      this.blocklyService.selectedBlockIdsSubject,
+      this.blocklyService.blockCodeMapSubject,
+    ]).subscribe(() => {
+      if (this.initialized && this.isAilyChatTool()) {
+        this.syncHostContext();
       }
     });
   }
@@ -154,25 +167,30 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   ngOnDestroy(): void {
-    void this.notifyChildBeforeClose('destroy');
     this.langSubscription?.unsubscribe();
     this.langSubscription = null;
     this.themeSubscription?.unsubscribe();
     this.themeSubscription = null;
     this.projectPathSubscription?.unsubscribe();
     this.projectPathSubscription = null;
+    this.blockSelectionSubscription?.unsubscribe();
+    this.blockSelectionSubscription = null;
     this.toolSignalSubscription?.unsubscribe();
     this.toolSignalSubscription = null;
     this.projectContextListenerCleanup?.();
     this.projectContextListenerCleanup = null;
     this.projectContextListenerRegistered = false;
-    this.destroyPenpalConnection();
     this.unregisterHostController?.();
     this.unregisterHostController = null;
-    if (this.acquired && this.resolvedToolId) {
-      void this.processService.release(this.resolvedToolId);
-      this.acquired = false;
-    }
+    const releaseToolId = this.acquired ? this.resolvedToolId : '';
+    this.acquired = false;
+    const finishDestroy = () => {
+      this.destroyPenpalConnection();
+      if (releaseToolId) {
+        void this.processService.release(releaseToolId);
+      }
+    };
+    void this.notifyChildBeforeClose('destroy').then(finishDestroy, finishDestroy);
   }
 
   async close(): Promise<Record<string, unknown>> {
@@ -198,7 +216,23 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     return { ok: true, toolId: this.resolvedToolId, action: 'close', mode: 'embedded' };
   }
 
-  async restart(): Promise<Record<string, unknown>> {
+  restart(): Promise<Record<string, unknown>> {
+    if (this.restartTask) {
+      return this.restartTask;
+    }
+
+    const task = this.performRestart();
+    this.restartTask = task;
+    const clearRestartTask = () => {
+      if (this.restartTask === task) {
+        this.restartTask = null;
+      }
+    };
+    void task.then(clearRestartTask, clearRestartTask);
+    return task;
+  }
+
+  private async performRestart(): Promise<Record<string, unknown>> {
     if (!this.config) return { ok: false, message: '子应用配置未就绪' };
     if (!await this.notifyChildBeforeClose('restart')) {
       return { ok: false, message: '子应用拒绝重启，可能存在未完成操作。' };
@@ -614,6 +648,22 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       return true;
     }
 
+    if (this.beforeCloseTask) {
+      return this.beforeCloseTask;
+    }
+
+    const task = this.runChildBeforeClose(reason);
+    this.beforeCloseTask = task;
+    const clearBeforeCloseTask = () => {
+      if (this.beforeCloseTask === task) {
+        this.beforeCloseTask = null;
+      }
+    };
+    void task.then(clearBeforeCloseTask, clearBeforeCloseTask);
+    return task;
+  }
+
+  private async runChildBeforeClose(reason: ChildLifecycleReason): Promise<boolean> {
     const beforeClose = this.remoteApi?.beforeClose;
     if (typeof beforeClose !== 'function') {
       this.beforeCloseNotified = true;
@@ -654,10 +704,14 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       return true;
     } catch (error) {
       this.beforeCloseNotified = true;
-      this.logError('beforeClose failed', {
-        reason,
-        error: error instanceof Error ? error.message : String(error || '')
-      });
+      const errorRecord = this.isRecord(error) ? error : {};
+      const errorMessage = this.stringifyHostMessageValue(errorRecord['message'] ?? error)
+        || 'Unknown child lifecycle error';
+      const errorCode = this.stringifyHostMessageValue(errorRecord['code'] ?? errorRecord['penpalCode']);
+      this.logError(
+        'beforeClose failed',
+        `reason=${reason}${errorCode ? ` code=${errorCode}` : ''} error=${errorMessage}`
+      );
       return true;
     }
   }
@@ -790,6 +844,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       platform: (window as any).electronAPI?.platform?.type || 'browser',
       embedded: !this.isStandalone,
       workspace: this.resolveHostWorkspace(),
+      blockResources: isAilyChat ? this.createSelectedBlockResources() : [],
       capabilities: {
         snapshotRefresh: true,
         userInteractionNotifications: true,
@@ -797,9 +852,19 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
         resourcePicker: isAilyChat
           && typeof (window as any).dialog?.selectFiles === 'function',
         childAppMenu: isAilyChat,
-        clipboardWrite: isAilyChat
+        clipboardWrite: isAilyChat,
+        blockSelectionContext: isAilyChat
       }
     };
+  }
+
+  private createSelectedBlockResources(): Record<string, unknown>[] {
+    return this.blocklyService.getSelectedBlockContextLabels().map(item => ({
+      type: 'block',
+      name: item.label,
+      blockId: item.blockId,
+      blockContext: item.formatted,
+    }));
   }
 
   private isAilyChatTool(): boolean {
