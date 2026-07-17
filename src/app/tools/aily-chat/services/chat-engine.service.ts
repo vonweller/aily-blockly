@@ -1537,8 +1537,16 @@ export class ChatEngineService implements IChatContext {
       return [];
     }
 
-    const windowTurns = this.visibleTurnWindowModel.readTurns(model.sessionResource);
-    const turnResponses = windowTurns ?? model.peekTurnResponsesForProjection();
+    const modelTurns = model.peekTurnResponsesForProjection();
+    const hydratedWindowTurns = this.visibleTurnWindowModel.readTurns(model.sessionResource);
+    // A newly attached presentation window is allowed to be empty while the
+    // execution host is loading its first page. It must not erase an already
+    // restored canonical request list during that interval.
+    const windowTurns = hydratedWindowTurns
+      && (hydratedWindowTurns.length > 0 || modelTurns.length === 0)
+      ? hydratedWindowTurns
+      : null;
+    const turnResponses = windowTurns ?? modelTurns;
     const projectionSource = windowTurns ? 'runtime' : 'model';
     const lastTurn = turnResponses[turnResponses.length - 1];
     const lastTurnId = lastTurn?.turnId ?? '';
@@ -3017,6 +3025,8 @@ export class ChatEngineService implements IChatContext {
       buildExecutionSaveTarget: (sessionId) => thisEngine.buildExecutionSaveTarget(sessionId),
       hasSessionRuntimeHandle: (sessionId) => !!thisEngine.lexStream.agent.getHandle?.(sessionId),
       prewarmRuntimeExecutor: (request) => thisEngine.runtimeHostForView().prewarmRuntime(request),
+      restoreRuntimeSessionExecutor: (request) => thisEngine.runtimeHostForView().restoreRuntimeSession(request),
+      readExecutionRuntimeSessionState: (sessionId) => thisEngine.runtimeHostForView().readSessionExecutionState(sessionId),
       projectRestoredRuntimeAuxiliary: (sessionId, auxiliary) => thisEngine.projectRestoredRuntimeAuxiliary(sessionId, auxiliary),
       detachSessionRuntimeView: (sessionId) => thisEngine.detachSessionRuntimeView(sessionId),
       attachSessionView: (sessionId) => thisEngine.attachSessionView(sessionId),
