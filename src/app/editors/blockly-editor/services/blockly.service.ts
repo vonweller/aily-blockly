@@ -221,6 +221,10 @@ export class BlocklyService {
     this.workspaceCodeRevision++;
   }
 
+  getWorkspaceContentRevision(): number {
+    return this.workspaceCodeRevision;
+  }
+
   publishGeneratedCode(code: unknown): void {
     const normalizedCode = normalizeArduinoGeneratedCode(code);
     this.latestGeneratedCode = normalizedCode;
