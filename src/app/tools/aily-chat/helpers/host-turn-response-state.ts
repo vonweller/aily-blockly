@@ -3678,23 +3678,8 @@ function getRequestMetadataSignature(metadata: TurnResponseTurn['request']['meta
   return [
     normalizeMetadataSignatureValue(record['checkpointId']),
     normalizeMetadataSignatureValue(record['requestId']),
-    normalizeMetadataSignatureValue(record['checkpointRef']),
-    normalizeMetadataSignatureValue(record['startCheckpointRef']),
-    normalizeMetadataSignatureValue(record['checkpointNamespace']),
     normalizeMetadataSignatureValue(record['checkpointTurnIndex']),
-    getMetadataRecordSignature(record['checkpointRefs']),
-    getMetadataRecordSignature(record['startCheckpointRefs']),
   ].join('\u001f');
-}
-
-function getMetadataRecordSignature(value: unknown): string {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return '';
-  }
-  return Object.entries(value as Record<string, unknown>)
-    .map(([key, item]) => `${key}:${normalizeMetadataSignatureValue(item)}`)
-    .sort()
-    .join('\u001e');
 }
 
 function normalizeMetadataSignatureValue(value: unknown): string {

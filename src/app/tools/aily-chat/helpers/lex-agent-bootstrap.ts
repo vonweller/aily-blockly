@@ -76,11 +76,6 @@ import { analyzeLibraryBlocksTool } from '../tools/editBlockTool';
 import { TOOL_SETTINGS_CATALOG } from '../tools/tool-settings-catalog';
 import type { HostSessionRecord, PersistedHostResponseData } from '../services/chat-history.service';
 import { AilyAgentSessionProviderOptionsSourceService } from '../services/chat-session-provider-options-source.service';
-import { EditingTextDiffService } from '../services/editing-text-diff.service';
-import type { EditingTimelineFileWriteEvent } from '../services/editing-timeline-recording-bridge';
-import type { ChatSessionLexPostTurnResources } from '../services/chat-session-lex-post-turn-resource-factory.service';
-import type { EditingTextLineChange } from '../services/editing-text-diff.types';
-import type { NormalizedTextEdit } from '../services/editing-timeline.types';
 import { LEGACY_HOST_EXTERNAL_TOOLS } from '../tools/legacy-host-tool-definitions';
 import {
   BlocklyHostAdapter,
@@ -542,9 +537,6 @@ export type BootstrapLexAgentContext = Pick<IProjectContext, 'prjPath' | 'prjRoo
   & Pick<IChatServiceAccess, 'ailyChatConfigService' | 'mcpService' | 'runtimeInteractionHost'>
   & Pick<IChatCoordination, 'handleToolApproval' | 'checkToolApprovalPreflight' | 'lexStream' | 'syncSessionCustomizationContentProvider' | 'syncSessionCustomizationProvider' | 'syncSessionCustomizationProviders' | 'syncSessionProviderOptionsSource' | 'syncSessionProviderOptionsSources'>
   & {
-    readonly editTracking: {
-      recordAdditionalRepositoryRootCandidates(paths: readonly string[] | undefined | null): void;
-    };
     readonly currentSessionPath?: string | null;
     readonly currentSessionPermissionMode?: ChatSessionPermissionMode;
     readonly currentSessionPermissionProfile?: ChatSessionPermissionProfile;
@@ -552,10 +544,6 @@ export type BootstrapLexAgentContext = Pick<IProjectContext, 'prjPath' | 'prjRoo
     readonly currentSessionApprovalPolicy?: 'on_request' | 'never';
     readonly ownerScheduler?: Pick<ChatRuntimeOwnerScheduler, 'runOutsideOwner'>;
     buildExecutionSaveTarget?(sessionId: string | null | undefined): HostSessionSaveTarget | null;
-    getOrCreateLexPostTurnResources?(
-      sessionId: string | null | undefined,
-      cwd: string | null | undefined,
-    ): ChatSessionLexPostTurnResources | undefined;
     scheduleLexRequestCompleted?(input: {
       sessionId: string;
       turnId: string;
@@ -1091,86 +1079,6 @@ function toDirectoryNames(entries: unknown): string[] {
     return [];
   }
   return entries.map(entry => typeof entry === 'string' ? entry : String((entry as { name?: unknown })?.name ?? ''));
-}
-
-const EDITING_TIMELINE_DIFF_OPTIONS = {
-  ignoreTrimWhitespace: false,
-  maxComputationTimeMs: 5_000,
-  computeMoves: false,
-  extendToSubwords: true,
-} as const;
-
-async function computeNormalizedTextEdits(beforeContent: string, afterContent: string): Promise<NormalizedTextEdit[] | undefined> {
-  if (beforeContent === afterContent) {
-    return undefined;
-  }
-
-  const diffService = new EditingTextDiffService({ preferWorker: false });
-  const diff = await diffService.computeDiff(beforeContent, afterContent, EDITING_TIMELINE_DIFF_OPTIONS);
-  const edits = diff.changes.flatMap(change => toNormalizedTextEdits(change, afterContent));
-  return edits.length > 0 ? edits : undefined;
-}
-
-function toNormalizedTextEdits(change: EditingTextLineChange, modifiedContent: string): NormalizedTextEdit[] {
-  if (Array.isArray(change.charChanges) && change.charChanges.length > 0) {
-    return change.charChanges.map(charChange => ({
-      startLine: charChange.originalStartLineNumber,
-      startColumn: charChange.originalStartColumn,
-      endLine: charChange.originalEndLineNumber,
-      endColumn: charChange.originalEndColumn,
-      newText: sliceTextByPosition(
-        modifiedContent,
-        charChange.modifiedStartLineNumber,
-        charChange.modifiedStartColumn,
-        charChange.modifiedEndLineNumber,
-        charChange.modifiedEndColumn,
-      ),
-    }));
-  }
-
-  return [{
-    startLine: change.originalStartLineNumber,
-    startColumn: 1,
-    endLine: change.originalEndLineNumberExclusive,
-    endColumn: 1,
-    newText: sliceTextByPosition(
-      modifiedContent,
-      change.modifiedStartLineNumber,
-      1,
-      change.modifiedEndLineNumberExclusive,
-      1,
-    ),
-  }];
-}
-
-function sliceTextByPosition(
-  content: string,
-  startLine: number,
-  startColumn: number,
-  endLine: number,
-  endColumn: number,
-): string {
-  const lineStarts = computeLineStarts(content);
-  const startOffset = positionToOffset(lineStarts, content.length, startLine, startColumn);
-  const endOffset = positionToOffset(lineStarts, content.length, endLine, endColumn);
-  return content.slice(startOffset, endOffset);
-}
-
-function computeLineStarts(content: string): number[] {
-  const starts = [0];
-  for (let index = 0; index < content.length; index++) {
-    if (content.charCodeAt(index) === 10) {
-      starts.push(index + 1);
-    }
-  }
-  return starts;
-}
-
-function positionToOffset(lineStarts: readonly number[], contentLength: number, line: number, column: number): number {
-  const safeLine = Math.max(1, line);
-  const lineIndex = Math.min(safeLine - 1, lineStarts.length - 1);
-  const lineStart = lineStarts[lineIndex] ?? contentLength;
-  return Math.min(contentLength, lineStart + Math.max(0, column - 1));
 }
 
 interface BlocklyExternalHostApiOptions {
@@ -2215,78 +2123,18 @@ export function bootstrapBlocklyLexAgent(
       },
     };
   }
-  if (cwd && (sessionId || ctx.sessionId)) {
-    const lexPostTurnResources = ctx.getOrCreateLexPostTurnResources?.(
-      sessionId || ctx.sessionId,
-      cwd,
-    );
-    if (lexPostTurnResources) {
-      const editingTimelineRecorder = lexPostTurnResources.editingTimelineRecorder;
-      runtimeExtensions['editingTimeline'] = {
-        recordFileWrite: async (event: EditingTimelineFileWriteEvent) => {
-          const edits = event.contentKind !== 'binary'
-            && event.beforeContent !== null
-            && event.beforeContent !== undefined
-            && event.afterContent !== null
-            && event.afterContent !== undefined
-            ? await computeNormalizedTextEdits(event.beforeContent, event.afterContent)
-            : undefined;
-          editingTimelineRecorder.recordFileWrite({
-            ...event,
-            ...(edits ? { edits } : {}),
-          });
-        },
-        reconcileWorktreeChanges: async (input: {
-          turnId: string;
-          filePaths: readonly string[];
-          repositoryRoots?: readonly string[];
-          changes?: readonly ({
-            filePath: string;
-            kind: 'create' | 'modify' | 'delete';
-            contentKind: 'text' | 'binary' | 'notebook';
-          } | {
-            filePath: string;
-            previousFilePath: string;
-            kind: 'rename';
-            contentKind: 'text' | 'binary' | 'notebook';
-          })[];
-        }) => {
-          ctx.editTracking.recordAdditionalRepositoryRootCandidates(input.repositoryRoots);
-          await editingTimelineRecorder.reconcileWorktreeChanges({
-            ...input,
-            readCurrentText: async (filePath: string) => {
-              try {
-                return AilyHost.get().fs.readFileSync(filePath, 'utf-8');
-              } catch {
-                return null;
-              }
-            },
-            readCurrentBytes: async (filePath: string) => {
-              try {
-                return normalizeHostBytes((AilyHost.get().fs.readFileSync as any)(filePath));
-              } catch {
-                return null;
-              }
-            },
-            computeEdits: computeNormalizedTextEdits,
-          });
-        },
-      };
-      runtimeExtensions['workspaceChangeCollector'] = lexPostTurnResources.workspaceChangeCollector;
-    }
-    if (ctx.scheduleLexRequestCompleted) {
-      runtimeExtensions['sessionCompletionCoordinator'] = {
-        scheduleRequestCompleted: (input: {
-          sessionId: string;
-          turnId: string;
-          reason: string;
-          runWorkspaceFinalize: () => Promise<void>;
-          runSessionEndHooks: () => Promise<void>;
-        }) => {
-          ctx.scheduleLexRequestCompleted?.(input);
-        },
-      };
-    }
+  if (cwd && (sessionId || ctx.sessionId) && ctx.scheduleLexRequestCompleted) {
+    runtimeExtensions['sessionCompletionCoordinator'] = {
+      scheduleRequestCompleted: (input: {
+        sessionId: string;
+        turnId: string;
+        reason: string;
+        runWorkspaceFinalize: () => Promise<void>;
+        runSessionEndHooks: () => Promise<void>;
+      }) => {
+        ctx.scheduleLexRequestCompleted?.(input);
+      },
+    };
   }
 
   let pendingNpmCommand: { command: string; isInstall: boolean; isUninstall: boolean } | null = null;
@@ -5067,19 +4915,4 @@ function parseShellCommand(command: string): string[] {
   }
 
   return result;
-}
-
-function normalizeHostBytes(content: unknown): Uint8Array {
-  if (content instanceof Uint8Array) {
-    return content;
-  }
-  if (Array.isArray(content)) {
-    return new Uint8Array(content);
-  }
-  if (content && typeof content === 'object' && 'buffer' in (content as any)) {
-    const view = content as { buffer: ArrayBufferLike; byteOffset?: number; byteLength?: number };
-    const byteLength = view.byteLength ?? ((view.buffer as ArrayBufferLike).byteLength - (view.byteOffset ?? 0));
-    return new Uint8Array(view.buffer, view.byteOffset ?? 0, byteLength);
-  }
-  return new Uint8Array();
 }

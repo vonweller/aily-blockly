@@ -38,11 +38,13 @@ export class ChatRuntimeHostWorkspaceMutationTransaction {
 
   readonly record = (input: ChatRuntimeHostWorkspaceMutationReceiptInput): void => {
     const sequence = this.receipts.length;
-    const operationKind = !input.existedBefore
+    const operationKind = input.operationKind ?? (!input.existedBefore
       ? 'create'
       : input.afterContent === null && input.afterBytes == null
         ? 'delete'
-        : 'replace';
+        : input.contentKind === 'notebook'
+          ? 'notebook-edit'
+          : 'replace');
     this.receipts.push({
       ...this.identity,
       operationId: `${this.identity.transactionId}:${sequence}`,
@@ -98,10 +100,12 @@ export class ChatRuntimeHostWorkspaceMutationTransaction {
     return this.receipts.length > 0;
   }
 
-  createBatch(): ChatRuntimeHostWorkspaceMutationBatch {
+  createBatch(
+    status: ChatRuntimeHostWorkspaceMutationBatch['status'] = 'committed',
+  ): ChatRuntimeHostWorkspaceMutationBatch {
     return {
       ...this.identity,
-      status: 'committed',
+      status,
       receipts: this.receipts.map(receipt => ({ ...receipt })),
     };
   }
@@ -111,16 +115,24 @@ export class ChatRuntimeHostWorkspaceMutationTransaction {
       if (this.capturedTextFilePaths.has(receipt.filePath)) {
         continue;
       }
+      if (receipt.operationKind === 'rename') {
+        const fromPath = receipt.fromPath;
+        const toPath = receipt.toPath;
+        if (!fromPath || !toPath) {
+          throw new Error('Cannot roll back rename without canonical from/to paths.');
+        }
+        if (await Promise.resolve(this.fileSystem.exists(toPath))) {
+          await Promise.resolve(this.fileSystem.deleteFile(toPath));
+        }
+        await this.restoreBeforeImage(receipt, fromPath);
+        continue;
+      }
       if (!receipt.existedBefore) {
         if (await Promise.resolve(this.fileSystem.exists(receipt.filePath))) {
           await Promise.resolve(this.fileSystem.deleteFile(receipt.filePath));
         }
-      } else if (receipt.contentKind === 'text') {
-        await Promise.resolve(this.fileSystem.writeFile(receipt.filePath, receipt.beforeContent ?? ''));
-      } else if (receipt.contentKind === 'binary' && this.fileSystem.writeFileBytes && receipt.beforeBytes) {
-        await Promise.resolve(this.fileSystem.writeFileBytes(receipt.filePath, receipt.beforeBytes));
       } else {
-        throw new Error(`Unsupported workspace mutation rollback content kind: ${receipt.contentKind}`);
+        await this.restoreBeforeImage(receipt, receipt.filePath);
       }
     }
     for (const captured of [...this.capturedTextFiles].reverse()) {
@@ -130,5 +142,20 @@ export class ChatRuntimeHostWorkspaceMutationTransaction {
         await Promise.resolve(this.fileSystem.deleteFile(captured.filePath));
       }
     }
+  }
+
+  private async restoreBeforeImage(
+    receipt: ChatRuntimeHostWorkspaceMutationReceipt,
+    filePath: string,
+  ): Promise<void> {
+    if (receipt.contentKind === 'text' || receipt.contentKind === 'notebook') {
+      await Promise.resolve(this.fileSystem.writeFile(filePath, receipt.beforeContent ?? ''));
+      return;
+    }
+    if (receipt.contentKind === 'binary' && this.fileSystem.writeFileBytes && receipt.beforeBytes) {
+      await Promise.resolve(this.fileSystem.writeFileBytes(filePath, receipt.beforeBytes));
+      return;
+    }
+    throw new Error(`Unsupported workspace mutation rollback content kind: ${receipt.contentKind}`);
   }
 }

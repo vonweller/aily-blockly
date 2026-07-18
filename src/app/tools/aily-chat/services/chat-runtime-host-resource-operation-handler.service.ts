@@ -1,10 +1,10 @@
 import { Injectable, OnDestroy } from '@angular/core';
 
 import type {
-  ChatRuntimeHostEditTrackingPayload,
   ChatRuntimeHostResourceOperationPayload,
   ChatRuntimeHostResourceOperationRequest,
   ChatRuntimeHostSyncAbsPayload,
+  ChatRuntimeHostWorkspaceMutationBatch,
 } from '../core/chat-runtime-host-contract';
 import {
   registerElectronChatRuntimeResourceOperationHandler,
@@ -28,7 +28,6 @@ import { setBoardConfigTool } from '../tools/boardConfigTool';
 import { collectDiagnostics } from '../core/diagnostics';
 import { AbsAutoSyncService } from './abs-auto-sync.service';
 import { ChatHistoryService, type LiveHostSessionRecord } from './chat-history.service';
-import { EditCheckpointService } from './edit-checkpoint.service';
 import { ArduinoLintService } from './arduino-lint.service';
 import { AilyHost } from '../core/host';
 import { AilyChatConfigService } from './aily-chat-config.service';
@@ -132,11 +131,14 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
     readonly toolCallId: string;
     readonly projectPath: string;
   }>();
+  private readonly pendingWorkspaceMutations = new Map<string, {
+    readonly batch: ChatRuntimeHostWorkspaceMutationBatch;
+    readonly transaction: ChatRuntimeHostWorkspaceMutationTransaction;
+  }>();
 
   constructor(
     private readonly chatHistoryService: ChatHistoryService,
     private readonly absAutoSyncService: AbsAutoSyncService,
-    private readonly editCheckpointService: EditCheckpointService,
     private readonly projectService: ProjectService,
     private readonly electronService: ElectronService,
     private readonly builderService: BuilderService,
@@ -181,22 +183,23 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
       this.deletePendingProjectDirectory(pending.projectPath);
     }
     this.pendingProjectCreations.clear();
+    for (const pending of this.pendingWorkspaceMutations.values()) {
+      void pending.transaction.rollback().catch(() => undefined);
+    }
+    this.pendingWorkspaceMutations.clear();
   }
 
   private handleResourceOperation(request: ChatRuntimeHostResourceOperationRequest): unknown {
     switch (request.kind) {
       case 'abs-workspace-export':
         return this.ensureWorkspaceAbsExport(request);
-      case 'checkpoint-commit':
-        return this.commitWorkspaceCheckpoint(request);
-      case 'checkpoint-settle':
-        return this.waitForWorkspaceCheckpointMetadata(request);
-      case 'edit-tracking':
-        return this.runEditTrackingOperation(request);
       case 'file-read':
       case 'file-write':
-      case 'workspace-mutation':
         return this.runSyncAbsResourceOperation(request);
+      case 'workspace-mutation':
+        return request.payload?.adapter === 'workspaceMutation'
+          ? this.runWorkspaceMutationControl(request)
+          : this.runSyncAbsResourceOperation(request);
       case 'project-info':
         return this.runProjectInfoOperation(request);
       case 'project-build':
@@ -284,175 +287,15 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
       );
     }
     this.absAutoSyncService.initialize(projectPath);
-    await this.absAutoSyncService.ensureWorkspaceExport();
+    // A submitted Blockly request captures the current working copy even when
+    // the local revision counter was restored or reused by a workspace reload.
+    await this.absAutoSyncService.exportToAbs();
     return {
       synchronized: true,
       sessionId,
       kind: request.kind,
       projectPath,
       mirrorState: this.absAutoSyncService.getWorkspaceMirrorState(),
-    };
-  }
-
-  private async commitWorkspaceCheckpoint(request: ChatRuntimeHostResourceOperationRequest): Promise<{
-    readonly committed: boolean;
-    readonly skipped: boolean;
-    readonly sessionId: string;
-    readonly kind: ChatRuntimeHostResourceOperationRequest['kind'];
-  }> {
-    const sessionId = this.requireSessionId(request, 'checkpoint commit');
-    this.requireEditCheckpointPayload(request.payload, 'commitCurrentTurn', 'checkpoint commit');
-    if (this.editCheckpointService.getTotalEditCount() === 0) {
-      await this.editCheckpointService.waitForCheckpointMetadataSettled();
-      return {
-        committed: false,
-        skipped: true,
-        sessionId,
-        kind: request.kind,
-      };
-    }
-
-    await this.editCheckpointService.commitCurrentTurn();
-    return {
-      committed: true,
-      skipped: false,
-      sessionId,
-      kind: request.kind,
-    };
-  }
-
-  private async waitForWorkspaceCheckpointMetadata(request: ChatRuntimeHostResourceOperationRequest): Promise<{
-    readonly settled: true;
-    readonly sessionId: string;
-    readonly kind: ChatRuntimeHostResourceOperationRequest['kind'];
-  }> {
-    const sessionId = this.requireSessionId(request, 'checkpoint settle');
-    this.requireEditCheckpointPayload(request.payload, 'settleMetadata', 'checkpoint settle');
-    await this.editCheckpointService.waitForCheckpointMetadataSettled();
-    return {
-      settled: true,
-      sessionId,
-      kind: request.kind,
-    };
-  }
-
-  private async runEditTrackingOperation(request: ChatRuntimeHostResourceOperationRequest): Promise<{
-    readonly applied: true;
-    readonly sessionId: string;
-    readonly kind: ChatRuntimeHostResourceOperationRequest['kind'];
-    readonly action: ChatRuntimeHostEditTrackingPayload['action'];
-    readonly checkpointMetadata?: unknown;
-    readonly forkedTurnResponses?: readonly unknown[] | null;
-  }> {
-    const sessionId = this.requireSessionId(request, 'edit tracking');
-    const payload = this.readEditTrackingPayload(request.payload);
-    switch (payload.action) {
-      case 'setAutoSaveEdits':
-        this.editCheckpointService.autoSaveEdits = payload.autoSaveEdits;
-        break;
-      case 'setTimelineContext':
-        this.editCheckpointService.setTimelineContext(sessionId, payload.workspaceRoot ?? null);
-        break;
-      case 'startTurn':
-        if (typeof payload.autoSaveEdits === 'boolean') {
-          this.editCheckpointService.autoSaveEdits = payload.autoSaveEdits;
-        }
-        this.editCheckpointService.startTurn(
-          payload.turnIndex,
-          payload.turnStartListIndex,
-          payload.responseStartListIndex,
-          payload.turnId,
-          payload.requestContent,
-          payload.displayContent,
-          payload.checkpointId,
-          payload.requestMetadata as never,
-        );
-        break;
-      case 'recordAdditionalRepositoryRootCandidates':
-        this.editCheckpointService.recordAdditionalRepositoryRootCandidates(payload.paths);
-        break;
-      case 'recordEdit':
-        this.editCheckpointService.recordEdit(payload.filePath, payload.editType);
-        break;
-      case 'publishCurrentSummary':
-        await this.editCheckpointService.publishCurrentSummary();
-        break;
-      case 'finalizeCurrentTurn':
-        if (typeof payload.autoSaveEdits === 'boolean') {
-          this.editCheckpointService.autoSaveEdits = payload.autoSaveEdits;
-        }
-        await this.editCheckpointService.commitCurrentTurn();
-        if (this.editCheckpointService.hasEditsInCurrentTurn()) {
-          const summary = await this.editCheckpointService.getEditsSummary();
-          if (payload.requestDiffPreview !== false) {
-            this.editCheckpointService.requestDiffPreview(summary);
-          }
-          if (payload.autoSaveEdits === true) {
-            this.editCheckpointService.acceptAllAsBaseline();
-            this.editCheckpointService.dismissSummary();
-          } else {
-            this.editCheckpointService.publishSummary(summary);
-          }
-        }
-        return {
-          applied: true,
-          sessionId,
-          kind: request.kind,
-          action: payload.action,
-          checkpointMetadata: await this.readFinalizedCheckpointMetadata(payload),
-        };
-      case 'readFinalizedCheckpointMetadata':
-        return {
-          applied: true,
-          sessionId,
-          kind: request.kind,
-          action: payload.action,
-          checkpointMetadata: await this.readFinalizedCheckpointMetadata(payload),
-        };
-      case 'restoreFromTurnResponses':
-        this.editCheckpointService.clear();
-        if (typeof payload.autoSaveEdits === 'boolean') {
-          this.editCheckpointService.autoSaveEdits = payload.autoSaveEdits;
-        }
-        this.editCheckpointService.setTimelineContext(sessionId, payload.workspaceRoot ?? null);
-        await this.editCheckpointService.rebuildFromTurnResponses(payload.turnResponses as never);
-        if (this.editCheckpointService.hasUnsavedEdits()) {
-          if (payload.autoSaveEdits === true) {
-            this.editCheckpointService.acceptAllAsBaseline();
-            this.editCheckpointService.dismissSummary();
-          } else {
-            await this.editCheckpointService.publishCurrentSummary();
-          }
-        } else {
-          this.editCheckpointService.dismissSummary();
-        }
-        break;
-      case 'forkRequestCheckpointMetadata': {
-        const forkedTurnResponses = await this.editCheckpointService.forkRequestCheckpointMetadata?.({
-          sourceSessionResource: payload.sourceSessionResource,
-          targetSessionResource: payload.targetSessionResource,
-          retainedTurnResponses: payload.retainedTurnResponses as never,
-        });
-        return {
-          applied: true,
-          sessionId,
-          kind: request.kind,
-          action: payload.action,
-          forkedTurnResponses: Array.isArray(forkedTurnResponses) ? forkedTurnResponses : null,
-        };
-      }
-      case 'clearSessionState':
-        this.editCheckpointService.clear();
-        if (payload.dismissSummary !== false) {
-          this.editCheckpointService.dismissSummary();
-        }
-        break;
-    }
-    return {
-      applied: true,
-      sessionId,
-      kind: request.kind,
-      action: payload.action,
     };
   }
 
@@ -471,6 +314,9 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
       );
     }
     const transactionId = `syncabs:${turnId}:${toolCallId}`;
+    if (isMutation) {
+      this.assertWorkspaceMutationNotPrepared(transactionId);
+    }
     const mutationTransaction = isMutation
       ? new ChatRuntimeHostWorkspaceMutationTransaction({
           sessionId,
@@ -508,7 +354,10 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
     if (!mutationTransaction?.hasMutations) {
       return result;
     }
-    return { ...result, mutationBatch: mutationTransaction.createBatch() };
+    return {
+      ...result,
+      mutationBatch: this.prepareWorkspaceMutation(mutationTransaction),
+    };
   }
 
   private async runProjectInfoOperation(request: ChatRuntimeHostResourceOperationRequest): Promise<unknown> {
@@ -600,11 +449,13 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
       );
     }
 
+    const transactionId = `project:${turnId}:${toolCallId}:${action}`;
+    this.assertWorkspaceMutationNotPrepared(transactionId);
     const transaction = new ChatRuntimeHostWorkspaceMutationTransaction({
       sessionId,
       turnId,
       toolCallId,
-      transactionId: `project:${turnId}:${toolCallId}:${action}`,
+      transactionId,
     }, this.electronService);
     await transaction.captureTextFiles(relativeFilePaths.map(filePath => this.joinProjectPath(projectPath, filePath)));
 
@@ -622,7 +473,10 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
     }
 
     return transaction.hasMutations
-      ? { ...(result && typeof result === 'object' ? result : { result }), mutationBatch: transaction.createBatch() }
+      ? {
+          ...(result && typeof result === 'object' ? result : { result }),
+          mutationBatch: this.prepareWorkspaceMutation(transaction),
+        }
       : result;
   }
 
@@ -1309,12 +1163,16 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
         false,
       );
     }
+    const transactionId = `connection-graph:${turnId}:${toolCallId}:${action}`;
+    if (usesWorkspaceMutation) {
+      this.assertWorkspaceMutationNotPrepared(transactionId);
+    }
     const mutationTransaction = usesWorkspaceMutation
       ? new ChatRuntimeHostWorkspaceMutationTransaction({
           sessionId,
           turnId,
           toolCallId,
-          transactionId: `connection-graph:${turnId}:${toolCallId}:${action}`,
+          transactionId,
         }, this.electronService)
       : null;
     const invocationContext = {
@@ -1374,8 +1232,77 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
     }
     return {
       ...(result && typeof result === 'object' ? result : { content: result }),
-      mutationBatch: mutationTransaction.createBatch(),
+      mutationBatch: this.prepareWorkspaceMutation(mutationTransaction),
     };
+  }
+
+  private prepareWorkspaceMutation(
+    transaction: ChatRuntimeHostWorkspaceMutationTransaction,
+  ): ChatRuntimeHostWorkspaceMutationBatch {
+    const batch = transaction.createBatch('prepared');
+    if (this.pendingWorkspaceMutations.has(batch.transactionId)) {
+      throw new HostResourceOperationError(
+        `[AilyChat][RuntimeHost] Workspace mutation is already prepared: ${batch.transactionId}.`,
+        'resource_operation_mutation_already_prepared',
+        false,
+      );
+    }
+    this.pendingWorkspaceMutations.set(batch.transactionId, { batch, transaction });
+    return batch;
+  }
+
+  private assertWorkspaceMutationNotPrepared(transactionId: string): void {
+    if (!this.pendingWorkspaceMutations.has(transactionId)) {
+      return;
+    }
+    throw new HostResourceOperationError(
+      `[AilyChat][RuntimeHost] Workspace mutation is already prepared: ${transactionId}.`,
+      'resource_operation_mutation_already_prepared',
+      false,
+    );
+  }
+
+  private async runWorkspaceMutationControl(
+    request: ChatRuntimeHostResourceOperationRequest,
+  ): Promise<{
+    readonly transactionId: string;
+    readonly status: 'committed' | 'rolled-back' | 'not-found';
+  }> {
+    const sessionId = this.requireSessionId(request, 'workspace mutation control');
+    const payload = this.requirePayloadAdapter(
+      request.payload,
+      'workspaceMutation',
+      'workspace mutation control',
+    );
+    const transactionId = this.normalizeSessionId(payload.transactionId);
+    if (!transactionId || (payload.action !== 'commit' && payload.action !== 'rollback')) {
+      throw new HostResourceOperationError(
+        '[AilyChat][RuntimeHost] Workspace mutation control requires action and transaction identity.',
+        'resource_operation_payload_invalid',
+        false,
+      );
+    }
+    const pending = this.pendingWorkspaceMutations.get(transactionId);
+    if (!pending) {
+      return { transactionId, status: 'not-found' };
+    }
+    const turnId = this.normalizeSessionId(request.turnId);
+    const toolCallId = this.normalizeSessionId(request.toolCallId);
+    if (pending.batch.sessionId !== sessionId
+      || pending.batch.turnId !== turnId
+      || pending.batch.toolCallId !== toolCallId) {
+      throw new HostResourceOperationError(
+        '[AilyChat][RuntimeHost] Workspace mutation control identity mismatch.',
+        'resource_operation_mutation_identity_mismatch',
+        false,
+      );
+    }
+    this.pendingWorkspaceMutations.delete(transactionId);
+    if (payload.action === 'rollback') {
+      await pending.transaction.rollback();
+      return { transactionId, status: 'rolled-back' };
+    }
+    return { transactionId, status: 'committed' };
   }
 
   private async runBoardSearchOperation(request: ChatRuntimeHostResourceOperationRequest): Promise<unknown> {
@@ -1723,185 +1650,6 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
         false,
       );
     }
-  }
-
-  private requireEditCheckpointPayload(
-    payload: ChatRuntimeHostResourceOperationPayload | undefined,
-    action: 'commitCurrentTurn' | 'settleMetadata',
-    operation: string,
-  ): void {
-    if (!payload || typeof payload !== 'object') {
-      throw new HostResourceOperationError(
-        `[AilyChat][RuntimeHost] ${operation} requires a typed payload.`,
-        'resource_operation_payload_missing',
-        false,
-      );
-    }
-    const payloadObject = payload as HostResourceOperationPayload;
-    if (payloadObject.adapter !== 'editCheckpoint' || payloadObject.action !== action) {
-      throw new HostResourceOperationError(
-        `[AilyChat][RuntimeHost] ${operation} payload must use editCheckpoint.${action}.`,
-        'resource_operation_payload_invalid',
-        false,
-      );
-    }
-  }
-
-  private readEditTrackingPayload(
-    payload: ChatRuntimeHostResourceOperationPayload | undefined,
-  ): ChatRuntimeHostEditTrackingPayload {
-    if (!payload || typeof payload !== 'object') {
-      throw new HostResourceOperationError(
-        '[AilyChat][RuntimeHost] edit tracking operation requires a typed payload.',
-        'resource_operation_payload_missing',
-        false,
-      );
-    }
-    const payloadObject = payload as HostResourceOperationPayload;
-    if (payloadObject.adapter !== 'editTracking') {
-      throw new HostResourceOperationError(
-        '[AilyChat][RuntimeHost] edit tracking operation payload must use editTracking.',
-        'resource_operation_payload_invalid',
-        false,
-      );
-    }
-    switch (payloadObject.action) {
-      case 'setAutoSaveEdits':
-        return {
-          adapter: 'editTracking',
-          action: 'setAutoSaveEdits',
-          autoSaveEdits: payloadObject.autoSaveEdits === true,
-        };
-      case 'setTimelineContext':
-        return {
-          adapter: 'editTracking',
-          action: 'setTimelineContext',
-          workspaceRoot: this.normalizeNullableString(payloadObject.workspaceRoot),
-        };
-      case 'startTurn':
-        return {
-          adapter: 'editTracking',
-          action: 'startTurn',
-          turnIndex: this.normalizeFiniteNumber(payloadObject.turnIndex, 0),
-          turnStartListIndex: this.normalizeNullableFiniteNumber(payloadObject.turnStartListIndex),
-          responseStartListIndex: this.normalizeNullableFiniteNumber(payloadObject.responseStartListIndex),
-          ...this.optionalStringProperty('turnId', payloadObject.turnId),
-          ...this.optionalStringProperty('requestContent', payloadObject.requestContent),
-          ...this.optionalStringProperty('displayContent', payloadObject.displayContent),
-          ...this.optionalStringProperty('checkpointId', payloadObject.checkpointId),
-          ...(payloadObject.requestMetadata !== undefined ? { requestMetadata: payloadObject.requestMetadata } : {}),
-          ...(typeof payloadObject.autoSaveEdits === 'boolean' ? { autoSaveEdits: payloadObject.autoSaveEdits } : {}),
-        };
-      case 'recordAdditionalRepositoryRootCandidates':
-        return {
-          adapter: 'editTracking',
-          action: 'recordAdditionalRepositoryRootCandidates',
-          paths: this.normalizeStringList(payloadObject.paths),
-        };
-      case 'recordEdit': {
-        const filePath = this.normalizeSessionId(payloadObject.filePath);
-        const editType = payloadObject.editType;
-        if (!filePath || (editType !== 'create' && editType !== 'modify' && editType !== 'delete')) {
-          throw new HostResourceOperationError(
-            '[AilyChat][RuntimeHost] edit tracking recordEdit requires filePath and editType.',
-            'resource_operation_payload_invalid',
-            false,
-          );
-        }
-        return {
-          adapter: 'editTracking',
-          action: 'recordEdit',
-          filePath,
-          editType,
-        };
-      }
-      case 'publishCurrentSummary':
-        return {
-          adapter: 'editTracking',
-          action: 'publishCurrentSummary',
-        };
-      case 'finalizeCurrentTurn':
-        return {
-          adapter: 'editTracking',
-          action: 'finalizeCurrentTurn',
-          ...(typeof payloadObject.checkpointId === 'string' && payloadObject.checkpointId.trim()
-            ? { checkpointId: payloadObject.checkpointId.trim() }
-            : {}),
-          ...(typeof payloadObject.requestId === 'string' && payloadObject.requestId.trim()
-            ? { requestId: payloadObject.requestId.trim() }
-            : {}),
-          ...(typeof payloadObject.autoSaveEdits === 'boolean' ? { autoSaveEdits: payloadObject.autoSaveEdits } : {}),
-          ...(typeof payloadObject.requestDiffPreview === 'boolean'
-            ? { requestDiffPreview: payloadObject.requestDiffPreview }
-            : {}),
-        };
-      case 'readFinalizedCheckpointMetadata':
-        return {
-          adapter: 'editTracking',
-          action: 'readFinalizedCheckpointMetadata',
-          ...(typeof payloadObject.checkpointId === 'string' && payloadObject.checkpointId.trim()
-            ? { checkpointId: payloadObject.checkpointId.trim() }
-            : {}),
-          ...(typeof payloadObject.requestId === 'string' && payloadObject.requestId.trim()
-            ? { requestId: payloadObject.requestId.trim() }
-            : {}),
-        };
-      case 'restoreFromTurnResponses':
-        return {
-          adapter: 'editTracking',
-          action: 'restoreFromTurnResponses',
-          workspaceRoot: this.normalizeNullableString(payloadObject.workspaceRoot),
-          turnResponses: Array.isArray(payloadObject.turnResponses) ? payloadObject.turnResponses : [],
-          ...(typeof payloadObject.autoSaveEdits === 'boolean' ? { autoSaveEdits: payloadObject.autoSaveEdits } : {}),
-        };
-      case 'forkRequestCheckpointMetadata': {
-        const sourceSessionResource = this.normalizeSessionId(payloadObject.sourceSessionResource);
-        const targetSessionResource = this.normalizeSessionId(payloadObject.targetSessionResource);
-        if (!sourceSessionResource || !targetSessionResource || !Array.isArray(payloadObject.retainedTurnResponses)) {
-          throw new HostResourceOperationError(
-            '[AilyChat][RuntimeHost] edit tracking forkRequestCheckpointMetadata requires source, target, and retained turn responses.',
-            'resource_operation_payload_invalid',
-            false,
-          );
-        }
-        return {
-          adapter: 'editTracking',
-          action: 'forkRequestCheckpointMetadata',
-          sourceSessionResource,
-          targetSessionResource,
-          retainedTurnResponses: payloadObject.retainedTurnResponses,
-        };
-      }
-      case 'clearSessionState':
-        return {
-          adapter: 'editTracking',
-          action: 'clearSessionState',
-          ...(typeof payloadObject.dismissSummary === 'boolean' ? { dismissSummary: payloadObject.dismissSummary } : {}),
-        };
-      default:
-        throw new HostResourceOperationError(
-          '[AilyChat][RuntimeHost] edit tracking operation has an unsupported action.',
-          'resource_operation_payload_invalid',
-          false,
-        );
-    }
-  }
-
-  private async readFinalizedCheckpointMetadata(payload: { checkpointId?: string; requestId?: string }): Promise<unknown> {
-    const checkpointId = this.normalizeSessionId(payload.checkpointId);
-    if (checkpointId) {
-      const metadata = await this.editCheckpointService.getSettledRequestCheckpointMetadataByCheckpointId?.(checkpointId);
-      if (metadata) {
-        return metadata;
-      }
-    }
-
-    const requestId = this.normalizeSessionId(payload.requestId);
-    if (requestId) {
-      return await this.editCheckpointService.getSettledRequestCheckpointMetadataByRequestId?.(requestId) ?? null;
-    }
-
-    return null;
   }
 
   private readSyncAbsArgs(request: ChatRuntimeHostResourceOperationRequest): SyncAbsArgs {

@@ -107,7 +107,7 @@ class WorkerExternalEditService {
         warnings.push(warning);
       }
       for (const change of result.changes) {
-        changesByPath.set(change.filePath, change);
+        changesByPath.set(changeIdentity(change), change);
       }
     }
 
@@ -175,8 +175,15 @@ class WorkerExternalEditService {
     const changes = [];
     for (const entry of entries) {
       if (entry.kind === 'rename') {
-        await this.appendGitChange(changes, warnings, capture, capture.beforeCommit, afterCommit, entry.oldPath, null);
-        await this.appendGitChange(changes, warnings, capture, capture.beforeCommit, afterCommit, null, entry.newPath);
+        await this.appendGitRenameChange(
+          changes,
+          warnings,
+          capture,
+          capture.beforeCommit,
+          afterCommit,
+          entry.oldPath,
+          entry.newPath,
+        );
       } else if (entry.kind === 'delete') {
         await this.appendGitChange(changes, warnings, capture, capture.beforeCommit, afterCommit, entry.path, null);
       } else if (entry.kind === 'create') {
@@ -186,6 +193,44 @@ class WorkerExternalEditService {
       }
     }
     return { changes, warnings };
+  }
+
+  async appendGitRenameChange(
+    changes,
+    warnings,
+    capture,
+    beforeCommit,
+    afterCommit,
+    beforePath,
+    afterPath,
+  ) {
+    const fromPath = path.resolve(capture.gitRoot, beforePath);
+    const toPath = path.resolve(capture.gitRoot, afterPath);
+    if (!isPathInside(capture.root, fromPath) || !isPathInside(capture.root, toPath)) {
+      return;
+    }
+    const exclusion = findExcludedPath(capture.root, fromPath)
+      ?? findExcludedPath(capture.root, toPath);
+    if (exclusion) {
+      warnings.push(`${exclusion.path}: ${exclusion.reason}; changes are not restorable`);
+      return;
+    }
+    const before = await readGitBlob(capture.gitRoot, beforeCommit, beforePath, this.maxFileBytes);
+    const after = await readGitBlob(capture.gitRoot, afterCommit, afterPath, this.maxFileBytes);
+    if (before?.excludedReason || after?.excludedReason) {
+      warnings.push(`${toPath}: ${before?.excludedReason ?? after?.excludedReason}; changes are not restorable`);
+      return;
+    }
+    const contentKind = inferContentKind(toPath, after?.bytes ?? before?.bytes);
+    changes.push({
+      operationKind: 'rename',
+      filePath: toPath,
+      fromPath,
+      toPath,
+      beforeBytes: before?.bytes ?? null,
+      afterBytes: after?.bytes ?? null,
+      contentKind,
+    });
   }
 
   async appendGitChange(changes, warnings, capture, beforeCommit, afterCommit, beforePath, afterPath) {
@@ -210,6 +255,13 @@ class WorkerExternalEditService {
       return;
     }
     changes.push({
+      operationKind: before === null
+        ? 'create'
+        : after === null
+          ? 'delete'
+          : inferContentKind(filePath, after?.bytes ?? before?.bytes) === 'notebook'
+            ? 'notebook-edit'
+            : 'replace',
       filePath,
       beforeBytes: before?.bytes ?? null,
       afterBytes: after?.bytes ?? null,
@@ -229,6 +281,13 @@ class WorkerExternalEditService {
         continue;
       }
       changes.push({
+        operationKind: before === null
+          ? 'create'
+          : after === null
+            ? 'delete'
+            : inferContentKind(filePath, after?.bytes ?? before?.bytes) === 'notebook'
+              ? 'notebook-edit'
+              : 'replace',
         filePath,
         beforeBytes: before?.bytes ?? null,
         afterBytes: after?.bytes ?? null,
@@ -443,9 +502,12 @@ function createMutationReceipt(input) {
     transactionId: input.transactionId,
     operationId: input.operationId,
     sequence: input.sequence,
-    operationKind: change.beforeBytes === null ? 'create' : change.afterBytes === null ? 'delete' : 'replace',
+    operationKind: change.operationKind,
     filePath: change.filePath,
     existedBefore: change.beforeBytes !== null,
+    ...(change.operationKind === 'rename'
+      ? { fromPath: change.fromPath, toPath: change.toPath }
+      : {}),
     contentKind: change.contentKind,
     ...(change.contentKind === 'binary'
       ? { beforeBytes: change.beforeBytes, afterBytes: change.afterBytes }
@@ -457,6 +519,12 @@ async function rollbackChanges(changes) {
   const failures = [];
   for (const change of [...changes].reverse()) {
     try {
+      if (change.operationKind === 'rename') {
+        await fs.rm(change.toPath, { force: true });
+        await fs.mkdir(path.dirname(change.fromPath), { recursive: true });
+        await fs.writeFile(change.fromPath, change.beforeBytes);
+        continue;
+      }
       if (change.beforeBytes === null) {
         await fs.rm(change.filePath, { force: true });
       } else {
@@ -470,6 +538,12 @@ async function rollbackChanges(changes) {
   if (failures.length > 0) {
     throw new Error(`External edit rollback failed: ${failures.join('; ')}`);
   }
+}
+
+function changeIdentity(change) {
+  return change.operationKind === 'rename'
+    ? `rename:${change.fromPath}->${change.toPath}`
+    : `${change.operationKind}:${change.filePath}`;
 }
 
 function findExcludedPath(root, filePath) {

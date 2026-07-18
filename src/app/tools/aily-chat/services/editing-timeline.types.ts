@@ -77,7 +77,8 @@ export type TimelineFileOperation =
   | TimelineDeleteFileOperation
   | TimelineRenameFileOperation
   | TimelineReplaceFileOperation
-  | TimelineTextEditFileOperation;
+  | TimelineTextEditFileOperation
+  | TimelineNotebookEditFileOperation;
 
 export interface TimelineBaseFileOperation {
   operationId: string;
@@ -116,6 +117,12 @@ export interface TimelineTextEditFileOperation extends TimelineBaseFileOperation
   beforeRef: ContentRef;
   afterRef: ContentRef;
   edits: NormalizedTextEdit[];
+}
+
+export interface TimelineNotebookEditFileOperation extends TimelineBaseFileOperation {
+  type: 'notebook-edit';
+  beforeRef: ContentRef;
+  afterRef: ContentRef;
 }
 
 export interface NormalizedTextEdit {

@@ -91,7 +91,6 @@ import { ChatSessionEntryCoordinator } from './chat-session-entry-coordinator';
 import { ChatPerformanceTracer } from '../services/chat-perf-tracer';
 import { createRequiredSessionResourceModel } from './required-session-resource-model';
 import type {
-  ChatRuntimeHostEditTrackingPayload,
   ChatRuntimeHostForkSessionRequest,
   ChatRuntimeHostForkSessionResult,
   ChatRuntimeHostPrewarmRequest,
@@ -159,7 +158,6 @@ type SessionLifecycleContext = ChatViewWriteBridgeContext
     attachSessionViewModel?(sessionId?: string | null): ChatSessionViewModel | null;
     detachSessionViewModel?(sessionId?: string | null): void;
     readCurrentViewSessionResource?(): string | null;
-    requestHostResourceOperation?: HostSessionSaveContext['requestHostResourceOperation'];
     createSessionSaveBridge(ctx: HostSessionSaveContext): SessionLifecycleSaveBridgePort;
     clearEntryInputState?(): void;
     buildExecutionSaveTarget?(sessionId: string | null | undefined): HostSessionSaveTarget | null;
@@ -1332,65 +1330,8 @@ export class SessionLifecycleHelper {
         console.warn('[SessionLifecycle] session history restore failed:', error);
         this.ctx.message.warning('会话历史加载失败，已继续打开当前会话');
       }
-    } else {
-      await this.clearHostEditTrackingSessionState(sessionId);
     }
     this.ctx.chatHistoryService.clearRecordedRestoreFailure?.(sessionId);
-  }
-
-  private async clearHostEditTrackingSessionState(sessionId: string | null | undefined): Promise<void> {
-    await this.requestHostEditTrackingOperation({
-      sessionId,
-      label: 'Clearing edit tracking session state',
-      detail: 'Host edit tracking resource is clearing stale session edit state.',
-      payload: {
-        adapter: 'editTracking',
-        action: 'clearSessionState',
-        dismissSummary: true,
-      },
-    });
-  }
-
-  private async restoreHostEditTrackingSessionState(
-    sessionId: string | null | undefined,
-    workspaceRoot: string | null | undefined,
-    turnResponses: readonly TurnResponseTurn[] | null | undefined,
-  ): Promise<void> {
-    const canonicalTurnResponses = Array.isArray(turnResponses) ? turnResponses : [];
-    await this.requestHostEditTrackingOperation({
-      sessionId,
-      label: 'Restoring edit tracking timeline',
-      detail: 'Host edit tracking resource is restoring session edit state from the response model.',
-      payload: {
-        adapter: 'editTracking',
-        action: 'restoreFromTurnResponses',
-        workspaceRoot: workspaceRoot ?? null,
-        turnResponses: canonicalTurnResponses,
-        autoSaveEdits: this.ctx.ailyChatConfigService.autoSaveEdits === true,
-      },
-    });
-  }
-
-  private async requestHostEditTrackingOperation(input: {
-    readonly sessionId: string | null | undefined;
-    readonly label: string;
-    readonly detail: string;
-    readonly payload: ChatRuntimeHostEditTrackingPayload;
-  }): Promise<Awaited<ReturnType<NonNullable<SessionLifecycleContext['requestHostResourceOperation']>>>> {
-    const targetSessionId = typeof input.sessionId === 'string' ? input.sessionId.trim() : '';
-    if (!targetSessionId) {
-      throw new Error('[AilyChat][RuntimeHost] edit tracking session operation requires a host session id.');
-    }
-    if (typeof this.ctx.requestHostResourceOperation !== 'function') {
-      throw new Error('[AilyChat][RuntimeHost] edit tracking session operation requires the host resource operation bridge.');
-    }
-    return this.ctx.requestHostResourceOperation({
-      sessionId: targetSessionId,
-      kind: 'edit-tracking',
-      label: input.label,
-      detail: input.detail,
-      payload: input.payload,
-    });
   }
 
   private createSessionId(): string {
@@ -1825,17 +1766,6 @@ export class SessionLifecycleHelper {
       ?? restoreRequest.sessionContent.providerOptions;
 
     this.persistSessionEntryTarget(this.buildSessionEntryTarget(sessionId, restoreRequest.sessionContent));
-    await this.restoreHostEditTrackingSessionState(
-      sessionId,
-      providerOptions.folderPath
-        ?? restoreRequest.sessionContent.projectPathHint
-        ?? restoreRequest.target.projectPath
-        ?? null,
-      restoreRequest.hostRecord?.turnResponses
-        ?? restoreRequest.sessionContent.hostRecord?.turnResponses
-        ?? model.turnResponses,
-    );
-
     const durableHostRecord = restoreRequest.hostRecord
       ?? restoreRequest.sessionContent.hostRecord
       ?? null;
@@ -2202,9 +2132,6 @@ export class SessionLifecycleHelper {
       }
       return total + (
         typeof metadata['checkpointId'] === 'string'
-        || typeof metadata['checkpointRef'] === 'string'
-        || metadata['additionalCheckpointRefs'] !== undefined
-        || metadata['checkpointRefs'] !== undefined
           ? 1
           : 0
       );

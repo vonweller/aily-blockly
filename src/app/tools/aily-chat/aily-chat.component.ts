@@ -42,7 +42,6 @@ import {
 import { ChatViewService } from './services/chat-view.service';
 import { ChatEngineService } from './services/chat-engine.service';
 import { EditCheckpointService } from './services/edit-checkpoint.service';
-import { GitWorkspaceCheckpointProviderService } from './services/git-workspace-checkpoint-provider.service';
 import { ChatPerformanceTracer } from './services/chat-perf-tracer';
 import { ChatSwitchShellCoordinator } from './helpers/chat-switch-shell-coordinator';
 import { ChatEditResourceShellCoordinator } from './helpers/chat-edit-resource-shell-coordinator';
@@ -2533,7 +2532,6 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
     void this.sessionActions.requestSwitchToSession(
       event.sessionId,
       this.chatService.currentSessionId,
-      this.engine.editCheckpointService,
       this.createSessionSwitchCallbacks(),
       event.item,
     );
@@ -2568,7 +2566,6 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
 
   requestReturnToEntryInventory(options?: { saveCurrentSession?: boolean }): void {
     void this.sessionActions.requestReturnToEntryInventory(
-      this.engine.editCheckpointService,
       this.createSessionEntryCommandCallbacks(),
       this.chatService.currentSessionId,
       {
@@ -2578,7 +2575,7 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
   }
 
   requestImportDebugSnapshot(): void {
-    void this.sessionActions.requestImportDebugSnapshot(this.engine.editCheckpointService, this.createSessionCommandCallbacks());
+    void this.sessionActions.requestImportDebugSnapshot(this.createSessionCommandCallbacks());
   }
 
   private createSessionSwitchCallbacks() {

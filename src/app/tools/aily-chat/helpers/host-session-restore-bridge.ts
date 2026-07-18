@@ -44,10 +44,6 @@ import type { RequestCheckpointMetadata } from '../services/edit-checkpoint.serv
 import type { AskUserAnswer, AskUserQuestion } from '../core/ask-user';
 import type { ConfirmationPart, QuestionPart } from '../core/chat-parts';
 import type { RuntimePlanReviewAction, RuntimePlanReviewDecision } from '../services/chat-runtime-interaction-host.service';
-import type {
-  ChatRuntimeHostResourceOperationRequest,
-  ChatRuntimeHostResourceOperationResult,
-} from '../core/chat-runtime-host-contract';
 import {
   createSessionCheckpointTimelineState,
   type SessionCheckpointTimelineState,
@@ -248,9 +244,6 @@ type HostSessionRestoreContext = Pick<IChatViewAccess, 'scrollManager' | 'invali
       state: HostTurnResponseState | null,
       options: { readonly sessionId: string | null; readonly attachedView?: boolean },
     ): void;
-    requestHostResourceOperation?(
-      request: ChatRuntimeHostResourceOperationRequest,
-    ): Promise<ChatRuntimeHostResourceOperationResult>;
   };
 
 export interface RuntimeRestoreHostRecordRequest {
@@ -388,30 +381,13 @@ function isCompleteCheckpointMetadata(
     && readStringProperty(record, 'checkpointId').length > 0
     && readStringProperty(record, 'requestId').length > 0
     && readStringProperty(record, 'sessionResource') === targetSessionResource
-    && readStringProperty(record, 'checkpointNamespace') === `refs/sessions/${targetSessionResource}`
-    && readStringProperty(record, 'checkpointRef').length > 0
     && typeof record['turnIndex'] === 'number'
-    && Number.isFinite(record['turnIndex'])
-    && hasCompleteAdditionalCheckpointRefs(record);
+    && Number.isFinite(record['turnIndex']);
 }
 
 function readStringProperty(record: Record<string, unknown> | null, key: string): string {
   const value = record?.[key];
   return typeof value === 'string' ? value.trim() : '';
-}
-
-function hasCompleteAdditionalCheckpointRefs(metadata: Record<string, unknown> | null): boolean {
-  const additionalStartRefs = readStringRecord(metadata?.['additionalStartCheckpointRefs']);
-  const additionalRefs = readStringRecord(metadata?.['additionalCheckpointRefs']);
-  if (!additionalStartRefs) {
-    return true;
-  }
-
-  if (!additionalRefs) {
-    return false;
-  }
-
-  return Object.keys(additionalStartRefs).every(key => !!additionalRefs[key]);
 }
 
 function readStringRecord(value: unknown): Record<string, string> | null {
@@ -546,11 +522,6 @@ export class HostSessionRestoreBridge {
         );
       }
 
-      await this.restoreEditCheckpoints(
-        targetSessionId,
-        this.resolveRestoreWorkspaceRoot(sanitizedHostRecord, targetSessionId),
-        restoredHostResponseState.turnResponses,
-      );
       if (!isCurrent()) {
         return;
       }
@@ -889,46 +860,6 @@ export class HostSessionRestoreBridge {
     }
 
     this.ctx.toolCallingIteration = hostRecord.metadata?.toolCallingIteration || 0;
-  }
-
-  private resolveRestoreWorkspaceRoot(hostRecord: HostSessionRecord, sessionId: string): string | null {
-    const metadataProjectPath = typeof hostRecord.metadata?.projectPath === 'string'
-      ? hostRecord.metadata.projectPath.trim()
-      : '';
-    if (metadataProjectPath) {
-      return metadataProjectPath;
-    }
-
-    const indexProjectPath = this.ctx.chatHistoryService.findEntry(sessionId)?.projectPath;
-    return typeof indexProjectPath === 'string' && indexProjectPath.trim()
-      ? indexProjectPath.trim()
-      : null;
-  }
-
-  private async restoreEditCheckpoints(
-    sessionId: string,
-    workspaceRoot: string | null,
-    turnResponses: readonly TurnResponseTurn[],
-  ): Promise<void> {
-    const requestHostResourceOperation = this.ctx.requestHostResourceOperation;
-    if (typeof requestHostResourceOperation !== 'function') {
-      throw new Error('[AilyChat][Restore] Runtime host resource operation bridge is required to restore edit tracking state.');
-    }
-    await requestHostResourceOperation({
-      sessionId,
-      kind: 'edit-tracking',
-      label: 'Restoring edit tracking timeline',
-      resource: {
-        workspaceRoot,
-      },
-      payload: {
-        adapter: 'editTracking',
-        action: 'restoreFromTurnResponses',
-        workspaceRoot,
-        turnResponses,
-        autoSaveEdits: this.ctx.ailyChatConfigService.autoSaveEdits === true,
-      },
-    });
   }
 
   private finalizeRestoreUi(_restoredLexSession: boolean): void {

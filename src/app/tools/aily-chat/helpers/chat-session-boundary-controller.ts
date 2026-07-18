@@ -5,32 +5,32 @@ import type {
   ChatRuntimeHostCheckpointNavigationRequest,
   ChatRuntimeHostCheckpointNavigationState,
 } from '../core/chat-runtime-host-contract';
-import { AilyHost } from '../core/host';
-import type {
-  WorkspaceCheckpointAvailabilityDetail,
-  WorkspaceCheckpointPresentationMode,
-} from '../services/edit-checkpoint.service';
 import type { EditActionsHelper } from './edit-actions.helper';
 
 export interface ChatSessionBoundaryActionController {
   regenerateTurn(target?: DialogTurnContext | null): Promise<void> | void;
+  undoEdits(sessionResource?: string): Promise<void> | void;
+  redoFileEdits(sessionResource?: string): Promise<void> | void;
   redoEdits(sessionResource?: string): Promise<void> | void;
   restoreCheckpoint(target: DialogTurnContext, sessionResource?: string): Promise<boolean | void> | boolean | void;
   forkSession(target: DialogTurnContext, sessionResource?: string): Promise<boolean | void> | boolean | void;
 }
 
-export type ChatSessionBoundaryBlockedAction = 'redoCheckpoint' | 'restoreCheckpoint' | 'forkSession';
+export type ChatSessionBoundaryBlockedAction =
+  | 'undoEditingSession'
+  | 'redoEditingSession'
+  | 'redoCheckpoint'
+  | 'restoreCheckpoint'
+  | 'forkSession';
 export type ChatSessionBoundaryUnavailableAction = ChatSessionBoundaryBlockedAction;
 
 export interface ChatSessionBoundaryUnavailableReason {
   readonly action: ChatSessionBoundaryUnavailableAction;
   readonly reason:
     | 'session-unavailable'
-    | 'workspace-checkpoint-unavailable'
     | 'checkpoint-unavailable'
     | 'checkpoint-session-mismatch';
   readonly checkpointId?: string;
-  readonly workspaceCheckpointDetail?: WorkspaceCheckpointAvailabilityDetail;
 }
 
 export interface ChatSessionBoundaryControllerContext {
@@ -40,9 +40,6 @@ export interface ChatSessionBoundaryControllerContext {
   readCheckpointNavigationState?(
     request: ChatRuntimeHostCheckpointNavigationRequest,
   ): Promise<ChatRuntimeHostCheckpointNavigationState | null>;
-  getWorkspaceCheckpointPresentationMode?(): WorkspaceCheckpointPresentationMode;
-  ensureWorkspaceCheckpointPresentationMode?(): Promise<WorkspaceCheckpointPresentationMode> | WorkspaceCheckpointPresentationMode;
-  getWorkspaceCheckpointAvailabilityDetail?(): WorkspaceCheckpointAvailabilityDetail | null | undefined;
   warnBoundaryActionUnavailable?(reason: ChatSessionBoundaryUnavailableReason): void;
   logBoundaryDiagnostic?(message: string): void;
 }
@@ -61,6 +58,32 @@ export class ChatSessionBoundaryController implements ChatSessionBoundaryActionC
 
   async regenerateTurn(target?: DialogTurnContext | null): Promise<void> {
     await this.editActions.regenerateTurn(target);
+  }
+
+  async undoEdits(explicitSessionResource?: string): Promise<void> {
+    if (this.isBoundaryRewriteBlocked('undoEditingSession')) {
+      return;
+    }
+    const sessionResource = this.resolveActionSessionResource(explicitSessionResource);
+    this.traceActionSession('undoEditingSession', explicitSessionResource, sessionResource);
+    if (!sessionResource) {
+      this.blockUnavailable({ action: 'undoEditingSession', reason: 'session-unavailable' });
+      return;
+    }
+    await this.editActions.undoLastEdit({ sessionResource });
+  }
+
+  async redoFileEdits(explicitSessionResource?: string): Promise<void> {
+    if (this.isBoundaryRewriteBlocked('redoEditingSession')) {
+      return;
+    }
+    const sessionResource = this.resolveActionSessionResource(explicitSessionResource);
+    this.traceActionSession('redoEditingSession', explicitSessionResource, sessionResource);
+    if (!sessionResource) {
+      this.blockUnavailable({ action: 'redoEditingSession', reason: 'session-unavailable' });
+      return;
+    }
+    await this.editActions.redoLastEdit({ sessionResource });
   }
 
   async redoEdits(explicitSessionResource?: string): Promise<void> {
@@ -139,10 +162,6 @@ export class ChatSessionBoundaryController implements ChatSessionBoundaryActionC
       return null;
     }
 
-    if (!await this.isWorkspaceCheckpointAvailable('redoCheckpoint', sessionResource, navigation)) {
-      return null;
-    }
-
     return navigation;
   }
 
@@ -154,9 +173,6 @@ export class ChatSessionBoundaryController implements ChatSessionBoundaryActionC
     if (!resolved) {
       return null;
     }
-    if (!await this.isWorkspaceCheckpointAvailable('restoreCheckpoint', sessionResource, resolved.navigation)) {
-      return null;
-    }
     return resolved;
   }
 
@@ -165,50 +181,6 @@ export class ChatSessionBoundaryController implements ChatSessionBoundaryActionC
     target: DialogTurnContext,
   ): Promise<{ checkpointId: string | null; target: DialogTurnContext } | null> {
     return { checkpointId: readCheckpointIdFromTarget(target), target };
-  }
-
-  private async isWorkspaceCheckpointAvailable(
-    action: ChatSessionBoundaryUnavailableAction,
-    sessionResource: string,
-    navigation?: ChatRuntimeHostCheckpointNavigationState | null,
-  ): Promise<boolean> {
-    const mode = await Promise.resolve(
-      this.ctx.ensureWorkspaceCheckpointPresentationMode?.()
-        ?? this.ctx.getWorkspaceCheckpointPresentationMode?.()
-        ?? 'unknown',
-    );
-    if (mode === 'git' || mode === 'timeline') {
-      return true;
-    }
-    if (this.hasCurrentSessionTimelineCheckpointBoundary(sessionResource, navigation)) {
-      return true;
-    }
-    return this.blockUnavailable({
-      action,
-      reason: 'workspace-checkpoint-unavailable',
-      workspaceCheckpointDetail: this.ctx.getWorkspaceCheckpointAvailabilityDetail?.() ?? undefined,
-    });
-  }
-
-  private hasCurrentSessionTimelineCheckpointBoundary(
-    sessionResource?: string | null,
-    navigation?: ChatRuntimeHostCheckpointNavigationState | null,
-  ): boolean {
-    if (this.hasOpenProjectWorkspace()) {
-      return false;
-    }
-
-    return normalizeString(navigation?.sessionId) === normalizeString(sessionResource)
-      && (navigation?.checkpointCount ?? 0) > 0;
-  }
-
-  private hasOpenProjectWorkspace(): boolean {
-    try {
-      const currentProjectPath = AilyHost.get().project?.currentProjectPath;
-      return typeof currentProjectPath === 'string' && currentProjectPath.trim().length > 0;
-    } catch {
-      return false;
-    }
   }
 
   private async resolveTargetCheckpoint(
@@ -282,9 +254,7 @@ export class ChatSessionBoundaryController implements ChatSessionBoundaryActionC
   private blockUnavailable(reason: ChatSessionBoundaryUnavailableReason): false {
     this.ctx.logBoundaryDiagnostic?.(
       `blocked action=${reason.action}; reason=${reason.reason}; checkpointId=${reason.checkpointId ?? 'none'}; `
-      + `workspaceMode=${reason.workspaceCheckpointDetail?.mode ?? 'unknown'}; `
-      + `workspaceReason=${reason.workspaceCheckpointDetail?.reason ?? 'none'}; `
-      + `workspaceMessage=${reason.workspaceCheckpointDetail?.message ?? ''}`,
+      + `session=${this.resolveCurrentSessionResource() || 'none'}`,
     );
     this.ctx.warnBoundaryActionUnavailable?.(reason);
     return false;
