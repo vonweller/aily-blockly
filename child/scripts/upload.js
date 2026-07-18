@@ -404,7 +404,7 @@ async function main() {
         }
 
         console.log('使用的核心:', core);
-        console.log('默认波特率:', defaultBaudRate);
+        // console.log('默认波特率:', defaultBaudRate);
 
         // 6. 获取波特率
         const baudRate = projectConfig?.UploadSpeed || defaultBaudRate;
