@@ -83,38 +83,8 @@
         "INDUSTRIAL_BUS_DEBUGGER": "Industrial Bus Debugger",
         "BLE_DEBUGGER": "BLE Debugger"
     },
-    "ESP32": {
-        "UPLOAD_SPEED": "Upload Speed",
-        "UPLOAD_MODE": "Upload Method",
-        "FLASH_MODE": "Flash Mode",
-        "FLASH_SIZE": "Flash Size",
-        "PARTITION_SCHEME": "Partition Scheme",
-        "CDC_ON_BOOT": "USB CDC on Boot",
-        "PSRAM": "PSRAM"
-    },
-    "WIO_TERMINAL": {
-        "ROLE": "Role",
-        "CACHE": "Cache",
-        "CPU_SPEED": "CPU Speed",
-        "OPTIMIZATION": "Optimization",
-        "MAX_QSPI": "Max QSPI Speed",
-        "USB_STACK": "USB Stack",
-        "DEBUG": "Debug",
-        "TX_RX_LED": "TX/RX LED"
-    },
-    "STM32": {
-        "BOARD": "Select Board Model",
-        "USB": "USB Configuration",
-        "UPLOAD_METHOD": "Upload Method"
-    },
-    "NRF5": {
-        "SOFTDEVICE": "SoftDevice",
-        "FLASH_SOFTDEVICE_TITLE": "Flash SoftDevice",
-        "FLASH_SOFTDEVICE_CONFIRM": "Do you want to flash {{softdevice}} SoftDevice to the device?",
-        "SELECT_PORT_FIRST": "Please select a port first",
-        "FLASHING_SOFTDEVICE": "Flashing SoftDevice...",
-        "FLASH_SUCCESS": "SoftDevice flashed successfully",
-        "FLASH_FAILED": "Failed to flash SoftDevice"
+    "SERIAL": {
+        "SELECT_PORT_FIRST": "Please select a port first"
     },
     "BLE_OTA": {
         "SEARCHING_DEVICE": "Searching for BLE devices",

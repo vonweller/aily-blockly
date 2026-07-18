@@ -46,38 +46,8 @@
         "INDUSTRIAL_BUS_DEBUGGER": "Industrial Bus Debugger",
         "BLE_DEBUGGER": "Débogueur BLE"
     },
-    "ESP32": {
-        "UPLOAD_SPEED": "Vitesse de téléchargement",
-        "UPLOAD_MODE": "Méthode de Téléversement",
-        "FLASH_MODE": "Mode Flash",
-        "FLASH_SIZE": "Taille Flash",
-        "PARTITION_SCHEME": "Schéma de partition",
-        "CDC_ON_BOOT": "USB CDC au démarrage",
-        "PSRAM": "PSRAM"
-    },
-    "WIO_TERMINAL": {
-        "ROLE": "Rôle",
-        "CACHE": "Cache",
-        "CPU_SPEED": "Fréquence du processeur",
-        "OPTIMIZATION": "Optimisation",
-        "MAX_QSPI": "Vitesse QSPI maximale",
-        "USB_STACK": "Pile USB",
-        "DEBUG": "Débogage",
-        "TX_RX_LED": "LED TX/RX"
-    },
-    "STM32": {
-        "BOARD": "Sélection du modèle de la carte",
-        "USB": "Paramètres USB",
-        "UPLOAD_METHOD": "Méthode de Téléversement"
-    },
-    "NRF5": {
-        "SOFTDEVICE": "SoftDevice",
-        "FLASH_SOFTDEVICE_TITLE": "Flasher SoftDevice",
-        "FLASH_SOFTDEVICE_CONFIRM": "Voulez-vous flasher {{softdevice}} SoftDevice sur l'appareil ?",
-        "SELECT_PORT_FIRST": "Veuillez d'abord sélectionner un port",
-        "FLASHING_SOFTDEVICE": "Flashage du SoftDevice en cours...",
-        "FLASH_SUCCESS": "SoftDevice flashé avec succès",
-        "FLASH_FAILED": "Échec du flashage du SoftDevice"
+    "SERIAL": {
+        "SELECT_PORT_FIRST": "Veuillez d'abord sélectionner un port"
     },
     "BLE_OTA": {
         "SEARCHING_DEVICE": "Recherche d'appareils BLE",

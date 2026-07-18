@@ -46,38 +46,8 @@
         "INDUSTRIAL_BUS_DEBUGGER": "Industrial Bus Debugger",
         "BLE_DEBUGGER": "BLE 디버거"
     },
-    "ESP32": {
-        "UPLOAD_SPEED": "업로드 속도",
-        "UPLOAD_MODE": "업로드 방법",
-        "FLASH_MODE": "플래시 모드",
-        "FLASH_SIZE": "플래시 크기",
-        "PARTITION_SCHEME": "파티션 스킴",
-        "CDC_ON_BOOT": "USB 시리얼 통신",
-        "PSRAM": "PSRAM"
-    },
-    "WIO_TERMINAL": {
-        "ROLE": "역할",
-        "CACHE": "캐시",
-        "CPU_SPEED": "CPU 속도",
-        "OPTIMIZATION": "최적화",
-        "MAX_QSPI": "최대 QSPI 속도",
-        "USB_STACK": "USB 스택",
-        "DEBUG": "디버그",
-        "TX_RX_LED": "TX/RX LED"
-    },
-    "STM32": {
-        "BOARD": "개발 보드 모델 선택",
-        "USB": "USB 설정",
-        "UPLOAD_METHOD": "업로드 방법"
-    },
-    "NRF5": {
-        "SOFTDEVICE": "SoftDevice",
-        "FLASH_SOFTDEVICE_TITLE": "SoftDevice 플래시",
-        "FLASH_SOFTDEVICE_CONFIRM": "{{softdevice}} SoftDevice를 장치에 플래시하시겠습니까?",
-        "SELECT_PORT_FIRST": "먼저 포트를 선택해주세요",
-        "FLASHING_SOFTDEVICE": "SoftDevice 플래시 중...",
-        "FLASH_SUCCESS": "SoftDevice 플래시 성공",
-        "FLASH_FAILED": "SoftDevice 플래시 실패"
+    "SERIAL": {
+        "SELECT_PORT_FIRST": "먼저 포트를 선택해주세요"
     },
     "BLE_OTA": {
         "SEARCHING_DEVICE": "BLE 장치 검색 중",

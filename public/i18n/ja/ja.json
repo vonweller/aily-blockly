@@ -46,38 +46,8 @@
         "INDUSTRIAL_BUS_DEBUGGER": "Industrial Bus Debugger",
         "BLE_DEBUGGER": "BLEデバッガー"
     },
-    "ESP32": {
-        "UPLOAD_SPEED": "書き込み速度",
-        "UPLOAD_MODE": "書き込み方法",
-        "FLASH_MODE": "フラッシュモード",
-        "FLASH_SIZE": "フラッシュサイズ",
-        "PARTITION_SCHEME": "パーティション方式",
-        "CDC_ON_BOOT": "USBシリアル通信",
-        "PSRAM": "PSRAM"
-    },
-    "WIO_TERMINAL": {
-        "ROLE": "ロール",
-        "CACHE": "キャッシュ",
-        "CPU_SPEED": "CPU 速度",
-        "OPTIMIZATION": "最適化",
-        "MAX_QSPI": "最大 QSPI 速度",
-        "USB_STACK": "USB スタック",
-        "DEBUG": "デバッグ",
-        "TX_RX_LED": "TX/RX LED"
-    },
-    "STM32": {
-        "BOARD": "開発ボードモデル選択",
-        "USB": "USB設定",
-        "UPLOAD_METHOD": "書き込み方法"
-    },
-    "NRF5": {
-        "SOFTDEVICE": "SoftDevice",
-        "FLASH_SOFTDEVICE_TITLE": "SoftDeviceを書き込む",
-        "FLASH_SOFTDEVICE_CONFIRM": "{{softdevice}} SoftDeviceをデバイスに書き込みますか？",
-        "SELECT_PORT_FIRST": "先にポートを選択してください",
-        "FLASHING_SOFTDEVICE": "SoftDeviceを書き込み中...",
-        "FLASH_SUCCESS": "SoftDeviceの書き込みに成功しました",
-        "FLASH_FAILED": "SoftDeviceの書き込みに失敗しました"
+    "SERIAL": {
+        "SELECT_PORT_FIRST": "先にポートを選択してください"
     },
     "BLE_OTA": {
         "SEARCHING_DEVICE": "BLEデバイスを検索中",

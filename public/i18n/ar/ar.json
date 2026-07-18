@@ -46,38 +46,8 @@
         "INDUSTRIAL_BUS_DEBUGGER": "Industrial Bus Debugger",
         "BLE_DEBUGGER": "BLE Debugger"
     },
-    "ESP32": {
-        "UPLOAD_SPEED": "سرعة الرفع",
-        "UPLOAD_MODE": "طريقة الرفع",
-        "FLASH_MODE": "وضع الفلاش",
-        "FLASH_SIZE": "حجم الفلاش",
-        "PARTITION_SCHEME": "مخطط التقسيم",
-        "CDC_ON_BOOT": "USB CDC عند التشغيل",
-        "PSRAM": "PSRAM"
-    },
-    "WIO_TERMINAL": {
-        "ROLE": "الدور",
-        "CACHE": "ذاكرة التخزين المؤقت",
-        "CPU_SPEED": "سرعة المعالج",
-        "OPTIMIZATION": "التحسين",
-        "MAX_QSPI": "أقصى سرعة QSPI",
-        "USB_STACK": "مكدس USB",
-        "DEBUG": "تصحيح الأخطاء",
-        "TX_RX_LED": "مؤشر TX/RX"
-    },
-    "STM32": {
-        "BOARD": "اختيار نموذج اللوحة",
-        "USB": "إعدادات USB",
-        "UPLOAD_METHOD": "طريقة الرفع"
-    },
-    "NRF5": {
-        "SOFTDEVICE": "SoftDevice",
-        "FLASH_SOFTDEVICE_TITLE": "برمجة SoftDevice",
-        "FLASH_SOFTDEVICE_CONFIRM": "هل تريد برمجة {{softdevice}} SoftDevice على الجهاز؟",
-        "SELECT_PORT_FIRST": "يرجى اختيار منفذ أولاً",
-        "FLASHING_SOFTDEVICE": "جاري برمجة SoftDevice...",
-        "FLASH_SUCCESS": "تم برمجة SoftDevice بنجاح",
-        "FLASH_FAILED": "فشل في برمجة SoftDevice"
+    "SERIAL": {
+        "SELECT_PORT_FIRST": "يرجى اختيار منفذ أولاً"
     },
     "BLE_OTA": {
         "SEARCHING_DEVICE": "جارٍ البحث عن أجهزة BLE",

@@ -46,38 +46,8 @@
         "INDUSTRIAL_BUS_DEBUGGER": "Industrial Bus Debugger",
         "BLE_DEBUGGER": "BLE Debugger"
     },
-    "ESP32": {
-        "UPLOAD_SPEED": "Скорость загрузки",
-        "UPLOAD_MODE": "Метод загрузки",
-        "FLASH_MODE": "Режим Flash",
-        "FLASH_SIZE": "Размер Flash",
-        "PARTITION_SCHEME": "Схема разделов",
-        "CDC_ON_BOOT": "USB CDC при загрузке",
-        "PSRAM": "PSRAM"
-    },
-    "WIO_TERMINAL": {
-        "ROLE": "Роль",
-        "CACHE": "Кэш",
-        "CPU_SPEED": "Частота CPU",
-        "OPTIMIZATION": "Оптимизация",
-        "MAX_QSPI": "Максимальная частота QSPI",
-        "USB_STACK": "Стек USB",
-        "DEBUG": "Отладка",
-        "TX_RX_LED": "Индикатор TX/RX"
-    },
-    "STM32": {
-        "BOARD": "Выбор модели платы",
-        "USB": "Настройки USB",
-        "UPLOAD_METHOD": "Метод загрузки"
-    },
-    "NRF5": {
-        "SOFTDEVICE": "SoftDevice",
-        "FLASH_SOFTDEVICE_TITLE": "Прошить SoftDevice",
-        "FLASH_SOFTDEVICE_CONFIRM": "Вы хотите прошить {{softdevice}} SoftDevice на устройство?",
-        "SELECT_PORT_FIRST": "Сначала выберите порт",
-        "FLASHING_SOFTDEVICE": "Прошивка SoftDevice...",
-        "FLASH_SUCCESS": "SoftDevice успешно прошит",
-        "FLASH_FAILED": "Не удалось прошить SoftDevice"
+    "SERIAL": {
+        "SELECT_PORT_FIRST": "Сначала выберите порт"
     },
     "BLE_OTA": {
         "SEARCHING_DEVICE": "Поиск устройств BLE",

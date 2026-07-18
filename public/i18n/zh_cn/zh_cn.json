@@ -78,37 +78,8 @@
         "PROJECT_HUB": "项目广场",
         "NEW_INSTANCE": "新建窗口"
     },
-    "ESP32": {
-        "UPLOAD_SPEED": "烧录速度",
-        "UPLOAD_MODE": "烧录方式",
-        "FLASH_MODE": "闪存模式",
-        "FLASH_SIZE": "闪存大小",
-        "PARTITION_SCHEME": "分区方案",
-        "CDC_ON_BOOT": "USB模拟串口",
-        "PSRAM": "PSRAM"
-    },
-    "WIO_TERMINAL": {
-        "ROLE": "角色",
-        "CACHE": "缓存",
-        "CPU_SPEED": "CPU 频率",
-        "OPTIMIZATION": "编译优化",
-        "MAX_QSPI": "QSPI 最高频率",
-        "USB_STACK": "USB 协议栈",
-        "DEBUG": "调试",
-        "TX_RX_LED": "TX/RX 指示灯"
-    },
-    "STM32": {
-        "BOARD": "开发板型号选择",
-        "USB": "USB配置"
-    },
-    "NRF5": {
-        "SOFTDEVICE": "SoftDevice",
-        "FLASH_SOFTDEVICE_TITLE": "烧录 SoftDevice",
-        "FLASH_SOFTDEVICE_CONFIRM": "是否要烧录 {{softdevice}} SoftDevice 到设备？",
-        "SELECT_PORT_FIRST": "请先选择串口",
-        "FLASHING_SOFTDEVICE": "正在烧录 SoftDevice...",
-        "FLASH_SUCCESS": "SoftDevice 烧录成功",
-        "FLASH_FAILED": "SoftDevice 烧录失败"
+    "SERIAL": {
+        "SELECT_PORT_FIRST": "请先选择串口"
     },
     "BLE_OTA": {
         "SEARCHING_DEVICE": "正在搜索BLE设备",

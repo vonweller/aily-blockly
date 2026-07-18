@@ -46,38 +46,8 @@
         "INDUSTRIAL_BUS_DEBUGGER": "Industrial Bus Debugger",
         "BLE_DEBUGGER": "Depurador BLE"
     },
-    "ESP32": {
-        "UPLOAD_SPEED": "Velocidade de Upload",
-        "UPLOAD_MODE": "Método de Upload",
-        "FLASH_MODE": "Modo Flash",
-        "FLASH_SIZE": "Tamanho Flash",
-        "PARTITION_SCHEME": "Esquema de Partição",
-        "CDC_ON_BOOT": "USB CDC na inicialização",
-        "PSRAM": "PSRAM"
-    },
-    "WIO_TERMINAL": {
-        "ROLE": "Função",
-        "CACHE": "Cache",
-        "CPU_SPEED": "Velocidade da CPU",
-        "OPTIMIZATION": "Otimização",
-        "MAX_QSPI": "Velocidade QSPI máxima",
-        "USB_STACK": "Pilha USB",
-        "DEBUG": "Depuração",
-        "TX_RX_LED": "LED TX/RX"
-    },
-    "STM32": {
-        "BOARD": "Seleção do modelo da placa",
-        "USB": "Configurações USB",
-        "UPLOAD_METHOD": "Método de Upload"
-    },
-    "NRF5": {
-        "SOFTDEVICE": "SoftDevice",
-        "FLASH_SOFTDEVICE_TITLE": "Gravar SoftDevice",
-        "FLASH_SOFTDEVICE_CONFIRM": "Deseja gravar {{softdevice}} SoftDevice no dispositivo?",
-        "SELECT_PORT_FIRST": "Por favor, selecione uma porta primeiro",
-        "FLASHING_SOFTDEVICE": "Gravando SoftDevice...",
-        "FLASH_SUCCESS": "SoftDevice gravado com sucesso",
-        "FLASH_FAILED": "Falha ao gravar SoftDevice"
+    "SERIAL": {
+        "SELECT_PORT_FIRST": "Por favor, selecione uma porta primeiro"
     },
     "BLE_OTA": {
         "SEARCHING_DEVICE": "Procurando dispositivos BLE",

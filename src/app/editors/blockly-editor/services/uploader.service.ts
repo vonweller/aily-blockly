@@ -480,7 +480,7 @@ export class _UploaderService {
         }
 
         // 获取当前选中的 STM32.BOARD (pnum) 选项，用于 probe-rs download 参数
-        const pnum = this.projectService.currentStm32Config?.board || null;
+        const pnum = this.projectService.currentBoardPinConfig?.board || null;
 
         const uploadConfig = {
           currentProjectPath,
