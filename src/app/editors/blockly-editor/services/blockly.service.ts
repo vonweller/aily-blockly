@@ -104,6 +104,11 @@ export interface WorkspaceBlockSearchState {
   currentIndex: number;
 }
 
+export interface BlocklyDebugExecutionMarkerState {
+  projectPath: string;
+  blockId: string;
+}
+
 @Injectable({
   providedIn: 'root'
 })
@@ -182,6 +187,9 @@ export class BlocklyService {
   selectedBlockIdsSubject = new BehaviorSubject<string[]>([]);
   /** block → 代码行号映射（每次代码生成后更新） */
   blockCodeMapSubject = new BehaviorSubject<Map<string, BlockCodeMapping>>(new Map());
+  /** GDB 当前执行块；与 Blockly 用户 selection 完全独立。 */
+  debugExecutionMarkerSubject =
+    new BehaviorSubject<BlocklyDebugExecutionMarkerState | null>(null);
   /** block → ABS 行号映射（由 abs-auto-sync 生成 ABS 时同步更新，确保与用户看到的 .abs 文件一致） */
   absBlockLineMap = new BehaviorSubject<Map<string, { startLine: number; endLine: number }>>(new Map());
   codeViewerRefreshRequested$ = this.codeViewerRefreshRequestSubject.asObservable();
@@ -193,6 +201,31 @@ export class BlocklyService {
   toolboxSelectedKeySubject = new BehaviorSubject<string | null>(null);
   toolboxSearchQuerySubject = new BehaviorSubject<string>('');
   workspaceBlockSearchSubject = new BehaviorSubject<WorkspaceBlockSearchState>(this.createWorkspaceBlockSearchState());
+
+  setDebugExecutionMarker(projectPath: string, blockId: string): void {
+    const normalizedProjectPath = String(projectPath || '').trim();
+    const normalizedBlockId = String(blockId || '').trim();
+    const next = normalizedProjectPath && normalizedBlockId
+      ? {
+          projectPath: normalizedProjectPath,
+          blockId: normalizedBlockId.slice(0, 256),
+        }
+      : null;
+    const current = this.debugExecutionMarkerSubject.value;
+    if (
+      current?.projectPath === next?.projectPath
+      && current?.blockId === next?.blockId
+    ) {
+      return;
+    }
+    this.debugExecutionMarkerSubject.next(next);
+  }
+
+  clearDebugExecutionMarker(projectPath?: string): void {
+    const current = this.debugExecutionMarkerSubject.value;
+    if (!current || (projectPath && current.projectPath !== projectPath)) return;
+    this.debugExecutionMarkerSubject.next(null);
+  }
 
   boardConfig;
 
@@ -1777,6 +1810,7 @@ export class BlocklyService {
     this.codeSubject.next('');
     this.selectedBlockSubject.next(null);
     this.selectedBlockIdsSubject.next([]);
+    this.debugExecutionMarkerSubject.next(null);
     this.blockCodeMapSubject.next(new Map());
     this.absBlockLineMap.next(new Map());
     this.closeWorkspaceBlockSearch();
@@ -2548,6 +2582,29 @@ export class BlocklyService {
   getCodeLinesForBlock(blockId: string): CodeLineRange[] {
     const mapping = this.getCodeForBlock(blockId);
     return mapping?.lineRanges || [];
+  }
+
+  /**
+   * Resolve the most specific Blockly block for a generated source line
+   * without changing the user's current Blockly selection.
+   */
+  getBlockIdByGeneratedLine(line: number): string | null {
+    if (!Number.isSafeInteger(line) || line < 1) return null;
+    const candidates = [...this.blockCodeMapSubject.value.values()]
+      .filter((mapping) => mapping.lineRanges.some(
+        (range) => line >= range.startLine && line <= range.endLine,
+      ))
+      .sort((left, right) => {
+        const leftSpan = Math.min(...left.lineRanges.map(
+          (range) => range.endLine - range.startLine,
+        ));
+        const rightSpan = Math.min(...right.lineRanges.map(
+          (range) => range.endLine - range.startLine,
+        ));
+        return leftSpan - rightSpan;
+      });
+    const blockId = candidates[0]?.blockId;
+    return blockId || null;
   }
 
   private createWorkspaceBlockSearchState(): WorkspaceBlockSearchState {

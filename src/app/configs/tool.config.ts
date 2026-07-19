@@ -365,7 +365,7 @@ export const APP_LIST: AppItem[] = [
     icon: 'fa-light fa-atom',
     router: ['/main/blockly-editor'],
     dev: true,
-    enabled: false
+    enabled: true
   }
 ];
 
@@ -375,6 +375,7 @@ export const AVAILABLE_APP_IDS: string[] = [
   'serial-monitor',
   'ffs-manager',
   'aily-chat',
+  'simulator',
   'model-store',
   'cloud-space',
   'user-center',
@@ -385,6 +386,7 @@ export const DEFAULT_TOOLBAR_APP_IDS: string[] = [
   'code-viewer',
   'serial-monitor',
   'aily-chat',
+  'simulator',
   'cloud-space',
   'user-center'
 ];

@@ -12,6 +12,7 @@ const { isWin32, isDarwin, isLinux } = require("./platform");
 const projectLock = require("./project-lock");
 const builder = require("./builder");
 const linter = require("./linter");
+const simulatorGateway = require("./simulator-gateway");
 const {
   markInstalledForAppVersion,
   shouldInstallForAppVersion,
@@ -1893,7 +1894,21 @@ function loadEnv() {
   // 同一应用版本复用现有工具；两个 npm 全局安装串行执行。
   runInstallEnv(childPath);
   const appVersion = app.getVersion();
-  const installLatest = shouldInstallForAppVersion(userConf, appVersion);
+  const preserveDevelopmentTools = (
+    process.env.AILY_E2E === '1'
+    || process.env.DEV === 'true'
+    || process.env.AILY_USE_LOCAL_BUILDER === '1'
+  );
+  const installLatest = (
+    !preserveDevelopmentTools
+    && shouldInstallForAppVersion(userConf, appVersion)
+  );
+  if (preserveDevelopmentTools) {
+    console.log(
+      'development/E2E mode preserves the configured aily-builder '
+      + 'and aily-linter installations',
+    );
+  }
   if (installLatest) {
     try {
       markInstalledForAppVersion(userConfigPath, appVersion);
@@ -2203,6 +2218,11 @@ function createWindow() {
   registerBleHandlers();
   builder.registerHandlers(() => mainWindow);
   linter.registerHandlers(() => mainWindow);
+  simulatorGateway.registerHandlers({
+    ipcMain,
+    app,
+    mainWindow: () => mainWindow,
+  });
 
   // 检查是否有待处理的OAuth回调
   // 注意：这里不再使用 setTimeout 自动发送，而是等待 renderer-ready 事件
@@ -2615,7 +2635,8 @@ function cleanupRegisteredChildProcesses() {
     killAllCmdProcesses(),
     killAllNpmProcesses(),
     killAllTerminals(),
-    cancelAllAilyServicesStreams()
+    cancelAllAilyServicesStreams(),
+    simulatorGateway.stop(),
   ]).then((results) => {
     // console.info('[PROC_TRACE][APP_CLEANUP_DONE]', { results });
   });

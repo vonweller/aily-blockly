@@ -54,6 +54,60 @@ declare global {
       };
       codeViewer: any;
       builder: any;
+      simulatorGateway?: {
+        iframeUrlOverride?: string;
+        start: (projectPath: string) => Promise<{
+          baseUrl: string;
+          accessToken: string;
+          artifactDirectory: string;
+          artifact: unknown;
+          debugSource: {
+            file: string;
+            revision: string;
+            sizeBytes: number;
+            content: string;
+          } | null;
+          debugSourceMap?: unknown;
+          runtimeSource: string;
+          runtimePackId?: string;
+          runtimeMode?: string;
+        }>;
+        status: () => Promise<{
+          state: 'ready' | 'stopped';
+          baseUrl?: string;
+          projectPath?: string;
+          runtimeSource?: string;
+          runtimePackId?: string;
+          runtimeMode?: string;
+          lastFailure?: {
+            phase: string;
+            message: string;
+            code?: number | null;
+            signal?: string | null;
+            stdoutTail?: string;
+            stderrTail?: string;
+            occurredAt: string;
+          };
+        }>;
+        stop: () => Promise<{ state: 'stopped' }>;
+        onStateChanged: (
+          callback: (state: {
+            state: 'starting' | 'ready' | 'stopped' | 'failed';
+            unexpected?: boolean;
+            code?: number | null;
+            signal?: string | null;
+            failure?: {
+              phase: string;
+              message: string;
+              code?: number | null;
+              signal?: string | null;
+              stdoutTail?: string;
+              stderrTail?: string;
+              occurredAt: string;
+            };
+          }) => void,
+        ) => () => void;
+      };
       linter: any;
       uploader: any;
       fs: any;

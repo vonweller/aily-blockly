@@ -1,0 +1,14 @@
+{
+  "version": "1.0",
+  "description": "XIAO ESP32-S3 simulator/debug E2E board-only scene",
+  "components": [
+    {
+      "refId": "xiao_esp32s3",
+      "componentId": "component_1771340537742",
+      "componentName": "XIAO ESP32S3",
+      "configFile": "xiao_esp32s3_config.json",
+      "componentType": "hardware"
+    }
+  ],
+  "connections": []
+}
