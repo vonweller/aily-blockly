@@ -97,7 +97,7 @@ export async function closeAilyElectronApp(app: ElectronApplication, timeoutMs =
 
   await app
     .evaluate(({ app }) => {
-      app.exit(0);
+      app.quit();
     })
     .catch(() => {});
 

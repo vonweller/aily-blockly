@@ -26,7 +26,7 @@
                     "type": "math_number",
                     "id": "debug-pin-mode-number",
                     "fields": {
-                      "NUM": 2
+                      "NUM": 3
                     }
                   }
                 },
@@ -39,6 +39,32 @@
                     }
                   }
                 }
+              },
+              "next": {
+                "block": {
+                  "type": "io_pinmode",
+                  "id": "debug-button-pin-mode",
+                  "inputs": {
+                    "PIN": {
+                      "block": {
+                        "type": "math_number",
+                        "id": "debug-button-pin-number",
+                        "fields": {
+                          "NUM": 4
+                        }
+                      }
+                    },
+                    "MODE": {
+                      "block": {
+                        "type": "io_mode",
+                        "id": "debug-button-input-mode",
+                        "fields": {
+                          "MODE": "INPUT_PULLUP"
+                        }
+                      }
+                    }
+                  }
+                }
               }
             }
           }
@@ -48,7 +74,7 @@
         "type": "arduino_loop",
         "id": "debug-loop",
         "x": 30,
-        "y": 300,
+        "y": 340,
         "deletable": false,
         "inputs": {
           "ARDUINO_LOOP": {
@@ -90,89 +116,165 @@
                         "type": "math_number",
                         "id": "debug-counter-value",
                         "fields": {
-                          "NUM": 2
+                          "NUM": 3
                         }
                       }
                     }
                   },
                   "next": {
                     "block": {
-                      "type": "io_digitalwrite",
-                      "id": "debug-loop-break",
+                      "type": "controls_ifelse",
+                      "id": "debug-button-controls-led",
                       "inputs": {
-                        "PIN": {
+                        "IF0": {
                           "block": {
-                            "type": "variables_get",
-                            "id": "debug-counter-read",
-                            "fields": {
-                              "VAR": {
-                                "id": "debug-counter-variable",
-                                "name": "debugCounter",
-                                "type": "uint32_t"
+                            "type": "logic_negate",
+                            "id": "debug-button-active-low",
+                            "inputs": {
+                              "BOOL": {
+                                "block": {
+                                  "type": "io_digitalread",
+                                  "id": "debug-button-read",
+                                  "inputs": {
+                                    "PIN": {
+                                      "block": {
+                                        "type": "math_number",
+                                        "id": "debug-button-read-pin",
+                                        "fields": {
+                                          "NUM": 4
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
                               }
                             }
                           }
                         },
-                        "STATE": {
+                        "DO0": {
                           "block": {
-                            "type": "io_state",
-                            "id": "debug-high-state",
-                            "fields": {
-                              "STATE": "HIGH"
-                            }
-                          }
-                        }
-                      },
-                      "next": {
-                        "block": {
-                          "type": "time_delay",
-                          "id": "debug-delay-block",
-                          "inputs": {
-                            "DELAY_TIME": {
+                            "type": "io_digitalwrite",
+                            "id": "debug-button-led-high",
+                            "inputs": {
+                              "PIN": {
+                                "block": {
+                                  "type": "math_number",
+                                  "id": "debug-button-led-pin",
+                                  "fields": {
+                                    "NUM": 3
+                                  }
+                                }
+                              },
+                              "STATE": {
+                                "block": {
+                                  "type": "io_state",
+                                  "id": "debug-button-high-state",
+                                  "fields": {
+                                    "STATE": "HIGH"
+                                  }
+                                }
+                              }
+                            },
+                            "next": {
                               "block": {
-                                "type": "math_number",
-                                "id": "debug-delay-ms",
-                                "fields": {
-                                  "NUM": 1000
+                                "type": "time_delay",
+                                "id": "debug-button-hold-delay",
+                                "inputs": {
+                                  "DELAY_TIME": {
+                                    "block": {
+                                      "type": "math_number",
+                                      "id": "debug-button-hold-delay-ms",
+                                      "fields": {
+                                        "NUM": 20
+                                      }
+                                    }
+                                  }
                                 }
                               }
                             }
-                          },
-                          "next": {
-                            "block": {
-                              "type": "io_digitalwrite",
-                              "id": "debug-loop-low",
-                              "inputs": {
-                                "PIN": {
-                                  "block": {
-                                    "type": "math_number",
-                                    "id": "debug-low-pin",
-                                    "fields": {
-                                      "NUM": 2
-                                    }
-                                  }
-                                },
-                                "STATE": {
-                                  "block": {
-                                    "type": "io_state",
-                                    "id": "debug-low-state",
-                                    "fields": {
-                                      "STATE": "LOW"
+                          }
+                        },
+                        "ELSE": {
+                          "block": {
+                            "type": "io_digitalwrite",
+                            "id": "debug-loop-break",
+                            "inputs": {
+                              "PIN": {
+                                "block": {
+                                  "type": "variables_get",
+                                  "id": "debug-counter-read",
+                                  "fields": {
+                                    "VAR": {
+                                      "id": "debug-counter-variable",
+                                      "name": "debugCounter",
+                                      "type": "uint32_t"
                                     }
                                   }
                                 }
                               },
-                              "next": {
+                              "STATE": {
                                 "block": {
-                                  "type": "time_delay",
-                                  "id": "debug-low-delay",
-                                  "inputs": {
-                                    "DELAY_TIME": {
+                                  "type": "io_state",
+                                  "id": "debug-high-state",
+                                  "fields": {
+                                    "STATE": "HIGH"
+                                  }
+                                }
+                              }
+                            },
+                            "next": {
+                              "block": {
+                                "type": "time_delay",
+                                "id": "debug-delay-block",
+                                "inputs": {
+                                  "DELAY_TIME": {
+                                    "block": {
+                                      "type": "math_number",
+                                      "id": "debug-delay-ms",
+                                      "fields": {
+                                        "NUM": 1000
+                                      }
+                                    }
+                                  }
+                                },
+                                "next": {
+                                  "block": {
+                                    "type": "io_digitalwrite",
+                                    "id": "debug-loop-low",
+                                    "inputs": {
+                                      "PIN": {
+                                        "block": {
+                                          "type": "math_number",
+                                          "id": "debug-low-pin",
+                                          "fields": {
+                                            "NUM": 3
+                                          }
+                                        }
+                                      },
+                                      "STATE": {
+                                        "block": {
+                                          "type": "io_state",
+                                          "id": "debug-low-state",
+                                          "fields": {
+                                            "STATE": "LOW"
+                                          }
+                                        }
+                                      }
+                                    },
+                                    "next": {
                                       "block": {
-                                        "type": "math_number",
-                                        "id": "debug-low-delay-ms",
-                                        "fields": {
-                                          "NUM": 1000
+                                        "type": "time_delay",
+                                        "id": "debug-low-delay",
+                                        "inputs": {
+                                          "DELAY_TIME": {
+                                            "block": {
+                                              "type": "math_number",
+                                              "id": "debug-low-delay-ms",
+                                              "fields": {
+                                                "NUM": 1000
+                                              }
+                                            }
+                                          }
                                         }
                                       }
                                     }

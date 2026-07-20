@@ -2978,6 +2978,7 @@ export class ChatEngineService implements IChatContext {
       },
       buildExecutionSaveTarget: (sessionId) => thisEngine.buildExecutionSaveTarget(sessionId),
       hasSessionRuntimeHandle: (sessionId) => !!thisEngine.lexStream.agent.getHandle?.(sessionId),
+      resolveSummarizerModelSnapshot: () => thisEngine.resolveSummarizerModelSnapshot(),
       prewarmRuntimeExecutor: (request) => thisEngine.runtimeHostForView().prewarmRuntime(request),
       restoreRuntimeSessionExecutor: (request) => thisEngine.runtimeHostForView().restoreRuntimeSession(request),
       readExecutionRuntimeSessionState: (sessionId) => thisEngine.runtimeHostForView().readSessionExecutionState(sessionId),
@@ -4219,6 +4220,14 @@ export class ChatEngineService implements IChatContext {
     }
 
     return null;
+  }
+
+  private resolveSummarizerModelSnapshot(): ChatRuntimeHostModelSelectionSnapshot | null {
+    const summarizerModel = this.ailyChatConfigService.resolvePresetModel('auto-fast')
+      ?? this.chatService.currentModel;
+    return summarizerModel
+      ? { ...(summarizerModel as unknown as Record<string, unknown>) } as ChatRuntimeHostModelSelectionSnapshot
+      : null;
   }
 
   private resolveVisibleResolvedModeSnapshot(sessionId?: string | null): ChatResolvedMode {
@@ -8840,6 +8849,7 @@ Do not create non-existent boards and libraries.
         });
       }
       const currentModelSnapshot = this.resolveVisibleCurrentModelSnapshot(targetSessionId);
+      const summarizerModelSnapshot = this.resolveSummarizerModelSnapshot();
       const currentServiceSessionId = typeof this.chatService?.currentSessionId === 'string'
         ? this.chatService.currentSessionId.trim()
         : '';
@@ -8867,6 +8877,7 @@ Do not create non-existent boards and libraries.
           agentRuntimeMode: runtimeResolution.mode,
           agentRuntimeModeSource: runtimeResolution.source,
           currentModel: currentModelSnapshot,
+          summarizerModel: summarizerModelSnapshot,
           metadata: this.withHostRuntimeSessionInventoryMetadata(
             targetSessionId,
             requestMetadata ?? null,
@@ -9195,6 +9206,7 @@ Do not create non-existent boards and libraries.
     try {
       const runtimeHost = this.runtimeHostForView();
       const currentModelSnapshot = this.resolveVisibleCurrentModelSnapshot(runtimeSessionId);
+      const summarizerModelSnapshot = this.resolveSummarizerModelSnapshot();
       const currentServiceSessionId = typeof this.chatService?.currentSessionId === 'string'
         ? this.chatService.currentSessionId.trim()
         : '';
@@ -9219,6 +9231,7 @@ Do not create non-existent boards and libraries.
         agentRuntimeMode: runtimeResolution.mode,
         agentRuntimeModeSource: runtimeResolution.source,
         currentModel: currentModelSnapshot,
+        summarizerModel: summarizerModelSnapshot,
         metadata: this.withHostRuntimeSessionInventoryMetadata(
           runtimeSessionId,
           requestMetadata,

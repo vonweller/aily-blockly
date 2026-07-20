@@ -164,9 +164,48 @@ export interface DebugThread {
   frame: DebugStackFrame | null;
 }
 
+export type DebugTaskState =
+  | 'ready'
+  | 'pending'
+  | 'suspended'
+  | 'delayed'
+  | 'waiting-termination'
+  | 'unknown';
+
+export type DebugTaskSnapshotReason =
+  | 'ok'
+  | 'not-configured'
+  | 'symbols-unavailable'
+  | 'layout-unsupported'
+  | 'bridge-error';
+
+export interface DebugTask {
+  /**
+   * Ephemeral guest TCB identity. It is valid only for the current debugger
+   * generation and must not be persisted in project configuration.
+   */
+  id: string;
+  name: string;
+  state: DebugTaskState;
+  priority: number | null;
+  coreAffinity: number | null;
+  runningCore: number | null;
+}
+
+export interface DebugTaskSnapshot {
+  availability: 'available' | 'unavailable';
+  reason: DebugTaskSnapshotReason;
+  tasks: DebugTask[];
+}
+
 export interface DebugInspectionSnapshot {
   selectedThreadId?: number | null;
   threads?: DebugThread[];
+  /**
+   * Read-only RTOS metadata. Tasks are not GDB hardware threads and cannot be
+   * selected with the hardware-thread debugging command.
+   */
+  taskSnapshot?: DebugTaskSnapshot;
   selectedFrame: number;
   stack: DebugStackFrame[];
   variables: DebugVariable[];
@@ -706,10 +745,33 @@ export class SimulatorGatewayClient {
       signal: AbortSignal;
       onEvent(event: RuntimeEnvelope): void | Promise<void>;
       afterSequence?: number;
+      expectedSceneRevision?: string;
+      onDiscardedEvent?(event: {
+        reason: 'duplicate' | 'late';
+        sequence: number;
+        lastAcceptedSequence: number;
+      }): void;
+      onSequenceGap?(gap: {
+        expectedSequence: number;
+        receivedSequence: number;
+        resync: boolean;
+      }): void;
       reconnect?: boolean;
     },
   ): Promise<number> {
     let afterSequence = options.afterSequence;
+    let sceneRevision = options.expectedSceneRevision;
+    let lastSimulationTimeNs: number | undefined;
+    if (
+      sceneRevision !== undefined
+      && !isLowercaseSha256(sceneRevision)
+    ) {
+      throw new SimulatorGatewayError(
+        400,
+        'invalid_scene_revision',
+        'expectedSceneRevision 必须是小写 SHA-256 哈希。',
+      );
+    }
     let reconnectDelay = 250;
     while (!options.signal.aborted) {
       try {
@@ -733,19 +795,65 @@ export class SimulatorGatewayClient {
           );
         }
         reconnectDelay = 250;
-        for await (const data of parseSseData(
+        for await (const event of parseSseEvents(
           response.body,
           options.signal,
         )) {
-          const envelope = requireRuntimeEnvelope(data, sessionId);
+          const envelope = requireRuntimeEnvelope(event.data, sessionId);
+          requireMatchingSseSequence(event.id, envelope.sequence);
+          if (sceneRevision === undefined) {
+            sceneRevision = envelope.sceneRevision;
+          } else if (envelope.sceneRevision !== sceneRevision) {
+            throw new SimulatorGatewayError(
+              409,
+              'scene_revision_mismatch',
+              'Gateway 事件的连线图 revision 在同一 Session 内发生了变化。',
+            );
+          }
           if (
             afterSequence !== undefined
             && envelope.sequence <= afterSequence
           ) {
+            options.onDiscardedEvent?.({
+              reason: envelope.sequence === afterSequence
+                ? 'duplicate'
+                : 'late',
+              sequence: envelope.sequence,
+              lastAcceptedSequence: afterSequence,
+            });
             continue;
+          }
+          if (
+            afterSequence !== undefined
+            && envelope.sequence > afterSequence + 1
+          ) {
+            const resync = envelope.type === 'stream.resync';
+            options.onSequenceGap?.({
+              expectedSequence: afterSequence + 1,
+              receivedSequence: envelope.sequence,
+              resync,
+            });
+            if (!resync) {
+              throw new SimulatorGatewayError(
+                502,
+                'event_sequence_gap',
+                `Gateway 事件序号从 ${afterSequence} 跳到了 ${envelope.sequence}。`,
+              );
+            }
+          }
+          if (
+            lastSimulationTimeNs !== undefined
+            && envelope.simulationTimeNs < lastSimulationTimeNs
+          ) {
+            throw new SimulatorGatewayError(
+              502,
+              'simulation_time_regression',
+              'Gateway 仿真时间发生了倒退。',
+            );
           }
           await options.onEvent(envelope);
           afterSequence = envelope.sequence;
+          lastSimulationTimeNs = envelope.simulationTimeNs;
         }
         if (options.reconnect === false) break;
       } catch (error) {
@@ -808,10 +916,10 @@ export class SimulatorGatewayClient {
   }
 }
 
-async function* parseSseData(
+async function* parseSseEvents(
   stream: ReadableStream<Uint8Array>,
   signal: AbortSignal,
-): AsyncGenerator<string> {
+): AsyncGenerator<{ id: string; data: string }> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
@@ -824,12 +932,16 @@ async function* parseSseData(
       while (boundary >= 0) {
         const block = buffer.slice(0, boundary);
         buffer = buffer.slice(boundary + 2);
-        const data = block
-          .split('\n')
+        const lines = block.split('\n');
+        const ids = lines
+          .filter((line) => line.startsWith('id:'))
+          .map((line) => line.slice(3).replace(/^ /, ''));
+        const id = ids[ids.length - 1] ?? '';
+        const data = lines
           .filter((line) => line.startsWith('data:'))
           .map((line) => line.slice(5).replace(/^ /, ''))
           .join('\n');
-        if (data) yield data;
+        if (data) yield { id, data };
         boundary = buffer.indexOf('\n\n');
       }
       if (result.done) break;
@@ -870,8 +982,11 @@ function requireRuntimeEnvelope(
     || envelope.direction !== 'event'
     || typeof envelope.type !== 'string'
     || envelope.sessionId !== sessionId
+    || !isLowercaseSha256(envelope.sceneRevision)
     || !Number.isSafeInteger(envelope.sequence)
     || Number(envelope.sequence) < 1
+    || !Number.isSafeInteger(envelope.simulationTimeNs)
+    || Number(envelope.simulationTimeNs) < 0
     || !Object.prototype.hasOwnProperty.call(envelope, 'payload')
   ) {
     throw new SimulatorGatewayError(
@@ -881,6 +996,31 @@ function requireRuntimeEnvelope(
     );
   }
   return envelope as RuntimeEnvelope;
+}
+
+function requireMatchingSseSequence(
+  id: string,
+  envelopeSequence: number,
+): void {
+  if (!/^[1-9][0-9]*$/.test(id)) {
+    throw new SimulatorGatewayError(
+      502,
+      'invalid_event_id',
+      'Gateway SSE 事件缺少有效 id。',
+    );
+  }
+  const sequence = Number(id);
+  if (!Number.isSafeInteger(sequence) || sequence !== envelopeSequence) {
+    throw new SimulatorGatewayError(
+      502,
+      'event_id_mismatch',
+      'Gateway SSE id 与事件 envelope 序号不一致。',
+    );
+  }
+}
+
+function isLowercaseSha256(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 }
 
 async function requireSuccessfulResponse(response: Response): Promise<void> {

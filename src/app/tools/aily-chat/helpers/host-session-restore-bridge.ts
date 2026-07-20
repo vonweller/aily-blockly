@@ -1382,7 +1382,7 @@ function isTransientRuntimeStatePart(
   part: TurnResponseTurn['response']['parts'][number],
 ): boolean {
   return part.type === 'state'
-    && (part.kind === 'compaction' || part.kind === 'provider_context_management');
+    && part.kind === 'provider_context_management';
 }
 
 function cloneSessionSnapshotRounds(
@@ -1394,12 +1394,10 @@ function cloneSessionSnapshotRounds(
   }
 
   return snapshotRounds.map((round) => {
-    const summary = normalizeTurnResponseSummaryPreview(round.summary);
-
+    const { summary: _runtimeSummary, ...roundWithoutSummary } = round;
     return {
-      ...round,
+      ...roundWithoutSummary,
       toolCalls: (round.toolCalls ?? []).map(toolCall => ({ ...toolCall })),
-      ...(summary ? { summary } : {}),
     };
   });
 }

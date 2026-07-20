@@ -2156,6 +2156,7 @@ function createWindow() {
 
   mainWindow.webContents.on('render-process-gone', (event, details) => {
     console.error('Renderer process gone:', details.reason, 'exitCode:', details.exitCode);
+    void simulatorGateway.stop();
     if (!serve) return;
 
     setTimeout(() => {

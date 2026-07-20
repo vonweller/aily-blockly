@@ -10,11 +10,46 @@ import { NoticeOptions } from './notice.service';
 
 /** 组件图片 */
 export interface ComponentImage {
+  id?: string;
   url: string;
   x: number;
   y: number;
   width: number;
   height: number;
+  version?: 'v1' | string;
+  rotation?: number;
+  appearanceLayer?: 'background' | 'foreground';
+}
+
+export interface VersionedComponentIdentity {
+  id: string;
+  version: string;
+}
+
+export interface PinmapAppearanceSlot {
+  id: string;
+  role: string;
+  layer: 'dynamic' | 'interaction';
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  shape?: 'rect' | 'circle';
+  clip?: boolean;
+}
+
+export interface PinmapComponentAppearance
+  extends VersionedComponentIdentity {
+  schemaVersion: 1;
+  source: 'pinmap';
+  overflow: 'visible' | 'hidden';
+  slots: PinmapAppearanceSlot[];
+}
+
+export interface ComponentSimulationBinding {
+  schemaVersion: 1;
+  model: VersionedComponentIdentity;
+  viewAdapter: VersionedComponentIdentity;
 }
 
 /** 引脚功能 */
@@ -68,6 +103,8 @@ export interface ComponentConfig {
   images: ComponentImage[];
   pins: ConfigPin[];
   functionTypes: FunctionTypeDef[];
+  appearance?: VersionedComponentIdentity | PinmapComponentAppearance;
+  simulation?: ComponentSimulationBinding;
   /** 同库下的类似组件列表（来自 pinmap_catalog.json，仅 pinmapId 加载时有） */
   similarComponents?: SimilarComponent[];
 }

@@ -5,14 +5,22 @@ const { spawn } = require('child_process');
 
 const START_TIMEOUT_MS = 15_000;
 const STOP_TIMEOUT_MS = 5_000;
+const FORCE_STOP_TIMEOUT_MS = 2_000;
 const DIAGNOSTIC_TAIL_BYTES = 32 * 1024;
 const DEBUG_SOURCE_MAX_BYTES = 2 * 1024 * 1024;
 const BLOCK_SOURCE_MAP_MAX_BYTES = 16 * 1024 * 1024;
+const GATEWAY_SHUTDOWN_MESSAGE = Object.freeze({
+  type: 'aily-simulator-gateway.shutdown',
+  version: 1,
+});
 
 let handlersRegistered = false;
 let gatewayProcess = null;
 let gatewayDescriptor = null;
 let gatewayStartPromise = null;
+let gatewayStartProjectPath = null;
+let gatewayStartOwnerId = null;
+let gatewayStopPromise = null;
 let lastGatewayFailure = null;
 let getMainWindow = () => null;
 
@@ -21,22 +29,32 @@ function registerHandlers({ ipcMain, app, mainWindow }) {
   if (handlersRegistered) return;
   handlersRegistered = true;
 
-  ipcMain.handle('simulator-gateway-start', async (event, projectPath) => {
+  ipcMain.handle('simulator-gateway-start', async (
+    event,
+    projectPath,
+    ownerId,
+  ) => {
     return start({
       app,
       projectPath,
+      ownerId,
       rendererOrigin: originFromSenderUrl(event.senderFrame?.url),
     });
   });
   ipcMain.handle('simulator-gateway-status', async () => status());
-  ipcMain.handle('simulator-gateway-stop', async () => {
-    await stop();
+  ipcMain.handle('simulator-gateway-stop', async (
+    _event,
+    expectedProjectPath,
+    expectedOwnerId,
+  ) => {
+    await stop(expectedProjectPath, expectedOwnerId);
     return status();
   });
 }
 
-async function start({ app, projectPath, rendererOrigin }) {
+async function start({ app, projectPath, rendererOrigin, ownerId }) {
   const projectRoot = requireProjectRoot(projectPath);
+  const normalizedOwnerId = normalizeOwnerId(ownerId);
   const buildPath = path.join(projectRoot, '.build');
   const artifactPath = path.join(
     buildPath,
@@ -52,13 +70,34 @@ async function start({ app, projectPath, rendererOrigin }) {
   if (
     gatewayDescriptor
     && gatewayProcess
+    && gatewayProcess.exitCode === null
     && gatewayDescriptor.projectPath === projectRoot
   ) {
+    gatewayDescriptor.ownerId = normalizedOwnerId;
     return publicDescriptor(gatewayDescriptor, artifact);
   }
-  if (gatewayStartPromise) return gatewayStartPromise;
+  if (gatewayStartPromise) {
+    const pendingStart = gatewayStartPromise;
+    if (gatewayStartProjectPath === projectRoot) {
+      gatewayStartOwnerId = normalizedOwnerId;
+      const result = await pendingStart;
+      if (gatewayDescriptor?.projectPath === projectRoot) {
+        gatewayDescriptor.ownerId = normalizedOwnerId;
+      }
+      return result;
+    }
+    await pendingStart.catch(() => undefined);
+    return start({
+      app,
+      projectPath: projectRoot,
+      rendererOrigin,
+      ownerId: normalizedOwnerId,
+    });
+  }
 
-  gatewayStartPromise = (async () => {
+  gatewayStartProjectPath = projectRoot;
+  gatewayStartOwnerId = normalizedOwnerId;
+  const startPromise = (async () => {
     await stop();
     lastGatewayFailure = null;
     sendStateChanged({ state: 'starting', projectPath: projectRoot });
@@ -88,6 +127,9 @@ async function start({ app, projectPath, rendererOrigin }) {
     }
     if (runtime.gdbExecutable) {
       args.push('--gdb', runtime.gdbExecutable);
+      if (runtime.freeRtosBridgePath) {
+        args.push('--freertos-bridge', runtime.freeRtosBridgePath);
+      }
     }
     const child = spawn(process.execPath, args, {
       cwd: runtime.simulatorRoot,
@@ -95,7 +137,7 @@ async function start({ app, projectPath, rendererOrigin }) {
         ...process.env,
         ELECTRON_RUN_AS_NODE: '1',
       },
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
       windowsHide: true,
       shell: false,
     });
@@ -104,12 +146,16 @@ async function start({ app, projectPath, rendererOrigin }) {
 
     try {
       const startup = await waitForGatewayStartup(child);
+      if (gatewayProcess !== child) {
+        throw new Error('本地 Simulator Gateway 启动已取消。');
+      }
       gatewayDescriptor = {
         service: 'aily-simulator-gateway',
         baseUrl: startup.baseUrl,
         accessToken,
         artifactDirectory: '.',
         projectPath: projectRoot,
+        ownerId: gatewayStartOwnerId,
         runtimeSource: runtime.source,
         runtimePackId: runtime.runtimePackId,
         runtimeMode: runtime.runtimeMode,
@@ -148,11 +194,15 @@ async function start({ app, projectPath, rendererOrigin }) {
       });
       return publicDescriptor(gatewayDescriptor, artifact);
     } catch (error) {
-      if (gatewayProcess === child) {
+      const ownsCurrentGateway = gatewayProcess === child;
+      if (ownsCurrentGateway) {
         gatewayProcess = null;
         gatewayDescriptor = null;
       }
-      terminateChild(child);
+      await shutdownGatewayProcess(child, {
+        gracefulTimeoutMs: 1_000,
+      });
+      if (!ownsCurrentGateway) throw error;
       lastGatewayFailure = {
         phase: 'startup',
         message: error instanceof Error ? error.message : String(error),
@@ -170,11 +220,16 @@ async function start({ app, projectPath, rendererOrigin }) {
       throw error;
     }
   })();
+  gatewayStartPromise = startPromise;
 
   try {
-    return await gatewayStartPromise;
+    return await startPromise;
   } finally {
-    gatewayStartPromise = null;
+    if (gatewayStartPromise === startPromise) {
+      gatewayStartPromise = null;
+      gatewayStartProjectPath = null;
+      gatewayStartOwnerId = null;
+    }
   }
 }
 
@@ -195,22 +250,45 @@ function status() {
   };
 }
 
-async function stop() {
+async function stop(expectedProjectPath, expectedOwnerId) {
+  if (gatewayStopPromise) return gatewayStopPromise;
+  const actualProjectPath =
+    gatewayDescriptor?.projectPath ?? gatewayStartProjectPath;
+  const actualOwnerId =
+    gatewayDescriptor?.ownerId ?? gatewayStartOwnerId;
+  const ownershipMatches = matchesGatewayOwnership({
+    expectedProjectPath,
+    expectedOwnerId,
+    actualProjectPath,
+    actualOwnerId,
+  });
+  if (gatewayProcess || expectedProjectPath || expectedOwnerId) {
+    console.info('[SimulatorGateway][STOP_REQUEST]', {
+      expectedProjectPath: expectedProjectPath ?? null,
+      expectedOwnerId: expectedOwnerId ?? null,
+      actualProjectPath: actualProjectPath ?? null,
+      actualOwnerId: actualOwnerId ?? null,
+      ownershipMatches,
+      hasGatewayProcess: !!gatewayProcess,
+      startPending: !!gatewayStartPromise,
+    });
+  }
+  if (!ownershipMatches) return;
   const child = gatewayProcess;
   gatewayProcess = null;
   gatewayDescriptor = null;
-  if (!child || child.exitCode !== null || child.killed) return;
+  if (!child || hasChildExited(child)) return;
 
-  const exited = new Promise((resolve) => child.once('exit', resolve));
-  terminateChild(child);
-  await Promise.race([
-    exited,
-    new Promise((resolve) => setTimeout(resolve, STOP_TIMEOUT_MS)),
-  ]);
-  if (child.exitCode === null) {
-    child.kill('SIGKILL');
+  const stopPromise = (async () => {
+    await shutdownGatewayProcess(child);
+    sendStateChanged({ state: 'stopped', unexpected: false });
+  })();
+  gatewayStopPromise = stopPromise;
+  try {
+    await stopPromise;
+  } finally {
+    if (gatewayStopPromise === stopPromise) gatewayStopPromise = null;
   }
-  sendStateChanged({ state: 'stopped', unexpected: false });
 }
 
 function terminateChild(child) {
@@ -219,6 +297,134 @@ function terminateChild(child) {
   } catch {
     // The process may already have exited.
   }
+}
+
+async function shutdownGatewayProcess(child, options = {}) {
+  if (!child || hasChildExited(child)) return;
+  const gracefulTimeoutMs = options.gracefulTimeoutMs ?? STOP_TIMEOUT_MS;
+  const forceTimeoutMs = options.forceTimeoutMs ?? FORCE_STOP_TIMEOUT_MS;
+  const forceTerminate = options.forceTerminate ?? forceTerminateProcessTree;
+  const gracefulRequested = requestGatewayShutdown(child);
+  if (!gracefulRequested) terminateChild(child);
+  if (await waitForChildExit(child, gracefulTimeoutMs)) return;
+
+  await forceTerminate(child);
+  await waitForChildExit(child, forceTimeoutMs);
+}
+
+function requestGatewayShutdown(child) {
+  if (
+    child.connected !== true
+    || typeof child.send !== 'function'
+  ) {
+    return false;
+  }
+  try {
+    child.send(GATEWAY_SHUTDOWN_MESSAGE, (error) => {
+      if (error && !hasChildExited(child)) terminateChild(child);
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function waitForChildExit(child, timeoutMs) {
+  if (hasChildExited(child)) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (exited) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      child.removeListener?.('exit', onExit);
+      resolve(exited);
+    };
+    const onExit = () => finish(true);
+    const timeout = setTimeout(() => finish(hasChildExited(child)), timeoutMs);
+    child.once('exit', onExit);
+  });
+}
+
+function hasChildExited(child) {
+  return child.exitCode !== null || child.signalCode !== null;
+}
+
+async function forceTerminateProcessTree(child) {
+  if (hasChildExited(child)) return;
+  if (
+    process.platform === 'win32'
+    && Number.isSafeInteger(child.pid)
+    && child.pid > 0
+  ) {
+    await new Promise((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        resolve();
+      };
+      const killer = spawn(
+        'taskkill.exe',
+        ['/pid', String(child.pid), '/T', '/F'],
+        {
+          stdio: 'ignore',
+          windowsHide: true,
+          shell: false,
+        },
+      );
+      const timeout = setTimeout(finish, FORCE_STOP_TIMEOUT_MS);
+      killer.once('error', finish);
+      killer.once('exit', finish);
+    });
+  }
+  if (hasChildExited(child)) return;
+  try {
+    child.kill('SIGKILL');
+  } catch {
+    // The process may have exited while the fallback was being requested.
+  }
+}
+
+function isSameProjectPath(expectedProjectPath, actualProjectPath) {
+  if (!actualProjectPath) return true;
+  const expected = path.resolve(String(expectedProjectPath));
+  const actual = path.resolve(String(actualProjectPath));
+  return process.platform === 'win32'
+    ? expected.toLowerCase() === actual.toLowerCase()
+    : expected === actual;
+}
+
+function normalizeOwnerId(ownerId) {
+  if (ownerId === undefined || ownerId === null || ownerId === '') {
+    return null;
+  }
+  if (
+    typeof ownerId !== 'string'
+    || ownerId.length > 128
+    || !/^[a-zA-Z0-9._:-]+$/.test(ownerId)
+  ) {
+    throw new Error('Simulator Gateway ownerId 无效。');
+  }
+  return ownerId;
+}
+
+function matchesGatewayOwnership({
+  expectedProjectPath,
+  expectedOwnerId,
+  actualProjectPath,
+  actualOwnerId,
+}) {
+  if (
+    expectedOwnerId
+    && actualOwnerId
+    && normalizeOwnerId(expectedOwnerId) !== actualOwnerId
+  ) {
+    return false;
+  }
+  return !expectedProjectPath
+    || isSameProjectPath(expectedProjectPath, actualProjectPath);
 }
 
 function publicDescriptor(descriptor, artifact) {
@@ -675,6 +881,18 @@ function resolveRuntimePaths({ app, moduleDirectory }) {
   const gdbExecutable = process.env.AILY_SIMULATOR_GDB
     || runtimeBundle?.gdbExecutable
     || resolveWorkspaceGdbExecutable(simulatorRoot);
+  const freeRtosBridgeCandidate = process.env.AILY_SIMULATOR_FREERTOS_BRIDGE
+    || runtimeBundle?.freeRtosBridgePath
+    || path.join(
+      simulatorRoot,
+      'packages',
+      'simulator-host',
+      'gdb',
+      'aily_freertos_snapshot.gdb',
+    );
+  const freeRtosBridgePath = fs.existsSync(freeRtosBridgeCandidate)
+    ? freeRtosBridgeCandidate
+    : null;
   return {
     simulatorRoot,
     gatewayEntry,
@@ -682,6 +900,7 @@ function resolveRuntimePaths({ app, moduleDirectory }) {
     qemuDataDirectory: runtimeBundle?.qemuDataDirectory
       || resolveQemuDataDirectory(qemuExecutable),
     gdbExecutable,
+    freeRtosBridgePath,
     runtimePackId: runtimeBundle?.manifest.id,
     runtimeMode: runtimeBundle?.manifest.mode,
     source: process.env.AILY_SIMULATOR_ROOT
@@ -737,7 +956,19 @@ function readRuntimeBundle(simulatorRoot, requireRelease) {
     manifest.entrypoints.gdb,
     'GDB executable',
   );
-  for (const filePath of [gatewayEntry, qemuExecutable, gdbExecutable]) {
+  const freeRtosBridgePath = manifest.entrypoints.freeRtosBridge
+    ? resolveBundlePath(
+        simulatorRoot,
+        manifest.entrypoints.freeRtosBridge,
+        'FreeRTOS GDB bridge',
+      )
+    : null;
+  for (const filePath of [
+    gatewayEntry,
+    qemuExecutable,
+    gdbExecutable,
+    freeRtosBridgePath,
+  ].filter(Boolean)) {
     if (!fs.statSync(filePath).isFile()) {
       throw new Error(`Simulator Runtime 文件无效：${filePath}`);
     }
@@ -749,6 +980,9 @@ function readRuntimeBundle(simulatorRoot, requireRelease) {
     manifest.entrypoints.gateway,
     manifest.entrypoints.qemu,
     manifest.entrypoints.gdb,
+    ...(manifest.entrypoints.freeRtosBridge
+      ? [manifest.entrypoints.freeRtosBridge]
+      : []),
   ]) {
     const expected = manifest.integrity.requiredFileSha256[relativePath];
     if (typeof expected !== 'string') {
@@ -781,6 +1015,7 @@ function readRuntimeBundle(simulatorRoot, requireRelease) {
     qemuExecutable,
     qemuDataDirectory,
     gdbExecutable,
+    freeRtosBridgePath,
   };
 }
 
@@ -916,6 +1151,11 @@ function sendStateChanged(payload) {
 }
 
 module.exports = {
+  GATEWAY_SHUTDOWN_MESSAGE,
+  hasChildExited,
+  isSameProjectPath,
+  matchesGatewayOwnership,
+  normalizeOwnerId,
   originFromSenderUrl,
   parseStartupJson,
   readArtifactBlockSourceMap,
@@ -923,7 +1163,9 @@ module.exports = {
   readRuntimeBundle,
   registerHandlers,
   resolveRuntimePaths,
+  shutdownGatewayProcess,
   start,
   status,
   stop,
+  waitForChildExit,
 };

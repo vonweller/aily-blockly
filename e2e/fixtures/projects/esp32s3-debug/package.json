@@ -20,10 +20,19 @@
     "@aily-project/lib-core-io": {
       "version": "1.0.0",
       "blockTypes": [
+        "io_digitalread",
         "io_digitalwrite",
         "io_mode",
         "io_pinmode",
         "io_state"
+      ],
+      "updatedAt": 0
+    },
+    "@aily-project/lib-core-logic": {
+      "version": "0.0.1",
+      "blockTypes": [
+        "controls_ifelse",
+        "logic_negate"
       ],
       "updatedAt": 0
     },

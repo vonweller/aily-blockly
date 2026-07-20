@@ -578,6 +578,9 @@ class ChatRuntimeHostProcessService {
           ? submittedRequest.agentRuntimeModeSource ?? null
           : null,
         currentModel: runningState.currentModel ?? null,
+        summarizerModel: submittedRequest && submittedRequest.summarizerModel
+          ? submittedRequest.summarizerModel
+          : null,
         transcriptRevision: Number(runningState.transcriptRevision) || 0,
         protocolTruncation: submittedRequest && submittedRequest.protocolTruncation ? submittedRequest.protocolTruncation : null,
       },
@@ -1013,6 +1016,7 @@ class ChatRuntimeHostProcessService {
         providerOptions: request.providerOptions || null,
         agentRuntimeMode: request.agentRuntimeMode || null,
         currentModel: request.currentModel || null,
+        summarizerModel: request.summarizerModel || null,
       }]);
       if (!runtimeResult || runtimeResult.ensured !== true) {
         throw new Error('[AilyChat][RuntimeHost] Runtime snapshot fork was not created.');

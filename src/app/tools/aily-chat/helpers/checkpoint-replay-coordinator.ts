@@ -2955,12 +2955,10 @@ export class CheckpointReplayCoordinator {
       ...turn,
       request: { ...turn.request },
       rounds: turn.rounds.map((round) => {
-        const summary = normalizeTurnResponseSummaryPreview(round.summary);
-
+        const { summary: _runtimeSummary, ...roundWithoutSummary } = round;
         return {
-          ...round,
+          ...roundWithoutSummary,
           toolCalls: (round.toolCalls ?? []).map(toolCall => ({ ...toolCall })),
-          ...(summary ? { summary } : {}),
         };
       }),
       ...(turn.usage ? { usage: { ...turn.usage } } : {}),

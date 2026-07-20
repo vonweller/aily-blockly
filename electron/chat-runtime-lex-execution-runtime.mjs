@@ -486,10 +486,12 @@ class LexExecutionRuntimeOwner {
     const projectInfo = await this.readProjectInfo(sessionId);
     const request = command.request || {};
     const currentModel = command.currentModel || request.currentModel || null;
+    const summarizerModel = command.summarizerModel || request.summarizerModel || null;
     const providerOptions = command.providerOptions || request.providerOptions || null;
     const runtimeConfigKey = createSessionRuntimeConfigKey(
       providerOptions,
       currentModel,
+      summarizerModel,
       this.resolveCwd(projectInfo, providerOptions),
     );
     const existing = this.sessions.get(sessionId);
@@ -499,6 +501,7 @@ class LexExecutionRuntimeOwner {
         sessionId,
         providerOptions,
         currentModel,
+        summarizerModel,
         initialSnapshot: snapshot,
       }, projectInfo);
       return {
@@ -520,8 +523,22 @@ class LexExecutionRuntimeOwner {
       ? existing.handle.getSessionSnapshot()
       : existing.handle?.saveSession?.();
     if (sessionSnapshotsHaveSameRequestList(currentSnapshot, snapshot)) {
+      if (existing.runtimeConfigKey !== runtimeConfigKey) {
+        await this.replaceSessionRuntimeWithSnapshot(existing, projectInfo, {
+          providerOptions,
+          currentModel,
+          summarizerModel,
+          runtimeConfigKey,
+        }, snapshot);
+        return {
+          sessionId,
+          restored: true,
+          turnCount: snapshot.turns.length,
+        };
+      }
       existing.providerOptions = providerOptions || existing.providerOptions || null;
       existing.currentModel = currentModel || existing.currentModel || null;
+      existing.summarizerModel = summarizerModel || existing.summarizerModel || null;
       return {
         sessionId,
         restored: false,
@@ -533,6 +550,7 @@ class LexExecutionRuntimeOwner {
       await this.replaceSessionRuntimeWithSnapshot(existing, projectInfo, {
         providerOptions,
         currentModel,
+        summarizerModel,
         runtimeConfigKey,
       }, snapshot);
     } else {
@@ -542,6 +560,7 @@ class LexExecutionRuntimeOwner {
       existing.handle.restoreSession(snapshot);
       existing.providerOptions = providerOptions || existing.providerOptions || null;
       existing.currentModel = currentModel || existing.currentModel || null;
+      existing.summarizerModel = summarizerModel || existing.summarizerModel || null;
       existing.pendingConfirmations?.clear?.();
       existing.pendingQuestions?.clear?.();
       existing.revision += 1;
@@ -625,6 +644,7 @@ class LexExecutionRuntimeOwner {
         sessionId: targetSessionId,
         providerOptions: command.providerOptions || source.providerOptions || null,
         currentModel: command.currentModel || source.currentModel || null,
+        summarizerModel: command.summarizerModel || source.summarizerModel || null,
         initialSnapshot: forked.snapshot,
       }, projectInfo);
       return {
@@ -1153,8 +1173,17 @@ class LexExecutionRuntimeOwner {
       ? command.executionContext
       : null;
     const currentModel = command.currentModel || executionContext?.currentModel || request.currentModel || null;
+    const summarizerModel = command.summarizerModel
+      || executionContext?.summarizerModel
+      || request.summarizerModel
+      || null;
     const providerOptions = command.providerOptions || executionContext?.providerOptions || request.providerOptions || null;
-    const runtimeConfigKey = createSessionRuntimeConfigKey(providerOptions, currentModel, this.resolveCwd(projectInfo, providerOptions));
+    const runtimeConfigKey = createSessionRuntimeConfigKey(
+      providerOptions,
+      currentModel,
+      summarizerModel,
+      this.resolveCwd(projectInfo, providerOptions),
+    );
     const existing = this.sessions.get(sessionId);
     if (existing) {
       await existing.handlePromise;
@@ -1162,11 +1191,13 @@ class LexExecutionRuntimeOwner {
         await this.recreateSessionRuntime(existing, projectInfo, {
           providerOptions,
           currentModel,
+          summarizerModel,
           runtimeConfigKey,
         });
       } else {
         existing.providerOptions = providerOptions || existing.providerOptions || null;
         existing.currentModel = currentModel || existing.currentModel || null;
+        existing.summarizerModel = summarizerModel || existing.summarizerModel || null;
       }
       return existing;
     }
@@ -1175,6 +1206,7 @@ class LexExecutionRuntimeOwner {
       sessionId,
       providerOptions,
       currentModel,
+      summarizerModel,
       runtimeConfigKey,
       revision: 0,
       activeTurnId: null,
@@ -1217,6 +1249,7 @@ class LexExecutionRuntimeOwner {
     }
     session.providerOptions = nextConfig.providerOptions;
     session.currentModel = nextConfig.currentModel;
+    session.summarizerModel = nextConfig.summarizerModel;
     session.runtimeConfigKey = nextConfig.runtimeConfigKey;
     session.handle = null;
     session.adapter = null;
@@ -1234,6 +1267,7 @@ class LexExecutionRuntimeOwner {
     }
     session.providerOptions = nextConfig.providerOptions;
     session.currentModel = nextConfig.currentModel;
+    session.summarizerModel = nextConfig.summarizerModel;
     session.runtimeConfigKey = nextConfig.runtimeConfigKey;
     session.handle = null;
     session.adapter = null;
@@ -1245,9 +1279,18 @@ class LexExecutionRuntimeOwner {
   }
 
   async createSessionRuntime(session, projectInfo, snapshot = null) {
-    const { sessionId, providerOptions, currentModel } = session;
+    const { sessionId, providerOptions, currentModel, summarizerModel } = session;
     const runtimeConfig = readRuntimeConfig(projectInfo);
     const endpoint = this.createEndpoint(currentModel, runtimeConfig);
+    console.info('[AilyChat][LexExecutionHostCompaction]', JSON.stringify({
+      sessionId,
+      architecture: 'provider',
+      inlineSummarization: false,
+      summarizerModel: normalizeString(
+        summarizerModel?.model || summarizerModel?.modelId || currentModel?.model || currentModel?.modelId,
+      ) || DEFAULT_MODEL_ID,
+      providerContextManagementKind: normalizeString(currentModel?.providerContextManagementSupport?.kind) || null,
+    }));
     session.runtimeConfig = runtimeConfig;
     session.endpoint = endpoint;
     const resolvedCwd = this.resolveCwd(projectInfo, providerOptions);
@@ -1365,6 +1408,9 @@ class LexExecutionRuntimeOwner {
       approvalPolicy: normalizeApprovalPolicy(providerOptions),
       approvalsReviewer: normalizeApprovalsReviewer(providerOptions),
       strictAutoReview: normalizeApprovalsReviewer(providerOptions) === 'auto_review',
+      contextCompactionArchitecture: 'provider',
+      summarizerModel: this.createModelConfig(summarizerModel || currentModel),
+      inlineSummarization: false,
       ...(additionalChronicleTools.length > 0 ? { additionalTools: additionalChronicleTools } : {}),
       ...(chronicleToolOptions ? { additionalToolOptions: chronicleToolOptions } : {}),
       ...(snapshot ? { snapshot } : {}),
@@ -7974,7 +8020,7 @@ function normalizeApprovalsReviewer(providerOptions) {
   return reviewer === 'auto_review' ? 'auto_review' : 'user';
 }
 
-function createSessionRuntimeConfigKey(providerOptions, currentModel, cwd) {
+function createSessionRuntimeConfigKey(providerOptions, currentModel, summarizerModel, cwd) {
   return JSON.stringify({
     cwd: normalizeString(cwd),
     childToolInventory: createElectronChildToolInventorySignature(),
@@ -7983,6 +8029,7 @@ function createSessionRuntimeConfigKey(providerOptions, currentModel, cwd) {
     approvalPolicy: normalizeApprovalPolicy(providerOptions),
     approvalsReviewer: normalizeApprovalsReviewer(providerOptions),
     model: normalizeString(currentModel?.model || currentModel?.modelId || currentModel?.id),
+    summarizerModel: normalizeString(summarizerModel?.model || summarizerModel?.modelId || summarizerModel?.id),
     baseUrl: normalizeString(currentModel?.baseUrl || currentModel?.llmConfig?.baseUrl),
   });
 }

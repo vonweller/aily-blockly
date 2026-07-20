@@ -93,6 +93,7 @@ import { createRequiredSessionResourceModel } from './required-session-resource-
 import type {
   ChatRuntimeHostForkSessionRequest,
   ChatRuntimeHostForkSessionResult,
+  ChatRuntimeHostModelSelectionSnapshot,
   ChatRuntimeHostPrewarmRequest,
   ChatRuntimeHostPrewarmResult,
   ChatRuntimeHostRestoreRuntimeSessionRequest,
@@ -169,6 +170,7 @@ type SessionLifecycleContext = ChatViewWriteBridgeContext
     readSessionRuntimeState?(sessionId?: string | null): Readonly<ChatSessionRuntimeState> | undefined;
     readSessionCheckpointTimelineState?(sessionId?: string | null): import('./session-checkpoint-timeline-model').SessionCheckpointTimelineState | null;
     hasSessionRuntimeHandle?(sessionId?: string | null): boolean;
+    resolveSummarizerModelSnapshot?(): ChatRuntimeHostModelSelectionSnapshot | null;
     prewarmRuntimeExecutor?(request: ChatRuntimeHostPrewarmRequest): Promise<ChatRuntimeHostPrewarmResult>;
     restoreRuntimeSessionExecutor?(
       request: ChatRuntimeHostRestoreRuntimeSessionRequest,
@@ -469,6 +471,7 @@ export class SessionLifecycleHelper {
         providerOptions: forkedProviderOptions,
         agentRuntimeMode: this.ctx.currentAgentRuntimeMode,
         currentModel: this.ctx.currentModel ?? null,
+        summarizerModel: this.ctx.resolveSummarizerModelSnapshot?.() ?? this.ctx.currentModel ?? null,
         pageLimit: 30,
       });
       forkedMetadata.forkedRetainedTurnCount = result.retainedTurnIds.length;
@@ -1024,6 +1027,7 @@ export class SessionLifecycleHelper {
         providerOptions,
         agentRuntimeMode,
         currentModel: this.ctx.currentModel ?? null,
+        summarizerModel: this.ctx.resolveSummarizerModelSnapshot?.() ?? this.ctx.currentModel ?? null,
       })
         .then(result => {
           const ensured = result?.ensured === true;
@@ -1834,6 +1838,7 @@ export class SessionLifecycleHelper {
       providerOptions,
       agentRuntimeMode,
       currentModel: this.ctx.currentModel ?? null,
+      summarizerModel: this.ctx.resolveSummarizerModelSnapshot?.() ?? this.ctx.currentModel ?? null,
     });
     if (result.sessionId !== sessionId || result.turnCount !== turnResponses.length) {
       throw new Error(
@@ -2109,14 +2114,11 @@ export class SessionLifecycleHelper {
     }
 
     return turnResponses.reduce((total, turn) => {
-      const roundCount = Array.isArray(turn?.rounds)
-        ? turn.rounds.filter(round => typeof round?.summary === 'string' && round.summary.trim().length > 0).length
-        : 0;
       const responseModel = turn?.responseModel;
       const sidecarCount = Array.isArray(responseModel?.summaries)
         ? responseModel.summaries.filter(summary => typeof summary?.text === 'string' && summary.text.trim().length > 0).length
         : (typeof responseModel?.summary?.text === 'string' && responseModel.summary.text.trim().length > 0 ? 1 : 0);
-      return total + roundCount + sidecarCount;
+      return total + sidecarCount;
     }, 0);
   }
 

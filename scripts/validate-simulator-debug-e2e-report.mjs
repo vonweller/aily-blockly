@@ -54,6 +54,61 @@ assertEqual(
   'legacy Blockly runtime UI removal',
 );
 assertEqual(
+  report.iframeUart?.coreIo?.ledPinmapId,
+  'lib-core-io:led:generic',
+  'core IO LED pinmap identity',
+);
+assertEqual(
+  report.iframeUart?.coreIo?.buttonPinmapId,
+  'lib-core-io:button:generic',
+  'core IO Button pinmap identity',
+);
+assertEqual(
+  report.iframeUart?.coreIo?.resistorPinmapId,
+  'lib-core-io:resistor:generic',
+  'core IO Resistor pinmap identity',
+);
+assertEqual(
+  report.iframeUart?.coreIo?.currentLimitOhms,
+  220,
+  'explicit LED current-limit resistance',
+);
+assertEqual(
+  report.iframeUart?.coreIo?.currentLimitAppearanceVisible,
+  true,
+  'explicit resistor appearance',
+);
+assertEqual(
+  report.iframeUart?.coreIo?.blinkObserved,
+  true,
+  'QEMU-driven LED blink cycle',
+);
+assertEqual(
+  report.iframeUart?.coreIo?.buttonPressObserved,
+  true,
+  'Button press view/action round trip',
+);
+assertEqual(
+  report.iframeUart?.coreIo?.buttonHeldLedOn,
+  true,
+  'Button-controlled LED hold',
+);
+assertEqual(
+  report.iframeUart?.coreIo?.buttonReleaseObserved,
+  true,
+  'Button release view/action round trip',
+);
+assertEqual(
+  report.iframeUart?.coreIo?.electricalDiagnosticsForwarded,
+  true,
+  'electrical diagnostics Host-to-iframe forwarding',
+);
+assertEqual(
+  report.iframeUart?.coreIo?.electricalDiagnosticRecoveryObserved,
+  true,
+  'electrical diagnostic revision and recovery',
+);
+assertEqual(
   report.iframeUart?.legacyBlocklyDebugUiRemoved,
   true,
   'legacy Blockly debug UI removal',
@@ -133,6 +188,40 @@ assertEqual(
   true,
   'iframe GDB thread switch round trip',
 );
+assertTrue(
+  Number.isSafeInteger(report.iframeUart?.debugTasks?.count)
+    && report.iframeUart.debugTasks.count >= 1
+    && report.iframeUart.debugTasks.count <= 128,
+  'iframe FreeRTOS task count',
+);
+assertTrue(
+  Array.isArray(report.iframeUart?.debugTasks?.ids)
+    && report.iframeUart.debugTasks.ids.length
+      === report.iframeUart.debugTasks.count
+    && report.iframeUart.debugTasks.ids.every(
+      (id) => typeof id === 'string' && /^tcb:[0-9a-f]+$/.test(id),
+    ),
+  'iframe bounded FreeRTOS task identities',
+);
+assertTrue(
+  Array.isArray(report.iframeUart?.debugTasks?.labels)
+    && report.iframeUart.debugTasks.labels.length
+      === report.iframeUart.debugTasks.count
+    && report.iframeUart.debugTasks.labels.every(
+      (label) => typeof label === 'string' && label.trim().length > 0,
+    ),
+  'iframe FreeRTOS task labels',
+);
+assertEqual(
+  report.iframeUart?.debugTasks?.includesLoopTask,
+  true,
+  'iframe Arduino loop task awareness',
+);
+assertEqual(
+  report.iframeUart?.debugTasks?.readOnly,
+  true,
+  'iframe FreeRTOS tasks remain read-only',
+);
 assertEqual(
   report.iframeUart?.debugWatch?.expression,
   'debugCounter',
@@ -140,7 +229,7 @@ assertEqual(
 );
 assertEqual(
   report.iframeUart?.debugWatch?.value,
-  '2',
+  '3',
   'iframe watch value',
 );
 assertNonEmpty(
@@ -154,7 +243,7 @@ assertEqual(
 );
 assertEqual(
   report.iframeUart?.debugVariable?.value,
-  '2',
+  '3',
   'iframe variable value',
 );
 assertNonEmpty(
@@ -360,7 +449,7 @@ assertEqual(
 );
 assertEqual(
   report.iframeUart?.debugFrameSelection?.variableValue,
-  '2',
+  '3',
   'selected stack frame variable value',
 );
 assertNonEmpty(
@@ -536,7 +625,7 @@ assertEqual(
 );
 assertEqual(
   report.iframeUart?.debugRecovery?.restoredWatchValue,
-  '2',
+  '3',
   'restored watch value',
 );
 assertTrue(

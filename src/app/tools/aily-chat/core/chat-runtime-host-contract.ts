@@ -53,6 +53,7 @@ export interface ChatRuntimeHostSubmitRequest {
   readonly agentRuntimeMode?: ChatAgentRuntimeMode | null;
   readonly agentRuntimeModeSource?: ChatAgentRuntimeModeSource | null;
   readonly currentModel?: ChatRuntimeHostModelSelectionSnapshot | null;
+  readonly summarizerModel?: ChatRuntimeHostModelSelectionSnapshot | null;
   readonly metadata?: Readonly<Record<string, unknown>> | null;
   readonly activeResponseHandle?: unknown | null;
   readonly protocolTruncation?: ChatRuntimeHostProtocolTruncation | null;
@@ -172,6 +173,7 @@ export interface ChatRuntimeHostForkSessionRequest {
   readonly providerOptions?: HostSessionProviderOptions | null;
   readonly agentRuntimeMode?: ChatAgentRuntimeMode | null;
   readonly currentModel?: ChatRuntimeHostModelSelectionSnapshot | null;
+  readonly summarizerModel?: ChatRuntimeHostModelSelectionSnapshot | null;
   readonly pageLimit?: number;
 }
 
@@ -231,6 +233,7 @@ export interface ChatRuntimeHostPrewarmRequest {
   readonly providerOptions?: HostSessionProviderOptions | null;
   readonly agentRuntimeMode?: ChatAgentRuntimeMode | null;
   readonly currentModel?: ChatRuntimeHostModelSelectionSnapshot | null;
+  readonly summarizerModel?: ChatRuntimeHostModelSelectionSnapshot | null;
 }
 
 export interface ChatRuntimeHostPrewarmResult {

@@ -114,6 +114,7 @@ const IFRAME_SIMULATION_EVENT_TYPES = new Set([
   'device.snapshot',
   'device.action.result',
   'device.action.error',
+  'electrical.diagnostics',
   'debug.state',
 ]);
 
@@ -170,6 +171,9 @@ export class SimulatorEditorComponent implements OnInit, OnDestroy {
   private debugMemoryCapabilitiesLoaded = false;
   private projectDebugConfigurationSubscription: Subscription | null = null;
   private blockSelectionSubscription: Subscription | null = null;
+  private projectActivationSubscription: Subscription | null = null;
+  private runtimeProjectPath: string | null = null;
+  private readonly runtimeOwnerId = createSimulatorRuntimeOwnerId();
   private selectedProjectDebugTargetBlockId = '';
   private removeIframeOperationHandlers: (() => void) | null = null;
   private iframeSimulationUiReady = false;
@@ -254,6 +258,18 @@ export class SimulatorEditorComponent implements OnInit, OnDestroy {
           void this.syncIframeDebugUiSnapshot();
         },
       );
+    this.projectActivationSubscription =
+      this.projectService.projectActivation$.subscribe(({ path: projectPath }) => {
+        const runtimeProjectPath = this.runtimeProjectPath;
+        if (
+          !runtimeProjectPath
+          || isSameSimulatorProjectPath(projectPath, runtimeProjectPath)
+        ) {
+          return;
+        }
+        this.state = 'disconnected';
+        void this.disposeRuntime(runtimeProjectPath, 'project-activation');
+      });
     this.loadProjectDebugConfiguration();
     void this.connectIframeSimulationUi();
   }
@@ -269,7 +285,9 @@ export class SimulatorEditorComponent implements OnInit, OnDestroy {
     this.projectDebugConfigurationSubscription = null;
     this.blockSelectionSubscription?.unsubscribe();
     this.blockSelectionSubscription = null;
-    void this.disposeRuntime();
+    this.projectActivationSubscription?.unsubscribe();
+    this.projectActivationSubscription = null;
+    void this.disposeRuntime(this.runtimeProjectPath, 'component-destroy');
   }
 
   get selectedProjectDebugBlockId(): string {
@@ -832,7 +850,30 @@ export class SimulatorEditorComponent implements OnInit, OnDestroy {
     if (!gatewayApi) {
       throw new Error('本地仿真仅支持 Aily Blockly 桌面版。');
     }
-    const bootstrap = await gatewayApi.start(projectPath) as GatewayBootstrap;
+    this.runtimeProjectPath = projectPath;
+    let bootstrap: GatewayBootstrap;
+    try {
+      bootstrap = await gatewayApi.start(
+        projectPath,
+        this.runtimeOwnerId,
+      ) as GatewayBootstrap;
+    } catch (error) {
+      if (this.runtimeProjectPath === projectPath) {
+        this.runtimeProjectPath = null;
+      }
+      throw error;
+    }
+    if (
+      this.destroyed
+      || this.projectService.currentProjectPath !== projectPath
+    ) {
+      await gatewayApi.stop(projectPath, this.runtimeOwnerId)
+        .catch(() => undefined);
+      if (this.runtimeProjectPath === projectPath) {
+        this.runtimeProjectPath = null;
+      }
+      throw new Error('项目已切换，本次仿真启动已取消。');
+    }
     this.runtimeSource = bootstrap.runtimePackId
       ? `${bootstrap.runtimePackId} (${bootstrap.runtimeMode || 'unknown'})`
       : bootstrap.runtimeSource;
@@ -927,6 +968,9 @@ export class SimulatorEditorComponent implements OnInit, OnDestroy {
       .then(() => client.streamEvents(sessionId, {
         signal,
         reconnect: true,
+        ...(this.manifest
+          ? { expectedSceneRevision: this.manifest.sceneRevision }
+          : {}),
         onEvent: async (event) => {
           if (event.type === 'display.frame') {
             await iframeApi.receiveDisplayFrame?.(event.payload);
@@ -1530,12 +1574,32 @@ export class SimulatorEditorComponent implements OnInit, OnDestroy {
     }
   }
 
-  private async disposeRuntime(): Promise<void> {
+  private async disposeRuntime(
+    expectedProjectPath: string | null,
+    reason: 'component-destroy' | 'project-activation',
+  ): Promise<void> {
+    console.info('[SimulatorLifecycle][DISPOSE_RUNTIME]', {
+      reason,
+      expectedProjectPath,
+      ownerId: this.runtimeOwnerId,
+      hasClient: !!this.client,
+      hasSession: !!this.sessionId,
+    });
+    const disposedClient = this.client;
+    if (
+      expectedProjectPath
+      && this.runtimeProjectPath === expectedProjectPath
+    ) {
+      this.runtimeProjectPath = null;
+    }
     await this.deleteCurrentSession();
     await (window as any).electronAPI?.simulatorGateway
-      ?.stop?.()
+      ?.stop?.(
+        expectedProjectPath || undefined,
+        this.runtimeOwnerId,
+      )
       .catch(() => undefined);
-    this.client = null;
+    if (this.client === disposedClient) this.client = null;
   }
 }
 
@@ -1561,7 +1625,16 @@ function redactSimulationEventForIframe(
       break;
     case 'uart.data':
       payload = {
+        uart: Number.isSafeInteger(source['uart'])
+          ? Number(source['uart'])
+          : 0,
         dataEncoding: 'base64',
+        dataByteLength: Number.isSafeInteger(source['dataByteLength'])
+          ? Number(source['dataByteLength'])
+          : 0,
+        chunkCount: Number.isSafeInteger(source['chunkCount'])
+          ? Number(source['chunkCount'])
+          : 0,
         dataBase64: typeof source['dataBase64'] === 'string'
           ? source['dataBase64']
           : '',
@@ -1601,6 +1674,14 @@ function redactSimulationEventForIframe(
     case 'device.state':
       payload = {
         instanceId: boundedDisplayText(source['instanceId'], 128),
+        modelId: boundedDisplayText(source['modelId'], 128),
+        reason:
+          source['reason'] === 'initial'
+          || source['reason'] === 'signal'
+          || source['reason'] === 'action'
+          || source['reason'] === 'reset'
+            ? source['reason']
+            : 'signal',
         state: sanitizeSimulationScalarRecord(source['state']),
       };
       break;
@@ -1626,6 +1707,66 @@ function redactSimulationEventForIframe(
         state: sanitizeSimulationScalarRecord(source['state']),
       };
       break;
+    case 'electrical.diagnostics': {
+      const rawIssues = Array.isArray(source['issues'])
+        ? source['issues'].slice(0, 768)
+        : [];
+      const issues = rawIssues
+        .filter(isRecord)
+        .map((issue) => {
+          const nodeId = boundedDisplayText(issue['nodeId'], 256);
+          const nodeIds = [...new Set(
+            (
+              Array.isArray(issue['nodeIds'])
+                ? issue['nodeIds']
+                : [issue['nodeId']]
+            )
+              .slice(0, 512)
+              .map((item) => boundedDisplayText(item, 256))
+              .filter((item) => item.length > 0),
+          )];
+          if (nodeId && !nodeIds.includes(nodeId)) nodeIds.unshift(nodeId);
+          return {
+            code: issue['code'] === 'ELECTRICAL_NODE_CONFLICT'
+              ? 'ELECTRICAL_NODE_CONFLICT'
+              : 'ELECTRICAL_GPIO_FLOATING',
+            severity:
+              issue['severity'] === 'error'
+              || issue['severity'] === 'warning'
+                ? issue['severity']
+                : 'info',
+            nodeId,
+            nodeIds,
+            level: issue['level'] === 'conflict' ? 'conflict' : 'floating',
+            strength:
+              issue['strength'] === 'strong'
+              || issue['strength'] === 'weak'
+                ? issue['strength']
+                : 'none',
+            sources: (
+              Array.isArray(issue['sources']) ? issue['sources'] : []
+            ).slice(0, 320).map((item) => boundedDisplayText(item, 256)),
+            message: boundedDisplayText(issue['message'], 512),
+          };
+        });
+      payload = {
+        schemaVersion: 1,
+        kind: 'aily-electrical-diagnostics',
+        revision: Number.isSafeInteger(source['revision'])
+          && Number(source['revision']) > 0
+            ? Number(source['revision'])
+            : 1,
+        status: issues.some(({ severity }) => severity === 'error')
+          ? 'error'
+          : issues.some(({ severity }) => severity === 'warning')
+            ? 'warning'
+            : issues.length > 0
+              ? 'info'
+            : 'healthy',
+        issues,
+      };
+      break;
+    }
     case 'debug.state':
       payload = {
         state: typeof source['state'] === 'string'
@@ -2186,6 +2327,20 @@ function emptyDebugSourceContext(
     blockMapping: null,
     lines: [],
   };
+}
+
+function createSimulatorRuntimeOwnerId(): string {
+  const randomId = globalThis.crypto?.randomUUID?.()
+    ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  return `simulator-editor:${randomId}`;
+}
+
+function isSameSimulatorProjectPath(left: string, right: string): boolean {
+  const normalize = (value: string) => value
+    .replace(/\\/g, '/')
+    .replace(/\/+$/, '')
+    .toLowerCase();
+  return normalize(left) === normalize(right);
 }
 
 function basename(filePath: string): string {

@@ -3174,9 +3174,6 @@ export function buildTurnResponseLexSessionSnapshot(
         error: toolCall?.error,
       })),
       timestamp: round?.timestamp,
-      ...(normalizeTurnResponseSummaryPreview(round?.summary)
-        ? { summary: normalizeTurnResponseSummaryPreview(round?.summary) }
-        : {}),
     })),
     response: createConversationTurnResponse({
       participant: turn.response?.participant || 'assistant',
@@ -3207,7 +3204,6 @@ export function buildTurnResponseLexSessionSnapshot(
     });
   });
 
-  const normalizedLexTurns = applyPersistedRoundSummariesOnTurns(lexTurns, turnResponses);
   const latestContinuation = turnResponses[turnResponses.length - 1]?.response?.continuation;
   const latestRequestSnapshot = findLatestTurnRequestPromptContextSnapshot(turnResponses);
 
@@ -3230,7 +3226,7 @@ export function buildTurnResponseLexSessionSnapshot(
 
   return {
     sessionId,
-    turns: normalizedLexTurns,
+    turns: lexTurns,
     ...(normalizedRequestContext ? { requestContext: normalizedRequestContext } : {}),
     ...(activeSkillNames.length > 0 ? { activeSkillNames } : {}),
     revision: 0,
@@ -3262,148 +3258,6 @@ function normalizeActiveSkillNames(value: readonly string[] | undefined): string
       .filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
       .map(entry => entry.trim()),
   )).sort((left, right) => left.localeCompare(right));
-}
-
-interface PersistedRoundSummaryCarrier {
-  readonly anchorRoundId: string;
-  readonly summary: string;
-  readonly anchorTurnId?: string;
-  readonly turnIndex?: number;
-  readonly roundIndex?: number;
-}
-
-function getLatestStructuredRoundSummaryForTurn(
-  turn: import('aily-lex/browser').TurnResponseTurn,
-): PersistedRoundSummaryCarrier | undefined {
-  const turnSummary = turn.responseModel?.summaries?.at(-1) ?? turn.responseModel?.summary;
-  const rawSummary = (turnSummary ?? {}) as Record<string, unknown>;
-  const toolCallRoundId = typeof turnSummary?.toolCallRoundId === 'string' && turnSummary.toolCallRoundId.trim()
-    ? turnSummary.toolCallRoundId.trim()
-    : undefined;
-  const anchorRoundId = typeof rawSummary['anchorRoundId'] === 'string' && rawSummary['anchorRoundId'].trim()
-    ? rawSummary['anchorRoundId'].trim()
-    : toolCallRoundId;
-  const anchorTurnId = typeof rawSummary['anchorTurnId'] === 'string' && rawSummary['anchorTurnId'].trim()
-    ? rawSummary['anchorTurnId'].trim()
-    : undefined;
-  const turnIndex = typeof rawSummary['turnIndex'] === 'number' && Number.isInteger(rawSummary['turnIndex']) && rawSummary['turnIndex'] >= 0
-    ? rawSummary['turnIndex']
-    : undefined;
-  const roundIndex = typeof rawSummary['roundIndex'] === 'number' && Number.isInteger(rawSummary['roundIndex']) && rawSummary['roundIndex'] >= -1
-    ? rawSummary['roundIndex']
-    : undefined;
-  const summary = normalizeTurnResponseSummaryPreview(turnSummary?.text);
-
-  if (!anchorRoundId || !summary) {
-    return undefined;
-  }
-
-  return {
-    anchorRoundId,
-    summary,
-    ...(anchorTurnId ? { anchorTurnId } : {}),
-    ...(turnIndex !== undefined ? { turnIndex } : {}),
-    ...(roundIndex !== undefined ? { roundIndex } : {}),
-  };
-}
-
-function collectDirectSummaryRoundIds(
-  turns: readonly import('aily-lex/browser').ConversationTurn[],
-): Set<string> {
-  const directSummaryRoundIds = new Set<string>();
-
-  for (const turn of turns) {
-    for (const round of turn.rounds) {
-      if (normalizeTurnResponseSummaryPreview(round.summary)) {
-        directSummaryRoundIds.add(round.id);
-      }
-    }
-  }
-
-  return directSummaryRoundIds;
-}
-
-function findPersistedRoundSummaryTarget(
-  turns: readonly import('aily-lex/browser').ConversationTurn[],
-  sourceTurnIndex: number,
-  carrier: PersistedRoundSummaryCarrier,
-): { turnIndex: number; roundIndex: number } | undefined {
-  const maxTurnIndex = Math.min(sourceTurnIndex, turns.length - 1);
-  if (maxTurnIndex < 0) {
-    return undefined;
-  }
-
-  for (let turnIndex = maxTurnIndex; turnIndex >= 0; turnIndex -= 1) {
-    const roundIndex = turns[turnIndex].rounds.findIndex(round => round.id === carrier.anchorRoundId);
-    if (roundIndex >= 0) {
-      return { turnIndex, roundIndex };
-    }
-  }
-
-  if (carrier.anchorTurnId && carrier.roundIndex !== undefined && carrier.roundIndex >= 0) {
-    for (let turnIndex = maxTurnIndex; turnIndex >= 0; turnIndex -= 1) {
-      const turn = turns[turnIndex];
-      if (turn.id !== carrier.anchorTurnId) {
-        continue;
-      }
-
-      return carrier.roundIndex < turn.rounds.length
-        ? { turnIndex, roundIndex: carrier.roundIndex }
-        : undefined;
-    }
-  }
-
-  if (carrier.turnIndex !== undefined && carrier.roundIndex !== undefined && carrier.roundIndex >= 0) {
-    const turn = turns[carrier.turnIndex];
-    return carrier.turnIndex <= maxTurnIndex && turn && carrier.roundIndex < turn.rounds.length
-      ? { turnIndex: carrier.turnIndex, roundIndex: carrier.roundIndex }
-      : undefined;
-  }
-
-  return undefined;
-}
-
-function applyPersistedRoundSummariesOnTurns(
-  turns: readonly import('aily-lex/browser').ConversationTurn[],
-  turnResponses: readonly import('aily-lex/browser').TurnResponseTurn[],
-): import('aily-lex/browser').ConversationTurn[] {
-  if (!turns.length || !turnResponses.length) {
-    return [...turns];
-  }
-
-  const turnsWithNormalizedSummaries = [...turns];
-  const directSummaryRoundIds = collectDirectSummaryRoundIds(turns);
-
-  for (let sourceTurnIndex = 0; sourceTurnIndex < turnResponses.length; sourceTurnIndex += 1) {
-    const carrier = getLatestStructuredRoundSummaryForTurn(turnResponses[sourceTurnIndex]);
-    if (!carrier) {
-      continue;
-    }
-
-    const target = findPersistedRoundSummaryTarget(turnsWithNormalizedSummaries, sourceTurnIndex, carrier);
-    if (!target) {
-      continue;
-    }
-
-    const targetTurn = turnsWithNormalizedSummaries[target.turnIndex];
-    const targetRound = targetTurn.rounds[target.roundIndex];
-    if (directSummaryRoundIds.has(targetRound.id)) {
-      continue;
-    }
-
-    const updatedRounds = [...targetTurn.rounds];
-    updatedRounds[target.roundIndex] = {
-      ...targetRound,
-      summary: carrier.summary,
-    };
-
-    turnsWithNormalizedSummaries[target.turnIndex] = {
-      ...targetTurn,
-      rounds: updatedRounds,
-    };
-  }
-
-  return turnsWithNormalizedSummaries;
 }
 
 function clonePersistableInteractionContinuation(

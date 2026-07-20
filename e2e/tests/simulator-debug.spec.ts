@@ -37,6 +37,10 @@ const PACKAGE_SOURCE = path.resolve(
   process.env['AILY_E2E_ESP32S3_PACKAGE_SOURCE']
   || path.join(ARTIFACT_ROOT, 'esp32s3-package-source'),
 );
+const BLOCKLY_LIBRARIES_ROOT = path.resolve(
+  process.env['AILY_E2E_BLOCKLY_LIBRARIES_ROOT']
+  || path.join(ROOT, '..', 'aily-blockly-libraries'),
+);
 const PREPARATION_REPORT_PATH = path.join(
   ARTIFACT_ROOT,
   'simulator-debug-preparation.json',
@@ -298,6 +302,171 @@ test.describe('ESP32-S3 simulator desktop debug closure', () => {
   );
 });
 
+async function verifyCoreIoLedButton(
+  frame: import('@playwright/test').FrameLocator,
+): Promise<{
+  ledPinmapId: 'lib-core-io:led:generic';
+  buttonPinmapId: 'lib-core-io:button:generic';
+  resistorPinmapId: 'lib-core-io:resistor:generic';
+  currentLimitOhms: 220;
+  currentLimitAppearanceVisible: true;
+  blinkObserved: true;
+  buttonPressObserved: true;
+  buttonHeldLedOn: true;
+  buttonReleaseObserved: true;
+  electricalDiagnosticsForwarded: true;
+  electricalDiagnosticRecoveryObserved: true;
+}> {
+  const ledSurface = frame.locator(
+    '[data-aily-appearance-id="aily.appearance.gpio-led"]',
+  ).first();
+  const buttonSurface = frame.locator(
+    '[data-aily-appearance-id="aily.appearance.gpio-button"]',
+  ).first();
+  const resistorSurface = frame.locator(
+    '[data-aily-appearance-id="aily.appearance.resistor"]',
+  ).first();
+  await expect(ledSurface).toBeVisible({ timeout: 30_000 });
+  await expect(buttonSurface).toBeVisible({ timeout: 30_000 });
+  await expect(resistorSurface).toBeVisible({ timeout: 30_000 });
+  await expect(resistorSurface).toHaveAttribute(
+    'data-aily-appearance-version',
+    '1.0.0',
+  );
+
+  const emitter = ledSurface.locator(
+    '[data-aily-simulation-view="led-emitter"]',
+  );
+  const cap = buttonSurface.locator(
+    '[data-aily-simulation-view="button-cap"]',
+  );
+  const hitArea = buttonSurface.locator(
+    '[data-aily-slot-id="hit-area"]',
+  );
+  await expect(emitter).toBeVisible({ timeout: 30_000 });
+  await expect(cap).toBeVisible({ timeout: 30_000 });
+  await expect(hitArea).toHaveAttribute('role', 'button');
+  const electricalDiagnostics = frame.locator(
+    '.simulation-electrical-diagnostics',
+  );
+  await expect(electricalDiagnostics).toHaveAttribute(
+    'data-status',
+    'info',
+    { timeout: 30_000 },
+  );
+  const initialElectricalRevision = Number(
+    await electricalDiagnostics.getAttribute('data-revision'),
+  );
+  expect(initialElectricalRevision).toBeGreaterThan(0);
+  await expect(electricalDiagnostics.locator(
+    '[data-code="ELECTRICAL_GPIO_FLOATING"]'
+    + '[data-node-id="net-e2e_button_d3"]',
+  )).toBeVisible();
+
+  // Released firmware branch blinks board D2 (ESP32-S3 GPIO3). Observe a
+  // complete off -> on -> off
+  // cycle instead of accepting a static initial snapshot.
+  await waitForLocatorAttribute(
+    emitter,
+    'data-aily-led-on',
+    'false',
+    8_000,
+  );
+  await waitForLocatorAttribute(
+    emitter,
+    'data-aily-led-on',
+    'true',
+    8_000,
+  );
+  await waitForLocatorAttribute(
+    emitter,
+    'data-aily-led-on',
+    'false',
+    8_000,
+  );
+
+  await hitArea.dispatchEvent('pointerdown', {
+    button: 0,
+    pointerId: 41,
+  });
+  await waitForLocatorAttribute(
+    cap,
+    'data-aily-button-pressed',
+    'true',
+    5_000,
+  );
+  await waitForLocatorAttribute(
+    emitter,
+    'data-aily-led-on',
+    'true',
+    5_000,
+  );
+  await expect(electricalDiagnostics).toHaveCount(0, { timeout: 5_000 });
+  await pause(600);
+  expect(await emitter.getAttribute('data-aily-led-on')).toBe('true');
+
+  await hitArea.dispatchEvent('pointerup', {
+    button: 0,
+    pointerId: 41,
+  });
+  await waitForLocatorAttribute(
+    cap,
+    'data-aily-button-pressed',
+    'false',
+    5_000,
+  );
+  await waitForLocatorAttribute(
+    emitter,
+    'data-aily-led-on',
+    'false',
+    8_000,
+  );
+  await expect(electricalDiagnostics).toHaveAttribute(
+    'data-status',
+    'info',
+    { timeout: 5_000 },
+  );
+  await expect.poll(async () => Number(
+    await electricalDiagnostics.getAttribute('data-revision'),
+  )).toBeGreaterThan(initialElectricalRevision);
+
+  return {
+    ledPinmapId: 'lib-core-io:led:generic',
+    buttonPinmapId: 'lib-core-io:button:generic',
+    resistorPinmapId: 'lib-core-io:resistor:generic',
+    currentLimitOhms: 220,
+    currentLimitAppearanceVisible: true,
+    blinkObserved: true,
+    buttonPressObserved: true,
+    buttonHeldLedOn: true,
+    buttonReleaseObserved: true,
+    electricalDiagnosticsForwarded: true,
+    electricalDiagnosticRecoveryObserved: true,
+  };
+}
+
+async function waitForLocatorAttribute(
+  locator: import('@playwright/test').Locator,
+  name: string,
+  expected: string,
+  timeoutMs: number,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let lastValue: string | null = null;
+  while (Date.now() < deadline) {
+    lastValue = await locator.getAttribute(name).catch(() => null);
+    if (lastValue === expected) return;
+    await pause(25);
+  }
+  throw new Error(
+    `Timed out waiting for ${name}=${expected}; last value was ${lastValue}.`,
+  );
+}
+
+function pause(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
 async function verifyIframeUartClosure(
   win: import('@playwright/test').Page,
   electronApp: import('@playwright/test').ElectronApplication,
@@ -308,6 +477,17 @@ async function verifyIframeUartClosure(
   writeStatus: string;
   runtimeControlsOwner: 'iframe';
   legacyBlocklyRuntimeUiRemoved: true;
+  coreIo: {
+    ledPinmapId: 'lib-core-io:led:generic';
+    buttonPinmapId: 'lib-core-io:button:generic';
+    resistorPinmapId: 'lib-core-io:resistor:generic';
+    currentLimitOhms: 220;
+    currentLimitAppearanceVisible: true;
+    blinkObserved: true;
+    buttonPressObserved: true;
+    buttonHeldLedOn: true;
+    buttonReleaseObserved: true;
+  };
   debugPanelOwner: 'iframe';
   legacyBlocklyDebugUiRemoved: true;
   debugPanelCollapsible: true;
@@ -320,6 +500,13 @@ async function verifyIframeUartClosure(
     labels: string[];
     selectedLabel: string;
     switchRoundTrip: boolean;
+  };
+  debugTasks: {
+    count: number;
+    ids: string[];
+    labels: string[];
+    includesLoopTask: true;
+    readOnly: true;
   };
   debugWatch: {
     expression: 'debugCounter';
@@ -484,6 +671,7 @@ async function verifyIframeUartClosure(
   });
   const output = frame.locator('.simulation-uart-output');
   await expect(output).toContainText('ESP-ROM:', { timeout: 30_000 });
+  const coreIo = await verifyCoreIoLedButton(frame);
 
   const debugState = debugPanel.locator('.debug-state');
   await expect(debugState).toHaveText('disconnected', {
@@ -578,6 +766,29 @@ async function verifyIframeUartClosure(
     );
     threadSwitchRoundTrip = true;
   }
+  const taskSnapshotCard = debugPanel.locator(
+    '[data-testid="debug-task-snapshot"]',
+  );
+  await expect(taskSnapshotCard).toHaveAttribute(
+    'data-task-availability',
+    'available',
+    { timeout: 30_000 },
+  );
+  await expect(taskSnapshotCard).toHaveAttribute('data-task-reason', 'ok');
+  const taskRows = debugPanel.locator('.task-list [data-task-id]');
+  await expect(taskRows.first()).toBeVisible({ timeout: 30_000 });
+  const taskCount = await taskRows.count();
+  expect(taskCount).toBeGreaterThan(0);
+  expect(taskCount).toBeLessThanOrEqual(128);
+  const taskIds = await taskRows.evaluateAll((elements) => (
+    elements.map((element) => element.getAttribute('data-task-id') || '')
+  ));
+  expect(taskIds.every((id) => /^tcb:[0-9a-f]+$/.test(id))).toBe(true);
+  const taskLabels = (await taskRows.allInnerTexts())
+    .map((label) => label.replace(/\s+/g, ' ').trim());
+  expect(taskLabels).toHaveLength(taskCount);
+  expect(taskLabels.some((label) => label.includes('loopTask'))).toBe(true);
+  await expect(debugPanel.locator('.task-list button')).toHaveCount(0);
   const stoppedFunction = (
     await debugPanel.locator('.debug-location strong').innerText()
   ).trim();
@@ -634,9 +845,13 @@ async function verifyIframeUartClosure(
     'resolved',
   );
   await expect(currentSourceGutter).toBeDisabled();
-  const emptySourceGutter = sourceContext.locator(
+  const sourceBreakpointLine = sourceContext.locator('.source-line').filter({
+    hasText: 'delay(250);',
+  });
+  await expect(sourceBreakpointLine).toHaveCount(1);
+  const emptySourceGutter = sourceBreakpointLine.locator(
     '.source-breakpoint-gutter[data-source-breakpoint-state="none"]',
-  ).first();
+  );
   await expect(emptySourceGutter).toBeEnabled();
   const gutterSourceLine = Number(
     await emptySourceGutter.getAttribute('data-source-line'),
@@ -682,7 +897,7 @@ async function verifyIframeUartClosure(
     .filter({ hasText: 'debugCounter' })
     .first();
   await expect(variableRow).toBeVisible({ timeout: 30_000 });
-  await expect(variableRow.locator('.variable-value')).toHaveText('2');
+  await expect(variableRow.locator('.variable-value')).toHaveText('3');
   const variableType = (
     await variableRow.locator('small').first().innerText()
   ).trim();
@@ -769,7 +984,7 @@ async function verifyIframeUartClosure(
     .filter({ hasText: 'debugCounter' })
     .first();
   await expect(watchRow).toBeVisible({ timeout: 30_000 });
-  await expect(watchRow.locator('span')).toHaveText('2');
+  await expect(watchRow.locator('span')).toHaveText('3');
   const watchValue = (await watchRow.locator('span').innerText()).trim();
   const watchType = (await watchRow.locator('small').innerText()).trim();
 
@@ -813,7 +1028,7 @@ async function verifyIframeUartClosure(
   await watchInput.fill('debugCounter');
   await invokeIframeDebugOperation(debugPanel, 'debug.watch.add');
   await expect(watchRow).toBeVisible({ timeout: 30_000 });
-  await expect(watchRow.locator('span')).toHaveText('2');
+  await expect(watchRow.locator('span')).toHaveText('3');
   await expect(configurationRows).toHaveCount(2);
 
   const registerRows = debugPanel.locator('.register-list > div');
@@ -981,7 +1196,7 @@ async function verifyIframeUartClosure(
   await expect(selectedFrameVariable).toBeVisible({ timeout: 30_000 });
   await expect(
     selectedFrameVariable.locator('.variable-value'),
-  ).toHaveText('2');
+  ).toHaveText('3');
   await expect(sourceContext).toHaveAttribute(
     'data-source-status',
     'available',
@@ -1090,7 +1305,7 @@ async function verifyIframeUartClosure(
     .filter({ hasText: 'debugCounter' })
     .first();
   await expect(restoredWatchRow).toBeVisible({ timeout: 30_000 });
-  await expect(restoredWatchRow.locator('span')).toHaveText('2');
+  await expect(restoredWatchRow.locator('span')).toHaveText('3');
   const restoredWatchValue = (
     await restoredWatchRow.locator('span').innerText()
   ).trim();
@@ -1131,6 +1346,7 @@ async function verifyIframeUartClosure(
     writeStatus: writeStatusText,
     runtimeControlsOwner: 'iframe',
     legacyBlocklyRuntimeUiRemoved: true,
+    coreIo,
     debugPanelOwner: 'iframe',
     legacyBlocklyDebugUiRemoved: true,
     debugPanelCollapsible: true,
@@ -1144,6 +1360,13 @@ async function verifyIframeUartClosure(
       selectedLabel: selectedThreadLabel,
       switchRoundTrip: threadSwitchRoundTrip,
     },
+    debugTasks: {
+      count: taskCount,
+      ids: taskIds,
+      labels: taskLabels,
+      includesLoopTask: true,
+      readOnly: true,
+    },
     debugWatch: {
       expression: 'debugCounter',
       value: watchValue,
@@ -1151,7 +1374,7 @@ async function verifyIframeUartClosure(
     },
     debugVariable: {
       name: 'debugCounter',
-      value: '2',
+      value: '3',
       type: variableType,
     },
     debugVariableExpansion: {
@@ -1198,7 +1421,7 @@ async function verifyIframeUartClosure(
       functionName: 'loop',
       frameLevel: loopFrameLevel,
       variableName: 'debugCounter',
-      variableValue: '2',
+      variableValue: '3',
     },
     debugRegisters: {
       firstPageName: firstPageRegisterName,
@@ -1444,7 +1667,14 @@ async function stageProject(): Promise<void> {
   );
   await mkdir(targetScope, { recursive: true });
   for (const packageName of PACKAGE_NAMES) {
-    const source = path.join(sourceScope, packageName);
+    const localLibrarySource = path.join(
+      BLOCKLY_LIBRARIES_ROOT,
+      packageName === 'lib-core-io' ? 'core-io' : '__not-local__',
+    );
+    const source = packageName === 'lib-core-io'
+      && existsSync(path.join(localLibrarySource, 'pinmaps', 'pinmap_catalog.json'))
+        ? localLibrarySource
+        : path.join(sourceScope, packageName);
     if (!existsSync(source)) {
       throw new Error(`Required fixture package is unavailable: ${source}`);
     }

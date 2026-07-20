@@ -212,6 +212,7 @@ export function callRuntimeOwnerMethod(
         providerOptions: command?.providerOptions ?? null,
         agentRuntimeMode: command?.agentRuntimeMode ?? null,
         currentModel: command?.currentModel ?? null,
+        summarizerModel: command?.summarizerModel ?? null,
       });
     }
     case 'restoreRuntimeSession': {

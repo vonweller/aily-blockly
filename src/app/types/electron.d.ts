@@ -56,7 +56,7 @@ declare global {
       builder: any;
       simulatorGateway?: {
         iframeUrlOverride?: string;
-        start: (projectPath: string) => Promise<{
+        start: (projectPath: string, ownerId?: string) => Promise<{
           baseUrl: string;
           accessToken: string;
           artifactDirectory: string;
@@ -89,7 +89,13 @@ declare global {
             occurredAt: string;
           };
         }>;
-        stop: () => Promise<{ state: 'stopped' }>;
+        stop: (
+          expectedProjectPath?: string,
+          expectedOwnerId?: string,
+        ) => Promise<{
+          state: 'ready' | 'stopped';
+          projectPath?: string;
+        }>;
         onStateChanged: (
           callback: (state: {
             state: 'starting' | 'ready' | 'stopped' | 'failed';

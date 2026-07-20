@@ -10,6 +10,7 @@ import {
 
 import type { ChatPartStore, ChatPartStoreReadableHandle } from '../core/chat-part-store';
 import type { ChatPart } from '../core/chat-parts';
+import { upsertTurnResponseProgress } from '../core/turn-response-progress';
 import type {
   CanonicalRenderItemKind,
   CanonicalRenderItemStatus,
@@ -71,10 +72,10 @@ function applyHostStreamResponseProgressUpdate(
       ];
       break;
     case 'response_progress_message':
-      nextResponse.progressMessages = [
-        ...(nextResponse.progressMessages ?? []),
+      nextResponse.progressMessages = upsertTurnResponseProgress(
+        nextResponse.progressMessages,
         cloneHostStreamProgressMessage(event.value),
-      ];
+      );
       break;
   }
 
@@ -2442,12 +2443,10 @@ function cloneProjectedTurnRounds(
   rounds: TurnResponseTurn['rounds'],
 ): TurnResponseTurn['rounds'] {
   return (rounds ?? []).map((round) => {
-    const summary = normalizeTurnResponseSummaryPreview(round.summary);
-
+    const { summary: _runtimeSummary, ...roundWithoutSummary } = round;
     return {
-      ...round,
+      ...roundWithoutSummary,
       toolCalls: (round.toolCalls ?? []).map(toolCall => ({ ...toolCall })),
-      ...(summary ? { summary } : {}),
     };
   });
 }
