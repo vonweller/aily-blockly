@@ -237,6 +237,16 @@ function createCatalogState(rootDir, index, locale, meta = {}) {
       const installedState = readInstalledState(rootDir, entry);
       const copy = resolveLocalizedCopy(entry, locale);
       const toolId = TOOL_ID_ALIASES[entry.id] || entry.id;
+      const localizedConfig = installedState.config
+        ? {
+            ...installedState.config,
+            app: {
+              ...installedState.config.app,
+              name: copy.name,
+              description: copy.description,
+            },
+          }
+        : null;
       return {
         id: entry.id,
         toolId,
@@ -253,7 +263,7 @@ function createCatalogState(rootDir, index, locale, meta = {}) {
         description: copy.description,
         icon: entry.app.icon,
         enabled: entry.app.enabled,
-        config: installedState.config,
+        config: localizedConfig,
         ...(installedState.installError ? { installError: installedState.installError } : {}),
       };
     }),

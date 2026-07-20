@@ -120,6 +120,8 @@ test('installs indexed package into the user app project and exposes its absolut
   assert.ok(npmCalls[0].includes('@aily-project/subapp-aily-chat@0.1.0'));
   assert.equal(after.apps[0].installed, true);
   assert.equal(after.apps[0].toolId, 'aily-chat-react');
+  assert.equal(after.apps[0].config.app.name, 'Aily Chat');
+  assert.equal(after.apps[0].config.app.description, 'AI 编程助手');
   assert.equal(
     after.apps[0].config.packagePath,
     path.join(rootDir, 'node_modules', '@aily-project', 'subapp-aily-chat'),

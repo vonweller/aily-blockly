@@ -991,7 +991,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       return { ok: false, message: 'Child app listing is only available to Aily Chat' };
     }
     return this.mainUiAutomation.listChildApps({
-      limit: Math.max(1, Math.min(12, Number(payload?.limit) || 6)),
+      limit: Math.max(1, Math.min(100, Number(payload?.limit) || 100)),
     });
   }
 
