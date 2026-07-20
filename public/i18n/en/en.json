@@ -520,6 +520,7 @@
         "TEXT_DOWNLOADED": "Version {{version}} has been downloaded. Install now?",
         "TEXT_AVAILABLE": "Current version {{currentVersion}}, new version {{version}}<br>Would you like to download and install this update?",
         "DOWNLOAD_FAILED": "Download Failed",
+        "USING_FALLBACK_DOWNLOAD_SOURCE": "Using fallback download source ({{current}}/{{total}})",
         "REMIND_LATER": "Remind Later",
         "SKIP_VERSION": "Skip This Version",
         "UPDATE_NOW": "Update Now",
