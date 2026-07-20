@@ -213,7 +213,7 @@
               type="button"
               class="checkpoint-restore-action"
               [title]="checkpointRestoreSurface.actionTitle"
-              (click)="handleCheckpointRestoreSurfaceAction($event)">
+              (click)="handleCheckpointRestoreSurfaceAction($event, vm.sessionId)">
               {{ checkpointRestoreSurface.actionLabelKey | translate }}
             </button>
             <div class="checkpoint-line-right"></div>

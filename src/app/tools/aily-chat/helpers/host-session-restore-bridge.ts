@@ -1160,7 +1160,7 @@ function toHostSessionRestoreErrorMessage(error: unknown): string {
       : 'unknown error';
 }
 
-function sanitizeHostRecordForRestore(hostRecord: HostSessionRecord): HostSessionRecord {
+export function sanitizeHostRecordForRestore(hostRecord: HostSessionRecord): HostSessionRecord {
   if (!hostRecord.turnResponses?.length) {
     return hostRecord;
   }

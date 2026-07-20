@@ -1311,7 +1311,6 @@ export class ChatHistoryService implements OnDestroy {
           shouldSkipSession: (sessionId, policy) => {
             const active = this.autoSaveSessionActiveProvider?.(sessionId) === true;
             if (active && policy === 'recovery-snapshot') {
-              console.log(`[ChatHistory] 跳过运行中会话兜底保存: ${sessionId}`);
               return true;
             }
             return false;
@@ -1370,7 +1369,6 @@ export class ChatHistoryService implements OnDestroy {
   private shouldSkipActiveRecoverySnapshot(sessionId: string, policy: HostSessionDirtyPolicy): boolean {
     const active = this.autoSaveSessionActiveProvider?.(sessionId) === true;
     if (active && policy === 'recovery-snapshot') {
-      console.log(`[ChatHistory] skip active recovery snapshot: ${sessionId}`);
       return true;
     }
     return false;

@@ -49,6 +49,7 @@ export class ChatVisibleTurnWindowModel {
     this.loadingOlder = false;
     if (!normalizedSessionId || !page || page.sessionId !== normalizedSessionId) {
       this.turns = [];
+      this.turnIndexById.clear();
       this.nextCursor = null;
       this.backwardsCursor = null;
       this.revision = 0;
