@@ -455,7 +455,6 @@ export class HeaderComponent implements OnInit, OnDestroy {
     let hasSelectablePort = portList0.length > 0;
 
     let core = (this.projectService.currentBoardConfig?.['core'] || '').toLowerCase();
-    const isEsp32Core = this.isEsp32Core(core);
     const canShowBleOtaPorts = await this.canShowBleOtaPorts(core);
     const canShowNetworkOtaPorts = await this.canShowNetworkOtaPorts(core);
 
@@ -495,51 +494,17 @@ export class HeaderComponent implements OnInit, OnDestroy {
     }
 
 
-    // 添加ESP32相关配置选项
-    // console.log('core:' + core);
-    if (isEsp32Core) {
-      let temp = this.projectService.currentBoardConfig['type'].split(':');
-      let board = temp[temp.length - 1];
-      let esp32config = await this.projectService.updateEsp32ConfigMenu(board);
-      if (esp32config) {
-        portList0 = portList0.concat(esp32config)
-      }
-      // console.log('ESP32配置选项:', esp32config);
-    }
-
-    // 添加 Wio Terminal 相关配置选项
-    else if (this.projectService.currentBoardConfig['type']?.split(':').pop() === 'seeed_wio_terminal') {
-      const wioTerminalConfig = await this.projectService.updateWioTerminalConfigMenu('seeed_wio_terminal');
-      if (wioTerminalConfig) {
-        portList0 = portList0.concat(wioTerminalConfig);
-      }
-    }
-
-    // 添加STM32相关配置选项
-    else if (core.indexOf('stm32') > -1) {
-      // 异步检测调试探针，完成后更新缓存并重建列表
+    // 加载当前开发板包声明的可选配置菜单。
+    if (core.includes('stm32') || core.includes('nrf5')) {
       this.detectProbes(generation, portList0, skipDetect);
-      let temp = this.projectService.currentBoardConfig['type'].split(':');
-      let board = temp[temp.length - 1];
-      let stm32config = await this.projectService.updateStm32ConfigMenu(board);
-      if (stm32config) {
-        portList0 = portList0.concat(stm32config)
-      }
     }
 
-    // 添加nRF5相关配置选项
-    else if (core.indexOf('nrf5') > -1) {
-      // 异步检测调试探针（nRF52）
-      this.detectProbes(generation, portList0, skipDetect);
-      let temp = this.projectService.currentBoardConfig['type'].split(':');
-      let board = temp[temp.length - 1];
-      let nrf5config = await this.projectService.updateNrf5ConfigMenu(board);
-      if (nrf5config) {
-        portList0 = portList0.concat(nrf5config)
-      }
+    const boardConfigMenu = await this.projectService.getBoardConfigMenu();
+    if (boardConfigMenu.length > 0) {
+      portList0 = portList0.concat(boardConfigMenu);
     }
 
-    // 添加切换开发板功能
+    // Add the board switch entry after optional package-provided menu items.
     portList0.push({ sep: true });
     portList0.push({
       name: this.translate.instant('BOARD_SELECTOR.TITLE'),
@@ -1425,33 +1390,23 @@ export class HeaderComponent implements OnInit, OnDestroy {
 
       packageJson['projectConfig'][subItem.key] = subItem.data;
       this.projectService.setPackageJson(packageJson);
-      if (subItem.key === 'CDCOnBoot') {
+      if (subItem.extra?.refreshRuntimeBoardConfig) {
         await this.projectService.refreshRuntimeBoardConfig();
       }
-      // 判断是否是STM32，是则更新项目配置
-      if (this.projectService.currentBoardConfig['core'].indexOf('stm32') > -1 &&
-        this.projectService.currentBoardConfig['description'].indexOf('Series') > -1) {
-        // 如果subItem包含pnum variant字段，则调用比较函数
-        if (subItem.key === 'pnum' && subItem.extra?.build.variant) {
-          let newPinConfig = subItem;
-          this.projectService.compareStm32PinConfig(newPinConfig)
-        }
+
+      if (subItem.extra?.syncPinConfig) {
+        await this.projectService.syncBoardPinConfig(subItem);
       }
 
-      // 判断是否是nRF5的softdevice选择，如果是则直接烧录softdevice
-      if (this.projectService.currentBoardConfig['core']?.indexOf('nRF5') > -1 &&
-        subItem.key === 'softdevice') {
-        // 检查串口是否已选择
+      if (subItem.extra?.selectAction === 'flash-softdevice') {
         if (!this.serialService.currentPort) {
-          this.message.warning(this.translate.instant('NRF5.SELECT_PORT_FIRST') || '请先选择串口');
+          const messageKey = subItem.extra?.selectPortMessage;
+          this.message.warning(messageKey ? this.translate.instant(messageKey) : 'Please select a port first');
           return;
         }
-
-        // 通过 UploaderService 调用烧录方法（使用 ActionService 分发到 _UploaderService）
         await this.uploaderService.flashSoftdevice(subItem.data, this.serialService.currentPort);
       }
 
-      // 触发预编译操作：配置变更后自动触发预编译
       this.builderService.triggerPreprocess('config-changed');
     }, 500);
   }
