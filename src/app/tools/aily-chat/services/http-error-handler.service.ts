@@ -76,10 +76,11 @@ export function getQuotaUsageText(err: any): string {
   const candidates = getNestedErrorData(err);
   for (const candidate of candidates) {
     if (!candidate || typeof candidate !== 'object') continue;
+    const quotaPeriodText = candidate.quotaPeriod === 'daily' ? '本日' : '本月';
     const limit = Number(candidate.limit);
     const used = Number(candidate.used);
     if (Number.isFinite(limit) && limit > 0 && Number.isFinite(used)) {
-      return `本月已用 ${used}/${limit} 次。`;
+      return `${quotaPeriodText}已用 ${used}/${limit} 次。`;
     }
   }
   return '';
