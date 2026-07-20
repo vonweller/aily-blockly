@@ -591,16 +591,6 @@ export class HeaderComponent implements OnInit, OnDestroy {
       ];
     }
 
-    const boardConfig = this.projectService.currentBoardConfig;
-    const coreRaw = boardConfig?.core;
-    if (coreRaw) {
-      const boardCore = String(coreRaw).toLowerCase();
-      const boardType = boardConfig['type'];
-      const boardId =
-        typeof boardType === 'string' && boardType.includes(':')
-          ? boardType.split(':').pop()
-          : '';
-
     // 加载当前开发板包声明的可选配置菜单。
     if (core.includes('stm32') || core.includes('nrf5')) {
       this.detectProbes(generation, portList0, skipDetect);

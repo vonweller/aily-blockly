@@ -183,6 +183,20 @@ export async function setBoardConfigTool(
             console.warn('Board configuration side effect failed:', error);
         }
 
+        if (invocationContext?.timelineWriter?.recordFileWrite && invocationContext.turnId && fileSystem.existsSync(packageJsonPath)) {
+            const afterContent = fileSystem.readFileSync(packageJsonPath, 'utf8');
+            if (!existedBefore || beforeContent !== afterContent) {
+                await invocationContext.timelineWriter.recordFileWrite({
+                    turnId: invocationContext.turnId,
+                    toolCallId: invocationContext.toolCallId,
+                    filePath: packageJsonPath,
+                    existedBefore,
+                    beforeContent,
+                    afterContent,
+                });
+            }
+        }
+
         if (builderService?.triggerPreprocess) {
             builderService.triggerPreprocess('config-changed');
         }
