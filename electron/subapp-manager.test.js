@@ -140,3 +140,77 @@ test('installs indexed package into the user app project and exposes its absolut
   assert.deepEqual(npmCalls[2].slice(0, 3), ['uninstall', '--prefix', rootDir]);
   assert.equal(removed.apps[0].installed, false);
 });
+
+test('update replaces stale package files even when npm metadata already claims the target version', async (t) => {
+  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aily-subapp-stale-update-'));
+  const packageDir = path.join(rootDir, 'node_modules', '@aily-project', 'subapp-aily-chat');
+  t.after(() => fs.rmSync(rootDir, { recursive: true, force: true }));
+
+  fs.mkdirSync(path.join(packageDir, 'ui'), { recursive: true });
+  fs.writeFileSync(path.join(packageDir, 'index.js'), '');
+  fs.writeFileSync(path.join(packageDir, 'ui', 'index.html'), '<!doctype html>');
+  fs.writeFileSync(path.join(packageDir, 'package.json'), JSON.stringify({
+    name: '@aily-project/subapp-aily-chat',
+    version: '0.1.0',
+    main: 'index.js',
+  }));
+
+  const npmCalls = [];
+  const manager = createSubappManager({
+    rootDir,
+    fetchImpl: async () => ({
+      ok: true,
+      text: async () => JSON.stringify(fixtureIndex('0.1.1')),
+    }),
+    runNpm: async (args) => {
+      npmCalls.push(args);
+      assert.equal(fs.existsSync(packageDir), false, 'stale package must be moved aside before npm runs');
+      fs.mkdirSync(path.join(packageDir, 'ui'), { recursive: true });
+      fs.writeFileSync(path.join(packageDir, 'index.js'), '');
+      fs.writeFileSync(path.join(packageDir, 'ui', 'index.html'), '<!doctype html>');
+      fs.writeFileSync(path.join(packageDir, 'package.json'), JSON.stringify({
+        name: '@aily-project/subapp-aily-chat',
+        version: '0.1.1',
+        main: 'index.js',
+      }));
+      return { code: 0, stdout: 'changed 1 package', stderr: '' };
+    },
+  });
+
+  const updated = await manager.update({ id: 'aily-chat', locale: 'en' });
+  assert.equal(npmCalls.length, 1);
+  assert.equal(updated.apps[0].installedVersion, '0.1.1');
+  assert.equal(updated.apps[0].updateAvailable, false);
+  assert.equal(fs.readdirSync(rootDir).some((name) => name.startsWith('.subapp-update-')), false);
+});
+
+test('update restores the previous package when the replacement cannot be verified', async (t) => {
+  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aily-subapp-update-rollback-'));
+  const packageDir = path.join(rootDir, 'node_modules', '@aily-project', 'subapp-aily-chat');
+  t.after(() => fs.rmSync(rootDir, { recursive: true, force: true }));
+
+  fs.mkdirSync(path.join(packageDir, 'ui'), { recursive: true });
+  fs.writeFileSync(path.join(packageDir, 'index.js'), 'old runtime');
+  fs.writeFileSync(path.join(packageDir, 'ui', 'index.html'), '<!doctype html>');
+  fs.writeFileSync(path.join(packageDir, 'package.json'), JSON.stringify({
+    name: '@aily-project/subapp-aily-chat',
+    version: '0.1.0',
+    main: 'index.js',
+  }));
+
+  const manager = createSubappManager({
+    rootDir,
+    fetchImpl: async () => ({
+      ok: true,
+      text: async () => JSON.stringify(fixtureIndex('0.1.1')),
+    }),
+    runNpm: async () => ({ code: 0, stdout: 'up to date', stderr: '' }),
+  });
+
+  await assert.rejects(
+    manager.update({ id: 'aily-chat', locale: 'en' }),
+    /update verification failed/,
+  );
+  assert.equal(JSON.parse(fs.readFileSync(path.join(packageDir, 'package.json'), 'utf8')).version, '0.1.0');
+  assert.equal(fs.readFileSync(path.join(packageDir, 'index.js'), 'utf8'), 'old runtime');
+});

@@ -392,6 +392,54 @@ function centerSubWindowOnMainDisplay(subWindow, mainWin, width, height) {
     }
 }
 
+/**
+ * 在窗口展示前一次性确定显示器、位置和尺寸；未提供显式位置时保持主窗口所在屏居中。
+ */
+function placeSubWindowBeforeReveal(subWindow, mainWin, options, width, height) {
+    try {
+        if (!subWindow || subWindow.isDestroyed()) return;
+        const displays = screen.getAllDisplays();
+        const mainDisplay = mainWin && !mainWin.isDestroyed()
+            ? screen.getDisplayMatching(mainWin.getBounds())
+            : screen.getPrimaryDisplay();
+        const requestedDisplayId = options && options.displayId;
+        const targetDisplay = requestedDisplayId === undefined || requestedDisplayId === null
+            ? mainDisplay
+            : displays.find(display => String(display.id) === String(requestedDisplayId)) || mainDisplay;
+        const workArea = targetDisplay.workArea;
+        const requestedWidth = Number.isFinite(Number(width)) ? Math.round(Number(width)) : 800;
+        const requestedHeight = Number.isFinite(Number(height)) ? Math.round(Number(height)) : 600;
+        const nextWidth = clampNumber(requestedWidth, SUB_WINDOW_MIN_WIDTH, workArea.width);
+        const nextHeight = clampNumber(requestedHeight, SUB_WINDOW_MIN_HEIGHT, workArea.height);
+        const relativeToDisplay = requestedDisplayId !== undefined
+            && requestedDisplayId !== null
+            && options.relativeToDisplay !== false;
+        const hasX = Number.isFinite(Number(options && options.x));
+        const hasY = Number.isFinite(Number(options && options.y));
+        const requestedX = hasX ? Math.round(Number(options.x)) : Math.round((workArea.width - nextWidth) / 2);
+        const requestedY = hasY ? Math.round(Number(options.y)) : Math.round((workArea.height - nextHeight) / 2);
+        const candidate = {
+            x: relativeToDisplay || !hasX ? workArea.x + requestedX : requestedX,
+            y: relativeToDisplay || !hasY ? workArea.y + requestedY : requestedY,
+            width: nextWidth,
+            height: nextHeight,
+        };
+        const bounds = options && options.clampToWorkArea === false
+            ? candidate
+            : clampBoundsToWorkArea(candidate, workArea, {
+                width: SUB_WINDOW_MIN_WIDTH,
+                height: SUB_WINDOW_MIN_HEIGHT,
+            });
+        if (subWindow.isFullScreen()) subWindow.setFullScreen(false);
+        if (subWindow.isMinimized()) subWindow.restore();
+        if (subWindow.isMaximized()) subWindow.unmaximize();
+        subWindow.setBounds(bounds);
+    } catch (e) {
+        console.warn('[SubWindowPool] 子窗口初始定位失败:', e.message);
+        centerSubWindowOnMainDisplay(subWindow, mainWin, width, height);
+    }
+}
+
 function clampNumber(value, min, max) {
     return Math.min(Math.max(value, min), max);
 }
@@ -610,6 +658,19 @@ function registerWindowHandlers(mainWindow) {
         }
         return {
             success: true,
+            mainWindow: mainWindow && !mainWindow.isDestroyed()
+                ? {
+                    open: true,
+                    visible: mainWindow.isVisible(),
+                    focused: mainWindow.isFocused(),
+                    minimized: mainWindow.isMinimized(),
+                    maximized: mainWindow.isMaximized(),
+                    fullScreen: mainWindow.isFullScreen(),
+                    bounds: mainWindow.getBounds(),
+                    display: listDisplaySnapshots().find(display =>
+                        display.id === screen.getDisplayMatching(mainWindow.getBounds()).id) || null,
+                }
+                : null,
             displays: listDisplaySnapshots(),
             windows,
         };
@@ -1010,6 +1071,16 @@ function registerWindowHandlers(mainWindow) {
             // 确保窗口仍然有效
             if (existingWindow && !existingWindow.isDestroyed()) {
                 // 激活已存在的窗�?
+                if (data.applyInitialBounds === true) {
+                    const currentBounds = existingWindow.getBounds();
+                    placeSubWindowBeforeReveal(
+                        existingWindow,
+                        mainWindow,
+                        data,
+                        data.width ?? currentBounds.width,
+                        data.height ?? currentBounds.height
+                    );
+                }
                 notifySubWindowState(windowUrl, true);
                 focusSubWindow(existingWindow);
                 return;
@@ -1056,7 +1127,7 @@ function registerWindowHandlers(mainWindow) {
         }
 
         applySubWindowMinimumSize(subWindow);
-        centerSubWindowOnMainDisplay(subWindow, mainWindow, width, height);
+        placeSubWindowBeforeReveal(subWindow, mainWindow, data, width, height);
 
         openWindows.set(windowUrl, subWindow);
         notifySubWindowState(windowUrl, true);

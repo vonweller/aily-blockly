@@ -12,7 +12,10 @@ import { ToolContainerComponent } from '../../components/tool-container/tool-con
 import { ChildToolConfig, getChildToolConfig } from '../../configs/tool.config';
 import { ChildToolHostInfo, ChildToolProcessService } from '../../services/child-tool-process.service';
 import { SubappManagerService } from '../../services/subapp-manager.service';
-import { ChildAppHostRegistryService } from '../../services/child-app-host-registry.service';
+import {
+  ChildAppHostRegistryService,
+  type ChildAppWindowPlacement,
+} from '../../services/child-app-host-registry.service';
 import { AuthService } from '../../services/auth.service';
 import { BlocklyService } from '../../editors/blockly-editor/services/blockly.service';
 import { ElectronService } from '../../services/electron.service';
@@ -240,6 +243,15 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       return { ok: false, message: '子应用拒绝重启，可能存在未完成操作。' };
     }
 
+    const updatedConfig = getChildToolConfig(this.resolvedToolId);
+    if (!updatedConfig) {
+      return { ok: false, message: `子应用配置未找到: ${this.resolvedToolId}` };
+    }
+    this.config = updatedConfig;
+    this.childVersion = updatedConfig.version || '';
+    this.titleKey = updatedConfig.titleKey;
+    this.routePath = updatedConfig.routePath || `/child-tool/${updatedConfig.id}`;
+
     this.destroyPenpalConnection();
     this.serverInfo = null;
     this.iframeSrc = null;
@@ -252,7 +264,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       : { ok: false, toolId: this.resolvedToolId, action: 'restart', message: this.errorMessage || '子应用重启失败' };
   }
 
-  async detach(): Promise<Record<string, unknown>> {
+  async detach(options: ChildAppWindowPlacement = {}): Promise<Record<string, unknown>> {
     if (!this.config) return { ok: false, message: '子应用配置未就绪' };
     if (this.isStandalone) {
       return { ok: true, toolId: this.resolvedToolId, action: 'detach', message: '子应用已经处于独立窗口模式。' };
@@ -261,7 +273,10 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       return { ok: false, message: '子应用拒绝切换到独立窗口，可能存在未完成操作。' };
     }
 
-    const opened = this.uiService.openToolWindow(this.resolvedToolId, { title: this.getToolDisplayName() });
+    const opened = this.uiService.openToolWindow(this.resolvedToolId, {
+      title: this.getToolDisplayName(),
+      ...options,
+    });
     if (!opened) {
       return { ok: false, message: `无法为子应用创建独立窗口: ${this.resolvedToolId}` };
     }
@@ -361,7 +376,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       status: () => this.hostAutomationStatus(),
       restart: () => this.restart(),
       close: () => this.close(),
-      detach: () => this.detach(),
+      detach: options => this.detach(options),
       embed: () => this.embed(),
     });
   }
@@ -373,6 +388,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       penpalState: this.penpalState,
       closing: this.closing,
       error: this.errorMessage || null,
+      version: this.childVersion || null,
       pid: this.serverInfo?.pid ?? null,
       port: this.serverInfo?.port ?? null,
     };
@@ -472,6 +488,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
         selectChatResources: () => this.selectChatResources(),
         listChildApps: (payload: { limit?: number } = {}) => this.listChatChildApps(payload),
         openChildApp: (payload: { toolId?: string; mode?: 'embedded' | 'window' } = {}) => this.openChatChildApp(payload),
+        focusChildFrame: () => this.focusChildFrame(),
         writeClipboardText: (payload: { text?: string } = {}) => this.writeClipboardText(payload),
         sendToolSignal: async (signal: string, payload: any = {}) => {
           return await this.sendToolSignalFromChild(signal, payload);
@@ -856,7 +873,8 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
           && typeof (window as any).dialog?.selectFiles === 'function',
         childAppMenu: isAilyChat,
         clipboardWrite: isAilyChat,
-        blockSelectionContext: isAilyChat
+        blockSelectionContext: isAilyChat,
+        childFrameFocus: isAilyChat
       }
     };
   }
@@ -883,6 +901,14 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       return { ok: false, message: 'Clipboard text is empty' };
     }
     await this.electronService.clipboardWriteText(text);
+    return { ok: true };
+  }
+
+  private focusChildFrame(): Record<string, unknown> {
+    if (!this.isAilyChatTool() || !this.penpalRemoteWindow) {
+      return { ok: false };
+    }
+    this.penpalRemoteWindow.focus();
     return { ok: true };
   }
 

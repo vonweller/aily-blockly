@@ -2,11 +2,22 @@ import { Injectable } from '@angular/core';
 
 export type ChildAppHostAction = 'status' | 'restart' | 'close' | 'detach' | 'embed';
 
+export interface ChildAppWindowPlacement {
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  displayId?: string | number;
+  relativeToDisplay?: boolean;
+  clampToWorkArea?: boolean;
+  applyInitialBounds?: boolean;
+}
+
 export interface ChildAppHostController {
   status(): Record<string, unknown>;
   restart(): Promise<Record<string, unknown>>;
   close(): Promise<Record<string, unknown>>;
-  detach(): Promise<Record<string, unknown>>;
+  detach(options?: ChildAppWindowPlacement): Promise<Record<string, unknown>>;
   embed(): Promise<Record<string, unknown>>;
 }
 
@@ -61,7 +72,11 @@ export class ChildAppHostRegistryService {
     return this.controllers.get(this.normalizeToolId(toolId))?.status() || null;
   }
 
-  async control(toolId: string, action: ChildAppHostAction): Promise<Record<string, unknown>> {
+  async control(
+    toolId: string,
+    action: ChildAppHostAction,
+    options: ChildAppWindowPlacement = {},
+  ): Promise<Record<string, unknown>> {
     const id = this.normalizeToolId(toolId);
     const controller = this.controllers.get(id);
     if (!controller) {
@@ -76,7 +91,7 @@ export class ChildAppHostRegistryService {
       case 'close':
         return controller.close();
       case 'detach':
-        return controller.detach();
+        return controller.detach(options);
       case 'embed':
         return controller.embed();
       default:
@@ -88,7 +103,7 @@ export class ChildAppHostRegistryService {
     const payload = this.asRecord(command);
     const toolId = typeof payload['toolId'] === 'string' ? payload['toolId'] : '';
     const action = typeof payload['action'] === 'string' ? payload['action'] as ChildAppHostAction : 'status';
-    return this.control(toolId, action);
+    return this.control(toolId, action, payload as ChildAppWindowPlacement);
   }
 
   private asRecord(value: unknown): Record<string, unknown> {

@@ -349,6 +349,67 @@ function readIndexCache(rootDir) {
   return fs.existsSync(cachePath) ? validateIndex(readJson(cachePath)) : null;
 }
 
+function snapshotFile(filePath) {
+  return fs.existsSync(filePath)
+    ? { exists: true, contents: fs.readFileSync(filePath) }
+    : { exists: false, contents: null };
+}
+
+function restoreFile(filePath, snapshot) {
+  if (snapshot.exists) {
+    fs.writeFileSync(filePath, snapshot.contents);
+  } else if (fs.existsSync(filePath)) {
+    fs.rmSync(filePath, { force: true });
+  }
+}
+
+function packageInstallArgs(rootDir, entry) {
+  return [
+    'install', '--prefix', rootDir, '--save-exact', '--omit=dev', '--no-audit', '--no-fund',
+    '--foreground-scripts', `${entry.package}@${entry.version}`,
+  ];
+}
+
+async function replaceInstalledPackage(rootDir, entry, npmRunner, options) {
+  const packagePath = packagePathFor(rootDir, entry.package);
+  const backupRoot = fs.mkdtempSync(path.join(rootDir, '.subapp-update-'));
+  const backupPath = path.join(backupRoot, 'package');
+  const packageJsonPath = path.join(rootDir, 'package.json');
+  const packageLockPath = path.join(rootDir, 'package-lock.json');
+  const packageJsonSnapshot = snapshotFile(packageJsonPath);
+  const packageLockSnapshot = snapshotFile(packageLockPath);
+  let backedUp = false;
+
+  try {
+    if (fs.existsSync(packagePath)) {
+      fs.renameSync(packagePath, backupPath);
+      backedUp = true;
+    }
+
+    await npmRunner(packageInstallArgs(rootDir, entry), options);
+    const installedState = readInstalledState(rootDir, entry);
+    if (!installedState.installed || installedState.installedVersion !== entry.version) {
+      throw new Error(
+        `Subapp update verification failed: expected ${entry.version}, got ${installedState.installedVersion || 'missing'}`,
+      );
+    }
+
+    fs.rmSync(backupRoot, { recursive: true, force: true });
+  } catch (error) {
+    if (fs.existsSync(packagePath)) {
+      fs.rmSync(packagePath, { recursive: true, force: true });
+    }
+    if (backedUp && fs.existsSync(backupPath)) {
+      fs.mkdirSync(path.dirname(packagePath), { recursive: true });
+      fs.renameSync(backupPath, packagePath);
+    }
+    restoreFile(packageJsonPath, packageJsonSnapshot);
+    restoreFile(packageLockPath, packageLockSnapshot);
+    fs.rmSync(backupRoot, { recursive: true, force: true });
+    throw error;
+  }
+}
+
 function createSubappManager(options = {}) {
   const rootDir = resolveSubappRoot(options);
   const indexUrl = options.indexUrl || process.env.AILY_SUBAPP_INDEX_URL || DEFAULT_INDEX_URL;
@@ -385,7 +446,7 @@ function createSubappManager(options = {}) {
   function enqueueMutation(operation) {
     const previous = mutationQueues.get(rootDir) || Promise.resolve();
     const next = previous.catch(() => undefined).then(operation);
-    const queued = next.finally(() => {
+    const queued = next.then(() => undefined, () => undefined).finally(() => {
       if (mutationQueues.get(rootDir) === queued) mutationQueues.delete(rootDir);
     });
     mutationQueues.set(rootDir, queued);
@@ -404,11 +465,10 @@ function createSubappManager(options = {}) {
         await (options.runNpm || runNpm)([
           'uninstall', '--prefix', rootDir, '--no-audit', '--no-fund', entry.package,
         ], options);
+      } else if (action === 'update') {
+        await replaceInstalledPackage(rootDir, entry, options.runNpm || runNpm, options);
       } else {
-        await (options.runNpm || runNpm)([
-          'install', '--prefix', rootDir, '--save-exact', '--omit=dev', '--no-audit', '--no-fund',
-          '--foreground-scripts', `${entry.package}@${entry.version}`,
-        ], options);
+        await (options.runNpm || runNpm)(packageInstallArgs(rootDir, entry), options);
       }
       return list({ locale: payload.locale || 'en' });
     });
