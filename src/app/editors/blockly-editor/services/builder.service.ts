@@ -13,7 +13,10 @@ import {
   normalizeArduinoGeneratedCode,
   type BlockCodeMapping,
 } from '../components/blockly/generators/arduino/arduino';
-import { generateCodeWithActiveProjectGenerator } from './blockly-generator-runtime.service';
+import {
+  generateCodeWithActiveProjectGenerator,
+  getActiveProjectGenerator,
+} from './blockly-generator-runtime.service';
 
 import { BlocklyService as BlocklyService } from './blockly.service';
 
@@ -205,9 +208,9 @@ export class _BuilderService {
 
   /**
    * Capture code and its serialized Blockly source map inside the same
-   * synchronous workspaceToCode() phase. arduinoGenerator.blockCodeMap is
-   * mutable global generator state, so reading it after an await could pair a
-   * newer map with older sketch bytes.
+   * synchronous workspaceToCode() phase. The active project generator's
+   * blockCodeMap is mutable runtime state, so reading it after an await could
+   * pair a newer map with older sketch bytes.
    */
   private async generateWorkspaceBuildSnapshotForPreprocess(
     workspace: unknown,
@@ -227,12 +230,17 @@ export class _BuilderService {
       'workspace_to_code',
       () => {
         const code = normalizeArduinoGeneratedCode(
-          arduinoGenerator.workspaceToCode(workspace as any),
+          generateCodeWithActiveProjectGenerator(workspace as any),
         );
+        const activeGenerator = getActiveProjectGenerator() as {
+          blockCodeMap?: Map<string, BlockCodeMapping>;
+        } | null;
+        const blockCodeMap = activeGenerator?.blockCodeMap
+          ?? new Map<string, BlockCodeMapping>();
         return {
           code,
           blockSourceMappings: this.createBlockSourceMappings(
-            arduinoGenerator.blockCodeMap,
+            blockCodeMap,
             workspace,
           ),
         };
