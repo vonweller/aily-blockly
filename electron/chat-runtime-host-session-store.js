@@ -48,8 +48,6 @@ function normalizeResourceRequestId(requestId) {
 
 function normalizeResourceRequestKind(kind) {
   return kind === 'abs-workspace-export'
-    || kind === 'checkpoint-commit'
-    || kind === 'checkpoint-settle'
     || kind === 'file-read'
     || kind === 'file-write'
     || kind === 'file-edit'
@@ -63,7 +61,6 @@ function normalizeResourceRequestKind(kind) {
     || kind === 'board-search'
     || kind === 'library-analysis'
     || kind === 'diagnostics'
-    || kind === 'edit-tracking'
     || kind === 'session-title'
     || kind === 'save-current-session'
     || kind === 'history-persistence'
@@ -283,6 +280,8 @@ class ChatRuntimeHostSessionStore {
     this.sessionStates = new Map();
     this.transcriptBuilder = new ChatRuntimeHostTranscriptBuilder();
     this.checkpointTimelines = new Map();
+    this.editingSessionRevisions = new Map();
+    this.turnDiffRevisions = new Map();
     this.interactions = new Map();
     this.viewRequestEvents = new Map();
     this.resourceRequestEvents = new Map();
@@ -306,6 +305,8 @@ class ChatRuntimeHostSessionStore {
     this.sessionStates.delete(normalizedSessionId);
     this.transcriptBuilder.clearSession(normalizedSessionId);
     this.checkpointTimelines.delete(normalizedSessionId);
+    this.editingSessionRevisions.delete(normalizedSessionId);
+    this.turnDiffRevisions.delete(normalizedSessionId);
     this.interactions.delete(normalizedSessionId);
     this.viewRequestEvents.delete(normalizedSessionId);
     this.resourceRequestEvents.delete(normalizedSessionId);
@@ -681,6 +682,7 @@ class ChatRuntimeHostSessionStore {
   redoSessionCheckpoint(request) {
     const input = request && typeof request === 'object' ? request : {};
     const sessionId = normalizeSessionId(input.sessionId);
+    const checkpointId = normalizeOptionalString(input.checkpointId);
     this.assertCheckpointMutationAllowed(sessionId);
     const previousTranscript = this.buildTranscriptSnapshot(sessionId);
     const currentRevision = Number(previousTranscript && previousTranscript.revision) || 0;
@@ -693,6 +695,13 @@ class ChatRuntimeHostSessionStore {
     if (!checkpoint) {
       const error = new Error('No forward checkpoint is available to redo.');
       error.code = 'checkpoint_redo_unavailable';
+      throw error;
+    }
+    if (checkpointId && checkpoint.checkpointId !== checkpointId) {
+      const error = new Error(
+        `Requested redo checkpoint is not the canonical next checkpoint: ${checkpointId}.`,
+      );
+      error.code = 'checkpoint_redo_identity_mismatch';
       throw error;
     }
     const nextTimeline = createCheckpointTimelineState(sessionId, previousTimeline.turnResponses, {
@@ -1915,6 +1924,10 @@ class ChatRuntimeHostSessionStore {
     switch (payload.kind) {
       case 'turnProgress':
         return this.cacheRuntimeOwnerTurnProgress(payload);
+      case 'editingSessionChanged':
+        return this.cacheRuntimeOwnerEditingSessionChanged(payload);
+      case 'turnDiffUpdated':
+        return this.cacheRuntimeOwnerTurnDiffUpdated(payload);
       case 'runtimeProjectPathUpdated':
         return payload;
       case 'turnInteractionRequested':
@@ -2543,6 +2556,50 @@ class ChatRuntimeHostSessionStore {
     };
     this.sessionStates.set(sessionId, clonePayload(nextState));
     return clonePayload(nextState);
+  }
+
+  cacheRuntimeOwnerEditingSessionChanged(payload) {
+    const sessionId = normalizeSessionId(payload && payload.sessionId);
+    const revision = Number(payload && payload.revision);
+    if (!sessionId || !Number.isFinite(revision) || revision < 0) {
+      return null;
+    }
+    const currentRevision = this.editingSessionRevisions.get(sessionId);
+    if (Number.isFinite(currentRevision) && revision <= currentRevision) {
+      return null;
+    }
+    this.editingSessionRevisions.set(sessionId, revision);
+    return {
+      kind: 'editing-session',
+      sessionId,
+      revision,
+    };
+  }
+
+  cacheRuntimeOwnerTurnDiffUpdated(payload) {
+    const sessionId = normalizeSessionId(payload && payload.sessionId);
+    const turnId = normalizeOptionalString(payload && payload.turnId);
+    const revision = Number(payload && payload.revision);
+    if (!sessionId || !turnId || !Number.isFinite(revision) || revision < 0 || typeof payload.diff !== 'string') {
+      return null;
+    }
+    let revisions = this.turnDiffRevisions.get(sessionId);
+    if (!revisions) {
+      revisions = new Map();
+      this.turnDiffRevisions.set(sessionId, revisions);
+    }
+    const currentRevision = revisions.get(turnId);
+    if (Number.isFinite(currentRevision) && revision <= currentRevision) {
+      return null;
+    }
+    revisions.set(turnId, revision);
+    return {
+      kind: 'turn-diff',
+      sessionId,
+      turnId,
+      revision,
+      diff: payload.diff,
+    };
   }
 
   buildCheckpointProtocolTruncation(timeline, transcript) {

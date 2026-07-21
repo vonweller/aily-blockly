@@ -178,7 +178,7 @@ function buildBaseRenderItems(parts: readonly RenderableChatPart[]): ChatRenderI
 
     if (isProgressMessageDisplayPart(part)) {
       flushBuffer();
-      items.push({ kind: 'part', id: `progress:${part.progressKind}:${index}:${part.content}`, part });
+      items.push({ kind: 'part', id: `progress:${part.id}`, part });
       continue;
     }
 

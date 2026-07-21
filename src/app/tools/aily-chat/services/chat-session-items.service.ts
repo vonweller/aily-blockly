@@ -30,7 +30,7 @@ import type {
   HostSessionListItemTiming,
   SessionInventorySummary,
 } from '../helpers/host-session-item-controller';
-import { EditCheckpointService } from './edit-checkpoint.service';
+import { ChatEditingSessionProjectionService } from './chat-editing-session-projection.service';
 import { buildHostSessionCurrentPickerInputState } from '../helpers/host-session-input-state';
 import { buildHostSessionCurrentPickerRoutingSummary } from '../helpers/host-session-request-routing';
 import { isChatSessionUnread } from '../helpers/chat-session-presentation';
@@ -116,7 +116,7 @@ export class ChatSessionItemsService implements OnDestroy {
     private readonly chatService: ChatService,
     private readonly chatHistoryService: ChatHistoryService,
     private readonly chatSessionRuntimeStore: ChatSessionRuntimeStoreService,
-    @Optional() private readonly editCheckpointService: EditCheckpointService | null = null,
+    @Optional() private readonly editingSessionProjection: ChatEditingSessionProjectionService | null = null,
     @Optional() private readonly chatSessionStateService: ChatSessionStateService | null = null,
     @Optional() private readonly chatSessionModelStore: ChatSessionModelStoreService | null = null,
     @Optional() private readonly chatSessionViewModelStore: ChatSessionViewModelStoreService | null = null,
@@ -127,7 +127,24 @@ export class ChatSessionItemsService implements OnDestroy {
     this.hostSessionItemController = new HostSessionItemController({
       chatService: this.chatService,
       chatHistoryService: this.chatHistoryService,
-      ...(this.editCheckpointService ? { editCheckpointService: this.editCheckpointService } : {}),
+      ...(this.editingSessionProjection
+        ? {
+            readEditingSessionRequestChanges: (sessionId: string, requestOrTurnId: string) => {
+              const summary = this.editingSessionProjection?.getRequestSummary(sessionId, requestOrTurnId);
+              if (summary === undefined) {
+                this.editingSessionProjection?.ensureLoaded(sessionId);
+                return undefined;
+              }
+              return summary
+                ? {
+                    fileCount: summary.fileCount,
+                    insertions: summary.totalAdded,
+                    deletions: summary.totalRemoved,
+                  }
+                : null;
+            },
+          }
+        : {}),
       ...(this.chatSessionStateService ? { chatSessionStateService: this.chatSessionStateService } : {}),
       readLiveSessionTurnResponses: (sessionId) => this.chatSessionRuntimeStore.readTurnResponses(sessionId),
       readLiveSessionRuntimeState: (sessionId) => this.readLiveSessionRuntimeState(sessionId),
@@ -144,6 +161,11 @@ export class ChatSessionItemsService implements OnDestroy {
     this.controllerSubscription.add(this.chatSessionRuntimeStore.runtimeChanged$.subscribe((event) => {
       this.handleRuntimeChanged(event);
     }));
+    if (this.editingSessionProjection) {
+      this.controllerSubscription.add(this.editingSessionProjection.changed$.subscribe(event => {
+        this.scheduleSessionItemRefresh(event.sessionId, 'editing-session-revision');
+      }));
+    }
     if (this.chatSessionModelStore) {
       this.controllerSubscription.add(this.chatSessionModelStore.changed$.subscribe((event) => {
         this.bumpSessionInventoryRevision();

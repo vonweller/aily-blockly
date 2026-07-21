@@ -68,8 +68,21 @@ export interface BlockCodeMapping {
   blockType: string;
   fragments: CodeFragment[];   // 该 block 贡献的所有代码片段
   lineRanges: CodeLineRange[]; // 在最终生成代码中的行号范围（finish 后计算）
+  /** GDB 可安全绑定的运行时语句位置；空数组表示该块只有声明/辅助代码。 */
+  executableLineRanges?: CodeLineRange[];
+  /** include、全局对象、helper/function 等归属位置，不作为块级停点。 */
+  supportLineRanges?: CodeLineRange[];
   codeSnippet: string;         // 合并后的代码片段文本（便于 agent 直接使用）
 }
+
+const EXECUTABLE_FRAGMENT_SECTIONS = new Set([
+  'setups_begin',
+  'setups',
+  'setups_end',
+  'loops_begin',
+  'loops',
+  'loops_end',
+]);
 
 export function normalizeArduinoGeneratedCode(value: unknown): string {
   if (typeof value === 'string') {
@@ -373,6 +386,8 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
     // ===== Part 1: 处理 addXxx 产生的代码片段（codeDict 区段） =====
     for (const [blockId, fragments] of this.blockCodeFragments.entries()) {
       const lineRanges: CodeLineRange[] = [];
+      const executableLineRanges: CodeLineRange[] = [];
+      const supportLineRanges: CodeLineRange[] = [];
       const codeSnippets: string[] = [];
 
       for (const fragment of fragments) {
@@ -380,6 +395,11 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
         const range = tagLineRanges.get(fullTag);
         if (range) {
           lineRanges.push(range);
+          if (EXECUTABLE_FRAGMENT_SECTIONS.has(fragment.section)) {
+            executableLineRanges.push(range);
+          } else {
+            supportLineRanges.push(range);
+          }
           const snippet = lines.slice(range.startLine - 1, range.endLine).join('\n');
           codeSnippets.push(snippet);
         }
@@ -393,6 +413,8 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
           blockType: this._blockTypes.get(blockId) || 'unknown',
           fragments,
           lineRanges: mergedRanges,
+          executableLineRanges: this._mergeLineRanges(executableLineRanges),
+          supportLineRanges: this._mergeLineRanges(supportLineRanges),
           codeSnippet: codeSnippets.join('\n\n')
         });
       }
@@ -476,6 +498,11 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
         const existing = this.blockCodeMap.get(blockId)!;
         existing.lineRanges.push(matchedRange);
         existing.lineRanges = this._mergeLineRanges(existing.lineRanges);
+        existing.executableLineRanges ??= [];
+        existing.executableLineRanges.push(matchedRange);
+        existing.executableLineRanges = this._mergeLineRanges(
+          existing.executableLineRanges,
+        );
         const bodySnippet = lines.slice(matchedRange.startLine - 1, matchedRange.endLine).join('\n');
         existing.codeSnippet += '\n\n' + bodySnippet;
       } else {
@@ -485,6 +512,8 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
           blockType: this._blockTypes.get(blockId) || 'unknown',
           fragments: [{ section: 'body', tag: blockId, code: codeClean }],
           lineRanges: [matchedRange],
+          executableLineRanges: [matchedRange],
+          supportLineRanges: [],
           codeSnippet: bodySnippet
         });
       }
@@ -497,7 +526,6 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
     // 构建反向索引：parentId → [{blockId, code}, ...]
     const parentToValueChildren = new Map<string, {blockId: string, code: string}[]>();
     for (const valueBlockId of this._valueBlockIds) {
-      if (this.blockCodeMap.has(valueBlockId)) continue;
       const parentId = this._blockParent.get(valueBlockId);
       if (!parentId) continue;
       // 优先使用 valueToCode 捕获的代码（包含父块可能添加的括号等），
@@ -513,10 +541,20 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
 
     // 每个父块独立追踪已占用位置，避免不同父块之间干扰
     // 多轮处理：值块的父块可能也是值块，需要先映射父块再映射子块
+    const mappedValueBodyIds = new Set<string>();
     let progress = true;
     while (progress) {
       progress = false;
       for (const [parentId, children] of parentToValueChildren.entries()) {
+        // A nested value can only be located after its value parent has gained
+        // its runtime expression range. A declaration/helper fragment owned by
+        // that parent is not a safe search scope.
+        if (
+          this._valueBlockIds.has(parentId)
+          && !mappedValueBodyIds.has(parentId)
+        ) {
+          continue;
+        }
         const parentMapping = this.blockCodeMap.get(parentId);
         if (!parentMapping || parentMapping.lineRanges.length === 0) continue;
 
@@ -524,7 +562,7 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
         const parentUsed = new Set<string>();
 
         for (const child of children) {
-          if (this.blockCodeMap.has(child.blockId)) continue;
+          if (mappedValueBodyIds.has(child.blockId)) continue;
 
           // 在父块的精确行范围内搜索值块代码
           let matchedRange: CodeLineRange | null = null;
@@ -554,13 +592,41 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
           }
 
           if (matchedRange) {
-            this.blockCodeMap.set(child.blockId, {
-              blockId: child.blockId,
-              blockType: this._blockTypes.get(child.blockId) || 'unknown',
-              fragments: [{ section: 'value', tag: child.blockId, code: child.code }],
-              lineRanges: [matchedRange],
-              codeSnippet: child.code
-            });
+            const existing = this.blockCodeMap.get(child.blockId);
+            if (existing) {
+              existing.fragments.push({
+                section: 'value',
+                tag: child.blockId,
+                code: child.code,
+              });
+              existing.lineRanges.push(matchedRange);
+              existing.lineRanges = this._mergeLineRanges(
+                existing.lineRanges,
+              );
+              existing.executableLineRanges ??= [];
+              existing.executableLineRanges.push(matchedRange);
+              existing.executableLineRanges = this._mergeLineRanges(
+                existing.executableLineRanges,
+              );
+              existing.codeSnippet = existing.codeSnippet
+                ? `${existing.codeSnippet}\n\n${child.code}`
+                : child.code;
+            } else {
+              this.blockCodeMap.set(child.blockId, {
+                blockId: child.blockId,
+                blockType: this._blockTypes.get(child.blockId) || 'unknown',
+                fragments: [{
+                  section: 'value',
+                  tag: child.blockId,
+                  code: child.code,
+                }],
+                lineRanges: [matchedRange],
+                executableLineRanges: [matchedRange],
+                supportLineRanges: [],
+                codeSnippet: child.code,
+              });
+            }
+            mappedValueBodyIds.add(child.blockId);
             progress = true;
           }
         }

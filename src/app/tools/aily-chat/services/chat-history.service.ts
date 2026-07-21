@@ -39,7 +39,7 @@ import {
   type ChatSessionScope,
 } from '../core/chat-session-scope';
 import { SkillRegistry as BlocklySkillRegistry } from '../core/skill-registry';
-import { EditCheckpointService, type RequestCheckpointMetadata } from './edit-checkpoint.service';
+import type { RequestCheckpointMetadata } from './edit-checkpoint.service';
 import { ChatHistoryIndexStore, type ChatHistoryIndexLoadDiagnostics } from './chat-history-index-store';
 import { buildHostSessionDebugEvents, createHostSessionDebugEventId, type HostSessionDebugEvent } from './host-session-debug-events';
 import {
@@ -917,10 +917,6 @@ export class ChatHistoryService implements OnDestroy {
   deleteSession(sessionId: string): void {
     this.ensureIndexLoaded();
     const entry = this.index.find(e => e.sessionId === sessionId);
-
-    if (entry?.projectPath) {
-      EditCheckpointService.cleanSessionCheckpoints(entry.projectPath, sessionId);
-    }
 
     if (entry) {
       this.deleteSessionFile(sessionId, entry.projectPath);

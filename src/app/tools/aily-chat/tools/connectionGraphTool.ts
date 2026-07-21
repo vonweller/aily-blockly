@@ -12,7 +12,7 @@ import {
 import { API, getServerUrl } from '../../../configs/api.config';
 import { AilyHost } from '../core/host';
 import { readChatRuntimeWorkspaceEnvironment } from '../core/chat-runtime-workspace-environment';
-import type { EditingTimelineWriter } from '../services/editing-timeline-recording-bridge';
+import type { ChatRuntimeHostWorkspaceMutationReceiptInput } from '../core/chat-runtime-host-contract';
 
 /**
  * 解析后的组件实例信息（内部使用）
@@ -31,134 +31,129 @@ interface ParsedComponentInstance {
 export interface ConnectionGraphInvocationContext {
   turnId?: string;
   toolCallId?: string;
-  timelineWriter?: EditingTimelineWriter;
+  recordMutationReceipt?: (receipt: ChatRuntimeHostWorkspaceMutationReceiptInput) => void;
 }
 
+
 function normalizeProjectPath(value: unknown): string {
-  return typeof value === 'string' ? value.trim().replace(/\\/g, '/') : '';
+    return typeof value === 'string' ? value.trim().replace(/\\/g, '/') : '';
 }
 
 function joinHostPath(...parts: string[]): string {
-  const host = AilyHost.get();
-  const pathApi = host?.path ?? (typeof window !== 'undefined' ? (window as any).path : undefined);
-  if (pathApi && typeof pathApi.join === 'function') {
-    return pathApi.join(...parts);
-  }
-  return parts.join('/').replace(/\/+/g, '/');
+    const host = AilyHost.get();
+    const pathApi = host?.path ?? (typeof window !== 'undefined' ? (window as any).path : undefined);
+    if (pathApi && typeof pathApi.join === 'function') {
+        return pathApi.join(...parts);
+    }
+    return parts.join('/').replace(/\/+/g, '/');
 }
 
 function resolveProjectPath(projectService: ProjectService): string | null {
-  const host = AilyHost.get();
-  const runtimeWorkspace = readChatRuntimeWorkspaceEnvironment();
-  const candidates = [
-    runtimeWorkspace.projectPath,
-    runtimeWorkspace.currentSessionPath,
-    runtimeWorkspace.currentProjectPath,
-    projectService.currentProjectPath,
-    projectService.projectRootPath,
-    host.project?.currentProjectPath,
-    host.project?.projectRootPath,
-  ]
-    .map(normalizeProjectPath)
-    .filter((value, index, values) => value.length > 0 && values.indexOf(value) === index);
+    const host = AilyHost.get();
+    const runtimeWorkspace = readChatRuntimeWorkspaceEnvironment();
+    const candidates = [
+        runtimeWorkspace.projectPath,
+        runtimeWorkspace.currentSessionPath,
+        runtimeWorkspace.currentProjectPath,
+        projectService.currentProjectPath,
+        projectService.projectRootPath,
+        host.project?.currentProjectPath,
+        host.project?.projectRootPath,
+    ]
+        .map(normalizeProjectPath)
+        .filter((value, index, values) => value.length > 0 && values.indexOf(value) === index);
 
-  for (const candidate of candidates) {
-    try {
-      if (host.fs.existsSync(joinHostPath(candidate, 'package.json'))) {
-        return candidate;
-      }
-    } catch {
-      // Ignore and keep trying.
+    for (const candidate of candidates) {
+        try {
+            if (host.fs.existsSync(joinHostPath(candidate, 'package.json'))) {
+                return candidate;
+            }
+        } catch {
+            // Ignore and keep trying.
+        }
     }
-  }
 
-  return null;
+    return null;
 }
 
 function resolvePackagesBasePath(projectService: ProjectService): string | null {
-  const projectPath = resolveProjectPath(projectService);
-  if (!projectPath) {
-    return null;
-  }
-  return joinHostPath(projectPath, 'node_modules');
+    const projectPath = resolveProjectPath(projectService);
+    if (!projectPath) {
+        return null;
+    }
+    return joinHostPath(projectPath, 'node_modules');
 }
 
 async function resolveBoardPackagePath(projectService: ProjectService): Promise<string | null> {
-  const projectPath = resolveProjectPath(projectService);
-  if (!projectPath) {
-    return null;
-  }
-
-  const host = AilyHost.get();
-  const packageJsonPath = joinHostPath(projectPath, 'package.json');
-  let packageJson: any = null;
-  try {
-    if (host.fs.existsSync(packageJsonPath)) {
-      packageJson = JSON.parse(host.fs.readFileSync(packageJsonPath, 'utf8'));
+    const projectPath = resolveProjectPath(projectService);
+    if (!projectPath) {
+        return null;
     }
-  } catch {
-    packageJson = null;
-  }
 
-  const dependencyBlocks = [
-    packageJson?.dependencies,
-    packageJson?.boardDependencies,
-  ];
-  for (const block of dependencyBlocks) {
-    if (!block || typeof block !== 'object') {
-      continue;
+    const host = AilyHost.get();
+    const packageJsonPath = joinHostPath(projectPath, 'package.json');
+    let packageJson: any = null;
+    try {
+        if (host.fs.existsSync(packageJsonPath)) {
+            packageJson = JSON.parse(host.fs.readFileSync(packageJsonPath, 'utf8'));
+        }
+    } catch {
+        packageJson = null;
     }
-    const boardModule = Object.keys(block).find(dep =>
-      dep.startsWith('@aily-project/board-') || dep.startsWith('@aily-project/coder-'),
-    );
-    if (boardModule) {
-      return joinHostPath(projectPath, 'node_modules', boardModule);
-    }
-  }
 
-  const aciPath = joinHostPath(projectPath, 'project.aci');
-  try {
-    if (host.fs.existsSync(aciPath)) {
-      const aci = JSON.parse(host.fs.readFileSync(aciPath, 'utf8'));
-      const boardPackage = String(aci?.target?.boardPackage ?? '').trim();
-      const board = String(aci?.target?.board ?? '').trim();
-      const boardModule = boardPackage || (board.startsWith('@aily-project/') ? board : '');
-      if (boardModule) {
-        return joinHostPath(projectPath, 'node_modules', boardModule);
-      }
+    const dependencyBlocks = [
+        packageJson?.dependencies,
+        packageJson?.boardDependencies,
+    ];
+    for (const block of dependencyBlocks) {
+        if (!block || typeof block !== 'object') {
+            continue;
+        }
+        const boardModule = Object.keys(block).find(dep =>
+            dep.startsWith('@aily-project/board-') || dep.startsWith('@aily-project/coder-'),
+        );
+        if (boardModule) {
+            return joinHostPath(projectPath, 'node_modules', boardModule);
+        }
     }
-  } catch {
-    // Ignore and fall through.
-  }
 
-  try {
-    const legacyPath = await projectService.getBoardPackagePath();
-    return typeof legacyPath === 'string' && legacyPath.trim().length > 0 ? legacyPath.trim() : null;
-  } catch {
-    return null;
-  }
+    const aciPath = joinHostPath(projectPath, 'project.aci');
+    try {
+        if (host.fs.existsSync(aciPath)) {
+            const aci = JSON.parse(host.fs.readFileSync(aciPath, 'utf8'));
+            const boardPackage = String(aci?.target?.boardPackage ?? '').trim();
+            const board = String(aci?.target?.board ?? '').trim();
+            const boardModule = boardPackage || (board.startsWith('@aily-project/') ? board : '');
+            if (boardModule) {
+                return joinHostPath(projectPath, 'node_modules', boardModule);
+            }
+        }
+    } catch {
+        // Ignore and fall through.
+    }
+
+    try {
+        const legacyPath = await projectService.getBoardPackagePath();
+        return typeof legacyPath === 'string' && legacyPath.trim().length > 0 ? legacyPath.trim() : null;
+    } catch {
+        return null;
+    }
 }
 
-export async function saveTimelineAwareConnectionGraphTextFile(
+export async function saveConnectionGraphTextFileWithReceipt(
   filePath: string,
   content: string,
   save: () => boolean | Promise<boolean>,
   invocationContext?: ConnectionGraphInvocationContext,
 ): Promise<boolean> {
-  const timelineWriter = invocationContext?.timelineWriter;
-  const turnId = invocationContext?.turnId;
+  const recordMutationReceipt = invocationContext?.recordMutationReceipt;
   let existedBefore = false;
   let beforeContent: string | null = null;
 
-  if (timelineWriter?.recordFileWrite && turnId) {
+  if (recordMutationReceipt) {
     const fs = AilyHost.get().fs;
-    try {
-      existedBefore = fs.existsSync(filePath);
-      beforeContent = existedBefore ? fs.readFileSync(filePath, 'utf-8') : null;
-    } catch {
-      existedBefore = false;
-      beforeContent = null;
-    }
+    existedBefore = fs.existsSync(filePath);
+    beforeContent = existedBefore ? fs.readFileSync(filePath, 'utf-8') : null;
   }
 
   const saved = await Promise.resolve(save());
@@ -166,43 +161,30 @@ export async function saveTimelineAwareConnectionGraphTextFile(
     return false;
   }
 
-  if (!timelineWriter?.recordFileWrite || !turnId) {
-    return true;
-  }
-
-  try {
-    await timelineWriter.recordFileWrite({
-      turnId,
-      toolCallId: invocationContext?.toolCallId,
-      filePath,
-      existedBefore,
-      beforeContent,
-      afterContent: content,
-    });
-  } catch (error) {
-    console.warn('[connectionGraphTool] editing timeline recording failed:', error);
-  }
+  recordMutationReceipt?.({
+    filePath,
+    existedBefore,
+    contentKind: 'text',
+    beforeContent,
+    afterContent: content,
+  });
 
   return true;
 }
 
-function createConnectionGraphTimelineObserver(invocationContext?: ConnectionGraphInvocationContext) {
-  const timelineWriter = invocationContext?.timelineWriter;
-  const turnId = invocationContext?.turnId;
-  if (!timelineWriter?.recordFileWrite || !turnId) {
+function createConnectionGraphMutationObserver(invocationContext?: ConnectionGraphInvocationContext) {
+  const recordMutationReceipt = invocationContext?.recordMutationReceipt;
+  if (!recordMutationReceipt) {
     return undefined;
   }
 
   return (event: ConnectionGraphTextFileWriteEvent): void => {
-    void Promise.resolve(timelineWriter.recordFileWrite({
-      turnId,
-      toolCallId: invocationContext?.toolCallId,
+    recordMutationReceipt({
       filePath: event.filePath,
       existedBefore: event.existedBefore,
+      contentKind: 'text',
       beforeContent: event.beforeContent,
       afterContent: event.afterContent,
-    })).catch(error => {
-      console.warn('[connectionGraphTool] editing timeline recording failed:', error);
     });
   };
 }
@@ -282,6 +264,7 @@ export async function generateConnectionGraphTool(
         connectionGraphService,
         packagesBasePath,
         syncHints,
+        invocationContext,
       );
     }
 
@@ -913,6 +896,7 @@ async function trySyncPinmapComponentsFromApi(
   connectionGraphService: ConnectionGraphService,
   packagesBasePath: string,
   pinmapIdHints: string[],
+  invocationContext?: ConnectionGraphInvocationContext,
 ): Promise<number> {
   try {
     const host = AilyHost.get();
@@ -1035,7 +1019,10 @@ async function trySyncPinmapComponentsFromApi(
             pinmapId,
             config,
             packagesBasePath,
-            cloudVer,
+            {
+              catalogVersion: cloudVer,
+              onFileWrite: createConnectionGraphMutationObserver(invocationContext),
+            },
           );
           if (save.success) {
             synced++;
@@ -1044,6 +1031,7 @@ async function trySyncPinmapComponentsFromApi(
                 packageSlug,
                 save.resolvedPackagePath,
                 config,
+                createConnectionGraphMutationObserver(invocationContext),
               );
             }
           }
@@ -1055,7 +1043,10 @@ async function trySyncPinmapComponentsFromApi(
     }
 
     return synced;
-  } catch {
+  } catch (error) {
+    if (invocationContext?.recordMutationReceipt) {
+      throw error;
+    }
     return 0;
   }
 }
@@ -1069,7 +1060,8 @@ async function trySyncPinmapComponentsFromApi(
 export async function getPinmapSummaryTool(
   connectionGraphService: ConnectionGraphService,
   projectService: ProjectService,
-  input: { pinmapIds?: string[] }
+  input: { pinmapIds?: string[] },
+  invocationContext?: ConnectionGraphInvocationContext,
 ): Promise<ToolUseResult> {
   try {
     const currentProjectPath = resolveProjectPath(projectService);
@@ -1093,6 +1085,7 @@ export async function getPinmapSummaryTool(
         connectionGraphService,
         packagesBasePath,
         pinmapIdList,
+        invocationContext,
       );
     }
 
@@ -1689,7 +1682,7 @@ export async function validateConnectionGraphTool(
 
     // 7. 保存 AWS 和 JSON
     if (input.aws) {
-      await saveTimelineAwareConnectionGraphTextFile(
+      await saveConnectionGraphTextFileWithReceipt(
         awsFilePath,
         awsContent,
         () => connectionGraphService.saveAWSFile(awsContent, currentProjectPath),
@@ -1697,7 +1690,7 @@ export async function validateConnectionGraphTool(
       );
     }
     const jsonContent = JSON.stringify(jsonData, null, 2);
-    await saveTimelineAwareConnectionGraphTextFile(
+    await saveConnectionGraphTextFileWithReceipt(
       jsonFilePath,
       jsonContent,
       () => connectionGraphService.saveJSONFile(jsonData, currentProjectPath),
@@ -1985,7 +1978,7 @@ export async function savePinmapTool(
 
     // 保存 pinmap
     const saveResult = connectionGraphService.savePinmapConfig(input.pinmapId, config, packagesBasePath, {
-      onFileWrite: createConnectionGraphTimelineObserver(invocationContext),
+      onFileWrite: createConnectionGraphMutationObserver(invocationContext),
     });
 
     if (!saveResult.success) {
@@ -2123,7 +2116,7 @@ export async function applySchematicTool(
     if (input.aws) {
       awsContent = input.aws;
       // 同时保存 .aws 文件
-      await saveTimelineAwareConnectionGraphTextFile(
+      await saveConnectionGraphTextFileWithReceipt(
         awsFilePath,
         awsContent,
         () => connectionGraphService.saveAWSFile(awsContent, currentProjectPath),
@@ -2364,7 +2357,7 @@ export async function applySchematicTool(
 
     // 8. 保存 JSON
     const jsonContent = JSON.stringify(jsonData, null, 2);
-    await saveTimelineAwareConnectionGraphTextFile(
+    await saveConnectionGraphTextFileWithReceipt(
       jsonFilePath,
       jsonContent,
       () => connectionGraphService.saveJSONFile(jsonData, currentProjectPath),

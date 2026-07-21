@@ -480,6 +480,31 @@ contextBridge.exposeInMainWorld("electronAPI", {
     update: () => ipcRenderer.invoke("aily-builder-update"),
     waitForReady: () => ipcRenderer.invoke("aily-builder-wait-ready"),
   },
+  simulatorGateway: {
+    iframeUrlOverride:
+      process.env.AILY_E2E === "1"
+        ? process.env.AILY_E2E_SIMULATOR_IFRAME_URL || ""
+        : "",
+    start: (projectPath, ownerId) => ipcRenderer.invoke(
+      "simulator-gateway-start",
+      projectPath,
+      ownerId,
+    ),
+    status: () => ipcRenderer.invoke("simulator-gateway-status"),
+    stop: (expectedProjectPath, expectedOwnerId) => ipcRenderer.invoke(
+      "simulator-gateway-stop",
+      expectedProjectPath,
+      expectedOwnerId,
+    ),
+    onStateChanged: (callback) => {
+      const listener = (_event, payload) => callback(payload);
+      ipcRenderer.on("simulator-gateway-state-changed", listener);
+      return () => ipcRenderer.removeListener(
+        "simulator-gateway-state-changed",
+        listener,
+      );
+    },
+  },
   linter: {
     status: () => ipcRenderer.invoke("aily-linter-status"),
     checkForUpdate: () => ipcRenderer.invoke("aily-linter-check-update"),

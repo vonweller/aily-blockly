@@ -60,6 +60,7 @@ interface ProjectOpenOptions {
 interface ProjectCreationOptions {
   activationReason?: ProjectActivationReason;
   sessionResource?: string | null;
+  deferActivation?: boolean;
 }
 
 @Injectable({
@@ -487,6 +488,10 @@ export class ProjectService {
       await this.crossPlatformCmdService.copyItem(`${templatePath}${separator}*`, projectPath, true, true);
 
       this.updateNewProjectPackageJson(projectPath, newProjectData);
+      if (options.deferActivation) {
+        this.uiService.updateFooterState({ state: 'done', text: this.translate.instant('PROJECT.PROJECT_CREATED') });
+        return true;
+      }
       return await this.finishProjectCreation(projectPath, options);
 
       // if (closeWindow) {
@@ -838,6 +843,13 @@ export class ProjectService {
     // this.currentProjectPath = (await window['env'].get("AILY_PROJECT_PATH")).replace('%HOMEPATH%\\Documents', window['path'].getUserDocuments());
     await this.router.navigate(['/main/guide'], { replaceUrl: true });
     return true;
+  }
+
+  async activateCreatedProject(projectPath: string, options: ProjectCreationOptions = {}): Promise<boolean> {
+    if (!projectPath || !window['fs'].existsSync(projectPath)) {
+      return false;
+    }
+    return this.finishProjectCreation(projectPath, options);
   }
 
   /** 项目已被其他实例占用时的操作：取消 / 前置其他进程 / 强制打开 */

@@ -45,6 +45,7 @@ describe('tool-catalog', () => {
 
     expect(names.has('get_workspace_overview_tool')).toBeFalse();
     expect(names.has('analyze_library_blocks')).toBeFalse();
+    expect(names.has('delete_folder')).toBeFalse();
   });
 });
 

@@ -350,7 +350,7 @@
         </div>
         }
         <div inputPartWidget class="chat-editing-session">
-          <app-aily-edits-viewer></app-aily-edits-viewer>
+          <app-aily-edits-viewer [sessionId]="vm.sessionId"></app-aily-edits-viewer>
         </div>
         @if(getCurrentSessionPendingFollowupRequests(); as pendingRequests) {
         @if(pendingRequests.length > 0) {
