@@ -2763,8 +2763,8 @@ export class ChatEngineService implements IChatContext {
         thisEngine.commitCheckpointRestoreByIdentity(sessionId, checkpointId),
       rollbackCheckpointRestoreRequestListTransaction: (sessionId, committed) =>
         thisEngine.chatSessionModelStore.rollbackCheckpointRestoreTransaction(sessionId, committed as any),
-      commitCheckpointRedoByIdentity: (sessionId, checkpointId) =>
-        thisEngine.commitCheckpointRedoByIdentity(sessionId, checkpointId),
+      commitCheckpointRedo: (sessionId, checkpointId) =>
+        thisEngine.commitCheckpointRedo(sessionId, checkpointId),
       operateEditingSessionEntry: async (sessionId, uri, action) => {
         if (!thisEngine.electronRuntimeHost) {
           throw new Error('Editing-session entry operation requires the execution host.');
@@ -5451,46 +5451,52 @@ export class ChatEngineService implements IChatContext {
       expectedRevision: navigation.revision,
       pageLimit: 30,
     });
-    this.projectCheckpointMutationPage(targetSessionId, hostMutation.page, 'runtime-host-checkpoint-restore');
+    this.projectCheckpointMutationPage(
+      targetSessionId,
+      hostMutation.page,
+      hostMutation.checkpointTimeline as unknown as SessionCheckpointTimelineState,
+      'runtime-host-checkpoint-restore',
+    );
     return hostMutation;
   }
 
-  private async commitCheckpointRedoByIdentity(
+  private async commitCheckpointRedo(
     sessionId: string | null | undefined,
-    checkpointId: string | null | undefined,
+    checkpointId?: string | null,
   ): Promise<unknown | null> {
     const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
     const targetCheckpointId = typeof checkpointId === 'string' ? checkpointId.trim() : '';
-    if (!targetSessionId || !targetCheckpointId) {
+    if (!targetSessionId) {
       return null;
-    }
-    const navigation = await this.runtimeHostForView().readCheckpointNavigationState({
-      sessionId: targetSessionId,
-    });
-    if (!navigation?.nextCheckpoint || navigation.nextCheckpoint.checkpointId !== targetCheckpointId) {
-      throw new Error(`Checkpoint redo identity changed before commit for ${targetSessionId}`);
     }
     const hostMutation = await this.runtimeHostForView().redoSessionCheckpoint({
       sessionId: targetSessionId,
-      expectedRevision: navigation.revision,
+      ...(targetCheckpointId ? { checkpointId: targetCheckpointId } : {}),
       pageLimit: 30,
     });
-    if (hostMutation.checkpointId !== targetCheckpointId) {
+    if (targetCheckpointId && hostMutation.checkpointId !== targetCheckpointId) {
       throw new Error(`Checkpoint redo host committed an unexpected identity for ${targetSessionId}`);
     }
 
-    this.projectCheckpointMutationPage(targetSessionId, hostMutation.page, 'runtime-host-checkpoint-redo');
+    this.projectCheckpointMutationPage(
+      targetSessionId,
+      hostMutation.page,
+      hostMutation.checkpointTimeline as unknown as SessionCheckpointTimelineState,
+      'runtime-host-checkpoint-redo',
+    );
     return hostMutation;
   }
 
   private projectCheckpointMutationPage(
     sessionId: string,
     page: any,
+    checkpointTimeline: SessionCheckpointTimelineState,
     source: string,
   ): void {
     const pageTurns = Array.isArray(page?.data) ? page.data as TurnResponseTurn[] : [];
     this.visibleTurnWindowModel.attach(sessionId, page);
     this.replaceSessionModelTurnResponses(sessionId, pageTurns, { source });
+    this.chatSessionModelStore.get(sessionId)?.replaceCheckpointTimelineState(checkpointTimeline);
     const hostProjectionState = buildRuntimeHostProjectionState(pageTurns);
     if (hostProjectionState) {
       const attachedView = this.resolveCurrentViewSessionResource() === sessionId;

@@ -91,6 +91,7 @@ import { ChatSessionEntryCoordinator } from './chat-session-entry-coordinator';
 import { ChatPerformanceTracer } from '../services/chat-perf-tracer';
 import { createRequiredSessionResourceModel } from './required-session-resource-model';
 import type {
+  ChatRuntimeHostCheckpointTimelineState,
   ChatRuntimeHostForkSessionRequest,
   ChatRuntimeHostForkSessionResult,
   ChatRuntimeHostModelSelectionSnapshot,
@@ -1831,10 +1832,15 @@ export class SessionLifecycleHelper {
       throw new Error(`[SessionLifecycle] Unable to build the canonical runtime snapshot for ${sessionId}.`);
     }
     const agentRuntimeMode = this.resolveAgentRuntimeMode(providerOptions, metadata).mode;
+    const checkpointTimeline = hostRecord.sidecar?.checkpointRedoBranch;
+    const restoredCheckpointTimeline = checkpointTimeline?.sessionResource === sessionId
+      ? checkpointTimeline as unknown as ChatRuntimeHostCheckpointTimelineState
+      : undefined;
     const result = await restoreRuntimeSession({
       sessionId,
       snapshot,
       turnResponses,
+      ...(restoredCheckpointTimeline ? { checkpointTimeline: restoredCheckpointTimeline } : {}),
       providerOptions,
       agentRuntimeMode,
       currentModel: this.ctx.currentModel ?? null,

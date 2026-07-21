@@ -783,6 +783,7 @@ class ChatRuntimeHostSessionStore {
       retainedTurnIds,
       restoredTurnIds: retainedTurnIds.filter(turnId => !previousIds.has(turnId)),
       canRedo: timeline.currentCheckpointIndex < timeline.checkpoints.length - 1,
+      checkpointTimeline: clonePayload(timeline),
       page: this.buildSessionTurnPage({
         sessionId,
         limit: Math.max(1, Math.min(100, Number(request.pageLimit) || 30)),
@@ -1267,7 +1268,7 @@ class ChatRuntimeHostSessionStore {
     return this.transcriptBuilder.acceptTranscriptSnapshot(transcript);
   }
 
-  restoreCanonicalTranscript(sessionId, turnResponses) {
+  restoreCanonicalTranscript(sessionId, turnResponses, checkpointTimeline) {
     const normalizedSessionId = normalizeSessionId(sessionId);
     if (!normalizedSessionId || !Array.isArray(turnResponses)) {
       const error = new Error('[AilyChat][RuntimeHost] Canonical transcript restore requires a session id and turn array.');
@@ -1282,16 +1283,22 @@ class ChatRuntimeHostSessionStore {
       throw error;
     }
 
+    const restoredTimeline = this.restoreCheckpointTimeline(
+      normalizedSessionId,
+      turnResponses,
+      checkpointTimeline,
+    );
     const currentRevision = this.transcriptBuilder.readTranscriptRevision(normalizedSessionId);
     const transcript = this.transcriptBuilder.replaceTurnResponses({
       sessionId: normalizedSessionId,
       turnResponses,
       expectedRevision: currentRevision,
     });
-    // A restored request list is the checkpoint source of truth. Rebuild the
-    // timeline lazily from this list instead of retaining a timeline belonging
-    // to a previous in-process model instance.
-    this.checkpointTimelines.delete(normalizedSessionId);
+    if (restoredTimeline) {
+      this.checkpointTimelines.set(normalizedSessionId, clonePayload(restoredTimeline));
+    } else {
+      this.checkpointTimelines.delete(normalizedSessionId);
+    }
     this.sessionStates.set(normalizedSessionId, clonePayload({
       ...(state || {}),
       sessionId: normalizedSessionId,
@@ -1301,6 +1308,32 @@ class ChatRuntimeHostSessionStore {
       attachedViewIds: this.readAttachedViewIds(normalizedSessionId),
     }));
     return clonePayload(transcript);
+  }
+
+  restoreCheckpointTimeline(sessionId, visibleTurnResponses, checkpointTimeline) {
+    if (!checkpointTimeline || typeof checkpointTimeline !== 'object') {
+      return null;
+    }
+    if (normalizeSessionId(checkpointTimeline.sessionResource) !== sessionId
+      || !Array.isArray(checkpointTimeline.turnResponses)) {
+      const error = new Error('[AilyChat][RuntimeHost] Restored checkpoint timeline has an invalid session owner.');
+      error.code = 'invalid_checkpoint_timeline_restore';
+      throw error;
+    }
+    const restored = createCheckpointTimelineState(sessionId, checkpointTimeline.turnResponses, {
+      currentCheckpointIndex: checkpointTimeline.currentCheckpointIndex,
+      currentTurnResponseCount: checkpointTimeline.currentTurnResponseCount,
+    });
+    const visiblePrefix = restored.turnResponses.slice(0, restored.currentTurnResponseCount);
+    const visibleIds = visibleTurnResponses.map(turn => normalizeOptionalString(turn && turn.turnId));
+    const prefixIds = visiblePrefix.map(turn => normalizeOptionalString(turn && turn.turnId));
+    if (visibleIds.length !== prefixIds.length
+      || visibleIds.some((turnId, index) => !turnId || turnId !== prefixIds[index])) {
+      const error = new Error('[AilyChat][RuntimeHost] Restored checkpoint cursor does not match the canonical visible request list.');
+      error.code = 'checkpoint_timeline_visible_prefix_mismatch';
+      throw error;
+    }
+    return restored;
   }
 
   buildTurnTranscriptEvent(transcript, turnId, revisionFallback = 0) {

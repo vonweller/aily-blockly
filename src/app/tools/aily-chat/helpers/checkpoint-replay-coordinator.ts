@@ -236,6 +236,13 @@ function readCheckpointCommitAppliedFiles(value: unknown): number {
   return Number.isFinite(appliedFiles) && appliedFiles > 0 ? Math.floor(appliedFiles) : 0;
 }
 
+function readCheckpointCommitIdentity(value: unknown): string {
+  if (!value || typeof value !== 'object') {
+    return '';
+  }
+  return normalizeString((value as { checkpointId?: unknown }).checkpointId as string | undefined);
+}
+
 function readCheckpointCommitRollbackErrors(error: unknown): string[] {
   if (!error || typeof error !== 'object') {
     return [];
@@ -451,13 +458,15 @@ export class CheckpointReplayCoordinator {
     private readonly viewWriteBridge: CheckpointReplayViewWriteAccess,
   ) {}
 
-  async redoCheckpointByIdentity(
-    checkpointId: string,
+  async redoCheckpoint(
     commitCanonicalCheckpoint: () => Promise<unknown>,
   ): Promise<CheckpointRedoExecutionResult> {
-    const normalizedCheckpointId = checkpointId.trim();
     try {
       const committed = await commitCanonicalCheckpoint();
+      const normalizedCheckpointId = readCheckpointCommitIdentity(committed);
+      if (!normalizedCheckpointId) {
+        throw new Error('Checkpoint redo commit did not return the canonical checkpoint identity');
+      }
       await this.syncCommittedWorkspacePresentation(normalizedCheckpointId, 'redo');
       const appliedFiles = readCheckpointCommitAppliedFiles(committed);
       return {

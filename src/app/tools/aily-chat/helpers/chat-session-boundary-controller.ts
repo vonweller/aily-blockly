@@ -96,11 +96,10 @@ export class ChatSessionBoundaryController implements ChatSessionBoundaryActionC
       this.blockUnavailable({ action: 'redoCheckpoint', reason: 'session-unavailable' });
       return;
     }
-    const navigation = await this.canRunRedoCheckpointBoundary(sessionResource);
-    if (!navigation) {
-      return;
-    }
-    await this.editActions.redoEdits(navigation.nextCheckpoint!.checkpointId, { sessionResource });
+    // Match VS Code's redoInteraction boundary: the UI submits only the redo
+    // intent. The canonical host owns the timeline cursor and selects the next
+    // checkpoint atomically with the workspace/response-model transaction.
+    await this.editActions.redoEdits({ sessionResource });
   }
 
   async restoreCheckpoint(target: DialogTurnContext, explicitSessionResource?: string): Promise<boolean | void> {
@@ -145,24 +144,6 @@ export class ChatSessionBoundaryController implements ChatSessionBoundaryActionC
 
     this.ctx.warnBoundaryRewriteBlocked?.(action);
     return true;
-  }
-
-  private async canRunRedoCheckpointBoundary(
-    explicitSessionResource?: string,
-  ): Promise<ChatRuntimeHostCheckpointNavigationState | null> {
-    const sessionResource = this.resolveActionSessionResource(explicitSessionResource);
-    if (!sessionResource) {
-      this.blockUnavailable({ action: 'redoCheckpoint', reason: 'session-unavailable' });
-      return null;
-    }
-
-    const navigation = await this.readCheckpointNavigationState({ sessionId: sessionResource });
-    if (!navigation?.canRedo || !navigation.nextCheckpoint) {
-      this.blockUnavailable({ action: 'redoCheckpoint', reason: 'checkpoint-unavailable' });
-      return null;
-    }
-
-    return navigation;
   }
 
   private async resolveRestoreCheckpointBoundary(

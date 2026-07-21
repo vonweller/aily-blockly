@@ -132,9 +132,9 @@ type EditActionsContext = ChatViewWriteBridgeContext
       sessionId: string | null | undefined,
       committed: ChatSessionRequestListTransactionResult | null | undefined,
     ): ChatSessionRequestListTransactionResult | null | undefined;
-    commitCheckpointRedoByIdentity?(
+    commitCheckpointRedo?(
       sessionId: string | null | undefined,
-      checkpointId: string,
+      checkpointId?: string | null,
     ): Promise<unknown | null | undefined> | unknown | null | undefined;
     operateEditingSessionEntry?(
       sessionId: string,
@@ -717,23 +717,13 @@ export class EditActionsHelper {
   /**
    * 重做文件变更（Redo，恢复被撤销的文件状态）
    */
-  async redoEdits(
-    checkpointId: string,
-    options: { sessionResource?: string } = {},
-  ): Promise<void> {
+  async redoEdits(options: { sessionResource?: string } = {}): Promise<void> {
     if (this.ctx.isWaiting) { this.ctx.message.warning('正在处理中，请稍候...'); return; }
 
-    const normalizedCheckpointId = checkpointId.trim();
-    if (!normalizedCheckpointId) {
-      this.ctx.message.info('没有可重做的文件变更');
-      return;
-    }
-
-    const checkpointRedoResult = await this.checkpointReplayCoordinator.redoCheckpointByIdentity(
-      normalizedCheckpointId,
+    const checkpointRedoResult = await this.checkpointReplayCoordinator.redoCheckpoint(
       async () => {
         const sessionId = this.resolveCurrentSessionResource(options.sessionResource);
-        const committed = await this.ctx.commitCheckpointRedoByIdentity?.(sessionId, normalizedCheckpointId);
+        const committed = await this.ctx.commitCheckpointRedo?.(sessionId);
         if (!committed) {
           throw new Error('Checkpoint redo host commit did not return a result');
         }

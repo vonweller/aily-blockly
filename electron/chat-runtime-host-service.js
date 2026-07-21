@@ -275,6 +275,7 @@ class ChatRuntimeHostProcessService {
       : showNotification;
     this.notificationNeedsInputKeys = new Map();
     this.notificationRequestInProgress = new Map();
+    this.checkpointMutationQueues = new Map();
   }
 
   setMainWindow(mainWindow) {
@@ -614,7 +615,7 @@ class ChatRuntimeHostProcessService {
     if (!this.runtimeOwnerController.hasUsableRuntimeOwner()) {
       throw new Error('[AilyChat][RuntimeHost] No registered host runtime owner.');
     }
-    const { turnResponses, ...runtimeRequest } = request;
+    const { turnResponses, checkpointTimeline, ...runtimeRequest } = request;
     const result = await this.runtimeOwnerController.dispatchCommand('restoreRuntimeSession', [{
       ...runtimeRequest,
       sessionId,
@@ -622,7 +623,11 @@ class ChatRuntimeHostProcessService {
     if (!result || result.sessionId !== sessionId || Number(result.turnCount) !== responseTurnIds.length) {
       throw new Error('[AilyChat][RuntimeHost] Execution owner restored an invalid request list.');
     }
-    const transcript = this.hostSessionStore.restoreCanonicalTranscript(sessionId, turnResponses);
+    const transcript = this.hostSessionStore.restoreCanonicalTranscript(
+      sessionId,
+      turnResponses,
+      checkpointTimeline,
+    );
     return {
       ...result,
       transcriptRevision: Number(transcript && transcript.revision) || 0,
@@ -925,11 +930,56 @@ class ChatRuntimeHostProcessService {
   async handleCheckpointMutation(method, args) {
     const request = args && args[0] && typeof args[0] === 'object' ? args[0] : {};
     const sessionId = normalizeSessionId(request.sessionId);
-    const checkpointId = typeof request.checkpointId === 'string' ? request.checkpointId.trim() : '';
-    const direction = method === 'restoreSessionCheckpoint' ? 'restore' : 'redo';
-    if (!sessionId || !checkpointId) {
-      throw new Error('[AilyChat][RuntimeHost] Checkpoint navigation requires session and checkpoint identity.');
+    if (!sessionId) {
+      throw new Error('[AilyChat][RuntimeHost] Checkpoint navigation requires a session identity.');
     }
+    return this.enqueueCheckpointMutation(sessionId, () => (
+      this.executeCheckpointMutation(method, request, sessionId)
+    ));
+  }
+
+  enqueueCheckpointMutation(sessionId, operation) {
+    const previous = this.checkpointMutationQueues.get(sessionId) || Promise.resolve();
+    let queued;
+    queued = previous
+      .catch(() => undefined)
+      .then(operation)
+      .finally(() => {
+        if (this.checkpointMutationQueues.get(sessionId) === queued) {
+          this.checkpointMutationQueues.delete(sessionId);
+        }
+      });
+    this.checkpointMutationQueues.set(sessionId, queued);
+    return queued;
+  }
+
+  async executeCheckpointMutation(method, request, sessionId) {
+    const direction = method === 'restoreSessionCheckpoint' ? 'restore' : 'redo';
+    const requestedCheckpointId = typeof request.checkpointId === 'string' ? request.checkpointId.trim() : '';
+    const navigation = this.hostSessionStore.readCheckpointNavigationState({ sessionId });
+    const checkpointId = direction === 'restore'
+      ? requestedCheckpointId
+      : navigation?.nextCheckpoint?.checkpointId || '';
+    if (!checkpointId) {
+      const error = new Error(direction === 'restore'
+        ? '[AilyChat][RuntimeHost] Checkpoint restore requires a checkpoint identity.'
+        : '[AilyChat][RuntimeHost] No forward checkpoint is available to redo.');
+      error.code = direction === 'restore' ? 'checkpoint_not_found' : 'checkpoint_redo_unavailable';
+      throw error;
+    }
+    if (direction === 'redo' && requestedCheckpointId && requestedCheckpointId !== checkpointId) {
+      const error = new Error(`Requested redo checkpoint is not the canonical next checkpoint: ${requestedCheckpointId}.`);
+      error.code = 'checkpoint_redo_identity_mismatch';
+      throw error;
+    }
+    const mutationRequest = {
+      ...request,
+      sessionId,
+      checkpointId,
+      expectedRevision: Number.isFinite(Number(request.expectedRevision))
+        ? Number(request.expectedRevision)
+        : Number(navigation?.revision) || 0,
+    };
     if (!this.runtimeOwnerController.hasUsableRuntimeOwner()) {
       throw new Error('[AilyChat][RuntimeHost] Checkpoint navigation requires the execution host.');
     }
@@ -946,8 +996,8 @@ class ChatRuntimeHostProcessService {
     let mutation = null;
     try {
       mutation = method === 'restoreSessionCheckpoint'
-        ? this.hostSessionStore.restoreSessionCheckpoint(request)
-        : this.hostSessionStore.redoSessionCheckpoint(request);
+        ? this.hostSessionStore.restoreSessionCheckpoint(mutationRequest)
+        : this.hostSessionStore.redoSessionCheckpoint(mutationRequest);
       await this.persistHostSessionRecord(mutation.sessionId, method, {
         requestInProgress: false,
         activeTurnId: null,

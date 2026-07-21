@@ -121,7 +121,7 @@ export interface ChatRuntimeHostRequestListMutationResult {
 
 export interface ChatRuntimeHostCheckpointMutationRequest {
   readonly sessionId: ChatRuntimeHostSessionId;
-  readonly expectedRevision: number;
+  readonly expectedRevision?: number;
   readonly checkpointId?: string;
   readonly pageLimit?: number;
 }
@@ -137,6 +137,15 @@ export interface ChatRuntimeHostCheckpointNavigationEntry {
   readonly requestId: string;
   readonly turnId?: string;
   readonly turnIndex: number;
+  readonly metadata?: Readonly<Record<string, unknown>>;
+}
+
+export interface ChatRuntimeHostCheckpointTimelineState {
+  readonly sessionResource: ChatRuntimeHostSessionId;
+  readonly currentCheckpointIndex: number;
+  readonly currentTurnResponseCount: number;
+  readonly checkpoints: readonly ChatRuntimeHostCheckpointNavigationEntry[];
+  readonly turnResponses: readonly TurnResponseTurn[];
 }
 
 export interface ChatRuntimeHostCheckpointNavigationState {
@@ -160,6 +169,7 @@ export interface ChatRuntimeHostCheckpointMutationResult {
   readonly retainedTurnIds: readonly string[];
   readonly restoredTurnIds: readonly string[];
   readonly canRedo: boolean;
+  readonly checkpointTimeline: ChatRuntimeHostCheckpointTimelineState;
   readonly page: ChatRuntimeHostTurnPage;
 }
 
@@ -252,6 +262,13 @@ export interface ChatRuntimeHostRestoreRuntimeSessionRequest extends ChatRuntime
    * on the same atomic restore boundary.
    */
   readonly turnResponses: readonly TurnResponseTurn[];
+  /**
+   * VS Code keeps disabled forward requests in the ChatModel while the editing
+   * timeline cursor controls their visibility. The execution owner still
+   * receives only `turnResponses`; this host-owned timeline restores that
+   * forward branch and cursor after process restart.
+   */
+  readonly checkpointTimeline?: ChatRuntimeHostCheckpointTimelineState;
 }
 
 export interface ChatRuntimeHostRestoreRuntimeSessionResult {
@@ -1262,7 +1279,10 @@ export interface ChatRuntimeHost {
     request: ChatRuntimeHostRequestListMutationRequest,
   ): Promise<ChatRuntimeHostRequestListMutationResult>;
   restoreSessionCheckpoint(
-    request: ChatRuntimeHostCheckpointMutationRequest & { readonly checkpointId: string },
+    request: ChatRuntimeHostCheckpointMutationRequest & {
+      readonly checkpointId: string;
+      readonly expectedRevision: number;
+    },
   ): Promise<ChatRuntimeHostCheckpointMutationResult>;
   redoSessionCheckpoint(
     request: ChatRuntimeHostCheckpointMutationRequest,
