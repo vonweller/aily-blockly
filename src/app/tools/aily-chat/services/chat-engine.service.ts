@@ -2208,7 +2208,49 @@ export class ChatEngineService implements IChatContext {
   currentStatelessMode = false;
 
   /** 缓存的编辑反馈（用户保留/撤销变更后，在下次发送时注入上下文） */
-  pendingEditFeedback: string | null = null;
+  private readonly pendingEditFeedbackBySession = new Map<string, string>();
+
+  get pendingEditFeedback(): string | null {
+    return this.readPendingEditFeedback();
+  }
+
+  set pendingEditFeedback(value: string | null) {
+    this.writePendingEditFeedback(undefined, value);
+  }
+
+  readPendingEditFeedback(sessionId?: string | null): string | null {
+    const ownerSessionId = this.resolvePendingEditFeedbackSessionId(sessionId);
+    return ownerSessionId
+      ? this.pendingEditFeedbackBySession.get(ownerSessionId) ?? null
+      : null;
+  }
+
+  writePendingEditFeedback(
+    sessionId: string | null | undefined,
+    value: string | null,
+  ): void {
+    const ownerSessionId = this.resolvePendingEditFeedbackSessionId(sessionId);
+    if (!ownerSessionId) {
+      return;
+    }
+
+    const normalizedValue = typeof value === 'string' ? value.trim() : '';
+    if (normalizedValue) {
+      this.pendingEditFeedbackBySession.set(ownerSessionId, normalizedValue);
+      return;
+    }
+
+    this.pendingEditFeedbackBySession.delete(ownerSessionId);
+  }
+
+  private resolvePendingEditFeedbackSessionId(sessionId?: string | null): string | null {
+    const candidate = typeof sessionId === 'string' && sessionId.trim().length > 0
+      ? sessionId
+      : this.resolveCurrentViewSessionResource() || this.sessionId;
+    return typeof candidate === 'string' && candidate.trim().length > 0
+      ? candidate.trim()
+      : null;
+  }
 
   pendingUserInput = false;
   private _isWaiting = false;
@@ -4936,7 +4978,7 @@ export class ChatEngineService implements IChatContext {
       });
     }
     this.syncPendingFollowupRuntimeState(targetSessionId);
-    this.pendingEditFeedback = null;
+    this.writePendingEditFeedback(targetSessionId, null);
 
     const currentViewSessionId = resolveOptionalUiSessionOwner(this, null);
     if (currentViewSessionId === targetSessionId) {
@@ -10072,7 +10114,8 @@ function readRequestTextContent(candidate: unknown): string | undefined {
   const text = typeof candidate === 'string'
     ? candidate
     : candidate && typeof candidate === 'object'
-      ? ((candidate as { messageText?: unknown }).messageText
+      ? ((candidate as { displayContent?: unknown }).displayContent
+        ?? (candidate as { messageText?: unknown }).messageText
         ?? (candidate as { prompt?: unknown }).prompt
         ?? (candidate as { text?: unknown }).text
         ?? (candidate as { content?: unknown }).content)

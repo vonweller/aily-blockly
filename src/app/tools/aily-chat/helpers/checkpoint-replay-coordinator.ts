@@ -43,9 +43,7 @@ export type CheckpointRedoChatReplayResult =
 
 export type CheckpointRedoChatReplayFailure = Extract<CheckpointRedoChatReplayResult, { ok: false }>;
 
-export type CheckpointProjectionOutcome = EditActionResultDescriptor & {
-  pendingEditFeedback?: string | null;
-};
+export type CheckpointProjectionOutcome = EditActionResultDescriptor;
 
 type CheckpointWorkspaceAccess = {
   buildRestorePlan?(checkpointId: string): Promise<RestorePlan | null> | RestorePlan | null;
@@ -335,7 +333,7 @@ type CheckpointFileApplyExecutionState<TResult extends { ok: boolean }> = {
 
 type CheckpointReplayCoordinatorContext = ChatViewWriteBridgeContext
   & Pick<IChatServiceAccess, 'editCheckpointService'>
-  & Pick<IAgentLifecycle, 'isCompleted' | 'isCancelled' | 'pendingEditFeedback'>
+  & Pick<IAgentLifecycle, 'isCompleted' | 'isCancelled'>
   & Pick<IChatCoordination, 'lexStream' | 'session'>
   & {
     workspaceCheckpointAccess?: CheckpointWorkspaceAccess;
@@ -1299,18 +1297,10 @@ export class CheckpointReplayCoordinator {
   }
 
   private projectRestoreOutcome(outcome: CheckpointProjectionOutcome): void {
-    if (typeof outcome.pendingEditFeedback !== 'undefined') {
-      this.ctx.pendingEditFeedback = outcome.pendingEditFeedback;
-    }
-
     appendEditActionResult(this.viewWriteBridge, 'restore', outcome);
   }
 
   private projectRedoOutcome(outcome: CheckpointProjectionOutcome): void {
-    if (typeof outcome.pendingEditFeedback !== 'undefined') {
-      this.ctx.pendingEditFeedback = outcome.pendingEditFeedback;
-    }
-
     appendEditActionResult(this.viewWriteBridge, 'redo', outcome);
   }
 
@@ -1329,7 +1319,6 @@ export class CheckpointReplayCoordinator {
       fileCount?: number;
       errorCount?: number;
       detailMessage?: string;
-      pendingEditFeedback?: string | null;
     } = {},
   ): CheckpointProjectionOutcome {
     return {
@@ -1338,7 +1327,6 @@ export class CheckpointReplayCoordinator {
       fileCount: options.fileCount,
       errorCount: options.errorCount,
       detailMessage: options.detailMessage,
-      pendingEditFeedback: options.pendingEditFeedback,
     };
   }
 
@@ -1949,7 +1937,6 @@ export class CheckpointReplayCoordinator {
       'done',
       {
         fileCount,
-        pendingEditFeedback: `[用户重新应用了 ${fileCount} 个文件变更，并恢复了 ${chatTurnCount} 轮聊天。]`,
       },
     );
   }

@@ -770,7 +770,8 @@ function readRequestTextCandidate(candidate: unknown): string {
   const text = typeof candidate === 'string'
     ? candidate
     : candidate && typeof candidate === 'object'
-      ? ((candidate as { messageText?: unknown }).messageText
+      ? ((candidate as { displayContent?: unknown }).displayContent
+        ?? (candidate as { messageText?: unknown }).messageText
         ?? (candidate as { prompt?: unknown }).prompt
         ?? (candidate as { text?: unknown }).text
         ?? (candidate as { content?: unknown }).content)
