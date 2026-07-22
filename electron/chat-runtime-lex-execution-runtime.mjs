@@ -12,7 +12,6 @@ import { createWorkerExternalEditService } from './chat-runtime-external-edit-ca
 
 import {
   AilyServicesEndpoint,
-  OpenAIEndpoint,
   PromptLayer,
   EditingTimelineOwner,
   createAgentHandleAsync,
@@ -22,14 +21,14 @@ import {
 const DEFAULT_MODEL_ID = 'auto';
 const DEFAULT_API_ENDPOINT = 'https://api.aily.pro';
 const TITLE_GENERATION_MAX_INPUT_LENGTH = 500;
-const TITLE_GENERATION_MAX_OUTPUT_TOKENS = 4096;
-const TITLE_GENERATION_PROMPT = `You are an expert in crafting ultra-compact titles for chatbot conversations.
-You are presented with a chat request and must reply with only a brief title.
+const TITLE_GENERATION_MAX_OUTPUT_TOKENS = 256;
+const TITLE_GENERATION_PROMPT = `You are an expert in crafting pithy titles for chatbot conversations.
+You are presented with a chat request and must reply with a brief title that captures its main topic.
 
 Rules:
 1. Return title text only, no JSON, no markdown, no code fences
 2. Use sentence case, preserve product names and code symbols
-3. Aim for 3-6 words and keep it concise
+3. Keep the title about 8 words or fewer
 4. Do not include quotes, prefixes, or trailing punctuation`;
 const DEFAULT_INTERACTION_SOFT_ROUND_LIMIT = 200;
 const DEFAULT_PROCESS_LOG_SUBAPP = 'default';
@@ -694,10 +693,20 @@ class LexExecutionRuntimeOwner {
     const text = typeof request.requestText === 'string'
       ? request.requestText
       : String(request.displayText || '');
-    this.prepareSubmittedTurnTitle(session, request, text);
 
+    let releaseTitleGeneration;
+    const firstModelOutput = new Promise(resolve => {
+      releaseTitleGeneration = resolve;
+    });
     let editingTimelineOutcome = 'completed';
-    const turnPromise = this.runTurn(session, turnId, request, text, abortController)
+    const turnPromise = this.runTurn(
+      session,
+      turnId,
+      request,
+      text,
+      abortController,
+      releaseTitleGeneration,
+    )
       .catch(error => {
         editingTimelineOutcome = abortController.signal.aborted ? 'cancelled' : 'error';
         if (!abortController.signal.aborted && session.responseCompletedTurnId !== turnId) {
@@ -711,6 +720,9 @@ class LexExecutionRuntimeOwner {
         }
       })
       .finally(async () => {
+        // An empty, cancelled, or failed turn must not leave title generation
+        // waiting forever for an event that will never arrive.
+        releaseTitleGeneration();
         try {
           if (abortController.signal.aborted) {
             editingTimelineOutcome = 'cancelled';
@@ -731,6 +743,16 @@ class LexExecutionRuntimeOwner {
         }
       });
     session.activeTurnPromise = turnPromise;
+    const customTitleEndpoint = Boolean(
+      normalizeString(session.currentModel?.baseUrl || session.currentModel?.llmConfig?.baseUrl)
+      && normalizeString(session.currentModel?.apiKey || session.currentModel?.llmConfig?.apiKey),
+    );
+    this.prepareSubmittedTurnTitle(
+      session,
+      request,
+      text,
+      customTitleEndpoint ? firstModelOutput : null,
+    );
 
     return this.createSessionState(session, 'running', true, turnId);
   }
@@ -1146,11 +1168,16 @@ class LexExecutionRuntimeOwner {
     return this.createInteractionSnapshot(session);
   }
 
-  async runTurn(session, turnId, request, text, abortController) {
+  async runTurn(session, turnId, request, text, abortController, onFirstModelOutput = null) {
     const requestMetadata = normalizeRequestMetadata(request);
+    let firstModelOutputObserved = false;
     for await (const renderEvent of session.handle.chat(text, abortController.signal, { turnId, requestMetadata })) {
       if (abortController.signal.aborted) {
         continue;
+      }
+      if (!firstModelOutputObserved && isModelOutputRenderEvent(renderEvent)) {
+        firstModelOutputObserved = true;
+        onFirstModelOutput?.();
       }
       this.emit({
         kind: 'render-event',
@@ -1432,7 +1459,7 @@ class LexExecutionRuntimeOwner {
     registerExtension('agentExecutor', handle.agent.getAgentExecutor());
   }
 
-  prepareSubmittedTurnTitle(session, request, text) {
+  prepareSubmittedTurnTitle(session, request, text, waitFor = null) {
     if (!this.requestResourceOperation || !session || session.titleGenerationStarted) {
       return;
     }
@@ -1457,7 +1484,40 @@ class LexExecutionRuntimeOwner {
     }
 
     session.titleGenerationStarted = true;
-    void this.generateSubmittedTurnTitle(session, requestText)
+    const runGeneration = () => {
+      const startedAt = Date.now();
+      const modelId = normalizeString(
+        session.currentModel?.model || session.currentModel?.modelId || session.currentModel?.id,
+      ) || DEFAULT_MODEL_ID;
+      const customEndpoint = Boolean(
+        normalizeString(session.currentModel?.baseUrl || session.currentModel?.llmConfig?.baseUrl)
+        && normalizeString(session.currentModel?.apiKey || session.currentModel?.llmConfig?.apiKey),
+      );
+      console.info('[AilyChat][LexExecutionHostTitle]', JSON.stringify({
+        phase: 'start',
+        sessionId: session.sessionId,
+        kind: customEndpoint ? 'aily-services-custom' : 'aily-services',
+        model: modelId,
+      }));
+      return this.generateSubmittedTurnTitle(session, requestText).then(title => {
+        console.info('[AilyChat][LexExecutionHostTitle]', JSON.stringify({
+          phase: 'complete',
+          sessionId: session.sessionId,
+          kind: customEndpoint ? 'aily-services-custom' : 'aily-services',
+          model: modelId,
+          elapsedMs: Date.now() - startedAt,
+          hasTitle: Boolean(title),
+          titleLength: title?.length || 0,
+        }));
+        return title;
+      });
+    };
+    const generation = waitFor
+      ? Promise.resolve(waitFor)
+        .catch(() => undefined)
+        .then(runGeneration)
+      : runGeneration();
+    void generation
       .then(title => {
         if (!title) {
           return undefined;
@@ -1490,7 +1550,14 @@ class LexExecutionRuntimeOwner {
       && normalizeString(session.currentModel?.apiKey || session.currentModel?.llmConfig?.apiKey),
     );
     if (hasCustomEndpoint) {
-      return this.generateTitleWithLexEndpoint(session.endpoint, titleContent);
+      const customModelId = normalizeString(
+        session.currentModel?.model || session.currentModel?.modelId || session.currentModel?.id,
+      );
+      return this.generateTitleWithLexEndpoint(
+        session.endpoint,
+        titleContent,
+        this.createModelConfig({ ...session.currentModel, model: customModelId }),
+      );
     }
 
     try {
@@ -1510,7 +1577,11 @@ class LexExecutionRuntimeOwner {
       const payload = await response.json();
       return sanitizeGeneratedTitle(payload?.data);
     } catch (error) {
-      const fallbackTitle = await this.generateTitleWithLexEndpoint(session.endpoint, titleContent);
+      const fallbackTitle = await this.generateTitleWithLexEndpoint(
+        session.endpoint,
+        titleContent,
+        this.createModelConfig(session.currentModel),
+      );
       if (fallbackTitle) {
         return fallbackTitle;
       }
@@ -1518,7 +1589,7 @@ class LexExecutionRuntimeOwner {
     }
   }
 
-  async generateTitleWithLexEndpoint(endpoint, content) {
+  async generateTitleWithLexEndpoint(endpoint, content, modelConfig = null) {
     if (!endpoint || typeof endpoint.stream !== 'function') {
       return '';
     }
@@ -1530,7 +1601,11 @@ class LexExecutionRuntimeOwner {
     for await (const chunk of endpoint.stream(
       messages,
       [],
-      { modelId: DEFAULT_MODEL_ID, maxOutputTokens: TITLE_GENERATION_MAX_OUTPUT_TOKENS },
+      {
+        ...(modelConfig && typeof modelConfig === 'object' ? modelConfig : {}),
+        modelId: normalizeString(modelConfig?.modelId) || DEFAULT_MODEL_ID,
+        maxOutputTokens: TITLE_GENERATION_MAX_OUTPUT_TOKENS,
+      },
       undefined,
       {
         requestKind: 'utility',
@@ -1804,20 +1879,6 @@ class LexExecutionRuntimeOwner {
   createEndpoint(currentModel, runtimeConfig = null) {
     const customBaseUrl = normalizeString(currentModel?.baseUrl || currentModel?.llmConfig?.baseUrl);
     const customApiKey = normalizeString(currentModel?.apiKey || currentModel?.llmConfig?.apiKey);
-    if (customBaseUrl && customApiKey) {
-      console.info('[AilyChat][LexExecutionHostEndpoint]', JSON.stringify({
-        kind: 'openai-compatible',
-        baseUrl: customBaseUrl,
-        model: normalizeString(currentModel?.model || currentModel?.modelId) || DEFAULT_MODEL_ID,
-        hasApiKey: true,
-      }));
-      return new OpenAIEndpoint({
-        baseUrl: customBaseUrl,
-        apiKey: customApiKey,
-        modelFamily: normalizeString(currentModel?.family) || 'openai',
-      });
-    }
-
     const baseUrl = this.resolveAilyServicesBaseUrl(currentModel, runtimeConfig);
     const authToken = this.resolveAuthToken(currentModel, runtimeConfig);
     console.info('[AilyChat][LexExecutionHostEndpoint]', JSON.stringify({
@@ -1826,6 +1887,7 @@ class LexExecutionRuntimeOwner {
       model: normalizeString(currentModel?.model || currentModel?.modelId) || DEFAULT_MODEL_ID,
       presetId: normalizeString(currentModel?.presetId) || '',
       hasAuthToken: Boolean(authToken),
+      usesCustomApiKey: Boolean(customBaseUrl && customApiKey),
       isLoggedIn: Boolean(runtimeConfig?.isLoggedIn || authToken),
       maxRequests: normalizeSoftRoundLimit(runtimeConfig?.maxRequests),
     }));
@@ -1855,6 +1917,8 @@ class LexExecutionRuntimeOwner {
   }
 
   createModelConfig(currentModel) {
+    const customBaseUrl = normalizeString(currentModel?.baseUrl || currentModel?.llmConfig?.baseUrl);
+    const customApiKey = normalizeString(currentModel?.apiKey || currentModel?.llmConfig?.apiKey);
     return {
       modelId: normalizeString(currentModel?.model || currentModel?.modelId) || DEFAULT_MODEL_ID,
       ...(normalizeString(currentModel?.presetId) ? { presetId: normalizeString(currentModel.presetId) } : {}),
@@ -1862,6 +1926,9 @@ class LexExecutionRuntimeOwner {
       ...(normalizeString(currentModel?.reasoningEffort) ? { reasoningEffort: normalizeString(currentModel.reasoningEffort) } : {}),
       ...(currentModel?.providerContextManagementSupport
         ? { providerContextManagementSupport: currentModel.providerContextManagementSupport }
+        : {}),
+      ...(customBaseUrl && customApiKey
+        ? { llmConfig: { apiKey: customApiKey, baseUrl: customBaseUrl } }
         : {}),
     };
   }
@@ -8098,31 +8165,89 @@ function hasResolvedHostSessionTitle(inventory) {
 }
 
 function sanitizeGeneratedTitle(raw) {
-  let value = normalizeString(raw);
+  let value = readGeneratedTitleValue(raw);
   if (!value) {
     return '';
   }
   value = value.replace(/\s*<think>[\s\S]*?<\/think>\s*/gi, ' ').trim();
-  try {
-    const parsed = JSON.parse(value);
-    if (parsed && typeof parsed.title === 'string') {
-      value = parsed.title;
+  value = value
+    .replace(/^\s*```(?:json|text|markdown)?\s*/i, '')
+    .replace(/\s*```\s*$/i, '')
+    .trim();
+
+  for (let depth = 0; depth < 3; depth += 1) {
+    const jsonValue = parseGeneratedTitleJson(value);
+    if (jsonValue === null) {
+      if (/^\s*[\[{]/.test(value) || /[\]}]\s*$/.test(value)) {
+        // Never use malformed structured output as the visible session title.
+        return '';
+      }
+      break;
     }
-  } catch {
-    // Plain text is the canonical title response.
+    const extracted = readGeneratedTitleValue(jsonValue);
+    if (!extracted) {
+      return '';
+    }
+    if (extracted === value) {
+      break;
+    }
+    value = extracted
+      .replace(/^\s*```(?:json|text|markdown)?\s*/i, '')
+      .replace(/\s*```\s*$/i, '')
+      .trim();
   }
   value = value
-    .replace(/^```(?:json|text)?\s*/i, '')
-    .replace(/```$/i, '')
-    .replace(/^\s*title\s*[:：]\s*/i, '')
-    .replace(/^\s*["'“”‘’]|["'“”‘’]\s*$/g, '')
+    .replace(/^\s*(?:title|标题)\s*[:：]\s*/i, '')
+    .replace(/^\s*(?:#{1,6}|[-*])\s+/, '')
+    .replace(/^\s*["'“”‘’]+|["'“”‘’]+\s*$/g, '')
     .replace(/[\r\n]+/g, ' ')
     .replace(/\s{2,}/g, ' ')
     .trim();
-  if (!value || value.length > 40 || /\b(当然|下面|我来|以下|可以|sorry|here is|let me|i can)\b/i.test(value)) {
+  if (!value || value.length > 40 || /(?:当然|下面|我来|以下|可以|sorry|here is|let me|i can)/i.test(value)) {
     return '';
   }
-  return value.replace(/[\s.?!。！？;；:：]+$/g, '').trim();
+  return value.replace(/[\s.?!。！？，,：:;；]+$/g, '').trim();
+}
+
+function readGeneratedTitleValue(raw) {
+  if (typeof raw === 'string') {
+    return raw.trim();
+  }
+  if (Array.isArray(raw)) {
+    return raw.length === 1 ? readGeneratedTitleValue(raw[0]) : '';
+  }
+  if (!raw || typeof raw !== 'object') {
+    return '';
+  }
+
+  for (const key of ['title', 'name', 'subject', 'text', 'content', 'summary', 'data']) {
+    const value = readGeneratedTitleValue(raw[key]);
+    if (value) {
+      return value;
+    }
+  }
+
+  const stringValues = Object.values(raw)
+    .filter(value => typeof value === 'string' && value.trim())
+    .map(value => value.trim());
+  return stringValues.length === 1 ? stringValues[0] : '';
+}
+
+function parseGeneratedTitleJson(value) {
+  const candidates = [value];
+  const objectStart = value.indexOf('{');
+  const objectEnd = value.lastIndexOf('}');
+  if (objectStart >= 0 && objectEnd > objectStart) {
+    candidates.push(value.slice(objectStart, objectEnd + 1));
+  }
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      // Continue with the next structured-output candidate.
+    }
+  }
+  return null;
 }
 
 function normalizeApprovalInput(request) {
@@ -8233,4 +8358,14 @@ function isTerminalResponseRenderEvent(event) {
     || status === 'done'
     || stopReason === 'COMPLETED'
     || stopReason === 'END_TURN';
+}
+
+function isModelOutputRenderEvent(event) {
+  if (!event || typeof event !== 'object') {
+    return false;
+  }
+  if (event.type === 'markdown_delta' || event.type === 'thinking_delta') {
+    return Boolean(normalizeString(event.text));
+  }
+  return event.type === 'tool_call_begin';
 }

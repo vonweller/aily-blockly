@@ -20,7 +20,11 @@ import {
   resolveChatSessionScopeFromProject,
 } from '../core/chat-session-scope';
 import { resolveChatSurfaceModeId } from '../core/chat-mode';
-import { normalizeChatSessionTitleSource } from '../core/chat-session-title';
+import {
+  getChatSessionTitleSourcePriority,
+  isCustomSessionTitleSource,
+  normalizeChatSessionTitleSource,
+} from '../core/chat-session-title';
 import type { ChatSessionListAction, ChatSessionListItem } from './menu-manager.service';
 import type {
   HostSessionHistoryItem,
@@ -1265,12 +1269,36 @@ export class ChatSessionItemsService implements OnDestroy {
     // timing belongs to durable inventory; a host-only running row can render
     // without a relative timestamp until that inventory exists.
     const timing = existing?.timing;
+    const hostTitle = typeof state.title === 'string' ? state.title.trim() : '';
+    const existingTitle = typeof existing?.title === 'string' ? existing.title.trim() : '';
+    const normalizedHostSource = normalizeChatSessionTitleSource(state.titleSource);
+    const normalizedExistingSource = normalizeChatSessionTitleSource(existing?.titleSource);
+    const hostSource = normalizedHostSource !== 'empty'
+      ? normalizedHostSource
+      : (state.titleDurable === true && hostTitle ? 'legacy-custom' : 'empty');
+    const existingSource = normalizedExistingSource !== 'empty'
+      ? normalizedExistingSource
+      : (existing?.titleDurable === true && existingTitle ? 'legacy-custom' : 'empty');
+    // The renderer session model is the canonical title owner, matching VS
+    // Code's ChatModel.setCustomTitle semantics. A stale host inventory
+    // default must not replace a generated/user title that has already been
+    // applied to that model. A higher-priority host title (for example a user
+    // rename restored from persistence) may still win.
+    const useHostTitle = Boolean(hostTitle) && (
+      !existingTitle
+      || getChatSessionTitleSourcePriority(hostSource) > getChatSessionTitleSourcePriority(existingSource)
+    );
+    const title = useHostTitle ? hostTitle : existingTitle;
+    const titleSource = useHostTitle ? hostSource : existingSource;
+    const titleDurable = useHostTitle
+      ? state.titleDurable === true || isCustomSessionTitleSource(hostSource)
+      : existing?.titleDurable === true || isCustomSessionTitleSource(existingSource);
 
     return this.toSessionListItem({
       sessionId,
-      title: state.title ?? existing?.title,
-      titleSource: this.normalizeHostInventoryTitleSource(state.titleSource, existing?.titleSource),
-      titleDurable: state.titleDurable ?? existing?.titleDurable,
+      title,
+      titleSource,
+      titleDurable,
       description: existing?.description,
       sessionType: state.sessionType ?? existing?.sessionType,
       projectPath: state.projectPath !== undefined ? state.projectPath : existing?.projectPath,
@@ -1310,17 +1338,6 @@ export class ChatSessionItemsService implements OnDestroy {
     return state.requestInProgress === true
       || state.status === 'running'
       || state.status === 'needs_input';
-  }
-
-  private normalizeHostInventoryTitleSource(
-    value: string | undefined,
-    fallback: SessionListSourceLike['titleSource'] | undefined,
-  ): SessionListSourceLike['titleSource'] | undefined {
-    const normalized = normalizeChatSessionTitleSource(value);
-    if (normalized !== 'empty') {
-      return normalized;
-    }
-    return fallback;
   }
 
   private normalizeHostInventoryMode(

@@ -158,7 +158,7 @@ export class BackgroundAgentService implements OnDestroy {
       const agent = lex.createAgent({
         host: adapter,
         endpoint: buildLexEndpoint(lex, this.chatService.currentModel, this.ailyChatConfigService),
-        model: buildLexModelConfig(this.chatService.currentModel),
+        model: buildLexModelConfig(this.chatService.currentModel, 8192, this.ailyChatConfigService),
         cwd: cwd || undefined,
         maxToolCallIterations: this.ailyChatConfigService.maxRequests,
         extensions: {

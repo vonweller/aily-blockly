@@ -1851,11 +1851,13 @@ export function buildLexEndpoint(
 ): any {
   const llmConfig = getLLMConfig(currentModel, apiConfig);
 
-  if (llmConfig?.apiKey && llmConfig?.baseUrl) {
-    return new lex.OpenAIEndpoint({
-      baseUrl: llmConfig.baseUrl,
-      apiKey: llmConfig.apiKey,
-      modelFamily: 'openai',
+  if (isLexBootstrapTraceEnabled()) {
+    console.info('[LatencyDebug][Routing] endpoint selected', {
+      endpointKind: 'AilyServicesEndpoint',
+      modelId: currentModel?.model || null,
+      hasResolvedApiKey: Boolean(llmConfig?.apiKey),
+      hasResolvedBaseUrl: Boolean(llmConfig?.baseUrl),
+      useCustomApiKey: apiConfig?.useCustomApiKey === true,
     });
   }
 
@@ -1905,13 +1907,16 @@ function normalizeSoftRoundLimit(value: number | undefined): number {
 export function buildLexModelConfig(
   currentModel?: LexRuntimeModelConfig | null,
   maxOutputTokens = 8192,
+  apiConfig?: LexRuntimeApiConfig | null,
 ): any {
+  const llmConfig = getLLMConfig(currentModel, apiConfig);
   return {
     modelId: currentModel?.model || 'default',
     presetId: currentModel?.presetId,
     contextWindowTokens: currentModel?.contextWindowTokens,
     reasoningEffort: currentModel?.reasoningEffort,
     maxOutputTokens,
+    ...(llmConfig ? { llmConfig } : {}),
   };
 }
 
@@ -2277,7 +2282,7 @@ export function bootstrapBlocklyLexAgent(
   agent = lex.createAgent({
     host: adapter,
     endpoint: buildLexEndpoint(lex, ctx.currentModel, ctx.ailyChatConfigService),
-    model: buildLexModelConfig(ctx.currentModel),
+    model: buildLexModelConfig(ctx.currentModel, 8192, ctx.ailyChatConfigService),
     summarizerModel: buildLexSummarizerModelConfig(ctx.currentModel, ctx.ailyChatConfigService),
     contextCompactionArchitecture: 'provider',
     inlineSummarization: true,

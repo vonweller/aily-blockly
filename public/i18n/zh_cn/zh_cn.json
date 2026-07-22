@@ -651,7 +651,7 @@
         "TURN_ACTION_RESTORE_ROUNDS": "还原 · {{count}} 轮",
         "TURN_ACTION_FORK": "分叉新会话",
         "TURN_RESTORE_STATUS": "已还原检查点",
-        "TURN_RESTORE_REAPPLY": "恢复",
+        "TURN_RESTORE_REAPPLY": "撤销还原",
         "USER_FEEDBACK_NOTIFY_TITLE": "AI 助手需要你的操作",
         "USER_FEEDBACK_NOTIFY_BODY": "AI 助手有待您处理的操作，请打开对话并完成确认、作答或界面指示的后续步骤。",
         "ONBOARDING": {
