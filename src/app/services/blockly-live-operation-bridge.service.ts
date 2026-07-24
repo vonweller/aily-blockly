@@ -33,6 +33,7 @@ type LivePlacement =
 
 type BlocklyLiveOperationPayload = {
   requestId?: string;
+  rendererGeneration?: number;
   path?: string;
   operation?: string;
   params?: Record<string, any>;
@@ -77,8 +78,9 @@ export class BlocklyLiveOperationBridgeService {
     const requestId = payload?.requestId;
     const respond = (result: Record<string, any>) => {
       ipcRenderer.send('cli-bridge:blockly-live-operation:response', {
-        requestId,
         ...result,
+        requestId,
+        rendererGeneration: payload?.rendererGeneration,
       });
     };
 

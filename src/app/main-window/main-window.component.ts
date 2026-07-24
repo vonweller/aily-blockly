@@ -150,10 +150,12 @@ export class MainWindowComponent implements OnDestroy {
     });
     this.updateService.init();
     this.npmService.init();
-    await this.authService.initializeAuth();
     this.setupGlobalOAuthListener();
     this.setupExampleListListener();
-    this.electronService.sendRendererReady();
+    void this.electronService.sendRendererReady();
+    void this.authService.initializeAuth().catch(error => {
+      console.warn('[Auth] Background authentication initialization failed:', error);
+    });
     // 重置 footer 状态
     this.uiService.updateFooterState({ text: '', timeout: 0 });
 

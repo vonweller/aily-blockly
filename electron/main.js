@@ -6,7 +6,7 @@ const http = require("http");
 const { spawn, exec } = require("child_process");
 const url = require("url");
 const WinState = require('electron-win-state').default;
-const { app, BrowserWindow, ipcMain, dialog, screen, shell, Menu } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, screen, shell, Menu, powerMonitor } = require("electron");
 
 const { isWin32, isDarwin, isLinux } = require("./platform");
 const projectLock = require("./project-lock");
@@ -862,7 +862,7 @@ function handleProtocol(url) {
         version: version || ''
       };
 
-      if (mainWindow && mainWindow.webContents && isRendererReady) {
+      if (isCurrentRendererGenerationReady()) {
         mainWindow.webContents.send('open-example-list', data);
         if (mainWindow.isMinimized()) {
           mainWindow.restore();
@@ -953,19 +953,25 @@ function requestMainWindow(channel, responseChannel, payload, timeoutMs = 12000)
       resolve({ ok: false, message: '主窗口不可用' });
       return;
     }
-    if (!isRendererReady) {
+    if (!isCurrentRendererGenerationReady()) {
       resolve({ ok: false, message: '渲染进程尚未就绪' });
       return;
     }
 
+    const requestGeneration = rendererGeneration;
     const requestId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const timer = setTimeout(() => {
       ipcMain.removeListener(responseChannel, listener);
       resolve({ ok: false, message: '等待渲染进程响应超时' });
     }, timeoutMs);
 
-    const listener = (_event, message) => {
-      if (!message || message.requestId !== requestId) {
+    const listener = (event, message) => {
+      if (!isCurrentMainRenderer(event.sender)
+        || rendererGeneration !== requestGeneration
+        || readyRendererGeneration !== requestGeneration
+        || !message
+        || message.requestId !== requestId
+        || Number(message.rendererGeneration) !== requestGeneration) {
         return;
       }
       clearTimeout(timer);
@@ -974,7 +980,11 @@ function requestMainWindow(channel, responseChannel, payload, timeoutMs = 12000)
     };
 
     ipcMain.on(responseChannel, listener);
-    mainWindow.webContents.send(channel, { ...payload, requestId });
+    mainWindow.webContents.send(channel, {
+      ...payload,
+      requestId,
+      rendererGeneration: requestGeneration,
+    });
   });
 }
 
@@ -1299,12 +1309,63 @@ function getZipUrlState(conf = {}) {
 function buildZipUrls(conf = {}) {
   return JSON.stringify(getZipUrlState(conf).urls);
 }
-let isRendererReady = false;
+let rendererGeneration = 0;
+let readyRendererGeneration = 0;
+let powerMonitorListenersRegistered = false;
+
+function isCurrentMainRenderer(sender) {
+  return !!mainWindow
+    && !mainWindow.isDestroyed()
+    && !!mainWindow.webContents
+    && !mainWindow.webContents.isDestroyed()
+    && sender?.id === mainWindow.webContents.id;
+}
+
+function isCurrentRendererGenerationReady() {
+  return rendererGeneration > 0
+    && readyRendererGeneration === rendererGeneration
+    && isCurrentMainRenderer(mainWindow?.webContents);
+}
+
+function invalidateRendererGeneration(reason) {
+  readyRendererGeneration = 0;
+  console.info('[RendererLifecycle] unavailable', {
+    generation: rendererGeneration,
+    reason,
+  });
+}
+
+function beginRendererGeneration(reason) {
+  rendererGeneration += 1;
+  invalidateRendererGeneration(reason);
+  console.info('[RendererLifecycle] loading', {
+    generation: rendererGeneration,
+    reason,
+  });
+  return rendererGeneration;
+}
+
+ipcMain.handle('get-renderer-generation', (event) => {
+  return isCurrentMainRenderer(event.sender) ? rendererGeneration : 0;
+});
 
 // 监听渲染进程就绪事件
-ipcMain.on('renderer-ready', () => {
-  console.log('渲染进程已就绪');
-  isRendererReady = true;
+ipcMain.on('renderer-ready', (event, payload = {}) => {
+  const requestedGeneration = Number(payload?.generation);
+  if (!isCurrentMainRenderer(event.sender)
+    || !Number.isInteger(requestedGeneration)
+    || requestedGeneration !== rendererGeneration) {
+    console.warn('[RendererLifecycle] ignored stale renderer-ready', {
+      requestedGeneration,
+      currentGeneration: rendererGeneration,
+      senderId: event.sender?.id,
+    });
+    return;
+  }
+
+  console.log('渲染进程已就绪', { generation: requestedGeneration });
+  readyRendererGeneration = requestedGeneration;
+  event.sender.send('renderer-ready-ack', { generation: requestedGeneration });
 
   // 检查是否有待处理的OAuth回调
   if (global.pendingOAuthCallback) {
@@ -1320,6 +1381,29 @@ ipcMain.on('renderer-ready', () => {
     global.pendingExampleListOpen = null;
   }
 });
+
+function registerPowerMonitorLifecycle() {
+  if (powerMonitorListenersRegistered) {
+    return;
+  }
+  powerMonitorListenersRegistered = true;
+  powerMonitor.on('suspend', () => {
+    if (isCurrentRendererGenerationReady()) {
+      mainWindow.webContents.send('renderer-lifecycle', {
+        kind: 'suspend',
+        generation: rendererGeneration,
+      });
+    }
+  });
+  powerMonitor.on('resume', () => {
+    if (isCurrentRendererGenerationReady()) {
+      mainWindow.webContents.send('renderer-lifecycle', {
+        kind: 'resume',
+        generation: rendererGeneration,
+      });
+    }
+  });
+}
 
 // 检查并解压 child 目录下的平台组件包
 function installChildEnv(childPath, options) {
@@ -2301,6 +2385,9 @@ function createWindow() {
   });
 
   registerWebBluetoothChooser(mainWindow);
+  mainWindow.webContents.on('did-start-loading', () => {
+    beginRendererGeneration('did-start-loading');
+  });
 
   mainWindow.setBounds(winState.state);
 
@@ -2372,6 +2459,7 @@ function createWindow() {
 
   mainWindow.webContents.on('render-process-gone', (event, details) => {
     console.error('Renderer process gone:', details.reason, 'exitCode:', details.exitCode);
+    invalidateRendererGeneration(`render-process-gone:${details.reason}`);
     void simulatorGateway.stop();
     if (!serve) return;
 
@@ -2415,8 +2503,8 @@ function createWindow() {
 
   // 当主窗口被关闭时，进行相应的处理
   mainWindow.on("closed", () => {
+    invalidateRendererGeneration('window-closed');
     mainWindow = null;
-    isRendererReady = false;
     app.quit();
   });
 
@@ -2441,30 +2529,6 @@ function createWindow() {
     app,
     mainWindow: () => mainWindow,
   });
-
-  // 检查是否有待处理的OAuth回调
-  // 注意：这里不再使用 setTimeout 自动发送，而是等待 renderer-ready 事件
-  // 但为了兼容性（如果 renderer-ready 没触发），保留一个较长时间的超时检查
-  if (global.pendingOAuthCallback) {
-    setTimeout(() => {
-      if (global.pendingOAuthCallback && mainWindow && mainWindow.webContents) {
-        console.log('超时检查：发送待处理的OAuth回调');
-        mainWindow.webContents.send('oauth-callback', global.pendingOAuthCallback);
-        global.pendingOAuthCallback = null;
-      }
-    }, 5000);
-  }
-
-  // 检查是否有待处理的示例列表打开请求
-  if (global.pendingExampleListOpen) {
-    setTimeout(() => {
-      if (global.pendingExampleListOpen && mainWindow && mainWindow.webContents) {
-        console.log('超时检查：发送待处理的示例列表请求');
-        mainWindow.webContents.send('open-example-list', global.pendingExampleListOpen);
-        global.pendingExampleListOpen = null;
-      }
-    }, 5000);
-  }
 
   // 在多实例模式下，监听OAuth回调文件的变化
   if (shouldUseMultiInstance()) {
@@ -2758,6 +2822,7 @@ app.on("ready", async () => {
 
   // 创建主窗口
   createWindow();
+  registerPowerMonitorLifecycle();
 
   // 启动 CLI bridge（供外部 CLI 驱动打开/关闭/重载项目）
   startCliBridgeIfPossible();

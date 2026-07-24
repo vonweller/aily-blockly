@@ -258,7 +258,10 @@ export class ChatSessionsControlService {
   }
 
   get showLoginSurface(): boolean {
-    return !this._isAuthenticated;
+    return !this._isAuthenticated
+      && this.sessionListItems.length === 0
+      && !this._hasConversationContent
+      && !this._hasCurrentSession;
   }
 
   get showWelcomeSurface(): boolean {
@@ -377,10 +380,6 @@ export class ChatSessionsControlService {
     hasConversationContent: boolean;
     hasCurrentSession: boolean;
   }): 'hidden' | 'stacked' | 'sidebar' {
-    if (!this._isAuthenticated) {
-      return 'hidden';
-    }
-
     if (this._isSessionViewerSuppressed) {
       return 'hidden';
     }
