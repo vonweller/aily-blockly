@@ -1033,6 +1033,7 @@ async function handleCliBridgeCommand(action, payload) {
         'child_app_window_list',
         'child_app_window_set_bounds',
         'child_app_window_arrange',
+        'subapp_agent_call',
       ]);
       if (!dir && !projectOptionalOperations.has(operation)) return { ok: false, message: '当前没有打开的项目,且未提供 path' };
       const liveOperationTimeoutMs = operation === 'project_build'
@@ -1041,12 +1042,14 @@ async function handleCliBridgeCommand(action, payload) {
           ? 300000
           : operation === 'abs_apply'
             ? 120000
-            : operation === 'child_app_control'
+            : operation === 'subapp_agent_call'
+              ? 620000
+              : operation === 'child_app_control'
               || operation === 'child_app_open'
               || operation === 'child_app_window_set_bounds'
               || operation === 'child_app_window_arrange'
-              ? 120000
-            : 12000;
+                ? 120000
+                : 12000;
       const result = await requestMainWindow(
         'cli-bridge:blockly-live-operation',
         'cli-bridge:blockly-live-operation:response',

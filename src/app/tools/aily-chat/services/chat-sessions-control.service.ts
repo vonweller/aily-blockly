@@ -35,6 +35,7 @@ export class ChatSessionsControlService {
   private _hasCurrentSession = false;
   private _isAuthenticated = true;
   private _isSessionViewerSuppressed = false;
+  private _isSubappDockExpanded = false;
   private _sessionViewerOrientation = 'sideBySide' as ChatSessionViewerOrientationSetting;
   private _requestedSessionSidebarWidth = this.readPersistedSessionSidebarWidth();
   private _sessionSidebarWidth = this.sessionSidebarDefaultWidth;
@@ -272,6 +273,10 @@ export class ChatSessionsControlService {
     return this._isSessionViewerSuppressed;
   }
 
+  get isSubappDockExpanded(): boolean {
+    return this._isSubappDockExpanded;
+  }
+
   get showSessionSidebar(): boolean {
     return this._sessionListDisplayMode === 'sidebar';
   }
@@ -355,6 +360,18 @@ export class ChatSessionsControlService {
     }
   }
 
+  setSubappDockExpanded(expanded: boolean): void {
+    const nextExpanded = expanded === true;
+    if (nextExpanded === this._isSubappDockExpanded) {
+      return;
+    }
+
+    this._isSubappDockExpanded = nextExpanded;
+    if (!this.updateLayoutProjection()) {
+      this.controlChangedSubject.next();
+    }
+  }
+
   resolveSessionListDisplayMode(input: {
     hasSessions: boolean;
     hasConversationContent: boolean;
@@ -365,6 +382,10 @@ export class ChatSessionsControlService {
     }
 
     if (this._isSessionViewerSuppressed) {
+      return 'hidden';
+    }
+
+    if (this._isSubappDockExpanded) {
       return 'hidden';
     }
 

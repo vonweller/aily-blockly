@@ -1386,6 +1386,10 @@ export class ChatViewService {
     this.chatSessionsControlService.setSessionSidebarWidth(width, options);
   }
 
+  setSubappDockExpanded(expanded: boolean): void {
+    this.chatSessionsControlService.setSubappDockExpanded(expanded);
+  }
+
   resolveSessionListDisplayMode(input: {
     hasSessions: boolean;
     hasConversationContent: boolean;

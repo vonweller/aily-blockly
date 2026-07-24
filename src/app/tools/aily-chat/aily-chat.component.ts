@@ -108,6 +108,8 @@ import { ChatSessionListComponent } from './components/chat-session-list.compone
 import { ChatSessionPickerComponent } from './components/chat-session-picker.component';
 import { ChatSessionTitleControlComponent } from './components/chat-session-title-control.component';
 import { ChatContextToolbarComponent } from './components/chat-context-toolbar/chat-context-toolbar.component';
+import { ChatSubappActivityBarComponent } from './components/subapp-activity/chat-subapp-activity-bar.component';
+import { ChatSubappDockComponent } from './components/subapp-activity/chat-subapp-dock.component';
 import {
   ChatPermissionConfirmDialogComponent,
   type ChatPermissionConfirmDialogResult,
@@ -199,6 +201,8 @@ function clearTimeoutOutsideAngular(handle: ReturnType<typeof setTimeout>): void
     ChatSessionPickerComponent,
     ChatSessionTitleControlComponent,
     ChatContextToolbarComponent,
+    ChatSubappActivityBarComponent,
+    ChatSubappDockComponent,
     NzNoAnimationDirective,
   ],
   templateUrl: './aily-chat.component.html',
@@ -1018,6 +1022,11 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
     }
 
     this.viewState.setSessionSidebarWidth(width, { persist: true });
+  }
+
+  handleSubappDockExpandedChange(expanded: boolean): void {
+    this.viewState.setSubappDockExpanded(expanded);
+    this.cdr.markForCheck();
   }
 
   openImportedDebugSession(sessionId: string): void {

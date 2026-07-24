@@ -56,13 +56,80 @@ test('treats an npm-linked source package as an installed subapp', async (t) => 
   t.after(() => fs.rmSync(fixtureRoot, { recursive: true, force: true }));
 
   fs.mkdirSync(path.join(sourceDir, 'ui'), { recursive: true });
+  fs.mkdirSync(path.join(sourceDir, 'agent'), { recursive: true });
+  fs.mkdirSync(path.join(sourceDir, 'skill', 'fixture-skill'), { recursive: true });
   fs.mkdirSync(path.dirname(linkedDir), { recursive: true });
   fs.writeFileSync(path.join(sourceDir, 'index.js'), '');
   fs.writeFileSync(path.join(sourceDir, 'ui', 'index.html'), '<!doctype html>');
+  fs.writeFileSync(path.join(sourceDir, 'agent', 'tools.json'), JSON.stringify({
+    protocolVersion: 1,
+    transport: 'aily-child-rpc',
+    lifecycle: {
+      sessionRelease: {
+        method: 'fixture.session.close',
+        params: { reason: 'host-session-release' },
+        timeoutMs: 2500,
+      },
+    },
+    tools: [{
+      name: 'fixture_echo',
+      description: 'Echo through the fixture subapp Runtime.',
+      rpc: { method: 'fixture.echo' },
+      permission: 'read',
+      timeoutMs: 5000,
+      maxOutputBytes: 49152,
+      presentation: {
+        mode: 'dock',
+        surface: 'compact',
+        autoOpen: 'first-active',
+        when: {
+          param: 'action',
+          values: ['open'],
+        },
+      },
+      inputSchema: {
+        type: 'object',
+        properties: { value: { type: 'string' } },
+        additionalProperties: false,
+      },
+    }],
+  }));
+  fs.writeFileSync(path.join(sourceDir, 'skill', 'fixture-skill', 'SKILL.md'), [
+    '---',
+    'name: fixture-skill',
+    'description: Fixture skill.',
+    '---',
+    '',
+    '# Fixture',
+  ].join('\n'));
   fs.writeFileSync(path.join(sourceDir, 'package.json'), JSON.stringify({
     name: '@aily-project/subapp-aily-chat',
     version: '0.1.1',
     main: 'index.js',
+    ailySubapp: {
+      ui: {
+        surfaces: {
+          compact: {
+            entry: 'ui/index.html',
+            minWidth: 280,
+            minHeight: 180,
+            preferredHeight: 260,
+            interactive: true,
+          },
+        },
+      },
+      runtime: {
+        startupTimeoutMs: 20000,
+      },
+      agent: {
+        protocolVersion: 1,
+        skills: ['skill/fixture-skill/SKILL.md'],
+        tools: {
+          transport: 'aily-child-rpc',
+          manifest: 'agent/tools.json',
+        },
+      },
+    },
   }));
   fs.symlinkSync(sourceDir, linkedDir, process.platform === 'win32' ? 'junction' : 'dir');
 
@@ -77,6 +144,82 @@ test('treats an npm-linked source package as an installed subapp', async (t) => 
   assert.equal(state.apps[0].installed, true);
   assert.equal(state.apps[0].installedVersion, '0.1.1');
   assert.equal(state.apps[0].config.packagePath, linkedDir);
+  assert.equal(state.apps[0].config.startupTimeoutMs, 20000);
+  assert.deepEqual(state.apps[0].config.ui, {
+    surfaces: {
+      default: {
+        entry: 'ui/index.html',
+      },
+      compact: {
+        entry: 'ui/index.html',
+        minWidth: 280,
+        minHeight: 180,
+        preferredHeight: 260,
+        interactive: true,
+      },
+    },
+  });
+  assert.equal(state.apps[0].config.agent.transport, 'aily-child-rpc');
+  assert.deepEqual(state.apps[0].config.agent.lifecycle, {
+    sessionRelease: {
+      method: 'fixture.session.close',
+      params: { reason: 'host-session-release' },
+      timeoutMs: 2500,
+    },
+  });
+  assert.deepEqual(state.apps[0].config.agent.skills, ['skill/fixture-skill/SKILL.md']);
+  assert.equal(state.apps[0].config.agent.tools[0].name, 'fixture_echo');
+  assert.equal(state.apps[0].config.agent.tools[0].rpc.method, 'fixture.echo');
+  assert.deepEqual(state.apps[0].config.agent.tools[0].presentation, {
+    mode: 'dock',
+    surface: 'compact',
+    autoOpen: 'first-active',
+    when: {
+      param: 'action',
+      values: ['open'],
+    },
+  });
+});
+
+test('rejects an unsafe compact UI surface entry without exposing a runnable config', async (t) => {
+  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'aily-subapp-surface-'));
+  const installRoot = path.join(fixtureRoot, 'install');
+  const sourceDir = path.join(fixtureRoot, 'source');
+  const linkedDir = path.join(installRoot, 'node_modules', '@aily-project', 'subapp-aily-chat');
+  t.after(() => fs.rmSync(fixtureRoot, { recursive: true, force: true }));
+
+  fs.mkdirSync(path.join(sourceDir, 'ui'), { recursive: true });
+  fs.mkdirSync(path.dirname(linkedDir), { recursive: true });
+  fs.writeFileSync(path.join(sourceDir, 'index.js'), '');
+  fs.writeFileSync(path.join(sourceDir, 'ui', 'index.html'), '<!doctype html>');
+  fs.writeFileSync(path.join(sourceDir, 'package.json'), JSON.stringify({
+    name: '@aily-project/subapp-aily-chat',
+    version: '0.1.1',
+    main: 'index.js',
+    ailySubapp: {
+      ui: {
+        surfaces: {
+          compact: {
+            entry: '../outside.html',
+          },
+        },
+      },
+    },
+  }));
+  fs.symlinkSync(sourceDir, linkedDir, process.platform === 'win32' ? 'junction' : 'dir');
+
+  const manager = createSubappManager({
+    rootDir: installRoot,
+    fetchImpl: async () => ({
+      ok: true,
+      text: async () => JSON.stringify(fixtureIndex()),
+    }),
+  });
+  const state = await manager.list({ locale: 'en', refresh: true });
+
+  assert.equal(state.apps[0].installed, false);
+  assert.equal(state.apps[0].config, null);
+  assert.match(state.apps[0].installError, /Unsafe ailySubapp\.ui\.surfaces\.compact\.entry/);
 });
 
 test('installs indexed package into the user app project and exposes its absolute runtime path', async (t) => {

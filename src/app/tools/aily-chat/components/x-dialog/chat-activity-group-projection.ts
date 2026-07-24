@@ -117,11 +117,11 @@ export function buildChatPartIdentity(part: ChatPart, index: number): string {
     return part.partId || part.askId;
   }
   if (part.type === 'terminal') {
-    return part.partId
+    return part.toolCallId
+      || part.partId
       || part.processId
       || part.outputSessionId
       || part.terminalId
-      || part.toolCallId
       || `terminal-${index}`;
   }
   if (part.type === 'question') {

@@ -43,6 +43,11 @@ import {
 } from './blockly-contributed-tool-runtime';
 import { createBlocklyPlaceholderHandlers } from './blockly-placeholder-host-tools';
 import { createPlanReviewHandler, makePlanReviewContribution } from './blockly-plan-review-tool';
+import {
+  appendSubappAgentContributions,
+  collectSubappAgentToolBindings,
+  createSubappAgentHandlers,
+} from './blockly-subapp-agent-tools';
 
 export const BLOCKLY_LEX_DEFERRED_GROUPS = [
   { id: 'blockly-library-discovery', label: '硬件/库工具', description: '开发板、库搜索与库定义分析' },
@@ -187,8 +192,13 @@ Set confirmed=true when the user made the choice in response to your runtime sel
 export function createBlocklyToolProvider(hostAPI: IExternalHostAPI, options?: BlocklyToolProviderOptions): IHostToolProvider {
   const runtimeMode = normalizeChatAgentRuntimeMode(options?.runtimeMode, 'blockly');
   const contributions = collectBlocklyContributions(hostAPI, runtimeMode);
+  const subappAgentBindings = collectSubappAgentToolBindings();
+  appendSubappAgentContributions(contributions, subappAgentBindings);
   appendRuntimeModeContribution(contributions, runtimeMode, options);
-  const handlers = createHandlers(runtimeMode, options);
+  const handlers = {
+    ...createHandlers(runtimeMode, options),
+    ...createSubappAgentHandlers(subappAgentBindings),
+  };
 
   return {
     contributeTools(): IToolContribution[] {
