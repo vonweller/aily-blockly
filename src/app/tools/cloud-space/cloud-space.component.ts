@@ -17,8 +17,9 @@ import { distinctUntilChanged } from 'rxjs/operators';
 import { PlatformService } from "../../services/platform.service";
 import { CrossPlatformCmdService } from "../../services/cross-platform-cmd.service";
 import { LoginComponent } from '../../components/login/login.component';
-import { extractApiErrorDetails } from '../../utils/api-error.utils';
+import { resolveTranslatedApiErrorMessage } from '../../utils/api-error.utils';
 import { AILY_LOCAL_LIBRARY_SOURCES_KEY } from '../../services/local-library-sync.service';
+import { TranslateService } from '@ngx-translate/core';
 
 @Component({
   selector: 'app-cloud-space',
@@ -56,7 +57,8 @@ export class CloudSpaceComponent {
     private modal: NzModalService,
     private electronService: ElectronService,
     private platformService: PlatformService,
-    private crossPlatformCmdService: CrossPlatformCmdService
+    private crossPlatformCmdService: CrossPlatformCmdService,
+    private translate: TranslateService,
   ) { }
 
   // 分页参数
@@ -461,6 +463,13 @@ export class CloudSpaceComponent {
     this.filterProjects();
   }
 
+  private getPublishErrorMessage(source: unknown): string {
+    return resolveTranslatedApiErrorMessage(source, this.translate, {
+      fallbackMessage: this.translate.instant('CLOUD_SPACE_ERRORS.PUBLISH_FAILED'),
+      translationPrefix: 'CLOUD_SPACE_ERRORS',
+    });
+  }
+
   toggleVisibility(item) {
     // 切换公开/私有状态
     // console.log('切换项目可见性:', item);
@@ -473,14 +482,14 @@ export class CloudSpaceComponent {
       this.cloudService.publishProject(item.id).subscribe({
         next: res => {
           if (res.status !== 200) {
-            this.message.error(extractApiErrorDetails(res, '项目公开失败').message);
+            this.message.error(this.getPublishErrorMessage(res));
             return;
           }
           this.message.info(`项目 "${item.nickname}" 已设为公开`);
           item.is_published = true;
         },
         error: error => {
-          this.message.error(extractApiErrorDetails(error, '项目公开失败').message);
+          this.message.error(this.getPublishErrorMessage(error));
         }
       });
     }

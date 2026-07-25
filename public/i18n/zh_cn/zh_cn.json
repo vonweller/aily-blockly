@@ -1,4 +1,11 @@
 {
+    "CLOUD_SPACE_ERRORS": {
+        "PUBLISH_FAILED": "项目公开失败",
+        "WORKSPACE_PROJECT_NOT_FOUND": "项目不存在",
+        "WORKSPACE_PROJECT_PUBLISH_FORBIDDEN": "无权公开此项目",
+        "WORKSPACE_PROJECT_LOCAL_DEPENDENCY_PATH_INVALID": "本地依赖路径不符合公开要求",
+        "WORKSPACE_PROJECT_BUILD_REQUIRED": "请先编译并同步项目"
+    },
     "MENU": {
         "MENU": "菜单",
         "PROJECT_NEW": "新建项目",

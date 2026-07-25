@@ -1,4 +1,11 @@
 {
+    "CLOUD_SPACE_ERRORS": {
+        "PUBLISH_FAILED": "Projekt konnte nicht veröffentlicht werden",
+        "WORKSPACE_PROJECT_NOT_FOUND": "Projekt nicht gefunden",
+        "WORKSPACE_PROJECT_PUBLISH_FORBIDDEN": "Sie dürfen dieses Projekt nicht veröffentlichen",
+        "WORKSPACE_PROJECT_LOCAL_DEPENDENCY_PATH_INVALID": "Lokale Abhängigkeitspfade erfüllen die Veröffentlichungsanforderungen nicht",
+        "WORKSPACE_PROJECT_BUILD_REQUIRED": "Erstellen und synchronisieren Sie zuerst das Projekt"
+    },
     "MENU": {
         "MENU": "Menü",
         "PROJECT_NEW": "Neues Projekt",
