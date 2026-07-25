@@ -1498,7 +1498,15 @@ function loadEnv() {
   // 同一应用版本复用现有工具；两个 npm 全局安装串行执行。
   runInstallEnv(childPath);
   const appVersion = app.getVersion();
-  const installLatest = shouldInstallForAppVersion(userConf, appVersion);
+  const isE2E = process.env.AILY_E2E === "1";
+  const allowE2ERefresh = process.env.AILY_E2E_ALLOW_TOOL_REFRESH === "1";
+  const installLatest = shouldInstallForAppVersion(userConf, appVersion, {
+    isE2E,
+    allowE2ERefresh,
+  });
+  if (isE2E && !allowE2ERefresh) {
+    console.log("E2E mode: skipping automatic aily-builder and aily-linter latest refresh");
+  }
   if (installLatest) {
     try {
       markInstalledForAppVersion(userConfigPath, appVersion);
