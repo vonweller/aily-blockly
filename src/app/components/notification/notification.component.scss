@@ -11,7 +11,6 @@
     box-shadow: var(--aily-shadow-md);
     min-width: 250px;
     max-width: 400px;
-    width: 250px;
     height: 90px;
     transition: all 0.3s ease;
     overflow: hidden;
@@ -73,8 +72,8 @@
 
     .text-box {
         margin-left: 10px;
-        flex: 1;
-        width: calc(100% - 115px);
+        // flex: 1;
+        // width: calc(100% - 115px);
         color: var(--aily-text-primary);
 
         > div:first-child {
