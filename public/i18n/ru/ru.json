@@ -1,4 +1,11 @@
 {
+    "CLOUD_SPACE_ERRORS": {
+        "PUBLISH_FAILED": "Не удалось опубликовать проект",
+        "WORKSPACE_PROJECT_NOT_FOUND": "Проект не найден",
+        "WORKSPACE_PROJECT_PUBLISH_FORBIDDEN": "У вас нет прав на публикацию этого проекта",
+        "WORKSPACE_PROJECT_LOCAL_DEPENDENCY_PATH_INVALID": "Пути локальных зависимостей не соответствуют требованиям публикации",
+        "WORKSPACE_PROJECT_BUILD_REQUIRED": "Сначала соберите и синхронизируйте проект"
+    },
     "MENU": {
         "MENU": "Меню",
         "PROJECT_NEW": "Новый проект",

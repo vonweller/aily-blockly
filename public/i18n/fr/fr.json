@@ -1,4 +1,11 @@
 {
+    "CLOUD_SPACE_ERRORS": {
+        "PUBLISH_FAILED": "Échec de la publication du projet",
+        "WORKSPACE_PROJECT_NOT_FOUND": "Projet introuvable",
+        "WORKSPACE_PROJECT_PUBLISH_FORBIDDEN": "Vous ne pouvez pas publier ce projet",
+        "WORKSPACE_PROJECT_LOCAL_DEPENDENCY_PATH_INVALID": "Les chemins des dépendances locales ne respectent pas les exigences de publication",
+        "WORKSPACE_PROJECT_BUILD_REQUIRED": "Compilez et synchronisez d'abord le projet"
+    },
     "MENU": {
         "MENU": "Menu",
         "PROJECT_NEW": "Nouveau Projet",

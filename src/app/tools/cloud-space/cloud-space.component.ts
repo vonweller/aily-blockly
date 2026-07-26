@@ -17,6 +17,9 @@ import { distinctUntilChanged } from 'rxjs/operators';
 import { PlatformService } from "../../services/platform.service";
 import { CrossPlatformCmdService } from "../../services/cross-platform-cmd.service";
 import { LoginComponent } from '../../components/login/login.component';
+import { resolveTranslatedApiErrorMessage } from '../../utils/api-error.utils';
+import { AILY_LOCAL_LIBRARY_SOURCES_KEY } from '../../services/local-library-sync.service';
+import { TranslateService } from '@ngx-translate/core';
 
 @Component({
   selector: 'app-cloud-space',
@@ -54,7 +57,8 @@ export class CloudSpaceComponent {
     private modal: NzModalService,
     private electronService: ElectronService,
     private platformService: PlatformService,
-    private crossPlatformCmdService: CrossPlatformCmdService
+    private crossPlatformCmdService: CrossPlatformCmdService,
+    private translate: TranslateService,
   ) { }
 
   // 分页参数
@@ -239,6 +243,20 @@ export class CloudSpaceComponent {
       return;
     }
 
+    let cloudPackageJson;
+    try {
+      cloudPackageJson = JSON.parse(this.electronService.readFile(packageJsonPath));
+    } catch (error) {
+      this.message.error('package.json 格式错误，无法打包');
+      console.error('读取 package.json 失败:', error);
+      return;
+    }
+    const hasLocalLibrarySources = Object.prototype.hasOwnProperty.call(
+      cloudPackageJson,
+      AILY_LOCAL_LIBRARY_SOURCES_KEY,
+    );
+    delete cloudPackageJson[AILY_LOCAL_LIBRARY_SOURCES_KEY];
+
     // console.log('开始打包项目:', prjPath);
 
     // 构建更安全的打包命令
@@ -249,6 +267,9 @@ export class CloudSpaceComponent {
     // -x!project.7z: 排除自身
     // 注意：在某些shell环境下，!可能需要转义或引用，这里使用引号包裹排除项
     let packCommand = `${this.platformService.za7} a -t7z -mx=9 "${archivePath}" * "-x!node_modules" "-xr!.*" "-x!package-lock.json" "-x!project.7z" "-x!project.abi.backup" "-x!project.abs"`;
+    if (hasLocalLibrarySources) {
+      packCommand += ` "-x!package.json"`;
+    }
     
     // console.log('执行打包命令:', packCommand);
     const result = await this.cmdService.runAsync(packCommand, prjPath, false);
@@ -260,6 +281,32 @@ export class CloudSpaceComponent {
       this.message.error('项目打包失败: ' + (result.error || result.data));
       console.error('7za打包失败:', result);
       return;
+    }
+
+    if (hasLocalLibrarySources) {
+      const stagingDir = window['path'].join(
+        window['os'].tmpdir(),
+        `aily-cloud-package-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      );
+      try {
+        window['fs'].mkdirSync(stagingDir);
+        window['fs'].writeFileSync(
+          window['path'].join(stagingDir, 'package.json'),
+          JSON.stringify(cloudPackageJson, null, 2),
+        );
+        const addPackageResult = await this.cmdService.runAsync(
+          `${this.platformService.za7} a -t7z "${archivePath}" "package.json"`,
+          stagingDir,
+          false,
+        );
+        if (addPackageResult.type === 'error' || (addPackageResult.code && addPackageResult.code !== 0)) {
+          this.message.error('项目打包失败: 无法移除本机库路径');
+          console.error('写入云端 package.json 失败:', addPackageResult);
+          return;
+        }
+      } finally {
+        window['fs'].rmSync(stagingDir, { recursive: true, force: true });
+      }
     }
 
     // 等待文件系统完成写入
@@ -353,10 +400,12 @@ export class CloudSpaceComponent {
         this.isSyncing = false;
         return;
       }
+      const cloudProjectData = { ...currentProjectData };
+      delete cloudProjectData[AILY_LOCAL_LIBRARY_SOURCES_KEY];
 
     this.cloudService.syncProject({
       pid: currentProjectData?.cloudId,
-      projectData: currentProjectData,
+      projectData: cloudProjectData,
       archive: archivePath
     }).subscribe(async res => {
         try {
@@ -414,6 +463,13 @@ export class CloudSpaceComponent {
     this.filterProjects();
   }
 
+  private getPublishErrorMessage(source: unknown): string {
+    return resolveTranslatedApiErrorMessage(source, this.translate, {
+      fallbackMessage: this.translate.instant('CLOUD_SPACE_ERRORS.PUBLISH_FAILED'),
+      translationPrefix: 'CLOUD_SPACE_ERRORS',
+    });
+  }
+
   toggleVisibility(item) {
     // 切换公开/私有状态
     // console.log('切换项目可见性:', item);
@@ -423,13 +479,18 @@ export class CloudSpaceComponent {
         item.is_published = false;
       });
     } else {
-      this.cloudService.publishProject(item.id).subscribe(res => {
-        if(res.status !== 200){
-          this.message.error(`${res.messages}`);
-          return;
+      this.cloudService.publishProject(item.id).subscribe({
+        next: res => {
+          if (res.status !== 200) {
+            this.message.error(this.getPublishErrorMessage(res));
+            return;
+          }
+          this.message.info(`项目 "${item.nickname}" 已设为公开`);
+          item.is_published = true;
+        },
+        error: error => {
+          this.message.error(this.getPublishErrorMessage(error));
         }
-        this.message.info(`项目 "${item.nickname}" 已设为公开`);
-        item.is_published = true;
       });
     }
   }

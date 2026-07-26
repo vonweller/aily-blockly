@@ -1,4 +1,11 @@
 {
+    "CLOUD_SPACE_ERRORS": {
+        "PUBLISH_FAILED": "تعذر نشر المشروع",
+        "WORKSPACE_PROJECT_NOT_FOUND": "المشروع غير موجود",
+        "WORKSPACE_PROJECT_PUBLISH_FORBIDDEN": "ليس لديك صلاحية لنشر هذا المشروع",
+        "WORKSPACE_PROJECT_LOCAL_DEPENDENCY_PATH_INVALID": "مسارات التبعيات المحلية لا تستوفي متطلبات النشر",
+        "WORKSPACE_PROJECT_BUILD_REQUIRED": "قم ببناء المشروع ومزامنته أولاً"
+    },
     "MENU": {
         "MENU": "قائمة الطعام",
         "PROJECT_NEW": "مشروع جديد",

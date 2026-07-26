@@ -1,4 +1,11 @@
 {
+    "CLOUD_SPACE_ERRORS": {
+        "PUBLISH_FAILED": "プロジェクトの公開に失敗しました",
+        "WORKSPACE_PROJECT_NOT_FOUND": "プロジェクトが見つかりません",
+        "WORKSPACE_PROJECT_PUBLISH_FORBIDDEN": "このプロジェクトを公開する権限がありません",
+        "WORKSPACE_PROJECT_LOCAL_DEPENDENCY_PATH_INVALID": "ローカル依存関係のパスは公開要件を満たしていません",
+        "WORKSPACE_PROJECT_BUILD_REQUIRED": "先にプロジェクトをビルドして同期してください"
+    },
     "MENU": {
         "MENU": "メニュー",
         "PROJECT_NEW": "新規プロジェクト",
