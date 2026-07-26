@@ -271,7 +271,7 @@
             "COMPILATION": "إعدادات التجميع",
             "REPOSITORY": "إعدادات المستودع",
             "DEPENDENCIES": "التبعيات العامة",
-            "AILY_TOOLS": "أدوات Aily",
+            "TOOLS_AND_SUBAPP": "الأدوات والتطبيقات",
             "MCP": "MCP",
             "DEVMODE": "وضع المطور",
             "CACHE": "إدارة ذاكرة التخزين المؤقتة"

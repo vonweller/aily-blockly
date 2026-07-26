@@ -303,7 +303,7 @@
             "COMPILATION": "编译设置",
             "REPOSITORY": "服务区域",
             "DEPENDENCIES": "全局依赖",
-            "AILY_TOOLS": "Aily 工具",
+            "TOOLS_AND_SUBAPP": "工具和应用",
             "MCP": "MCP",
             "DEVMODE": "开发者模式",
             "CACHE": "缓存管理"

@@ -271,7 +271,7 @@
             "COMPILATION": "Paramètres de Compilation",
             "REPOSITORY": "Paramètres de Dépôt",
             "DEPENDENCIES": "Dépendances Globales",
-            "AILY_TOOLS": "Outils Aily",
+            "TOOLS_AND_SUBAPP": "Outils et applications",
             "MCP": "MCP",
             "DEVMODE": "Mode Développeur",
             "CACHE": "Gestion du cache"

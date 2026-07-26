@@ -271,7 +271,7 @@
             "COMPILATION": "컴파일 설정",
             "REPOSITORY": "저장소 설정",
             "DEPENDENCIES": "글로벌 종속성",
-            "AILY_TOOLS": "Aily 도구",
+            "TOOLS_AND_SUBAPP": "도구 및 앱",
             "MCP": "MCP",
             "DEVMODE": "개발자 모드",
             "CACHE": "캐시 관리"

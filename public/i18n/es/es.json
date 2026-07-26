@@ -271,7 +271,7 @@
             "COMPILATION": "Configuración de Compilación",
             "REPOSITORY": "Configuración de Repositorio",
             "DEPENDENCIES": "Dependencias Globales",
-            "AILY_TOOLS": "Herramientas de Aily",
+            "TOOLS_AND_SUBAPP": "Herramientas y aplicaciones",
             "MCP": "MCP",
             "DEVMODE": "Modo Desarrollador",
             "CACHE": "Gestión de caché"

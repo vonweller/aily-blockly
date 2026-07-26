@@ -271,7 +271,7 @@
             "COMPILATION": "コンパイル設定",
             "REPOSITORY": "リポジトリ設定",
             "DEPENDENCIES": "グローバル依存関係",
-            "AILY_TOOLS": "Aily ツール",
+            "TOOLS_AND_SUBAPP": "ツールとアプリ",
             "MCP": "MCP",
             "DEVMODE": "開発者モード",
             "CACHE": "キャッシュ管理"
