@@ -1,4 +1,11 @@
 {
+    "CLOUD_SPACE_ERRORS": {
+        "PUBLISH_FAILED": "项目公开失败",
+        "WORKSPACE_PROJECT_NOT_FOUND": "项目不存在",
+        "WORKSPACE_PROJECT_PUBLISH_FORBIDDEN": "无权公开此项目",
+        "WORKSPACE_PROJECT_LOCAL_DEPENDENCY_PATH_INVALID": "本地依赖路径不符合公开要求",
+        "WORKSPACE_PROJECT_BUILD_REQUIRED": "请先编译并同步项目"
+    },
     "MENU": {
         "MENU": "菜单",
         "PROJECT_NEW": "新建项目",
@@ -303,7 +310,7 @@
             "COMPILATION": "编译设置",
             "REPOSITORY": "服务区域",
             "DEPENDENCIES": "全局依赖",
-            "AILY_TOOLS": "Aily 工具",
+            "TOOLS_AND_SUBAPP": "工具和应用",
             "MCP": "MCP",
             "DEVMODE": "开发者模式",
             "CACHE": "缓存管理"
@@ -785,6 +792,14 @@
             "COMPLETE_WITH_TIME": "编译完成 (耗时: {{seconds}}s)",
             "FIRST_BUILD_HINT": "首次编译可能需要较长时间",
             "FAST_BUILD_HINT": "闪电构建系统正在运行",
+            "PROGRESS_PREPARING": "正在准备编译",
+            "PROGRESS_SKETCH": "正在编译程序",
+            "PROGRESS_LIBRARIES": "正在编译依赖库",
+            "PROGRESS_CORE": "正在编译核心",
+            "PROGRESS_LINKING": "正在链接固件",
+            "PROGRESS_OBJCOPY": "正在生成固件",
+            "PROGRESS_FINALIZING": "正在完成编译",
+            "PROGRESS_COMPLETE": "编译完成",
             "PROCESS_SIGNAL_TERMINATED": "编译进程被信号终止: {{signal}}",
             "PROCESS_EXITED_WITH_CODE": "编译进程异常退出，退出码: {{code}}",
             "PROCESS_START_FAILED": "编译进程启动失败",

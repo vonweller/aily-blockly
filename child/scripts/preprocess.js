@@ -116,12 +116,7 @@ async function main() {
         copyProjectSrcToSketch(currentProjectPath, sketchPath);
 
         // 3. 处理库文件
-        const libsPath = [];
-        Object.entries(dependencies || {}).forEach(([key, version]) => {
-            if (key.startsWith('@aily-project/lib-') && !key.startsWith('@aily-project/lib-core')) {
-                libsPath.push(key);
-            }
-        });
+        const libsPath = collectLibraryPackages(dependencies, currentProjectPath);
 
         logger.log(`开始处理 ${libsPath.length} 个库文件`);
         const copiedLibraries = await processLibrariesParallel(libsPath, librariesPath, currentProjectPath, za7Path, devmode, libraryCache);
@@ -416,6 +411,48 @@ function copyItemRecursive(sourcePath, targetPath) {
     fs.copyFileSync(sourcePath, targetPath);
 }
 
+function isCompilableLibraryPackage(packageName) {
+    return typeof packageName === 'string'
+        && packageName.startsWith('@aily-project/lib-')
+        && !packageName.startsWith('@aily-project/lib-core');
+}
+
+function collectLibraryPackages(projectDependencies, currentProjectPath) {
+    const libraries = [];
+    const visited = new Set();
+    const pending = Object.keys(projectDependencies || {});
+
+    for (let index = 0; index < pending.length; index++) {
+        const packageName = pending[index];
+        if (!isCompilableLibraryPackage(packageName) || visited.has(packageName)) {
+            continue;
+        }
+        visited.add(packageName);
+        libraries.push(packageName);
+
+        const packagePath = path.join(currentProjectPath, 'node_modules', packageName);
+        const packageJsonPath = path.join(packagePath, 'package.json');
+        if (!fs.existsSync(packageJsonPath)) {
+            logger.warn(`Library package is not installed: ${packageName}`);
+            continue;
+        }
+
+        let packageJson;
+        try {
+            packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+        } catch (error) {
+            logger.warn(`Failed to read library package.json: ${packageJsonPath}: ${error.message}`);
+            continue;
+        }
+
+        Object.keys(packageJson.dependencies || {}).forEach(dependencyName => {
+            pending.push(dependencyName);
+        });
+    }
+
+    return libraries;
+}
+
 async function processLibrariesParallel(libsPath, librariesPath, currentProjectPath, za7Path, devmode, libraryCache) {
     const tasks = libsPath.map(lib => processLibrary(lib, librariesPath, currentProjectPath, za7Path, devmode, libraryCache));
     const results = await Promise.all(tasks);
@@ -629,6 +666,14 @@ async function syncCompilerToolsToToolsPath(compilerPath, toolsPath) {
     }
 }
 
-main().catch(e => {
-    exitWithFatalError(e);
-});
+if (require.main === module) {
+    main().catch(e => {
+        exitWithFatalError(e);
+    });
+}
+
+module.exports = {
+    collectLibraryPackages,
+    isCompilableLibraryPackage,
+    processLibrariesParallel,
+};

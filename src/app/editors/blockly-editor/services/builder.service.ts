@@ -20,6 +20,11 @@ import { CompileValidationService } from '../../../services/compile-validation.s
 import { AppDataResourceLockService } from '../../../services/appdata-resource-lock.service';
 import { NpmService } from '../../../services/npm.service';
 import { debounceTime } from 'rxjs/operators';
+import {
+  AilyBuilderProgressEvent,
+  isAilyBuilderProgressLine,
+  parseAilyBuilderProgressLine
+} from '../../../utils/aily-builder-progress.utils';
 
 @Injectable()
 export class _BuilderService {
@@ -78,6 +83,12 @@ export class _BuilderService {
 
   private buildNoticeTitle(boardName: string): string {
     return this.t('RUNNING_TITLE', { board: boardName });
+  }
+
+  private buildProgressText(progress: AilyBuilderProgressEvent): string {
+    const translationKey = `BLOCKLY_EDITOR.BUILD.PROGRESS_${progress.stage.toUpperCase()}`;
+    const translated = this.translate.instant(translationKey);
+    return translated === translationKey ? progress.message : translated;
   }
 
   private messageWithDuration(message: string, seconds: string): string {
@@ -994,8 +1005,8 @@ export class _BuilderService {
           const code = arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
           this.lastCode = code;
           
-          const boardModule = await this.projectService.getBoardModule();
-          const boardName = boardModule.replace('@aily-project/board-', '');
+          const boardJson = await this.projectService.getBoardJson();
+          const boardName = boardJson.name;
           const configFilePath = this.electronService.pathJoin(tempPath, 'build-config.json');
           await this.waitForAilyBuilderReady();
 
@@ -1024,6 +1035,7 @@ export class _BuilderService {
           let lastLogLines: string[] = [];
           let processExitCode: number | null = null;
           let processSignal: string | null = null;
+          let hasStructuredBuilderProgress = false;
 
           this.buildStartTime = Date.now();
 
@@ -1093,12 +1105,43 @@ export class _BuilderService {
                     let trimmedLine = line.trim();
                     if (!trimmedLine) return;
 
+                    // aily-builder >= 1.2.11 emits a dedicated JSON progress event.
+                    // Consume it here so protocol data never enters the log component.
+                    if (isAilyBuilderProgressLine(trimmedLine)) {
+                      hasStructuredBuilderProgress = true;
+                      const builderProgress = parseAilyBuilderProgressLine(trimmedLine);
+                      if (builderProgress) {
+                        lastProgress = Math.max(lastProgress, builderProgress.percent);
+                        this.currentProgress = Math.max(this.currentProgress, builderProgress.percent);
+                        this.hasReceivedRealProgress = true;
+                        lastBuildText = this.buildProgressText(builderProgress);
+                        this.safeUpdateNotice({
+                          title: this.buildNoticeTitle(boardName),
+                          text: lastBuildText,
+                          state: 'doing',
+                          progress: this.currentProgress,
+                          setTimeout: 0,
+                          stop: () => {
+                            this.cancel();
+                          }
+                        });
+
+                        if (builderProgress.status === 'complete' && builderProgress.percent === 100) {
+                          this.buildCompleted = true;
+                        }
+                      }
+                      return;
+                    }
+
                     if (trimmedLine.startsWith('BuildText:')) {
                       const lineContent = trimmedLine.replace('BuildText:', '').trim();
                       const buildText = lineContent.split(/[\n\r]/)[0];
                       lastBuildText = buildText;
                     }
 
+                    // Legacy parser retained for aily-builder <= 1.2.10.
+                    // Newer builders also emit raw Ninja counters, but those counters are
+                    // local to a stage and must not be treated as global progress.
                     const progressInfo = trimmedLine.trim();
                     let progressValue = 0;
                     const barProgressMatch = progressInfo.match(/\[.*?\]\s*(\d+)%/);
@@ -1120,7 +1163,7 @@ export class _BuilderService {
                       }
                     }
 
-                    if (progressValue > lastProgress) {
+                    if (!hasStructuredBuilderProgress && progressValue > lastProgress) {
                       lastProgress = progressValue;
                       this.hasReceivedRealProgress = true;
                       
@@ -1142,7 +1185,7 @@ export class _BuilderService {
                       }
                     }
 
-                    if (lastProgress === 100) {
+                    if (!hasStructuredBuilderProgress && lastProgress === 100) {
                       this.buildCompleted = true;
                     }
 

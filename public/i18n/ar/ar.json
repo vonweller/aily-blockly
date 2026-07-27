@@ -1,4 +1,11 @@
 {
+    "CLOUD_SPACE_ERRORS": {
+        "PUBLISH_FAILED": "تعذر نشر المشروع",
+        "WORKSPACE_PROJECT_NOT_FOUND": "المشروع غير موجود",
+        "WORKSPACE_PROJECT_PUBLISH_FORBIDDEN": "ليس لديك صلاحية لنشر هذا المشروع",
+        "WORKSPACE_PROJECT_LOCAL_DEPENDENCY_PATH_INVALID": "مسارات التبعيات المحلية لا تستوفي متطلبات النشر",
+        "WORKSPACE_PROJECT_BUILD_REQUIRED": "قم ببناء المشروع ومزامنته أولاً"
+    },
     "MENU": {
         "MENU": "قائمة الطعام",
         "PROJECT_NEW": "مشروع جديد",
@@ -271,7 +278,7 @@
             "COMPILATION": "إعدادات التجميع",
             "REPOSITORY": "إعدادات المستودع",
             "DEPENDENCIES": "التبعيات العامة",
-            "AILY_TOOLS": "أدوات Aily",
+            "TOOLS_AND_SUBAPP": "الأدوات والتطبيقات",
             "MCP": "MCP",
             "DEVMODE": "وضع المطور",
             "CACHE": "إدارة ذاكرة التخزين المؤقتة"
@@ -714,6 +721,14 @@
             "COMPLETE_WITH_TIME": "اكتمل البناء (الوقت: {{seconds}}s)",
             "FIRST_BUILD_HINT": "قد يستغرق البناء الأول وقتًا أطول",
             "FAST_BUILD_HINT": "نظام البناء السريع قيد التشغيل",
+            "PROGRESS_PREPARING": "جارٍ تحضير البناء",
+            "PROGRESS_SKETCH": "جارٍ تجميع البرنامج",
+            "PROGRESS_LIBRARIES": "جارٍ تجميع المكتبات",
+            "PROGRESS_CORE": "جارٍ تجميع النواة",
+            "PROGRESS_LINKING": "جارٍ ربط البرنامج الثابت",
+            "PROGRESS_OBJCOPY": "جارٍ إنشاء البرنامج الثابت",
+            "PROGRESS_FINALIZING": "جارٍ إنهاء البناء",
+            "PROGRESS_COMPLETE": "اكتمل البناء",
             "PROCESS_SIGNAL_TERMINATED": "تم إنهاء عملية البناء بإشارة: {{signal}}",
             "PROCESS_EXITED_WITH_CODE": "خرجت عملية البناء بشكل غير متوقع، رمز الخروج: {{code}}",
             "PROCESS_START_FAILED": "فشل بدء عملية البناء",

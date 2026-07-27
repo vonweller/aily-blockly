@@ -1,4 +1,11 @@
 {
+    "CLOUD_SPACE_ERRORS": {
+        "PUBLISH_FAILED": "專案公開失敗",
+        "WORKSPACE_PROJECT_NOT_FOUND": "專案不存在",
+        "WORKSPACE_PROJECT_PUBLISH_FORBIDDEN": "無權公開此專案",
+        "WORKSPACE_PROJECT_LOCAL_DEPENDENCY_PATH_INVALID": "本機依賴路徑不符合公開要求",
+        "WORKSPACE_PROJECT_BUILD_REQUIRED": "請先編譯並同步專案"
+    },
     "MENU": {
         "MENU": "選單",
         "PROJECT_NEW": "新建專案",
@@ -272,7 +279,7 @@
             "COMPILATION": "編譯設定",
             "REPOSITORY": "倉庫設定",
             "DEPENDENCIES": "全域依賴",
-            "AILY_TOOLS": "Aily 工具",
+            "TOOLS_AND_SUBAPP": "工具和應用",
             "MCP": "MCP",
             "DEVMODE": "開發者模式",
             "CACHE": "緩存管理"
@@ -727,6 +734,14 @@
             "COMPLETE_WITH_TIME": "編譯完成 (耗時: {{seconds}}s)",
             "FIRST_BUILD_HINT": "首次編譯可能需要較長時間",
             "FAST_BUILD_HINT": "閃電構建系統正在執行",
+            "PROGRESS_PREPARING": "正在準備編譯",
+            "PROGRESS_SKETCH": "正在編譯程式",
+            "PROGRESS_LIBRARIES": "正在編譯依賴庫",
+            "PROGRESS_CORE": "正在編譯核心",
+            "PROGRESS_LINKING": "正在連結韌體",
+            "PROGRESS_OBJCOPY": "正在產生韌體",
+            "PROGRESS_FINALIZING": "正在完成編譯",
+            "PROGRESS_COMPLETE": "編譯完成",
             "PROCESS_SIGNAL_TERMINATED": "編譯進程被訊號終止: {{signal}}",
             "PROCESS_EXITED_WITH_CODE": "編譯進程異常退出，退出碼: {{code}}",
             "PROCESS_START_FAILED": "編譯進程啟動失敗",

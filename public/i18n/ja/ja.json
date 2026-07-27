@@ -1,4 +1,11 @@
 {
+    "CLOUD_SPACE_ERRORS": {
+        "PUBLISH_FAILED": "プロジェクトの公開に失敗しました",
+        "WORKSPACE_PROJECT_NOT_FOUND": "プロジェクトが見つかりません",
+        "WORKSPACE_PROJECT_PUBLISH_FORBIDDEN": "このプロジェクトを公開する権限がありません",
+        "WORKSPACE_PROJECT_LOCAL_DEPENDENCY_PATH_INVALID": "ローカル依存関係のパスは公開要件を満たしていません",
+        "WORKSPACE_PROJECT_BUILD_REQUIRED": "先にプロジェクトをビルドして同期してください"
+    },
     "MENU": {
         "MENU": "メニュー",
         "PROJECT_NEW": "新規プロジェクト",
@@ -271,7 +278,7 @@
             "COMPILATION": "コンパイル設定",
             "REPOSITORY": "リポジトリ設定",
             "DEPENDENCIES": "グローバル依存関係",
-            "AILY_TOOLS": "Aily ツール",
+            "TOOLS_AND_SUBAPP": "ツールとアプリ",
             "MCP": "MCP",
             "DEVMODE": "開発者モード",
             "CACHE": "キャッシュ管理"
@@ -714,6 +721,14 @@
             "COMPLETE_WITH_TIME": "ビルド完了 (所要時間: {{seconds}}s)",
             "FIRST_BUILD_HINT": "初回ビルドには時間がかかる場合があります",
             "FAST_BUILD_HINT": "高速ビルドシステムを実行中",
+            "PROGRESS_PREPARING": "ビルドを準備中",
+            "PROGRESS_SKETCH": "スケッチをコンパイル中",
+            "PROGRESS_LIBRARIES": "ライブラリをコンパイル中",
+            "PROGRESS_CORE": "コアをコンパイル中",
+            "PROGRESS_LINKING": "ファームウェアをリンク中",
+            "PROGRESS_OBJCOPY": "ファームウェアを生成中",
+            "PROGRESS_FINALIZING": "ビルドを仕上げています",
+            "PROGRESS_COMPLETE": "ビルド完了",
             "PROCESS_SIGNAL_TERMINATED": "ビルドプロセスはシグナルで終了しました: {{signal}}",
             "PROCESS_EXITED_WITH_CODE": "ビルドプロセスが予期せず終了しました。終了コード: {{code}}",
             "PROCESS_START_FAILED": "ビルドプロセスを開始できませんでした",
