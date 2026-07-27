@@ -14,6 +14,11 @@ const { startCliBridge } = require("./cli-bridge");
 const builder = require("./builder");
 const linter = require("./linter");
 const simulatorGateway = require("./simulator-gateway");
+const simulatorSubappHost = require("./simulator-subapp-host");
+const {
+  createSimulatorProjectRebuildCoordinator,
+} = require("./simulator-project-rebuild-coordinator");
+const { createPackagedRendererServer } = require("./packaged-renderer-server");
 const {
   markInstalledForAppVersion,
   shouldInstallForAppVersion,
@@ -307,6 +312,35 @@ app.removeAsDefaultProtocolClient(PROTOCOL);
 const args = process.argv.slice(1);
 const serve = args.some((val) => val === "--serve");
 process.env.DEV = serve;
+const packagedRendererServer = createPackagedRendererServer();
+
+async function ensurePackagedRendererServerStarted() {
+  if (serve) return null;
+  return packagedRendererServer.start({
+    rootDirectory: path.join(__dirname, "..", "renderer"),
+  });
+}
+
+function resolveAppRendererUrl(hash = "") {
+  if (!serve) {
+    return packagedRendererServer.rendererUrl(hash);
+  }
+  if (hash === undefined || hash === null || hash === "") {
+    return "http://localhost:4200";
+  }
+  if (
+    typeof hash !== "string"
+    || hash.length > 16 * 1024
+    || /[\u0000-\u001f\u007f]/.test(hash)
+  ) {
+    throw new TypeError("Renderer hash is invalid.");
+  }
+  return `http://localhost:4200/${hash.startsWith("#") ? hash : `#${hash}`}`;
+}
+
+function loadAppRenderer(targetWindow, hash = "") {
+  return targetWindow.loadURL(resolveAppRendererUrl(hash));
+}
 
 // Angular dev server 会把依赖预构建到 .angular/cache 下；重启后路径可能变化。
 // 开发态若继续复用 Electron 的 HTTP cache，容易命中已失效的旧 chunk URL
@@ -921,11 +955,7 @@ function navigateMainWindowHash(targetHash) {
   if (!mainWindow || !mainWindow.webContents || mainWindow.isDestroyed()) {
     return false;
   }
-  if (serve) {
-    mainWindow.loadURL(`http://localhost:4200/${targetHash}`);
-  } else {
-    mainWindow.loadFile(`renderer/index.html`, { hash: targetHash });
-  }
+  void loadAppRenderer(mainWindow, targetHash);
   try {
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.focus();
@@ -986,6 +1016,39 @@ function requestMainWindow(channel, responseChannel, payload, timeoutMs = 12000)
       rendererGeneration: requestGeneration,
     });
   });
+}
+
+let simulatorProjectRebuildCoordinator = null;
+
+function getSimulatorProjectRebuildCoordinator() {
+  if (simulatorProjectRebuildCoordinator) {
+    return simulatorProjectRebuildCoordinator;
+  }
+  simulatorProjectRebuildCoordinator =
+    createSimulatorProjectRebuildCoordinator({
+      async requestProjectRebuild(request) {
+        const response = await requestMainWindow(
+          'simulator-project-rebuild-request',
+          'simulator-project-rebuild-response',
+          { request },
+          30 * 60 * 1000,
+        );
+        return response?.result;
+      },
+      onStateChanged(artifactRebuild) {
+        if (!isCurrentRendererGenerationReady()) return;
+        mainWindow.webContents.send('simulator-subapp-state-changed', {
+          state: 'artifact-rebuild-state-changed',
+          artifactRebuild,
+        });
+      },
+      async onCandidateReady(candidateEvent) {
+        await simulatorSubappHost.defaultHost.stageRebuildCandidate(
+          candidateEvent,
+        );
+      },
+    });
+  return simulatorProjectRebuildCoordinator;
 }
 
 /** 处理来自 CLI 的命令（open/close/reload/refresh） */
@@ -2290,11 +2353,7 @@ async function updateMainWindowWithPendingData() {
 
   // 如果有目标URL，导航到该页面
   if (targetUrl) {
-    if (serve) {
-      mainWindow.loadURL(`http://localhost:4200/${targetUrl}`);
-    } else {
-      mainWindow.loadFile(`renderer/index.html`, { hash: targetUrl });
-    }
+    await loadAppRenderer(mainWindow, targetUrl);
   }
 }
 
@@ -2444,23 +2503,16 @@ function createWindow() {
 
   // 加载页面
   if (targetUrl) {
-    if (serve) {
-      mainWindow.loadURL(`http://localhost:4200/${targetUrl}`);
-    } else {
-      mainWindow.loadFile(`renderer/index.html`, { hash: targetUrl });
-    }
+    void loadAppRenderer(mainWindow, targetUrl);
   } else {
-    if (serve) {
-      mainWindow.loadURL("http://localhost:4200");
-    } else {
-      mainWindow.loadFile(`renderer/index.html`);
-    }
+    void loadAppRenderer(mainWindow);
   }
 
   mainWindow.webContents.on('render-process-gone', (event, details) => {
     console.error('Renderer process gone:', details.reason, 'exitCode:', details.exitCode);
     invalidateRendererGeneration(`render-process-gone:${details.reason}`);
     void simulatorGateway.stop();
+    void simulatorSubappHost.defaultHost.stop();
     if (!serve) return;
 
     setTimeout(() => {
@@ -2511,7 +2563,9 @@ function createWindow() {
   // 注册ipc handlers
   registerUpdaterHandlers(mainWindow);
   registerTerminalHandlers(mainWindow);
-  registerWindowHandlers(mainWindow);
+  registerWindowHandlers(mainWindow, {
+    resolveRendererUrl: resolveAppRendererUrl,
+  });
   registerNpmHandlers(mainWindow);
   registerCmdHandlers(mainWindow);
   registerAilyServicesStreamHandlers(mainWindow);
@@ -2529,6 +2583,14 @@ function createWindow() {
     app,
     mainWindow: () => mainWindow,
   });
+  simulatorSubappHost.registerHandlers({
+    ipcMain,
+    app,
+    mainWindow: () => mainWindow,
+  });
+  simulatorSubappHost.defaultHost.setRebuildCoordinator(
+    getSimulatorProjectRebuildCoordinator(),
+  );
 
   // 在多实例模式下，监听OAuth回调文件的变化
   if (shouldUseMultiInstance()) {
@@ -2821,6 +2883,18 @@ app.on("ready", async () => {
   }
 
   // 创建主窗口
+  try {
+    await ensurePackagedRendererServerStarted();
+  } catch (error) {
+    console.error("Failed to start packaged renderer server:", error);
+    dialog.showErrorBox(
+      "Unable to start aily blockly",
+      `The application interface could not be loaded: ${error.message}`,
+    );
+    app.quit();
+    return;
+  }
+
   createWindow();
   registerPowerMonitorLifecycle();
 
@@ -2932,6 +3006,8 @@ function cleanupRegisteredChildProcesses() {
     killAllTerminals(),
     cancelAllAilyServicesStreams(),
     simulatorGateway.stop(),
+    simulatorSubappHost.defaultHost.stop(),
+    packagedRendererServer.close(),
   ]).then((results) => {
     // console.info('[PROC_TRACE][APP_CLEANUP_DONE]', { results });
   });
@@ -3002,7 +3078,7 @@ app.on("will-quit", () => {
 });
 
 // 在 macOS 上，当应用被激活时（如点击 Dock 图标），重新创建窗口
-app.on("activate", () => {
+app.on("activate", async () => {
   if (mainWindow === null) {
     // 先加载环境变量
     try {
@@ -3011,7 +3087,16 @@ app.on("activate", () => {
       console.error("loadEnv error: ", error);
     }
     // 创建主窗口
-    createWindow();
+    try {
+      await ensurePackagedRendererServerStarted();
+      createWindow();
+    } catch (error) {
+      console.error("Failed to restart packaged renderer server:", error);
+      dialog.showErrorBox(
+        "Unable to start aily blockly",
+        `The application interface could not be loaded: ${error.message}`,
+      );
+    }
   }
 });
 // 用于嵌入的iframe打开外部链接
@@ -3039,11 +3124,7 @@ app.on('open-file', (event, filePath) => {
         const routePath = `main/blockly-editor?path=${encodeURIComponent(projectDir)}`;
         console.log('Navigating to route:', routePath);
 
-        if (serve) {
-          mainWindow.loadURL(`http://localhost:4200/#/${routePath}`);
-        } else {
-          mainWindow.loadFile(`renderer/index.html`, { hash: `#/${routePath}` });
-        }
+        await loadAppRenderer(mainWindow, `#/${routePath}`);
       })();
     } else {
       pendingFileToOpen = projectDir;

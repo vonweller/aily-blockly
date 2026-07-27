@@ -11,6 +11,7 @@ const MAX_INDEX_BYTES = 2 * 1024 * 1024;
 const TOOL_ID_ALIASES = Object.freeze({
   'aily-chat': 'aily-chat-react',
   'ffs-manager': 'ffs-manager-child',
+  'aily-simulator': 'simulator',
 });
 const STARTUP_TIMEOUTS = Object.freeze({
   'aily-chat-react': 30000,

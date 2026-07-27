@@ -5,6 +5,7 @@ const path = require('node:path');
 const test = require('node:test');
 
 const {
+  TOOL_ID_ALIASES,
   createSubappManager,
   resolveSubappRoot,
   validateIndex,
@@ -40,6 +41,10 @@ test('resolves the required user npm-global/app installation root', () => {
     resolveSubappRoot({ platform: 'darwin', home: '/Users/test', env: {} }),
     '/Users/test/Library/aily-project/npm-global/app',
   );
+});
+
+test('routes the installed Simulator package through its dedicated host', () => {
+  assert.equal(TOOL_ID_ALIASES['aily-simulator'], 'simulator');
 });
 
 test('rejects package targets that are not safe npm package names', () => {

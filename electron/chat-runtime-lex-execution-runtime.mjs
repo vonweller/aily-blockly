@@ -150,7 +150,24 @@ const SCHEMATIC_TOOL_DEFINITIONS = [
       properties: {
         pinmapIds: {
           oneOf: [
-            { type: 'array', items: { oneOf: [{ type: 'string' }, { type: 'object' }] } },
+            {
+              type: 'array',
+              items: {
+                oneOf: [
+                  { type: 'string' },
+                  {
+                    type: 'object',
+                    properties: {
+                      id: { type: 'string' },
+                      alias: { type: 'string' },
+                      label: { type: 'string' },
+                    },
+                    required: ['id'],
+                    additionalProperties: false,
+                  },
+                ],
+              },
+            },
             { type: 'string' },
           ],
         },

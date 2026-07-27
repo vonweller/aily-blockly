@@ -185,6 +185,21 @@ async function main() {
                 '--emit-artifact-manifest',
                 `"${path.join(buildPath, 'aily-artifact-manifest.json')}"`
             );
+            if (config.graphSemanticRevision !== undefined) {
+                if (!/^[a-f0-9]{64}$/.test(config.graphSemanticRevision)) {
+                    throw new Error('graphSemanticRevision 必须是小写 SHA-256。');
+                }
+                if (!supportsSceneGraphProvenance(builderCommand)) {
+                    throw new Error(
+                        '当前 aily-builder 不支持 Scene graph provenance，'
+                        + '不能生成可替换的仿真 Artifact。'
+                    );
+                }
+                args.push(
+                    '--graph-semantic-revision',
+                    config.graphSemanticRevision
+                );
+            }
         } else {
             logger.warn(
                 '当前 aily-builder 不支持仿真 Artifact 输出；'
@@ -440,6 +455,34 @@ function supportsArtifactManifest(builderCommand) {
         );
         return `${result.stdout || ''}\n${result.stderr || ''}`
             .includes('--emit-artifact-manifest');
+    } catch {
+        return false;
+    }
+}
+
+function supportsSceneGraphProvenance(builderCommand) {
+    try {
+        const capabilitiesResult = spawnSync(
+            builderCommand,
+            ['capabilities', '--json'],
+            {
+                shell: true,
+                encoding: 'utf8',
+                windowsHide: true,
+                timeout: 5000,
+            }
+        );
+        if (capabilitiesResult.status === 0) {
+            const capabilities = JSON.parse(capabilitiesResult.stdout || '{}');
+            return (
+                capabilities?.schemaVersion === 1
+                && capabilities?.capabilities?.sceneGraphProvenance
+                    ?.schemaVersion === 1
+                && capabilities.capabilities.sceneGraphProvenance.cliOption
+                    === '--graph-semantic-revision'
+            );
+        }
+        return false;
     } catch {
         return false;
     }
