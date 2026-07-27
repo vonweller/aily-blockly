@@ -169,6 +169,7 @@ rm -rf e2e/.artifacts/full-flow-checkpoints
 | `AILY_E2E_BOARD_KEYWORD` | `uno r4` | 指定单个开发板搜索关键字 |
 | `AILY_E2E_BOARD_KEYWORDS` | 未设置 | 逗号分隔的多个关键字；设置后优先于单板关键字 |
 | `AILY_E2E_CLEAR_APPDATA` | `0` | 设为 `1` 才会在启动前清空并重建应用数据 |
+| `AILY_E2E_ALLOW_TOOL_REFRESH` | `0` | E2E 默认不自动刷新 `aily-builder`/`aily-linter`；设为 `1` 才允许应用版本变化时安装线上 latest |
 | `AILY_E2E_STOP_ON_ERROR` | `1` | 交互终端提示继续/中止；设为 `0` 时不提示并在最后汇总 |
 | `AILY_E2E_SINGLE_BOARD_TIMEOUT_MS` | `3600000` | 单块开发板全流程超时（60 分钟） |
 | `AILY_E2E_INSTALL_TIMEOUT_MS` | `1800000` | 开发板依赖安装超时（30 分钟） |

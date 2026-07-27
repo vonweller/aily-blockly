@@ -1039,7 +1039,7 @@ export class BlocklyEditorComponent implements OnInit, OnDestroy {
       }
 
       const declaredVersion = declaredLibraryDependencies.get(packageName) || '';
-      if (declaredVersion && this.isBlocklyLibraryPackageReady(projectPath, packageName)) {
+      if (this.isBlocklyLibraryPackageReady(projectPath, packageName)) {
         continue;
       }
 

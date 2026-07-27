@@ -1,4 +1,11 @@
 {
+    "CLOUD_SPACE_ERRORS": {
+        "PUBLISH_FAILED": "No se pudo publicar el proyecto",
+        "WORKSPACE_PROJECT_NOT_FOUND": "Proyecto no encontrado",
+        "WORKSPACE_PROJECT_PUBLISH_FORBIDDEN": "No puedes publicar este proyecto",
+        "WORKSPACE_PROJECT_LOCAL_DEPENDENCY_PATH_INVALID": "Las rutas de dependencias locales no cumplen los requisitos de publicación",
+        "WORKSPACE_PROJECT_BUILD_REQUIRED": "Compila y sincroniza primero el proyecto"
+    },
     "MENU": {
         "MENU": "Menú",
         "PROJECT_NEW": "Nuevo Proyecto",
@@ -270,7 +277,7 @@
             "COMPILATION": "Configuración de Compilación",
             "REPOSITORY": "Configuración de Repositorio",
             "DEPENDENCIES": "Dependencias Globales",
-            "AILY_TOOLS": "Herramientas de Aily",
+            "TOOLS_AND_SUBAPP": "Herramientas y aplicaciones",
             "MCP": "MCP",
             "DEVMODE": "Modo Desarrollador",
             "CACHE": "Gestión de caché"
@@ -797,6 +804,14 @@
             "COMPLETE_WITH_TIME": "Compilación completada (tiempo: {{seconds}}s)",
             "FIRST_BUILD_HINT": "La primera compilación puede tardar más",
             "FAST_BUILD_HINT": "El sistema de compilación rápida está en ejecución",
+            "PROGRESS_PREPARING": "Preparando la compilación",
+            "PROGRESS_SKETCH": "Compilando el programa",
+            "PROGRESS_LIBRARIES": "Compilando las bibliotecas",
+            "PROGRESS_CORE": "Compilando el núcleo",
+            "PROGRESS_LINKING": "Enlazando el firmware",
+            "PROGRESS_OBJCOPY": "Generando el firmware",
+            "PROGRESS_FINALIZING": "Finalizando la compilación",
+            "PROGRESS_COMPLETE": "Compilación completada",
             "PROCESS_SIGNAL_TERMINATED": "El proceso de compilación fue terminado por la señal: {{signal}}",
             "PROCESS_EXITED_WITH_CODE": "El proceso de compilación terminó inesperadamente, código de salida: {{code}}",
             "PROCESS_START_FAILED": "No se pudo iniciar el proceso de compilación",

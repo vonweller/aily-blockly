@@ -1,4 +1,11 @@
 {
+    "CLOUD_SPACE_ERRORS": {
+        "PUBLISH_FAILED": "Échec de la publication du projet",
+        "WORKSPACE_PROJECT_NOT_FOUND": "Projet introuvable",
+        "WORKSPACE_PROJECT_PUBLISH_FORBIDDEN": "Vous ne pouvez pas publier ce projet",
+        "WORKSPACE_PROJECT_LOCAL_DEPENDENCY_PATH_INVALID": "Les chemins des dépendances locales ne respectent pas les exigences de publication",
+        "WORKSPACE_PROJECT_BUILD_REQUIRED": "Compilez et synchronisez d'abord le projet"
+    },
     "MENU": {
         "MENU": "Menu",
         "PROJECT_NEW": "Nouveau Projet",
@@ -270,7 +277,7 @@
             "COMPILATION": "Paramètres de Compilation",
             "REPOSITORY": "Paramètres de Dépôt",
             "DEPENDENCIES": "Dépendances Globales",
-            "AILY_TOOLS": "Outils Aily",
+            "TOOLS_AND_SUBAPP": "Outils et applications",
             "MCP": "MCP",
             "DEVMODE": "Mode Développeur",
             "CACHE": "Gestion du cache"
@@ -797,6 +804,14 @@
             "COMPLETE_WITH_TIME": "Compilation terminée (durée: {{seconds}}s)",
             "FIRST_BUILD_HINT": "La première compilation peut prendre plus de temps",
             "FAST_BUILD_HINT": "Le système de build rapide est en cours d’exécution",
+            "PROGRESS_PREPARING": "Préparation de la compilation",
+            "PROGRESS_SKETCH": "Compilation du programme",
+            "PROGRESS_LIBRARIES": "Compilation des bibliothèques",
+            "PROGRESS_CORE": "Compilation du cœur",
+            "PROGRESS_LINKING": "Édition des liens du micrologiciel",
+            "PROGRESS_OBJCOPY": "Génération du micrologiciel",
+            "PROGRESS_FINALIZING": "Finalisation de la compilation",
+            "PROGRESS_COMPLETE": "Compilation terminée",
             "PROCESS_SIGNAL_TERMINATED": "Le processus de compilation a été arrêté par le signal: {{signal}}",
             "PROCESS_EXITED_WITH_CODE": "Le processus de compilation s’est terminé de façon inattendue, code de sortie: {{code}}",
             "PROCESS_START_FAILED": "Impossible de démarrer le processus de compilation",

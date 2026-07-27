@@ -1,4 +1,11 @@
 {
+    "CLOUD_SPACE_ERRORS": {
+        "PUBLISH_FAILED": "Projekt konnte nicht veröffentlicht werden",
+        "WORKSPACE_PROJECT_NOT_FOUND": "Projekt nicht gefunden",
+        "WORKSPACE_PROJECT_PUBLISH_FORBIDDEN": "Sie dürfen dieses Projekt nicht veröffentlichen",
+        "WORKSPACE_PROJECT_LOCAL_DEPENDENCY_PATH_INVALID": "Lokale Abhängigkeitspfade erfüllen die Veröffentlichungsanforderungen nicht",
+        "WORKSPACE_PROJECT_BUILD_REQUIRED": "Erstellen und synchronisieren Sie zuerst das Projekt"
+    },
     "MENU": {
         "MENU": "Menü",
         "PROJECT_NEW": "Neues Projekt",
@@ -270,7 +277,7 @@
             "COMPILATION": "Kompilierungseinstellungen",
             "REPOSITORY": "Repository-Einstellungen",
             "DEPENDENCIES": "Globale Abhängigkeiten",
-            "AILY_TOOLS": "Aily-Tools",
+            "TOOLS_AND_SUBAPP": "Tools und Apps",
             "MCP": "MCP",
             "DEVMODE": "Entwicklermodus",
             "CACHE": "Cache-Verwaltung"
@@ -797,6 +804,14 @@
             "COMPLETE_WITH_TIME": "Kompilierung abgeschlossen (Dauer: {{seconds}}s)",
             "FIRST_BUILD_HINT": "Die erste Kompilierung kann länger dauern",
             "FAST_BUILD_HINT": "Das schnelle Build-System läuft",
+            "PROGRESS_PREPARING": "Kompilierung wird vorbereitet",
+            "PROGRESS_SKETCH": "Programm wird kompiliert",
+            "PROGRESS_LIBRARIES": "Bibliotheken werden kompiliert",
+            "PROGRESS_CORE": "Kern wird kompiliert",
+            "PROGRESS_LINKING": "Firmware wird verknüpft",
+            "PROGRESS_OBJCOPY": "Firmware wird erstellt",
+            "PROGRESS_FINALIZING": "Kompilierung wird abgeschlossen",
+            "PROGRESS_COMPLETE": "Kompilierung abgeschlossen",
             "PROCESS_SIGNAL_TERMINATED": "Build-Prozess wurde durch Signal beendet: {{signal}}",
             "PROCESS_EXITED_WITH_CODE": "Build-Prozess wurde unerwartet beendet, Exit-Code: {{code}}",
             "PROCESS_START_FAILED": "Build-Prozess konnte nicht gestartet werden",

@@ -956,6 +956,7 @@ export class ProjectService {
    * 同步 package.json 与 temp 文件夹：
    * - 若 temp/package.json 存在，则用它覆盖主项目的 package.json
    * - 若不存在，则将主项目的 package.json 复制到 temp 文件夹
+   * node_modules 由 npm 维护；这里不能按顶层声明清理，否则会误删提升到根目录的间接依赖。
    */
   async syncPackageJsonWithTemp(projectPath: string): Promise<void> {
     const mainPackagePath = window['path'].join(projectPath, 'package.json');
@@ -970,8 +971,6 @@ export class ProjectService {
       // temp 下有 package.json，覆盖主项目
       const tempContent = window['fs'].readFileSync(tempPackagePath, 'utf8');
       window['fs'].writeFileSync(mainPackagePath, tempContent);
-      // 覆盖后扫描 node_modules 删除未声明的依赖包（避免 npm prune 冷启动慢）
-      this.pruneUndeclaredDeps(projectPath);
     } else {
       // temp 下无 package.json，从主项目复制到 temp
       await this.copyPackageJsonToTemp(projectPath);
@@ -998,69 +997,6 @@ export class ProjectService {
     } catch (error) {
       console.warn('复制 package.json 到 temp 失败:', error);
       return false;
-    }
-  }
-
-  /**
-   * 扫描 node_modules 删除未在 package.json 中声明的依赖包（仅第一层）
-   * 参考 NpmService.installedOk 实现，避免 npm prune 冷启动慢
-   */
-  private pruneUndeclaredDeps(projectPath: string): void {
-    try {
-      const packageJsonPath = window['path'].join(projectPath, 'package.json');
-      const nodeModulesPath = window['path'].join(projectPath, 'node_modules');
-
-      if (!window['path'].isExists(packageJsonPath) || !window['path'].isExists(nodeModulesPath)) {
-        return;
-      }
-
-      const packageJson = JSON.parse(window['fs'].readFileSync(packageJsonPath, 'utf8'));
-      const deps = { ...(packageJson.dependencies || {}), ...(packageJson.devDependencies || {}) };
-      const declaredNames = new Set(Object.keys(deps));
-
-      const dirs = window['fs'].readDirSync(nodeModulesPath);
-      const toRemove: string[] = [];
-
-      for (const dir of dirs) {
-        const dirName = dir.name ?? dir;
-        if (typeof dirName !== 'string' || dirName.startsWith('.')) {
-          continue;
-        }
-
-        const dirPath = window['path'].join(nodeModulesPath, dirName);
-        if (!window['fs'].isDirectory(dirPath)) {
-          continue;
-        }
-
-        if (dirName.startsWith('@')) {
-          const scopeDirs = window['fs'].readDirSync(dirPath);
-          for (const scopeDir of scopeDirs) {
-            const scopeDirName = scopeDir.name ?? scopeDir;
-            if (typeof scopeDirName !== 'string' || scopeDirName.startsWith('.')) {
-              continue;
-            }
-            const packageName = `${dirName}/${scopeDirName}`;
-            if (!declaredNames.has(packageName)) {
-              toRemove.push(window['path'].join(dirPath, scopeDirName));
-            }
-          }
-        } else {
-          if (!declaredNames.has(dirName)) {
-            toRemove.push(dirPath);
-          }
-        }
-      }
-
-      for (const removePath of toRemove) {
-        try {
-          window['fs'].rmSync(removePath, { recursive: true, force: true });
-          console.log('[pruneUndeclaredDeps] 已删除未声明依赖:', window['path'].basename(removePath));
-        } catch (err) {
-          console.warn('[pruneUndeclaredDeps] 删除失败:', removePath, err);
-        }
-      }
-    } catch (err) {
-      console.warn('[pruneUndeclaredDeps] 执行异常:', err);
     }
   }
 
