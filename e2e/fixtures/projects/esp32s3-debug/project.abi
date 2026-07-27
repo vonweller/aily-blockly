@@ -63,6 +63,36 @@
                         }
                       }
                     }
+                  },
+                  "next": {
+                    "block": {
+                      "type": "serial_begin",
+                      "id": "debug-uart-begin",
+                      "fields": {
+                        "SERIAL": "Serial",
+                        "SPEED": "115200"
+                      },
+                      "next": {
+                        "block": {
+                          "type": "serial_println",
+                          "id": "debug-uart-ready",
+                          "fields": {
+                            "SERIAL": "Serial"
+                          },
+                          "inputs": {
+                            "VAR": {
+                              "block": {
+                                "type": "text",
+                                "id": "debug-uart-ready-text",
+                                "fields": {
+                                  "TEXT": "blockly-sim-ready"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
                   }
                 }
               }
@@ -276,6 +306,44 @@
                                             }
                                           }
                                         }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      },
+                      "next": {
+                        "block": {
+                          "type": "controls_ifelse",
+                          "id": "debug-uart-echo-if",
+                          "inputs": {
+                            "IF0": {
+                              "block": {
+                                "type": "serial_available",
+                                "id": "debug-uart-available",
+                                "fields": {
+                                  "SERIAL": "Serial"
+                                }
+                              }
+                            },
+                            "DO0": {
+                              "block": {
+                                "type": "serial_println",
+                                "id": "debug-uart-echo",
+                                "fields": {
+                                    "SERIAL": "Serial"
+                                },
+                                "inputs": {
+                                  "VAR": {
+                                    "block": {
+                                      "type": "serial_read",
+                                      "id": "debug-uart-read-line",
+                                      "fields": {
+                                        "SERIAL": "Serial",
+                                        "TYPE": "readStringUntil('\\n')"
                                       }
                                     }
                                   }
