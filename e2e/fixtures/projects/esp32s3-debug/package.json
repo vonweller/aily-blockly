@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "Deterministic ESP32-S3 Blockly simulator/debug fixture",
   "board": "XIAO ESP32S3",
+  "projectConfig": {
+    "CDCOnBoot": "cdc"
+  },
   "dependencies": {
     "@aily-project/board-xiao_esp32s3": "3.3.1",
     "@aily-project/lib-core-io": "1.0.0",

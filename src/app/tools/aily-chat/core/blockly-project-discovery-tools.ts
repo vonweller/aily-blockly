@@ -158,6 +158,48 @@ Set verbose to true for detailed compiler output.`,
   };
 }
 
+function makeUploadProjectContribution(createDeferred: DeferredFactory): RuntimeScopedToolContribution {
+  return {
+    name: 'uploadProject',
+    toolSet: 'blockly-project',
+    description: 'Upload/flash the current project to an explicit serial port',
+    prompt: `Use this tool only when the user asks to upload, flash, or download firmware to hardware.
+Call listSerialPorts first and pass one of the returned exact port values. If multiple ports are ambiguous, ask the user which device to use. The upload approval identifies the selected port. Building alone does not require this tool.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        port: {
+          type: 'string',
+          description: 'Exact serial port value returned by listSerialPorts (for example COM3 or /dev/cu.usbserial-...).',
+        },
+      },
+      required: ['port'],
+    },
+    annotations: { readOnly: false, destructive: true },
+    runtimeModes: ['unbound', 'coder', 'blockly'],
+    agentScope: ['main'],
+    deferred: createDeferred('blockly-project-management', 'Firmware upload is exposed only when requested.'),
+  };
+}
+
+function makeListSerialPortsContribution(createDeferred: DeferredFactory): RuntimeScopedToolContribution {
+  return {
+    name: 'listSerialPorts',
+    toolSet: 'blockly-project',
+    description: 'List serial ports currently available for firmware upload',
+    prompt: 'Use this read-only tool immediately before uploadProject. Select only an exact port value returned by this tool; do not invent or reuse a stale port.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      additionalProperties: false,
+    },
+    annotations: { readOnly: true },
+    runtimeModes: ['unbound', 'coder', 'blockly'],
+    agentScope: ['main'],
+    deferred: createDeferred('blockly-project-management', 'Serial port discovery is exposed with firmware upload.'),
+  };
+}
+
 function makeBoardSearchContribution(createDeferred: DeferredFactory): RuntimeScopedToolContribution {
   return {
     name: 'boardSearch',
@@ -246,6 +288,12 @@ export function appendBlocklyProjectContributions(
 
   if (hostAPI.builder?.build) {
     contributions.push(makeBuildProjectContribution(createDeferred));
+  }
+  if (typeof (hostAPI.builder as { upload?: unknown } | undefined)?.upload === 'function') {
+    if (typeof (hostAPI.builder as { listSerialPorts?: unknown }).listSerialPorts === 'function') {
+      contributions.push(makeListSerialPortsContribution(createDeferred));
+    }
+    contributions.push(makeUploadProjectContribution(createDeferred));
   }
 }
 
@@ -414,6 +462,27 @@ export function createBlocklyProjectDiscoveryHandlers(): Record<string, InvokeHa
       const projectPath = readActiveProjectPath(hostAPI.project);
       if (!projectPath) return error('No active project is available for build.');
       const result = await (hostAPI.builder.build as unknown as (projectPath: string) => Promise<unknown>)(projectPath);
+      return text(formatExternalResult(result));
+    },
+
+    listSerialPorts: async (_input, hostAPI) => {
+      const listSerialPorts = (hostAPI.builder as {
+        listSerialPorts?: () => Promise<unknown>;
+      } | undefined)?.listSerialPorts;
+      if (typeof listSerialPorts !== 'function') return error('Serial port discovery is not available.');
+      return text(formatExternalResult(await listSerialPorts.call(hostAPI.builder)));
+    },
+
+    uploadProject: async (input, hostAPI) => {
+      const upload = (hostAPI.builder as {
+        upload?: (options?: { projectPath?: string; port?: string }) => Promise<unknown>;
+      } | undefined)?.upload;
+      if (typeof upload !== 'function') return error('Project upload is not available.');
+      const projectPath = readActiveProjectPath(hostAPI.project);
+      if (!projectPath) return error('No active project is available for upload.');
+      const port = typeof input['port'] === 'string' ? input['port'].trim() : '';
+      if (!port) return error('uploadProject requires an explicit port from listSerialPorts.');
+      const result = await upload.call(hostAPI.builder, { projectPath, port });
       return text(formatExternalResult(result));
     },
 

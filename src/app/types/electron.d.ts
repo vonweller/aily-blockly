@@ -121,6 +121,125 @@ declare global {
           }) => void,
         ) => () => void;
       };
+      simulatorSubapp?: {
+        open: (options: {
+          projectPath: string;
+          ownerId?: string;
+          tool?: 'scene' | 'debugger';
+          sceneId?: string;
+          connectionGraph: Record<string, unknown>;
+        }) => Promise<{
+          schemaVersion: 1;
+          kind: 'aily-simulator-subapp-surface';
+          state: 'ready';
+          tool: 'scene' | 'debugger';
+          url: string;
+          origin: string;
+          launchId: string;
+          runtimeSource: string;
+          runtimePackId?: string;
+          runtimeMode?: string;
+        }>;
+        openProjectScene: (options: {
+          projectPath: string;
+          ownerId?: string;
+          sceneId?: string;
+        }) => Promise<{
+          schemaVersion: 1;
+          kind: 'aily-simulator-subapp-surface';
+          state: 'ready';
+          tool: 'scene';
+          url: string;
+          origin: string;
+          launchId: string;
+          initialization: 'existing' | 'imported-v1' | 'created-empty';
+          runtimeSource: string;
+          runtimePackId?: string;
+          runtimeMode?: string;
+        }>;
+        exportProjectSceneV1: (ownerId?: string) => Promise<{
+          schemaVersion: 1;
+          kind: 'aily-project-scene-v1-export-result';
+          state: 'exported';
+        }>;
+        attachProjectSceneSession: (ownerId?: string) => Promise<{
+          schemaVersion: 1;
+          kind: 'aily-project-scene-session-attachment-result';
+          state: 'attached';
+          session: {
+            sessionId: string;
+            state: string;
+            sceneRevision: string | null;
+          };
+        }>;
+        detachProjectSceneSession: (ownerId?: string) => Promise<{
+          schemaVersion: 1;
+          kind: 'aily-project-scene-session-detachment-result';
+          state: 'detached';
+        }>;
+        status: () => Promise<{
+          state: 'ready' | 'stopped';
+          tool?: 'scene' | 'debugger';
+          launchId?: string;
+          sessionState?: string;
+          runtimeSource?: string;
+          runtimePackId?: string;
+          runtimeMode?: string;
+          lastFailure?: {
+            phase: string;
+            message: string;
+            code: number | null;
+            signal: string | null;
+            occurredAt: string;
+          };
+        }>;
+        close: (ownerId?: string) => Promise<{
+          state: 'ready' | 'stopped';
+        }>;
+        onStateChanged: (
+          callback: (state: {
+            state: 'starting' | 'ready' | 'stopping' | 'stopped' | 'failed'
+              | 'rebuild-requested' | 'artifact-rebuild-state-changed'
+              | 'artifact-rebuild-candidate-ready';
+            unexpected?: boolean;
+            surface?: {
+              schemaVersion: 1;
+              kind: 'aily-simulator-subapp-surface';
+              state: 'ready';
+              tool: 'scene' | 'debugger';
+              url: string;
+              origin: string;
+              launchId: string;
+              runtimeSource: string;
+              runtimePackId?: string;
+              runtimeMode?: string;
+            };
+            failure?: {
+              phase: string;
+              message: string;
+              code: number | null;
+              signal: string | null;
+              occurredAt: string;
+            };
+          }) => void,
+        ) => () => void;
+        onProjectRebuildRequested: (
+          callback: (
+            request: Record<string, unknown>,
+            transport: {
+              requestId: string;
+              rendererGeneration: number;
+            },
+          ) => void,
+        ) => () => void;
+        respondProjectRebuild: (
+          transport: {
+            requestId: string;
+            rendererGeneration: number;
+          },
+          result: Record<string, unknown>,
+        ) => void;
+      };
       linter: any;
       uploader: any;
       fs: any;

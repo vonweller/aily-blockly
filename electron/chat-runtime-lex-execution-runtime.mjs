@@ -150,7 +150,24 @@ const SCHEMATIC_TOOL_DEFINITIONS = [
       properties: {
         pinmapIds: {
           oneOf: [
-            { type: 'array', items: { oneOf: [{ type: 'string' }, { type: 'object' }] } },
+            {
+              type: 'array',
+              items: {
+                oneOf: [
+                  { type: 'string' },
+                  {
+                    type: 'object',
+                    properties: {
+                      id: { type: 'string' },
+                      alias: { type: 'string' },
+                      label: { type: 'string' },
+                    },
+                    required: ['id'],
+                    additionalProperties: false,
+                  },
+                ],
+              },
+            },
             { type: 'string' },
           ],
         },
@@ -1099,6 +1116,7 @@ class LexExecutionRuntimeOwner {
         }
       }
     } finally {
+      await this.releaseSubappAgentSession(sessionId, session);
       this.sessions.delete(sessionId);
     }
   }
@@ -1123,12 +1141,35 @@ class LexExecutionRuntimeOwner {
           await session.editingTimeline?.finishRequest?.(session.activeTurnId, 'disposed');
         }
         session?.handle?.dispose?.();
+        await this.releaseSubappAgentSession(session.sessionId, session);
       } catch {
         // Best-effort cleanup while the worker process is shutting down.
       }
     }
     await this.chronicleTracker?.dispose();
     await this.sessionIndex?.dispose?.();
+  }
+
+  async releaseSubappAgentSession(sessionId, session = null) {
+    try {
+      if (typeof this.requestResourceOperation === 'function') {
+        await this.requestResourceOperation({
+          sessionId,
+          kind: 'subapp-agent',
+          payload: {
+            adapter: 'subappAgent',
+            action: 'releaseSession',
+          },
+        });
+      }
+    } catch (error) {
+      console.warn('[AilyChat][SubappAgent] Failed to release session resources', {
+        sessionId,
+        error: error?.message || String(error),
+      });
+    } finally {
+      releaseExternalAgentSessionLease(sessionId, session, this.env);
+    }
   }
 
   async resolveInteraction(command = {}) {
@@ -1821,6 +1862,7 @@ class LexExecutionRuntimeOwner {
       blockly: createExternalBlockly(sessionId, this.requestResourceOperation),
       connectionGraph: createExternalConnectionGraph(sessionId, this.requestResourceOperation),
       boardSearch: createExternalBoardSearch(sessionId, this.requestResourceOperation),
+      subappAgent: createExternalSubappAgent(sessionId, this.requestResourceOperation, this.env),
       chronicle: {
         indexWorkspaceArtifact: async input => this.sessionIndex?.indexWorkspaceArtifact?.({
           ...(input && typeof input === 'object' ? input : {}),
@@ -1950,10 +1992,7 @@ class LexExecutionRuntimeOwner {
   }
 
   resolveCwd(projectInfo, providerOptions) {
-    return normalizeString(projectInfo?.rootPath)
-      || normalizeString(projectInfo?.path)
-      || normalizeString(providerOptions?.folderPath)
-      || process.cwd();
+    return resolveEditingTimelineWorkspaceBinding(projectInfo, providerOptions, this.env).workspaceRoot;
   }
 
   emitRuntimeStatus(session, status, requestInProgress) {
@@ -2288,9 +2327,18 @@ function createExternalTerminal(cwd, options = {}) {
     persistWorkerCommandProcessRecord(processRecord);
     notifyProcessChanged();
     try {
+      const sessionLeaseFile = ensureExternalAgentSessionLease(session, process.env);
       const { stdout, stderr } = await runWorkerTerminalCommand(terminalCommand, {
         cwd: terminalCwd,
-        env: { ...process.env, ...(options.env && typeof options.env === 'object' ? options.env : {}) },
+        env: {
+          ...process.env,
+          ...(sessionLeaseFile ? {
+            AILY_AGENT_SESSION_ID: session.sessionId,
+            AILY_AGENT_SESSION_LEASE_FILE: sessionLeaseFile,
+            AILY_AGENT_SESSION_OWNER_PID: String(process.pid),
+          } : {}),
+          ...(options.env && typeof options.env === 'object' ? options.env : {}),
+        },
         timeout: Number.isFinite(options.timeoutMs)
           ? options.timeoutMs
           : Number.isFinite(options.timeout)
@@ -2377,6 +2425,48 @@ function createSyncFsExtension() {
   return {
     readFileAsBase64: filePath => fsSync.readFileSync(String(filePath || '')).toString('base64'),
   };
+}
+
+export function externalAgentSessionLeasePath(sessionId, env = process.env) {
+  const appDataPath = resolveAppDataPath(env);
+  const normalizedSessionId = normalizeSessionId(sessionId);
+  if (!appDataPath || !normalizedSessionId) return '';
+  const safeSessionId = normalizedSessionId.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 160);
+  return path.join(appDataPath, 'runtime-host', 'session-leases', `${safeSessionId}.json`);
+}
+
+export function ensureExternalAgentSessionLease(session, env = process.env) {
+  const sessionId = normalizeSessionId(session?.sessionId);
+  if (!sessionId) return '';
+  const leaseFile = session.agentSessionLeaseFile
+    || externalAgentSessionLeasePath(sessionId, env);
+  if (!leaseFile) return '';
+  fsSync.mkdirSync(path.dirname(leaseFile), { recursive: true });
+  fsSync.writeFileSync(leaseFile, `${JSON.stringify({
+    protocolVersion: 1,
+    sessionId,
+    ownerPid: process.pid,
+    updatedAt: Date.now(),
+  })}\n`, { encoding: 'utf8', mode: 0o600 });
+  session.agentSessionLeaseFile = leaseFile;
+  return leaseFile;
+}
+
+export function releaseExternalAgentSessionLease(sessionId, session = null, env = process.env) {
+  const leaseFile = session?.agentSessionLeaseFile
+    || externalAgentSessionLeasePath(sessionId, env);
+  if (!leaseFile) return;
+  try {
+    fsSync.unlinkSync(leaseFile);
+  } catch (error) {
+    if (error?.code !== 'ENOENT') {
+      console.warn('[AilyChat][SubappAgent] Failed to remove session lease', {
+        sessionId,
+        error: error?.message || String(error),
+      });
+    }
+  }
+  if (session) session.agentSessionLeaseFile = '';
 }
 
 function assertEditingNavigationFilePath(filePath, workspaceRoot) {
@@ -2561,8 +2651,17 @@ export function resolveEditingTimelineWorkspaceBinding(projectInfo, providerOpti
 
 export function buildEditingSessionProjection(state) {
   const operations = [...(Array.isArray(state?.operations) ? state.operations : [])]
+    .map(operation => ({
+      ...operation,
+      beforeRef: normalizeEditingTimelineContentRef(operation?.beforeRef),
+      afterRef: normalizeEditingTimelineContentRef(operation?.afterRef),
+    }))
     .sort((left, right) => Number(left?.epoch) - Number(right?.epoch));
-  const baselines = Array.isArray(state?.baselines) ? state.baselines : [];
+  const baselines = (Array.isArray(state?.baselines) ? state.baselines : [])
+    .map(baseline => ({
+      ...baseline,
+      contentRef: normalizeEditingTimelineContentRef(baseline?.contentRef),
+    }));
   const pointerEpoch = Math.max(0, Number(state?.currentPointer?.epoch) || 0);
   const visibleOperations = operations.filter(operation =>
     Math.max(0, Number(operation?.epoch) || 0) <= pointerEpoch);
@@ -2711,6 +2810,8 @@ export function buildEditingSessionProjection(state) {
 
   return {
     ...structuredClone(state),
+    baselines,
+    operations,
     entries: projectedEntries,
     requestSummaries,
     summary: {
@@ -2721,6 +2822,21 @@ export function buildEditingSessionProjection(state) {
       modifiedEntryCount,
     },
   };
+}
+
+function normalizeEditingTimelineContentRef(value) {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  const hash = normalizeString(value.hash);
+  const encoding = value.encoding === 'utf8' || value.encoding === 'base64'
+    ? value.encoding
+    : '';
+  const byteLength = Number(value.byteLength);
+  if (!hash || !encoding || !Number.isInteger(byteLength) || byteLength < 0) {
+    return null;
+  }
+  return { hash, encoding, byteLength };
 }
 
 function buildEditingSessionRequestEntries(baselines, operations, requestScopes) {
@@ -5447,7 +5563,7 @@ function createPathExtension() {
   };
 }
 
-function createElectronSkillRegistry(cwd, projectInfo, runtimeConfig = {}) {
+export function createElectronSkillRegistry(cwd, projectInfo, runtimeConfig = {}, env = process.env) {
   runtimeConfig = runtimeConfig && typeof runtimeConfig === 'object' ? runtimeConfig : {};
   const skills = new Map();
   const activeSkillNames = new Set();
@@ -5455,10 +5571,14 @@ function createElectronSkillRegistry(cwd, projectInfo, runtimeConfig = {}) {
     || normalizeString(projectInfo?.rootPath)
     || normalizeString(projectInfo?.path)
     || normalizeString(projectInfo?.projectPath);
-  const directories = resolveElectronSkillDirectories(projectRoot, runtimeConfig);
+  const sources = resolveElectronSkillSources(projectRoot, runtimeConfig, env);
 
-  for (const entry of directories) {
-    scanElectronSkillDirectory(skills, entry.dir, entry.origin);
+  for (const source of sources) {
+    if (source.skillMdPath) {
+      scanElectronSkillFile(skills, source.skillMdPath, source.origin);
+    } else {
+      scanElectronSkillDirectory(skills, source.dir, source.origin);
+    }
   }
 
   const registry = {
@@ -6246,35 +6366,42 @@ function buildElectronSkillsListingInstruction(input) {
   return 'When a listed skill applies to the request, treat it as a blocking requirement and defer the task until the required skill instructions become readable in the current tool set.';
 }
 
-function resolveElectronSkillDirectories(projectRoot, runtimeConfig = {}) {
+function resolveElectronSkillSources(projectRoot, runtimeConfig = {}, env = process.env) {
   const entries = [];
-  const push = (dir, origin) => {
+  const pushDirectory = (dir, origin) => {
     const normalized = normalizeString(dir);
-    if (!normalized || entries.some(entry => samePath(entry.dir, normalized))) {
+    if (!normalized || entries.some(entry => entry.dir && samePath(entry.dir, normalized))) {
       return;
     }
     entries.push({ dir: normalized, origin });
   };
+  const pushSkillFile = (skillMdPath, origin) => {
+    const normalized = normalizeString(skillMdPath);
+    if (!normalized || entries.some(entry => entry.skillMdPath && samePath(entry.skillMdPath, normalized))) {
+      return;
+    }
+    entries.push({ skillMdPath: normalized, origin });
+  };
 
-  push(path.resolve(MODULE_DIR, '..', 'renderer', 'skills'), { type: 'builtin' });
-  push(path.resolve(MODULE_DIR, '..', 'dist', 'aily-blockly', 'browser', 'skills'), { type: 'builtin' });
-  push(path.resolve(MODULE_DIR, '..', 'public', 'skills'), { type: 'builtin' });
-  for (const dir of resolveElectronChildToolSkillDirectories()) {
-    push(dir, { type: 'builtin' });
+  pushDirectory(path.resolve(MODULE_DIR, '..', 'renderer', 'skills'), { type: 'builtin', source: 'bundled' });
+  pushDirectory(path.resolve(MODULE_DIR, '..', 'dist', 'aily-blockly', 'browser', 'skills'), { type: 'builtin', source: 'bundled' });
+  pushDirectory(path.resolve(MODULE_DIR, '..', 'public', 'skills'), { type: 'builtin', source: 'bundled' });
+  for (const skillMdPath of resolveElectronInstalledSubappSkillFiles(env)) {
+    pushSkillFile(skillMdPath, { type: 'builtin', source: 'subapp' });
   }
-  push(path.join(resolveAppDataPath(process.env), 'aily-skills'), { type: 'user' });
+  pushDirectory(path.join(resolveAppDataPath(env), 'aily-skills'), { type: 'user' });
 
   for (const dir of normalizeStringArray(runtimeConfig.userSkillFolders)) {
-    push(dir, { type: 'user' });
+    pushDirectory(dir, { type: 'user' });
   }
 
   if (projectRoot) {
-    push(path.join(projectRoot, '.aily', 'skills'), { type: 'project' });
-    push(path.join(projectRoot, '.agents', 'skills'), { type: 'project' });
+    pushDirectory(path.join(projectRoot, '.aily', 'skills'), { type: 'project' });
+    pushDirectory(path.join(projectRoot, '.agents', 'skills'), { type: 'project' });
   }
 
   for (const dir of normalizeStringArray(runtimeConfig.projectSkillFolders)) {
-    push(dir, { type: 'project' });
+    pushDirectory(dir, { type: 'project' });
   }
 
   return entries;
@@ -6296,61 +6423,171 @@ function resolveElectronAilyChildPath() {
   return candidates[0] || '';
 }
 
-function resolveElectronChildToolSkillDirectories() {
-  const childPath = resolveElectronAilyChildPath();
-  if (!childPath) {
-    return [];
-  }
-
-  const toolsPath = path.join(childPath, 'tools');
-  if (!fsSync.existsSync(toolsPath)) {
-    return [];
-  }
-
-  try {
-    return fsSync.readdirSync(toolsPath, { withFileTypes: true })
-      .filter(entry => entry.isDirectory())
-      .map(entry => path.join(toolsPath, entry.name, 'skill'))
-      .filter(dir => fsSync.existsSync(dir))
-      .sort((left, right) => left.localeCompare(right));
-  } catch (error) {
-    console.warn('[AilyChat][SkillRegistry] Failed to scan child tool skills:', error?.message || error);
-    return [];
-  }
+function resolveElectronInstalledSubappRoot(env = process.env) {
+  return path.join(resolveAppDataPath(env), 'npm-global', 'app');
 }
 
-function createElectronChildToolInventorySignature() {
-  const childPath = resolveElectronAilyChildPath();
-  const toolsPath = childPath ? path.join(childPath, 'tools') : '';
-  if (!toolsPath || !fsSync.existsSync(toolsPath)) {
-    return '';
-  }
+function isValidNpmPackageName(value) {
+  return /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/i.test(normalizeString(value));
+}
 
-  const fingerprints = [];
-  try {
-    const toolEntries = fsSync.readdirSync(toolsPath, { withFileTypes: true })
-      .filter(entry => entry.isDirectory())
-      .sort((left, right) => left.name.localeCompare(right.name));
+function isPackageRelativePath(packagePath, candidatePath) {
+  const relative = path.relative(path.resolve(packagePath), path.resolve(candidatePath));
+  return relative !== ''
+    && !relative.startsWith('..')
+    && !path.isAbsolute(relative);
+}
 
-    for (const toolEntry of toolEntries) {
-      const toolPath = path.join(toolsPath, toolEntry.name);
-      fingerprints.push(`tool:${toolEntry.name}`);
-      fingerprints.push(readElectronChildToolLifecycleFile(path.join(toolPath, 'package.json')));
+function resolveElectronInstalledSubappSkillEntries(env = process.env) {
+  const rootDir = resolveElectronInstalledSubappRoot(env);
+  const installProject = readJsonFile(path.join(rootDir, 'package.json'));
+  const dependencies = installProject?.dependencies && typeof installProject.dependencies === 'object'
+    ? installProject.dependencies
+    : {};
+  const entries = [];
 
-      const skillRoot = path.join(toolPath, 'skill');
-      if (!fsSync.existsSync(skillRoot)) continue;
+  for (const packageName of Object.keys(dependencies).filter(isValidNpmPackageName).sort()) {
+    const packagePath = path.join(rootDir, 'node_modules', ...packageName.split('/'));
+    const packageJsonPath = path.join(packagePath, 'package.json');
+    const packageJson = readJsonFile(packageJsonPath);
+    const declaredSkills = normalizeStringArray(packageJson?.ailySubapp?.agent?.skills);
 
-      for (const skillEntry of fsSync.readdirSync(skillRoot, { withFileTypes: true })
-        .filter(entry => entry.isDirectory())
-        .sort((left, right) => left.name.localeCompare(right.name))) {
-        fingerprints.push(`skill:${toolEntry.name}/${skillEntry.name}`);
-        fingerprints.push(readElectronChildToolLifecycleFile(path.join(skillRoot, skillEntry.name, 'SKILL.md')));
+    for (const declaredSkill of declaredSkills) {
+      if (path.isAbsolute(declaredSkill)) {
+        console.warn('[AilyChat][SkillRegistry] Ignoring absolute subapp skill path', {
+          packageName,
+          declaredSkill,
+        });
+        continue;
       }
+      const skillMdPath = path.resolve(packagePath, declaredSkill);
+      if (!isPackageRelativePath(packagePath, skillMdPath)) {
+        console.warn('[AilyChat][SkillRegistry] Ignoring subapp skill path outside its package', {
+          packageName,
+          declaredSkill,
+        });
+        continue;
+      }
+      if (!fsSync.existsSync(skillMdPath)) {
+        console.warn('[AilyChat][SkillRegistry] Manifest-declared subapp skill is missing', {
+          packageName,
+          declaredSkill,
+        });
+        continue;
+      }
+      entries.push({
+        packageName,
+        packagePath,
+        packageJsonPath,
+        declaredSkill,
+        skillMdPath,
+      });
     }
-  } catch (error) {
-    console.warn('[AilyChat][SkillRegistry] Failed to fingerprint child tool inventory:', error?.message || error);
   }
 
+  return entries.sort((left, right) =>
+    left.packageName.localeCompare(right.packageName)
+      || left.declaredSkill.localeCompare(right.declaredSkill));
+}
+
+export function resolveElectronInstalledSubappSkillFiles(env = process.env) {
+  return resolveElectronInstalledSubappSkillEntries(env).map(entry => entry.skillMdPath);
+}
+
+export function resolveElectronInstalledSubappAgentToolBindings(env = process.env) {
+  const rootDir = resolveElectronInstalledSubappRoot(env);
+  const installProject = readJsonFile(path.join(rootDir, 'package.json'));
+  const dependencies = installProject?.dependencies && typeof installProject.dependencies === 'object'
+    ? installProject.dependencies
+    : {};
+  const candidates = [];
+
+  for (const packageName of Object.keys(dependencies).filter(isValidNpmPackageName).sort()) {
+    const packagePath = path.join(rootDir, 'node_modules', ...packageName.split('/'));
+    const packageJson = readJsonFile(path.join(packagePath, 'package.json'));
+    const agent = packageJson?.ailySubapp?.agent;
+    const declaredTools = agent?.tools;
+    const declaredManifest = normalizeString(declaredTools?.manifest);
+    if (!declaredManifest || path.isAbsolute(declaredManifest)) {
+      continue;
+    }
+
+    const manifestPath = path.resolve(packagePath, declaredManifest);
+    if (!isPackageRelativePath(packagePath, manifestPath)) {
+      console.warn('[AilyChat][SubappAgent] Ignoring tool manifest outside its package', {
+        packageName,
+        declaredManifest,
+      });
+      continue;
+    }
+    const manifest = readJsonFile(manifestPath);
+    if (!manifest) {
+      console.warn('[AilyChat][SubappAgent] Manifest-declared tool file is missing or invalid', {
+        packageName,
+        declaredManifest,
+      });
+      continue;
+    }
+    const protocolVersion = Number(manifest.protocolVersion ?? agent?.protocolVersion);
+    const transport = normalizeString(manifest.transport || declaredTools?.transport);
+    if (protocolVersion !== 1 || transport !== 'aily-child-rpc') {
+      console.warn('[AilyChat][SubappAgent] Ignoring unsupported subapp Agent manifest', {
+        packageName,
+        protocolVersion,
+        transport,
+      });
+      continue;
+    }
+
+    for (const definition of Array.isArray(manifest.tools) ? manifest.tools : []) {
+      const name = normalizeString(definition?.name);
+      if (!name || !/^[a-zA-Z][a-zA-Z0-9_-]*$/.test(name)) {
+        continue;
+      }
+      candidates.push({
+        packageName,
+        manifestPath,
+        definition: {
+          ...definition,
+          name,
+          description: normalizeString(definition.description) || name,
+          inputSchema: definition.inputSchema && typeof definition.inputSchema === 'object'
+            ? definition.inputSchema
+            : { type: 'object', properties: {} },
+        },
+      });
+    }
+  }
+
+  const counts = new Map();
+  for (const candidate of candidates) {
+    counts.set(candidate.definition.name, (counts.get(candidate.definition.name) || 0) + 1);
+  }
+  const ambiguousNames = [...counts.entries()]
+    .filter(([, count]) => count > 1)
+    .map(([name]) => name);
+  if (ambiguousNames.length > 0) {
+    console.warn('[AilyChat][SubappAgent] Ignoring ambiguous installed tool names', ambiguousNames);
+  }
+  return candidates.filter(candidate => counts.get(candidate.definition.name) === 1);
+}
+
+export function createElectronInstalledSubappInventorySignature(env = process.env) {
+  const rootDir = resolveElectronInstalledSubappRoot(env);
+  const fingerprints = [
+    readElectronChildToolLifecycleFile(path.join(rootDir, 'package.json')),
+  ];
+  for (const entry of resolveElectronInstalledSubappSkillEntries(env)) {
+    fingerprints.push(`package:${entry.packageName}`);
+    fingerprints.push(readElectronChildToolLifecycleFile(entry.packageJsonPath));
+    fingerprints.push(`skill:${entry.declaredSkill}`);
+    fingerprints.push(readElectronChildToolLifecycleFile(entry.skillMdPath));
+  }
+  for (const binding of resolveElectronInstalledSubappAgentToolBindings(env)) {
+    fingerprints.push(`agent-package:${binding.packageName}`);
+    fingerprints.push(`agent-manifest:${binding.manifestPath}`);
+    fingerprints.push(readElectronChildToolLifecycleFile(binding.manifestPath));
+  }
   return createHash('sha256').update(fingerprints.join('\0')).digest('hex');
 }
 
@@ -6383,29 +6620,48 @@ function scanElectronSkillDirectory(skills, dir, origin) {
     if (!fsSync.existsSync(skillMdPath)) {
       continue;
     }
-    try {
-      const raw = fsSync.readFileSync(skillMdPath, 'utf8');
-      const parsed = parseElectronSkillMarkdown(raw);
-      const metadata = {
-        ...parsed.metadata,
-        name: entry.name,
-        displayName: parsed.metadata.name && parsed.metadata.name !== 'unknown' && parsed.metadata.name !== entry.name
-          ? parsed.metadata.name
-          : undefined,
-      };
-      skills.set(entry.name, {
-        name: entry.name,
-        displayName: metadata.displayName,
-        description: metadata.description || '',
-        metadata,
-        body: metadata.autoActivate ? parsed.body : undefined,
-        baseDir: skillDir,
-        skillMdPath,
-        origin,
+    scanElectronSkillFile(skills, skillMdPath, origin);
+  }
+}
+
+function scanElectronSkillFile(skills, skillMdPath, origin) {
+  const skillDir = path.dirname(skillMdPath);
+  const skillName = path.basename(skillDir);
+  try {
+    const raw = fsSync.readFileSync(skillMdPath, 'utf8');
+    const parsed = parseElectronSkillMarkdown(raw);
+    const metadata = {
+      ...parsed.metadata,
+      name: skillName,
+      displayName: parsed.metadata.name && parsed.metadata.name !== 'unknown' && parsed.metadata.name !== skillName
+        ? parsed.metadata.name
+        : undefined,
+    };
+    const existing = skills.get(skillName);
+    const shouldReportConflict = existing
+      && !samePath(existing.skillMdPath, skillMdPath)
+      && (existing.origin?.source === 'subapp'
+        || origin?.source === 'subapp'
+        || existing.origin?.type !== origin?.type);
+    if (shouldReportConflict) {
+      console.warn('[AilyChat][SkillRegistry] Duplicate skill name; later source wins', {
+        name: skillName,
+        previousPath: existing.skillMdPath,
+        selectedPath: skillMdPath,
       });
-    } catch (error) {
-      console.warn('[AilyChat][SkillRegistry] Failed to parse skill', skillMdPath, error?.message || error);
     }
+    skills.set(skillName, {
+      name: skillName,
+      displayName: metadata.displayName,
+      description: metadata.description || '',
+      metadata,
+      body: metadata.autoActivate ? parsed.body : undefined,
+      baseDir: skillDir,
+      skillMdPath,
+      origin,
+    });
+  } catch (error) {
+    console.warn('[AilyChat][SkillRegistry] Failed to parse skill', skillMdPath, error?.message || error);
   }
 }
 
@@ -6739,7 +6995,7 @@ function createElectronBlocklyToolProvider(hostAPI) {
   };
 }
 
-function createElectronBlocklyToolContributions(hostAPI) {
+export function createElectronBlocklyToolContributions(hostAPI) {
   const contributions = [];
   if (hostAPI.project) {
     contributions.push({
@@ -6803,6 +7059,45 @@ function createElectronBlocklyToolContributions(hostAPI) {
       runtimeModes: ['unbound', 'coder', 'blockly'],
       agentScope: ['main'],
       deferred: { group: 'blockly-project-management', reason: 'Build is used on demand.' },
+    });
+  }
+  if (hostAPI.builder?.upload) {
+    if (hostAPI.builder?.listSerialPorts) {
+      contributions.push({
+        name: 'listSerialPorts',
+        toolSet: 'blockly-project',
+        description: 'List serial ports currently available for firmware upload',
+        prompt: 'Use this read-only tool immediately before uploadProject. Select only an exact port value returned by this tool; do not invent or reuse a stale port.',
+        inputSchema: {
+          type: 'object',
+          properties: {},
+          additionalProperties: false,
+        },
+        annotations: { readOnly: true },
+        runtimeModes: ['unbound', 'coder', 'blockly'],
+        agentScope: ['main'],
+        deferred: { group: 'blockly-project-management', reason: 'Serial port discovery is exposed with firmware upload.' },
+      });
+    }
+    contributions.push({
+      name: 'uploadProject',
+      toolSet: 'blockly-project',
+      description: 'Upload/flash the current project to an explicit serial port',
+      prompt: 'Use this tool only when the user asks to upload, flash, or download firmware to hardware. Call listSerialPorts first and pass one of the returned exact port values. If multiple ports are ambiguous, ask the user which device to use. The upload approval identifies the selected port.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          port: {
+            type: 'string',
+            description: 'Exact serial port value returned by listSerialPorts.',
+          },
+        },
+        required: ['port'],
+      },
+      annotations: { readOnly: false, destructive: true },
+      runtimeModes: ['unbound', 'coder', 'blockly'],
+      agentScope: ['main'],
+      deferred: { group: 'blockly-project-management', reason: 'Firmware upload is exposed only when requested.' },
     });
   }
   if (hostAPI.boardSearch?.search) {
@@ -6952,7 +7247,35 @@ Prefer flowchart TD or flowchart LR. After this tool succeeds, do not repeat the
   if (hostAPI.connectionGraph) {
     appendElectronSchematicToolContributions(contributions);
   }
+  appendElectronSubappAgentToolContributions(contributions, hostAPI.subappAgent?.bindings);
   return contributions;
+}
+
+function appendElectronSubappAgentToolContributions(contributions, bindings) {
+  const existingNames = new Set(contributions.map(contribution => contribution.name));
+  for (const binding of Array.isArray(bindings) ? bindings : []) {
+    const definition = binding?.definition;
+    if (!definition?.name || existingNames.has(definition.name)) {
+      if (definition?.name) {
+        console.warn('[AilyChat][SubappAgent] Ignoring tool name that conflicts with a host tool', {
+          packageName: binding.packageName,
+          tool: definition.name,
+        });
+      }
+      continue;
+    }
+    existingNames.add(definition.name);
+    contributions.push({
+      name: definition.name,
+      toolSet: `subapp:${binding.packageName}`,
+      description: definition.description || definition.name,
+      prompt: '',
+      inputSchema: definition.inputSchema || { type: 'object', properties: {} },
+      annotations: { readOnly: definition.permission !== 'change' },
+      runtimeModes: ['blockly', 'coder'],
+      agentScope: ['main'],
+    });
+  }
 }
 
 function appendElectronSchematicToolContributions(contributions) {
@@ -6971,12 +7294,35 @@ function appendElectronSchematicToolContributions(contributions) {
   }
 }
 
-async function invokeElectronBlocklyTool(toolName, input, hostAPI, context = {}) {
+export async function invokeElectronBlocklyTool(toolName, input, hostAPI, context = {}) {
+  const subappBinding = hostAPI.subappAgent?.bindings?.find(
+    binding => binding?.definition?.name === toolName,
+  );
+  if (subappBinding) {
+    const response = await hostAPI.subappAgent.execute({
+      tool: toolName,
+      params: input,
+    }, context);
+    const serialized = formatExternalResult(response);
+    return response?.ok === true
+      ? toolText(serialized, {
+          toolId: response.toolId,
+          subappPackage: subappBinding.packageName,
+          subappAgentTool: toolName,
+          presentation: response.presentation,
+        })
+      : toolError(serialized);
+  }
+
   switch (toolName) {
     case 'project':
       return invokeElectronProjectTool(input, hostAPI, context);
     case 'buildProject':
       return invokeElectronBuildProjectTool(hostAPI, context);
+    case 'listSerialPorts':
+      return toolText(formatExternalResult(await hostAPI.builder.listSerialPorts()));
+    case 'uploadProject':
+      return invokeElectronUploadProjectTool(input, hostAPI, context);
     case 'boardSearch':
       return invokeElectronBoardSearchTool(input, hostAPI);
     case 'search_boards_libraries':
@@ -7147,6 +7493,18 @@ async function invokeElectronBuildProjectTool(hostAPI, context = {}) {
     return toolError('No active project is available for build.');
   }
   return toolText(formatExternalResult(await hostAPI.builder.build({ projectPath }, context)));
+}
+
+async function invokeElectronUploadProjectTool(input, hostAPI, context = {}) {
+  const projectPath = hostAPI.project?.getProjectPath?.();
+  if (!projectPath) {
+    return toolError('No active project is available for upload.');
+  }
+  const port = normalizeString(input?.port);
+  if (!port) {
+    return toolError('uploadProject requires an explicit port from listSerialPorts.');
+  }
+  return toolText(formatExternalResult(await hostAPI.builder.upload({ projectPath, port }, context)));
 }
 
 async function invokeElectronBoardSearchTool(input, hostAPI) {
@@ -7589,6 +7947,40 @@ function createExternalBuilder(sessionId, requestResourceOperation, initialProje
           await session.externalEdits.stopExternalEdits({ operationId: externalEditOperation.operationId });
         }
       }
+    },
+    listSerialPorts: async () => {
+      const result = await requestResourceOperation({
+        sessionId,
+        kind: 'project-build',
+        payload: {
+          adapter: 'builder',
+          action: 'listSerialPorts',
+        },
+      });
+      return Array.isArray(result?.result ?? result) ? (result?.result ?? result) : [];
+    },
+    upload: async (options = {}, context = {}) => {
+      const projectInfo = normalizeProjectInfo(initialProjectInfo);
+      const projectPath = normalizeString(options?.projectPath)
+        || normalizeString(projectInfo.projectPath || projectInfo.path || projectInfo.rootPath)
+        || normalizeString(typeof readCwd === 'function' ? readCwd() : '');
+      const port = normalizeString(options?.port);
+      if (!port) {
+        throw new Error('Project upload requires an explicit serial port.');
+      }
+      const result = await requestResourceOperation({
+        sessionId,
+        turnId: normalizeString(context?.trace?.turnId || context?.turnId),
+        toolCallId: normalizeString(context?.toolCallId || context?.trace?.toolCallId),
+        kind: 'project-build',
+        payload: {
+          adapter: 'builder',
+          action: 'upload',
+          projectPath,
+          port,
+        },
+      });
+      return normalizeBuildResult(result?.result ?? result);
     },
   };
 }
@@ -8090,7 +8482,7 @@ function normalizeApprovalsReviewer(providerOptions) {
 function createSessionRuntimeConfigKey(providerOptions, currentModel, summarizerModel, cwd) {
   return JSON.stringify({
     cwd: normalizeString(cwd),
-    childToolInventory: createElectronChildToolInventorySignature(),
+    installedSubappInventory: createElectronInstalledSubappInventorySignature(),
     permissionMode: normalizePermissionMode(providerOptions),
     permissionProfile: normalizePermissionProfile(providerOptions) || null,
     approvalPolicy: normalizeApprovalPolicy(providerOptions),
@@ -8207,6 +8599,30 @@ function sanitizeGeneratedTitle(raw) {
     return '';
   }
   return value.replace(/[\s.?!。！？，,：:;；]+$/g, '').trim();
+}
+
+export function createExternalSubappAgent(sessionId, requestResourceOperation, env = process.env) {
+  const bindings = resolveElectronInstalledSubappAgentToolBindings(env);
+  return {
+    bindings,
+    execute: async (input = {}, context = {}) => {
+      if (typeof requestResourceOperation !== 'function') {
+        throw new Error('Subapp Agent host resource bridge is unavailable.');
+      }
+      const result = await requestResourceOperation({
+        sessionId,
+        turnId: normalizeString(context?.trace?.turnId || context?.turnId),
+        toolCallId: normalizeString(context?.toolCallId || context?.trace?.toolCallId),
+        kind: 'subapp-agent',
+        payload: {
+          adapter: 'subappAgent',
+          action: 'execute',
+          input,
+        },
+      });
+      return result?.result ?? result;
+    },
+  };
 }
 
 function readGeneratedTitleValue(raw) {

@@ -431,7 +431,9 @@ export class _BuilderService {
     this.initialized = true;
     this.actionService.listen('compile-begin', async (action) => {
       try {
-        const result = await this.build();
+        const graphSemanticRevision =
+          action.payload?.graphSemanticRevision as string | undefined;
+        const result = await this.build(graphSemanticRevision);
         return { success: true, result };
       } catch (msg) {
         return { success: false, result: msg };
@@ -1181,7 +1183,16 @@ export class _BuilderService {
   }
 
 
-  async build(): Promise<ActionState> {
+  async build(graphSemanticRevision?: string): Promise<ActionState> {
+    if (
+      graphSemanticRevision !== undefined
+      && !/^[a-f0-9]{64}$/.test(graphSemanticRevision)
+    ) {
+      return Promise.reject({
+        state: 'error',
+        text: 'Simulator graph semantic revision is invalid.',
+      });
+    }
     if (!this.workflowService.startBuild()) {
       const state = this.workflowService.currentState;
       let msg = this.t('BUSY_SYSTEM');
@@ -1434,6 +1445,11 @@ export class _BuilderService {
           }
           buildConfig.code = code;
           buildConfig.blockSourceMappings = blockSourceMappings;
+          if (graphSemanticRevision) {
+            buildConfig.graphSemanticRevision = graphSemanticRevision;
+          } else {
+            delete buildConfig.graphSemanticRevision;
+          }
           delete buildConfig.ailyBuilderPath;
           delete buildConfig.ailyBuilderCommand;
           await this.writeTextFile(configFilePath, JSON.stringify(buildConfig, null, 2));

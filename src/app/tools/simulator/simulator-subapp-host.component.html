@@ -1,0 +1,29 @@
+@if (useLegacySimulator) {
+  <app-simulator-editor></app-simulator-editor>
+} @else {
+  <section class="simulator-subapp-host" [attr.data-state]="state">
+    <iframe
+      #subappFrame
+      class="simulator-subapp-frame"
+      title="Aily Simulator"
+      sandbox="allow-scripts allow-same-origin"
+      referrerpolicy="no-referrer">
+    </iframe>
+
+    @if (state !== 'ready') {
+      <div class="simulator-subapp-status" role="status">
+        @if (state === 'failed') {
+          <strong>仿真器启动失败</strong>
+          <p>{{ errorMessage }}</p>
+          <button type="button" (click)="retry()">重新启动</button>
+        } @else {
+          <span class="simulator-subapp-spinner" aria-hidden="true"></span>
+          <strong>正在启动独立仿真服务</strong>
+          @if (runtimeSource) {
+            <small>{{ runtimeSource }}</small>
+          }
+        }
+      </div>
+    }
+  </section>
+}

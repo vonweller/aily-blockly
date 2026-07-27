@@ -638,6 +638,7 @@ export type ChatRuntimeHostResourceRequestKind =
   | 'diagnostics'
   | 'blockly-workspace'
   | 'connection-graph'
+  | 'subapp-agent'
   | 'session-title'
   | 'save-current-session'
   | 'history-persistence';
@@ -670,7 +671,7 @@ export interface ChatRuntimeHostResourceRequestEvent extends ChatRuntimeHostEven
 export interface ChatRuntimeHostAbsWorkspaceExportPayload {
   readonly adapter: 'absAutoSync';
   readonly action: 'ensureWorkspaceExport';
-  readonly projectPath: string;
+  readonly projectPath?: string;
 }
 
 export interface ChatRuntimeHostSyncAbsPayload {
@@ -715,12 +716,22 @@ export interface ChatRuntimeHostProjectInfoPayload {
   readonly configValue?: string;
 }
 
-export interface ChatRuntimeHostProjectBuildPayload {
-  readonly adapter: 'builder';
-  readonly action: 'build' | 'upload';
-  readonly projectPath: string;
-  readonly port?: string;
-}
+export type ChatRuntimeHostProjectBuildPayload =
+  | {
+    readonly adapter: 'builder';
+    readonly action: 'listSerialPorts';
+  }
+  | {
+    readonly adapter: 'builder';
+    readonly action: 'build';
+    readonly projectPath: string;
+  }
+  | {
+    readonly adapter: 'builder';
+    readonly action: 'upload';
+    readonly projectPath: string;
+    readonly port: string;
+  };
 
 export interface ChatRuntimeHostProjectLintPayload {
   readonly adapter: 'arduinoLint';
@@ -796,6 +807,12 @@ export interface ChatRuntimeHostToolApprovalPayload {
   readonly args?: unknown;
 }
 
+export interface ChatRuntimeHostSubappAgentPayload {
+  readonly adapter: 'subappAgent';
+  readonly action: 'execute' | 'releaseSession';
+  readonly input?: Readonly<Record<string, unknown>>;
+}
+
 export type ChatRuntimeHostResourceOperationPayload =
   | ChatRuntimeHostAbsWorkspaceExportPayload
   | ChatRuntimeHostSyncAbsPayload
@@ -809,7 +826,8 @@ export type ChatRuntimeHostResourceOperationPayload =
   | ChatRuntimeHostBoardSearchPayload
   | ChatRuntimeHostLibraryAnalysisPayload
   | ChatRuntimeHostDiagnosticsPayload
-  | ChatRuntimeHostToolApprovalPayload;
+  | ChatRuntimeHostToolApprovalPayload
+  | ChatRuntimeHostSubappAgentPayload;
 
 export interface ChatRuntimeHostResourceOperationRequest {
   readonly id?: string;

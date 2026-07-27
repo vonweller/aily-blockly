@@ -499,7 +499,10 @@ function terminateAilyProcess() {
     console.info('[PROC_TRACE][APP_NAME_KILL_DISABLED]');
 }
 
-function registerWindowHandlers(mainWindow) {
+function registerWindowHandlers(mainWindow, options = {}) {
+    const resolveRendererUrl = typeof options.resolveRendererUrl === 'function'
+        ? options.resolveRendererUrl
+        : null;
     registerChatRuntimeHostIpc(mainWindow);
 
     // 添加一个映射来存储已打开的窗�?
@@ -1189,7 +1192,10 @@ function registerWindowHandlers(mainWindow) {
         if (isDevServeSubWindow()) {
             subWindow.loadURL(`http://localhost:4200/#/${data.path}`);
         } else {
-            subWindow.loadFile('renderer/index.html', { hash: `#/${data.path}` });
+            if (!resolveRendererUrl) {
+                throw new Error('Packaged renderer URL resolver is unavailable.');
+            }
+            subWindow.loadURL(resolveRendererUrl(`#/${data.path}`));
         }
     });
 

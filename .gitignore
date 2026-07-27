@@ -83,6 +83,7 @@ child/aily-builder*
 !src/app/tools/aily-chat/tools/editorOperationEvents.spec.ts
 !src/app/tools/aily-chat/tools/blocklyEditorOperationQueue.spec.ts
 !src/app/tools/aily-chat/components/x-dialog/x-markdown-target-morph.spec.ts
+!src/app/tools/aily-chat/core/blockly-subapp-agent-tools.spec.ts
 !/e2e/tests/**/*.spec.ts
 **/__tests__/**/*
 .tmp

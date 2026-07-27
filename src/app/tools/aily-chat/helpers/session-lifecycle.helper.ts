@@ -148,7 +148,15 @@ type SessionLifecycleContext = ChatViewWriteBridgeContext
   >
   & Pick<IChatCoordination, 'interaction' | 'lexStream' | 'send' | 'session'>
   & {
-    readonly chatSessionItemsService?: Pick<ChatSessionItemsService, 'sessionItemController' | 'refreshHistoryList' | 'requestSessionListRefresh' | 'loadInitialSummaries' | 'sessionListItems'>;
+    readonly chatSessionItemsService?: Pick<
+      ChatSessionItemsService,
+      'sessionItemController'
+      | 'refreshHistoryList'
+      | 'requestSessionListRefresh'
+      | 'ensureCurrentScopeInitialized'
+      | 'loadInitialSummaries'
+      | 'sessionListItems'
+    >;
     readonly chatSessionEntryStateService?: Pick<
       ChatSessionEntryStateService,
       'readSessionEntryTarget' | 'setSessionEntryTarget' | 'clearSessionEntryTarget' | 'readEntryProviderOptions' | 'setEntryProviderOptions'
@@ -282,9 +290,6 @@ export class SessionLifecycleHelper {
     this._sessionSaveBridge = this.ctx.createSessionSaveBridge(this.ctx);
     this._hostSessionContentProvider = new HostSessionContentProvider(this.ctx);
     this._entryCoordinator = new ChatSessionEntryCoordinator({
-      get isLoggedIn() {
-        return ctx.isLoggedIn;
-      },
       get hasCurrentSession() {
         const currentViewSessionResource = typeof ctx.readCurrentViewSessionResource === 'function'
           ? ctx.readCurrentViewSessionResource()
@@ -312,7 +317,7 @@ export class SessionLifecycleHelper {
       enterBlankSessionShell: (options) => this.enterBlankSessionShell(options),
       startSession: (options) => this.startSession(options),
       restorePersistedSessionTarget: () => this.restorePersistedSessionTarget(),
-      requestSessionListRefresh: (input) => this.requestSessionListRefresh(input),
+      ensureLocalSessionInventoryScope: (input) => this.ensureLocalSessionInventoryScope(input),
     });
   }
 
@@ -582,6 +587,26 @@ export class SessionLifecycleHelper {
     }
 
     throw new Error('[SessionLifecycleHelper] ChatSessionItemsService session list refresh API is required for shared session read-side');
+  }
+
+  ensureLocalSessionInventoryScope(input: {
+    reason: 'open' | 'entry' | 'reopen' | 'project' | 'service-created';
+    projectPath?: string | null;
+    projectRootPath?: string | null;
+    rendererGeneration?: number;
+    force?: boolean;
+  }): boolean {
+    const project = AilyHost.get().project;
+    const sessionItemsService = this.ctx.chatSessionItemsService;
+    if (typeof sessionItemsService?.ensureCurrentScopeInitialized !== 'function') {
+      throw new Error('[SessionLifecycleHelper] ChatSessionItemsService.ensureCurrentScopeInitialized is required for local session bootstrap');
+    }
+
+    return sessionItemsService.ensureCurrentScopeInitialized({
+      ...input,
+      projectPath: input.projectPath !== undefined ? input.projectPath : project.currentProjectPath,
+      projectRootPath: input.projectRootPath !== undefined ? input.projectRootPath : project.projectRootPath,
+    });
   }
 
   private isSamePath(leftPath: string | null | undefined, rightPath: string | null | undefined): boolean {

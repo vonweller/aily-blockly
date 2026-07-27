@@ -1,4 +1,4 @@
-import { Injectable, OnDestroy } from '@angular/core';
+import { Injectable, OnDestroy, Optional } from '@angular/core';
 
 import type {
   ChatRuntimeHostResourceOperationPayload,
@@ -13,8 +13,11 @@ import {
 import { ElectronService } from '../../../services/electron.service';
 import { ProjectService } from '../../../services/project.service';
 import { BuilderService } from '../../../services/builder.service';
+import { UploaderService } from '../../../services/uploader.service';
+import { SerialService } from '../../../services/serial.service';
 import { ConfigService } from '../../../services/config.service';
 import { ConnectionGraphService } from '../../../services/connection-graph.service';
+import { SubappAgentBridgeService } from '../../../services/subapp-agent-bridge.service';
 import { BlocklyService } from '../../../editors/blockly-editor/services/blockly.service';
 import {
   runSyncAbsFileConcreteHandler,
@@ -109,6 +112,7 @@ type HostResourceOperationPayload = {
   readonly config_key?: unknown;
   readonly config_value?: unknown;
   readonly transactionId?: unknown;
+  readonly input?: unknown;
 };
 
 class HostResourceOperationError extends Error {
@@ -142,6 +146,8 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
     private readonly projectService: ProjectService,
     private readonly electronService: ElectronService,
     private readonly builderService: BuilderService,
+    private readonly uploaderService: UploaderService,
+    private readonly serialService: SerialService,
     private readonly arduinoLintService: ArduinoLintService,
     private readonly blocklyService: BlocklyService,
     private readonly connectionGraphService: ConnectionGraphService,
@@ -149,6 +155,7 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
     private readonly chatConfigService: AilyChatConfigService,
     private readonly submittedTurnTitleService: ChatRuntimeOwnerSubmittedTurnTitleService,
     private readonly ownerToolApproval?: ChatRuntimeOwnerToolApprovalService,
+    @Optional() private readonly subappAgentBridgeService?: SubappAgentBridgeService,
   ) {}
 
   start(): Promise<void> {
@@ -212,6 +219,8 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
         return this.runBlocklyWorkspaceOperation(request);
       case 'connection-graph':
         return this.runConnectionGraphOperation(request);
+      case 'subapp-agent':
+        return this.runSubappAgentOperation(request);
       case 'board-search':
         return this.runBoardSearchOperation(request);
       case 'library-analysis':
@@ -1003,6 +1012,18 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
   private async runProjectBuildOperation(request: ChatRuntimeHostResourceOperationRequest): Promise<unknown> {
     this.requireSessionId(request, 'project build');
     const payload = this.requirePayloadAdapter(request.payload, 'builder', 'project build');
+    if (payload.action === 'listSerialPorts') {
+      const ports = await this.serialService.getSerialPorts();
+      return ports
+        .map(port => ({
+          port: this.normalizeSessionId(port.name),
+          label: this.normalizeSessionId(port.text) || this.normalizeSessionId(port.name),
+          type: this.normalizeSessionId(port.type) || 'serial',
+          selected: this.normalizeSessionId(this.serialService.currentPort) === this.normalizeSessionId(port.name),
+        }))
+        .filter(port => !!port.port);
+    }
+
     const projectPath = this.normalizeSessionId(payload.projectPath);
     if (!projectPath) {
       throw new HostResourceOperationError(
@@ -1016,17 +1037,16 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
       return await this.builderService.build(projectPath);
     }
     if (payload.action === 'upload') {
-      const upload = (this.builderService as unknown as {
-        upload?: (projectPath: string, port?: string) => Promise<unknown>;
-      }).upload;
-      if (typeof upload !== 'function') {
+      const port = this.normalizeSessionId(payload.port);
+      if (!port) {
         throw new HostResourceOperationError(
-          '[AilyChat][RuntimeHost] project upload is not available.',
-          'resource_operation_unavailable',
+          '[AilyChat][RuntimeHost] project upload requires an explicit serial port.',
+          'resource_operation_payload_invalid',
           false,
         );
       }
-      return await upload.call(this.builderService, projectPath, this.normalizeSessionId(payload.port));
+      await this.serialService.selectSerialPort(port);
+      return await this.uploaderService.upload();
     }
     throw new HostResourceOperationError(
       `[AilyChat][RuntimeHost] Unsupported project build action: ${String(payload.action || '<missing>')}.`,
@@ -1234,6 +1254,46 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
       ...(result && typeof result === 'object' ? result : { content: result }),
       mutationBatch: this.prepareWorkspaceMutation(mutationTransaction),
     };
+  }
+
+  private async runSubappAgentOperation(
+    request: ChatRuntimeHostResourceOperationRequest,
+  ): Promise<Record<string, unknown>> {
+    const payload = this.requirePayloadAdapter(request.payload, 'subappAgent', 'subapp Agent operation');
+    if (!this.subappAgentBridgeService) {
+      throw new HostResourceOperationError(
+        '[AilyChat][RuntimeHost] subapp Agent bridge is unavailable.',
+        'resource_operation_unavailable',
+        true,
+      );
+    }
+    if (payload.action === 'releaseSession') {
+      return this.subappAgentBridgeService.releaseSession(request.sessionId);
+    }
+    if (payload.action !== 'execute') {
+      throw new HostResourceOperationError(
+        `[AilyChat][RuntimeHost] Unsupported subapp Agent action: ${String(payload.action || '<missing>')}.`,
+        'resource_operation_payload_invalid',
+        false,
+      );
+    }
+    const input = payload.input;
+    if (!input || typeof input !== 'object' || Array.isArray(input)) {
+      throw new HostResourceOperationError(
+        '[AilyChat][RuntimeHost] subapp Agent operation requires an input object.',
+        'resource_operation_payload_invalid',
+        false,
+      );
+    }
+    return this.subappAgentBridgeService.execute(
+      input as Record<string, unknown>,
+      undefined,
+      {
+        sessionId: request.sessionId,
+        turnId: request.turnId,
+        toolCallId: request.toolCallId,
+      },
+    );
   }
 
   private prepareWorkspaceMutation(

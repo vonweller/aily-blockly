@@ -193,30 +193,60 @@ function createConnectionGraphMutationObserver(invocationContext?: ConnectionGra
  * 从 generate_schematic 的 pinmapIds 入参提取用于云端同步的 pinmapId 字符串。
  * 空数组表示与 get_pinmap_summary 一致：同步所有已安装 lib-* 的云端列表。
  */
-function collectPinmapIdHintsFromGenerateInput(input: {
-  pinmapIds?: ComponentInstanceInput[] | string;
-}): string[] {
-  const hints: string[] = [];
-  if (input.pinmapIds == null) return hints;
-  let raw: ComponentInstanceInput[] = [];
-  if (Array.isArray(input.pinmapIds)) {
-    raw = input.pinmapIds;
-  } else if (typeof input.pinmapIds === 'string') {
+function parseGeneratePinmapIds(
+  value: ComponentInstanceInput[] | string | undefined,
+): { values: ComponentInstanceInput[]; error?: string } {
+  if (value == null) {
+    return { values: [] };
+  }
+
+  let candidates: unknown[];
+  if (Array.isArray(value)) {
+    candidates = value;
+  } else {
     try {
-      const parsed = JSON.parse(input.pinmapIds);
-      raw = Array.isArray(parsed) ? parsed : [input.pinmapIds];
+      const parsed = JSON.parse(value);
+      if (!Array.isArray(parsed)) {
+        return {
+          values: [],
+          error: 'pinmapIds 字符串必须是 pinmapId，或编码后的数组。对象项格式为 { id, alias?, label? }。',
+        };
+      }
+      candidates = parsed;
     } catch {
-      raw = [input.pinmapIds];
+      candidates = [value];
     }
   }
-  for (const item of raw) {
-    if (typeof item === 'string') {
-      hints.push(item);
-    } else if (typeof item === 'object' && item !== null && 'id' in item && typeof (item as { id: string }).id === 'string') {
-      hints.push((item as { id: string }).id);
+
+  const values: ComponentInstanceInput[] = [];
+  for (let index = 0; index < candidates.length; index += 1) {
+    const candidate = candidates[index];
+    if (typeof candidate === 'string' && candidate.trim()) {
+      values.push(candidate.trim());
+      continue;
     }
+    if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+      const record = candidate as Record<string, unknown>;
+      const id = typeof record['id'] === 'string' ? record['id'].trim() : '';
+      const alias = record['alias'];
+      const label = record['label'];
+      if (id
+        && (alias === undefined || typeof alias === 'string')
+        && (label === undefined || typeof label === 'string')) {
+        values.push({
+          id,
+          ...(typeof alias === 'string' && alias.trim() ? { alias: alias.trim() } : {}),
+          ...(typeof label === 'string' && label.trim() ? { label: label.trim() } : {}),
+        });
+        continue;
+      }
+    }
+    return {
+      values: [],
+      error: `pinmapIds[${index}] 无效；应为 pinmapId 字符串或 { id, alias?, label? }。`,
+    };
   }
-  return hints;
+  return { values };
 }
 
 /**
@@ -232,10 +262,18 @@ function collectPinmapIdHintsFromGenerateInput(input: {
 export async function generateConnectionGraphTool(
   connectionGraphService: ConnectionGraphService,
   projectService: ProjectService,
-  input: { pinmapIds?: ComponentInstanceInput[]; components?: string[]; requirements?: string },
+  input: { pinmapIds?: ComponentInstanceInput[] | string; components?: string[]; requirements?: string },
   invocationContext?: ConnectionGraphInvocationContext,
 ): Promise<ToolUseResult> {
   try {
+    const parsedPinmapIds = parseGeneratePinmapIds(input.pinmapIds);
+    if (parsedPinmapIds.error) {
+      return {
+        is_error: true,
+        content: parsedPinmapIds.error,
+      };
+    }
+
     const boardPackagePath = await resolveBoardPackagePath(projectService);
     if (!boardPackagePath) {
       return {
@@ -259,7 +297,7 @@ export async function generateConnectionGraphTool(
     // 与 get_pinmap_summary 一致：加载外设前先尝试从云端同步 pinmap 到本地 pinmaps/
     let cloudPinmapSynced = 0;
     if (packagesBasePath) {
-      const syncHints = collectPinmapIdHintsFromGenerateInput(input);
+      const syncHints = parsedPinmapIds.values.map(item => typeof item === 'string' ? item : item.id);
       cloudPinmapSynced = await trySyncPinmapComponentsFromApi(
         connectionGraphService,
         packagesBasePath,
@@ -292,21 +330,7 @@ export async function generateConnectionGraphTool(
 
     // 2. 解析 pinmapIds（支持字符串和对象两种格式）
     const loadedPinmapIds: string[] = [];
-    let rawPinmapIds: ComponentInstanceInput[] = [];
-    
-    if (input.pinmapIds) {
-      if (Array.isArray(input.pinmapIds)) {
-        rawPinmapIds = input.pinmapIds;
-      } else if (typeof input.pinmapIds === 'string') {
-        // 尝试解析 JSON 字符串
-        try {
-          const parsed = JSON.parse(input.pinmapIds);
-          rawPinmapIds = Array.isArray(parsed) ? parsed : [input.pinmapIds];
-        } catch {
-          rawPinmapIds = [input.pinmapIds];
-        }
-      }
-    }
+    const rawPinmapIds = parsedPinmapIds.values;
     
     // 统计每个 pinmapId 出现的次数（用于生成实例编号）
     const pinmapIdCountMap = new Map<string, number>();
@@ -320,12 +344,10 @@ export async function generateConnectionGraphTool(
         
         if (typeof item === 'string') {
           pinmapId = item;
-        } else if (typeof item === 'object' && item !== null) {
+        } else {
           pinmapId = item.id;
           alias = item.alias;
           label = item.label;
-        } else {
-          continue; // 跳过无效项
         }
         
         // 计算实例编号

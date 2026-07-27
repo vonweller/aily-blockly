@@ -405,6 +405,7 @@
 
   .interactive-input-part > .chat-input-notification-container,
   .interactive-input-part > .chat-pending-followup-widget-container,
+  .interactive-input-part > .chat-subapp-activity-widget,
   .interactive-input-part > .chat-question-carousel-widget-container,
   .interactive-input-part > .chat-tool-confirmation-carousel-container,
   .interactive-input-part > .chat-todo-list-widget-container,
@@ -417,6 +418,10 @@
     padding: 0 10px;
     box-sizing: border-box;
     position: relative;
+  }
+
+  .interactive-input-part > .chat-subapp-activity-widget.has-activity {
+    margin-bottom: 5px;
   }
 
   .interactive-input-part:has(> .chat-input-notification-container.has-notification) .input-box,

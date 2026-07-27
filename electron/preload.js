@@ -505,6 +505,60 @@ contextBridge.exposeInMainWorld("electronAPI", {
       );
     },
   },
+  simulatorSubapp: {
+    open: (options) => ipcRenderer.invoke("simulator-subapp-open", options),
+    openProjectScene: (options) => ipcRenderer.invoke(
+      "simulator-subapp-open-project-scene",
+      options,
+    ),
+    exportProjectSceneV1: (ownerId) => ipcRenderer.invoke(
+      "simulator-subapp-export-project-scene-v1",
+      { ownerId },
+    ),
+    attachProjectSceneSession: (ownerId) => ipcRenderer.invoke(
+      "simulator-subapp-attach-project-scene-session",
+      { ownerId },
+    ),
+    detachProjectSceneSession: (ownerId) => ipcRenderer.invoke(
+      "simulator-subapp-detach-project-scene-session",
+      { ownerId },
+    ),
+    status: () => ipcRenderer.invoke("simulator-subapp-status"),
+    close: (ownerId) => ipcRenderer.invoke(
+      "simulator-subapp-close",
+      { ownerId },
+    ),
+    onStateChanged: (callback) => {
+      const listener = (_event, payload) => callback(payload);
+      ipcRenderer.on("simulator-subapp-state-changed", listener);
+      return () => ipcRenderer.removeListener(
+        "simulator-subapp-state-changed",
+        listener,
+      );
+    },
+    onProjectRebuildRequested: (callback) => {
+      const listener = (_event, payload) => callback(
+        payload?.request,
+        {
+          requestId: payload?.requestId,
+          rendererGeneration: payload?.rendererGeneration,
+        },
+      );
+      ipcRenderer.on("simulator-project-rebuild-request", listener);
+      return () => ipcRenderer.removeListener(
+        "simulator-project-rebuild-request",
+        listener,
+      );
+    },
+    respondProjectRebuild: (transport, result) => ipcRenderer.send(
+      "simulator-project-rebuild-response",
+      {
+        requestId: transport?.requestId,
+        rendererGeneration: transport?.rendererGeneration,
+        result,
+      },
+    ),
+  },
   linter: {
     status: () => ipcRenderer.invoke("aily-linter-status"),
     checkForUpdate: () => ipcRenderer.invoke("aily-linter-check-update"),

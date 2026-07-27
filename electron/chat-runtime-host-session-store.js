@@ -58,6 +58,7 @@ function normalizeResourceRequestKind(kind) {
     || kind === 'tool-approval'
     || kind === 'blockly-workspace'
     || kind === 'connection-graph'
+    || kind === 'subapp-agent'
     || kind === 'board-search'
     || kind === 'library-analysis'
     || kind === 'diagnostics'

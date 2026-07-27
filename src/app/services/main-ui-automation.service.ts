@@ -175,8 +175,16 @@ export class MainUiAutomationService {
       if (windowState.open) {
         const moved = await this.sendHostCommand(routePath, toolId, 'embed');
         if (moved['ok'] !== true) return moved;
-      } else if (!this.uiService.openToolList.includes(toolId)) {
-        this.uiService.openTool(toolId);
+      }
+      const visible = this.uiService.openToolEmbedded(toolId);
+      if (!visible) {
+        return {
+          ok: false,
+          operation: 'child_app_open',
+          toolId,
+          requestedMode: mode,
+          message: `子应用未进入内嵌可见状态: ${toolId}`,
+        };
       }
     } else if (this.uiService.openToolList.includes(toolId)) {
       const detached = await this.childHostRegistry.control(toolId, 'detach', placement);
@@ -190,6 +198,8 @@ export class MainUiAutomationService {
       operation: 'child_app_open',
       toolId,
       requestedMode: mode,
+      visible: mode === 'embedded' ? this.uiService.topTool === toolId : true,
+      ...(mode === 'embedded' ? { topTool: this.uiService.topTool } : {}),
       ...(mode === 'window' ? { initialPlacement: placement } : {}),
       message: mode === 'embedded' ? `已打开内嵌子应用: ${toolId}` : `已打开独立子应用窗口: ${toolId}`,
     };

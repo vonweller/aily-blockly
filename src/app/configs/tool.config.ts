@@ -22,6 +22,68 @@ export interface ChildToolAppConfig extends Partial<AppItem> {
   defaultToolbar?: boolean;
 }
 
+export interface ChildToolUiSurfaceConfig {
+  entry: string;
+  minWidth?: number;
+  minHeight?: number;
+  preferredHeight?: number;
+  interactive?: boolean;
+}
+
+export interface ChildToolUiConfig {
+  surfaces: Record<string, ChildToolUiSurfaceConfig>;
+}
+
+export interface ChildToolAgentRpcConfig {
+  method?: string;
+  actionParam?: string;
+  methods?: Record<string, string>;
+}
+
+export interface ChildToolAgentPresentationConfig {
+  mode: 'embedded' | 'window' | 'dock';
+  surface?: string;
+  autoOpen?: 'never' | 'first-active' | 'always' | 'on-error';
+  when?: {
+    param: string;
+    values: Array<string | number | boolean>;
+  };
+}
+
+export interface ChildToolAgentLifecycleRequestConfig {
+  method: string;
+  params?: Record<string, unknown>;
+  timeoutMs?: number;
+}
+
+export interface ChildToolAgentLifecycleConfig {
+  sessionRelease?: ChildToolAgentLifecycleRequestConfig;
+}
+
+export interface ChildToolAgentDefinition {
+  name: string;
+  description: string;
+  rpc: ChildToolAgentRpcConfig;
+  presentation?: ChildToolAgentPresentationConfig;
+  permission?: 'read' | 'change';
+  requiresSession?: boolean;
+  supportsCancellation?: boolean;
+  timeoutMs?: number;
+  maxTimeoutMs?: number;
+  maxInputBytes?: number;
+  maxOutputBytes?: number;
+  inputSchema: Record<string, unknown>;
+}
+
+export interface ChildToolAgentConfig {
+  protocolVersion: number;
+  transport: string;
+  skills: string[];
+  manifestPath: string;
+  lifecycle?: ChildToolAgentLifecycleConfig;
+  tools: ChildToolAgentDefinition[];
+}
+
 export interface ChildToolConfig {
   id: string;
   catalogId?: string;
@@ -37,9 +99,12 @@ export interface ChildToolConfig {
   routePath?: string;
   startupTimeoutMs?: number;
   env?: Record<string, string>;
+  ui?: ChildToolUiConfig;
+  agent?: ChildToolAgentConfig;
 }
 
 export let CHILD_TOOL_CONFIGS: Record<string, ChildToolConfig> = {};
+const CHILD_TOOL_CONFIG_CHANGE_LISTENERS = new Set<() => void>();
 
 export function getChildToolConfigs(_forceReload = false): Record<string, ChildToolConfig> {
   // 子应用配置由 SubappManagerService 从远端目录和用户级 npm 安装状态注入。
@@ -48,10 +113,25 @@ export function getChildToolConfigs(_forceReload = false): Record<string, ChildT
 }
 
 export function replaceChildToolConfigs(configs: ChildToolConfig[]): void {
+  const previousSignature = JSON.stringify(CHILD_TOOL_CONFIGS);
   CHILD_TOOL_CONFIGS = configs.reduce((result, config) => {
     if (config?.id) result[config.id] = { ...config, app: config.app ? { ...config.app } : undefined };
     return result;
   }, {} as Record<string, ChildToolConfig>);
+  if (JSON.stringify(CHILD_TOOL_CONFIGS) !== previousSignature) {
+    for (const listener of CHILD_TOOL_CONFIG_CHANGE_LISTENERS) {
+      try {
+        listener();
+      } catch (error) {
+        console.warn('[ChildToolConfig] change listener failed', error);
+      }
+    }
+  }
+}
+
+export function onChildToolConfigsChanged(listener: () => void): () => void {
+  CHILD_TOOL_CONFIG_CHANGE_LISTENERS.add(listener);
+  return () => CHILD_TOOL_CONFIG_CHANGE_LISTENERS.delete(listener);
 }
 
 export function getChildToolConfigLoadError(): Error | null {

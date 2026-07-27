@@ -190,6 +190,16 @@ export class UiService {
     this.openToolInMainWindow(name);
   }
 
+  /**
+   * Open a tool in the main-window embedded stack without first attempting
+   * to focus a detached child window. Host automation has already resolved
+   * the requested presentation mode before calling this method.
+   */
+  openToolEmbedded(name: string): boolean {
+    this.openToolInMainWindow(name);
+    return this.topTool === name;
+  }
+
   private openToolInMainWindow(name: string) {
     if (!name) {
       return;

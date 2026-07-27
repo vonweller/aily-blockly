@@ -378,6 +378,10 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       close: () => this.close(),
       detach: options => this.detach(options),
       embed: () => this.embed(),
+    }, {
+      instanceId: this.hostContextId,
+      surface: 'default',
+      primary: true,
     });
   }
 

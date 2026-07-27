@@ -664,7 +664,7 @@ function resolveDeferredGroupsForRuntime(runtimeMode: ChatAgentRuntimeMode) {
 // - blockly-specific capabilities must enter through toolProvider / agentProvider / skillProvider
 // - if a tool is portable across hosts, it should move into aily-lex core instead of growing this host list
 const LEX_CORE_SAFE_TOOLS = new Set([
-  'read_file', 'write_file', 'edit_file', 'multi_edit_file',
+  'read_file', 'create_file', 'write_file', 'edit_file', 'multi_edit_file',
   'delete_file', 'list_dir', 'create_directory',
   'grep_search', 'glob_search', 'assets_tool',
   'command_exec', 'command_write_stdin', 'command_status', 'command_resize', 'command_stop',
@@ -1255,6 +1255,7 @@ export function buildExternalHostAPI(
     return home ? joinProjectPath(home, 'aily-project') : '';
   };
   const hasBuilder = typeof host.builder?.build === 'function';
+  const hasUploader = typeof host.builder?.upload === 'function';
   const hasBoardSearch = !!(
     host.config?.getHardwareCategories
     || host.config?.getBoardsList
@@ -1500,6 +1501,21 @@ export function buildExternalHostAPI(
             errors: result?.success ? [] : [result?.output ?? 'Build failed'],
           };
         },
+        ...(hasUploader ? {
+          listSerialPorts: async () => await host.builder.listSerialPorts?.() ?? [],
+          upload: async (options?: { port?: string }) => {
+            const port = String(options?.port || '').trim();
+            if (!port) {
+              return { success: false, output: 'An explicit serial port is required.', errors: ['An explicit serial port is required.'] };
+            }
+            const result = await host.builder.upload!(prjPath(), port);
+            return {
+              success: !!result?.success,
+              output: result?.output ?? '',
+              errors: result?.success ? [] : [result?.output ?? 'Upload failed'],
+            };
+          },
+        } : {}),
       } : undefined,
       boardSearch: hasBoardSearch ? {
         search: async (query: string, type?: string) => {
@@ -1614,6 +1630,7 @@ export function buildExternalHostAPI(
       },
     } as any) : undefined,
     connectionGraph: host.connectionGraph,
+    subappAgent: host.subappAgent,
     config: host.config,
       auth: host.auth ? {
         getToken: async () => host.auth.getToken?.() ?? host.auth.token,
