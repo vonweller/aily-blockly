@@ -255,6 +255,21 @@
             "WORKER_STATUS_DECODE_IMAGE_FRAME": "Converting {{format}} frame {{current}}/{{total}}",
             "WORKER_ERROR_IMAGE_NO_VALID_FRAMES": "{{format}} decoded successfully, but no valid frames were captured",
             "WORKER_ERROR_UNSUPPORTED_FILE_TYPE": "Only MP4, GIF, or PNG files are supported"
+        },
+        "TFTESPI_IMAGE": {
+            "BUTTON_UPLOAD": "업로드",
+            "UPLOAD_TOOLTIP": "지원 형식: PNG, JPEG, WebP, BMP",
+            "BUTTON_CLEAR": "지우기",
+            "LABEL_WIDTH": "W",
+            "LABEL_HEIGHT": "H",
+            "LABEL_COLOR_MODE": "색상",
+            "EMPTY": "업로드된 이미지가 없습니다",
+            "STATUS_READING_FILE": "{{name}} 읽는 중...",
+            "STATUS_DECODING": "이미지 변환 중...",
+            "STATUS_INFO": "{{sourcePrefix}}{{width}}x{{height}} | {{mode}} | {{dataSize}}",
+            "ERROR_FILE_SIZE_EXCEEDED": "원본 파일은 {{maxSize}} 이하여야 합니다(현재: {{currentSize}})",
+            "ERROR_DECODE_FAILED": "이미지 변환에 실패했습니다",
+            "ERROR_UNSUPPORTED_FILE_TYPE": "PNG, JPEG, WebP, BMP 이미지만 지원합니다"
         }
     },
     "MAIN_WINDOW": {

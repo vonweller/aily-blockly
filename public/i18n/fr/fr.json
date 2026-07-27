@@ -255,6 +255,21 @@
             "WORKER_STATUS_DECODE_IMAGE_FRAME": "Converting {{format}} frame {{current}}/{{total}}",
             "WORKER_ERROR_IMAGE_NO_VALID_FRAMES": "{{format}} decoded successfully, but no valid frames were captured",
             "WORKER_ERROR_UNSUPPORTED_FILE_TYPE": "Only MP4, GIF, or PNG files are supported"
+        },
+        "TFTESPI_IMAGE": {
+            "BUTTON_UPLOAD": "Téléverser",
+            "UPLOAD_TOOLTIP": "Formats pris en charge : PNG, JPEG, WebP, BMP",
+            "BUTTON_CLEAR": "Effacer",
+            "LABEL_WIDTH": "L",
+            "LABEL_HEIGHT": "H",
+            "LABEL_COLOR_MODE": "Couleur",
+            "EMPTY": "Aucune image téléversée",
+            "STATUS_READING_FILE": "Lecture de {{name}}...",
+            "STATUS_DECODING": "Conversion de l’image...",
+            "STATUS_INFO": "{{sourcePrefix}}{{width}}x{{height}} | {{mode}} | {{dataSize}}",
+            "ERROR_FILE_SIZE_EXCEEDED": "Le fichier source ne doit pas dépasser {{maxSize}} (actuel : {{currentSize}})",
+            "ERROR_DECODE_FAILED": "Échec de la conversion de l’image",
+            "ERROR_UNSUPPORTED_FILE_TYPE": "Seules les images PNG, JPEG, WebP et BMP sont prises en charge"
         }
     },
     "MAIN_WINDOW": {

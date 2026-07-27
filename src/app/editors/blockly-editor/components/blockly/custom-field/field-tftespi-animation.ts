@@ -1,4 +1,5 @@
 import * as Blockly from 'blockly/core';
+import { MEDIA_FIELD_PARAMETER_DEBOUNCE_MS } from './field-media-editor-style';
 
 type AnimationMessageParams = Record<string, string | number>;
 type AnimationTranslator = (key: string, params?: AnimationMessageParams) => string;
@@ -173,9 +174,7 @@ const MAX_FPS = 30;
 const MAX_FRAMES = 300;
 const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const MAX_SOURCE_FILE_SIZE_BYTES = 100 * 1024 * 1024;
-const DEFAULT_FIELD_HEIGHT = 40;
-const MAX_FIELD_WIDTH = 72;
-const INPUT_DEBOUNCE_MS = 350;
+const BLOCK_FIELD_HEIGHT = 50;
 
 function bytesToBase64(bytes: Uint8Array) {
   let binary = '';
@@ -250,6 +249,7 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
   private uploadRequestId = 0;
   private applyingDecodedValue = false;
   private isDisposed = false;
+  private sourceBlockRenderScheduled = false;
 
   constructor(
     value: TftEsPiAnimationValue | typeof Blockly.Field.SKIP_SETUP,
@@ -258,7 +258,7 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
   ) {
     super(value, validator, config);
     this.SERIALIZABLE = true;
-    this.fieldHeight = config?.fieldHeight ?? DEFAULT_FIELD_HEIGHT;
+    this.fieldHeight = BLOCK_FIELD_HEIGHT;
 
     const normalized = this.normalizeValue(
       value === Blockly.Field.SKIP_SETUP ? config?.value : value,
@@ -283,6 +283,7 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
   }
 
   protected override doValueUpdate_(newValue: TftEsPiAnimationValue) {
+    const dimensionsChanged = this.imgWidth !== newValue.width || this.imgHeight !== newValue.height;
     if (!this.applyingDecodedValue) {
       this.clearSettingsTimer();
       this.clearSourceRedecodeTimer();
@@ -297,12 +298,14 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
     this.updateControlsFromValue();
     this.renderPreviewFrame(this.currentFrame);
     this.updateStatusFromValue();
+    if (dimensionsChanged) this.rerenderSourceBlockAfterResize();
   }
 
   protected override showEditor_() {
     const editor = this.createDropdownEditor();
-    Blockly.DropDownDiv.getContentDiv().appendChild(editor);
-    Blockly.DropDownDiv.getContentDiv().classList.add('contains-tftespi-animation-editor');
+    const dropdownContent = Blockly.DropDownDiv.getContentDiv();
+    dropdownContent.appendChild(editor);
+    dropdownContent.classList.add('contains-tftespi-animation-editor', 'ailyMediaFieldDropdown');
     Blockly.DropDownDiv.showPositionedByField(this, this.disposeDropdown.bind(this));
   }
 
@@ -336,12 +339,9 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
   }
 
   protected override updateSize_() {
-    const scale = Math.min(
-      MAX_FIELD_WIDTH / Math.max(1, this.imgWidth),
-      this.fieldHeight / Math.max(1, this.imgHeight),
-    );
-    const width = Math.max(16, Math.round(this.imgWidth * scale));
-    const height = Math.max(12, Math.round(this.imgHeight * scale));
+    const scale = this.fieldHeight / Math.max(1, this.imgHeight);
+    const width = Math.max(1, this.imgWidth * scale);
+    const height = this.fieldHeight;
     if (this.borderRect_) {
       this.borderRect_.setAttribute('width', String(width));
       this.borderRect_.setAttribute('height', String(height));
@@ -366,11 +366,11 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
 
   private createDropdownEditor() {
     this.initialValue = this.cloneValue(this.getValue());
-    const editor = this.createElement('div', 'tftEsPiAnimationEditor');
+    const editor = this.createElement('div', 'tftEsPiAnimationEditor ailyMediaFieldEditor');
     editor.addEventListener('pointerdown', (event) => event.stopPropagation());
 
-    const toolbar = this.createElement('div', 'tftEsPiAnimationToolbar');
-    const settings = this.createElement('div', 'tftEsPiAnimationSettings');
+    const toolbar = this.createElement('div', 'tftEsPiAnimationToolbar ailyMediaFieldToolbar');
+    const settings = this.createElement('div', 'tftEsPiAnimationSettings ailyMediaFieldSettings');
     this.widthInput = this.createNumberInput(this.imgWidth, 1, MAX_WIDTH);
     this.heightInput = this.createNumberInput(this.imgHeight, 1, MAX_HEIGHT);
     this.fpsInput = this.createNumberInput(this.fps, 1, MAX_FPS);
@@ -389,13 +389,13 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
     );
     for (const input of [this.widthInput, this.heightInput, this.fpsInput, this.maxFramesInput]) {
       input.addEventListener('input', () => this.scheduleSettingsCommit());
-      input.addEventListener('change', () => this.commitSettings());
-      input.addEventListener('blur', () => this.commitSettings());
+      input.addEventListener('change', () => this.scheduleSettingsCommit());
+      input.addEventListener('blur', () => this.scheduleSettingsCommit());
     }
-    this.formatSelect.addEventListener('change', () => this.commitSettings());
+    this.formatSelect.addEventListener('change', () => this.scheduleSettingsCommit());
     toolbar.appendChild(settings);
 
-    const actions = this.createElement('div', 'tftEsPiAnimationActions');
+    const actions = this.createElement('div', 'tftEsPiAnimationActions ailyMediaFieldActions');
     this.fileInput = document.createElement('input');
     this.fileInput.type = 'file';
     this.fileInput.accept = 'video/mp4,image/gif,.mp4,.gif';
@@ -416,10 +416,10 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
     toolbar.appendChild(actions);
     editor.appendChild(toolbar);
 
-    this.statusElement = this.createElement('div', 'tftEsPiAnimationStatus');
+    this.statusElement = this.createElement('div', 'tftEsPiAnimationStatus ailyMediaFieldStatus');
     editor.appendChild(this.statusElement);
 
-    const preview = this.createElement('div', 'tftEsPiAnimationPreview');
+    const preview = this.createElement('div', 'tftEsPiAnimationPreview ailyMediaFieldSurface');
     this.previewCanvas = document.createElement('canvas');
     this.previewCanvas.className = 'tftEsPiAnimationCanvas';
     preview.appendChild(this.previewCanvas);
@@ -471,6 +471,7 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
     input.min = String(min);
     input.max = String(max);
     input.step = '1';
+    input.className = 'ailyMediaFieldInput';
     return input;
   }
 
@@ -483,11 +484,12 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
       select.appendChild(option);
     }
     select.value = value;
+    select.className = 'ailyMediaFieldInput';
     return select;
   }
 
   private createNumberControl(label: string, input: HTMLElement) {
-    const wrapper = this.createElement('label', 'tftEsPiAnimationNumberControl');
+    const wrapper = this.createElement('label', 'tftEsPiAnimationNumberControl ailyMediaFieldControl');
     const labelElement = document.createElement('span');
     labelElement.textContent = label;
     wrapper.append(labelElement, input);
@@ -497,7 +499,7 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
   private createButton(text: string, callback: () => void, title?: string) {
     const button = document.createElement('button');
     button.type = 'button';
-    button.className = 'tftEsPiAnimationButton';
+    button.className = 'tftEsPiAnimationButton ailyMediaFieldButton';
     button.textContent = text;
     if (title) button.title = title;
     button.addEventListener('click', callback);
@@ -507,7 +509,7 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
   private createIconButton(iconClassName: string, callback: () => void, label: string) {
     const button = document.createElement('button');
     button.type = 'button';
-    button.className = 'tftEsPiAnimationButton tftEsPiAnimationIconButton';
+    button.className = 'tftEsPiAnimationButton tftEsPiAnimationIconButton ailyMediaFieldButton ailyMediaFieldIconButton';
     button.title = label;
     button.setAttribute('aria-label', label);
 
@@ -520,7 +522,10 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
 
   private scheduleSettingsCommit() {
     this.clearSettingsTimer();
-    this.settingsTimer = setTimeout(() => this.commitSettings(), INPUT_DEBOUNCE_MS);
+    this.settingsTimer = setTimeout(
+      () => this.commitSettings(),
+      MEDIA_FIELD_PARAMETER_DEBOUNCE_MS,
+    );
   }
 
   private clearSettingsTimer() {
@@ -717,7 +722,7 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
     this.sourceRedecodeTimer = setTimeout(() => {
       this.sourceRedecodeTimer = null;
       void this.redecodeFromSource();
-    }, 500);
+    }, 0);
   }
 
   private clearSourceRedecodeTimer() {
@@ -996,7 +1001,7 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
     const value = this.getValue();
     const message = value.sourceName || value.frames.length > 1
       ? translateMessage('STATUS_INFO', {
-        sourcePrefix: value.sourceName ? `${value.sourceName} | ` : '',
+        sourcePrefix: value.sourceName ? `${this.truncateStatusSourceName(value.sourceName)} | ` : '',
         frames: value.frames.length,
         width: value.width,
         height: value.height,
@@ -1006,6 +1011,28 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
       })
       : Blockly.Msg['TFTESPI_ANIMATION_EMPTY'];
     this.setStatus(message);
+  }
+
+  private truncateStatusSourceName(sourceName: string) {
+    const maxUnits = 10;
+    let usedUnits = 0;
+    let result = '';
+
+    for (const char of Array.from(sourceName)) {
+      const charUnits = this.getStatusSourceNameCharUnits(char);
+      if (usedUnits + charUnits > maxUnits) {
+        return `${result}...`;
+      }
+
+      result += char;
+      usedUnits += charUnits;
+    }
+
+    return result;
+  }
+
+  private getStatusSourceNameCharUnits(char: string) {
+    return char.codePointAt(0)! > 0xff ? 2 : 1;
   }
 
   private setStatus(message: string, isError = false) {
@@ -1129,6 +1156,27 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
     return JSON.stringify(left) === JSON.stringify(right);
   }
 
+  private rerenderSourceBlockAfterResize() {
+    const sourceBlock = this.getSourceBlock();
+    if (!(sourceBlock instanceof Blockly.BlockSvg) || this.sourceBlockRenderScheduled) return;
+
+    const rootBlock = typeof sourceBlock.getRootBlock === 'function'
+      ? sourceBlock.getRootBlock()
+      : sourceBlock;
+    const blockToRender = rootBlock instanceof Blockly.BlockSvg ? rootBlock : sourceBlock;
+    if (!blockToRender.rendered) return;
+
+    this.sourceBlockRenderScheduled = true;
+    const renderBlock = () => {
+      this.sourceBlockRenderScheduled = false;
+      if (!blockToRender.rendered) return;
+      blockToRender.render();
+      if (this.isDropdownOpen()) Blockly.DropDownDiv.repositionForWindowResize();
+    };
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(renderBlock);
+    else Promise.resolve().then(renderBlock);
+  }
+
   private disposeDropdown() {
     this.clearSettingsTimer();
     this.commitSettings();
@@ -1158,7 +1206,10 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
     this.fpsInput = null;
     this.maxFramesInput = null;
     this.formatSelect = null;
-    Blockly.DropDownDiv.getContentDiv().classList.remove('contains-tftespi-animation-editor');
+    Blockly.DropDownDiv.getContentDiv().classList.remove(
+      'contains-tftespi-animation-editor',
+      'ailyMediaFieldDropdown',
+    );
   }
 
   private cancelActiveDecode() {
@@ -1365,12 +1416,12 @@ Blockly.Css.register(`
   width: min(100%, 620px);
 }
 .tftEsPiAnimationPlayback input[type='range'] {
-  accent-color: #4db6ac;
+  accent-color: var(--aily-color-accent, #4db6ac);
   flex: 1;
   min-width: 120px;
 }
 .tftEsPiAnimationFrameIndex {
-  color: #cfcfcf;
+  color: var(--aily-text-tertiary, #cfcfcf);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   min-width: 54px;

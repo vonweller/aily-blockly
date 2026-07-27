@@ -54,9 +54,11 @@ import './renderer/aily-thrasos/thrasos';
 import './renderer/aily-zelos/zelos';
 import './custom-category';
 import './custom-field/field-bitmap';
-import './custom-field/field-bitmap-u8g2';
+import './custom-field/field-u8g2-bitmap';
 import { setU8g2AnimationFieldTranslator } from './custom-field/field-u8g2-animation';
 import { setTftEsPiAnimationFieldTranslator } from './custom-field/field-tftespi-animation';
+import { setTftEsPiImageFieldTranslator } from './custom-field/field-tftespi-image';
+import { registerMediaFieldEditorStyles } from './custom-field/field-media-editor-style';
 import './custom-field/field-image';
 import './custom-field/field-image-preview';
 import './custom-field/field-led-matrix';
@@ -104,6 +106,7 @@ type BlocklyWorkspaceEvent = { type?: string } | null | undefined;
 
 // 全局关闭 Blockly 文本输入字段的拼写检查，避免 block 内 input 出现红色波浪线
 (Blockly.FieldTextInput.prototype as unknown as { spellcheck_: boolean }).spellcheck_ = false;
+registerMediaFieldEditorStyles();
 
 /** Flyout 图钉右侧额外留白：Blockly 垂直条在 injectionDiv；vScroll 不可见时 DOM 仍可能有宽度，需一并判断 */
 function flyoutPinRightExtraX(
@@ -371,12 +374,6 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
       kind: 'categoryToolbox',
       contents: [],
     },
-    // plugins: {
-    //   toolbox: ContinuousToolbox,
-    //   flyoutsVerticalToolbox: ContinuousFlyout,
-    //   metricsManager: ContinuousMetrics,
-    // },
-    // theme: Blockly.Theme.defineTheme('zelos', DEV_THEME),
     theme: DarkTheme,
     renderer: 'thrasos',
     trashcan: true,
@@ -1474,6 +1471,7 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
     Blockly.Msg["CONTROLS_SWITCH_DEFAULT"] = this.translateService.instant('BLOCKLY.CONTROLS_SWITCH_DEFAULT') || (lang.startsWith('zh') ? "默认执行" : "default");
     setU8g2AnimationFieldTranslator((key, params) => this.translateService.instant(key, params));
     setTftEsPiAnimationFieldTranslator((key, params) => this.translateService.instant(key, params));
+    setTftEsPiImageFieldTranslator((key, params) => this.translateService.instant(key, params));
 
     // 如果工作区已存在，刷新工具箱以应用新语言
     if (this.workspace) {
