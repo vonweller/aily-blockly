@@ -1,11 +1,12 @@
-import { ArduinoGenerator } from '../components/blockly/generators/arduino/arduino';
+import type { ArduinoGenerator } from '../components/blockly/generators/arduino/arduino';
 
-const GENERATED_HEADER_PATTERN = /^[a-zA-Z0-9_-]+-[a-f0-9]{8}\.h$/;
+const GENERATED_HEADER_PATTERN = /^(?:variables|objects)_[a-zA-Z0-9_-]+-[a-f0-9]{8}\.h$/;
 
 /**
- * Materialize large generator declarations outside sketch.ino. The generator
- * only emits deterministic include directives; file I/O stays at the build
- * boundary so preview-only generation remains side-effect free.
+ * Materialize large generator declarations in the project's regular Arduino
+ * source directory. The build and lint boundaries copy project/src into the
+ * temporary sketch root, so generated includes follow the same rules as user
+ * authored headers.
  */
 export async function writeArduinoGeneratedArtifacts(
   projectPath: string | null | undefined,
@@ -14,11 +15,9 @@ export async function writeArduinoGeneratedArtifacts(
   if (!projectPath) return;
   const fsApi = window['fs'];
   const pathApi = window['path'];
-  // Keep generated headers inside the Arduino sketch directory. Arduino build
-  // tools copy this directory as one compilation unit, so quoted includes stay
-  // valid even when the preprocessed .ino.cpp is emitted under .build.
-  const outputDirectory = pathApi.join(projectPath, '.temp', 'sketch', 'generated');
   const artifacts = generator.getGeneratedArtifacts();
+  const outputDirectory = pathApi.join(projectPath, 'src');
+  if (!artifacts.length && !fsApi.existsSync(outputDirectory)) return;
   if (!fsApi.existsSync(outputDirectory)) fsApi.mkdirSync(outputDirectory, { recursive: true });
 
   const requiredNames = new Set(artifacts.map((artifact) => artifact.fileName));
@@ -38,4 +37,29 @@ export async function writeArduinoGeneratedArtifacts(
     fsApi.writeFileSync(tempPath, artifact.content);
     fsApi.renameSync(tempPath, finalPath);
   }
+
+  // Remove headers produced by the previous hidden-directory implementation.
+  // Only files matching our deterministic generated-header namespace qualify.
+  const legacyDirectory = pathApi.join(projectPath, '.temp', 'sketch', 'generated');
+  if (fsApi.existsSync(legacyDirectory)) {
+    for (const fileName of (fsApi.readdirSync(legacyDirectory) || []).map(String)) {
+      if (GENERATED_HEADER_PATTERN.test(fileName)) {
+        fsApi.unlinkSync(pathApi.join(legacyDirectory, fileName));
+      }
+    }
+  }
+}
+
+/** Copy regular project sources into the temporary Arduino sketch root. */
+export function syncArduinoProjectSourceToSketch(
+  projectPath: string | null | undefined,
+  sketchPath: string | null | undefined,
+): void {
+  if (!projectPath || !sketchPath) return;
+  const fsApi = window['fs'];
+  const pathApi = window['path'];
+  const sourceDirectory = pathApi.join(projectPath, 'src');
+  if (!fsApi.existsSync(sourceDirectory)) return;
+  if (!fsApi.existsSync(sketchPath)) fsApi.mkdirSync(sketchPath, { recursive: true });
+  fsApi.copySync(sourceDirectory, sketchPath);
 }

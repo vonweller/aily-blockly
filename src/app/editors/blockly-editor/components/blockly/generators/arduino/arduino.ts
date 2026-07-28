@@ -328,7 +328,9 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
       sourceTag,
       content: `#pragma once\n\n${item.code.replace(/\s+$/, '')}\n`,
     });
-    const includeCode = `#include "generated/${fileName}"`;
+    // Project source files are materialized under <project>/src and copied to
+    // the sketch root by the build/lint boundary.
+    const includeCode = `#include "${fileName}"`;
     for (const fragments of this.blockCodeFragments.values()) {
       for (const fragment of fragments) {
         if (fragment.section === section && fragment.tag === sourceTag) {

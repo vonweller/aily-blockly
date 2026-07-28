@@ -1,7 +1,10 @@
 ﻿import { Injectable } from '@angular/core';
 import { AilyHost } from '../core/host';
 import { prepareBlocklyProjectDataForCodeGeneration } from '../../../services/project-data/blockly-project-data-adapter';
-import { writeArduinoGeneratedArtifacts } from '../../../editors/blockly-editor/services/generated-code-artifacts';
+import {
+  syncArduinoProjectSourceToSketch,
+  writeArduinoGeneratedArtifacts,
+} from '../../../editors/blockly-editor/services/generated-code-artifacts';
 
 // Arduino 代码检查器
 declare const arduinoGenerator: any;
@@ -269,6 +272,7 @@ export class ArduinoLintService {
 
       // 高效写入代码到 sketch.ino 文件（覆盖模式，无需预先删除）
       await AilyHost.get().fs.writeFileSync(sketchFilePath, code);
+      syncArduinoProjectSourceToSketch(this.currentProjectPath, sketchPath);
       // console.log(`✅ 写入代码到: ${sketchFilePath} (${code.length} 字符)`);
 
       // console.log(`✅ 临时环境准备完成，复用项目 .temp 目录: ${tempPath}`);
