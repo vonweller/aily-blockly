@@ -86,6 +86,7 @@ export class FieldLedMatrixImage extends Blockly.Field<LedMatrixImageValue> {
     private resolvedValueRefId = '';
     private loadingValue: Promise<ResolvedLedMatrixImageValue> | null = null;
     private mutationVersion = 0;
+    private sourceBlockRenderScheduled = false;
 
     buttonOptions: LedMatrixImageButtons;
     pixelColours: LedMatrixImageColours;
@@ -705,8 +706,27 @@ export class FieldLedMatrixImage extends Blockly.Field<LedMatrixImageValue> {
 
     private rerenderSourceBlock() {
         const sourceBlock = this.getSourceBlock();
-        if (sourceBlock instanceof Blockly.BlockSvg && sourceBlock.rendered) {
-            sourceBlock.render();
+        if (!(sourceBlock instanceof Blockly.BlockSvg) || this.sourceBlockRenderScheduled) return;
+
+        const rootBlock = typeof sourceBlock.getRootBlock === 'function'
+            ? sourceBlock.getRootBlock()
+            : sourceBlock;
+        const blockToRender = rootBlock instanceof Blockly.BlockSvg ? rootBlock : sourceBlock;
+        if (!blockToRender.rendered) return;
+
+        this.sourceBlockRenderScheduled = true;
+        const renderBlock = () => {
+            this.sourceBlockRenderScheduled = false;
+            if (!blockToRender.rendered) return;
+            blockToRender.render();
+            if (Blockly.DropDownDiv.getOwner() === this) {
+                Blockly.DropDownDiv.repositionForWindowResize();
+            }
+        };
+        if (typeof requestAnimationFrame === 'function') {
+            requestAnimationFrame(renderBlock);
+        } else {
+            Promise.resolve().then(renderBlock);
         }
     }
 

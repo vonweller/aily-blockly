@@ -371,7 +371,7 @@ export class FieldImageSelector extends Blockly.FieldImage {
       // this.imageElement.setAttribute('src', newValue);
       const img = new Image();
       img.onload = () => {
-        this.imageElement.setAttribute('src', this.renderedImageData);
+        this.updateImageElement();
       };
       img.src = this.renderedImageData;
       // TODO base64 图片不显示 @downey @coloz
@@ -420,7 +420,7 @@ export class FieldImageSelector extends Blockly.FieldImage {
         sourceName,
         image,
       } satisfies ImageSelectorState));
-      if (this.imageElement) this.imageElement.setAttribute('src', dataUrl);
+      this.updateImageElement(dataUrl);
     });
     projectDataRuntime.trackMutation(mutation);
     void mutation.catch((error) => console.error('图片资源保存失败:', error));
@@ -431,18 +431,27 @@ export class FieldImageSelector extends Blockly.FieldImage {
     const ref = state.image;
     if (!ref) return;
     const refId = ref.$ailyData.id;
-    if (this.renderedRefId === refId) return;
+    if (this.renderedRefId === refId) {
+      this.updateImageElement();
+      return;
+    }
     if (this.loadingImage) return this.loadingImage;
     const loading = projectDataRuntime.resolve<Uint8Array>(ref).then((bytes) => {
       if (parseImageSelectorState(this.imageData).image?.$ailyData.id !== refId) return;
       this.renderedImageData = `data:${state.mediaType};base64,${bytesToBase64(bytes)}`;
       this.renderedRefId = refId;
-      if (this.imageElement) this.imageElement.setAttribute('src', this.renderedImageData);
+      this.updateImageElement();
     }).finally(() => {
       if (this.loadingImage === loading) this.loadingImage = null;
     });
     this.loadingImage = loading;
     return loading;
+  }
+
+  private updateImageElement(source = this.renderedImageData): void {
+    if (!this.imageElement) return;
+    this.imageElement.setAttribute('href', source);
+    this.imageElement.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', source);
   }
 }
 

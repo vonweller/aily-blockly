@@ -265,6 +265,21 @@
             "WORKER_STATUS_DECODE_IMAGE_FRAME": "Converting {{format}} frame {{current}}/{{total}}",
             "WORKER_ERROR_IMAGE_NO_VALID_FRAMES": "{{format}} decoded successfully, but no valid frames were captured",
             "WORKER_ERROR_UNSUPPORTED_FILE_TYPE": "Only MP4, GIF, or PNG files are supported"
+        },
+        "TFTESPI_IMAGE": {
+            "BUTTON_UPLOAD": "アップロード",
+            "UPLOAD_TOOLTIP": "対応形式：PNG、JPEG、WebP、BMP",
+            "BUTTON_CLEAR": "クリア",
+            "LABEL_WIDTH": "W",
+            "LABEL_HEIGHT": "H",
+            "LABEL_COLOR_MODE": "色",
+            "EMPTY": "画像がアップロードされていません",
+            "STATUS_READING_FILE": "{{name}} を読み込み中...",
+            "STATUS_DECODING": "画像を変換中...",
+            "STATUS_INFO": "{{sourcePrefix}}{{width}}x{{height}} | {{mode}} | {{dataSize}}",
+            "ERROR_FILE_SIZE_EXCEEDED": "元ファイルは {{maxSize}} 以下にしてください（現在：{{currentSize}}）",
+            "ERROR_DECODE_FAILED": "画像の変換に失敗しました",
+            "ERROR_UNSUPPORTED_FILE_TYPE": "PNG、JPEG、WebP、BMP 画像のみ対応しています"
         }
     },
     "MAIN_WINDOW": {

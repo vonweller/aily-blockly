@@ -197,9 +197,9 @@
     "@xterm/xterm": "^5.5.0",
     "acorn": "^8.16.0",
     "altcha": "^2.3.0",
+    "blockly": "npm:aily-project-blockly@^1.0.2",
     "angular2-draggable": "^16.0.0",
     "animate.css": "^4.1.1",
-    "blockly": "^11.2.2",
     "buffer": "^6.0.3",
     "cropperjs": "^1.6.2",
     "dragselect": "^2.7.4",
@@ -257,5 +257,8 @@
   },
   "optionalDependencies": {
     "dmg-license": "^1.0.11"
+  },
+  "overrides": {
+    "blockly": "npm:aily-project-blockly@^1.0.2"
   }
 }
