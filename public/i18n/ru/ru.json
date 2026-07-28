@@ -198,6 +198,7 @@
             "WORKER_ERROR_UNSUPPORTED_FILE_TYPE": "Поддерживаются только файлы MP4 и GIF"
         },
         "TFTESPI_IMAGE": {
+            "BLOCK_TOOLTIP": "Преобразовать PNG, JPEG, WebP или GIF в пиксельные данные RGB565/RGB332",
             "UPLOAD_TOOLTIP": "Поддерживаемые форматы: PNG, JPEG, WebP, GIF",
             "EMPTY": "Изображение не загружено",
             "STATUS_DECODING": "Преобразование изображения...",

@@ -15,7 +15,7 @@ import { BlocklyService as BlocklyService } from './blockly.service';
 
 import { PlatformService } from "../../../services/platform.service";
 import { ElectronService } from '../../../services/electron.service';
-import { projectDataRuntime } from '../../../services/project-data/project-data-runtime';
+import { prepareBlocklyProjectDataForCodeGeneration } from '../../../services/project-data/blockly-project-data-adapter';
 import { writeArduinoGeneratedArtifacts } from './generated-code-artifacts';
 import { WorkflowService, ProcessState } from '../../../services/workflow.service';
 import { CompileValidationService } from '../../../services/compile-validation.service';
@@ -569,9 +569,8 @@ export class _BuilderService {
   }
 
   private async generateWorkspaceCode(): Promise<string> {
-    await projectDataRuntime.flushPending();
     const projectDocument = this.blocklyService.getProjectDocument();
-    await projectDataRuntime.prepareValue(projectDocument);
+    await prepareBlocklyProjectDataForCodeGeneration(this.blocklyService.workspace, projectDocument);
     const code = arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
     await writeArduinoGeneratedArtifacts(this.projectService.currentProjectPath, arduinoGenerator);
     return code;

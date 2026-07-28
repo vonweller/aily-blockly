@@ -13,6 +13,11 @@ import { BlockSearcher } from '../components/blockly/plugins/toolbox-search/src/
 import { dragSelectionWeakMap } from '../components/blockly/plugins/workspace-multiselect/index.js';
 import { exportWorkspaceToSvg } from './workspace-svg-exporter';
 import { createProjectDataMarker, isAilyProjectDataMarker } from '../../../services/project-data/project-data.types';
+import {
+  decorateLibraryBlockDefinitionForProjectData,
+  unregisterProjectDataFieldSlots,
+  wrapProjectDataGeneratorFunctions,
+} from '../../../services/project-data/blockly-project-data-adapter';
 
 export interface BlockContextLabel {
   label: string;
@@ -1279,6 +1284,11 @@ export class BlocklyService {
       if (libStaticPath) {
         block = processStaticFilePath(block, libStaticPath);
       }
+      block = decorateLibraryBlockDefinitionForProjectData(
+        block,
+        libPackageName,
+        (key) => this.translateService.instant(key),
+      );
       Blockly.defineBlocksWithJsonArray([block]);
     }
   }
@@ -1519,6 +1529,11 @@ export class BlocklyService {
         // 加载后检测新增的generator函数
         const blockTypesAfter = this.getRegisteredGenerators();
         const newBlockTypes = blockTypesAfter.filter(type => !blockTypesBefore.includes(type));
+        wrapProjectDataGeneratorFunctions((window as any).Arduino, blockTypesAfter);
+        wrapProjectDataGeneratorFunctions(
+          (window as any).MPY || (window as any).MicropPython,
+          blockTypesAfter,
+        );
         this.loadedGenerators.set(filePath, new Set(newBlockTypes));
         // console.log(`Generator loaded from ${filePath}, registered blocks:`, newBlockTypes);
         resolve(true);
@@ -1622,6 +1637,7 @@ export class BlocklyService {
   }
 
   private removeLibBlockTypes(blockTypes: string[]) {
+    unregisterProjectDataFieldSlots(blockTypes);
     for (const blockType of blockTypes) {
       // 从Blockly中删除block定义
       if (Blockly.Blocks[blockType]) {

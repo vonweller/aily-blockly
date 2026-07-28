@@ -4,6 +4,7 @@ import { ActionService } from '../../../services/action.service';
 import { arduinoGenerator } from '../components/blockly/generators/arduino/arduino';
 import { ElectronService } from '../../../services/electron.service';
 import { projectDataRuntime } from '../../../services/project-data/project-data-runtime';
+import { prepareBlocklyProjectDataForCodeGeneration } from '../../../services/project-data/blockly-project-data-adapter';
 import { assertNoOversizedInlineValues } from '../../../services/project-data/project-data-policy';
 import { writeArduinoGeneratedArtifacts } from './generated-code-artifacts';
 
@@ -130,7 +131,10 @@ export class _ProjectService {
       }
 
       // 复用最近一次成功生成的代码；如果工作区已变更但防抖生成尚未完成，再同步生成一次。
-      await projectDataRuntime.prepareValue(projectDocument ?? this.blocklyService.getProjectDocument());
+      await prepareBlocklyProjectDataForCodeGeneration(
+        this.blocklyService.workspace,
+        projectDocument ?? this.blocklyService.getProjectDocument(),
+      );
       const code = this.blocklyService.getReusableGeneratedCode()
         ?? arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
       await writeArduinoGeneratedArtifacts(path, arduinoGenerator);

@@ -199,6 +199,7 @@
             "WORKER_ERROR_UNSUPPORTED_FILE_TYPE": "僅支援 MP4 或 GIF 檔案"
         },
         "TFTESPI_IMAGE": {
+            "BLOCK_TOOLTIP": "上傳 PNG、JPEG、WebP 或 GIF 圖片並轉換為 RGB565/RGB332 像素資料",
             "UPLOAD_TOOLTIP": "支援格式：PNG、JPEG、WebP、GIF",
             "EMPTY": "未上傳圖片",
             "STATUS_DECODING": "正在轉換圖片...",

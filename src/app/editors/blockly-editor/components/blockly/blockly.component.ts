@@ -49,6 +49,7 @@ import { micropythonGenerator } from './generators/micropython/micropython';
 import { BlocklyService, WorkspaceBlockSearchState } from '../../services/blockly.service';
 import { BitmapUploadResponse, GlobalServiceManager } from '../../services/bitmap-upload.service';
 import { projectDataRuntime } from '../../../../services/project-data/project-data-runtime';
+import { prepareBlocklyProjectDataForCodeGeneration } from '../../../../services/project-data/blockly-project-data-adapter';
 
 import './renderer/aily-icon';
 import './renderer/aily-thrasos/thrasos';
@@ -1665,12 +1666,11 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
       takeUntil(this.destroy$)
     ).subscribe(async () => {
       try {
-          await projectDataRuntime.flushPending();
-          await projectDataRuntime.prepareValue(Blockly.serialization.workspaces.save(this.workspace));
-    const code = this.generator.workspaceToCode(this.workspace);
-    if (this.generator === arduinoGenerator) {
-      await writeArduinoGeneratedArtifacts(this.projectService.currentProjectPath, arduinoGenerator);
-    }
+        await prepareBlocklyProjectDataForCodeGeneration(this.workspace);
+        const code = this.generator.workspaceToCode(this.workspace);
+        if (this.generator === arduinoGenerator) {
+          await writeArduinoGeneratedArtifacts(this.projectService.currentProjectPath, arduinoGenerator);
+        }
         this.blocklyService.publishGeneratedCode(code);
         let blockCodeMap = new Map<string, BlockCodeMapping>();
 

@@ -5,6 +5,7 @@ import { ArduinoSyntaxTool } from "./arduinoSyntaxTool";
 import { fixBlockConfig } from './blockConfigFixer';
 import { normalizeInputNameForAbs } from './abiAbsConverter';
 import { projectDataRuntime } from '../../../services/project-data/project-data-runtime';
+import { prepareBlocklyProjectDataForCodeGeneration } from '../../../services/project-data/blockly-project-data-adapter';
 import { writeArduinoGeneratedArtifacts } from '../../../editors/blockly-editor/services/generated-code-artifacts';
 import { prepareBlockFieldValue } from './blockFieldValue';
 declare const Blockly: any;
@@ -7651,8 +7652,7 @@ export async function getWorkspaceOverviewTool(args?: any): Promise<ToolUseResul
     let lintResult = null;
     if (includeCode) {
       try {
-        await projectDataRuntime.flushPending();
-        await projectDataRuntime.prepareValue(Blockly.serialization.workspaces.save(workspace));
+        await prepareBlocklyProjectDataForCodeGeneration(workspace);
         if ((window as any).Arduino && (window as any).Arduino.workspaceToCode) {
           generatedCode = (window as any).Arduino.workspaceToCode(workspace) || '// 无代码生成';
           await writeArduinoGeneratedArtifacts(
@@ -8725,8 +8725,7 @@ export async function generateCodeTool(): Promise<ToolUseResult> {
   
   try {
     const workspace = getActiveWorkspace();
-    await projectDataRuntime.flushPending();
-    await projectDataRuntime.prepareValue(Blockly.serialization.workspaces.save(workspace));
+    await prepareBlocklyProjectDataForCodeGeneration(workspace);
     const code = arduinoGenerator.workspaceToCode(workspace);
     await writeArduinoGeneratedArtifacts(projectDataRuntime.getStore().getProjectPath(), arduinoGenerator);
     

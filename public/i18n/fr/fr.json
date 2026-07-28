@@ -198,6 +198,7 @@
             "WORKER_ERROR_UNSUPPORTED_FILE_TYPE": "Seuls les fichiers MP4 et GIF sont pris en charge"
         },
         "TFTESPI_IMAGE": {
+            "BLOCK_TOOLTIP": "Convertir une image PNG, JPEG, WebP ou GIF en données de pixels RGB565/RGB332",
             "UPLOAD_TOOLTIP": "Formats pris en charge : PNG, JPEG, WebP, GIF",
             "EMPTY": "Aucune image importée",
             "STATUS_DECODING": "Conversion de l’image...",

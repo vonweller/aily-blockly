@@ -135,6 +135,11 @@ export class FieldImagePreview extends Blockly.Field<ImagePreviewValue> {
         return { ...this.getValue() };
     }
 
+    /** Ensures legacy read-only generators can consume their derived image cache. */
+    async prepareForCodeGeneration(): Promise<void> {
+        await this.ensureImageLoaded();
+    }
+
     /**
      * 显示编辑器
      */

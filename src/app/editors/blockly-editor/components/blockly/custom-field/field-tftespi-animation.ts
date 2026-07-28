@@ -201,6 +201,7 @@ interface ActiveDecodeTask {
 class AnimationDecodeCancelledError extends Error {}
 
 export interface FieldTftEsPiAnimationFromJsonConfig extends Blockly.FieldConfig {
+  type?: string;
   value?: TftEsPiAnimationValue;
   width?: number;
   height?: number;
@@ -329,7 +330,13 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
   }
 
   static override fromJson(options: FieldTftEsPiAnimationFromJsonConfig) {
-    return new this(options.value ?? Blockly.Field.SKIP_SETUP, undefined, options);
+    const imageMode = options.imageMode === true || options.type === 'field_tftespi_image';
+    return new this(options.value ?? Blockly.Field.SKIP_SETUP, undefined, {
+      ...options,
+      imageMode,
+      fps: imageMode ? 1 : options.fps,
+      maxFrames: imageMode ? 1 : options.maxFrames,
+    });
   }
 
   protected override doClassValidation_(
