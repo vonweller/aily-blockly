@@ -361,7 +361,7 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
         this.updateControlsFromValue();
         this.renderFrameStrip();
         this.updatePlayTestButtonState();
-        if (nextRefId && this.isDropdownOpen()) {
+        if (nextRefId && this.blockDisplayImage) {
             queueMicrotask(() => {
                 void this.ensureFramesLoaded().catch((error) => this.reportProjectDataLoadError(error));
             });
@@ -401,6 +401,7 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
         ) as SVGImageElement;
 
         this.updateBlockDisplayImage();
+        void this.ensureFramesLoaded().catch((error) => this.reportProjectDataLoadError(error));
     }
 
     override updateEditable() {

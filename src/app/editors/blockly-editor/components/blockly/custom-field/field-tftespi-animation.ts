@@ -367,6 +367,9 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
     this.updateControlsFromValue();
     this.renderPreviewFrame(this.currentFrame);
     this.updateStatusFromValue();
+    if (nextRefId && this.blockDisplayImage) {
+      void this.ensureFramesLoaded().catch((error) => this.reportProjectDataLoadError(error));
+    }
   }
 
   override saveState(_doFullSerialization?: boolean): TftEsPiAnimationValue {
@@ -393,6 +396,7 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
     ) as SVGImageElement;
     this.updateSize_();
     this.updateBlockDisplayImage();
+    void this.ensureFramesLoaded().catch((error) => this.reportProjectDataLoadError(error));
   }
 
   protected override render_() {
