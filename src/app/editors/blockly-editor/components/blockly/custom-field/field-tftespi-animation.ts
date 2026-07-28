@@ -70,6 +70,25 @@ const DEFAULT_MESSAGES: Record<string, string> = {
   WORKER_ERROR_FRAME_TOO_LARGE: 'A {{width}}x{{height}} {{mode}} frame exceeds the {{maxSize}} output budget ({{size}})',
 };
 
+const DEFAULT_IMAGE_MESSAGES: Record<string, string> = {
+  UPLOAD_TOOLTIP: 'Supported formats: PNG, JPEG, WebP, GIF',
+  EMPTY: 'No image uploaded',
+  STATUS_DECODING: 'Converting image...',
+  STATUS_REDECODING: 'Re-converting {{name}}...',
+  STATUS_INFO: '{{width}}x{{height}} | {{mode}} | {{dataSize}}',
+  ERROR_DECODE_FAILED: 'Image conversion failed',
+  ERROR_REDECODE_FAILED: 'Image re-conversion failed',
+  ERROR_PROJECT_PATH_MISSING: 'The current project path is unavailable, so the image source cannot be saved',
+  ERROR_FS_CREATE_ASSETS_UNAVAILABLE: 'The assets directory cannot be created',
+  ERROR_FS_SAVE_UNAVAILABLE: 'The image source file cannot be saved',
+  ERROR_FS_READ_UNAVAILABLE: 'The image source file cannot be read',
+  ERROR_SOURCE_READ_INVALID: 'The image source file returned invalid data',
+  ERROR_SOURCE_MISSING_REDECODE: 'The image source file is unavailable for re-conversion',
+  ERROR_SOURCE_NOT_FOUND: 'Image source not found: {{path}}',
+  ERROR_PROJECT_DATA_LOAD_FAILED: 'Image data could not be loaded: {{message}}',
+  WORKER_ERROR_UNSUPPORTED_FILE_TYPE: 'Only PNG, JPEG, WebP, and GIF files are supported',
+};
+
 let animationTranslator: AnimationTranslator | null = null;
 
 function interpolate(message: string, params?: AnimationMessageParams) {
@@ -130,6 +149,18 @@ export interface TftEsPiAnimationValue {
   sourceName?: string;
   sourceType?: string;
   sourcePath?: string;
+}
+
+function translateImageMessage(messageName: string, params?: AnimationMessageParams) {
+  const translationKey = `BLOCKLY.TFTESPI_IMAGE.${messageName}`;
+  const translated = animationTranslator?.(translationKey, params);
+  if (translated && translated !== translationKey) {
+    return translated;
+  }
+  if (DEFAULT_IMAGE_MESSAGES[messageName]) {
+    return interpolate(DEFAULT_IMAGE_MESSAGES[messageName], params);
+  }
+  return translateMessage(messageName, params);
 }
 
 interface DecodedTftEsPiAnimationValue {
@@ -452,7 +483,7 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
         Blockly.Msg['TFTESPI_ANIMATION_BUTTON_UPLOAD'],
         () => this.fileInput?.click(),
         this.imageMode
-          ? 'PNG / JPEG / WebP / GIF'
+          ? this.getMessage('UPLOAD_TOOLTIP')
           : Blockly.Msg['TFTESPI_ANIMATION_UPLOAD_TOOLTIP'],
       ),
       this.createButton(
@@ -631,19 +662,19 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
 
     try {
       if (!this.isSupportedSource(file.name, file.type)) {
-        throw new Error(translateMessage('WORKER_ERROR_UNSUPPORTED_FILE_TYPE'));
+        throw new Error(this.getMessage('WORKER_ERROR_UNSUPPORTED_FILE_TYPE'));
       }
       if (file.size > MAX_SOURCE_FILE_SIZE_BYTES) {
-        throw new Error(translateMessage('ERROR_FILE_SIZE_EXCEEDED', {
+        throw new Error(this.getMessage('ERROR_FILE_SIZE_EXCEEDED', {
           maxSize: this.formatFileSize(MAX_SOURCE_FILE_SIZE_BYTES),
           currentSize: this.formatFileSize(file.size),
         }));
       }
 
-      this.setStatus(translateMessage('STATUS_READING_FILE', { name: file.name }));
+      this.setStatus(this.getMessage('STATUS_READING_FILE', { name: file.name }));
       const buffer = await file.arrayBuffer();
       if (!this.isUploadOperationCurrent(uploadRequestId, decodeVersion)) return;
-      this.setStatus(translateMessage('STATUS_SAVING_FILE', { name: file.name }));
+      this.setStatus(this.getMessage('STATUS_SAVING_FILE', { name: file.name }));
       const sourcePath = this.persistSourceFile(file, buffer);
       const value = this.getValue();
       await this.decodeAnimation({
@@ -655,7 +686,7 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
     } catch (error: any) {
       if (error instanceof AnimationDecodeCancelledError) return;
       if (!this.isUploadOperationCurrent(uploadRequestId, decodeVersion)) return;
-      this.setStatus(error?.message || translateMessage('ERROR_DECODE_FAILED'), true);
+      this.setStatus(error?.message || this.getMessage('ERROR_DECODE_FAILED'), true);
     } finally {
       if (this.fileInput && uploadRequestId === this.uploadRequestId) this.fileInput.value = '';
     }
@@ -696,7 +727,7 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
           if (message.type === 'done') {
             if (!message.result) {
               this.activeDecodeTask = null;
-              reject(new Error(translateMessage('ERROR_DECODE_FAILED')));
+              reject(new Error(this.getMessage('ERROR_DECODE_FAILED')));
               return;
             }
             try {
@@ -739,7 +770,7 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
             resolve();
             return;
           }
-          reject(new Error(error.message || translateMessage('ERROR_DECODE_FAILED')));
+          reject(new Error(error.message || this.getMessage('ERROR_DECODE_FAILED')));
         };
         worker.postMessage({
           type: 'decode',
@@ -772,7 +803,7 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
     if (frames.length === 0 || frames.some((frame) => (
       !(frame instanceof Uint8Array) || frame.byteLength !== frameByteLength
     ))) {
-      throw new Error(translateMessage('ERROR_DECODE_FAILED'));
+      throw new Error(this.getMessage('ERROR_DECODE_FAILED'));
     }
 
     const packedFrames = new Uint8Array(frameByteLength * frames.length);
@@ -819,18 +850,18 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
     const sourceFilePath = this.resolveSourceFilePath(value.sourcePath);
     const fsApi = (window as any)['fs'];
     if (!sourceFilePath || (!fsApi?.readFileBuffer && !fsApi?.readFileAsBase64)) {
-      this.setStatus(translateMessage('ERROR_SOURCE_MISSING_REDECODE'), true);
+      this.setStatus(this.getMessage('ERROR_SOURCE_MISSING_REDECODE'), true);
       return;
     }
     if (typeof fsApi.existsSync === 'function' && !fsApi.existsSync(sourceFilePath)) {
-      this.setStatus(translateMessage('ERROR_SOURCE_NOT_FOUND', { path: value.sourcePath }), true);
+      this.setStatus(this.getMessage('ERROR_SOURCE_NOT_FOUND', { path: value.sourcePath }), true);
       return;
     }
 
     try {
       const sourceName = value.sourceName || this.getPathBaseName(value.sourcePath);
       const decodeVersion = this.valueVersion;
-      this.setStatus(translateMessage('STATUS_REDECODING', { name: sourceName }));
+      this.setStatus(this.getMessage('STATUS_REDECODING', { name: sourceName }));
       await this.decodeAnimation({
         fileName: sourceName,
         mimeType: value.sourceType || this.inferMimeType(value.sourcePath),
@@ -839,7 +870,7 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
       }, value.width, value.height, value.fps, value.maxFrames, value.format, decodeVersion);
     } catch (error: any) {
       if (error instanceof AnimationDecodeCancelledError) return;
-      this.setStatus(error?.message || translateMessage('ERROR_REDECODE_FAILED'), true);
+      this.setStatus(error?.message || this.getMessage('ERROR_REDECODE_FAILED'), true);
     }
   }
 
@@ -848,10 +879,10 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
     const fsApi = (window as any)['fs'];
     const pathApi = (window as any)['path'];
     if (!projectPath || !fsApi || !pathApi?.join || !pathApi?.relative) {
-      throw new Error(translateMessage('ERROR_PROJECT_PATH_MISSING'));
+      throw new Error(this.getMessage('ERROR_PROJECT_PATH_MISSING'));
     }
     if (typeof fsApi.mkdirSync !== 'function') {
-      throw new Error(translateMessage('ERROR_FS_CREATE_ASSETS_UNAVAILABLE'));
+      throw new Error(this.getMessage('ERROR_FS_CREATE_ASSETS_UNAVAILABLE'));
     }
 
     const assetsDir = pathApi.join(projectPath, 'assets', 'tftespi-animation');
@@ -868,18 +899,18 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
     } else if (typeof fsApi.writeBase64File === 'function') {
       fsApi.writeBase64File(assetFilePath, bytesToBase64(new Uint8Array(buffer)));
     } else {
-      throw new Error(translateMessage('ERROR_FS_SAVE_UNAVAILABLE'));
+      throw new Error(this.getMessage('ERROR_FS_SAVE_UNAVAILABLE'));
     }
     return this.normalizeAssetPath(pathApi.relative(projectPath, assetFilePath));
   }
 
   private calculateSourceMd5(buffer: ArrayBuffer, fsApi: any) {
     if (typeof fsApi.md5Buffer !== 'function') {
-      throw new Error(translateMessage('ERROR_MD5_UNAVAILABLE'));
+      throw new Error(this.getMessage('ERROR_MD5_UNAVAILABLE'));
     }
     const md5 = String(fsApi.md5Buffer(buffer) || '').toLowerCase();
     if (!/^[a-f0-9]{32}$/.test(md5)) {
-      throw new Error(translateMessage('ERROR_MD5_FAILED'));
+      throw new Error(this.getMessage('ERROR_MD5_FAILED'));
     }
     return md5;
   }
@@ -891,7 +922,7 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
     if (typeof fsApi.readFileAsBase64 === 'function') {
       return base64ToBytes(fsApi.readFileAsBase64(sourceFilePath)).buffer;
     }
-    throw new Error(translateMessage('ERROR_FS_READ_UNAVAILABLE'));
+    throw new Error(this.getMessage('ERROR_FS_READ_UNAVAILABLE'));
   }
 
   private toArrayBuffer(data: unknown): ArrayBuffer {
@@ -905,7 +936,7 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
     if (maybeBuffer?.type === 'Buffer' && Array.isArray(maybeBuffer.data)) {
       return new Uint8Array(maybeBuffer.data).buffer;
     }
-    throw new Error(translateMessage('ERROR_SOURCE_READ_INVALID'));
+    throw new Error(this.getMessage('ERROR_SOURCE_READ_INVALID'));
   }
 
   private resolveSourceFilePath(sourcePath: string): string | null {
@@ -985,7 +1016,7 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
 
   private reportProjectDataLoadError(error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
-    this.setStatus(translateMessage('ERROR_PROJECT_DATA_LOAD_FAILED', { message }), true);
+    this.setStatus(this.getMessage('ERROR_PROJECT_DATA_LOAD_FAILED', { message }), true);
   }
 
   private renderPreviewFrame(frameIndex: number) {
@@ -1133,7 +1164,7 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
     if (!this.statusElement) return;
     const value = this.getValue();
     const message = value.sourceName || value.frameCount > 1
-      ? translateMessage('STATUS_INFO', {
+      ? this.getMessage('STATUS_INFO', {
         sourcePrefix: value.sourceName ? `${value.sourceName} | ` : '',
         frames: value.frameCount,
         width: value.width,
@@ -1142,7 +1173,7 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
         mode: value.format.toUpperCase(),
         dataSize: this.formatDataSize(getFrameByteLength(value.width, value.height, value.format) * value.frameCount),
       })
-      : Blockly.Msg['TFTESPI_ANIMATION_EMPTY'];
+      : this.getMessage('EMPTY');
     this.setStatus(message);
   }
 
@@ -1155,8 +1186,8 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
 
   private resolveWorkerMessage(message: DecodeWorkerMessage, fallback: string) {
     return message.messageKey
-      ? translateMessage(message.messageKey, message.messageParams)
-      : message.message || translateMessage(fallback);
+      ? this.getMessage(message.messageKey, message.messageParams)
+      : message.message || this.getMessage(fallback);
   }
 
   private clearAnimation() {
@@ -1254,6 +1285,12 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
 
   private getMaxFramesLimit(width: number, height: number, format: TftEsPiAnimationFormat) {
     return this.imageMode ? 1 : getMaxFramesForDimensions(width, height, format);
+  }
+
+  private getMessage(messageName: string, params?: AnimationMessageParams) {
+    return this.imageMode
+      ? translateImageMessage(messageName, params)
+      : translateMessage(messageName, params);
   }
 
   private cloneValue(value: TftEsPiAnimationValue | null) {
@@ -1366,7 +1403,7 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
       if (lowerType.includes('png')) return '.png';
       if (lowerType.includes('jpeg') || lowerType.includes('jpg')) return '.jpg';
       if (lowerType.includes('webp')) return '.webp';
-      throw new Error(translateMessage('WORKER_ERROR_UNSUPPORTED_FILE_TYPE'));
+      throw new Error(this.getMessage('WORKER_ERROR_UNSUPPORTED_FILE_TYPE'));
     }
     if (extension === '.gif' || extension === '.mp4') return extension;
     return mimeType.toLowerCase().includes('gif') ? '.gif' : '.mp4';

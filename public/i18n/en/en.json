@@ -234,6 +234,15 @@
             "LABEL_COLOR_MODE": "Color",
             "WORKER_ERROR_UNSUPPORTED_FILE_TYPE": "Only MP4 and GIF files are supported"
         },
+        "TFTESPI_IMAGE": {
+            "UPLOAD_TOOLTIP": "Supported formats: PNG, JPEG, WebP, GIF",
+            "EMPTY": "No image uploaded",
+            "STATUS_DECODING": "Converting image...",
+            "STATUS_REDECODING": "Re-converting {{name}}...",
+            "ERROR_DECODE_FAILED": "Image conversion failed",
+            "ERROR_REDECODE_FAILED": "Image re-conversion failed",
+            "WORKER_ERROR_UNSUPPORTED_FILE_TYPE": "Only PNG, JPEG, WebP, and GIF files are supported"
+        },
         "U8G2_ANIMATION": {
             "BUTTON_UPLOAD": "Upload",
             "UPLOAD_TOOLTIP": "Supported formats: MP4, GIF, PNG",

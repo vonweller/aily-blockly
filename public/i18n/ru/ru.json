@@ -197,6 +197,15 @@
             "LABEL_COLOR_MODE": "Цвет",
             "WORKER_ERROR_UNSUPPORTED_FILE_TYPE": "Поддерживаются только файлы MP4 и GIF"
         },
+        "TFTESPI_IMAGE": {
+            "UPLOAD_TOOLTIP": "Поддерживаемые форматы: PNG, JPEG, WebP, GIF",
+            "EMPTY": "Изображение не загружено",
+            "STATUS_DECODING": "Преобразование изображения...",
+            "STATUS_REDECODING": "Повторное преобразование {{name}}...",
+            "ERROR_DECODE_FAILED": "Не удалось преобразовать изображение",
+            "ERROR_REDECODE_FAILED": "Не удалось повторно преобразовать изображение",
+            "WORKER_ERROR_UNSUPPORTED_FILE_TYPE": "Поддерживаются только файлы PNG, JPEG, WebP и GIF"
+        },
         "U8G2_ANIMATION": {
             "BUTTON_UPLOAD": "Загрузить",
             "UPLOAD_TOOLTIP": "Поддерживаемые форматы: MP4, GIF, PNG",

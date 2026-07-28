@@ -197,6 +197,15 @@
             "LABEL_COLOR_MODE": "Cor",
             "WORKER_ERROR_UNSUPPORTED_FILE_TYPE": "Apenas arquivos MP4 e GIF são suportados"
         },
+        "TFTESPI_IMAGE": {
+            "UPLOAD_TOOLTIP": "Formatos compatíveis: PNG, JPEG, WebP, GIF",
+            "EMPTY": "Nenhuma imagem carregada",
+            "STATUS_DECODING": "Convertendo imagem...",
+            "STATUS_REDECODING": "Reconvertendo {{name}}...",
+            "ERROR_DECODE_FAILED": "Falha na conversão da imagem",
+            "ERROR_REDECODE_FAILED": "Falha na reconversão da imagem",
+            "WORKER_ERROR_UNSUPPORTED_FILE_TYPE": "Apenas arquivos PNG, JPEG, WebP e GIF são compatíveis"
+        },
         "U8G2_ANIMATION": {
             "BUTTON_UPLOAD": "Enviar",
             "UPLOAD_TOOLTIP": "Formatos compatíveis: MP4, GIF, PNG",

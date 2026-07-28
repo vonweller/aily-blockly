@@ -198,6 +198,15 @@
             "LABEL_COLOR_MODE": "色彩",
             "WORKER_ERROR_UNSUPPORTED_FILE_TYPE": "僅支援 MP4 或 GIF 檔案"
         },
+        "TFTESPI_IMAGE": {
+            "UPLOAD_TOOLTIP": "支援格式：PNG、JPEG、WebP、GIF",
+            "EMPTY": "未上傳圖片",
+            "STATUS_DECODING": "正在轉換圖片...",
+            "STATUS_REDECODING": "正在重新轉換 {{name}}...",
+            "ERROR_DECODE_FAILED": "圖片轉換失敗",
+            "ERROR_REDECODE_FAILED": "圖片重新轉換失敗",
+            "WORKER_ERROR_UNSUPPORTED_FILE_TYPE": "僅支援 PNG、JPEG、WebP 或 GIF 檔案"
+        },
         "U8G2_ANIMATION": {
             "BUTTON_UPLOAD": "上傳",
             "UPLOAD_TOOLTIP": "支援格式：MP4、GIF、PNG",

@@ -197,6 +197,15 @@
             "LABEL_COLOR_MODE": "色",
             "WORKER_ERROR_UNSUPPORTED_FILE_TYPE": "MP4 または GIF ファイルのみ対応しています"
         },
+        "TFTESPI_IMAGE": {
+            "UPLOAD_TOOLTIP": "対応形式: PNG、JPEG、WebP、GIF",
+            "EMPTY": "画像がアップロードされていません",
+            "STATUS_DECODING": "画像を変換しています...",
+            "STATUS_REDECODING": "{{name}} を再変換しています...",
+            "ERROR_DECODE_FAILED": "画像の変換に失敗しました",
+            "ERROR_REDECODE_FAILED": "画像の再変換に失敗しました",
+            "WORKER_ERROR_UNSUPPORTED_FILE_TYPE": "PNG、JPEG、WebP、GIF ファイルのみ対応しています"
+        },
         "U8G2_ANIMATION": {
             "BUTTON_UPLOAD": "アップロード",
             "UPLOAD_TOOLTIP": "対応形式: MP4、GIF、PNG",
