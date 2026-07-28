@@ -256,6 +256,33 @@
             "WORKER_STATUS_DECODE_IMAGE_FRAME": "Converting {{format}} frame {{current}}/{{total}}",
             "WORKER_ERROR_IMAGE_NO_VALID_FRAMES": "{{format}} decoded successfully, but no valid frames were captured",
             "WORKER_ERROR_UNSUPPORTED_FILE_TYPE": "Only MP4, GIF, or PNG files are supported"
+        },
+        "TFTESPI_IMAGE": {
+            "BUTTON_UPLOAD": "上傳",
+            "UPLOAD_TOOLTIP": "支援格式：PNG、JPEG、WebP、BMP",
+            "BUTTON_CLEAR": "清空",
+            "LABEL_WIDTH": "W",
+            "LABEL_HEIGHT": "H",
+            "LABEL_COLOR_MODE": "色彩",
+            "EMPTY": "未上傳圖片",
+            "STATUS_READING_FILE": "正在讀取 {{name}}...",
+            "STATUS_SAVING_FILE": "正在儲存 {{name}}...",
+            "STATUS_DECODING": "正在轉換圖片...",
+            "STATUS_REDECODING": "正在根據原圖重新轉換 {{name}}...",
+            "STATUS_INFO": "{{sourcePrefix}}{{width}}x{{height}} | {{mode}} | 資料 {{dataSize}}",
+            "ERROR_FILE_SIZE_EXCEEDED": "檔案大小不能超過 {{maxSize}}，目前檔案 {{currentSize}}",
+            "ERROR_DECODE_FAILED": "圖片轉換失敗",
+            "ERROR_REDECODE_FAILED": "圖片重新轉換失敗",
+            "ERROR_PROJECT_PATH_MISSING": "找不到目前專案目錄，無法儲存圖片原始檔",
+            "ERROR_FS_CREATE_ASSETS_UNAVAILABLE": "檔案系統介面不可用，無法建立圖片資源目錄",
+            "ERROR_FS_SAVE_UNAVAILABLE": "檔案系統介面不可用，無法儲存圖片原始檔",
+            "ERROR_FS_READ_UNAVAILABLE": "檔案系統介面不可用，無法讀取圖片原始檔",
+            "ERROR_SOURCE_READ_INVALID": "圖片原始檔讀取結果無效",
+            "ERROR_SOURCE_MISSING_REDECODE": "找不到圖片原始檔，請重新上傳後再修改尺寸",
+            "ERROR_SOURCE_NOT_FOUND": "圖片原始檔不存在：{{path}}",
+            "ERROR_MD5_UNAVAILABLE": "檔案 MD5 介面不可用，請完全重新啟動軟體後再上傳",
+            "ERROR_MD5_FAILED": "圖片原始檔 MD5 計算失敗",
+            "ERROR_UNSUPPORTED_FILE_TYPE": "僅支援 PNG、JPEG、WebP 或 BMP 圖片"
         }
     },
     "MAIN_WINDOW": {

@@ -255,6 +255,21 @@
             "WORKER_STATUS_DECODE_IMAGE_FRAME": "Converting {{format}} frame {{current}}/{{total}}",
             "WORKER_ERROR_IMAGE_NO_VALID_FRAMES": "{{format}} decoded successfully, but no valid frames were captured",
             "WORKER_ERROR_UNSUPPORTED_FILE_TYPE": "Only MP4, GIF, or PNG files are supported"
+        },
+        "TFTESPI_IMAGE": {
+            "BUTTON_UPLOAD": "رفع",
+            "UPLOAD_TOOLTIP": "الصيغ المدعومة: PNG وJPEG وWebP وBMP",
+            "BUTTON_CLEAR": "مسح",
+            "LABEL_WIDTH": "ع",
+            "LABEL_HEIGHT": "ا",
+            "LABEL_COLOR_MODE": "اللون",
+            "EMPTY": "لم يتم رفع صورة",
+            "STATUS_READING_FILE": "جارٍ قراءة {{name}}...",
+            "STATUS_DECODING": "جارٍ تحويل الصورة...",
+            "STATUS_INFO": "{{sourcePrefix}}{{width}}x{{height}} | {{mode}} | {{dataSize}}",
+            "ERROR_FILE_SIZE_EXCEEDED": "يجب ألا يتجاوز الملف المصدر {{maxSize}} (الحالي: {{currentSize}})",
+            "ERROR_DECODE_FAILED": "فشل تحويل الصورة",
+            "ERROR_UNSUPPORTED_FILE_TYPE": "تُدعم صور PNG وJPEG وWebP وBMP فقط"
         }
     },
     "MAIN_WINDOW": {
