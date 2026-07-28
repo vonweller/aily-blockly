@@ -3,6 +3,9 @@ import { AILY_BLOCKLY_USED_LIBRARIES_FIELD, BlocklyProjectDocument, BlocklyServi
 import { ActionService } from '../../../services/action.service';
 import { arduinoGenerator } from '../components/blockly/generators/arduino/arduino';
 import { ElectronService } from '../../../services/electron.service';
+import { projectDataRuntime } from '../../../services/project-data/project-data-runtime';
+import { assertNoOversizedInlineValues } from '../../../services/project-data/project-data-policy';
+import { writeArduinoGeneratedArtifacts } from './generated-code-artifacts';
 
 
 @Injectable({
@@ -70,14 +73,24 @@ export class _ProjectService {
   }
 
   async save(path: string, createHistory: boolean = true) {
+    await projectDataRuntime.flushPending();
     const projectDocument = this.blocklyService.getProjectDocument();
     const jsonData = this.blocklyService.getProjectAbiForSave(projectDocument);
-    window['fs'].writeFileSync(`${path}/project.abi`, JSON.stringify(jsonData));
+    assertNoOversizedInlineValues(jsonData);
+    const refs = projectDataRuntime.getStore().collectReferences(jsonData);
+    const validation = await projectDataRuntime.getStore().validateReferences(refs);
+    if (!validation.valid) {
+      throw new Error(`Project data validation failed: ${validation.issues.map((issue) => issue.error).join('; ')}`);
+    }
+    const abiPath = `${path}/project.abi`;
+    const tempPath = `${abiPath}.tmp`;
+    window['fs'].writeFileSync(tempPath, JSON.stringify(jsonData));
+    window['fs'].renameSync(tempPath, abiPath);
     this.syncUsedLibraryManifest(path, projectDocument);
     
     // 更新 codeHash 以反映当前代码状态
     // 这样当代码改变后同步时，服务器能够检测到代码已改变
-    await this.updateCodeHash(path);
+    await this.updateCodeHash(path, projectDocument);
     
     // this.stateSubject.next('saved');
   }
@@ -109,7 +122,7 @@ export class _ProjectService {
    * 更新 package.json 中的 codeHash
    * 用于在项目保存时记录当前代码的哈希值
    */
-  private async updateCodeHash(path: string) {
+  private async updateCodeHash(path: string, projectDocument?: BlocklyProjectDocument) {
     try {
       if (!arduinoGenerator || !this.blocklyService || !this.blocklyService.workspace) {
         console.warn('无法生成代码哈希，跳过更新');
@@ -117,8 +130,10 @@ export class _ProjectService {
       }
 
       // 复用最近一次成功生成的代码；如果工作区已变更但防抖生成尚未完成，再同步生成一次。
+      await projectDataRuntime.prepareValue(projectDocument ?? this.blocklyService.getProjectDocument());
       const code = this.blocklyService.getReusableGeneratedCode()
         ?? arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
+      await writeArduinoGeneratedArtifacts(path, arduinoGenerator);
       this.blocklyService.publishGeneratedCode(code);
       
       // 计算哈希

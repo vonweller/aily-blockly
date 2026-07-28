@@ -706,7 +706,7 @@ export class HeaderComponent implements OnInit, OnDestroy {
       case 'project-save-as':
         const path = await this.selectSaveAsFolder();
         if (path) {
-          this.projectService.saveAs(path);
+          await this.projectService.saveAs(path);
         }
         break;
       case 'workspace-export-image':

@@ -6,6 +6,13 @@
 
 import { parseAbs, BlocklyAbsParser } from './absParser';
 import { getGlobalBlockMetas } from '../services/block-definition.service';
+import {
+  AILY_PROJECT_DATA_ABS_HEADER,
+  createProjectDataMarker,
+  hasAilyProjectDataAbsHeader,
+  isAilyProjectDataMarker,
+} from '../../../services/project-data/project-data.types';
+import { assertNoOversizedInlineValues } from '../../../services/project-data/project-data-policy';
 
 declare const Blockly: any;
 
@@ -31,6 +38,7 @@ export interface AbiToAbsOptions {
  * 将完整的 ABI JSON 转换为 ABS 格式
  */
 export function convertAbiToAbs(abiJson: any, options: AbiToAbsOptions = {}): string {
+  assertNoOversizedInlineValues(abiJson);
   const {
     includeHeader = true,
     indentStr = '    ',
@@ -45,6 +53,9 @@ export function convertAbiToAbs(abiJson: any, options: AbiToAbsOptions = {}): st
   if (includeHeader) {
     lines.push('# ============================================');
     lines.push('# Blockly ABS File');
+    if (isAilyProjectDataMarker(abiJson?.$ailyProjectData)) {
+      lines.push(AILY_PROJECT_DATA_ABS_HEADER);
+    }
     lines.push(`# Generated: ${new Date().toISOString()}`);
     if (explicitBlockTypes) {
       lines.push('# Mode: Explicit block types (no syntax sugar)');
@@ -102,6 +113,7 @@ export function convertAbiToAbsWithLineMap(
   abiJson: any,
   options: AbiToAbsOptions = {}
 ): { abs: string; blockLineMap: Map<string, { startLine: number; endLine: number }> } {
+  assertNoOversizedInlineValues(abiJson);
   const {
     includeHeader = true,
     indentStr = '    ',
@@ -116,6 +128,9 @@ export function convertAbiToAbsWithLineMap(
   if (includeHeader) {
     lines.push('# ============================================');
     lines.push('# Blockly ABS File');
+    if (isAilyProjectDataMarker(abiJson?.$ailyProjectData)) {
+      lines.push(AILY_PROJECT_DATA_ABS_HEADER);
+    }
     lines.push(`# Generated: ${new Date().toISOString()}`);
     if (explicitBlockTypes) {
       lines.push('# Mode: Explicit block types (no syntax sugar)');
@@ -619,7 +634,7 @@ function formatFieldValue(blockType: string, fieldName: string, value: any, cont
       const varName = context.getVariableName(value.id);
       return safeVarRef(varName);
     }
-    return null;
+    return `"@json:${escapeString(JSON.stringify(value))}"`;
   }
   
   // 字符串
@@ -1050,6 +1065,12 @@ export interface AbsToAbiResult {
  * 将 ABS 转换为 ABI JSON
  */
 export function convertAbsToAbi(abs: string): AbsToAbiResult {
+  if (!hasAilyProjectDataAbsHeader(abs)) {
+    return {
+      success: false,
+      errors: [{ line: 1, message: 'Missing Project Data Schema: 1 (external-only) header.' }],
+    };
+  }
   const parser = new BlocklyAbsParser();
   const parseResult = parser.parse(abs);
   
@@ -1063,6 +1084,7 @@ export function convertAbsToAbi(abs: string): AbsToAbiResult {
   
   // 构建 ABI JSON
   const abiJson: any = {
+    $ailyProjectData: createProjectDataMarker(),
     blocks: {
       languageVersion: 0,
       blocks: []
@@ -1095,6 +1117,16 @@ export function convertAbsToAbi(abs: string): AbsToAbiResult {
     const abiBlock = convertBlockConfigToAbi(blockConfig, 30, yPosition, variableNameToId);
     abiJson.blocks.blocks.push(abiBlock);
     yPosition += calculateBlockHeight(blockConfig) + 50;
+  }
+
+  try {
+    assertNoOversizedInlineValues(abiJson);
+  } catch (error) {
+    return {
+      success: false,
+      errors: [{ line: 1, message: error instanceof Error ? error.message : String(error) }],
+      warnings: parseResult.warnings,
+    };
   }
   
   return {

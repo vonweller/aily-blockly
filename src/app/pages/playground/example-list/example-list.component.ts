@@ -372,6 +372,7 @@ export class ExampleListComponent implements OnInit, AfterViewInit, OnDestroy {
             packageJson.cloudId = item.id;
 
             this.electronService.writeFile(packageJsonPath, JSON.stringify(packageJson, null, 2));
+            await this.projectService.initializeProjectDataSchema(actualProjectPath);
 
             if (this.params && Object.keys(this.params).length > 0) {
               const abiFilePath = `${actualProjectPath}${this.platformService.getPlatformSeparator()}project.abi`;

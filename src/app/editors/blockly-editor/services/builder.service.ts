@@ -15,6 +15,8 @@ import { BlocklyService as BlocklyService } from './blockly.service';
 
 import { PlatformService } from "../../../services/platform.service";
 import { ElectronService } from '../../../services/electron.service';
+import { projectDataRuntime } from '../../../services/project-data/project-data-runtime';
+import { writeArduinoGeneratedArtifacts } from './generated-code-artifacts';
 import { WorkflowService, ProcessState } from '../../../services/workflow.service';
 import { CompileValidationService } from '../../../services/compile-validation.service';
 import { AppDataResourceLockService } from '../../../services/appdata-resource-lock.service';
@@ -269,7 +271,7 @@ export class _BuilderService {
           return;
         }
         
-        const code = arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
+        const code = await this.generateWorkspaceCode();
         if (!code) {
           return;
         }
@@ -566,6 +568,15 @@ export class _BuilderService {
     }
   }
 
+  private async generateWorkspaceCode(): Promise<string> {
+    await projectDataRuntime.flushPending();
+    const projectDocument = this.blocklyService.getProjectDocument();
+    await projectDataRuntime.prepareValue(projectDocument);
+    const code = arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
+    await writeArduinoGeneratedArtifacts(this.projectService.currentProjectPath, arduinoGenerator);
+    return code;
+  }
+
   /**
    * 运行预编译脚本（同步等待完成）
    */
@@ -604,7 +615,7 @@ export class _BuilderService {
     const tempPath = this.electronService.pathJoin(currentProjectPath, '.temp');
     
     // 生成代码
-    const code = arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
+    const code = await this.generateWorkspaceCode();
     this.lastCode = code; // 保存代码用于后续 hash 计算
 
     // 构建配置对象
@@ -981,7 +992,7 @@ export class _BuilderService {
           console.log('发现预编译缓存，跳过预编译');
           // 即使有缓存，也需要生成代码以保存到 lastCode（用于后续 hash 计算）
           if (!this.lastCode) {
-            const code = arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
+            const code = await this.generateWorkspaceCode();
             this.lastCode = code;
           }
         }
@@ -1002,7 +1013,7 @@ export class _BuilderService {
 
         try {
           // 获取最新代码
-          const code = arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
+          const code = await this.generateWorkspaceCode();
           this.lastCode = code;
           
           const boardJson = await this.projectService.getBoardJson();

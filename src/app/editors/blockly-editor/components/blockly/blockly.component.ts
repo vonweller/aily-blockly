@@ -48,6 +48,7 @@ import { arduinoGenerator, type BlockCodeMapping } from './generators/arduino/ar
 import { micropythonGenerator } from './generators/micropython/micropython';
 import { BlocklyService, WorkspaceBlockSearchState } from '../../services/blockly.service';
 import { BitmapUploadResponse, GlobalServiceManager } from '../../services/bitmap-upload.service';
+import { projectDataRuntime } from '../../../../services/project-data/project-data-runtime';
 
 import './renderer/aily-icon';
 import './renderer/aily-thrasos/thrasos';
@@ -99,6 +100,7 @@ import { applyWindowsBlocklyScrollbarThickness } from '../../utils/apply-windows
 import { BlocklyToolboxPaneComponent } from './components/blockly-toolbox-pane/blockly-toolbox-pane.component';
 import { BlocklyWorkspacePagesComponent } from './components/blockly-workspace-pages/blockly-workspace-pages.component';
 import { CodeViewerIpcService } from '../../services/code-viewer-ipc.service';
+import { writeArduinoGeneratedArtifacts } from '../../services/generated-code-artifacts';
 
 type BlocklyWorkspaceEvent = { type?: string } | null | undefined;
 
@@ -779,6 +781,12 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
 
       // 初始化跨实例复制粘贴的全局桥接
       (window as any).__ailyClipboard = window['clipboard'] || null;
+      (window as any).__ailyProjectDataClipboard = {
+        export: (value: unknown) => projectDataRuntime.exportClipboardBundle(value),
+        import: (bundle: unknown, requiredValue: unknown) => (
+          projectDataRuntime.importClipboardBundle(bundle, requiredValue)
+        ),
+      };
       // 注册跨实例粘贴时缺失库的安装回调
       (window as any).__ailyBlockPasteNeedsInstall = (missingLibs: MissingLibInfo[]) => {
         // Filter to only installable libs (those with a name)
@@ -1655,9 +1663,14 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
     this.codeGenerationSubject.pipe(
       debounceTime(500),
       takeUntil(this.destroy$)
-    ).subscribe(() => {
+    ).subscribe(async () => {
       try {
-        const code = this.generator.workspaceToCode(this.workspace);
+          await projectDataRuntime.flushPending();
+          await projectDataRuntime.prepareValue(Blockly.serialization.workspaces.save(this.workspace));
+    const code = this.generator.workspaceToCode(this.workspace);
+    if (this.generator === arduinoGenerator) {
+      await writeArduinoGeneratedArtifacts(this.projectService.currentProjectPath, arduinoGenerator);
+    }
         this.blocklyService.publishGeneratedCode(code);
         let blockCodeMap = new Map<string, BlockCodeMapping>();
 

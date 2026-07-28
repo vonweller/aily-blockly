@@ -1,5 +1,7 @@
 ﻿import { Injectable } from '@angular/core';
 import { AilyHost } from '../core/host';
+import { projectDataRuntime } from '../../../services/project-data/project-data-runtime';
+import { writeArduinoGeneratedArtifacts } from '../../../editors/blockly-editor/services/generated-code-artifacts';
 
 // Arduino 代码检查器
 declare const arduinoGenerator: any;
@@ -198,7 +200,10 @@ export class ArduinoLintService {
   async checkCurrentWorkspace(options: LintOptions = {}): Promise<LintResult> {
     try {
       // 从 Blockly 工作区生成代码
+      await projectDataRuntime.flushPending();
+      await projectDataRuntime.prepareValue(this.blocklyService.getProjectDocument());
       const code = arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
+      await writeArduinoGeneratedArtifacts(this.currentProjectPath, arduinoGenerator);
       
       if (!code || code.trim().length === 0) {
         return {

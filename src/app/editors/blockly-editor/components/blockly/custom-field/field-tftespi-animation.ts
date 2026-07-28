@@ -1,4 +1,6 @@
 import * as Blockly from 'blockly/core';
+import { projectDataRuntime } from '../../../../../services/project-data/project-data-runtime';
+import { AilyDataRef, isAilyDataRef } from '../../../../../services/project-data/project-data.types';
 
 type AnimationMessageParams = Record<string, string | number>;
 type AnimationTranslator = (key: string, params?: AnimationMessageParams) => string;
@@ -47,6 +49,7 @@ const DEFAULT_MESSAGES: Record<string, string> = {
   ERROR_SOURCE_READ_INVALID: 'The animation source file returned invalid data',
   ERROR_SOURCE_MISSING_REDECODE: 'The animation source file is unavailable for re-conversion',
   ERROR_SOURCE_NOT_FOUND: 'Animation source not found: {{path}}',
+  ERROR_PROJECT_DATA_LOAD_FAILED: 'Animation data could not be loaded: {{message}}',
   ERROR_MD5_UNAVAILABLE: 'The file hashing API is unavailable; restart the application and try again',
   ERROR_MD5_FAILED: 'Failed to hash the source file',
   WORKER_ERROR_CREATE_CANVAS: 'Unable to create the animation conversion canvas',
@@ -63,7 +66,7 @@ const DEFAULT_MESSAGES: Record<string, string> = {
   WORKER_STATUS_PARSE_IMAGE: 'Parsing {{format}}...',
   WORKER_STATUS_DECODE_IMAGE_FRAME: 'Converting {{format}} frame {{current}}/{{total}}',
   WORKER_ERROR_IMAGE_NO_VALID_FRAMES: '{{format}} decoded successfully, but no usable frames were produced',
-  WORKER_ERROR_UNSUPPORTED_FILE_TYPE: 'Only MP4 and GIF files are supported',
+  WORKER_ERROR_UNSUPPORTED_FILE_TYPE: 'Only MP4, GIF, PNG, JPEG, and WebP files are supported',
   WORKER_ERROR_FRAME_TOO_LARGE: 'A {{width}}x{{height}} {{mode}} frame exceeds the {{maxSize}} output budget ({{size}})',
 };
 
@@ -112,20 +115,34 @@ export function setTftEsPiAnimationFieldTranslator(translator: AnimationTranslat
 applyBlocklyMessages();
 
 export type TftEsPiAnimationFormat = 'rgb565' | 'rgb332';
-export type TftEsPiAnimationEncoding = 'rgb565-be-base64' | 'rgb332-base64';
+export type TftEsPiAnimationEncoding = 'rgb565-be' | 'rgb332';
 
 export interface TftEsPiAnimationValue {
-  version: 1;
+  schemaVersion: 1;
   format: TftEsPiAnimationFormat;
   encoding: TftEsPiAnimationEncoding;
   width: number;
   height: number;
   fps: number;
   maxFrames: number;
-  frames: string[];
+  frameCount: number;
+  frames: AilyDataRef | null;
   sourceName?: string;
   sourceType?: string;
   sourcePath?: string;
+}
+
+interface DecodedTftEsPiAnimationValue {
+  schemaVersion: 1;
+  format: TftEsPiAnimationFormat;
+  encoding: TftEsPiAnimationEncoding;
+  width: number;
+  height: number;
+  fps: number;
+  maxFrames: number;
+  frames: Uint8Array[];
+  sourceName: string;
+  sourceType: string;
 }
 
 interface DecodeWorkerMessage {
@@ -134,7 +151,7 @@ interface DecodeWorkerMessage {
   message?: string;
   messageKey?: string;
   messageParams?: AnimationMessageParams;
-  result?: TftEsPiAnimationValue;
+  result?: DecodedTftEsPiAnimationValue;
 }
 
 interface AnimationDecodeSource {
@@ -160,6 +177,7 @@ export interface FieldTftEsPiAnimationFromJsonConfig extends Blockly.FieldConfig
   maxFrames?: number;
   format?: TftEsPiAnimationFormat;
   fieldHeight?: number;
+  imageMode?: boolean;
 }
 
 const DEFAULT_WIDTH = 160;
@@ -201,7 +219,11 @@ function normalizeAnimationFormat(value: unknown, fallback = DEFAULT_FORMAT): Tf
 }
 
 function getAnimationEncoding(format: TftEsPiAnimationFormat): TftEsPiAnimationEncoding {
-  return format === 'rgb332' ? 'rgb332-base64' : 'rgb565-be-base64';
+  return format === 'rgb332' ? 'rgb332' : 'rgb565-be';
+}
+
+function getAnimationCodec(format: TftEsPiAnimationFormat) {
+  return format === 'rgb332' ? 'tft-rgb332-frames-v1' : 'tft-rgb565-be-frames-v1';
 }
 
 function getBytesPerPixel(format: TftEsPiAnimationFormat) {
@@ -214,8 +236,7 @@ function getFrameByteLength(width: number, height: number, format: TftEsPiAnimat
 
 function getMaxFramesForDimensions(width: number, height: number, format: TftEsPiAnimationFormat) {
   const frameBytes = getFrameByteLength(width, height, format);
-  const encodedFrameBytes = Math.ceil(frameBytes / 3) * 4 + 3;
-  return Math.max(1, Math.min(MAX_FRAMES, Math.floor((MAX_OUTPUT_BYTES - 1024) / encodedFrameBytes)));
+  return Math.max(1, Math.min(MAX_FRAMES, Math.floor(MAX_OUTPUT_BYTES / frameBytes)));
 }
 
 export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> {
@@ -226,6 +247,7 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
   private maxFrames = DEFAULT_MAX_FRAMES;
   private pixelFormat = DEFAULT_FORMAT;
   private readonly fieldHeight: number;
+  private readonly imageMode: boolean;
   private blockDisplayImage: SVGImageElement | null = null;
   private blockPreviewDataUrl = '';
   private statusElement: HTMLElement | null = null;
@@ -250,6 +272,9 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
   private uploadRequestId = 0;
   private applyingDecodedValue = false;
   private isDisposed = false;
+  private resolvedFrames: Uint8Array[] = [];
+  private resolvedFrameRefId = '';
+  private loadingFrames: Promise<Uint8Array[]> | null = null;
 
   constructor(
     value: TftEsPiAnimationValue | typeof Blockly.Field.SKIP_SETUP,
@@ -259,6 +284,7 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
     super(value, validator, config);
     this.SERIALIZABLE = true;
     this.fieldHeight = config?.fieldHeight ?? DEFAULT_FIELD_HEIGHT;
+    this.imageMode = config?.imageMode === true;
 
     const normalized = this.normalizeValue(
       value === Blockly.Field.SKIP_SETUP ? config?.value : value,
@@ -288,9 +314,15 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
       this.clearSourceRedecodeTimer();
       this.invalidateDecodeOperations();
     }
+    const nextRefId = newValue.frames?.$ailyData.id || '';
+    if (nextRefId !== this.resolvedFrameRefId) {
+      this.resolvedFrames = [];
+      this.resolvedFrameRefId = '';
+      this.loadingFrames = null;
+    }
     this.value_ = this.cloneValue(newValue);
     this.syncSettings(newValue);
-    this.currentFrame = Math.min(this.currentFrame, Math.max(0, newValue.frames.length - 1));
+    this.currentFrame = Math.min(this.currentFrame, Math.max(0, newValue.frameCount - 1));
     this.blockPreviewDataUrl = '';
     this.updateSize_();
     this.updateBlockDisplayImage();
@@ -299,11 +331,16 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
     this.updateStatusFromValue();
   }
 
+  override saveState(_doFullSerialization?: boolean): TftEsPiAnimationValue {
+    return this.cloneValue(this.getValue());
+  }
+
   protected override showEditor_() {
     const editor = this.createDropdownEditor();
     Blockly.DropDownDiv.getContentDiv().appendChild(editor);
     Blockly.DropDownDiv.getContentDiv().classList.add('contains-tftespi-animation-editor');
     Blockly.DropDownDiv.showPositionedByField(this, this.disposeDropdown.bind(this));
+    void this.ensureFramesLoaded().catch((error) => this.reportProjectDataLoadError(error));
   }
 
   override initView() {
@@ -378,13 +415,19 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
     this.maxFramesInput = this.createNumberInput(
       this.maxFrames,
       1,
-      getMaxFramesForDimensions(this.imgWidth, this.imgHeight, this.pixelFormat),
+      this.getMaxFramesLimit(this.imgWidth, this.imgHeight, this.pixelFormat),
     );
     settings.append(
       this.createNumberControl(Blockly.Msg['TFTESPI_ANIMATION_LABEL_WIDTH'], this.widthInput),
       this.createNumberControl(Blockly.Msg['TFTESPI_ANIMATION_LABEL_HEIGHT'], this.heightInput),
-      this.createNumberControl(Blockly.Msg['TFTESPI_ANIMATION_LABEL_FPS'], this.fpsInput),
-      this.createNumberControl(Blockly.Msg['TFTESPI_ANIMATION_LABEL_MAX_FRAMES'], this.maxFramesInput),
+    );
+    if (!this.imageMode) {
+      settings.append(
+        this.createNumberControl(Blockly.Msg['TFTESPI_ANIMATION_LABEL_FPS'], this.fpsInput),
+        this.createNumberControl(Blockly.Msg['TFTESPI_ANIMATION_LABEL_MAX_FRAMES'], this.maxFramesInput),
+      );
+    }
+    settings.append(
       this.createNumberControl(Blockly.Msg['TFTESPI_ANIMATION_LABEL_COLOR_MODE'], this.formatSelect),
     );
     for (const input of [this.widthInput, this.heightInput, this.fpsInput, this.maxFramesInput]) {
@@ -398,7 +441,9 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
     const actions = this.createElement('div', 'tftEsPiAnimationActions');
     this.fileInput = document.createElement('input');
     this.fileInput.type = 'file';
-    this.fileInput.accept = 'video/mp4,image/gif,.mp4,.gif';
+    this.fileInput.accept = this.imageMode
+      ? 'image/png,image/jpeg,image/webp,image/gif,.png,.jpg,.jpeg,.webp,.gif'
+      : 'video/mp4,image/gif,.mp4,.gif';
     this.fileInput.hidden = true;
     this.fileInput.addEventListener('change', () => void this.onFileSelected());
     actions.appendChild(this.fileInput);
@@ -406,7 +451,9 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
       this.createButton(
         Blockly.Msg['TFTESPI_ANIMATION_BUTTON_UPLOAD'],
         () => this.fileInput?.click(),
-        Blockly.Msg['TFTESPI_ANIMATION_UPLOAD_TOOLTIP'],
+        this.imageMode
+          ? 'PNG / JPEG / WebP / GIF'
+          : Blockly.Msg['TFTESPI_ANIMATION_UPLOAD_TOOLTIP'],
       ),
       this.createButton(
         Blockly.Msg['TFTESPI_ANIMATION_BUTTON_CLEAR'],
@@ -535,12 +582,12 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
     const height = this.clampInput(this.heightInput, current.height, 1, MAX_HEIGHT);
     const fps = this.clampInput(this.fpsInput, current.fps, 1, MAX_FPS);
     const format = normalizeAnimationFormat(this.formatSelect?.value, current.format);
-    const maxAllowedFrames = getMaxFramesForDimensions(width, height, format);
+    const maxAllowedFrames = this.getMaxFramesLimit(width, height, format);
     if (this.maxFramesInput) this.maxFramesInput.max = String(maxAllowedFrames);
     const maxFrames = this.clampInput(this.maxFramesInput, current.maxFrames, 1, maxAllowedFrames);
     const dimensionsChanged = width !== current.width || height !== current.height;
     const formatChanged = format !== current.format;
-    const requiresRedecode = dimensionsChanged || formatChanged;
+    const requiresRedecode = dimensionsChanged || formatChanged || maxFrames < current.frameCount;
     const settingsChanged = requiresRedecode || fps !== current.fps || maxFrames !== current.maxFrames;
     if (!settingsChanged) return;
 
@@ -552,9 +599,8 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
       maxFrames,
       format,
       encoding: getAnimationEncoding(format),
-      frames: requiresRedecode
-        ? []
-        : current.frames.slice(0, maxFrames),
+      frameCount: requiresRedecode ? 0 : current.frameCount,
+      frames: requiresRedecode ? null : current.frames,
     };
     this.setValue(nextValue, !this.isDropdownOpen());
     if (nextValue.sourcePath) this.scheduleRedecodeFromSource();
@@ -638,7 +684,7 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
       await new Promise<void>((resolve, reject) => {
         task = { worker, requestId, reject };
         this.activeDecodeTask = task;
-        worker.onmessage = (event: MessageEvent<DecodeWorkerMessage>) => {
+        worker.onmessage = async (event: MessageEvent<DecodeWorkerMessage>) => {
           const message = event.data;
           if (!message || message.requestId !== requestId || this.activeDecodeTask !== task) return;
           if (message.type === 'progress') {
@@ -653,24 +699,29 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
               reject(new Error(translateMessage('ERROR_DECODE_FAILED')));
               return;
             }
-            const result: TftEsPiAnimationValue = {
-              ...message.result,
-              sourceName: source.fileName,
-              sourceType: source.mimeType || message.result.sourceType,
-              sourcePath: source.sourcePath,
-            };
-            if (this.isDecodeVersionCurrent(expectedVersion)) {
-              this.currentFrame = 0;
-              this.applyingDecodedValue = true;
-              try {
-                this.setValue(result, !this.isDropdownOpen());
-                this.updateStatusFromValue();
-              } finally {
-                this.applyingDecodedValue = false;
+            try {
+              const result = await this.persistDecodedFrames(message.result, {
+                sourceName: source.fileName,
+                sourceType: source.mimeType || message.result.sourceType,
+                sourcePath: source.sourcePath,
+              });
+              if (this.isDecodeVersionCurrent(expectedVersion)) {
+                this.currentFrame = 0;
+                this.applyingDecodedValue = true;
+                try {
+                  this.setValue(result.value, !this.isDropdownOpen());
+                  this.setResolvedFrames(result.value.frames, result.frames);
+                  this.refreshResolvedFrames();
+                } finally {
+                  this.applyingDecodedValue = false;
+                }
               }
+              this.activeDecodeTask = null;
+              resolve();
+            } catch (error) {
+              this.activeDecodeTask = null;
+              reject(error instanceof Error ? error : new Error(String(error)));
             }
-            this.activeDecodeTask = null;
-            resolve();
             return;
           }
           if (message.type === 'error') {
@@ -710,6 +761,43 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
       if (this.activeDecodeTask === task) this.activeDecodeTask = null;
       worker.terminate();
     }
+  }
+
+  private async persistDecodedFrames(
+    decoded: DecodedTftEsPiAnimationValue,
+    source: Pick<TftEsPiAnimationValue, 'sourceName' | 'sourceType' | 'sourcePath'>,
+  ): Promise<{ value: TftEsPiAnimationValue; frames: Uint8Array[] }> {
+    const frameByteLength = getFrameByteLength(decoded.width, decoded.height, decoded.format);
+    const frames = decoded.frames.slice(0, decoded.maxFrames);
+    if (frames.length === 0 || frames.some((frame) => (
+      !(frame instanceof Uint8Array) || frame.byteLength !== frameByteLength
+    ))) {
+      throw new Error(translateMessage('ERROR_DECODE_FAILED'));
+    }
+
+    const packedFrames = new Uint8Array(frameByteLength * frames.length);
+    frames.forEach((frame, index) => packedFrames.set(frame, index * frameByteLength));
+    const ref = await projectDataRuntime.put({
+      codec: getAnimationCodec(decoded.format),
+      storage: 'raw-v1',
+      value: packedFrames,
+    });
+
+    return {
+      value: {
+        schemaVersion: 1,
+        format: decoded.format,
+        encoding: getAnimationEncoding(decoded.format),
+        width: decoded.width,
+        height: decoded.height,
+        fps: decoded.fps,
+        maxFrames: decoded.maxFrames,
+        frameCount: frames.length,
+        frames: ref,
+        ...source,
+      },
+      frames,
+    };
   }
 
   private scheduleRedecodeFromSource() {
@@ -849,9 +937,60 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
     return null;
   }
 
+  async ensureFramesLoaded(): Promise<Uint8Array[]> {
+    const value = this.getValue();
+    const ref = value.frames;
+    if (!ref || value.frameCount === 0) {
+      this.setResolvedFrames(null, []);
+      return [];
+    }
+    const refId = ref.$ailyData.id;
+    if (this.resolvedFrameRefId === refId && this.resolvedFrames.length === value.frameCount) {
+      return this.resolvedFrames;
+    }
+    if (this.loadingFrames) return this.loadingFrames;
+
+    const loading = projectDataRuntime.resolve<Uint8Array>(ref).then((packedFrames) => {
+      const current = this.getValue();
+      if (current.frames?.$ailyData.id !== refId) return [];
+      const frameByteLength = getFrameByteLength(current.width, current.height, current.format);
+      const expectedLength = frameByteLength * current.frameCount;
+      if (!(packedFrames instanceof Uint8Array) || packedFrames.byteLength !== expectedLength) {
+        throw new Error(`expected ${expectedLength} bytes, received ${packedFrames.byteLength}`);
+      }
+      const frames = Array.from({ length: current.frameCount }, (_, index) => (
+        packedFrames.subarray(index * frameByteLength, (index + 1) * frameByteLength)
+      ));
+      this.setResolvedFrames(ref, frames);
+      this.refreshResolvedFrames();
+      return frames;
+    }).finally(() => {
+      if (this.loadingFrames === loading) this.loadingFrames = null;
+    });
+    this.loadingFrames = loading;
+    return loading;
+  }
+
+  private setResolvedFrames(ref: AilyDataRef | null, frames: Uint8Array[]) {
+    this.resolvedFrameRefId = ref?.$ailyData.id || '';
+    this.resolvedFrames = frames;
+  }
+
+  private refreshResolvedFrames() {
+    this.blockPreviewDataUrl = '';
+    this.renderPreviewFrame(this.currentFrame);
+    this.updateBlockDisplayImage();
+    this.updateStatusFromValue();
+  }
+
+  private reportProjectDataLoadError(error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    this.setStatus(translateMessage('ERROR_PROJECT_DATA_LOAD_FAILED', { message }), true);
+  }
+
   private renderPreviewFrame(frameIndex: number) {
     const value = this.getValue();
-    const frames = value?.frames || [];
+    const frames = this.resolvedFrames;
     if (frames.length === 0) {
       this.currentFrame = 0;
       if (this.previewCanvas) this.drawEmptyCanvas(this.previewCanvas, value.width, value.height);
@@ -879,12 +1018,11 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
 
   private drawFrameToCanvas(
     canvas: HTMLCanvasElement,
-    encodedFrame: string,
+    bytes: Uint8Array,
     width: number,
     height: number,
     format: TftEsPiAnimationFormat,
   ) {
-    const bytes = base64ToBytes(encodedFrame);
     if (bytes.length !== getFrameByteLength(width, height, format)) return;
     canvas.width = width;
     canvas.height = height;
@@ -923,8 +1061,8 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
     if (!this.blockPreviewDataUrl) {
       const value = this.getValue();
       const canvas = document.createElement('canvas');
-      if (value.frames.length > 0) {
-        this.drawFrameToCanvas(canvas, value.frames[0], value.width, value.height, value.format);
+      if (this.resolvedFrames.length > 0) {
+        this.drawFrameToCanvas(canvas, this.resolvedFrames[0], value.width, value.height, value.format);
       } else {
         this.drawEmptyCanvas(canvas, value.width, value.height);
       }
@@ -940,13 +1078,13 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
 
   private startPreview() {
     const value = this.getValue();
-    if (value.frames.length <= 1) return;
+    if (this.resolvedFrames.length <= 1) return;
     this.stopPreview(false);
     this.playActive = true;
     const tick = () => {
       if (!this.playActive) return;
       const current = this.getValue();
-      this.renderPreviewFrame((this.currentFrame + 1) % current.frames.length);
+      this.renderPreviewFrame((this.currentFrame + 1) % this.resolvedFrames.length);
       this.playTimer = setTimeout(tick, Math.max(1, Math.round(1000 / Math.max(1, current.fps))));
     };
     this.playTimer = setTimeout(tick, Math.max(1, Math.round(1000 / value.fps)));
@@ -967,7 +1105,7 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
     const label = this.playActive
       ? Blockly.Msg['TFTESPI_ANIMATION_BUTTON_STOP_PLAY_TEST']
       : Blockly.Msg['TFTESPI_ANIMATION_BUTTON_PLAY_TEST'];
-    this.playButton.disabled = value.frames.length <= 1;
+    this.playButton.disabled = this.resolvedFrames.length <= 1;
     this.playButton.title = this.playActive
       ? Blockly.Msg['TFTESPI_ANIMATION_BUTTON_STOP_PLAY_TEST']
       : Blockly.Msg['TFTESPI_ANIMATION_PLAY_TEST_TOOLTIP'];
@@ -985,7 +1123,7 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
     if (this.fpsInput) this.fpsInput.value = String(value.fps);
     if (this.formatSelect) this.formatSelect.value = value.format;
     if (this.maxFramesInput) {
-      this.maxFramesInput.max = String(getMaxFramesForDimensions(value.width, value.height, value.format));
+      this.maxFramesInput.max = String(this.getMaxFramesLimit(value.width, value.height, value.format));
       this.maxFramesInput.value = String(value.maxFrames);
     }
     this.renderPreviewFrame(this.currentFrame);
@@ -994,15 +1132,15 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
   private updateStatusFromValue() {
     if (!this.statusElement) return;
     const value = this.getValue();
-    const message = value.sourceName || value.frames.length > 1
+    const message = value.sourceName || value.frameCount > 1
       ? translateMessage('STATUS_INFO', {
         sourcePrefix: value.sourceName ? `${value.sourceName} | ` : '',
-        frames: value.frames.length,
+        frames: value.frameCount,
         width: value.width,
         height: value.height,
         fps: value.fps,
         mode: value.format.toUpperCase(),
-        dataSize: this.formatDataSize(getFrameByteLength(value.width, value.height, value.format) * value.frames.length),
+        dataSize: this.formatDataSize(getFrameByteLength(value.width, value.height, value.format) * value.frameCount),
       })
       : Blockly.Msg['TFTESPI_ANIMATION_EMPTY'];
     this.setStatus(message);
@@ -1044,19 +1182,20 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
     const format = normalizeAnimationFormat(config?.format);
     const maxFrames = this.normalizeNumber(
       config?.maxFrames,
-      DEFAULT_MAX_FRAMES,
+      this.imageMode ? 1 : DEFAULT_MAX_FRAMES,
       1,
-      getMaxFramesForDimensions(width, height, format),
+      this.getMaxFramesLimit(width, height, format),
     );
     return {
-      version: 1,
+      schemaVersion: 1,
       format,
       encoding: getAnimationEncoding(format),
       width,
       height,
       fps,
       maxFrames,
-      frames: [],
+      frameCount: 0,
+      frames: null,
     };
   }
 
@@ -1066,7 +1205,7 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
   ): TftEsPiAnimationValue {
     const fallback = this.createEmptyValue(config);
     if (!value || typeof value !== 'object') return fallback;
-    if (value.version !== 1 || (value.format !== 'rgb565' && value.format !== 'rgb332')) {
+    if (value.schemaVersion !== 1 || (value.format !== 'rgb565' && value.format !== 'rgb332')) {
       return fallback;
     }
     const format = value.format;
@@ -1080,26 +1219,27 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
       value.maxFrames,
       fallback.maxFrames,
       1,
-      getMaxFramesForDimensions(width, height, format),
+      this.getMaxFramesLimit(width, height, format),
     );
-    const expectedBase64Length = Math.ceil(getFrameByteLength(width, height, format) / 3) * 4;
-    const frames = Array.isArray(value.frames)
+    let frameCount = this.normalizeNumber(value.frameCount, 0, 0, maxFrames);
+    const expectedRawLength = getFrameByteLength(width, height, format) * frameCount;
+    const frames = frameCount > 0
+      && isAilyDataRef(value.frames)
+      && value.frames.$ailyData.logicalType === 'binary'
+      && value.frames.$ailyData.codec === getAnimationCodec(format)
+      && value.frames.$ailyData.rawLength === expectedRawLength
       ? value.frames
-        .filter((frame): frame is string => (
-          typeof frame === 'string'
-          && frame.length === expectedBase64Length
-          && /^[A-Za-z0-9+/]*={0,2}$/.test(frame)
-        ))
-        .slice(0, maxFrames)
-      : [];
+      : null;
+    if (!frames) frameCount = 0;
     return {
-      version: 1,
+      schemaVersion: 1,
       format,
       encoding: getAnimationEncoding(format),
       width,
       height,
       fps,
       maxFrames,
+      frameCount,
       frames,
       sourceName: value.sourceName,
       sourceType: value.sourceType,
@@ -1112,9 +1252,18 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
     return Number.isFinite(parsed) ? Math.min(max, Math.max(min, Math.floor(parsed))) : fallback;
   }
 
+  private getMaxFramesLimit(width: number, height: number, format: TftEsPiAnimationFormat) {
+    return this.imageMode ? 1 : getMaxFramesForDimensions(width, height, format);
+  }
+
   private cloneValue(value: TftEsPiAnimationValue | null) {
     const normalized = this.normalizeValue(value);
-    return { ...normalized, frames: [...normalized.frames] };
+    return {
+      ...normalized,
+      frames: normalized.frames
+        ? { $ailyData: { ...normalized.frames.$ailyData } }
+        : null,
+    };
   }
 
   private syncSettings(value: TftEsPiAnimationValue) {
@@ -1191,16 +1340,34 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
   private isSupportedSource(fileName: string, mimeType: string) {
     const lowerName = fileName.toLowerCase();
     const lowerType = (mimeType || '').toLowerCase();
+    if (this.imageMode) {
+      return ['.gif', '.png', '.jpg', '.jpeg', '.webp'].some(extension => lowerName.endsWith(extension))
+        || ['gif', 'png', 'jpeg', 'jpg', 'webp'].some(type => lowerType.includes(type));
+    }
     return lowerName.endsWith('.gif') || lowerName.endsWith('.mp4')
       || lowerType.includes('gif') || lowerType.includes('mp4');
   }
 
   private inferMimeType(fileName: string) {
-    return fileName.toLowerCase().endsWith('.gif') ? 'image/gif' : 'video/mp4';
+    const extension = this.getPathExtension(fileName).toLowerCase();
+    if (extension === '.gif') return 'image/gif';
+    if (extension === '.png') return 'image/png';
+    if (extension === '.jpg' || extension === '.jpeg') return 'image/jpeg';
+    if (extension === '.webp') return 'image/webp';
+    return 'video/mp4';
   }
 
   private getSourceExtension(fileName: string, mimeType: string) {
     const extension = this.getPathExtension(fileName).toLowerCase();
+    if (this.imageMode) {
+      if (['.gif', '.png', '.jpg', '.jpeg', '.webp'].includes(extension)) return extension;
+      const lowerType = mimeType.toLowerCase();
+      if (lowerType.includes('gif')) return '.gif';
+      if (lowerType.includes('png')) return '.png';
+      if (lowerType.includes('jpeg') || lowerType.includes('jpg')) return '.jpg';
+      if (lowerType.includes('webp')) return '.webp';
+      throw new Error(translateMessage('WORKER_ERROR_UNSUPPORTED_FILE_TYPE'));
+    }
     if (extension === '.gif' || extension === '.mp4') return extension;
     return mimeType.toLowerCase().includes('gif') ? '.gif' : '.mp4';
   }
@@ -1239,6 +1406,7 @@ export class FieldTftEsPiAnimation extends Blockly.Field<TftEsPiAnimationValue> 
 }
 
 Blockly.fieldRegistry.register('field_tftespi_animation', FieldTftEsPiAnimation);
+Blockly.fieldRegistry.register('field_tftespi_image', FieldTftEsPiAnimation);
 
 Blockly.Css.register(`
 .tftEsPiAnimationEditor {
