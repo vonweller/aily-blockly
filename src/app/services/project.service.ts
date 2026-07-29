@@ -687,7 +687,12 @@ export class ProjectService {
       .map((item) => item.name);
     const loadedLibraryNames = Array.from(blocklyService.loadedLibraryInfos.values())
       .map((item) => item.packageName);
-    const normalizedLibraryNames = [...new Set(libraryNames)].sort((a, b) => a.localeCompare(b));
+    // getAllInstalledLibraries() already returns the toolbox's canonical order
+    // (core libraries first). Keep that order for the runtime rebuild; sorting
+    // here made the remaining libraries jump to plain alphabetical order after
+    // an uninstall.
+    const orderedLibraryNames = [...new Set(libraryNames)];
+    const normalizedLibraryNames = [...orderedLibraryNames].sort((a, b) => a.localeCompare(b));
     const normalizedLoadedLibraryNames = [...new Set(loadedLibraryNames)].sort((a, b) => a.localeCompare(b));
     if (
       this.blocklyLibraryRuntimePackageSignatures.get(projectPath) === packageContent
@@ -703,7 +708,7 @@ export class ProjectService {
     await blocklyService.rebuildLibraryRuntimeInPlace({
       projectPath,
       packageJson,
-      libraryNames: normalizedLibraryNames,
+      libraryNames: orderedLibraryNames,
       projectService: this,
     });
     return true;
