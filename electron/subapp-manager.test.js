@@ -7,6 +7,8 @@ const test = require('node:test');
 const {
   TOOL_ID_ALIASES,
   createSubappManager,
+  prepareNpmSpawn,
+  quoteWindowsShellPath,
   resolveSubappRoot,
   validateIndex,
 } = require('./subapp-manager');
@@ -43,6 +45,66 @@ test('resolves the required user npm-global/app installation root', () => {
   );
 });
 
+test('quotes Windows npm paths that contain spaces for shell:true', (t) => {
+  assert.equal(
+    quoteWindowsShellPath('D:\\Program Files\\Aily\\node\\npm.cmd'),
+    '"D:\\Program Files\\Aily\\node\\npm.cmd"',
+  );
+
+  const spawnSpec = prepareNpmSpawn(
+    ['install', '--prefix', 'D:\\Program Files\\aily-project\\npm-global\\app', 'pkg@1.0.0'],
+    {
+      platform: 'win32',
+      env: { AILY_CHILD_PATH: '' },
+    },
+  );
+
+  assert.equal(spawnSpec.shell, true);
+  assert.equal(spawnSpec.command, '"npm.cmd"');
+  assert.deepEqual(spawnSpec.args, [
+    'install',
+    '--prefix',
+    '"D:\\Program Files\\aily-project\\npm-global\\app"',
+    'pkg@1.0.0',
+  ]);
+
+  const childRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'aily Program Files-'));
+  const bundledNpm = path.join(childRoot, 'node', 'npm.cmd');
+  t.after(() => fs.rmSync(childRoot, { recursive: true, force: true }));
+  fs.mkdirSync(path.dirname(bundledNpm), { recursive: true });
+  fs.writeFileSync(bundledNpm, '@echo off\r\n');
+
+  const bundledSpawn = prepareNpmSpawn(
+    ['install', '--prefix', path.join(childRoot, 'npm-global', 'app'), 'pkg@1.0.0'],
+    {
+      platform: 'win32',
+      env: { AILY_CHILD_PATH: childRoot },
+    },
+  );
+
+  assert.equal(bundledSpawn.command, quoteWindowsShellPath(bundledNpm));
+  assert.match(bundledSpawn.command, /^".*Program Files.*npm\.cmd"$/);
+});
+
+test('does not quote npm spawn args on non-Windows platforms', () => {
+  const spawnSpec = prepareNpmSpawn(
+    ['install', '--prefix', '/Users/test/Library/aily-project/npm-global/app', 'pkg@1.0.0'],
+    {
+      platform: 'darwin',
+      env: { AILY_CHILD_PATH: '' },
+    },
+  );
+
+  assert.equal(spawnSpec.shell, false);
+  assert.equal(spawnSpec.command, 'npm');
+  assert.deepEqual(spawnSpec.args, [
+    'install',
+    '--prefix',
+    '/Users/test/Library/aily-project/npm-global/app',
+    'pkg@1.0.0',
+  ]);
+});
+
 test('routes the installed Simulator package through its dedicated host', () => {
   assert.equal(TOOL_ID_ALIASES['aily-simulator'], 'simulator');
 });
@@ -51,6 +113,66 @@ test('rejects package targets that are not safe npm package names', () => {
   const index = fixtureIndex();
   index['aily-chat'].package = 'file:../../tmp/app';
   assert.throws(() => validateIndex(index), /Invalid subapp package/);
+});
+
+test('omits disabled catalog entries from the subapp list', async (t) => {
+  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'aily-subapp-disabled-'));
+  const installRoot = path.join(fixtureRoot, 'npm-global', 'app');
+  t.after(() => fs.rmSync(fixtureRoot, { recursive: true, force: true }));
+
+  const index = {
+    ...fixtureIndex(),
+    'ble-debugger': {
+      id: 'ble-debugger',
+      titleKey: 'BLE_DEBUGGER.TITLE',
+      namespace: 'BLE_DEBUGGER',
+      app: {
+        name: 'BLE_DEBUGGER.TITLE',
+        description: 'BLE_DEBUGGER.DESCRIPTION',
+        icon: 'fa-light fa-bluetooth',
+        enabled: false,
+      },
+      package: '@aily-project/subapp-ble-debugger',
+      version: '0.1.0',
+      i18n: {
+        defaultLocale: 'en',
+        locales: {
+          en: { TITLE: 'BLE Debugger', DESCRIPTION: 'BLE tools' },
+        },
+      },
+    },
+    'hidden-enable': {
+      id: 'hidden-enable',
+      titleKey: 'HIDDEN.TITLE',
+      namespace: 'HIDDEN',
+      app: {
+        name: 'HIDDEN.TITLE',
+        description: 'HIDDEN.DESCRIPTION',
+        enable: false,
+      },
+      package: '@aily-project/subapp-hidden-enable',
+      version: '0.1.0',
+      i18n: {
+        defaultLocale: 'en',
+        locales: {
+          en: { TITLE: 'Hidden', DESCRIPTION: 'Hidden by enable flag' },
+        },
+      },
+    },
+  };
+
+  assert.equal(validateIndex(index)['ble-debugger'].app.enabled, false);
+  assert.equal(validateIndex(index)['hidden-enable'].app.enabled, false);
+
+  const manager = createSubappManager({
+    rootDir: installRoot,
+    fetchImpl: async () => ({
+      ok: true,
+      text: async () => JSON.stringify(index),
+    }),
+  });
+  const state = await manager.list({ locale: 'en', refresh: true });
+  assert.deepEqual(state.apps.map((app) => app.id), ['aily-chat']);
 });
 
 test('treats an npm-linked source package as an installed subapp', async (t) => {

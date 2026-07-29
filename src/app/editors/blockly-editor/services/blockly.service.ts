@@ -16,6 +16,12 @@ import { convertBlockTreeToAbs, convertAbiToAbsWithLineMap } from '../../../tool
 import { BlockSearcher } from '../components/blockly/plugins/toolbox-search/src/block_searcher';
 import { dragSelectionWeakMap } from '../components/blockly/plugins/workspace-multiselect/index.js';
 import { exportWorkspaceToSvg } from './workspace-svg-exporter';
+import { createProjectDataMarker, isAilyProjectDataMarker } from '../../../services/project-data/project-data.types';
+import {
+  decorateLibraryBlockDefinitionForProjectData,
+  unregisterProjectDataFieldSlots,
+  wrapProjectDataGeneratorFunctions,
+} from '../../../services/project-data/blockly-project-data-adapter';
 import { BlocklyGeneratorRuntimeService } from './blockly-generator-runtime.service';
 
 export interface BlockContextLabel {
@@ -61,6 +67,7 @@ export interface BlocklyToolboxFacadeItem {
   libraryName?: string | null;
   libraryPath?: string | null;
   isLocalLibrary?: boolean;
+  libraryLoadFailed?: boolean;
   parentKey: string | null;
   level: number;
   expanded: boolean;
@@ -777,7 +784,7 @@ export class BlocklyService {
   }
 
   loadAbiJson(jsonData) {
-    const document = this.normalizeProjectDocument(jsonData);
+    const document = this.normalizeProjectAbiForLoad(jsonData);
     this.loadProjectDocument(document, false);
   }
 
@@ -795,6 +802,9 @@ export class BlocklyService {
   }
 
   normalizeProjectAbiForLoad(jsonData: any): BlocklyProjectDocument {
+    if (!isAilyProjectDataMarker(jsonData?.$ailyProjectData)) {
+      throw new Error('Unsupported project.abi: missing $ailyProjectData external-only schema marker.');
+    }
     return this.normalizeProjectDocument(jsonData, false);
   }
 
@@ -919,11 +929,13 @@ export class BlocklyService {
   }
 
   getProjectAbiForSave(document = this.getProjectDocument()): any {
-    if (document.pages.length === 1) {
-      return this.composeWorkspacePayload(document.pages[0].content, document.sharedModel);
-    }
-
-    return document;
+    const payload = document.pages.length === 1
+      ? this.composeWorkspacePayload(document.pages[0].content, document.sharedModel)
+      : document;
+    return {
+      ...payload,
+      $ailyProjectData: createProjectDataMarker(),
+    };
   }
 
   getProjectUsedLibraryManifest(packageJson?: any, document = this.getProjectDocument()): BlocklyUsedLibraryManifest {
@@ -1060,11 +1072,59 @@ export class BlocklyService {
     }
   }
 
+  async retryLibrary(libPackageName: string, projectPath: string): Promise<boolean> {
+    const libPackagePath = this.blocklyLibraryPackageService.getPackagePath(projectPath, libPackageName);
+    try {
+      await this.loadLibrary(libPackageName, projectPath);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error || '未知错误');
+      this.noticeService.update({
+        title: `库加载失败：${libPackageName}`,
+        text: errorMessage,
+        detail: errorMessage,
+        state: 'error',
+        showProgress: false,
+        setTimeout: 10000,
+      });
+      return false;
+    }
+
+    const librarySnapshot = this.blocklyLibraryPackageService.readLibraryPackage(projectPath, libPackageName);
+    const displayName = this.getLibraryToolboxDisplayName(librarySnapshot, libPackageName);
+    if (this.loadedLibraries.has(libPackagePath)) {
+      this.noticeService.update({
+        title: '库加载成功',
+        text: displayName,
+        state: 'done',
+        showProgress: false,
+        setTimeout: 3000,
+      });
+      return true;
+    }
+
+    const diagnostics = this.blocklyLibraryPackageService.validateLibraryPackage(librarySnapshot, libPackageName);
+    const errors = diagnostics.errors.length > 0
+      ? diagnostics.errors
+      : [`${displayName} 运行时加载失败，请检查 generator.js 是否能正常执行。`];
+    const detail = errors.map((error) => `- ${error}`).join('\n');
+    this.noticeService.update({
+      title: `库加载失败：${displayName}`,
+      text: errors[0],
+      detail,
+      state: 'error',
+      showProgress: false,
+      setTimeout: 10000,
+    });
+    return false;
+  }
+
   private async loadLibraryInternal(libPackageName: string, projectPath: string, libPackagePath: string): Promise<void> {
     const librarySnapshot = this.blocklyLibraryPackageService.readLibraryPackage(projectPath, libPackageName);
+    const libLocalPath = this.resolveLibraryLocalPath(projectPath, libPackageName);
     // 检查库的完整性
     const integrityCheck = this.checkLibraryIntegrity(librarySnapshot, libPackageName);
     if (!integrityCheck.valid) {
+      this.loadFailedLibraryToolbox(librarySnapshot, libPackageName, libPackagePath, !!libLocalPath);
       return;
     }
 
@@ -1097,16 +1157,6 @@ export class BlocklyService {
             throw new Error(`[loadLibrary] generator.js 加载失败: ${libPackageName}`);
           }
         }
-        // 检测是否为本地库（项目 package.json 中 dependencies 版本以 "file:" 开头）
-        let libLocalPath: string | undefined;
-        try {
-          const projPkgJsonPath = this.electronService.pathJoin(projectPath, 'package.json');
-          if (this.electronService.exists(projPkgJsonPath)) {
-            const projPkgJson = JSON.parse(this.electronService.readFile(projPkgJsonPath));
-            const depVersion = this.getPackageDependencySpec(projPkgJson, libPackageName);
-            libLocalPath = this.resolveFileDependencyPath(projectPath, depVersion);
-          }
-        } catch (e) { }
         // 替换block中静态图片路径
         const staticFileIsExist = this.electronService.exists(this.electronService.pathJoin(libPackagePath, 'static'));
         this.loadLibBlocks(blocks, staticFileIsExist ? this.electronService.pathJoin(libPackagePath, 'static') : null, libPackageName, libVersion, libLocalPath);
@@ -1229,6 +1279,54 @@ export class BlocklyService {
     }
   }
 
+  private loadFailedLibraryToolbox(
+    snapshot: BlocklyLibraryPackageSnapshot,
+    libraryName: string,
+    libraryPath: string,
+    isLocalLibrary: boolean,
+  ): void {
+    const toolboxIcon = typeof snapshot.toolboxRoot?.icon === 'string' && snapshot.toolboxRoot.icon.trim()
+      ? snapshot.toolboxRoot.icon
+      : 'fa-light fa-cube';
+    const placeholder = {
+      kind: 'category',
+      name: this.getLibraryToolboxDisplayName(snapshot, libraryName),
+      icon: toolboxIcon,
+      contents: [],
+    };
+
+    this.attachLibraryMetadataToToolbox(placeholder, libraryName, libraryPath, isLocalLibrary, true);
+    this.loadLibToolbox(placeholder);
+  }
+
+  private getLibraryToolboxDisplayName(snapshot: BlocklyLibraryPackageSnapshot, libraryName: string): string {
+    const toolboxName = typeof snapshot.toolboxRoot?.name === 'string'
+      ? snapshot.toolboxRoot.name.trim()
+      : '';
+    const packageNickname = typeof snapshot.packageJson?.nickname === 'string'
+      ? snapshot.packageJson.nickname.trim()
+      : '';
+    const packageName = typeof snapshot.packageJson?.name === 'string'
+      ? snapshot.packageJson.name.trim()
+      : '';
+    return toolboxName || packageNickname || packageName || libraryName;
+  }
+
+  private resolveLibraryLocalPath(projectPath: string, libraryName: string): string | undefined {
+    try {
+      const projectPackageJsonPath = this.electronService.pathJoin(projectPath, 'package.json');
+      if (!this.electronService.exists(projectPackageJsonPath)) {
+        return undefined;
+      }
+
+      const projectPackageJson = JSON.parse(this.electronService.readFile(projectPackageJsonPath));
+      const dependencySpec = this.getPackageDependencySpec(projectPackageJson, libraryName);
+      return this.resolveFileDependencyPath(projectPath, dependencySpec);
+    } catch {
+      return undefined;
+    }
+  }
+
   loadLibBlocks(blocks, libStaticPath, libPackageName = '', libVersion = '', libLocalPath?: string) {
     for (let index = 0; index < blocks.length; index++) {
       let block = blocks[index];
@@ -1246,6 +1344,11 @@ export class BlocklyService {
       if (libStaticPath) {
         block = processStaticFilePath(block, libStaticPath);
       }
+      block = decorateLibraryBlockDefinitionForProjectData(
+        block,
+        libPackageName,
+        (key) => this.translateService.instant(key),
+      );
       Blockly.defineBlocksWithJsonArray([block]);
     }
   }
@@ -1267,10 +1370,15 @@ export class BlocklyService {
     // 检查是否已存在相同的toolboxItem
     const existingIndex = this.findToolboxItemIndex(toolboxItem);
     if (existingIndex !== -1) {
-      return;
+      const existingItem = this.toolbox.contents[existingIndex];
+      if ((existingItem as any)?.ailyLibraryLoadFailed !== true) {
+        return;
+      }
+      this.toolbox.contents.splice(existingIndex, 1, toolboxItem);
+    } else {
+      this.toolbox.contents.push(toolboxItem);
     }
 
-    this.toolbox.contents.push(toolboxItem);
     this.ensureToolboxItemIds(this.toolbox.contents);
     this.applyToolboxSortOrderToContents(this.toolbox.contents);
     if (!this.rebuildingLibraryRuntime) {
@@ -1315,6 +1423,7 @@ export class BlocklyService {
   }
 
   private clearLoadedLibraryStateForRuntimeRebuild(): void {
+    unregisterProjectDataFieldSlots(Array.from(this.blockTypeToLibMap.keys()));
     this.iconsMap.clear();
     this.blockDefinitionsMap.clear();
     this.loadedGenerators.clear();
@@ -1438,7 +1547,13 @@ export class BlocklyService {
     }
   }
 
-  private attachLibraryMetadataToToolbox(toolboxItem: any, libraryName: string, libraryPath: string, isLocalLibrary: boolean) {
+  private attachLibraryMetadataToToolbox(
+    toolboxItem: any,
+    libraryName: string,
+    libraryPath: string,
+    isLocalLibrary: boolean,
+    libraryLoadFailed = false,
+  ) {
     if (!toolboxItem || typeof toolboxItem !== 'object') {
       return;
     }
@@ -1447,10 +1562,17 @@ export class BlocklyService {
       toolboxItem.ailyLibraryName = libraryName;
       toolboxItem.ailyLibraryPath = libraryPath;
       toolboxItem.ailyIsLocalLibrary = isLocalLibrary;
+      toolboxItem.ailyLibraryLoadFailed = libraryLoadFailed;
     }
 
     if (Array.isArray(toolboxItem.contents)) {
-      toolboxItem.contents.forEach((child: any) => this.attachLibraryMetadataToToolbox(child, libraryName, libraryPath, isLocalLibrary));
+      toolboxItem.contents.forEach((child: any) => this.attachLibraryMetadataToToolbox(
+        child,
+        libraryName,
+        libraryPath,
+        isLocalLibrary,
+        libraryLoadFailed,
+      ));
     }
   }
 
@@ -1505,6 +1627,10 @@ export class BlocklyService {
       const registered = result.arduinoBlockTypes.length > 0
         ? result.arduinoBlockTypes
         : result.micropythonBlockTypes;
+      wrapProjectDataGeneratorFunctions(
+        this.generatorRuntime.getActiveGenerator(),
+        registered,
+      );
       this.loadedGenerators.set(filePath, new Set(registered));
       return Promise.resolve(true);
     } catch (error) {
@@ -1516,6 +1642,12 @@ export class BlocklyService {
 
   // 查找toolbox项在contents数组中的索引
   findToolboxItemIndex(toolboxItem) {
+    if (toolboxItem?.ailyLibraryPath) {
+      return this.toolbox.contents.findIndex((item) =>
+        (item as any)?.ailyLibraryPath === toolboxItem.ailyLibraryPath,
+      );
+    }
+
     for (let i = 0; i < this.toolbox.contents.length; i++) {
       const item = this.toolbox.contents[i];
       // 使用name、categoryId等属性进行匹配
@@ -1537,6 +1669,7 @@ export class BlocklyService {
     }
     this.generatorRuntime.destroy();
 
+    unregisterProjectDataFieldSlots(Array.from(this.blockTypeToLibMap.keys()));
     this.iconsMap.clear();
     this.blockDefinitionsMap.clear();
     this.loadedGenerators.clear();
@@ -1773,6 +1906,7 @@ export class BlocklyService {
       libraryName: item.ailyLibraryName || null,
       libraryPath: item.ailyLibraryPath || null,
       isLocalLibrary: item.ailyIsLocalLibrary === true,
+      libraryLoadFailed: item.ailyLibraryLoadFailed === true,
       parentKey,
       level,
       expanded: this.normalizeToolboxExpandedState(item.expanded, false),

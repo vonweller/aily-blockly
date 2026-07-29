@@ -2329,20 +2329,14 @@ function loadEnv() {
   // 同一应用版本复用现有工具；两个 npm 全局安装串行执行。
   runInstallEnv(childPath);
   const appVersion = app.getVersion();
-  const preserveDevelopmentTools = (
-    process.env.AILY_E2E === '1'
-    || process.env.DEV === 'true'
-    || process.env.AILY_USE_LOCAL_BUILDER === '1'
-  );
-  const installLatest = (
-    !preserveDevelopmentTools
-    && shouldInstallForAppVersion(userConf, appVersion)
-  );
-  if (preserveDevelopmentTools) {
-    console.log(
-      'development/E2E mode preserves the configured aily-builder '
-      + 'and aily-linter installations',
-    );
+  const isE2E = process.env.AILY_E2E === "1";
+  const allowE2ERefresh = process.env.AILY_E2E_ALLOW_TOOL_REFRESH === "1";
+  const installLatest = shouldInstallForAppVersion(userConf, appVersion, {
+    isE2E,
+    allowE2ERefresh,
+  });
+  if (isE2E && !allowE2ERefresh) {
+    console.log("E2E mode: skipping automatic aily-builder and aily-linter latest refresh");
   }
   if (installLatest) {
     try {
@@ -3689,6 +3683,18 @@ ipcMain.handle("fs-stat", async (_event, filePath) => {
     birthtime: s.birthtime.toISOString(),
     _isDirectory: s.isDirectory(),
     _isFile: s.isFile(),
+  };
+});
+
+ipcMain.handle("fs-lstat", async (_event, filePath) => {
+  const s = await fsPromises.lstat(filePath);
+  return {
+    size: s.size,
+    mtime: s.mtime.toISOString(),
+    birthtime: s.birthtime.toISOString(),
+    _isDirectory: s.isDirectory(),
+    _isFile: s.isFile(),
+    _isSymbolicLink: s.isSymbolicLink(),
   };
 });
 

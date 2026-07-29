@@ -15,11 +15,16 @@ import { ActionService } from "../../../services/action.service";
 import {
   normalizeArduinoGeneratedCode,
 } from "../components/blockly/generators/arduino/arduino";
-import { generateCodeWithActiveProjectGenerator } from './blockly-generator-runtime.service';
+import {
+  generateCodeWithActiveProjectGenerator,
+  getActiveProjectGenerator,
+} from './blockly-generator-runtime.service';
 import { BlocklyService } from "./blockly.service";
 import { WorkflowService, ProcessState } from '../../../services/workflow.service';
 import { BleOtaProgress, UploaderBleService } from '../../../services/uploader-ble.service';
 import { AppDataResourceLockService } from '../../../services/appdata-resource-lock.service';
+import { prepareBlocklyProjectDataForCodeGeneration } from '../../../services/project-data/blockly-project-data-adapter';
+import { writeArduinoGeneratedArtifacts } from './generated-code-artifacts';
 import { appendProjectLog, type ProjectLogLevel } from '../../../utils/project-log.utils';
 import {
   resolveUploadRecoveryPolicy,
@@ -247,6 +252,10 @@ export class _UploaderService {
     return weightedProgress;
   }
 
+  private isUploadErrorLine(line: string): boolean {
+    return /error\s*:|\bfailed\b|\bfatal\b[^\r\n]*\berror\b|\berror\b[^\r\n]*\bfatal\b|can't open device|could not open port/i.test(line);
+  }
+
   private calculateEsp32FlashProgress(state: Esp32UploadProgressState, rawProgress: number): number {
     const regionProgress = this.clampProgress(rawProgress);
 
@@ -302,7 +311,7 @@ export class _UploaderService {
     this.processExitCode = null; // 重置进程退出码
     this.uploadInProgress = true; // 立即设置为true，使取消功能生效
     let resourceRecovery: UploadRecoveryPolicy | undefined;
-  
+
     return new Promise<UploadActionState>(async (resolve, reject) => {
       // 保存 reject 函数，以便 cancel() 方法可以立即中断
       this.uploadPromiseReject = reject;
@@ -369,7 +378,15 @@ export class _UploaderService {
         }
 
         // 第一步：检查是否需要编译
+        await prepareBlocklyProjectDataForCodeGeneration(
+          this.blocklyService.workspace,
+          this.blocklyService.getProjectDocument(),
+        );
         const code = normalizeArduinoGeneratedCode(generateCodeWithActiveProjectGenerator(this.blocklyService.workspace));
+        await writeArduinoGeneratedArtifacts(
+          this.projectService.currentProjectPath,
+          getActiveProjectGenerator(),
+        );
         const buildPath = await this.projectService.getBuildPath();
         const needsBuild = !this._builderService.passed || 
                           code !== this._builderService.lastCode || 
@@ -629,6 +646,20 @@ export class _UploaderService {
             this.streamId = output.streamId;
 
             if (output.type === 'close') {
+              const trailingLine = bufferData.trim();
+              if (trailingLine) {
+                errorText = trailingLine;
+                if (this.isUploadErrorLine(trailingLine)) {
+                  fullErrorText += trailingLine + '\n';
+                  this.handleUploadError(trailingLine, this.uploadT('FAILED_TITLE'), fullErrorText);
+                }
+                this.logService.update({
+                  detail: trailingLine,
+                  state: this.isErrored ? 'error' : undefined
+                });
+                bufferData = '';
+              }
+
               this.processExitCode = output.code ?? (output.signal ? 1 : 0);
 
               if (!this.cancelled && this.processExitCode !== 0) {
@@ -685,10 +716,7 @@ export class _UploaderService {
                     errorText = trimmedLine;
 
                     // 检查是否有错误信息
-                    if (trimmedLine.toLowerCase().includes('error:') ||
-                      trimmedLine.toLowerCase().includes('failed') ||
-                      trimmedLine.toLowerCase().includes('a fatal error occurred') ||
-                      trimmedLine.toLowerCase().includes("can't open device")) {
+                    if (this.isUploadErrorLine(trimmedLine)) {
                       fullErrorText += trimmedLine + '\n';
                       this.handleUploadError(trimmedLine, this.uploadT('FAILED_TITLE'), fullErrorText);
                     }

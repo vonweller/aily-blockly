@@ -54,6 +54,13 @@ function normalizeLocale(value) {
   return String(value || 'en').trim().toLowerCase().replace(/-/g, '_');
 }
 
+function resolveEnabledFlag(...candidates) {
+  for (const value of candidates) {
+    if (typeof value === 'boolean') return value;
+  }
+  return true;
+}
+
 function validateId(value) {
   const id = requireText(value, 'subapp id');
   if (!/^[a-z0-9][a-z0-9-]{0,99}$/.test(id)) {
@@ -109,7 +116,12 @@ function validateIndex(rawIndex) {
         icon: typeof app.icon === 'string' && app.icon.trim()
           ? app.icon.trim()
           : 'fa-light fa-puzzle-piece',
-        enabled: app.enabled !== false,
+        enabled: resolveEnabledFlag(
+          app.enabled,
+          app.enable,
+          rawEntry.enabled,
+          rawEntry.enable,
+        ),
       },
       i18n: {
         defaultLocale,
@@ -581,40 +593,42 @@ function createCatalogState(rootDir, index, locale, meta = {}) {
     fetchedAt: meta.fetchedAt || new Date().toISOString(),
     warning: meta.warning || null,
     installRoot: rootDir,
-    apps: Object.values(index).map((entry) => {
-      const installedState = readInstalledState(rootDir, entry);
-      const copy = resolveLocalizedCopy(entry, locale);
-      const toolId = TOOL_ID_ALIASES[entry.id] || entry.id;
-      const localizedConfig = installedState.config
-        ? {
-            ...installedState.config,
-            app: {
-              ...installedState.config.app,
-              name: copy.name,
-              description: copy.description,
-            },
-          }
-        : null;
-      return {
-        id: entry.id,
-        toolId,
-        packageName: entry.package,
-        availableVersion: entry.version,
-        installedVersion: installedState.installedVersion,
-        installed: installedState.installed,
-        updateAvailable: installedState.installed
-          && hasUpdate(installedState.installedVersion, entry.version),
-        installPath: installedState.packagePath,
-        titleKey: entry.titleKey,
-        namespace: entry.namespace,
-        name: copy.name,
-        description: copy.description,
-        icon: entry.app.icon,
-        enabled: entry.app.enabled,
-        config: localizedConfig,
-        ...(installedState.installError ? { installError: installedState.installError } : {}),
-      };
-    }),
+    apps: Object.values(index)
+      .filter((entry) => entry.app.enabled !== false)
+      .map((entry) => {
+        const installedState = readInstalledState(rootDir, entry);
+        const copy = resolveLocalizedCopy(entry, locale);
+        const toolId = TOOL_ID_ALIASES[entry.id] || entry.id;
+        const localizedConfig = installedState.config
+          ? {
+              ...installedState.config,
+              app: {
+                ...installedState.config.app,
+                name: copy.name,
+                description: copy.description,
+              },
+            }
+          : null;
+        return {
+          id: entry.id,
+          toolId,
+          packageName: entry.package,
+          availableVersion: entry.version,
+          installedVersion: installedState.installedVersion,
+          installed: installedState.installed,
+          updateAvailable: installedState.installed
+            && hasUpdate(installedState.installedVersion, entry.version),
+          installPath: installedState.packagePath,
+          titleKey: entry.titleKey,
+          namespace: entry.namespace,
+          name: copy.name,
+          description: copy.description,
+          icon: entry.app.icon,
+          enabled: true,
+          config: localizedConfig,
+          ...(installedState.installError ? { installError: installedState.installError } : {}),
+        };
+      }),
   };
 }
 
@@ -640,13 +654,37 @@ function npmExecutable(env = process.env, platform = process.platform) {
   return childPath && fs.existsSync(bundled) ? bundled : (platform === 'win32' ? 'npm.cmd' : 'npm');
 }
 
+// Windows + shell:true 时，带空格路径（如 D:\Program Files\...）必须加引号，
+// 否则 cmd 会在空格处截断，表现为 'D:\Program' 不是内部或外部命令。
+function quoteWindowsShellPath(filePath) {
+  return `"${String(filePath).replace(/"/g, '""')}"`;
+}
+
+function prepareNpmSpawn(args, options = {}) {
+  const platform = options.platform || process.platform;
+  const command = npmExecutable(options.env, platform);
+  if (platform !== 'win32') {
+    return { command, args, shell: false };
+  }
+  return {
+    command: quoteWindowsShellPath(command),
+    args: args.map((arg) => {
+      const value = String(arg);
+      if (value.includes(' ') && !value.startsWith('"') && !value.startsWith("'")) {
+        return quoteWindowsShellPath(value);
+      }
+      return value;
+    }),
+    shell: true,
+  };
+}
+
 function runNpm(args, options = {}) {
   return new Promise((resolve, reject) => {
-    const platform = options.platform || process.platform;
-    const command = npmExecutable(options.env, platform);
-    const child = spawn(command, args, {
+    const { command, args: spawnArgs, shell } = prepareNpmSpawn(args, options);
+    const child = spawn(command, spawnArgs, {
       env: { ...process.env, ...(options.env || {}) },
-      shell: platform === 'win32',
+      shell,
       windowsHide: true,
     });
     let stdout = '';
@@ -807,6 +845,9 @@ function createSubappManager(options = {}) {
       const id = validateId(payload.id);
       const entry = index[id];
       if (!entry) throw new Error(`Subapp is not present in the remote index: ${id}`);
+      if (entry.app.enabled === false && action !== 'uninstall') {
+        throw new Error(`Subapp is disabled in the remote index: ${id}`);
+      }
       ensureInstallProject(rootDir);
 
       if (action === 'uninstall') {
@@ -862,6 +903,8 @@ module.exports = {
   createCatalogState,
   createSubappManager,
   packagePathFor,
+  prepareNpmSpawn,
+  quoteWindowsShellPath,
   registerSubappManagerHandlers,
   resolveSubappRoot,
   validateIndex,
