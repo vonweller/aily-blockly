@@ -171,7 +171,9 @@ export class CloudSpaceComponent {
         res.data.list.forEach(prj => {
           // 图片url
           let imageUrl = '';
-          if (prj.image_url) {
+          if (prj.image_cdn_url) {
+            imageUrl = prj.image_cdn_url;
+          } else if (prj.image_url) {
             const timestamp = new Date().getTime();
             const separator = prj.image_url.includes('?') ? '&' : '?';
             imageUrl = this.cloudService.baseUrl + prj.image_url + separator + 't=' + timestamp;
