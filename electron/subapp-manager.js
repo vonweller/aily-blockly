@@ -179,6 +179,44 @@ function optionalBoundedInteger(value, label, min, max) {
   return number;
 }
 
+function readRuntimeResourceLifecycleConfig(declaredRuntime) {
+  const declared = declaredRuntime?.resourceLifecycle;
+  if (declared === undefined) return null;
+  if (!isObject(declared)) {
+    throw new Error('ailySubapp.runtime.resourceLifecycle must be an object');
+  }
+  if (!Array.isArray(declared.resources) || declared.resources.length === 0) {
+    throw new Error('ailySubapp.runtime.resourceLifecycle.resources must be a non-empty array');
+  }
+  const resources = [...new Set(declared.resources.map((value, index) => {
+    const resource = requireText(value, `ailySubapp.runtime.resourceLifecycle.resources[${index}]`);
+    if (!/^[a-z][a-z0-9._-]{0,63}$/.test(resource)) {
+      throw new Error(`Invalid Subapp Runtime resource kind: ${resource}`);
+    }
+    return resource;
+  }))];
+  const suspendMethod = requireText(
+    declared.suspendMethod,
+    'ailySubapp.runtime.resourceLifecycle.suspendMethod',
+  );
+  const resumeMethod = requireText(
+    declared.resumeMethod,
+    'ailySubapp.runtime.resourceLifecycle.resumeMethod',
+  );
+  const timeoutMs = optionalBoundedInteger(
+    declared.timeoutMs,
+    'ailySubapp.runtime.resourceLifecycle.timeoutMs',
+    100,
+    10 * 60 * 1000,
+  );
+  return {
+    resources,
+    suspendMethod,
+    resumeMethod,
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+  };
+}
+
 function validateUiSurfaceName(value, label) {
   const name = requireText(value, label);
   if (!/^[a-z][a-z0-9_-]{0,63}$/.test(name)) {
@@ -463,6 +501,7 @@ function readInstalledState(rootDir, entry) {
       STARTUP_TIMEOUTS[toolId] || 0,
       2 * 60 * 1000,
     );
+    const resourceLifecycle = readRuntimeResourceLifecycleConfig(declaredRuntime);
     let agent = null;
     let agentError = '';
     try {
@@ -487,6 +526,7 @@ function readInstalledState(rootDir, entry) {
         uiIndex,
         routePath: `/child-tool/${toolId}`,
         ...(startupTimeoutMs ? { startupTimeoutMs } : {}),
+        ...(resourceLifecycle ? { runtime: { resourceLifecycle } } : {}),
         ...(ui ? { ui } : {}),
         ...(agent ? { agent } : {}),
         app: {

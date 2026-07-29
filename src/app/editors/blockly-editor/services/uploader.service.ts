@@ -21,6 +21,10 @@ import { WorkflowService, ProcessState } from '../../../services/workflow.servic
 import { BleOtaProgress, UploaderBleService } from '../../../services/uploader-ble.service';
 import { AppDataResourceLockService } from '../../../services/appdata-resource-lock.service';
 import { appendProjectLog, type ProjectLogLevel } from '../../../utils/project-log.utils';
+import {
+  resolveUploadRecoveryPolicy,
+  type UploadRecoveryPolicy,
+} from '../../../services/upload-recovery-policy';
 
 interface NetworkOtaUploadTarget {
   id?: string;
@@ -40,6 +44,10 @@ interface Esp32UploadProgressState {
   completedFiles: number;
   eraseRegionSizes: number[];
   currentFileBytes: number;
+}
+
+interface UploadActionState extends ActionState {
+  resourceRecovery?: UploadRecoveryPolicy;
 }
 
 function mapLogStateToLevel(state?: string): ProjectLogLevel {
@@ -291,14 +299,15 @@ export class _UploaderService {
     this._builderService.isUploading = false;
   }
 
-  async upload(): Promise<ActionState> {
+  async upload(): Promise<UploadActionState> {
     this.isErrored = false;
     this.cancelled = false;
     this.uploadCompleted = false;
     this.processExitCode = null; // 重置进程退出码
     this.uploadInProgress = true; // 立即设置为true，使取消功能生效
+    let resourceRecovery: UploadRecoveryPolicy | undefined;
   
-    return new Promise<ActionState>(async (resolve, reject) => {
+    return new Promise<UploadActionState>(async (resolve, reject) => {
       // 保存 reject 函数，以便 cancel() 方法可以立即中断
       this.uploadPromiseReject = reject;
       
@@ -492,6 +501,16 @@ export class _UploaderService {
         const wait_for_upload = isDebuggerUpload
           ? false
           : !!(flags['wait_for_upload_port'] || flags['wait_for_upload']);
+        const cdcOnBoot = !isDebuggerUpload
+          && await this.projectService.isCdcOnBootEnabledForProject(boardJson);
+        resourceRecovery = resolveUploadRecoveryPolicy({
+          boardJson,
+          boardModule,
+          uploadParam: cleanParam,
+          use1200bpsTouch: use_1200bps_touch,
+          waitForUploadPort: wait_for_upload,
+          cdcOnBoot,
+        });
 
         console.log('提取的上传标志:', flags);
         console.log('清理后的上传参数:', cleanParam);
@@ -866,7 +885,11 @@ export class _UploaderService {
             this.handleUploadError(error.message || this.uploadT('PROCESS_ERROR'), this.uploadT('FAILED_TITLE'), fullErrorMessage);
             this.workflowService.finishUpload(false, error.message || 'Upload error');
             this.uploadPromiseReject = null;
-            reject({ state: 'error', text: error.message || this.uploadT('FAILED_TITLE') });
+            reject({
+              state: 'error',
+              text: error.message || this.uploadT('FAILED_TITLE'),
+              ...(resourceRecovery ? { resourceRecovery } : {}),
+            });
           },
           complete: () => {
             if (syntheticProgressTimer) { clearInterval(syntheticProgressTimer); syntheticProgressTimer = null; }
@@ -909,7 +932,11 @@ export class _UploaderService {
               this._builderService.isUploading = false;
               this.workflowService.finishUpload(false, 'Cancelled');
               this.uploadPromiseReject = null;
-              reject({ state: 'warn', text: this.uploadT('CANCELLED') });
+              reject({
+                state: 'warn',
+                text: this.uploadT('CANCELLED'),
+                ...(resourceRecovery ? { resourceRecovery } : {}),
+              });
             } else if (this.isErrored) {
               console.log("上传命令完成 - 发生错误");
               console.log("[Uploader][DIAG] errorText =", errorText);
@@ -918,7 +945,11 @@ export class _UploaderService {
               this.handleUploadError(this.uploadT('PROCESS_ERROR'), this.uploadT('FAILED_TITLE'), fullErrorText || errorText || this.uploadT('PROCESS_ERROR'));
               this.workflowService.finishUpload(false, errorText);
               this.uploadPromiseReject = null;
-              reject({ state: 'error', text: errorText || this.uploadT('PROCESS_ERROR') });
+              reject({
+                state: 'error',
+                text: errorText || this.uploadT('PROCESS_ERROR'),
+                ...(resourceRecovery ? { resourceRecovery } : {}),
+              });
             } else if (this.uploadCompleted) {
               console.log("上传完成");
               // 安全更新UI
@@ -933,7 +964,11 @@ export class _UploaderService {
               this._builderService.isUploading = false;
               this.workflowService.finishUpload(true);
               this.uploadPromiseReject = null;
-              resolve({ state: 'done', text: this.uploadT('COMPLETE_TEXT') });
+              resolve({
+                state: 'done',
+                text: this.uploadT('COMPLETE_TEXT'),
+                ...(resourceRecovery ? { resourceRecovery } : {}),
+              });
             } else {
               // 这个分支理论上不应该被触发，因为上面已经处理了正常结束的情况
               // 但作为兜底逻辑保留
@@ -949,7 +984,11 @@ export class _UploaderService {
               this._builderService.isUploading = false;
               this.workflowService.finishUpload(false, 'Upload incomplete');
               this.uploadPromiseReject = null;
-              reject({ state: 'error', text: this.uploadT('INCOMPLETE_CHECK_LOG') });
+              reject({
+                state: 'error',
+                text: this.uploadT('INCOMPLETE_CHECK_LOG'),
+                ...(resourceRecovery ? { resourceRecovery } : {}),
+              });
             }
           }
         });
@@ -960,7 +999,11 @@ export class _UploaderService {
         this.handleUploadError(error.message || this.uploadT('FAILED_TITLE'), this.uploadT('FAILED_TITLE'), fullErrorMessage);
         this.workflowService.finishUpload(false, error.message || 'Upload failed');
         this.uploadPromiseReject = null;
-        reject({ state: 'error', text: error.message || this.uploadT('FAILED_TITLE') });
+        reject({
+          state: 'error',
+          text: error.message || this.uploadT('FAILED_TITLE'),
+          ...(resourceRecovery ? { resourceRecovery } : {}),
+        });
       }
     });
   }

@@ -124,6 +124,7 @@ import { RepetitionDetectionService } from './services/repetition-detection.serv
 import { ChatHistoryService } from './services/chat-history.service';
 import { ChatDebugBrowserService, ChatDebugBrowserViewState } from './services/chat-debug-browser.service';
 import { ChatRuntimeInteractionHostService } from './services/chat-runtime-interaction-host.service';
+import { ChatRuntimeOwnerToolApprovalService } from './services/chat-runtime-owner-tool-approval.service';
 import { ChatRemoteCapabilityService } from './services/chat-remote-capability.service';
 import { ThemeService } from '../../services/theme.service';
 import { ToolI18nService } from '../../services/tool-i18n.service';
@@ -392,6 +393,7 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
     private themeService: ThemeService,
     private toolI18n: ToolI18nService,
     private hostInitializer: AilyChatHostInitializerService,
+    private runtimeOwnerToolApproval: ChatRuntimeOwnerToolApprovalService,
     public runtimeInteractionHost: ChatRuntimeInteractionHostService,
     public remoteCapability: ChatRemoteCapabilityService,
     public engine: ChatEngineService,
@@ -418,6 +420,14 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
     exposeAilyChatE2eHarness({
       engine: this.engine,
       viewState: this.viewState,
+      openEmbeddedTool: (toolId) => this.uiService.openToolEmbedded(toolId),
+      closeTool: (toolId) => this.uiService.closeTool(toolId),
+      requestToolApproval: (sessionId, request) => this.runtimeOwnerToolApproval.handleToolApproval({
+        lexStream: this.engine.lexStream,
+        sessionId,
+        defaultSessionId: sessionId,
+        request,
+      }),
       readRenderingDiagnostics: () => this.readRenderingDiagnostics(),
       readPerformanceDiagnostics: () => ({
         ...ChatPerformanceTracer.snapshotPerformanceState(),
