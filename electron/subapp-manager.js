@@ -756,7 +756,114 @@ function packageInstallArgs(rootDir, entry) {
   ];
 }
 
-async function replaceInstalledPackage(rootDir, entry, npmRunner, options) {
+function sleep(ms, sleepImpl = globalThis.setTimeout) {
+  return new Promise((resolve) => sleepImpl(resolve, ms));
+}
+
+function isBusyRenameError(error) {
+  if (!error) return false;
+  if (error.code === 'EBUSY' || error.errno === -4082) return true;
+  const text = error.message || String(error);
+  return /\bEBUSY\b/i.test(text) && /\brename\b/i.test(text);
+}
+
+function formatBusyRenameError(packagePath, cause) {
+  const detail = packagePath ? `\n被占用目录: ${packagePath}` : '';
+  const error = new Error(
+    `子应用目录正在被占用，无法卸载/更新。请确认已关闭该子应用后重试。${detail}`,
+  );
+  error.code = 'EBUSY';
+  error.cause = cause;
+  return error;
+}
+
+async function renameWithBusyRetry(src, dest, options = {}) {
+  const retries = Number.isInteger(options.retries) ? options.retries : 4;
+  const baseDelayMs = Number.isFinite(options.baseDelayMs) ? options.baseDelayMs : 500;
+  const sleepImpl = options.sleep || sleep;
+  let lastError;
+  for (let attempt = 1; attempt <= retries + 1; attempt++) {
+    try {
+      fs.renameSync(src, dest);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt <= retries && isBusyRenameError(error)) {
+        await sleepImpl(baseDelayMs * attempt);
+        continue;
+      }
+      throw isBusyRenameError(error) ? formatBusyRenameError(src, error) : error;
+    }
+  }
+  throw formatBusyRenameError(src, lastError);
+}
+
+async function runNpmWithBusyRetry(npmRunner, args, options = {}, retryOptions = {}) {
+  const retries = Number.isInteger(retryOptions.retries) ? retryOptions.retries : 3;
+  const baseDelayMs = Number.isFinite(retryOptions.baseDelayMs) ? retryOptions.baseDelayMs : 1000;
+  const sleepImpl = retryOptions.sleep || options.sleep || sleep;
+  let lastError;
+  for (let attempt = 1; attempt <= retries + 1; attempt++) {
+    try {
+      return await npmRunner(args, options);
+    } catch (error) {
+      lastError = error;
+      if (attempt <= retries && isBusyRenameError(error)) {
+        console.warn(`[subapp-manager] npm ${args[0]} hit EBUSY, retry ${attempt}/${retries}`);
+        await sleepImpl(baseDelayMs * attempt);
+        continue;
+      }
+      throw isBusyRenameError(error)
+        ? formatBusyRenameError(retryOptions.packagePath, error)
+        : error;
+    }
+  }
+  throw formatBusyRenameError(retryOptions.packagePath, lastError);
+}
+
+async function uninstallInstalledPackage(rootDir, entry, npmRunner, options = {}) {
+  const packagePath = packagePathFor(rootDir, entry.package);
+  let stagingRoot = null;
+
+  try {
+    // Windows 上 npm uninstall 会 rename 包目录；若 Runtime/杀毒仍占着文件会 EBUSY。
+    // 先自行挪走目录（带重试），再让 npm 只更新 package.json / lock。
+    if (fs.existsSync(packagePath)) {
+      stagingRoot = fs.mkdtempSync(path.join(rootDir, '.subapp-uninstall-'));
+      await renameWithBusyRetry(
+        packagePath,
+        path.join(stagingRoot, 'package'),
+        {
+          retries: options.renameRetries,
+          baseDelayMs: options.renameRetryDelayMs,
+          sleep: options.sleep,
+        },
+      );
+    }
+
+    await runNpmWithBusyRetry(
+      npmRunner,
+      ['uninstall', '--prefix', rootDir, '--no-audit', '--no-fund', entry.package],
+      options,
+      {
+        retries: options.npmBusyRetries,
+        baseDelayMs: options.npmBusyRetryDelayMs,
+        sleep: options.sleep,
+        packagePath,
+      },
+    );
+  } finally {
+    if (stagingRoot && fs.existsSync(stagingRoot)) {
+      try {
+        fs.rmSync(stagingRoot, { recursive: true, force: true });
+      } catch (error) {
+        console.warn('[subapp-manager] failed to cleanup uninstall staging:', error.message || error);
+      }
+    }
+  }
+}
+
+async function replaceInstalledPackage(rootDir, entry, npmRunner, options = {}) {
   const packagePath = packagePathFor(rootDir, entry.package);
   const backupRoot = fs.mkdtempSync(path.join(rootDir, '.subapp-update-'));
   const backupPath = path.join(backupRoot, 'package');
@@ -768,11 +875,25 @@ async function replaceInstalledPackage(rootDir, entry, npmRunner, options) {
 
   try {
     if (fs.existsSync(packagePath)) {
-      fs.renameSync(packagePath, backupPath);
+      await renameWithBusyRetry(packagePath, backupPath, {
+        retries: options.renameRetries,
+        baseDelayMs: options.renameRetryDelayMs,
+        sleep: options.sleep,
+      });
       backedUp = true;
     }
 
-    await npmRunner(packageInstallArgs(rootDir, entry), options);
+    await runNpmWithBusyRetry(
+      npmRunner,
+      packageInstallArgs(rootDir, entry),
+      options,
+      {
+        retries: options.npmBusyRetries,
+        baseDelayMs: options.npmBusyRetryDelayMs,
+        sleep: options.sleep,
+        packagePath,
+      },
+    );
     const installedState = readInstalledState(rootDir, entry);
     if (!installedState.installed || installedState.installedVersion !== entry.version) {
       throw new Error(
@@ -787,7 +908,11 @@ async function replaceInstalledPackage(rootDir, entry, npmRunner, options) {
     }
     if (backedUp && fs.existsSync(backupPath)) {
       fs.mkdirSync(path.dirname(packagePath), { recursive: true });
-      fs.renameSync(backupPath, packagePath);
+      await renameWithBusyRetry(backupPath, packagePath, {
+        retries: options.renameRetries,
+        baseDelayMs: options.renameRetryDelayMs,
+        sleep: options.sleep,
+      });
     }
     restoreFile(packageJsonPath, packageJsonSnapshot);
     restoreFile(packageLockPath, packageLockSnapshot);
@@ -851,13 +976,21 @@ function createSubappManager(options = {}) {
       ensureInstallProject(rootDir);
 
       if (action === 'uninstall') {
-        await (options.runNpm || runNpm)([
-          'uninstall', '--prefix', rootDir, '--no-audit', '--no-fund', entry.package,
-        ], options);
+        await uninstallInstalledPackage(rootDir, entry, options.runNpm || runNpm, options);
       } else if (action === 'update') {
         await replaceInstalledPackage(rootDir, entry, options.runNpm || runNpm, options);
       } else {
-        await (options.runNpm || runNpm)(packageInstallArgs(rootDir, entry), options);
+        await runNpmWithBusyRetry(
+          options.runNpm || runNpm,
+          packageInstallArgs(rootDir, entry),
+          options,
+          {
+            retries: options.npmBusyRetries,
+            baseDelayMs: options.npmBusyRetryDelayMs,
+            sleep: options.sleep,
+            packagePath: packagePathFor(rootDir, entry.package),
+          },
+        );
       }
       return list({ locale: payload.locale || 'en' });
     });
@@ -902,10 +1035,12 @@ module.exports = {
   TOOL_ID_ALIASES,
   createCatalogState,
   createSubappManager,
+  isBusyRenameError,
   packagePathFor,
   prepareNpmSpawn,
   quoteWindowsShellPath,
   registerSubappManagerHandlers,
+  renameWithBusyRetry,
   resolveSubappRoot,
   validateIndex,
 };

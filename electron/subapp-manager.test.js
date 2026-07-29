@@ -7,8 +7,10 @@ const test = require('node:test');
 const {
   TOOL_ID_ALIASES,
   createSubappManager,
+  isBusyRenameError,
   prepareNpmSpawn,
   quoteWindowsShellPath,
+  renameWithBusyRetry,
   resolveSubappRoot,
   validateIndex,
 } = require('./subapp-manager');
@@ -497,4 +499,106 @@ test('update restores the previous package when the replacement cannot be verifi
   );
   assert.equal(JSON.parse(fs.readFileSync(path.join(packageDir, 'package.json'), 'utf8')).version, '0.1.0');
   assert.equal(fs.readFileSync(path.join(packageDir, 'index.js'), 'utf8'), 'old runtime');
+});
+
+test('isBusyRenameError detects npm and fs EBUSY rename failures', () => {
+  assert.equal(
+    isBusyRenameError(new Error("npm error EBUSY: resource busy or locked, rename 'a' -> 'b'")),
+    true,
+  );
+  assert.equal(isBusyRenameError(Object.assign(new Error('locked'), { code: 'EBUSY' })), true);
+  assert.equal(isBusyRenameError(new Error('ENOTFOUND registry.npmjs.org')), false);
+});
+
+test('renameWithBusyRetry succeeds after a transient Windows EBUSY', async () => {
+  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aily-subapp-rename-retry-'));
+  const src = path.join(rootDir, 'package');
+  const dest = path.join(rootDir, 'moved');
+  fs.mkdirSync(src);
+  fs.writeFileSync(path.join(src, 'marker.txt'), 'ok');
+
+  const originalRename = fs.renameSync;
+  let attempts = 0;
+  const delays = [];
+  fs.renameSync = (from, to) => {
+    attempts += 1;
+    if (attempts === 1) {
+      const error = new Error('EBUSY: resource busy or locked, rename');
+      error.code = 'EBUSY';
+      throw error;
+    }
+    return originalRename(from, to);
+  };
+
+  try {
+    await renameWithBusyRetry(src, dest, {
+      retries: 2,
+      baseDelayMs: 1,
+      sleep: async (ms) => { delays.push(ms); },
+    });
+  } finally {
+    fs.renameSync = originalRename;
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  }
+
+  assert.equal(attempts, 2);
+  assert.deepEqual(delays, [1]);
+});
+
+test('uninstall moves the package aside before npm and retries busy npm rename errors', async (t) => {
+  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aily-subapp-uninstall-busy-'));
+  const packageDir = path.join(rootDir, 'node_modules', '@aily-project', 'subapp-aily-chat');
+  t.after(() => fs.rmSync(rootDir, { recursive: true, force: true }));
+
+  fs.mkdirSync(path.join(packageDir, 'ui'), { recursive: true });
+  fs.writeFileSync(path.join(packageDir, 'index.js'), '');
+  fs.writeFileSync(path.join(packageDir, 'ui', 'index.html'), '<!doctype html>');
+  fs.writeFileSync(path.join(packageDir, 'package.json'), JSON.stringify({
+    name: '@aily-project/subapp-aily-chat',
+    version: '0.1.0',
+    main: 'index.js',
+  }));
+  fs.writeFileSync(path.join(rootDir, 'package.json'), JSON.stringify({
+    name: 'aily-subapps',
+    private: true,
+    dependencies: { '@aily-project/subapp-aily-chat': '0.1.0' },
+  }));
+
+  const npmCalls = [];
+  let uninstallAttempts = 0;
+  const delays = [];
+  const manager = createSubappManager({
+    rootDir,
+    npmBusyRetries: 2,
+    npmBusyRetryDelayMs: 1,
+    sleep: async (ms) => { delays.push(ms); },
+    fetchImpl: async () => ({
+      ok: true,
+      text: async () => JSON.stringify(fixtureIndex()),
+    }),
+    runNpm: async (args) => {
+      npmCalls.push(args);
+      assert.equal(args[0], 'uninstall');
+      assert.equal(
+        fs.existsSync(packageDir),
+        false,
+        'package must be moved aside before npm uninstall runs',
+      );
+      uninstallAttempts += 1;
+      if (uninstallAttempts === 1) {
+        throw new Error(
+          "npm error code EBUSY\nnpm error syscall rename\nnpm error EBUSY: resource busy or locked, rename",
+        );
+      }
+      return { code: 0, stdout: '', stderr: '' };
+    },
+  });
+
+  const removed = await manager.uninstall({ id: 'aily-chat', locale: 'en' });
+  assert.equal(uninstallAttempts, 2);
+  assert.equal(npmCalls.length, 2);
+  assert.deepEqual(delays, [1]);
+  assert.equal(removed.apps[0].installed, false);
+  assert.equal(fs.existsSync(packageDir), false);
+  assert.equal(fs.readdirSync(rootDir).some((name) => name.startsWith('.subapp-uninstall-')), false);
 });
