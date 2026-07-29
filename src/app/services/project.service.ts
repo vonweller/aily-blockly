@@ -30,9 +30,11 @@ import {
 import { applyCdcSerialPortOverrides } from '../editors/blockly-editor/components/blockly/abf';
 import { projectDataRuntime } from './project-data/project-data-runtime';
 import { assertNoOversizedInlineValues } from './project-data/project-data-policy';
-import { createProjectDataMarker } from './project-data/project-data.types';
 import { ProjectDataStore } from './project-data/project-data-store';
-import { migrateLegacyInlineProjectData } from './project-data/project-data-legacy-import';
+import {
+  ensureExternalProjectDataDocument,
+  ExternalProjectDataImportResult,
+} from './project-data/project-data-legacy-import';
 
 interface ProjectPackageData {
   name: string;
@@ -531,38 +533,82 @@ export class ProjectService {
 
   /**
    * Board, example, and cloud templates are source material for a new local
-   * project. Known internal-test inline payloads are migrated once at this copy
-   * boundary; normal project loading remains strictly external-only.
+   * project. Known legacy inline payloads are migrated once at this copy
+   * boundary.
    */
   async initializeProjectDataSchema(projectPath: string): Promise<void> {
     const abiPath = window['path'].join(projectPath, 'project.abi');
     if (!window['fs'].existsSync(abiPath)) return;
-    const abi = JSON.parse(window['fs'].readFileSync(abiPath, 'utf8'));
+    const originalContent = window['fs'].readFileSync(abiPath, 'utf8');
+    const abi = JSON.parse(originalContent);
 
     const store = new ProjectDataStore();
     store.configure(projectPath);
-    const migration = await migrateLegacyInlineProjectData(abi, store);
-    await store.flushPending();
-    assertNoOversizedInlineValues(abi);
-    abi.$ailyProjectData = createProjectDataMarker();
-    const refs = store.collectReferences(abi);
-    const validation = await store.validateReferences(refs);
-    if (!validation.valid) {
-      throw new Error(`Project data import validation failed: ${validation.issues.map((issue) => issue.error).join('; ')}`);
+    const result = await ensureExternalProjectDataDocument(abi, store);
+    if (result.upgradedLegacyDocument) {
+      this.writeProjectAbiAtomically(abiPath, result.document);
+      this.logProjectDataMigration(projectPath, result);
+    }
+  }
+
+  /**
+   * Upgrades a markerless pre-Project-Data ABI on first open. Existing marked
+   * documents remain strict: their marker and every referenced resource are
+   * validated, never repaired or silently downgraded.
+   */
+  async ensureProjectDataSchemaForLoad(
+    projectPath: string,
+    document: unknown,
+    originalContent?: string,
+  ): Promise<Record<string, unknown>> {
+    const store = projectDataRuntime.isConfigured()
+      && projectDataRuntime.getStore().getProjectPath() === projectPath
+      ? projectDataRuntime.getStore()
+      : this.createProjectDataStore(projectPath);
+    const result = await ensureExternalProjectDataDocument(document, store);
+    if (!result.upgradedLegacyDocument || originalContent === undefined) {
+      return result.document;
     }
 
+    const abiPath = window['path'].join(projectPath, 'project.abi');
+    const backupPath = `${abiPath}.pre-project-data.bak`;
+    if (!window['fs'].existsSync(backupPath)) {
+      window['fs'].writeFileSync(backupPath, originalContent);
+    }
+    this.writeProjectAbiAtomically(abiPath, result.document);
+    this.logProjectDataMigration(projectPath, result);
+    return result.document;
+  }
+
+  private createProjectDataStore(projectPath: string): ProjectDataStore {
+    const store = new ProjectDataStore();
+    store.configure(projectPath);
+    return store;
+  }
+
+  private writeProjectAbiAtomically(
+    abiPath: string,
+    document: Record<string, unknown>,
+  ): void {
     const tempPath = `${abiPath}.tmp`;
     try {
-      window['fs'].writeFileSync(tempPath, JSON.stringify(abi));
+      window['fs'].writeFileSync(tempPath, JSON.stringify(document));
       window['fs'].renameSync(tempPath, abiPath);
     } finally {
       if (window['fs'].existsSync(tempPath) && typeof window['fs'].unlinkSync === 'function') {
         window['fs'].unlinkSync(tempPath);
       }
     }
-    if (migration.migrated.length > 0) {
-      console.info(`[ProjectData] Migrated ${migration.migrated.length} inline field payload(s) while importing ${projectPath}.`);
-    }
+  }
+
+  private logProjectDataMigration(
+    projectPath: string,
+    result: ExternalProjectDataImportResult,
+  ): void {
+    console.info(
+      `[ProjectData] Upgraded legacy project.abi for ${projectPath}; `
+      + `migrated ${result.migration.migrated.length} inline field payload(s).`,
+    );
   }
 
   // 打开项目

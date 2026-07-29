@@ -378,13 +378,21 @@ export class BlocklyEditorComponent implements OnInit, OnDestroy {
     const abiPath = this.electronService.pathJoin(projectPath, 'project.abi');
     let abiContent = await this.electronService.readFileAsync(abiPath);
     let projectAbi = await this.parseProjectAbiContent(abiContent);
+    projectAbi = await this.projectService.ensureProjectDataSchemaForLoad(
+      projectPath,
+      projectAbi,
+      abiContent,
+    );
     abiContent = '';
 
     let usedBoardTemplate = false;
     if (this.hasEmptyLegacyWorkspace(projectAbi)) {
       const boardTemplateAbi = await this.readCurrentBoardTemplateAbi(projectPath);
       if (boardTemplateAbi && !this.hasEmptyLegacyWorkspace(boardTemplateAbi)) {
-        projectAbi = boardTemplateAbi;
+        projectAbi = await this.projectService.ensureProjectDataSchemaForLoad(
+          projectPath,
+          boardTemplateAbi,
+        );
         usedBoardTemplate = true;
         console.info('[ProjectAbi] project.abi is empty; using the current board template as temporary data.');
       }
