@@ -644,7 +644,7 @@ function formatFieldValue(blockType: string, fieldName: string, value: any, cont
       const json = JSON.stringify(value);
       return json === undefined ? null : json;
     } catch {
-      return `"@json:${escapeString(JSON.stringify(value))}"`;
+      return null;
     }
   }
   
@@ -1094,11 +1094,18 @@ export interface AbsToAbiResult {
   warnings?: Array<{ line: number; message: string }>;
 }
 
+export interface AbsToAbiOptions {
+  requireProjectDataHeader?: boolean;
+}
+
 /**
  * 将 ABS 转换为 ABI JSON
  */
-export function convertAbsToAbi(abs: string): AbsToAbiResult {
-  if (!hasAilyProjectDataAbsHeader(abs)) {
+export function convertAbsToAbi(
+  abs: string,
+  options: AbsToAbiOptions = {},
+): AbsToAbiResult {
+  if (options.requireProjectDataHeader && !hasAilyProjectDataAbsHeader(abs)) {
     return {
       success: false,
       errors: [{ line: 1, message: 'Missing Project Data Schema: 1 (external-only) header.' }],

@@ -16,6 +16,7 @@ import {
   hasAilyProjectDataAbsHeader,
 } from '../../../services/project-data/project-data.types';
 import { assertNoOversizedInlineValues } from '../../../services/project-data/project-data-policy';
+import { prepareBlocklyProjectDataForCodeGeneration } from '../../../services/project-data/blockly-project-data-adapter';
 import {
   normalizeArduinoGeneratedCode,
 } from '../../../editors/blockly-editor/components/blockly/generators/arduino/arduino';
@@ -102,6 +103,8 @@ async function writeGeneratedSketchIno(
   }
 
   await yieldToBrowserIdle(300);
+  throwIfSyncAbsCancelled(invocationContext);
+  await prepareBlocklyProjectDataForCodeGeneration(workspace);
   throwIfSyncAbsCancelled(invocationContext);
   const codegenStartedAt = performance.now();
   const generatedCode = await ChatPerformanceTracer.runWithSurface(
@@ -1228,12 +1231,27 @@ async function importFromAbs(
     }
     await checkpointSyncAbsFrameBudget(invocationContext, 'finished-loading.after');
 
-    // 保存工作区到 ABI 文件
-    // TODO AI 冲突解决
-    const abiJson = {
-      ...Blockly.serialization.workspaces.save(workspace),
-      $ailyProjectData: createProjectDataMarker(),
-    };
+    // 保存工作区到 ABI 文件：保留编辑器性能/取消边界，同时执行
+    // Project Data 引用完整性校验，并通过 tracked write 进入 AI 时间线。
+    await reportSyncAbsImportProgress(invocationContext, 'Saving Blockly workspace snapshot', 0.8, abiFilePath);
+    throwIfSyncAbsCancelled(invocationContext);
+    await checkpointSyncAbsFrameBudget(invocationContext, 'workspace-save.before');
+    const workspaceSaveStartedAt = performance.now();
+    const abiJson = await ChatPerformanceTracer.runWithSurface(
+      'editor_operation',
+      () => ({
+        ...Blockly.serialization.workspaces.save(workspace),
+        $ailyProjectData: createProjectDataMarker(),
+      }),
+      'syncAbs.import:workspace.save',
+    );
+    ChatPerformanceTracer.recordDuration(
+      'syncAbs_workspace_save',
+      performance.now() - workspaceSaveStartedAt,
+      abiFilePath,
+      { slowThresholdMs: 16 },
+    );
+    await checkpointSyncAbsFrameBudget(invocationContext, 'workspace-save.after');
     await projectDataRuntime.flushPending();
     const savedRefs = projectDataRuntime.getStore().collectReferences(abiJson);
     const savedRefsById = new Map(savedRefs.map((ref) => [ref.$ailyData.id, ref]));
@@ -1250,8 +1268,32 @@ async function importFromAbs(
     if (!validation.valid) {
       throw new Error(`Project data validation failed: ${validation.issues.map((issue) => issue.error).join('; ')}`);
     }
-    await electronService.writeFile(abiFilePath, JSON.stringify(abiJson));
+    throwIfSyncAbsCancelled(invocationContext);
+    await writeTrackedTextFile(abiFilePath, JSON.stringify(abiJson), electronService, invocationContext);
     workspaceMutationStarted = false;
+    await reportSyncAbsImportProgress(invocationContext, 'Saving generated project files', 0.85);
+    throwIfSyncAbsCancelled(invocationContext);
+
+    // 在 AI 回合中 builder 的自动预处理会因 aiWaiting 被延后。
+    // 这里直接同步刷新 sketch.ino，避免同一 turn 立即读取时仍看到旧代码。
+    let sketchSyncInfo: { filePath: string; generated: boolean } | null = null;
+    let sketchSyncWarning = '';
+    try {
+      await reportSyncAbsImportProgress(invocationContext, 'Refreshing generated sketch', 0.9);
+      throwIfSyncAbsCancelled(invocationContext);
+      sketchSyncInfo = await writeGeneratedSketchIno(
+        projectService?.currentProjectPath || projectService?.projectRootPath,
+        electronService,
+        workspace,
+        invocationContext,
+      );
+    } catch (error) {
+      if (isSyncAbsCancellationError(error)) {
+        throw error;
+      }
+      sketchSyncWarning = `\n\n**⚠️ 代码生成告警:** 未能立即刷新 sketch.ino: ${error instanceof Error ? error.message : String(error)}`;
+    }
+    throwIfSyncAbsCancelled(invocationContext);
     
     const variableCount = allVariables.size;  // 使用收集到的所有变量数量
     await reportSyncAbsImportProgress(invocationContext, 'Blockly workspace import finished', 0.95);

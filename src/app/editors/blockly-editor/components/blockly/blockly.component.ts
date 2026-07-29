@@ -2275,9 +2275,7 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
       try {
         await prepareBlocklyProjectDataForCodeGeneration(this.workspace);
         const code = normalizeArduinoGeneratedCode(this.generator.workspaceToCode(this.workspace));
-        if (this.generator === arduinoGenerator) {
-          await writeArduinoGeneratedArtifacts(this.projectService.currentProjectPath, arduinoGenerator);
-        }
+        await writeArduinoGeneratedArtifacts(this.projectService.currentProjectPath, this.generator);
         this.blocklyService.publishGeneratedCode(code);
         void this.projectDebugConfigurationService.updateWorkspaceGeneratedCode(
           this.projectService.currentProjectPath,

@@ -131,7 +131,8 @@ export class _ProjectService {
    */
   private async updateCodeHash(path: string, projectDocument?: BlocklyProjectDocument) {
     try {
-      if (!getActiveProjectGenerator() || !this.blocklyService || !this.blocklyService.workspace) {
+      const activeGenerator = getActiveProjectGenerator();
+      if (!activeGenerator || !this.blocklyService || !this.blocklyService.workspace) {
         console.warn('无法生成代码哈希，跳过更新');
         return;
       }
@@ -143,7 +144,7 @@ export class _ProjectService {
       );
       const code = this.blocklyService.getReusableGeneratedCode()
         ?? normalizeArduinoGeneratedCode(generateCodeWithActiveProjectGenerator(this.blocklyService.workspace));
-      await writeArduinoGeneratedArtifacts(path, arduinoGenerator);
+      await writeArduinoGeneratedArtifacts(path, activeGenerator);
       this.blocklyService.publishGeneratedCode(code);
       
       // 计算哈希

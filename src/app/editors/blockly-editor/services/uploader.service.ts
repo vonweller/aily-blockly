@@ -15,7 +15,10 @@ import { ActionService } from "../../../services/action.service";
 import {
   normalizeArduinoGeneratedCode,
 } from "../components/blockly/generators/arduino/arduino";
-import { generateCodeWithActiveProjectGenerator } from './blockly-generator-runtime.service';
+import {
+  generateCodeWithActiveProjectGenerator,
+  getActiveProjectGenerator,
+} from './blockly-generator-runtime.service';
 import { BlocklyService } from "./blockly.service";
 import { WorkflowService, ProcessState } from '../../../services/workflow.service';
 import { BleOtaProgress, UploaderBleService } from '../../../services/uploader-ble.service';
@@ -380,7 +383,10 @@ export class _UploaderService {
           this.blocklyService.getProjectDocument(),
         );
         const code = normalizeArduinoGeneratedCode(generateCodeWithActiveProjectGenerator(this.blocklyService.workspace));
-        await writeArduinoGeneratedArtifacts(this.projectService.currentProjectPath, arduinoGenerator);
+        await writeArduinoGeneratedArtifacts(
+          this.projectService.currentProjectPath,
+          getActiveProjectGenerator(),
+        );
         const buildPath = await this.projectService.getBuildPath();
         const needsBuild = !this._builderService.passed || 
                           code !== this._builderService.lastCode || 

@@ -1423,6 +1423,7 @@ export class BlocklyService {
   }
 
   private clearLoadedLibraryStateForRuntimeRebuild(): void {
+    unregisterProjectDataFieldSlots(Array.from(this.blockTypeToLibMap.keys()));
     this.iconsMap.clear();
     this.blockDefinitionsMap.clear();
     this.loadedGenerators.clear();
@@ -1626,6 +1627,10 @@ export class BlocklyService {
       const registered = result.arduinoBlockTypes.length > 0
         ? result.arduinoBlockTypes
         : result.micropythonBlockTypes;
+      wrapProjectDataGeneratorFunctions(
+        this.generatorRuntime.getActiveGenerator(),
+        registered,
+      );
       this.loadedGenerators.set(filePath, new Set(registered));
       return Promise.resolve(true);
     } catch (error) {
@@ -1664,6 +1669,7 @@ export class BlocklyService {
     }
     this.generatorRuntime.destroy();
 
+    unregisterProjectDataFieldSlots(Array.from(this.blockTypeToLibMap.keys()));
     this.iconsMap.clear();
     this.blockDefinitionsMap.clear();
     this.loadedGenerators.clear();

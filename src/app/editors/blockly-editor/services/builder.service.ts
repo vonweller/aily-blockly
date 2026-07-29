@@ -212,11 +212,28 @@ export class _BuilderService {
     detail?: string,
   ): Promise<string> {
     await this.waitForOneIdleBoundary();
-    return this.runBuilderPreprocessPhase(
+    await prepareBlocklyProjectDataForCodeGeneration(
+      workspace as any,
+      this.blocklyService.getProjectDocument(),
+    );
+    const generated = await this.runBuilderPreprocessPhase(
       'workspace_to_code',
-      () => normalizeArduinoGeneratedCode(generateCodeWithActiveProjectGenerator(workspace as any)),
+      () => {
+        const generator = getActiveProjectGenerator();
+        return {
+          code: normalizeArduinoGeneratedCode(
+            generateCodeWithActiveProjectGenerator(workspace as any),
+          ),
+          generator,
+        };
+      },
       detail,
     );
+    await writeArduinoGeneratedArtifacts(
+      this.projectService.currentProjectPath,
+      generated.generator,
+    );
+    return generated.code;
   }
 
   /**
@@ -239,13 +256,18 @@ export class _BuilderService {
     }>;
   }> {
     await this.waitForOneIdleBoundary();
-    return this.runBuilderPreprocessPhase(
+    await prepareBlocklyProjectDataForCodeGeneration(
+      workspace as any,
+      this.blocklyService.getProjectDocument(),
+    );
+    const generated = await this.runBuilderPreprocessPhase(
       'workspace_to_code',
       () => {
         const code = normalizeArduinoGeneratedCode(
           generateCodeWithActiveProjectGenerator(workspace as any),
         );
-        const activeGenerator = getActiveProjectGenerator() as {
+        const generator = getActiveProjectGenerator();
+        const activeGenerator = generator as {
           blockCodeMap?: Map<string, BlockCodeMapping>;
         } | null;
         const blockCodeMap = activeGenerator?.blockCodeMap
@@ -256,10 +278,19 @@ export class _BuilderService {
             blockCodeMap,
             workspace,
           ),
+          generator,
         };
       },
       detail,
     );
+    await writeArduinoGeneratedArtifacts(
+      this.projectService.currentProjectPath,
+      generated.generator,
+    );
+    return {
+      code: generated.code,
+      blockSourceMappings: generated.blockSourceMappings,
+    };
   }
 
   private appendPreprocessErrorOutput(value: unknown): void {
@@ -586,8 +617,6 @@ export class _BuilderService {
         }
         
         const code = await this.generateWorkspaceCodeForPreprocess(this.blocklyService.workspace, 'background_preprocess');
-        // TODO AI 冲突解决
-        const code = await this.generateWorkspaceCode();
         if (!code) {
           return;
         }
@@ -979,14 +1008,6 @@ export class _BuilderService {
             console.warn('删除目录失败:', dirPath, error);
         }
     }
-
-  private async generateWorkspaceCode(): Promise<string> {
-    const projectDocument = this.blocklyService.getProjectDocument();
-    await prepareBlocklyProjectDataForCodeGeneration(this.blocklyService.workspace, projectDocument);
-    const code = arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
-    await writeArduinoGeneratedArtifacts(this.projectService.currentProjectPath, arduinoGenerator);
-    return code;
-  }
 
   /**
    * 运行预编译脚本（同步等待完成）

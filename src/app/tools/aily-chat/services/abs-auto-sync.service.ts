@@ -264,7 +264,7 @@ export class AbsAutoSyncService {
     const absContent = await asyncFs.readFile(absFilePath, 'utf-8');
 
     // 转换为 ABI JSON
-    const result = convertAbsToAbi(absContent);
+    const result = convertAbsToAbi(absContent, { requireProjectDataHeader: true });
 
     if (!result.success) {
       console.error('[AbsAutoSync] ABS parse failed:', result.errors);

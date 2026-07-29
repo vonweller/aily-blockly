@@ -7,7 +7,10 @@ import {
 } from '../../../editors/blockly-editor/services/generated-code-artifacts';
 import { isAilyCategoryDebugEnabled } from '../core/chat-debug-flags';
 import { normalizeArduinoGeneratedCode } from '../../../editors/blockly-editor/components/blockly/generators/arduino/arduino';
-import { generateCodeWithActiveProjectGenerator } from '../../../editors/blockly-editor/services/blockly-generator-runtime.service';
+import {
+  generateCodeWithActiveProjectGenerator,
+  getActiveProjectGenerator,
+} from '../../../editors/blockly-editor/services/blockly-generator-runtime.service';
 
 // Arduino 代码检查器
 
@@ -285,7 +288,7 @@ export class ArduinoLintService {
         this.blocklyService.getProjectDocument(),
       );
       const code = normalizeArduinoGeneratedCode(generateCodeWithActiveProjectGenerator(this.blocklyService.workspace));
-      await writeArduinoGeneratedArtifacts(this.currentProjectPath, arduinoGenerator);
+      await writeArduinoGeneratedArtifacts(this.currentProjectPath, getActiveProjectGenerator());
       
       if (!code || code.trim().length === 0) {
         return {

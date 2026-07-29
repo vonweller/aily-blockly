@@ -1,4 +1,7 @@
-﻿import { generateCodeWithActiveProjectGenerator } from '../../../editors/blockly-editor/services/blockly-generator-runtime.service';
+﻿import {
+  generateCodeWithActiveProjectGenerator,
+  getActiveProjectGenerator,
+} from '../../../editors/blockly-editor/services/blockly-generator-runtime.service';
 import type { ToolUseResult } from '../core/tool-types';
 import { jsonrepair } from 'jsonrepair';
 import { ArduinoSyntaxTool } from "./arduinoSyntaxTool";
@@ -1398,20 +1401,6 @@ function getConfiguredFieldValue(block: any, fieldName: string, value: any): any
   return prepareBlockFieldValue(block?.getField?.(fieldName), value);
 }
 
-/**
- * 保留自定义字段的结构化值；只有 Blockly 变量字段才从对象中提取 ID/名称。
- */
-function normalizeBlocklyFieldValue(block: any, fieldName: string, value: any): any {
-  if (typeof value === 'object' && value !== null) {
-    const field = block.getField?.(fieldName);
-    if (field?.getVariable && typeof field.getVariable === 'function') {
-      return value.id ?? value.name ?? value;
-    }
-    return value;
-  }
-  return String(value);
-}
-
 function configureBlockFields(block: any, fields: FieldConfig): {
   configSuccess: boolean;
   failedFields?: Array<{
@@ -1452,7 +1441,7 @@ function configureBlockFields(block: any, fields: FieldConfig): {
           }
           actualValue = getConfiguredFieldValue(block, fieldName, value);
 
-          // � 检测 EXTRA_N 模式的字段：这些需要延迟到 updateShape_() 后再映射
+          // 🔑 EXTRA_N 字段需要延迟到 updateShape_() 创建动态字段后再映射
           const isExtraField = /^EXTRA_\d+$/.test(fieldName);
           if (isExtraField) {
             // console.log(`⏳ EXTRA 字段 "${fieldName}" 延迟处理，等待动态字段创建`);
@@ -1785,7 +1774,7 @@ function configureBlockFields(block: any, fields: FieldConfig): {
                           for (const { fieldName: fn, value: v } of normalFieldsImmediate) {
                             const fld = block.getField(fn);
                             if (fld) {
-                              const val = normalizeBlocklyFieldValue(block, fn, v);
+                              const val = getConfiguredFieldValue(block, fn, v);
                               
                               try {
                                 block.setFieldValue(val, fn);
@@ -1846,7 +1835,7 @@ function configureBlockFields(block: any, fields: FieldConfig): {
             try {
               // 自定义 Blockly 字段可以使用对象/数组作为值（例如动画帧）。
               // 此处必须传入原始值；JSON 字符串会被字段校验器拒绝并导致数据清空。
-              block.setFieldValue(normalizeBlocklyFieldValue(block, fieldName, value), fieldName);
+              block.setFieldValue(getConfiguredFieldValue(block, fieldName, value), fieldName);
               // console.log(`✅ 字段设置成功: ${fieldName} = ${actualValue}`);
               configSuccess = true;
             } catch (setFieldError: any) {
@@ -1968,7 +1957,7 @@ function configureBlockFields(block: any, fields: FieldConfig): {
           }
           
           // 字段现在存在，使用智能设置（支持下拉菜单匹配+验证）
-          const actualValue = normalizeBlocklyFieldValue(block, fieldName, value);
+          const actualValue = getConfiguredFieldValue(block, fieldName, value);
           
           const setResult = smartSetFieldValue(block, fieldName, actualValue);
           if (setResult.success) {
@@ -2052,7 +2041,7 @@ function configureBlockFields(block: any, fields: FieldConfig): {
       for (const { fieldName, value } of mappedRetryFields) {
         const existingField = block.getField(fieldName);
         if (existingField) {
-          const actualValue = normalizeBlocklyFieldValue(block, fieldName, value);
+          const actualValue = getConfiguredFieldValue(block, fieldName, value);
           const setResult = smartSetFieldValue(block, fieldName, actualValue);
           if (setResult.success) {
             // console.log(`✅ 字段设置成功: ${fieldName} = ${actualValue}`);
@@ -2089,7 +2078,7 @@ function configureBlockFields(block: any, fields: FieldConfig): {
           // 尝试将值映射到第一个未配置的字段
           if (unconfiguredFields.length > 0) {
             const targetField = unconfiguredFields[0];
-            const actualValue = normalizeBlocklyFieldValue(block, targetField, value);
+            const actualValue = getConfiguredFieldValue(block, targetField, value);
             const setResult = smartSetFieldValue(block, targetField, actualValue);
             if (setResult.success) {
               // console.log(`🔄 字段映射: ${fieldName} → ${targetField} = ${actualValue}`);
@@ -8803,7 +8792,10 @@ export async function generateCodeTool(): Promise<ToolUseResult> {
     const workspace = getActiveWorkspace();
     await prepareBlocklyProjectDataForCodeGeneration(workspace);
     const code = generateCodeWithActiveProjectGenerator(workspace);
-    await writeArduinoGeneratedArtifacts(projectDataRuntime.getStore().getProjectPath(), arduinoGenerator);
+    await writeArduinoGeneratedArtifacts(
+      projectDataRuntime.getStore().getProjectPath(),
+      getActiveProjectGenerator(),
+    );
     
     const result = {
       is_error: false,
