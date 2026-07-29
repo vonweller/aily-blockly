@@ -71,6 +71,7 @@ export class AppStoreComponent implements OnInit, AfterViewInit, OnDestroy {
   catalogWarning = '';
   installRoot = '';
   pendingCatalogId = '';
+  pendingProgress = 0;
   checkingCatalogId = '';
   confirmUninstallCatalogId = '';
   openMoreCatalogId = '';
@@ -80,6 +81,7 @@ export class AppStoreComponent implements OnInit, AfterViewInit, OnDestroy {
   private sortables: Sortable[] = [];
   private layoutSubscription?: Subscription;
   private catalogSubscription?: Subscription;
+  private progressSubscription?: Subscription;
   private confirmUninstallTimer?: ReturnType<typeof setTimeout>;
   private isDraggingToolbarApp = false;
   private activeSubappVersions = new Map<string, string>();
@@ -121,6 +123,17 @@ export class AppStoreComponent implements OnInit, AfterViewInit, OnDestroy {
       this.installRoot = state.installRoot;
       this.cdr.markForCheck();
     });
+    this.progressSubscription = this.subappManager.progress$.subscribe((progress) => {
+      if (!progress || progress.id !== this.pendingCatalogId) {
+        if (!this.pendingCatalogId) {
+          this.pendingProgress = 0;
+        }
+        this.cdr.markForCheck();
+        return;
+      }
+      this.pendingProgress = Math.max(this.pendingProgress, Math.round(progress.percent || 0));
+      this.cdr.markForCheck();
+    });
   }
 
   ngAfterViewInit(): void {
@@ -130,6 +143,7 @@ export class AppStoreComponent implements OnInit, AfterViewInit, OnDestroy {
   ngOnDestroy(): void {
     this.layoutSubscription?.unsubscribe();
     this.catalogSubscription?.unsubscribe();
+    this.progressSubscription?.unsubscribe();
     this.sortables.forEach(sortable => sortable.destroy());
     this.sortables = [];
     this.closeSubappMore();
@@ -294,6 +308,15 @@ export class AppStoreComponent implements OnInit, AfterViewInit, OnDestroy {
     return !!app.subapp && this.pendingCatalogId === app.subapp.catalogId;
   }
 
+  getInstallProgressPercent(app: AppItem): number {
+    if (!this.isSubappPending(app)) return 0;
+    return Math.max(1, Math.min(100, this.pendingProgress || 1));
+  }
+
+  getInstallProgressRatio(app: AppItem): string {
+    return String(Math.max(0.02, this.getInstallProgressPercent(app) / 100));
+  }
+
   isCheckingSubapp(app: AppItem): boolean {
     return !!app.subapp && this.checkingCatalogId === app.subapp.catalogId;
   }
@@ -387,6 +410,7 @@ export class AppStoreComponent implements OnInit, AfterViewInit, OnDestroy {
     const subapp = app.subapp;
     if (!subapp || this.pendingCatalogId) return;
     this.pendingCatalogId = subapp.catalogId;
+    this.pendingProgress = 1;
     this.cdr.markForCheck();
     try {
       if (action !== 'install') {
@@ -396,12 +420,14 @@ export class AppStoreComponent implements OnInit, AfterViewInit, OnDestroy {
         this.uiService.closeTool(app.id);
       }
       await this.subappManager[action](subapp.catalogId);
+      this.pendingProgress = 100;
       this.message.success(this.translate.instant(`APP_STORE.${action.toUpperCase()}_SUCCESS`, { name: app.name }));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error || 'Unknown error');
       this.message.error(this.translate.instant('APP_STORE.ACTION_FAILED', { message }));
     } finally {
       this.pendingCatalogId = '';
+      this.pendingProgress = 0;
       this.cdr.markForCheck();
     }
   }
@@ -431,9 +457,11 @@ export class AppStoreComponent implements OnInit, AfterViewInit, OnDestroy {
     const previousInstalledVersion = String(subapp.installedVersion || '').trim();
     let restartTarget: AppItem | null = null;
     this.pendingCatalogId = subapp.catalogId;
+    this.pendingProgress = 1;
     this.cdr.markForCheck();
     try {
       await this.subappManager.update(subapp.catalogId);
+      this.pendingProgress = 100;
       const updatedApp = this.subappManager.getCatalogApps()
         .find((item) => item.subapp?.catalogId === subapp.catalogId);
       const updatedInstalledVersion = String(updatedApp?.subapp?.installedVersion || '').trim();
@@ -449,6 +477,7 @@ export class AppStoreComponent implements OnInit, AfterViewInit, OnDestroy {
       this.message.error(this.translate.instant('APP_STORE.ACTION_FAILED', { message }));
     } finally {
       this.pendingCatalogId = '';
+      this.pendingProgress = 0;
       this.cdr.markForCheck();
     }
 

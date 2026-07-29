@@ -1,8 +1,11 @@
 // 远端子应用目录与用户级 npm 安装管理。
 const fs = require('fs');
+const http = require('http');
+const https = require('https');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
+const { URL } = require('url');
 const semver = require('semver');
 
 const DEFAULT_INDEX_URL = 'https://rs1.aily.pro/subapp-index.json';
@@ -689,8 +692,16 @@ function runNpm(args, options = {}) {
     });
     let stdout = '';
     let stderr = '';
-    child.stdout?.on('data', (chunk) => { stdout += String(chunk); });
-    child.stderr?.on('data', (chunk) => { stderr += String(chunk); });
+    const handleChunk = (chunk, stream) => {
+      const text = String(chunk);
+      if (stream === 'stdout') stdout += text;
+      else stderr += text;
+      if (typeof options.onOutput === 'function') {
+        options.onOutput(text, stream);
+      }
+    };
+    child.stdout?.on('data', (chunk) => handleChunk(chunk, 'stdout'));
+    child.stderr?.on('data', (chunk) => handleChunk(chunk, 'stderr'));
     child.once('error', reject);
     child.once('close', (code) => {
       if (code === 0) {
@@ -699,6 +710,209 @@ function runNpm(args, options = {}) {
         reject(new Error(stderr.trim() || stdout.trim() || `npm exited with ${code}`));
       }
     });
+  });
+}
+
+function clampProgress(value) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function parseDependencyProgressLog(text) {
+  const line = String(text || '').trim();
+  if (!line) return null;
+  if (/^(下载完成|Download complete)[:：]?/i.test(line)) {
+    return { phase: 'download', percent: 100 };
+  }
+  const match = line.match(/^(下载进度|Download progress|解压进度|Extract progress)[:：]?\s*(\d+(?:\.\d+)?)/i);
+  if (!match) return null;
+  const percent = Math.max(0, Math.min(100, Number(match[2])));
+  const isDownload = /^(下载进度|Download progress)/i.test(match[1]);
+  return {
+    phase: isDownload ? 'download' : 'extract',
+    percent,
+  };
+}
+
+function createMutationProgressTracker({ id, action, onProgress } = {}) {
+  let downloadProgress = 0;
+  let extractProgress = 0;
+  let lastProgress = 0;
+
+  function emit(phase) {
+    const singleDependencyProgress = downloadProgress * 0.5 + extractProgress * 0.5;
+    const overall = clampProgress(singleDependencyProgress);
+    lastProgress = Math.max(lastProgress, overall, phase === 'start' ? 1 : 0);
+    if (phase === 'complete') lastProgress = 100;
+    if (typeof onProgress === 'function') {
+      onProgress({
+        id,
+        action,
+        phase,
+        percent: lastProgress,
+        downloadProgress,
+        extractProgress,
+      });
+    }
+    return lastProgress;
+  }
+
+  return {
+    start() {
+      downloadProgress = 0;
+      extractProgress = 0;
+      lastProgress = 0;
+      return emit('start');
+    },
+    setDownload(percent) {
+      downloadProgress = Math.max(downloadProgress, clampProgress(percent));
+      return emit('download');
+    },
+    setExtract(percent) {
+      if (clampProgress(percent) > 0) {
+        downloadProgress = Math.max(downloadProgress, 100);
+      }
+      extractProgress = Math.max(extractProgress, clampProgress(percent));
+      return emit('extract');
+    },
+    handleLog(line) {
+      const parsed = parseDependencyProgressLog(line);
+      if (!parsed) return lastProgress;
+      return parsed.phase === 'download'
+        ? this.setDownload(parsed.percent)
+        : this.setExtract(parsed.percent);
+    },
+    complete() {
+      downloadProgress = 100;
+      extractProgress = 100;
+      return emit('complete');
+    },
+    get percent() {
+      return lastProgress;
+    },
+  };
+}
+
+function createProgressOutputHandler(tracker, previousHandler) {
+  let pending = '';
+  return (chunk, stream) => {
+    if (typeof previousHandler === 'function') {
+      previousHandler(chunk, stream);
+    }
+    if (!tracker) return;
+    pending += String(chunk || '');
+    const parts = pending.split(/\r\n|\n|\r/g);
+    pending = parts.pop() || '';
+    for (const line of parts) {
+      tracker.handleLog(line);
+    }
+  };
+}
+
+function resolvePackageTarballUrl(entry, npmRunner, options = {}) {
+  if (typeof options.resolveTarballUrl === 'function') {
+    return Promise.resolve(options.resolveTarballUrl(entry)).then((url) => {
+      const value = String(url || '').trim();
+      if (!/^https?:\/\//i.test(value)) {
+        throw new Error(`Unable to resolve tarball URL for ${entry.package}@${entry.version}`);
+      }
+      return value;
+    });
+  }
+
+  return Promise.resolve(npmRunner(
+    ['view', `${entry.package}@${entry.version}`, 'dist.tarball'],
+    options,
+  )).then((result) => {
+    const value = String(result?.stdout || '').trim().replace(/^"|"$/g, '');
+    if (!/^https?:\/\//i.test(value)) {
+      throw new Error(`Unable to resolve tarball URL for ${entry.package}@${entry.version}`);
+    }
+    return value;
+  });
+}
+
+function downloadFileWithProgress(fileUrl, destination, onProgress, options = {}) {
+  const fetchImpl = options.downloadFetch || ((url, requestOptions) => {
+    const parsed = new URL(url);
+    const transport = parsed.protocol === 'http:' ? http : https;
+    return transport.get(url, requestOptions);
+  });
+  const maxRedirects = Number.isInteger(options.maxRedirects) ? options.maxRedirects : 5;
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
+    const succeed = () => {
+      if (settled) return;
+      settled = true;
+      resolve(destination);
+    };
+
+    const request = (currentUrl, redirectsLeft) => {
+      let requestRef;
+      try {
+        requestRef = fetchImpl(currentUrl, {
+          headers: { Accept: '*/*' },
+        });
+      } catch (error) {
+        fail(error);
+        return;
+      }
+
+      requestRef.on('error', fail);
+      requestRef.on('response', (response) => {
+        const status = response.statusCode || 0;
+        if ([301, 302, 303, 307, 308].includes(status) && response.headers.location) {
+          response.resume();
+          if (redirectsLeft <= 0) {
+            fail(new Error(`Too many redirects while downloading ${fileUrl}`));
+            return;
+          }
+          const nextUrl = new URL(response.headers.location, currentUrl).toString();
+          request(nextUrl, redirectsLeft - 1);
+          return;
+        }
+        if (status < 200 || status >= 300) {
+          response.resume();
+          fail(new Error(`Download failed: HTTP ${status}`));
+          return;
+        }
+
+        const total = Number(response.headers['content-length']) || 0;
+        let downloaded = 0;
+        let lastPercent = -1;
+        const file = fs.createWriteStream(destination);
+        file.on('error', fail);
+        response.on('error', fail);
+        response.on('data', (chunk) => {
+          downloaded += chunk.length;
+          if (!total || typeof onProgress !== 'function') return;
+          const percent = clampProgress((downloaded / total) * 100);
+          if (percent !== lastPercent) {
+            lastPercent = percent;
+            onProgress(percent);
+          }
+        });
+        response.pipe(file);
+        file.on('finish', () => {
+          file.close((error) => {
+            if (error) {
+              fail(error);
+              return;
+            }
+            if (typeof onProgress === 'function') onProgress(100);
+            succeed();
+          });
+        });
+      });
+    };
+
+    request(fileUrl, maxRedirects);
   });
 }
 
@@ -754,6 +968,81 @@ function packageInstallArgs(rootDir, entry) {
     'install', '--prefix', rootDir, '--save-exact', '--omit=dev', '--no-audit', '--no-fund',
     '--foreground-scripts', `${entry.package}@${entry.version}`,
   ];
+}
+
+function packageInstallFromTarballArgs(rootDir, tarballPath) {
+  return [
+    'install', '--prefix', rootDir, '--save-exact', '--omit=dev', '--no-audit', '--no-fund',
+    '--foreground-scripts', tarballPath,
+  ];
+}
+
+function withProgressOutput(options = {}, tracker) {
+  return {
+    ...options,
+    onOutput: createProgressOutputHandler(tracker, options.onOutput),
+  };
+}
+
+async function installPackage(rootDir, entry, npmRunner, options = {}) {
+  const tracker = options.progressTracker;
+  const npmOptions = withProgressOutput(options, tracker);
+  const retryOptions = {
+    retries: options.npmBusyRetries,
+    baseDelayMs: options.npmBusyRetryDelayMs,
+    sleep: options.sleep,
+    packagePath: packagePathFor(rootDir, entry.package),
+  };
+
+  if (options.disableTarballProgress === true) {
+    await runNpmWithBusyRetry(npmRunner, packageInstallArgs(rootDir, entry), npmOptions, retryOptions);
+    tracker?.setDownload(100);
+    tracker?.setExtract(100);
+    return;
+  }
+
+  let stagingRoot = null;
+  try {
+    stagingRoot = fs.mkdtempSync(path.join(rootDir, '.subapp-download-'));
+    const tarballPath = path.join(stagingRoot, 'package.tgz');
+    const tarballUrl = await resolvePackageTarballUrl(entry, npmRunner, npmOptions);
+    const download = options.downloadFile || downloadFileWithProgress;
+    await download(
+      tarballUrl,
+      tarballPath,
+      (percent) => tracker?.setDownload(percent),
+      npmOptions,
+    );
+    tracker?.setDownload(100);
+    await runNpmWithBusyRetry(
+      npmRunner,
+      packageInstallFromTarballArgs(rootDir, tarballPath),
+      npmOptions,
+      retryOptions,
+    );
+    tracker?.setExtract(100);
+  } catch (error) {
+    console.warn(
+      '[subapp-manager] progress-aware install failed, falling back to npm install:',
+      error.message || error,
+    );
+    await runNpmWithBusyRetry(
+      npmRunner,
+      packageInstallArgs(rootDir, entry),
+      npmOptions,
+      retryOptions,
+    );
+    tracker?.setDownload(100);
+    tracker?.setExtract(100);
+  } finally {
+    if (stagingRoot && fs.existsSync(stagingRoot)) {
+      try {
+        fs.rmSync(stagingRoot, { recursive: true, force: true });
+      } catch (cleanupError) {
+        console.warn('[subapp-manager] failed to cleanup download staging:', cleanupError.message || cleanupError);
+      }
+    }
+  }
 }
 
 function sleep(ms, sleepImpl = globalThis.setTimeout) {
@@ -823,12 +1112,15 @@ async function runNpmWithBusyRetry(npmRunner, args, options = {}, retryOptions =
 
 async function uninstallInstalledPackage(rootDir, entry, npmRunner, options = {}) {
   const packagePath = packagePathFor(rootDir, entry.package);
+  const tracker = options.progressTracker;
   let stagingRoot = null;
+  tracker?.start();
 
   try {
     // Windows 上 npm uninstall 会 rename 包目录；若 Runtime/杀毒仍占着文件会 EBUSY。
     // 先自行挪走目录（带重试），再让 npm 只更新 package.json / lock。
     if (fs.existsSync(packagePath)) {
+      tracker?.setDownload(40);
       stagingRoot = fs.mkdtempSync(path.join(rootDir, '.subapp-uninstall-'));
       await renameWithBusyRetry(
         packagePath,
@@ -839,12 +1131,15 @@ async function uninstallInstalledPackage(rootDir, entry, npmRunner, options = {}
           sleep: options.sleep,
         },
       );
+      tracker?.setDownload(70);
+    } else {
+      tracker?.setDownload(70);
     }
 
     await runNpmWithBusyRetry(
       npmRunner,
       ['uninstall', '--prefix', rootDir, '--no-audit', '--no-fund', entry.package],
-      options,
+      withProgressOutput(options, tracker),
       {
         retries: options.npmBusyRetries,
         baseDelayMs: options.npmBusyRetryDelayMs,
@@ -852,6 +1147,8 @@ async function uninstallInstalledPackage(rootDir, entry, npmRunner, options = {}
         packagePath,
       },
     );
+    tracker?.setExtract(100);
+    tracker?.complete();
   } finally {
     if (stagingRoot && fs.existsSync(stagingRoot)) {
       try {
@@ -871,7 +1168,9 @@ async function replaceInstalledPackage(rootDir, entry, npmRunner, options = {}) 
   const packageLockPath = path.join(rootDir, 'package-lock.json');
   const packageJsonSnapshot = snapshotFile(packageJsonPath);
   const packageLockSnapshot = snapshotFile(packageLockPath);
+  const tracker = options.progressTracker;
   let backedUp = false;
+  tracker?.start();
 
   try {
     if (fs.existsSync(packagePath)) {
@@ -883,17 +1182,7 @@ async function replaceInstalledPackage(rootDir, entry, npmRunner, options = {}) 
       backedUp = true;
     }
 
-    await runNpmWithBusyRetry(
-      npmRunner,
-      packageInstallArgs(rootDir, entry),
-      options,
-      {
-        retries: options.npmBusyRetries,
-        baseDelayMs: options.npmBusyRetryDelayMs,
-        sleep: options.sleep,
-        packagePath,
-      },
-    );
+    await installPackage(rootDir, entry, npmRunner, options);
     const installedState = readInstalledState(rootDir, entry);
     if (!installedState.installed || installedState.installedVersion !== entry.version) {
       throw new Error(
@@ -902,6 +1191,7 @@ async function replaceInstalledPackage(rootDir, entry, npmRunner, options = {}) 
     }
 
     fs.rmSync(backupRoot, { recursive: true, force: true });
+    tracker?.complete();
   } catch (error) {
     if (fs.existsSync(packagePath)) {
       fs.rmSync(packagePath, { recursive: true, force: true });
@@ -975,22 +1265,42 @@ function createSubappManager(options = {}) {
       }
       ensureInstallProject(rootDir);
 
-      if (action === 'uninstall') {
-        await uninstallInstalledPackage(rootDir, entry, options.runNpm || runNpm, options);
-      } else if (action === 'update') {
-        await replaceInstalledPackage(rootDir, entry, options.runNpm || runNpm, options);
-      } else {
-        await runNpmWithBusyRetry(
-          options.runNpm || runNpm,
-          packageInstallArgs(rootDir, entry),
-          options,
-          {
-            retries: options.npmBusyRetries,
-            baseDelayMs: options.npmBusyRetryDelayMs,
-            sleep: options.sleep,
-            packagePath: packagePathFor(rootDir, entry.package),
-          },
-        );
+      const onProgress = typeof payload.onProgress === 'function'
+        ? payload.onProgress
+        : options.onProgress;
+      const progressTracker = createMutationProgressTracker({
+        id,
+        action,
+        onProgress,
+      });
+      const mutationOptions = {
+        ...options,
+        progressTracker,
+      };
+
+      try {
+        if (action === 'uninstall') {
+          await uninstallInstalledPackage(rootDir, entry, options.runNpm || runNpm, mutationOptions);
+        } else if (action === 'update') {
+          await replaceInstalledPackage(rootDir, entry, options.runNpm || runNpm, mutationOptions);
+        } else {
+          progressTracker.start();
+          await installPackage(rootDir, entry, options.runNpm || runNpm, mutationOptions);
+          progressTracker.complete();
+        }
+      } catch (error) {
+        if (typeof onProgress === 'function') {
+          onProgress({
+            id,
+            action,
+            phase: 'error',
+            percent: progressTracker.percent,
+            downloadProgress: 0,
+            extractProgress: 0,
+            error: error.message || String(error),
+          });
+        }
+        throw error;
       }
       return list({ locale: payload.locale || 'en' });
     });
@@ -1012,7 +1322,15 @@ let defaultManager = null;
 function registerSubappManagerHandlers(getMainWindow = () => null) {
   if (handlersRegistered) return;
   const { ipcMain } = require('electron');
-  defaultManager = createSubappManager();
+
+  const sendProgress = (progress) => {
+    const mainWindow = getMainWindow();
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+      mainWindow.webContents.send('subapp-manager-progress', progress);
+    }
+  };
+
+  defaultManager = createSubappManager({ onProgress: sendProgress });
 
   const handleMutation = (action) => async (_event, payload = {}) => {
     const result = await defaultManager[action](payload);
@@ -1033,10 +1351,14 @@ function registerSubappManagerHandlers(getMainWindow = () => null) {
 module.exports = {
   DEFAULT_INDEX_URL,
   TOOL_ID_ALIASES,
+  clampProgress,
   createCatalogState,
+  createMutationProgressTracker,
   createSubappManager,
+  downloadFileWithProgress,
   isBusyRenameError,
   packagePathFor,
+  parseDependencyProgressLog,
   prepareNpmSpawn,
   quoteWindowsShellPath,
   registerSubappManagerHandlers,

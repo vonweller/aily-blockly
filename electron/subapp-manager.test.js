@@ -6,8 +6,11 @@ const test = require('node:test');
 
 const {
   TOOL_ID_ALIASES,
+  clampProgress,
+  createMutationProgressTracker,
   createSubappManager,
   isBusyRenameError,
+  parseDependencyProgressLog,
   prepareNpmSpawn,
   quoteWindowsShellPath,
   renameWithBusyRetry,
@@ -378,6 +381,9 @@ test('installs indexed package into the user app project and exposes its absolut
     }),
     runNpm: async (args) => {
       npmCalls.push(args);
+      if (args[0] === 'view') {
+        return { code: 0, stdout: '', stderr: '' };
+      }
       const packageDir = path.join(rootDir, 'node_modules', '@aily-project', 'subapp-aily-chat');
       if (args[0] === 'uninstall') {
         fs.rmSync(packageDir, { recursive: true, force: true });
@@ -402,8 +408,10 @@ test('installs indexed package into the user app project and exposes its absolut
   assert.equal(before.apps[0].icon, 'fa-light fa-puzzle-piece');
 
   const after = await manager.install({ id: 'aily-chat', locale: 'zh-CN' });
-  assert.deepEqual(npmCalls[0].slice(0, 3), ['install', '--prefix', rootDir]);
-  assert.ok(npmCalls[0].includes('@aily-project/subapp-aily-chat@0.1.0'));
+  const installCall = npmCalls.find((args) => args[0] === 'install');
+  assert.ok(installCall, 'expected an npm install call');
+  assert.deepEqual(installCall.slice(0, 3), ['install', '--prefix', rootDir]);
+  assert.ok(installCall.includes('@aily-project/subapp-aily-chat@0.1.0'));
   assert.equal(after.apps[0].installed, true);
   assert.equal(after.apps[0].toolId, 'aily-chat-react');
   assert.equal(after.apps[0].config.app.name, 'Aily Chat');
@@ -418,12 +426,14 @@ test('installs indexed package into the user app project and exposes its absolut
   assert.equal(checked.apps[0].updateAvailable, true);
 
   const updated = await manager.update({ id: 'aily-chat', locale: 'zh-CN' });
-  assert.ok(npmCalls[1].includes('@aily-project/subapp-aily-chat@0.2.0'));
+  const updateCall = npmCalls.filter((args) => args[0] === 'install').at(-1);
+  assert.ok(updateCall.includes('@aily-project/subapp-aily-chat@0.2.0'));
   assert.equal(updated.apps[0].installedVersion, '0.2.0');
   assert.equal(updated.apps[0].updateAvailable, false);
 
   const removed = await manager.uninstall({ id: 'aily-chat', locale: 'zh-CN' });
-  assert.deepEqual(npmCalls[2].slice(0, 3), ['uninstall', '--prefix', rootDir]);
+  const uninstallCall = npmCalls.find((args) => args[0] === 'uninstall');
+  assert.deepEqual(uninstallCall.slice(0, 3), ['uninstall', '--prefix', rootDir]);
   assert.equal(removed.apps[0].installed, false);
 });
 
@@ -450,6 +460,9 @@ test('update replaces stale package files even when npm metadata already claims 
     }),
     runNpm: async (args) => {
       npmCalls.push(args);
+      if (args[0] === 'view') {
+        return { code: 0, stdout: '', stderr: '' };
+      }
       assert.equal(fs.existsSync(packageDir), false, 'stale package must be moved aside before npm runs');
       fs.mkdirSync(path.join(packageDir, 'ui'), { recursive: true });
       fs.writeFileSync(path.join(packageDir, 'index.js'), '');
@@ -464,7 +477,7 @@ test('update replaces stale package files even when npm metadata already claims 
   });
 
   const updated = await manager.update({ id: 'aily-chat', locale: 'en' });
-  assert.equal(npmCalls.length, 1);
+  assert.ok(npmCalls.some((args) => args[0] === 'install'));
   assert.equal(updated.apps[0].installedVersion, '0.1.1');
   assert.equal(updated.apps[0].updateAvailable, false);
   assert.equal(fs.readdirSync(rootDir).some((name) => name.startsWith('.subapp-update-')), false);
@@ -490,7 +503,12 @@ test('update restores the previous package when the replacement cannot be verifi
       ok: true,
       text: async () => JSON.stringify(fixtureIndex('0.1.1')),
     }),
-    runNpm: async () => ({ code: 0, stdout: 'up to date', stderr: '' }),
+    runNpm: async (args) => {
+      if (args[0] === 'view') {
+        return { code: 0, stdout: '', stderr: '' };
+      }
+      return { code: 0, stdout: 'up to date', stderr: '' };
+    },
   });
 
   await assert.rejects(
@@ -601,4 +619,74 @@ test('uninstall moves the package aside before npm and retries busy npm rename e
   assert.equal(removed.apps[0].installed, false);
   assert.equal(fs.existsSync(packageDir), false);
   assert.equal(fs.readdirSync(rootDir).some((name) => name.startsWith('.subapp-uninstall-')), false);
+});
+
+test('parseDependencyProgressLog understands download and extract lines', () => {
+  assert.deepEqual(parseDependencyProgressLog('下载进度: 42'), { phase: 'download', percent: 42 });
+  assert.deepEqual(parseDependencyProgressLog('Download progress: 88.6'), { phase: 'download', percent: 88.6 });
+  assert.deepEqual(parseDependencyProgressLog('下载完成'), { phase: 'download', percent: 100 });
+  assert.deepEqual(parseDependencyProgressLog('解压进度: 70'), { phase: 'extract', percent: 70 });
+  assert.equal(parseDependencyProgressLog('npm http fetch GET 200'), null);
+  assert.equal(clampProgress(120.4), 100);
+});
+
+test('mutation progress tracker weights download and extract like board deps', () => {
+  const events = [];
+  const tracker = createMutationProgressTracker({
+    id: 'aily-chat',
+    action: 'install',
+    onProgress: (event) => events.push(event),
+  });
+
+  assert.equal(tracker.start(), 1);
+  assert.equal(tracker.setDownload(50), 25);
+  assert.equal(tracker.handleLog('解压进度: 50'), 75);
+  assert.equal(tracker.complete(), 100);
+  assert.equal(events.at(-1).phase, 'complete');
+  assert.equal(events.at(-1).percent, 100);
+});
+
+test('install reports real download progress when tarball download succeeds', async (t) => {
+  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aily-subapp-progress-'));
+  t.after(() => fs.rmSync(rootDir, { recursive: true, force: true }));
+  const events = [];
+  const npmCalls = [];
+  const manager = createSubappManager({
+    rootDir,
+    onProgress: (event) => events.push({ ...event }),
+    resolveTarballUrl: async () => 'https://example.test/subapp.tgz',
+    downloadFile: async (_url, destination, onProgress) => {
+      onProgress?.(20);
+      onProgress?.(60);
+      onProgress?.(100);
+      fs.writeFileSync(destination, 'tarball');
+    },
+    fetchImpl: async () => ({
+      ok: true,
+      text: async () => JSON.stringify(fixtureIndex()),
+    }),
+    runNpm: async (args) => {
+      npmCalls.push(args);
+      assert.equal(args[0], 'install');
+      assert.ok(String(args.at(-1)).endsWith('package.tgz'));
+      const packageDir = path.join(rootDir, 'node_modules', '@aily-project', 'subapp-aily-chat');
+      fs.mkdirSync(path.join(packageDir, 'ui'), { recursive: true });
+      fs.writeFileSync(path.join(packageDir, 'index.js'), '');
+      fs.writeFileSync(path.join(packageDir, 'ui', 'index.html'), '<!doctype html>');
+      fs.writeFileSync(path.join(packageDir, 'package.json'), JSON.stringify({
+        name: '@aily-project/subapp-aily-chat',
+        version: '0.1.0',
+        main: 'index.js',
+      }));
+      return { code: 0, stdout: '解压进度: 100\n', stderr: '' };
+    },
+  });
+
+  const after = await manager.install({ id: 'aily-chat', locale: 'en' });
+  assert.equal(after.apps[0].installed, true);
+  assert.equal(npmCalls.length, 1);
+  assert.ok(events.some((event) => event.phase === 'download' && event.percent === 30));
+  assert.ok(events.some((event) => event.phase === 'download' && event.percent === 50));
+  assert.equal(events.at(-1).phase, 'complete');
+  assert.equal(events.at(-1).percent, 100);
 });

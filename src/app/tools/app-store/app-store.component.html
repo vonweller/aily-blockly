@@ -88,8 +88,9 @@
                     @for (app of catalogApps; track app.id) {
                     <div class="catalog-card" [class.dev]="app.dev" [class.locked]="app.lock"
                         [class.not-installed]="app.subapp && !app.subapp.installed"
-                        [class.installing]="isSubappPending(app) && !app.subapp?.installed"
+                        [class.installing]="isSubappPending(app)"
                         [class.has-update]="app.subapp?.updateAvailable"
+                        [style.--install-progress]="getInstallProgressRatio(app)"
                         [attr.aria-busy]="isSubappPending(app) ? 'true' : null">
                         <div class="catalog-main" [class.installing]="isSubappPending(app)"
                             role="button" tabindex="0"
@@ -127,7 +128,10 @@
                             @if (app.subapp) {
                             @if (isSubappPending(app)) {
                             <span class="action-progress" aria-live="polite">
-                                <i class="fa-light fa-spinner-third app-store-spin" aria-hidden="true"></i>
+                                <span class="action-progress-ring" aria-hidden="true">
+                                    <i class="fa-light fa-spinner-third app-store-spin"></i>
+                                    <span class="action-progress-value">{{ getInstallProgressPercent(app) }}%</span>
+                                </span>
                             </span>
                             }
                             }
