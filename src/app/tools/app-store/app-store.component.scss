@@ -683,20 +683,14 @@
   }
 }
 
+// 安装/卸载进度属于功能性反馈（否则 fa-spinner-third 静止时像卡住的百分比环）。
+// Windows 常因系统「动画效果」关闭而匹配 prefers-reduced-motion，不能因此关掉这些动画。
+// 仅弱化装饰性扫光；旋转与条纹流动继续保留。
 @media (prefers-reduced-motion: reduce) {
   .catalog-card.installing {
-    &::before {
-      transform: scaleX(var(--install-progress, 0.72));
-      animation: none;
-      opacity: 0.85;
-    }
-
     &::after {
-      display: none;
+      animation-duration: 2.4s;
+      opacity: 0.45;
     }
-  }
-
-  .app-store-spin {
-    animation: none;
   }
 }
