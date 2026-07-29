@@ -511,9 +511,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
       "simulator-subapp-open-project-scene",
       options,
     ),
-    exportProjectSceneV1: (ownerId) => ipcRenderer.invoke(
-      "simulator-subapp-export-project-scene-v1",
-      { ownerId },
+    resolveProjectSceneRegeneration: (options) => ipcRenderer.invoke(
+      "simulator-subapp-resolve-project-scene-regeneration",
+      options,
+    ),
+    applyProjectSceneAgentProposal: (options) => ipcRenderer.invoke(
+      "simulator-subapp-apply-project-scene-agent-proposal",
+      options,
     ),
     attachProjectSceneSession: (ownerId) => ipcRenderer.invoke(
       "simulator-subapp-attach-project-scene-session",

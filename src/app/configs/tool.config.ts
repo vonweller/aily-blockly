@@ -34,6 +34,17 @@ export interface ChildToolUiConfig {
   surfaces: Record<string, ChildToolUiSurfaceConfig>;
 }
 
+export interface ChildToolRuntimeResourceLifecycleConfig {
+  resources: string[];
+  suspendMethod: string;
+  resumeMethod: string;
+  timeoutMs?: number;
+}
+
+export interface ChildToolRuntimeConfig {
+  resourceLifecycle?: ChildToolRuntimeResourceLifecycleConfig;
+}
+
 export interface ChildToolAgentRpcConfig {
   method?: string;
   actionParam?: string;
@@ -98,6 +109,7 @@ export interface ChildToolConfig {
   uiIndex?: string;
   routePath?: string;
   startupTimeoutMs?: number;
+  runtime?: ChildToolRuntimeConfig;
   env?: Record<string, string>;
   ui?: ChildToolUiConfig;
   agent?: ChildToolAgentConfig;

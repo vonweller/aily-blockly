@@ -125,6 +125,12 @@ test('treats an npm-linked source package as an installed subapp', async (t) => 
       },
       runtime: {
         startupTimeoutMs: 20000,
+        resourceLifecycle: {
+          resources: ['serial'],
+          suspendMethod: 'runtime.resource.suspend',
+          resumeMethod: 'runtime.resource.resume',
+          timeoutMs: 150000,
+        },
       },
       agent: {
         protocolVersion: 1,
@@ -150,6 +156,14 @@ test('treats an npm-linked source package as an installed subapp', async (t) => 
   assert.equal(state.apps[0].installedVersion, '0.1.1');
   assert.equal(state.apps[0].config.packagePath, linkedDir);
   assert.equal(state.apps[0].config.startupTimeoutMs, 20000);
+  assert.deepEqual(state.apps[0].config.runtime, {
+    resourceLifecycle: {
+      resources: ['serial'],
+      suspendMethod: 'runtime.resource.suspend',
+      resumeMethod: 'runtime.resource.resume',
+      timeoutMs: 150000,
+    },
+  });
   assert.deepEqual(state.apps[0].config.ui, {
     surfaces: {
       default: {

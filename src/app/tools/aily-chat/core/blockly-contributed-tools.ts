@@ -48,6 +48,10 @@ import {
   collectSubappAgentToolBindings,
   createSubappAgentHandlers,
 } from './blockly-subapp-agent-tools';
+import {
+  appendProjectSceneRegenerationContributions,
+  createProjectSceneRegenerationHandlers,
+} from './blockly-project-scene-tools';
 
 export const BLOCKLY_LEX_DEFERRED_GROUPS = [
   { id: 'blockly-library-discovery', label: '硬件/库工具', description: '开发板、库搜索与库定义分析' },
@@ -109,7 +113,11 @@ function createHandlers(runtimeMode: ChatAgentRuntimeMode, options?: BlocklyTool
   }
 
   if (runtimeMode === 'blockly') {
-    Object.assign(handlers, createBlocklyWorkspaceHandlers(options));
+    Object.assign(
+      handlers,
+      createBlocklyWorkspaceHandlers(options),
+      createProjectSceneRegenerationHandlers(),
+    );
   }
 
   return handlers;
@@ -132,6 +140,7 @@ function collectBlocklyContributions(hostAPI: IExternalHostAPI, runtimeMode: Cha
 
   if (runtimeMode === 'blockly') {
     appendBlocklyWorkspaceContributions(contributions, hostAPI, createDeferred);
+    appendProjectSceneRegenerationContributions(contributions);
     appendLegacyHostContributions(contributions, hostAPI);
   }
 

@@ -144,7 +144,7 @@ declare global {
           projectPath: string;
           ownerId?: string;
           sceneId?: string;
-        }) => Promise<{
+        }) => Promise<({
           schemaVersion: 1;
           kind: 'aily-simulator-subapp-surface';
           state: 'ready';
@@ -152,16 +152,44 @@ declare global {
           url: string;
           origin: string;
           launchId: string;
-          initialization: 'existing' | 'imported-v1' | 'created-empty';
+          initialization: 'existing' | 'created-empty' | 'regenerated-v2';
           runtimeSource: string;
           runtimePackId?: string;
           runtimeMode?: string;
-        }>;
-        exportProjectSceneV1: (ownerId?: string) => Promise<{
+        } | {
           schemaVersion: 1;
-          kind: 'aily-project-scene-v1-export-result';
-          state: 'exported';
-        }>;
+          kind: 'aily-simulator-subapp-project-scene-regeneration-required';
+          state: 'legacy-scene-regeneration-required';
+          tool: 'scene';
+          initialization: 'legacy-detected';
+          requirement: {
+            schemaVersion: 1;
+            kind: 'aily-project-scene-legacy-regeneration-required';
+            regenerationId: string;
+            projectIdentity: string;
+            sceneId: string;
+            legacySourceKind: 'connection-output-v1';
+            legacySourceRevision: string;
+            legacySourceBytes: number;
+            catalogRevision: string;
+            draftVisualRevision: string;
+            draftGraphSemanticRevision: string;
+            expiresAtUnixMs: number;
+          };
+          runtimeSource: string;
+          runtimePackId?: string;
+          runtimeMode?: string;
+        })>;
+        resolveProjectSceneRegeneration: (options: {
+          ownerId?: string;
+          regenerationId: string;
+          resolution: 'cancel' | 'commit';
+          proposal?: Record<string, unknown>;
+        }) => Promise<Record<string, unknown>>;
+        applyProjectSceneAgentProposal: (options: {
+          ownerId?: string;
+          proposal: Record<string, unknown>;
+        }) => Promise<Record<string, unknown>>;
         attachProjectSceneSession: (ownerId?: string) => Promise<{
           schemaVersion: 1;
           kind: 'aily-project-scene-session-attachment-result';
@@ -178,13 +206,16 @@ declare global {
           state: 'detached';
         }>;
         status: () => Promise<{
-          state: 'ready' | 'stopped';
+          state: 'ready' | 'stopped' | 'legacy-scene-regeneration-required';
           tool?: 'scene' | 'debugger';
           launchId?: string;
           sessionState?: string;
           runtimeSource?: string;
           runtimePackId?: string;
           runtimeMode?: string;
+          initialization?: 'existing' | 'created-empty' | 'legacy-detected'
+            | 'regenerated-v2';
+          requirement?: Record<string, unknown>;
           lastFailure?: {
             phase: string;
             message: string;
@@ -200,7 +231,8 @@ declare global {
           callback: (state: {
             state: 'starting' | 'ready' | 'stopping' | 'stopped' | 'failed'
               | 'rebuild-requested' | 'artifact-rebuild-state-changed'
-              | 'artifact-rebuild-candidate-ready';
+              | 'artifact-rebuild-candidate-ready'
+              | 'legacy-scene-regeneration-required';
             unexpected?: boolean;
             surface?: {
               schemaVersion: 1;
@@ -221,6 +253,7 @@ declare global {
               signal: string | null;
               occurredAt: string;
             };
+            requirement?: Record<string, unknown>;
           }) => void,
         ) => () => void;
         onProjectRebuildRequested: (
