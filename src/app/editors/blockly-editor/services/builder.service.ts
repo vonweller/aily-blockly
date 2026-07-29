@@ -22,6 +22,8 @@ import { BlocklyService as BlocklyService } from './blockly.service';
 
 import { PlatformService } from "../../../services/platform.service";
 import { ElectronService } from '../../../services/electron.service';
+import { prepareBlocklyProjectDataForCodeGeneration } from '../../../services/project-data/blockly-project-data-adapter';
+import { writeArduinoGeneratedArtifacts } from './generated-code-artifacts';
 import { WorkflowService, ProcessState } from '../../../services/workflow.service';
 import { CompileValidationService } from '../../../services/compile-validation.service';
 import { AppDataResourceLockService } from '../../../services/appdata-resource-lock.service';
@@ -584,6 +586,8 @@ export class _BuilderService {
         }
         
         const code = await this.generateWorkspaceCodeForPreprocess(this.blocklyService.workspace, 'background_preprocess');
+        // TODO AI 冲突解决
+        const code = await this.generateWorkspaceCode();
         if (!code) {
           return;
         }
@@ -975,6 +979,14 @@ export class _BuilderService {
             console.warn('删除目录失败:', dirPath, error);
         }
     }
+
+  private async generateWorkspaceCode(): Promise<string> {
+    const projectDocument = this.blocklyService.getProjectDocument();
+    await prepareBlocklyProjectDataForCodeGeneration(this.blocklyService.workspace, projectDocument);
+    const code = arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
+    await writeArduinoGeneratedArtifacts(this.projectService.currentProjectPath, arduinoGenerator);
+    return code;
+  }
 
   /**
    * 运行预编译脚本（同步等待完成）

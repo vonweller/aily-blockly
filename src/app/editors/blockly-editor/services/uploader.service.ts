@@ -20,6 +20,8 @@ import { BlocklyService } from "./blockly.service";
 import { WorkflowService, ProcessState } from '../../../services/workflow.service';
 import { BleOtaProgress, UploaderBleService } from '../../../services/uploader-ble.service';
 import { AppDataResourceLockService } from '../../../services/appdata-resource-lock.service';
+import { prepareBlocklyProjectDataForCodeGeneration } from '../../../services/project-data/blockly-project-data-adapter';
+import { writeArduinoGeneratedArtifacts } from './generated-code-artifacts';
 import { appendProjectLog, type ProjectLogLevel } from '../../../utils/project-log.utils';
 import {
   resolveUploadRecoveryPolicy,
@@ -306,7 +308,7 @@ export class _UploaderService {
     this.processExitCode = null; // 重置进程退出码
     this.uploadInProgress = true; // 立即设置为true，使取消功能生效
     let resourceRecovery: UploadRecoveryPolicy | undefined;
-  
+
     return new Promise<UploadActionState>(async (resolve, reject) => {
       // 保存 reject 函数，以便 cancel() 方法可以立即中断
       this.uploadPromiseReject = reject;
@@ -373,7 +375,12 @@ export class _UploaderService {
         }
 
         // 第一步：检查是否需要编译
+        await prepareBlocklyProjectDataForCodeGeneration(
+          this.blocklyService.workspace,
+          this.blocklyService.getProjectDocument(),
+        );
         const code = normalizeArduinoGeneratedCode(generateCodeWithActiveProjectGenerator(this.blocklyService.workspace));
+        await writeArduinoGeneratedArtifacts(this.projectService.currentProjectPath, arduinoGenerator);
         const buildPath = await this.projectService.getBuildPath();
         const needsBuild = !this._builderService.passed || 
                           code !== this._builderService.lastCode || 
