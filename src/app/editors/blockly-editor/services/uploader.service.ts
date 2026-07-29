@@ -17,6 +17,8 @@ import { BlocklyService } from "./blockly.service";
 import { WorkflowService, ProcessState } from '../../../services/workflow.service';
 import { BleOtaProgress, UploaderBleService } from '../../../services/uploader-ble.service';
 import { AppDataResourceLockService } from '../../../services/appdata-resource-lock.service';
+import { prepareBlocklyProjectDataForCodeGeneration } from '../../../services/project-data/blockly-project-data-adapter';
+import { writeArduinoGeneratedArtifacts } from './generated-code-artifacts';
 
 interface NetworkOtaUploadTarget {
   id?: string;
@@ -344,7 +346,12 @@ export class _UploaderService {
         }
 
         // 第一步：检查是否需要编译
+        await prepareBlocklyProjectDataForCodeGeneration(
+          this.blocklyService.workspace,
+          this.blocklyService.getProjectDocument(),
+        );
         const code = arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
+        await writeArduinoGeneratedArtifacts(this.projectService.currentProjectPath, arduinoGenerator);
         const buildPath = await this.projectService.getBuildPath();
         const needsBuild = !this._builderService.passed || 
                           code !== this._builderService.lastCode || 

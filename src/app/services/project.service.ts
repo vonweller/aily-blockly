@@ -19,6 +19,11 @@ import { NoticeService } from './notice.service';
 import { NzModalRef, NzModalService } from 'ng-zorro-antd/modal';
 import { AppDataResourceLockService } from './appdata-resource-lock.service';
 import { applyCdcSerialPortOverrides } from '../editors/blockly-editor/components/blockly/abf';
+import { projectDataRuntime } from './project-data/project-data-runtime';
+import { assertNoOversizedInlineValues } from './project-data/project-data-policy';
+import { createProjectDataMarker } from './project-data/project-data.types';
+import { ProjectDataStore } from './project-data/project-data-store';
+import { migrateLegacyInlineProjectData } from './project-data/project-data-legacy-import';
 
 interface ProjectPackageData {
   name: string;
@@ -266,6 +271,7 @@ export class ProjectService {
       // 复制模板文件到项目目录
       await this.crossPlatformCmdService.copyItem(`${templatePath}${separator}*`, projectPath, true, true);
 
+      await this.initializeProjectDataSchema(projectPath);
       this.updateNewProjectPackageJson(projectPath, newProjectData);
       return await this.finishProjectCreation(projectPath, options);
 
@@ -288,12 +294,49 @@ export class ProjectService {
       await this.crossPlatformCmdService.createDirectory(projectPath, true);
       await this.crossPlatformCmdService.copyItem(`${templatePath}${separator}*`, projectPath, true, true);
 
+      await this.initializeProjectDataSchema(projectPath);
       this.updateNewProjectPackageJson(projectPath, newProjectData, { removeCloudId: true });
       return await this.finishProjectCreation(projectPath, options);
     } catch (error) {
       this.message.error(this.translate.instant('PROJECT.CREATE_FAILED') + ": " + error.message);
       this.uiService.updateFooterState({ state: 'error', text: this.translate.instant('PROJECT.CREATE_FAILED') });
       return false;
+    }
+  }
+
+  /**
+   * Board, example, and cloud templates are source material for a new local
+   * project. Known internal-test inline payloads are migrated once at this copy
+   * boundary; normal project loading remains strictly external-only.
+   */
+  async initializeProjectDataSchema(projectPath: string): Promise<void> {
+    const abiPath = window['path'].join(projectPath, 'project.abi');
+    if (!window['fs'].existsSync(abiPath)) return;
+    const abi = JSON.parse(window['fs'].readFileSync(abiPath, 'utf8'));
+
+    const store = new ProjectDataStore();
+    store.configure(projectPath);
+    const migration = await migrateLegacyInlineProjectData(abi, store);
+    await store.flushPending();
+    assertNoOversizedInlineValues(abi);
+    abi.$ailyProjectData = createProjectDataMarker();
+    const refs = store.collectReferences(abi);
+    const validation = await store.validateReferences(refs);
+    if (!validation.valid) {
+      throw new Error(`Project data import validation failed: ${validation.issues.map((issue) => issue.error).join('; ')}`);
+    }
+
+    const tempPath = `${abiPath}.tmp`;
+    try {
+      window['fs'].writeFileSync(tempPath, JSON.stringify(abi));
+      window['fs'].renameSync(tempPath, abiPath);
+    } finally {
+      if (window['fs'].existsSync(tempPath) && typeof window['fs'].unlinkSync === 'function') {
+        window['fs'].unlinkSync(tempPath);
+      }
+    }
+    if (migration.migrated.length > 0) {
+      console.info(`[ProjectData] Migrated ${migration.migrated.length} inline field payload(s) while importing ${projectPath}.`);
     }
   }
 
@@ -446,14 +489,26 @@ export class ProjectService {
   }
 
 
-  saveAs(path) {
+  async saveAs(path: string): Promise<void> {
+    const sourceProjectPath = this.currentProjectPath;
+    const saveResult = await this.save(sourceProjectPath);
+    if (!saveResult.success) {
+      throw new Error(saveResult.error || '保存当前项目失败，无法另存为');
+    }
+    await projectDataRuntime.flushPending();
+    const sourceAbi = JSON.parse(window['fs'].readFileSync(`${sourceProjectPath}/project.abi`, 'utf8'));
+    assertNoOversizedInlineValues(sourceAbi);
+    const validation = await projectDataRuntime.getStore().validateReferences(
+      projectDataRuntime.getStore().collectReferences(sourceAbi),
+    );
+    if (!validation.valid) {
+      throw new Error(`项目数据资源不完整，无法另存为: ${validation.issues.map((issue) => issue.error).join('; ')}`);
+    }
     //在当前路径下创建一个新的目录
     path = path.replace(/\s/g, '_');
     window['fs'].mkdirSync(path);
     // 复制项目目录到新路径
-    window['fs'].copySync(this.currentProjectPath, path);
-    // 修改package.json文件
-    this.save(path);
+    window['fs'].copySync(sourceProjectPath, path);
     // 修改package.json文件
     const packageJson = JSON.parse(window['fs'].readFileSync(`${path}/package.json`));
     // 另存为时去掉cloudId
@@ -475,6 +530,7 @@ export class ProjectService {
     window['fs'].writeFileSync(`${path}/package.json`, JSON.stringify(packageJson, null, 2));
     // 修改当前项目路径
     this.currentProjectPath = path;
+    projectDataRuntime.configure(path);
     this.currentPackageData = packageJson;
     this.addRecentlyProject({ name: this.currentPackageData.name, path: path, nickname: this.currentPackageData.nickname || this.currentPackageData.name });
   }

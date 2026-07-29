@@ -197,6 +197,16 @@
             "LABEL_COLOR_MODE": "Farbe",
             "WORKER_ERROR_UNSUPPORTED_FILE_TYPE": "Nur MP4- und GIF-Dateien werden unterstützt"
         },
+        "TFTESPI_IMAGE": {
+            "BLOCK_TOOLTIP": "PNG-, JPEG-, WebP- oder GIF-Bild in RGB565/RGB332-Pixeldaten umwandeln",
+            "UPLOAD_TOOLTIP": "Unterstützte Formate: PNG, JPEG, WebP, GIF",
+            "EMPTY": "Kein Bild hochgeladen",
+            "STATUS_DECODING": "Bild wird konvertiert...",
+            "STATUS_REDECODING": "{{name}} wird erneut konvertiert...",
+            "ERROR_DECODE_FAILED": "Bildkonvertierung fehlgeschlagen",
+            "ERROR_REDECODE_FAILED": "Erneute Bildkonvertierung fehlgeschlagen",
+            "WORKER_ERROR_UNSUPPORTED_FILE_TYPE": "Es werden nur PNG-, JPEG-, WebP- und GIF-Dateien unterstützt"
+        },
         "U8G2_ANIMATION": {
             "BUTTON_UPLOAD": "Hochladen",
             "UPLOAD_TOOLTIP": "Unterstützte Formate: MP4, GIF, PNG",

@@ -2713,6 +2713,18 @@ ipcMain.handle("fs-stat", async (_event, filePath) => {
   };
 });
 
+ipcMain.handle("fs-lstat", async (_event, filePath) => {
+  const s = await fsPromises.lstat(filePath);
+  return {
+    size: s.size,
+    mtime: s.mtime.toISOString(),
+    birthtime: s.birthtime.toISOString(),
+    _isDirectory: s.isDirectory(),
+    _isFile: s.isFile(),
+    _isSymbolicLink: s.isSymbolicLink(),
+  };
+});
+
 ipcMain.handle("fs-readdir", async (_event, dirPath) => {
   return await fsPromises.readdir(dirPath);
 });

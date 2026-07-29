@@ -8,6 +8,14 @@ import { convertAbiToAbs, convertAbsToAbi, inferFieldVariableType } from './abiA
 import { getActiveWorkspace, createBlockFromConfig } from './editBlockTool';
 import { AbsAutoSyncService } from '../services/abs-auto-sync.service';
 import { loadProjectBlockDefinitions, parseAbs, BlocklyAbsParser } from './absParser';
+import { projectDataRuntime } from '../../../services/project-data/project-data-runtime';
+import {
+  AilyDataRef,
+  areAilyDataRefsEquivalent,
+  createProjectDataMarker,
+  hasAilyProjectDataAbsHeader,
+} from '../../../services/project-data/project-data.types';
+import { assertNoOversizedInlineValues } from '../../../services/project-data/project-data-policy';
 
 declare const Blockly: any;
 
@@ -17,6 +25,16 @@ declare const Blockly: any;
  */
 function yieldToEventLoop(): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, 0));
+}
+
+function restoreWorkspaceSnapshot(workspace: any, snapshot: unknown): void {
+  Blockly.Events.disable();
+  try {
+    workspace.clear();
+    Blockly.serialization.workspaces.load(snapshot, workspace);
+  } finally {
+    Blockly.Events.enable();
+  }
 }
 
 // =============================================================================
@@ -138,7 +156,10 @@ async function exportToAbs(
     
     if (workspace) {
       // 直接从工作区序列化
-      abiJson = Blockly.serialization.workspaces.save(workspace);
+      abiJson = {
+        ...Blockly.serialization.workspaces.save(workspace),
+        $ailyProjectData: createProjectDataMarker(),
+      };
     } else if (await electronService.exists(abiFilePath)) {
       // 方法2：从 ABI 文件读取
       const abiContent = await electronService.readFile(abiFilePath);
@@ -208,6 +229,10 @@ async function importFromAbs(
   absAutoSyncService?: AbsAutoSyncService,
   projectService?: any
 ): Promise<SyncAbsResult> {
+  let rollbackWorkspace: any = null;
+  let rollbackSnapshot: unknown = null;
+  let workspaceMutationStarted = false;
+  let candidateRefs: AilyDataRef[] = [];
   try {
     // 检查 ABS 文件是否存在
     if (!await electronService.exists(absFilePath)) {
@@ -235,6 +260,12 @@ async function importFromAbs(
     
     // 读取 ABS 文件
     const absContent = await electronService.readFile(absFilePath);
+    if (!hasAilyProjectDataAbsHeader(absContent)) {
+      return {
+        is_error: true,
+        content: 'ABS 格式错误：缺少 # Project Data Schema: 1 (external-only) 文件头。',
+      };
+    }
     
     // 解析 ABS（不转换为 ABI JSON，而是获取 BlockConfig）
     const parser = new BlocklyAbsParser();
@@ -256,6 +287,25 @@ async function importFromAbs(
         content: `ABS 解析失败:\n${errorMessages}\n\n请检查 ABS 文件语法，读取对应库 reademe_ai.md 或使用 \`get_block_info_tool\` 查询正确的块定义和参数格式。`
       };
     }
+
+    // ABS 导入必须在修改工作区前完成资源和内联大值预检。
+    const candidate = { blocks: { languageVersion: 0, blocks: parseResult.rootBlocks } };
+    try {
+      assertNoOversizedInlineValues(candidate);
+      candidateRefs = projectDataRuntime.getStore().collectReferences(candidate);
+      const candidateValidation = await projectDataRuntime.getStore().validateReferences(candidateRefs);
+      if (!candidateValidation.valid) {
+        return {
+          is_error: true,
+          content: `ABS 引用的项目数据无效，未修改工作区: ${candidateValidation.issues.map((issue) => issue.error).join('; ')}`,
+        };
+      }
+    } catch (error) {
+      return {
+        is_error: true,
+        content: `ABS 项目数据预检失败，未修改工作区: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
     
     // 获取工作区
     const workspace = getActiveWorkspace();
@@ -265,6 +315,8 @@ async function importFromAbs(
         content: '无法获取 Blockly 工作区'
       };
     }
+    rollbackWorkspace = workspace;
+    rollbackSnapshot = Blockly.serialization.workspaces.save(workspace);
     
     // 备份当前 ABI 文件
     if (await electronService.exists(abiFilePath)) {
@@ -307,6 +359,7 @@ async function importFromAbs(
     // 使用 VariableMap 直接操作，避免 workspace.deleteVariableById 弹出确认对话框
     const variableMap = workspace.getVariableMap();
     const existingVars = workspace.getAllVariables();
+    workspaceMutationStarted = true;
     if (variableMap && existingVars.length > 0) {
       Blockly.Events.disable();
       try {
@@ -572,8 +625,28 @@ async function importFromAbs(
     }
     
     // 保存工作区到 ABI 文件
-    const abiJson = Blockly.serialization.workspaces.save(workspace);
+    const abiJson = {
+      ...Blockly.serialization.workspaces.save(workspace),
+      $ailyProjectData: createProjectDataMarker(),
+    };
+    await projectDataRuntime.flushPending();
+    const savedRefs = projectDataRuntime.getStore().collectReferences(abiJson);
+    const savedRefsById = new Map(savedRefs.map((ref) => [ref.$ailyData.id, ref]));
+    const droppedRefs = candidateRefs.filter((ref) => {
+      const saved = savedRefsById.get(ref.$ailyData.id);
+      return !saved || !areAilyDataRefsEquivalent(saved, ref);
+    });
+    if (droppedRefs.length > 0) {
+      throw new Error(
+        `ABS import dropped ${droppedRefs.length} project data reference(s): ${droppedRefs.map((ref) => ref.$ailyData.id).join(', ')}`,
+      );
+    }
+    const validation = await projectDataRuntime.getStore().validateReferences(savedRefs);
+    if (!validation.valid) {
+      throw new Error(`Project data validation failed: ${validation.issues.map((issue) => issue.error).join('; ')}`);
+    }
     await electronService.writeFile(abiFilePath, JSON.stringify(abiJson));
+    workspaceMutationStarted = false;
     
     const variableCount = allVariables.size;  // 使用收集到的所有变量数量
     
@@ -632,9 +705,17 @@ async function importFromAbs(
       }
     };
   } catch (error) {
+    let rollbackError = '';
+    if (workspaceMutationStarted && rollbackWorkspace && rollbackSnapshot) {
+      try {
+        restoreWorkspaceSnapshot(rollbackWorkspace, rollbackSnapshot);
+      } catch (restoreError) {
+        rollbackError = `; workspace rollback failed: ${restoreError instanceof Error ? restoreError.message : String(restoreError)}`;
+      }
+    }
     return {
       is_error: true,
-      content: `导入失败: ${error instanceof Error ? error.message : String(error)}`
+      content: `导入失败: ${error instanceof Error ? error.message : String(error)}${rollbackError}`
     };
   }
 }

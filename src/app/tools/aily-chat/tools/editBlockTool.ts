@@ -4,6 +4,10 @@ import { jsonrepair } from 'jsonrepair';
 import { ArduinoSyntaxTool } from "./arduinoSyntaxTool";
 import { fixBlockConfig } from './blockConfigFixer';
 import { normalizeInputNameForAbs } from './abiAbsConverter';
+import { projectDataRuntime } from '../../../services/project-data/project-data-runtime';
+import { prepareBlocklyProjectDataForCodeGeneration } from '../../../services/project-data/blockly-project-data-adapter';
+import { writeArduinoGeneratedArtifacts } from '../../../editors/blockly-editor/services/generated-code-artifacts';
+import { prepareBlockFieldValue } from './blockFieldValue';
 declare const Blockly: any;
 
 /**
@@ -1228,7 +1232,7 @@ function getDropdownOptions(block: any, fieldName: string): string[] {
 function smartSetFieldValue(
   block: any,
   fieldName: string,
-  actualValue: string
+  actualValue: any
 ): { success: boolean; error?: string; suggestion?: string } {
   const field = block.getField(fieldName);
   if (!field) {
@@ -1325,6 +1329,15 @@ function smartSetFieldValue(
   }
 }
 
+/**
+ * ABS @json fields are structured Blockly field state. Keep those values as
+ * objects so custom serializable fields can validate them. Only Blockly's
+ * variable-field descriptor is reduced to the workspace variable id/name.
+ */
+function getConfiguredFieldValue(block: any, fieldName: string, value: any): any {
+  return prepareBlockFieldValue(block?.getField?.(fieldName), value);
+}
+
 function configureBlockFields(block: any, fields: FieldConfig): {
   configSuccess: boolean;
   failedFields?: Array<{
@@ -1356,31 +1369,14 @@ function configureBlockFields(block: any, fields: FieldConfig): {
       if (value !== undefined && value !== null) {
         try {
           // 处理对象格式的字段值
-          let actualValue: string;
+          let actualValue: any;
           // 🔑 保存原始的 name 属性，用于变量字段的名称查找
           let variableNameFromConfig: string | undefined = undefined;
           
-          if (typeof value === 'object' && value !== null) {
-            // 如果是对象格式 {id: "xxx", name: "xxx"} 或 {name: "xxx"}
-            // 🔧 对于变量字段，优先保存 name 属性供后续使用
-            if ((value as any).name) {
-              variableNameFromConfig = (value as any).name;
-            }
-            
-            if ((value as any).id) {
-              // 传入了 {id: "xxx"} 格式，提取值（会在后续验证是否为真实变量ID）
-              actualValue = (value as any).id;
-              // console.log(`🔄 对象字段值转换(id字段): ${fieldName} = ${JSON.stringify(value)} -> ${actualValue}`);
-            } else if ((value as any).name) {
-              actualValue = (value as any).name;
-              // console.log(`🔄 对象字段值转换(名称): ${fieldName} = ${JSON.stringify(value)} -> ${actualValue}`);
-            } else {
-              actualValue = JSON.stringify(value);
-              // console.log(`🔄 对象字段值转换(JSON): ${fieldName} = ${JSON.stringify(value)} -> ${actualValue}`);
-            }
-          } else {
-            actualValue = value.toString();
+          if (typeof value === 'object' && value !== null && typeof (value as any).name === 'string') {
+            variableNameFromConfig = (value as any).name;
           }
+          actualValue = getConfiguredFieldValue(block, fieldName, value);
           
           // � 检测 EXTRA_N 模式的字段：这些需要延迟到 updateShape_() 后再映射
           const isExtraField = /^EXTRA_\d+$/.test(fieldName);
@@ -1905,18 +1901,7 @@ function configureBlockFields(block: any, fields: FieldConfig): {
           }
           
           // 字段现在存在，使用智能设置（支持下拉菜单匹配+验证）
-          let actualValue: string;
-          if (typeof value === 'object' && value !== null) {
-            if ((value as any).id) {
-              actualValue = (value as any).id;
-            } else if ((value as any).name) {
-              actualValue = (value as any).name;
-            } else {
-              actualValue = JSON.stringify(value);
-            }
-          } else {
-            actualValue = String(value);
-          }
+          const actualValue = getConfiguredFieldValue(block, fieldName, value);
           
           const setResult = smartSetFieldValue(block, fieldName, actualValue);
           if (setResult.success) {
@@ -2000,14 +1985,7 @@ function configureBlockFields(block: any, fields: FieldConfig): {
       for (const { fieldName, value } of mappedRetryFields) {
         const existingField = block.getField(fieldName);
         if (existingField) {
-          let actualValue: string;
-          if (typeof value === 'object' && value !== null) {
-            if ((value as any).id) actualValue = (value as any).id;
-            else if ((value as any).name) actualValue = (value as any).name;
-            else actualValue = JSON.stringify(value);
-          } else {
-            actualValue = String(value);
-          }
+          const actualValue = getConfiguredFieldValue(block, fieldName, value);
           const setResult = smartSetFieldValue(block, fieldName, actualValue);
           if (setResult.success) {
             // console.log(`✅ 字段设置成功: ${fieldName} = ${actualValue}`);
@@ -2044,14 +2022,7 @@ function configureBlockFields(block: any, fields: FieldConfig): {
           // 尝试将值映射到第一个未配置的字段
           if (unconfiguredFields.length > 0) {
             const targetField = unconfiguredFields[0];
-            let actualValue: string;
-            if (typeof value === 'object' && value !== null) {
-              if ((value as any).id) actualValue = (value as any).id;
-              else if ((value as any).name) actualValue = (value as any).name;
-              else actualValue = JSON.stringify(value);
-            } else {
-              actualValue = String(value);
-            }
+            const actualValue = getConfiguredFieldValue(block, targetField, value);
             const setResult = smartSetFieldValue(block, targetField, actualValue);
             if (setResult.success) {
               // console.log(`🔄 字段映射: ${fieldName} → ${targetField} = ${actualValue}`);
@@ -7681,8 +7652,13 @@ export async function getWorkspaceOverviewTool(args?: any): Promise<ToolUseResul
     let lintResult = null;
     if (includeCode) {
       try {
+        await prepareBlocklyProjectDataForCodeGeneration(workspace);
         if ((window as any).Arduino && (window as any).Arduino.workspaceToCode) {
           generatedCode = (window as any).Arduino.workspaceToCode(workspace) || '// 无代码生成';
+          await writeArduinoGeneratedArtifacts(
+            projectDataRuntime.getStore().getProjectPath(),
+            (window as any).Arduino,
+          );
         } else {
           // 备用方法：拼接顶层块的代码
           const codeLines: string[] = [];
@@ -8749,7 +8725,9 @@ export async function generateCodeTool(): Promise<ToolUseResult> {
   
   try {
     const workspace = getActiveWorkspace();
+    await prepareBlocklyProjectDataForCodeGeneration(workspace);
     const code = arduinoGenerator.workspaceToCode(workspace);
+    await writeArduinoGeneratedArtifacts(projectDataRuntime.getStore().getProjectPath(), arduinoGenerator);
     
     const result = {
       is_error: false,

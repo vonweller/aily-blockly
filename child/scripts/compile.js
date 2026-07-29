@@ -74,6 +74,7 @@ async function main() {
         mkdirp(tempPath);
         mkdirp(sketchPath);
         fs.writeFileSync(sketchFilePath, code);
+        copyProjectSrcToSketch(currentProjectPath, sketchPath);
 
         // 3. 检查预编译缓存是否存在
         if (!fs.existsSync(preprocessCachePath)) {
@@ -172,4 +173,16 @@ function syncPreprocessBuildPath(preprocessCachePath, buildPath) {
     } catch (error) {
         logger.warn(`Failed to update preprocess build path: ${error.message}`);
     }
+}
+
+function copyProjectSrcToSketch(currentProjectPath, sketchPath) {
+    const projectSrcPath = path.join(currentProjectPath, 'src');
+    if (!fs.existsSync(projectSrcPath)) {
+        return;
+    }
+    if (!fs.statSync(projectSrcPath).isDirectory()) {
+        logger.warn(`Project src path exists but is not a directory: ${projectSrcPath}`);
+        return;
+    }
+    fs.cpSync(projectSrcPath, sketchPath, { recursive: true });
 }

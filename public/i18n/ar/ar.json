@@ -197,6 +197,16 @@
             "LABEL_COLOR_MODE": "اللون",
             "WORKER_ERROR_UNSUPPORTED_FILE_TYPE": "يتم دعم ملفات MP4 وGIF فقط"
         },
+        "TFTESPI_IMAGE": {
+            "BLOCK_TOOLTIP": "تحويل صورة PNG أو JPEG أو WebP أو GIF إلى بيانات بكسل RGB565/RGB332",
+            "UPLOAD_TOOLTIP": "التنسيقات المدعومة: PNG وJPEG وWebP وGIF",
+            "EMPTY": "لم يتم تحميل صورة",
+            "STATUS_DECODING": "جارٍ تحويل الصورة...",
+            "STATUS_REDECODING": "جارٍ إعادة تحويل {{name}}...",
+            "ERROR_DECODE_FAILED": "فشل تحويل الصورة",
+            "ERROR_REDECODE_FAILED": "فشلت إعادة تحويل الصورة",
+            "WORKER_ERROR_UNSUPPORTED_FILE_TYPE": "يتم دعم ملفات PNG وJPEG وWebP وGIF فقط"
+        },
         "U8G2_ANIMATION": {
             "BUTTON_UPLOAD": "تحميل",
             "UPLOAD_TOOLTIP": "الصيغ المدعومة: MP4، GIF، PNG",

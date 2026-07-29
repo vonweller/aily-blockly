@@ -22,3 +22,6 @@ import './schematic-tools';
 
 // ABS / ABI / 工具类
 import './abs-tools';
+
+// 项目大数据资源
+import './project-data-tools';
