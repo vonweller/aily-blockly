@@ -35,6 +35,18 @@ import { ChildToolProcessService } from '../../services/child-tool-process.servi
 import { MainUiAutomationService } from '../../services/main-ui-automation.service';
 import { ChildAppHostRegistryService } from '../../services/child-app-host-registry.service';
 
+const SUBAPP_MORE_MENU_VIEWPORT_MARGIN = 8;
+const SUBAPP_MORE_MENU_GAP = 3;
+const SUBAPP_MORE_MENU_ESTIMATED_WIDTH = 148;
+const SUBAPP_MORE_ACTION_HEIGHT = 28;
+const SUBAPP_MORE_MENU_PADDING = 8;
+const SUBAPP_MORE_ACTION_COUNT = 2;
+
+interface SubappMoreMenuPosition {
+  left: number;
+  top: number;
+}
+
 @Component({
   selector: 'app-app-store',
   imports: [
@@ -62,6 +74,7 @@ export class AppStoreComponent implements OnInit, AfterViewInit, OnDestroy {
   checkingCatalogId = '';
   confirmUninstallCatalogId = '';
   openMoreCatalogId = '';
+  subappMoreMenuPosition: SubappMoreMenuPosition | null = null;
 
   private visibleCatalogIds: string[] = [];
   private sortables: Sortable[] = [];
@@ -240,6 +253,7 @@ export class AppStoreComponent implements OnInit, AfterViewInit, OnDestroy {
       return;
     }
     this.clearUninstallConfirmation();
+    this.subappMoreMenuPosition = this.calculateSubappMoreMenuPosition(event.currentTarget);
     this.openMoreCatalogId = catalogId;
     void this.refreshSubappActiveVersion(app);
     this.cdr.markForCheck();
@@ -247,6 +261,14 @@ export class AppStoreComponent implements OnInit, AfterViewInit, OnDestroy {
 
   isSubappMoreOpen(app: AppItem): boolean {
     return !!app.subapp && this.openMoreCatalogId === app.subapp.catalogId;
+  }
+
+  getSubappMoreMenuLeft(app: AppItem): number | null {
+    return this.isSubappMoreOpen(app) ? this.subappMoreMenuPosition?.left ?? null : null;
+  }
+
+  getSubappMoreMenuTop(app: AppItem): number | null {
+    return this.isSubappMoreOpen(app) ? this.subappMoreMenuPosition?.top ?? null : null;
   }
 
   uninstallSubapp(app: AppItem): void {
@@ -264,8 +286,7 @@ export class AppStoreComponent implements OnInit, AfterViewInit, OnDestroy {
       return;
     }
 
-    this.clearUninstallConfirmation();
-    this.openMoreCatalogId = '';
+    this.closeSubappMore();
     void this.runSubappAction('uninstall', app);
   }
 
@@ -295,6 +316,15 @@ export class AppStoreComponent implements OnInit, AfterViewInit, OnDestroy {
 
   @HostListener('document:keydown.escape')
   closeSubappMoreOnEscape(): void {
+    this.closeSubappMoreOnOutsideClick();
+  }
+
+  @HostListener('window:resize')
+  closeSubappMoreOnResize(): void {
+    this.closeSubappMoreOnOutsideClick();
+  }
+
+  closeSubappMoreOnScroll(): void {
     this.closeSubappMoreOnOutsideClick();
   }
 
@@ -357,6 +387,7 @@ export class AppStoreComponent implements OnInit, AfterViewInit, OnDestroy {
     const subapp = app.subapp;
     if (!subapp || this.pendingCatalogId) return;
     this.pendingCatalogId = subapp.catalogId;
+    this.cdr.markForCheck();
     try {
       if (action !== 'install') {
         await this.childToolProcess.stop(app.id);
@@ -517,7 +548,59 @@ export class AppStoreComponent implements OnInit, AfterViewInit, OnDestroy {
 
   private closeSubappMore(): void {
     this.openMoreCatalogId = '';
+    this.subappMoreMenuPosition = null;
     this.clearUninstallConfirmation();
+  }
+
+  private calculateSubappMoreMenuPosition(
+    trigger: EventTarget | null
+  ): SubappMoreMenuPosition {
+    const triggerElement = trigger instanceof HTMLElement ? trigger : null;
+    const triggerRect = triggerElement?.getBoundingClientRect();
+    const menuWidth = SUBAPP_MORE_MENU_ESTIMATED_WIDTH;
+    const menuHeight =
+      SUBAPP_MORE_ACTION_COUNT * SUBAPP_MORE_ACTION_HEIGHT + SUBAPP_MORE_MENU_PADDING;
+    const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+
+    if (!triggerRect) {
+      return {
+        left: Math.max(
+          SUBAPP_MORE_MENU_VIEWPORT_MARGIN,
+          viewportWidth - menuWidth - SUBAPP_MORE_MENU_VIEWPORT_MARGIN
+        ),
+        top: SUBAPP_MORE_MENU_VIEWPORT_MARGIN,
+      };
+    }
+
+    const preferredLeft = triggerRect.right - menuWidth;
+    const left = this.clamp(
+      preferredLeft,
+      SUBAPP_MORE_MENU_VIEWPORT_MARGIN,
+      Math.max(
+        SUBAPP_MORE_MENU_VIEWPORT_MARGIN,
+        viewportWidth - menuWidth - SUBAPP_MORE_MENU_VIEWPORT_MARGIN
+      )
+    );
+    const bottomTop = triggerRect.bottom + SUBAPP_MORE_MENU_GAP;
+    const topTop = triggerRect.top - menuHeight - SUBAPP_MORE_MENU_GAP;
+    const top =
+      bottomTop + menuHeight + SUBAPP_MORE_MENU_VIEWPORT_MARGIN <= viewportHeight
+        ? bottomTop
+        : this.clamp(
+          topTop,
+          SUBAPP_MORE_MENU_VIEWPORT_MARGIN,
+          Math.max(
+            SUBAPP_MORE_MENU_VIEWPORT_MARGIN,
+            viewportHeight - menuHeight - SUBAPP_MORE_MENU_VIEWPORT_MARGIN
+          )
+        );
+
+    return { left, top };
+  }
+
+  private clamp(value: number, min: number, max: number): number {
+    return Math.min(Math.max(value, min), max);
   }
 
   private createVisibilityContext() {

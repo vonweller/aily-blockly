@@ -170,27 +170,29 @@
     inset 0 0 0 1px color-mix(in srgb, var(--aily-color-primary) 12%, transparent),
     0 0 18px color-mix(in srgb, var(--aily-color-primary) 12%, transparent);
 
+  // Windows 上 npm 安装通常远超数秒；有限时长进度条会停在 90% 看起来像卡住。
+  // 进度只向前推进（不往返），条纹/高光持续单向流动表示仍在进行。
   &::before {
     position: absolute;
     z-index: 0;
     inset: 0;
     content: '';
-    transform: scaleX(0.025);
+    transform: scaleX(0.06);
     transform-origin: left center;
     background:
       linear-gradient(90deg,
-        color-mix(in srgb, var(--aily-color-primary) 10%, transparent),
-        color-mix(in srgb, var(--aily-color-primary) 26%, transparent) 72%,
-        color-mix(in srgb, var(--aily-color-primary) 44%, transparent)),
+        color-mix(in srgb, var(--aily-color-primary) 12%, transparent),
+        color-mix(in srgb, var(--aily-color-primary) 28%, transparent) 72%,
+        color-mix(in srgb, var(--aily-color-primary) 46%, transparent)),
       repeating-linear-gradient(125deg,
         transparent 0 10px,
-        color-mix(in srgb, #fff 12%, transparent) 10px 17px,
+        color-mix(in srgb, #fff 16%, transparent) 10px 17px,
         transparent 17px 28px);
     background-size: 100% 100%, 56px 100%;
     box-shadow: 14px 0 28px color-mix(in srgb, var(--aily-color-primary) 34%, transparent);
     animation:
-      subapp-install-progress 5.8s cubic-bezier(0.16, 0.78, 0.2, 1) forwards,
-      subapp-install-flow 0.9s linear infinite;
+      subapp-install-progress 28s cubic-bezier(0.12, 0.72, 0.18, 1) forwards,
+      subapp-install-flow 0.75s linear infinite;
   }
 
   &::after {
@@ -198,13 +200,13 @@
     z-index: 1;
     top: 0;
     bottom: 0;
-    left: -38%;
-    width: 34%;
+    left: 0;
+    width: 36%;
     content: '';
-    transform: skewX(-18deg);
-    background: linear-gradient(90deg, transparent, color-mix(in srgb, #fff 28%, transparent), transparent);
-    filter: blur(1px);
-    animation: subapp-install-shine 1.8s ease-in-out infinite;
+    transform: translate3d(-120%, 0, 0) skewX(-18deg);
+    background: linear-gradient(90deg, transparent, color-mix(in srgb, #fff 32%, transparent), transparent);
+    pointer-events: none;
+    animation: subapp-install-shine 1.5s ease-in-out infinite;
   }
 
   > * {
@@ -221,19 +223,23 @@
 
 @keyframes subapp-install-progress {
   0% {
-    transform: scaleX(0.025);
+    transform: scaleX(0.06);
   }
 
-  24% {
-    transform: scaleX(0.32);
+  18% {
+    transform: scaleX(0.36);
   }
 
-  64% {
-    transform: scaleX(0.72);
+  48% {
+    transform: scaleX(0.68);
+  }
+
+  78% {
+    transform: scaleX(0.86);
   }
 
   100% {
-    transform: scaleX(0.9);
+    transform: scaleX(0.94);
   }
 }
 
@@ -249,12 +255,12 @@
 
 @keyframes subapp-install-shine {
   0% {
-    left: -38%;
+    transform: translate3d(-120%, 0, 0) skewX(-18deg);
     opacity: 0;
   }
 
   18% {
-    opacity: 0.9;
+    opacity: 0.95;
   }
 
   82% {
@@ -262,7 +268,7 @@
   }
 
   100% {
-    left: 112%;
+    transform: translate3d(320%, 0, 0) skewX(-18deg);
     opacity: 0;
   }
 }
@@ -486,6 +492,19 @@
   color: var(--aily-color-primary);
 }
 
+// 不用 FA 的 fa-spin（默认 2s/圈，Windows 掉帧时像卡住）；改用更快的本地旋转。
+.app-store-spin {
+  display: inline-block;
+  transform-origin: center;
+  animation: app-store-spin 0.75s linear infinite;
+}
+
+@keyframes app-store-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .catalog-state {
   grid-column: 1 / -1;
   display: flex;
@@ -550,10 +569,10 @@
 }
 
 .subapp-more-menu {
-  position: absolute;
-  z-index: 30;
-  top: calc(100% + 3px);
-  right: 0;
+  position: fixed;
+  z-index: 1200;
+  top: 0;
+  left: 0;
   display: none;
   width: max-content;
   min-width: 118px;
@@ -649,12 +668,17 @@
 @media (prefers-reduced-motion: reduce) {
   .catalog-card.installing {
     &::before {
-      transform: scaleX(0.58);
+      transform: scaleX(0.72);
       animation: none;
+      opacity: 0.85;
     }
 
     &::after {
       display: none;
     }
+  }
+
+  .app-store-spin {
+    animation: none;
   }
 }
