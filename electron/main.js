@@ -1184,6 +1184,8 @@ async function handleCliBridgeCommand(action, payload) {
       if (!dir && !projectOptionalOperations.has(operation)) return { ok: false, message: '当前没有打开的项目,且未提供 path' };
       const liveOperationTimeoutMs = operation === 'project_build'
         ? 620000
+        : operation === 'project_upload'
+          ? 920000
         : operation === 'project_create'
           ? 300000
           : operation === 'abs_apply'
