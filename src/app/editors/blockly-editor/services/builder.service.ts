@@ -570,10 +570,22 @@ export class _BuilderService {
   }
 
   private async generateWorkspaceCode(): Promise<string> {
+    // Dependency changes are emitted immediately after code generation. Reuse
+    // that exact revision so background preprocessing does not synchronously
+    // generate the same workspace again on the renderer thread.
+    const reusableCode = this.blocklyService.getReusableGeneratedCode();
+    if (reusableCode !== null) {
+      return reusableCode;
+    }
+
     const projectDocument = this.blocklyService.getProjectDocument();
     await prepareBlocklyProjectDataForCodeGeneration(this.blocklyService.workspace, projectDocument);
     const code = arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
     await writeArduinoGeneratedArtifacts(this.projectService.currentProjectPath, arduinoGenerator);
+
+    // A revision can become dirty while the dependency debounce is pending.
+    // Cache that fallback generation for the rest of the preprocess/build flow.
+    this.blocklyService.publishGeneratedCode(code);
     return code;
   }
 
