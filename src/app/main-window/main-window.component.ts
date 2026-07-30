@@ -20,7 +20,6 @@ import { AppStoreComponent } from '../tools/app-store/app-store.component';
 import { UpdateService } from '../services/update.service';
 import { NzModalModule, NzModalService } from 'ng-zorro-antd/modal';
 import { NpmService } from '../services/npm.service';
-import { SimulatorComponent } from '../tools/simulator/simulator.component';
 import { NavigationEnd, Router, RouterModule } from '@angular/router';
 import { filter, Subscription } from 'rxjs';
 import { ConfigService } from '../services/config.service';
@@ -56,7 +55,6 @@ import { ToolI18nService } from '../services/tool-i18n.service';
     SimplebarAngularModule,
     AppStoreComponent,
     NzModalModule,
-    SimulatorComponent,
     RouterModule,
     NzToolTipModule,
     NzModalModule,
