@@ -940,6 +940,7 @@ const { registerNotificationHandlers } = require("./notification");
 const { registerProbeRsHandlers } = require("./probe-rs");
 const { registerBleHandlers, registerWebBluetoothChooser } = require("./ble");
 const { registerSubappManagerHandlers } = require("./subapp-manager");
+const { shouldBeginRendererGeneration } = require("./renderer-lifecycle");
 
 let mainWindow;
 let userConf;
@@ -2510,8 +2511,11 @@ function createWindow() {
   });
 
   registerWebBluetoothChooser(mainWindow);
-  mainWindow.webContents.on('did-start-loading', () => {
-    beginRendererGeneration('did-start-loading');
+  mainWindow.webContents.on('did-start-navigation', (details) => {
+    if (!shouldBeginRendererGeneration(details)) {
+      return;
+    }
+    beginRendererGeneration('did-start-navigation');
   });
 
   mainWindow.setBounds(winState.state);
