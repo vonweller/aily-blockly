@@ -102,6 +102,7 @@ import { PlatformService } from '../../../../services/platform.service';
 import { applyWindowsBlocklyScrollbarThickness } from '../../utils/apply-windows-blockly-scrollbar-thickness';
 import { BlocklyToolboxPaneComponent } from './components/blockly-toolbox-pane/blockly-toolbox-pane.component';
 import { BlocklyWorkspacePagesComponent } from './components/blockly-workspace-pages/blockly-workspace-pages.component';
+import { BlocklyConfirmDialogComponent } from './components/confirm-dialog/confirm-dialog.component';
 import { CodeViewerIpcService } from '../../services/code-viewer-ipc.service';
 import { writeArduinoGeneratedArtifacts } from '../../services/generated-code-artifacts';
 
@@ -462,7 +463,7 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
   ngOnInit(): void {
     this.initAiWritingSubscription();
     this.initDevMode();
-    this.initPrompt();
+    this.initBlocklyDialogs();
     this.initCodeGenerationDebounce();
     this.initMinimapSyncDebounce();
     this.initCodeViewerRefreshRequests();
@@ -1374,9 +1375,27 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
     }
   }
 
-  initPrompt() {
+  initBlocklyDialogs() {
+    Blockly.dialog.setConfirm((message, callback) => {
+      const modalRef = this.modal.create({
+        nzTitle: null,
+        nzFooter: null,
+        nzClosable: false,
+        nzMaskClosable: false,
+        nzBodyStyle: { padding: '0' },
+        nzWidth: '340px',
+        nzContent: BlocklyConfirmDialogComponent,
+        nzData: {
+          message,
+          okText: Blockly.Msg['DIALOG_OK'],
+          cancelText: Blockly.Msg['DIALOG_CANCEL'],
+        },
+      });
+
+      modalRef.afterClose.subscribe(result => callback(result === true));
+    });
+
     Blockly.dialog.setPrompt((message, defaultValue, callback) => {
-      // console.log('对话框初始化，消息:', message, '默认值:', defaultValue);
       this.modal.create({
         nzTitle: null,
         nzFooter: null,
