@@ -269,7 +269,6 @@ import { AilyMarkdownExternalLinksDirective } from '../../../directives/aily-mar
       }
       :host ::ng-deep .ac-think-body .ac-thinking-markdown pre > code[data-block='true'] {
         display: block;
-        min-width: max-content;
         margin: 0;
         padding: 0;
         color: inherit;
@@ -278,7 +277,7 @@ import { AilyMarkdownExternalLinksDirective } from '../../../directives/aily-mar
         font-family: Consolas, 'Courier New', monospace;
         font-size: 11px;
         line-height: 1.5;
-        white-space: pre;
+        white-space: pre-wrap;
         overflow-wrap: normal;
         word-break: normal;
       }
