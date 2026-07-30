@@ -455,6 +455,7 @@
         "TEXT_DOWNLOADED": "La version {{version}} a été téléchargée. Installer maintenant ?",
         "TEXT_AVAILABLE": "Version actuelle {{currentVersion}}, nouvelle version {{version}}<br>Voulez-vous télécharger et installer cette mise à jour ?",
         "DOWNLOAD_FAILED": "Échec du téléchargement",
+        "USING_FALLBACK_DOWNLOAD_SOURCE": "Utilisation de la source de secours ({{current}}/{{total}})",
         "REMIND_LATER": "Rappeler plus tard",
         "SKIP_VERSION": "Ignorer cette version",
         "UPDATE_NOW": "Mettre à jour maintenant",

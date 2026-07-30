@@ -41,9 +41,16 @@
                     <span class="label">{{ 'USER_CENTER.AI_CALLS' | translate }}</span>
                     <span class="value"><span class="mode">{{ 'USER_CENTER.AUTO_MODE' | translate }}</span> {{ benefits?.ai_calls?.unlimited ? '♾️' : (benefits?.ai_calls?.used ?? 0) + '/' + (benefits?.ai_calls?.total ?? 0) }}</span>
                 </div>
-                @if (!isProPlanSubscriber) {
-                <div class="action btn link" (click)="OpenUrl('/user/subscription')">
+                @if (!isProPlanSubscriber || displayAiCallsResetDate) {
+                <div class="action-stack">
+                    @if (!isProPlanSubscriber) {
+                    <div class="btn link" (click)="OpenUrl('/user/subscription')">
                     {{ 'USER_CENTER.ADD_AI_CALLS' | translate }}
+                    </div>
+                    }
+                    @if (displayAiCallsResetDate) {
+                    <div class="reset-date">{{ 'USER_CENTER.AI_CALLS_RESET_SHORT' | translate: { date: displayAiCallsResetDate } }}</div>
+                    }
                 </div>
                 }
             </div>
