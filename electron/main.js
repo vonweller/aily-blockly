@@ -1263,6 +1263,7 @@ async function handleCliBridgeCommand(action, payload) {
         url: payload?.url,
         timeoutMs: payload?.timeoutMs,
         waitAfterLoadMs: payload?.waitAfterLoadMs,
+        captureFullContent: true,
       });
       if (!result?.ok) {
         return result && typeof result === 'object'
@@ -1291,6 +1292,7 @@ async function handleCliBridgeCommand(action, payload) {
         sessionId,
         url: payload?.url,
         timeoutMs: payload?.timeoutMs,
+        captureFullContent: true,
       });
       return result && typeof result === 'object'
         ? result
