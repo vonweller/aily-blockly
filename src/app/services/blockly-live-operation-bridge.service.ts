@@ -12,6 +12,8 @@ import { ThemeService } from './theme.service';
 import { MainUiAutomationService } from './main-ui-automation.service';
 import { SubappAgentBridgeService } from './subapp-agent-bridge.service';
 import { ProjectHardwareIntentProviderService } from './project-hardware-intent-provider.service';
+import { ProjectSceneProposalProviderService } from './project-scene-proposal-provider.service';
+import type { ProjectSceneProposalInvocationInput } from '../tools/aily-chat/core/project-scene-proposal-invocation';
 import { AbsAutoSyncService } from '../tools/aily-chat/services/abs-auto-sync.service';
 import {
   connectBlocksSimpleTool,
@@ -56,6 +58,7 @@ export class BlocklyLiveOperationBridgeService {
     private readonly mainUiAutomationService: MainUiAutomationService,
     private readonly subappAgentBridgeService: SubappAgentBridgeService,
     private readonly projectHardwareIntentProvider: ProjectHardwareIntentProviderService,
+    private readonly projectSceneProposalProvider: ProjectSceneProposalProviderService,
     private readonly ngZone: NgZone,
   ) {}
 
@@ -154,9 +157,15 @@ export class BlocklyLiveOperationBridgeService {
       return { ok: true, snapshot };
     }
     if (payload.operation === 'project_scene_proposal_request') {
+      const proposal = await this.projectSceneProposalProvider.request(
+        (payload.params || {}) as unknown as ProjectSceneProposalInvocationInput,
+      );
+      return { ok: true, proposal };
+    }
+    if (payload.operation === 'project_scene_proposal_cancel') {
       return {
-        ok: false,
-        message: 'Project Scene proposal provider is not connected yet.',
+        ok: true,
+        cancelled: this.projectSceneProposalProvider.cancel(payload.params?.['requestId']),
       };
     }
 

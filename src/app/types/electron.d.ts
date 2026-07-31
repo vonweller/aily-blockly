@@ -182,13 +182,19 @@ declare global {
         })>;
         requestProjectSceneGeneration: (options: {
           ownerId?: string;
-          regenerationId: string;
+          regenerationId?: string;
+          launchId?: string;
+          base?: {
+            visualRevision: string;
+            graphSemanticRevision: string;
+            catalogRevision: string;
+          };
         }) => Promise<{
           schemaVersion: 1;
           kind: 'aily-simulator-subapp-project-scene-generation-request-result';
           state: 'accepted';
-          regenerationId: string;
           requestId: string;
+          reason: 'missing-scene' | 'legacy-detected' | 'user-regenerate';
         }>;
         resolveProjectSceneRegeneration: (options: {
           ownerId?: string;

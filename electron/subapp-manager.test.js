@@ -247,6 +247,10 @@ test('treats an npm-linked source package as an installed subapp', async (t) => 
       },
       runtime: {
         startupTimeoutMs: 20000,
+        processMessagePort: {
+          transport: 'node-ipc-v1',
+          maxMessageBytes: 1048576,
+        },
         resourceLifecycle: {
           resources: ['serial'],
           suspendMethod: 'runtime.resource.suspend',
@@ -279,6 +283,10 @@ test('treats an npm-linked source package as an installed subapp', async (t) => 
   assert.equal(state.apps[0].config.packagePath, linkedDir);
   assert.equal(state.apps[0].config.startupTimeoutMs, 20000);
   assert.deepEqual(state.apps[0].config.runtime, {
+    processMessagePort: {
+      transport: 'node-ipc-v1',
+      maxMessageBytes: 1048576,
+    },
     resourceLifecycle: {
       resources: ['serial'],
       suspendMethod: 'runtime.resource.suspend',

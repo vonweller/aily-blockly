@@ -15,6 +15,7 @@ import { SimulatorEditorComponent } from './simulator-editor/simulator-editor.co
 import {
   SimulatorSubappFrameAdapter,
   type SimulatorSubappDebugLocationHint,
+  type SimulatorSubappProjectSceneGenerationIntent,
   type SimulatorSubappSurface,
   type SimulatorSubappFrameState,
 } from './simulator-subapp-frame-adapter';
@@ -43,12 +44,19 @@ interface SimulatorSubappElectronApi {
   }): Promise<Record<string, unknown>>;
   requestProjectSceneGeneration?(options: {
     ownerId: string;
-    regenerationId: string;
+    regenerationId?: string;
+    launchId?: string;
+    base?: {
+      visualRevision: string;
+      graphSemanticRevision: string;
+      catalogRevision: string;
+    };
   }): Promise<{
     schemaVersion: 1;
     kind: 'aily-simulator-subapp-project-scene-generation-request-result';
     state: 'accepted';
-    regenerationId: string;
+    requestId: string;
+    reason: 'missing-scene' | 'legacy-detected' | 'user-regenerate';
   }>;
   attachProjectSceneSession(ownerId?: string): Promise<unknown>;
   close(ownerId?: string): Promise<unknown>;
@@ -215,18 +223,26 @@ implements AfterViewInit, OnDestroy {
 
   requestProjectSceneGeneration(): void {
     const requirement = this.regenerationRequirement;
-    const request = this.simulatorApi()?.requestProjectSceneGeneration;
     if (!requirement || this.generationRequestPending) return;
+    this.submitProjectSceneGeneration({
+      regenerationId: requirement.regenerationId,
+    });
+  }
+
+  private submitProjectSceneGeneration(options: {
+    regenerationId?: string;
+    launchId?: string;
+    base?: SimulatorSubappProjectSceneGenerationIntent['base'];
+  }): void {
+    const request = this.simulatorApi()?.requestProjectSceneGeneration;
+    if (this.generationRequestPending) return;
     if (typeof request !== 'function') {
       this.errorMessage = 'Scene Generation Broker 尚未连接；已阻止旧连线图生成通道。';
       return;
     }
     this.errorMessage = '';
     this.generationRequestPending = true;
-    void request({
-      ownerId: this.ownerId,
-      regenerationId: requirement.regenerationId,
-    }).catch((error) => {
+    void request({ ownerId: this.ownerId, ...options }).catch((error) => {
       if (this.destroyed) return;
       this.ngZone.run(() => {
         this.errorMessage = error instanceof Error ? error.message : String(error);
@@ -387,6 +403,9 @@ implements AfterViewInit, OnDestroy {
       onDebugLocationHint: (hint) => {
         this.applyDebugLocationHint(adapter, projectPath, hint);
       },
+      onProjectSceneGenerationIntent: (intent) => {
+        this.handleProjectSceneGenerationIntent(adapter, projectPath, intent);
+      },
     });
     this.adapter = adapter;
     try {
@@ -394,6 +413,26 @@ implements AfterViewInit, OnDestroy {
     } catch (error) {
       this.applyLaunchError(error, generation);
     }
+  }
+
+  private handleProjectSceneGenerationIntent(
+    adapter: SimulatorSubappFrameAdapter,
+    projectPath: string,
+    intent: SimulatorSubappProjectSceneGenerationIntent,
+  ): void {
+    this.ngZone.run(() => {
+      if (
+        this.adapter !== adapter
+        || this.destroyed
+        || this.projectService.currentProjectPath !== projectPath
+      ) {
+        return;
+      }
+      this.submitProjectSceneGeneration({
+        launchId: intent.launchId,
+        base: intent.base,
+      });
+    });
   }
 
   private applyDebugLocationHint(

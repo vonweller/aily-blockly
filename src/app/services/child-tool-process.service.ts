@@ -26,6 +26,12 @@ export interface ChildToolRuntimeSnapshot {
   updatedAt: number;
 }
 
+export interface ChildToolProcessMessageEvent {
+  toolId: string;
+  streamId: string;
+  message: Record<string, unknown>;
+}
+
 interface ChildToolBackendMessage {
   event?: string;
   data?: any;
@@ -55,6 +61,11 @@ export class ChildToolProcessService implements OnDestroy {
   private readonly releaseGraceMs = 15000;
   private readonly runtimeSnapshots = new Map<string, ChildToolRuntimeSnapshot>();
   private readonly runtimeStatesSubject = new BehaviorSubject<readonly ChildToolRuntimeSnapshot[]>([]);
+  private readonly processMessageListeners = new Map<
+    string,
+    Set<(message: Record<string, unknown>) => void>
+  >();
+  private removeProcessMessageListener: (() => void) | null = null;
   readonly runtimeStates$ = this.runtimeStatesSubject.asObservable();
 
   constructor(
@@ -64,6 +75,15 @@ export class ChildToolProcessService implements OnDestroy {
 
   async acquire(toolId: string): Promise<ChildToolHostInfo> {
     const config = this.requireConfig(toolId);
+    if (config.runtime?.processMessagePort) {
+      if (
+        !window['childToolSession']?.sendMessage
+        || !window['childToolSession']?.onMessage
+      ) {
+        throw new Error('Electron child tool process message bridge is not available');
+      }
+      this.ensureProcessMessageListener();
+    }
     const session = this.ensureSession(config.id);
     this.cancelReleaseTimer(session);
     session.refCount += 1;
@@ -170,7 +190,56 @@ export class ChildToolProcessService implements OnDestroy {
     };
   }
 
+  onMessage(
+    toolId: string,
+    listener: (message: Record<string, unknown>) => void,
+  ): () => void {
+    const config = this.requireConfig(toolId);
+    if (!config.runtime?.processMessagePort) {
+      throw new Error(`Child tool does not declare a process message port: ${toolId}`);
+    }
+    if (typeof listener !== 'function') {
+      throw new TypeError('Child tool process message listener must be a function');
+    }
+    this.ensureProcessMessageListener();
+    let listeners = this.processMessageListeners.get(config.id);
+    if (!listeners) {
+      listeners = new Set();
+      this.processMessageListeners.set(config.id, listeners);
+    }
+    listeners.add(listener);
+    return () => {
+      listeners?.delete(listener);
+      if (listeners?.size === 0) this.processMessageListeners.delete(config.id);
+    };
+  }
+
+  async sendMessage(toolId: string, message: Record<string, unknown>): Promise<void> {
+    const config = this.requireConfig(toolId);
+    if (!config.runtime?.processMessagePort) {
+      throw new Error(`Child tool does not declare a process message port: ${toolId}`);
+    }
+    const session = this.sessions.get(config.id);
+    if (!session?.running || !session.streamId) {
+      throw new Error(`Child tool process message port is not ready: ${toolId}`);
+    }
+    const result = await window['childToolSession']?.sendMessage?.({
+      toolId: config.id,
+      streamId: session.streamId,
+      leaseId: session.leaseId,
+      message,
+    });
+    if (!result?.success) {
+      throw new Error(
+        `Child tool process message failed: ${result?.reason || 'message-port-unavailable'}`,
+      );
+    }
+  }
+
   ngOnDestroy(): void {
+    this.removeProcessMessageListener?.();
+    this.removeProcessMessageListener = null;
+    this.processMessageListeners.clear();
     void this.stopAll();
   }
 
@@ -326,6 +395,16 @@ export class ChildToolProcessService implements OnDestroy {
     if (!cmd?.run || !cmd?.onData) {
       throw new Error('Electron command bridge is not available');
     }
+    if (
+      config.runtime?.processMessagePort
+      && (
+        !window['childToolSession']?.sendMessage
+        || !window['childToolSession']?.onMessage
+      )
+    ) {
+      throw new Error('Electron child tool process message bridge is not available');
+    }
+    this.ensureProcessMessageListener();
 
     if (!pathApi?.getAilyChildPath || !pathApi?.join) {
       throw new Error('Aily child path API is not available');
@@ -399,6 +478,10 @@ export class ChildToolProcessService implements OnDestroy {
         args: [scriptPath, 'serve', '--host', '127.0.0.1', '--port', '0'],
         cwd: projectPath,
         streamId,
+        shellProfile: false,
+        ...(config.runtime?.processMessagePort
+          ? { messagePort: config.runtime.processMessagePort }
+          : {}),
         env: {
           AILY_CHILD_TOOL: '1',
           AILY_CHILD_TOOL_ID: config.id,
@@ -600,6 +683,40 @@ export class ChildToolProcessService implements OnDestroy {
     session.stderrBuffer = '';
     session.hostInfo = null;
     session.expectedStopReason = null;
+  }
+
+  private ensureProcessMessageListener(): void {
+    if (this.removeProcessMessageListener) return;
+    const onMessage = window['childToolSession']?.onMessage;
+    if (typeof onMessage !== 'function') return;
+    this.removeProcessMessageListener = onMessage(
+      (event: ChildToolProcessMessageEvent) => {
+        const toolId = String(event?.toolId || '').trim();
+        const streamId = String(event?.streamId || '').trim();
+        const session = this.sessions.get(toolId);
+        if (
+          !toolId
+          || !streamId
+          || !session?.running
+          || session.streamId !== streamId
+          || !event.message
+          || typeof event.message !== 'object'
+          || Array.isArray(event.message)
+        ) {
+          return;
+        }
+        for (const listener of this.processMessageListeners.get(toolId) || []) {
+          try {
+            listener(event.message);
+          } catch (error) {
+            const config = getChildToolConfig(toolId);
+            if (config) {
+              this.logError(config, 'process message listener failed', error);
+            }
+          }
+        }
+      },
+    );
   }
 
   private createLeaseId(toolId: string): string {

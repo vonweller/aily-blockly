@@ -229,6 +229,27 @@ function readRuntimeResourceLifecycleConfig(declaredRuntime) {
   };
 }
 
+function readRuntimeProcessMessagePortConfig(declaredRuntime) {
+  const declared = declaredRuntime?.processMessagePort;
+  if (declared === undefined) return null;
+  if (!isObject(declared)) {
+    throw new Error('ailySubapp.runtime.processMessagePort must be an object');
+  }
+  if (declared.transport !== 'node-ipc-v1') {
+    throw new Error('ailySubapp.runtime.processMessagePort.transport must be node-ipc-v1');
+  }
+  const maxMessageBytes = optionalBoundedInteger(
+    declared.maxMessageBytes,
+    'ailySubapp.runtime.processMessagePort.maxMessageBytes',
+    1024,
+    8 * 1024 * 1024,
+  );
+  return {
+    transport: 'node-ipc-v1',
+    ...(maxMessageBytes !== undefined ? { maxMessageBytes } : {}),
+  };
+}
+
 function validateUiSurfaceName(value, label) {
   const name = requireText(value, label);
   if (!/^[a-z][a-z0-9_-]{0,63}$/.test(name)) {
@@ -514,6 +535,11 @@ function readInstalledState(rootDir, entry) {
       2 * 60 * 1000,
     );
     const resourceLifecycle = readRuntimeResourceLifecycleConfig(declaredRuntime);
+    const processMessagePort = readRuntimeProcessMessagePortConfig(declaredRuntime);
+    const runtime = {
+      ...(processMessagePort ? { processMessagePort } : {}),
+      ...(resourceLifecycle ? { resourceLifecycle } : {}),
+    };
     let agent = null;
     let agentError = '';
     try {
@@ -538,7 +564,7 @@ function readInstalledState(rootDir, entry) {
         uiIndex,
         routePath: `/child-tool/${toolId}`,
         ...(startupTimeoutMs ? { startupTimeoutMs } : {}),
-        ...(resourceLifecycle ? { runtime: { resourceLifecycle } } : {}),
+        ...(Object.keys(runtime).length ? { runtime } : {}),
         ...(ui ? { ui } : {}),
         ...(agent ? { agent } : {}),
         app: {
