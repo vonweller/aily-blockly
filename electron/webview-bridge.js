@@ -509,41 +509,84 @@ async function searchViaWebview(payload = {}) {
   }
 }
 
+function normalizeHttpUrl(value) {
+  const candidate = String(value || "").trim();
+  if (!candidate) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(candidate);
+    return parsed.protocol === "http:" || parsed.protocol === "https:"
+      ? parsed.toString()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+async function executeWebviewFetch(payload = {}) {
+  const url = normalizeHttpUrl(payload.url);
+  if (!url) {
+    return {
+      ok: false,
+      error: "WebView fetch requires a valid http/https url",
+    };
+  }
+
+  try {
+    return await fetchViaWebview({
+      ...payload,
+      url,
+    });
+  } catch (error) {
+    logBridgeError("fetch request failed", {
+      url,
+      error: describeError(error),
+    });
+    return {
+      ok: false,
+      error: describeError(error),
+    };
+  }
+}
+
+async function executeWebviewSearch(payload = {}) {
+  const url = normalizeHttpUrl(payload.url);
+  if (!url) {
+    return {
+      ok: false,
+      error: "WebView search requires a valid http/https url",
+    };
+  }
+
+  try {
+    return await searchViaWebview({
+      ...payload,
+      url,
+    });
+  } catch (error) {
+    logBridgeError("search request failed", {
+      url,
+      error: describeError(error),
+    });
+    return {
+      ok: false,
+      error: describeError(error),
+    };
+  }
+}
+
 function registerWebviewBridgeHandlers() {
   ipcMain.removeHandler(FETCH_CHANNEL);
   ipcMain.removeHandler(SEARCH_CHANNEL);
 
-  ipcMain.handle(FETCH_CHANNEL, async (_event, payload = {}) => {
-    try {
-      return await fetchViaWebview(payload);
-    } catch (error) {
-      logBridgeError("fetch handler failed", {
-        payload,
-        error: describeError(error),
-      });
-      return {
-        ok: false,
-        error: describeError(error),
-      };
-    }
-  });
-
-  ipcMain.handle(SEARCH_CHANNEL, async (_event, payload = {}) => {
-    try {
-      return await searchViaWebview(payload);
-    } catch (error) {
-      logBridgeError("search handler failed", {
-        payload,
-        error: describeError(error),
-      });
-      return {
-        ok: false,
-        error: describeError(error),
-      };
-    }
-  });
+  ipcMain.handle(FETCH_CHANNEL, async (_event, payload = {}) => executeWebviewFetch(payload));
+  ipcMain.handle(SEARCH_CHANNEL, async (_event, payload = {}) => executeWebviewSearch(payload));
 }
 
 module.exports = {
+  executeWebviewFetch,
+  executeWebviewSearch,
   registerWebviewBridgeHandlers,
 };
