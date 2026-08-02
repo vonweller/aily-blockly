@@ -12,8 +12,7 @@ import path from 'node:path';
  *     非 --serve 模式下用 loadFile('renderer/index.html') 加载，因此无需走完整
  *     electron-builder 打包即可对「生产渲染层」做测试。
  *
- * 加速开发循环：
- *  - 设置环境变量 E2E_SKIP_BUILD=1 且 renderer/ 已存在时，跳过构建。
+ * 每次运行都重新构建并暂存 renderer，确保测试使用当前源码。
  */
 const ROOT = path.resolve(__dirname, '..');
 const NG_CLI = path.join(ROOT, 'node_modules', '@angular', 'cli', 'bin', 'ng.js');
@@ -47,19 +46,6 @@ function stageRenderer(): void {
 }
 
 export default function globalSetup(): void {
-  const skipBuild = process.env['E2E_SKIP_BUILD'] === '1';
-
-  if (skipBuild && existsSync(RENDERER_DIR)) {
-    console.log('[e2e] E2E_SKIP_BUILD=1 且 renderer/ 已存在，跳过构建。');
-    return;
-  }
-
-  if (skipBuild && existsSync(BUILD_OUTPUT)) {
-    console.log('[e2e] E2E_SKIP_BUILD=1 且已有 dist 构建产物，跳过构建并暂存 renderer/。');
-    stageRenderer();
-    return;
-  }
-
   runAngularBuild();
   stageRenderer();
 }
