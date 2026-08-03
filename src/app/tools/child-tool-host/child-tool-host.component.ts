@@ -17,6 +17,7 @@ import {
   type ChildAppWindowPlacement,
 } from '../../services/child-app-host-registry.service';
 import { AuthService } from '../../services/auth.service';
+import { ConfigService } from '../../services/config.service';
 import { BlocklyService } from '../../editors/blockly-editor/services/blockly.service';
 import { ElectronService } from '../../services/electron.service';
 import { LogService } from '../../services/log.service';
@@ -101,6 +102,8 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   private blockSelectionSubscription: Subscription | null = null;
   private toolSignalSubscription: Subscription | null = null;
   private subappActivitySubscription: Subscription | null = null;
+  private configReloadSubscription: Subscription | null = null;
+  private lastKnownApiServer = '';
   private standaloneWorkspace: string | null | undefined;
   private standaloneWorkspaceVersion = -1;
   private projectContextListenerRegistered = false;
@@ -124,6 +127,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     private logService: LogService,
     private childHostRegistry: ChildAppHostRegistryService,
     private authService: AuthService,
+    private configService: ConfigService,
     private blocklyService: BlocklyService,
     private electronService: ElectronService,
     private mainUiAutomation: MainUiAutomationService,
@@ -145,6 +149,10 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       if (this.initialized && this.isAilyChatTool()) {
         this.syncHostContext();
       }
+    });
+    this.lastKnownApiServer = this.normalizeApiServer(this.configService.getCurrentApiServer());
+    this.configReloadSubscription = this.configService.configReloaded$.subscribe(() => {
+      this.handleApiServerChange();
     });
   }
 
@@ -206,6 +214,8 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     this.toolSignalSubscription = null;
     this.subappActivitySubscription?.unsubscribe();
     this.subappActivitySubscription = null;
+    this.configReloadSubscription?.unsubscribe();
+    this.configReloadSubscription = null;
     this.projectContextListenerCleanup?.();
     this.projectContextListenerCleanup = null;
     this.projectContextListenerRegistered = false;
@@ -261,9 +271,47 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     return task;
   }
 
-  private async performRestart(): Promise<Record<string, unknown>> {
+  private handleApiServerChange(): void {
+    const nextApiServer = this.normalizeApiServer(this.configService.getCurrentApiServer());
+    if (!nextApiServer || nextApiServer === this.lastKnownApiServer) {
+      return;
+    }
+
+    const previousApiServer = this.lastKnownApiServer;
+    this.lastKnownApiServer = nextApiServer;
+    if (!this.initialized || !this.acquired || !this.isAilyChatTool()) {
+      return;
+    }
+
+    this.log('service region changed', {
+      previousApiServer,
+      nextApiServer,
+    });
+    void this.restartForApiServerChange();
+  }
+
+  private restartForApiServerChange(): Promise<Record<string, unknown>> {
+    if (this.restartTask) {
+      return this.restartTask;
+    }
+
+    // A region change invalidates the old authentication endpoint. It is a
+    // host-owned runtime transition, so it must not remain on the old endpoint
+    // when a child beforeClose hook declines a normal user restart.
+    const task = this.performRestart(true);
+    this.restartTask = task;
+    const clearRestartTask = () => {
+      if (this.restartTask === task) {
+        this.restartTask = null;
+      }
+    };
+    void task.then(clearRestartTask, clearRestartTask);
+    return task;
+  }
+
+  private async performRestart(force = false): Promise<Record<string, unknown>> {
     if (!this.config) return { ok: false, message: '子应用配置未就绪' };
-    if (!await this.notifyChildBeforeClose('restart')) {
+    if (!force && !await this.notifyChildBeforeClose('restart')) {
       return { ok: false, message: '子应用拒绝重启，可能存在未完成操作。' };
     }
 
@@ -684,6 +732,10 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     } catch {
       return String(value);
     }
+  }
+
+  private normalizeApiServer(value: unknown): string {
+    return typeof value === 'string' ? value.trim().replace(/\/+$/, '') : '';
   }
 
   private isRecord(value: any): value is Record<string, any> {
