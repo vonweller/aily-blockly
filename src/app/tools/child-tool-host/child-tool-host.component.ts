@@ -103,6 +103,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   private toolSignalSubscription: Subscription | null = null;
   private subappActivitySubscription: Subscription | null = null;
   private configReloadSubscription: Subscription | null = null;
+  private aiWritingStateSubscription: Subscription | null = null;
   private lastKnownApiServer = '';
   private standaloneWorkspace: string | null | undefined;
   private standaloneWorkspaceVersion = -1;
@@ -110,6 +111,8 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   private projectContextListenerCleanup: (() => void) | null = null;
   private unregisterHostController: (() => void) | null = null;
   private ailyChatOperationActive = false;
+  private ailyChatOperationSessionId = '';
+  private aiOperationNoticeShown = false;
   ailyChatSessionId = '';
 
   constructor(
@@ -148,6 +151,14 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     ]).subscribe(() => {
       if (this.initialized && this.isAilyChatTool()) {
         this.syncHostContext();
+      }
+    });
+    this.aiWritingStateSubscription = combineLatest([
+      this.blocklyService.aiWriting$,
+      this.blocklyService.aiWaitWriting$,
+    ]).subscribe(([writing, waitWriting]) => {
+      if (!writing && !waitWriting && !this.ailyChatOperationActive) {
+        this.clearAiOperationNotice();
       }
     });
     this.lastKnownApiServer = this.normalizeApiServer(this.configService.getCurrentApiServer());
@@ -196,7 +207,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       void this.initTool();
     }
 
-    if (this.initialized && changes['active'] && this.active) {
+    if (this.initialized && changes['active']) {
       this.syncHostContext(true);
     }
   }
@@ -216,6 +227,9 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     this.subappActivitySubscription = null;
     this.configReloadSubscription?.unsubscribe();
     this.configReloadSubscription = null;
+    this.aiWritingStateSubscription?.unsubscribe();
+    this.aiWritingStateSubscription = null;
+    this.clearAiOperationNotice();
     this.projectContextListenerCleanup?.();
     this.projectContextListenerCleanup = null;
     this.projectContextListenerRegistered = false;
@@ -570,7 +584,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
         openChildApp: (payload: { toolId?: string; mode?: 'embedded' | 'window' } = {}) => this.openChatChildApp(payload),
         focusChildFrame: () => this.focusChildFrame(),
         writeClipboardText: (payload: { text?: string } = {}) => this.writeClipboardText(payload),
-        reportAiOperationState: (payload: { active?: boolean } = {}) => {
+        reportAiOperationState: (payload: { active?: boolean; sessionId?: string | null } = {}) => {
           return this.ngZone.run(() => this.reportAiOperationState(payload));
         },
         reportActiveChatSession: (payload: { sessionId?: string | null } = {}) => {
@@ -968,7 +982,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       platform: (window as any).electronAPI?.platform?.type || 'browser',
       embedded: !this.isStandalone,
       workspace: this.resolveHostWorkspace(),
-      blockResources: isAilyChat ? this.createSelectedBlockResources() : [],
+      blockResources: isAilyChat && this.active ? this.createSelectedBlockResources() : [],
       capabilities: {
         snapshotRefresh: true,
         userInteractionNotifications: true,
@@ -1059,18 +1073,41 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     };
   }
 
-  private reportAiOperationState(payload: { active?: boolean } = {}): Record<string, unknown> {
+  private reportAiOperationState(
+    payload: { active?: boolean; sessionId?: string | null } = {},
+  ): Record<string, unknown> {
     if (!this.isAilyChatTool()) {
       return { ok: false, message: 'AI operation state is only available to Aily Chat' };
     }
 
-    this.setAilyChatOperationActive(payload.active === true);
-    return { ok: true, active: this.ailyChatOperationActive };
+    const sessionId = typeof payload.sessionId === 'string' ? payload.sessionId.trim() : '';
+    if (
+      payload.active !== true &&
+      sessionId &&
+      this.ailyChatOperationSessionId &&
+      sessionId !== this.ailyChatOperationSessionId
+    ) {
+      return {
+        ok: true,
+        active: this.ailyChatOperationActive,
+        sessionId: this.ailyChatOperationSessionId,
+      };
+    }
+
+    this.setAilyChatOperationActive(payload.active === true, sessionId);
+    return {
+      ok: true,
+      active: this.ailyChatOperationActive,
+      sessionId: this.ailyChatOperationSessionId || null,
+    };
   }
 
-  private setAilyChatOperationActive(active: boolean): void {
+  private setAilyChatOperationActive(active: boolean, sessionId = ''): void {
     if (this.ailyChatOperationActive === active) {
       if (active) {
+        if (sessionId) {
+          this.ailyChatOperationSessionId = sessionId;
+        }
         // 已 active 时仍刷新通知，防止被其它 notice 覆盖后只剩 Blockly 遮罩。
         this.showAiOperationNotice();
       }
@@ -1078,8 +1115,8 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     }
 
     this.ailyChatOperationActive = active;
-    // 与旧版 Angular 一致：积木写入态走 aiWriting（驱动遮罩 + 通知订阅）。
-    this.blocklyService.setAiWritingActive(`child-tool:${this.hostContextId}`, active);
+    this.ailyChatOperationSessionId = active ? sessionId : '';
+    // 会话执行态用于预编译等宿主协调；视觉遮罩由 live Blockly 写入态精确驱动。
     this.blocklyService.setAiExecutionActive(`child-tool:${this.hostContextId}`, active);
 
     if (active) {
@@ -1088,11 +1125,13 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     }
 
     if (!this.blocklyService.aiWriting && !this.blocklyService.aiWaitWriting) {
-      this.noticeService.clear();
+      this.clearAiOperationNotice();
     }
   }
 
   private showAiOperationNotice(): void {
+    const sessionId = this.ailyChatOperationSessionId;
+    this.aiOperationNoticeShown = true;
     this.noticeService.update({
       title: 'AI正在操作',
       state: 'doing',
@@ -1100,11 +1139,19 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       setTimeout: 0,
       sendToLog: false,
       stop: () => {
-        void Promise.resolve(this.remoteApi?.stopActiveTurn?.()).catch(error => {
+        void Promise.resolve(this.remoteApi?.stopActiveTurn?.({ sessionId: sessionId || undefined })).catch(error => {
           this.logError('stop active Aily Chat turn failed', error);
         });
       },
     });
+  }
+
+  private clearAiOperationNotice(): void {
+    if (!this.aiOperationNoticeShown) {
+      return;
+    }
+    this.aiOperationNoticeShown = false;
+    this.noticeService.clear();
   }
 
   private createSelectedBlockResources(): Record<string, unknown>[] {
