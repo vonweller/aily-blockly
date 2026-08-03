@@ -151,7 +151,11 @@ export class BlocklyLiveOperationBridgeService {
       return this.mainUiAutomationService.arrangeChildAppWindows(payload.params || {});
     }
     if (payload.operation === 'subapp_agent_call') {
-      return this.subappAgentBridgeService.execute(payload.params || {});
+      const params = payload.params || {};
+      return this.subappAgentBridgeService.execute(params, undefined, {
+        sessionId: String(params['sessionId'] || '').trim(),
+        toolCallId: String(params['requestId'] || '').trim(),
+      });
     }
     if (payload.operation === 'project_hardware_intent_snapshot') {
       const request = payload.params?.['request'];

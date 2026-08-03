@@ -27,6 +27,11 @@ import { ThemeService } from '../../services/theme.service';
 import { ToolI18nService } from '../../services/tool-i18n.service';
 import { UiService } from '../../services/ui.service';
 import { toHostResourceLifecycleRequest } from '../../services/subapp-resource-lifecycle-adapter';
+import {
+  SubappActivityService,
+  type SubappActivity,
+} from '../../services/subapp-activity.service';
+import { ChatSubappDockComponent } from '../aily-chat/components/subapp-activity/chat-subapp-dock.component';
 
 type HostStatus = 'idle' | 'starting' | 'ready' | 'error' | 'closed';
 type HostMessageState = 'success' | 'info' | 'warning' | 'error' | 'loading';
@@ -55,7 +60,8 @@ interface NormalizedHostMessage {
     TranslateModule,
     NzToolTipModule,
     SubWindowComponent,
-    ToolContainerComponent
+    ToolContainerComponent,
+    ChatSubappDockComponent,
   ],
   templateUrl: './child-tool-host.component.html',
   styleUrl: './child-tool-host.component.scss'
@@ -94,12 +100,14 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   private projectPathSubscription: Subscription | null = null;
   private blockSelectionSubscription: Subscription | null = null;
   private toolSignalSubscription: Subscription | null = null;
+  private subappActivitySubscription: Subscription | null = null;
   private standaloneWorkspace: string | null | undefined;
   private standaloneWorkspaceVersion = -1;
   private projectContextListenerRegistered = false;
   private projectContextListenerCleanup: (() => void) | null = null;
   private unregisterHostController: (() => void) | null = null;
   private ailyChatOperationActive = false;
+  ailyChatSessionId = '';
 
   constructor(
     private route: ActivatedRoute,
@@ -121,6 +129,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     private mainUiAutomation: MainUiAutomationService,
     private subappManager: SubappManagerService,
     private noticeService: NoticeService,
+    private subappActivityService: SubappActivityService,
   ) {
     this.langSubscription = this.translate.onLangChange.subscribe(() => this.syncHostContext());
     this.themeSubscription = this.themeService.themeChanged$.subscribe(() => this.syncHostContext());
@@ -159,9 +168,18 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     return this.hostStatus === 'starting' || (this.hostStatus === 'ready' && !this.frameLoaded);
   }
 
+  get isAilyChat(): boolean {
+    return this.isAilyChatTool();
+  }
+
   ngOnInit(): void {
     this.initialized = true;
     this.toolSignalSubscription = this.uiService.actionSubject.subscribe((action: any) => this.forwardToolSignal(action));
+    this.subappActivitySubscription = this.subappActivityService.activities$.subscribe(() => {
+      if (this.initialized && this.isAilyChatTool()) {
+        this.pushChatSubappActivities();
+      }
+    });
     void this.initTool();
   }
 
@@ -186,6 +204,8 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     this.blockSelectionSubscription = null;
     this.toolSignalSubscription?.unsubscribe();
     this.toolSignalSubscription = null;
+    this.subappActivitySubscription?.unsubscribe();
+    this.subappActivitySubscription = null;
     this.projectContextListenerCleanup?.();
     this.projectContextListenerCleanup = null;
     this.projectContextListenerRegistered = false;
@@ -332,6 +352,10 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     if (!nextToolId) {
       this.showConfigError('Child tool id is missing');
       return;
+    }
+
+    if (this.resolvedToolId !== nextToolId) {
+      this.ailyChatSessionId = '';
     }
 
     this.log('init', {
@@ -501,6 +525,14 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
         reportAiOperationState: (payload: { active?: boolean } = {}) => {
           return this.ngZone.run(() => this.reportAiOperationState(payload));
         },
+        reportActiveChatSession: (payload: { sessionId?: string | null } = {}) => {
+          return this.ngZone.run(() => this.reportActiveChatSession(payload));
+        },
+        setSubappSurfaceState: (payload: {
+          sessionId?: string;
+          toolId?: string;
+          surfaceState?: 'collapsed' | 'expanded';
+        } = {}) => this.ngZone.run(() => this.setSubappSurfaceState(payload)),
         sendToolSignal: async (signal: string, payload: any = {}) => {
           return await this.sendToolSignalFromChild(signal, payload);
         }
@@ -514,6 +546,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
         this.penpalState = 'connected';
         this.beforeCloseNotified = false;
         this.syncHostContext();
+        this.pushChatSubappActivities();
       })
       .catch(error => {
         this.ngZone.run(() => {
@@ -894,8 +927,83 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
         clipboardWrite: isAilyChat,
         blockSelectionContext: isAilyChat,
         childFrameFocus: isAilyChat,
-        aiOperationState: isAilyChat
+        aiOperationState: isAilyChat,
+        subappDock: isAilyChat
       }
+    };
+  }
+
+  private reportActiveChatSession(
+    payload: { sessionId?: string | null } = {},
+  ): Record<string, unknown> {
+    if (!this.isAilyChatTool()) {
+      return { ok: false, message: 'Active chat session reporting is only available to Aily Chat' };
+    }
+
+    const sessionId = typeof payload.sessionId === 'string'
+      ? payload.sessionId.trim().slice(0, 512)
+      : '';
+    if (sessionId === this.ailyChatSessionId) {
+      this.pushChatSubappActivities();
+      return { ok: true, sessionId: sessionId || null };
+    }
+
+    this.ailyChatSessionId = sessionId;
+    this.pushChatSubappActivities();
+    return { ok: true, sessionId: sessionId || null };
+  }
+
+  private setSubappSurfaceState(payload: {
+    sessionId?: string;
+    toolId?: string;
+    surfaceState?: 'collapsed' | 'expanded';
+  } = {}): Record<string, unknown> {
+    if (!this.isAilyChatTool()) {
+      return { ok: false, message: 'Subapp Dock controls are only available to Aily Chat' };
+    }
+
+    const sessionId = String(payload.sessionId || '').trim();
+    const toolId = String(payload.toolId || '').trim();
+    const surfaceState = payload.surfaceState;
+    if (!sessionId || sessionId !== this.ailyChatSessionId || !toolId) {
+      return { ok: false, message: 'Subapp Dock target does not match the active chat session' };
+    }
+    if (surfaceState !== 'collapsed' && surfaceState !== 'expanded') {
+      return { ok: false, message: 'Subapp Dock surface state is invalid' };
+    }
+
+    const activity = this.subappActivityService.setSurfaceState(sessionId, toolId, surfaceState);
+    return activity
+      ? { ok: true, sessionId, toolId, surfaceState }
+      : { ok: false, message: 'Subapp activity is unavailable for the active chat session' };
+  }
+
+  private pushChatSubappActivities(): void {
+    if (!this.isAilyChatTool() || typeof this.remoteApi?.setSubappActivities !== 'function') {
+      return;
+    }
+
+    const sessionId = this.ailyChatSessionId;
+    const items = sessionId
+      ? this.subappActivityService.getSessionActivities(sessionId).map(activity => this.projectSubappActivity(activity))
+      : [];
+    void Promise.resolve(this.remoteApi.setSubappActivities({ sessionId, items })).catch(() => undefined);
+  }
+
+  private projectSubappActivity(activity: SubappActivity): Record<string, unknown> {
+    return {
+      sessionId: activity.sessionId,
+      toolId: activity.toolId,
+      title: activity.title,
+      icon: activity.icon,
+      toolName: activity.toolName,
+      invocationState: activity.invocationState,
+      runtimeState: activity.runtimeState,
+      surfaceState: activity.surfaceState,
+      invocationCount: activity.invocationCount,
+      activeInvocationCount: activity.activeInvocationCount,
+      lastUsedAt: activity.lastUsedAt,
+      ...(activity.summary ? { summary: { ...activity.summary } } : {}),
     };
   }
 
