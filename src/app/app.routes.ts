@@ -156,10 +156,6 @@ export const routes: Routes = [
         loadComponent: () => import('./editors/graph-editor/graph-editor.component').then(m => m.GraphEditorComponent)
     },
     {
-        path: "model-store",
-        loadComponent: () => import('./tools/model-store/model-store.component').then(m => m.ModelStoreComponent)
-    },
-    {
         path: "model-deploy",
         children: [
             {

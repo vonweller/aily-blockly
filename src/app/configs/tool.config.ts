@@ -247,15 +247,6 @@ export const APP_LIST: AppItem[] = [
     lock: true
   },
   {
-    id: 'model-store',
-    name: 'MENU.MODEL_STORE',
-    description: 'APP_STORE.MODEL_STORE_DESC',
-    action: 'tool-open',
-    data: { type: 'tool', data: 'model-store' },
-    icon: 'fa-light fa-microchip-ai',
-    enabled: true
-  },
-  {
     id: 'cloud-space',
     name: 'MENU.USER_SPACE',
     description: 'APP_STORE.CLOUD_SPACE_DESC',
@@ -283,7 +274,6 @@ export const AVAILABLE_APP_IDS: string[] = [
   'serial-monitor',
   'ffs-manager',
   'aily-chat',
-  'model-store',
   'cloud-space',
   'user-center',
 ];

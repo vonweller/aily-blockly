@@ -239,7 +239,6 @@ export class UiService {
       case 'code-viewer':
       case 'serial-monitor':
       case 'ffs-manager':
-      case 'model-store':
         return `/${name}`;
       default:
         return null;

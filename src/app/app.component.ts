@@ -6,6 +6,7 @@ import { ConfigService } from './services/config.service';
 import { TranslationService } from './services/translation.service';
 import { ThemeService } from './services/theme.service';
 import { SubappManagerService } from './services/subapp-manager.service';
+import { ModelStoreHostBridgeService } from './services/model-store-host-bridge.service';
 
 @Component({
   selector: 'app-root',
@@ -22,8 +23,10 @@ export class AppComponent implements OnInit, AfterViewInit {
   private translationService = inject(TranslationService);
   private themeService = inject(ThemeService);
   private subappManager = inject(SubappManagerService);
+  private modelStoreHostBridge = inject(ModelStoreHostBridgeService);
 
   async ngOnInit() {
+    void this.modelStoreHostBridge;
     await this.electronService.init();
     await this.configService.init();
     this.themeService.init();

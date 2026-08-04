@@ -5,7 +5,7 @@ import { TranslateModule } from '@ngx-translate/core';
 import { NzStepsModule } from 'ng-zorro-antd/steps';
 import { NzButtonModule } from 'ng-zorro-antd/button';
 import { SubWindowComponent } from '../../../components/sub-window/sub-window.component';
-import { ModelDetail } from '../../../tools/model-store/model-store.service';
+import { ModelDeployDetail } from '../model-deploy.types';
 import { ElectronService } from '../../../services/electron.service';
 import { PortItem, SerialService } from '../../../services/serial.service';
 import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
@@ -27,7 +27,7 @@ import {
   getDeviceConnectionImage,
   getDeviceConnectionSteps,
   getAuthorLogo
-} from '../../../tools/model-store/model-constants';
+} from '../model-deploy.constants';
 import { MenuComponent } from '../../../components/menu/menu.component';
 import { SscmaConfigComponent } from '../sscma-config/sscma-config.component';
 import { NotificationComponent } from '../../../components/notification/notification.component';
@@ -69,7 +69,7 @@ export interface ModelInfo {
   styleUrl: './sscma-deploy.component.scss'
 })
 export class SscmaDeployComponent implements OnInit {
-  @Input() modelDetail!: ModelDetail;
+  @Input() modelDetail!: ModelDeployDetail;
   @Input() initialStep: number = 0;
   @Output() deployComplete = new EventEmitter<void>();
   @Output() deployError = new EventEmitter<Error>();

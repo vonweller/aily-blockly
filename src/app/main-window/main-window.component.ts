@@ -26,7 +26,6 @@ import { ConfigService } from '../services/config.service';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { CloudSpaceComponent } from '../tools/cloud-space/cloud-space.component';
 import { UserCenterComponent } from '../tools/user-center/user-center.component';
-import { ModelStoreComponent } from '../tools/model-store/model-store.component';
 import { OnboardingComponent } from '../components/onboarding/onboarding.component';
 import { OnboardingService } from '../services/onboarding.service';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
@@ -71,7 +70,6 @@ const RIGHT_SIDER_MAX_WIDTH = 800;
     NzModalModule,
     CloudSpaceComponent,
     UserCenterComponent,
-    ModelStoreComponent,
     OnboardingComponent,
     TranslateModule,
     LibManagerToolComponent,

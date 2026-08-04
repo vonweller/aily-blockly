@@ -4,6 +4,7 @@ import { ConfigService } from './config.service';
 import { ProjectService } from './project.service';
 import { appendProjectLog, type ProjectLogLevel } from '../utils/project-log.utils';
 import { BehaviorSubject, distinctUntilChanged, map, type Observable } from 'rxjs';
+import { buildModelStoreServiceContextVersion } from './model-store-service-context';
 
 export interface ChildToolHostInfo {
   url: string;
@@ -13,6 +14,7 @@ export interface ChildToolHostInfo {
   port?: number;
   pid?: number;
   apiServer?: string;
+  serviceContextVersion?: string;
 }
 
 export type ChildToolRuntimeState = 'unknown' | 'starting' | 'ready' | 'stopped' | 'error';
@@ -429,6 +431,9 @@ export class ChildToolProcessService implements OnDestroy {
     const scriptPath = pathApi.join(projectPath, config.entry || 'index.js');
     const uiPath = pathApi.join(projectPath, config.uiIndex || pathApi.join('ui', 'index.html'));
     const hostApiServer = this.normalizeApiServer(this.configService.getCurrentApiServer());
+    const serviceContextVersion = config.id === 'model-store'
+      ? buildModelStoreServiceContextVersion(hostApiServer)
+      : '';
     if (this.requiresSelectedApiServer(config) && !hostApiServer) {
       throw new Error(`${config.id} requires the API server selected by the host service-region dialog`);
     }
@@ -502,7 +507,8 @@ export class ChildToolProcessService implements OnDestroy {
           AILY_CHILD_TOOL: '1',
           AILY_CHILD_TOOL_ID: config.id,
           ...(config.env || {}),
-          ...(hostApiServer ? { AILY_API_SERVER: hostApiServer } : {})
+          ...(hostApiServer ? { AILY_API_SERVER: hostApiServer } : {}),
+          ...(serviceContextVersion ? { AILY_SERVICE_CONTEXT_VERSION: serviceContextVersion } : {})
         }
       });
 
@@ -519,9 +525,11 @@ export class ChildToolProcessService implements OnDestroy {
       if (session.streamId !== streamId) {
         throw new Error(`${config.id} startup was superseded before registration`);
       }
-      const registeredHostInfo: ChildToolHostInfo = hostApiServer
-        ? { ...hostInfo, apiServer: hostApiServer }
-        : hostInfo;
+      const registeredHostInfo: ChildToolHostInfo = {
+        ...hostInfo,
+        ...(hostApiServer ? { apiServer: hostApiServer } : {}),
+        ...(serviceContextVersion ? { serviceContextVersion } : {}),
+      };
       session.hostInfo = registeredHostInfo;
       const registered = await window['childToolSession']?.register?.({
         toolId: config.id,
@@ -829,7 +837,7 @@ export class ChildToolProcessService implements OnDestroy {
   }
 
   private requiresSelectedApiServer(config: ChildToolConfig): boolean {
-    return config.id === 'aily-chat' || config.id === 'aily-chat-react';
+    return config.id === 'aily-chat' || config.id === 'aily-chat-react' || config.id === 'model-store';
   }
 
   private normalizeApiServer(value: unknown): string {

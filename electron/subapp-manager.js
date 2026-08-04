@@ -15,7 +15,11 @@ const TOOL_ID_ALIASES = Object.freeze({
   'aily-chat': 'aily-chat-react',
   'ffs-manager': 'ffs-manager-child',
   'aily-simulator': 'simulator',
+  'model-store-child': 'model-store',
 });
+// The catalog entry stays disabled for older hosts. Only hosts with the trusted
+// model-store bridge opt into this exact migration entry.
+const ENABLED_CATALOG_OVERRIDES = new Set(['model-store-child']);
 const STARTUP_TIMEOUTS = Object.freeze({
   'aily-chat-react': 30000,
   'ffs-manager-child': 10000,
@@ -92,9 +96,13 @@ function validateIndex(rawIndex) {
   if (!isObject(rawIndex)) {
     throw new Error('Subapp index must be a JSON object');
   }
+  if (rawIndex.dev !== undefined && typeof rawIndex.dev !== 'boolean') {
+    throw new Error('Subapp index dev flag must be a boolean');
+  }
 
-  const index = {};
+  const index = rawIndex.dev === true ? { dev: true } : {};
   for (const [indexId, rawEntry] of Object.entries(rawIndex)) {
+    if (indexId === 'dev') continue;
     if (!isObject(rawEntry)) throw new Error(`Invalid subapp entry: ${indexId}`);
     const id = validateId(rawEntry.id || indexId);
     if (id !== indexId) throw new Error(`Subapp index key does not match id: ${indexId}`);
@@ -625,8 +633,10 @@ function createCatalogState(rootDir, index, locale, meta = {}) {
     fetchedAt: meta.fetchedAt || new Date().toISOString(),
     warning: meta.warning || null,
     installRoot: rootDir,
-    apps: Object.values(index)
-      .filter((entry) => entry.app.enabled !== false)
+    apps: Object.entries(index)
+      .filter(([id]) => id !== 'dev')
+      .map(([, entry]) => entry)
+      .filter((entry) => entry.app.enabled !== false || ENABLED_CATALOG_OVERRIDES.has(entry.id))
       .map((entry) => {
         const installedState = readInstalledState(rootDir, entry);
         const copy = resolveLocalizedCopy(entry, locale);
@@ -646,6 +656,7 @@ function createCatalogState(rootDir, index, locale, meta = {}) {
             ...entry.app,
             name: copy.name,
             description: copy.description,
+            ...(ENABLED_CATALOG_OVERRIDES.has(entry.id) ? { enabled: true } : {}),
           },
           id: entry.id,
           toolId,
@@ -984,6 +995,13 @@ function readIndexCache(rootDir) {
   return fs.existsSync(cachePath) ? validateIndex(readJson(cachePath)) : null;
 }
 
+function readDevelopmentIndexCache(rootDir) {
+  const cachePath = path.join(rootDir, INDEX_CACHE_FILE);
+  if (!fs.existsSync(cachePath)) return null;
+  const rawIndex = readJson(cachePath);
+  return rawIndex?.dev === true ? validateIndex(rawIndex) : null;
+}
+
 function snapshotFile(filePath) {
   return fs.existsSync(filePath)
     ? { exists: true, contents: fs.readFileSync(filePath) }
@@ -1253,6 +1271,21 @@ function createSubappManager(options = {}) {
   let currentMeta = null;
 
   async function loadIndex(forceRefresh = false) {
+    const localIndex = readDevelopmentIndexCache(rootDir);
+    if (localIndex?.dev === true) {
+      currentIndex = localIndex;
+      currentMeta = {
+        indexUrl,
+        source: 'cache',
+        fetchedAt: new Date().toISOString(),
+        warning: null,
+      };
+      return { index: localIndex, meta: currentMeta };
+    }
+    if (currentIndex?.dev === true) {
+      currentIndex = null;
+      currentMeta = null;
+    }
     if (currentIndex && !forceRefresh) return { index: currentIndex, meta: currentMeta };
     try {
       const index = await fetchRemoteIndex(indexUrl, options.fetchImpl);

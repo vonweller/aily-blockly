@@ -925,7 +925,9 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     const waitFor: Promise<void>[] = [];
     const nextPayload = {
       ...(payload || {}),
-      source: payload?.source || this.childSignalSource()
+      source: this.childSignalSource(),
+      senderToolId: this.resolvedToolId,
+      senderContextId: this.hostContextId,
     };
 
     if (signal === 'serial-monitor:disconnect') {

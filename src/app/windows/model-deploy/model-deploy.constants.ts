@@ -1,5 +1,5 @@
 /**
- * 模型商店常量和映射配置
+ * 主软件模型部署常量和映射配置
  */
 
 export interface SupportBoardInfo {
