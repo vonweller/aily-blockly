@@ -370,6 +370,12 @@ export class SubappAgentBridgeService implements OnDestroy {
       }
     }
     const socket = await this.ensureSocket(channel);
+    if (signal?.aborted) {
+      throw new SubappRpcError('Subapp Agent request was cancelled', 'SUBAPP_RPC_CANCELLED', {
+        toolId,
+        method,
+      });
+    }
     const id = `agent-${Date.now()}-${++channel.requestSeq}`;
     const response = new Promise<unknown>((resolve, reject) => {
       const timer = setTimeout(() => {

@@ -46,6 +46,10 @@ type BlocklyLiveOperationPayload = {
 @Injectable({ providedIn: 'root' })
 export class BlocklyLiveOperationBridgeService {
   private initialized = false;
+  private readonly activeOperations = new Map<string, {
+    controller: AbortController;
+    rendererGeneration?: number;
+  }>();
 
   constructor(
     private readonly configService: ConfigService,
@@ -78,6 +82,9 @@ export class BlocklyLiveOperationBridgeService {
     ipcRenderer.on('cli-bridge:blockly-live-operation', (_event: unknown, payload: BlocklyLiveOperationPayload) => {
       void this.handleIpcPayload(ipcRenderer, payload);
     });
+    ipcRenderer.on('cli-bridge:blockly-live-operation:dispose', (_event: unknown, payload: BlocklyLiveOperationPayload) => {
+      this.dispose(String(payload?.requestId || ''), payload?.rendererGeneration);
+    });
     this.initialized = true;
   }
 
@@ -96,18 +103,47 @@ export class BlocklyLiveOperationBridgeService {
       return;
     }
 
+    const controller = new AbortController();
+    this.activeOperations.set(requestId, {
+      controller,
+      ...(payload.rendererGeneration !== undefined
+        ? { rendererGeneration: payload.rendererGeneration }
+        : {}),
+    });
+
     try {
-      const result = await this.ngZone.run(() => this.execute(payload));
+      const result = await this.ngZone.run(() => this.execute(payload, controller.signal));
       respond(result);
     } catch (error) {
       respond({
         ok: false,
         message: error instanceof Error ? error.message : String(error),
       });
+    } finally {
+      const active = this.activeOperations.get(requestId);
+      if (active?.controller === controller) this.activeOperations.delete(requestId);
     }
   }
 
-  private async execute(payload: BlocklyLiveOperationPayload): Promise<Record<string, any>> {
+  private dispose(requestId: string, rendererGeneration?: number): void {
+    const active = this.activeOperations.get(requestId);
+    if (!active) return;
+    if (
+      rendererGeneration !== undefined
+      && active.rendererGeneration !== undefined
+      && rendererGeneration !== active.rendererGeneration
+    ) {
+      return;
+    }
+
+    this.activeOperations.delete(requestId);
+    active.controller.abort();
+  }
+
+  private async execute(
+    payload: BlocklyLiveOperationPayload,
+    signal: AbortSignal,
+  ): Promise<Record<string, any>> {
     if (payload.operation === 'app_info') {
       return this.executeAppInfo();
     }
@@ -145,7 +181,11 @@ export class BlocklyLiveOperationBridgeService {
       return this.mainUiAutomationService.arrangeChildAppWindows(payload.params || {});
     }
     if (payload.operation === 'subapp_agent_call') {
-      return this.subappAgentBridgeService.execute(payload.params || {});
+      const params = payload.params || {};
+      return this.subappAgentBridgeService.execute(params, signal, {
+        sessionId: String(params['sessionId'] || ''),
+        toolCallId: String(params['requestId'] || ''),
+      });
     }
     if (payload.operation === 'project_hardware_intent_snapshot') {
       const request = payload.params?.['request'];

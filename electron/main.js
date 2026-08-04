@@ -998,9 +998,17 @@ function requestMainWindow(channel, responseChannel, payload, timeoutMs = 12000,
 
     const requestGeneration = rendererGeneration;
     const requestId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const dispose = () => {
+      if (!isCurrentRendererGenerationReady()) return;
+      mainWindow.webContents.send(`${channel}:dispose`, {
+        requestId,
+        rendererGeneration: requestGeneration,
+      });
+    };
     const timer = setTimeout(() => {
       signal?.removeEventListener('abort', onAbort);
       ipcMain.removeListener(responseChannel, listener);
+      dispose();
       resolve({ ok: false, message: '等待渲染进程响应超时' });
     }, timeoutMs);
 
@@ -1022,6 +1030,7 @@ function requestMainWindow(channel, responseChannel, payload, timeoutMs = 12000,
     const onAbort = () => {
       clearTimeout(timer);
       ipcMain.removeListener(responseChannel, listener);
+      dispose();
       resolve({
         ok: false,
         errorCode: 'RENDERER_REQUEST_CANCELLED',
@@ -1129,7 +1138,7 @@ function getSimulatorProjectRebuildCoordinator() {
 }
 
 /** 处理来自 CLI 的命令 */
-async function handleCliBridgeCommand(action, payload) {
+async function handleCliBridgeCommand(action, payload, context = {}) {
   const requestedPath = payload && typeof payload.path === 'string' ? payload.path : '';
   switch (action) {
     case 'open': {
@@ -1211,6 +1220,7 @@ async function handleCliBridgeCommand(action, payload) {
           params: payload && payload.params,
         },
         liveOperationTimeoutMs,
+        context.signal,
       );
       return result && typeof result === 'object' ? result : { ok: false, message: '渲染进程返回了无效结果' };
     }
