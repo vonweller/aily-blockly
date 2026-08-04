@@ -5621,8 +5621,9 @@ function resolveConfiguredAppDataPath(env = process.env) {
   try {
     const configPath = path.join(MODULE_DIR, 'config', 'config.json');
     const config = JSON.parse(fsSync.readFileSync(configPath, 'utf-8'));
-    const platform = normalizeString(config.platform) || process.platform;
-    const configured = normalizeString(config.appdata_path?.[platform] || config.appdata_path?.[process.platform]);
+    // Prefer the real process platform. config.platform is a build/product flag and
+    // can be "win32" on macOS/Linux machines, which must not select Windows appdata paths.
+    const configured = normalizeString(config.appdata_path?.[process.platform]);
     if (!configured) {
       return '';
     }
