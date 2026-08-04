@@ -42,6 +42,7 @@ export interface ChildToolRuntimeResourceLifecycleConfig {
 }
 
 export interface ChildToolRuntimeConfig {
+  apiServer?: 'optional' | 'required';
   processMessagePort?: {
     transport: 'node-ipc-v1';
     maxMessageBytes?: number;
@@ -227,15 +228,6 @@ export const APP_LIST: AppItem[] = [
     lock: true
   },
   {
-    id: 'ffs-manager',
-    name: 'MENU.FFS_MANAGER',
-    description: 'APP_STORE.FFS_MANAGER_DESC',
-    action: 'tool-open',
-    data: { type: 'tool', data: 'ffs-manager' },
-    icon: 'fa-light fa-database',
-    enabled: true
-  },
-  {
     id: 'aily-chat',
     name: 'MENU.AI',
     description: 'APP_STORE.AI_DESC',
@@ -272,7 +264,6 @@ export const APP_LIST: AppItem[] = [
 export const AVAILABLE_APP_IDS: string[] = [
   'code-viewer',
   'serial-monitor',
-  'ffs-manager',
   'aily-chat',
   'cloud-space',
   'user-center',

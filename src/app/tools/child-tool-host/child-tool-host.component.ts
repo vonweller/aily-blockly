@@ -54,6 +54,15 @@ interface NormalizedHostMessage {
   duration?: number;
 }
 
+interface ChildSurfaceWindowRequest {
+  surface?: string;
+  params?: Record<string, string | number | boolean>;
+  title?: string;
+  width?: number;
+  height?: number;
+  alwaysOnTop?: boolean;
+}
+
 @Component({
   selector: 'app-child-tool-host',
   imports: [
@@ -470,8 +479,8 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       embed: () => this.embed(),
     }, {
       instanceId: this.hostContextId,
-      surface: 'default',
-      primary: true,
+      surface: this.resolveLaunchContext().surface,
+      primary: this.resolveLaunchContext().surface === 'default',
     });
   }
 
@@ -582,6 +591,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
         selectChatResources: () => this.selectChatResources(),
         listChildApps: (payload: { limit?: number } = {}) => this.listChatChildApps(payload),
         openChildApp: (payload: { toolId?: string; mode?: 'embedded' | 'window' } = {}) => this.openChatChildApp(payload),
+        openChildSurfaceWindow: (payload: ChildSurfaceWindowRequest = {}) => this.openChildSurfaceWindow(payload),
         focusChildFrame: () => this.focusChildFrame(),
         writeClipboardText: (payload: { text?: string } = {}) => this.writeClipboardText(payload),
         reportAiOperationState: (payload: { active?: boolean; sessionId?: string | null } = {}) => {
@@ -959,15 +969,20 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
 
   private buildChildToolUrl(url: string): string {
     const context = this.createHostContext();
+    const launch = this.resolveLaunchContext();
 
     try {
       const nextUrl = new URL(url);
       nextUrl.searchParams.set('lang', String(context['lang'] || 'en'));
+      nextUrl.searchParams.set('surface', launch.surface);
+      nextUrl.searchParams.set('launch', JSON.stringify(launch.params));
       return nextUrl.toString();
     } catch {
       const separator = url.includes('?') ? '&' : '?';
       const query = new URLSearchParams({
-        lang: String(context['lang'] || 'en')
+        lang: String(context['lang'] || 'en'),
+        surface: launch.surface,
+        launch: JSON.stringify(launch.params),
       });
       return `${url}${separator}${query.toString()}`;
     }
@@ -975,6 +990,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
 
   private createHostContext(): Record<string, unknown> {
     const isAilyChat = this.isAilyChatTool();
+    const launch = this.resolveLaunchContext();
     return {
       toolId: this.resolvedToolId,
       contextId: this.hostContextId,
@@ -983,6 +999,8 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       theme: this.normalizeTheme(this.themeService.theme()),
       platform: (window as any).electronAPI?.platform?.type || 'browser',
       embedded: !this.isStandalone,
+      surface: launch.surface,
+      surfaceParams: launch.params,
       workspace: this.resolveHostWorkspace(),
       blockResources: isAilyChat && this.active ? this.createSelectedBlockResources() : [],
       capabilities: {
@@ -995,10 +1013,63 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
         clipboardWrite: isAilyChat,
         blockSelectionContext: isAilyChat,
         childFrameFocus: isAilyChat,
+        childSurfaceWindow: true,
         aiOperationState: isAilyChat,
         subappDock: isAilyChat
       }
     };
+  }
+
+  private resolveLaunchContext(): { surface: string; params: Record<string, string> } {
+    const requestedSurface = String(this.route.snapshot.queryParamMap.get('surface') || 'default').trim();
+    const surfaces = this.config?.ui?.surfaces || {};
+    const surface = Object.hasOwn(surfaces, requestedSurface) ? requestedSurface : 'default';
+    const rawLaunch = this.route.snapshot.queryParamMap.get('launch');
+    if (!rawLaunch || rawLaunch.length > 4096) return { surface, params: {} };
+    try {
+      const parsed = JSON.parse(rawLaunch);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { surface, params: {} };
+      const params: Record<string, string> = {};
+      for (const [key, value] of Object.entries(parsed).slice(0, 20)) {
+        if (!/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/.test(key)) continue;
+        if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') continue;
+        const text = String(value);
+        if (text.length <= 512) params[key] = text;
+      }
+      return { surface, params };
+    } catch {
+      return { surface, params: {} };
+    }
+  }
+
+  private openChildSurfaceWindow(payload: ChildSurfaceWindowRequest): Record<string, unknown> {
+    if (!this.config) return { ok: false, code: 'CHILD_CONFIG_UNAVAILABLE' };
+    const surface = String(payload?.surface || '').trim();
+    const surfaceConfig = this.config.ui?.surfaces?.[surface];
+    if (!surface || !surfaceConfig) return { ok: false, code: 'SURFACE_NOT_AVAILABLE' };
+    const params: Record<string, string> = {};
+    if (payload.params && typeof payload.params === 'object' && !Array.isArray(payload.params)) {
+      for (const [key, value] of Object.entries(payload.params).slice(0, 20)) {
+        if (!/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/.test(key)) continue;
+        if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') continue;
+        const text = String(value);
+        if (text.length <= 512) params[key] = text;
+      }
+    }
+    const query = new URLSearchParams({ surface, launch: JSON.stringify(params) });
+    const path = `${this.config.routePath || `/child-tool/${this.config.id}`}?${query.toString()}`;
+    const width = Math.max(surfaceConfig.minWidth || 400, Math.min(1800, Number(payload.width) || 1020));
+    const height = Math.max(surfaceConfig.minHeight || 300, Math.min(1200, Number(payload.height) || surfaceConfig.preferredHeight || 720));
+    this.uiService.openWindow({
+      path: path.replace(/^\/+/, ''),
+      title: typeof payload.title === 'string' ? payload.title.slice(0, 160) : this.titleKey,
+      width,
+      height,
+      alwaysOnTop: payload.alwaysOnTop === true,
+      relativeToDisplay: true,
+      clampToWorkArea: true,
+    });
+    return { ok: true, state: 'opened', surface, path };
   }
 
   private reportActiveChatSession(

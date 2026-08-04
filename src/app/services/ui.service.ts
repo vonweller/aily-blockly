@@ -238,7 +238,6 @@ export class UiService {
     switch (name) {
       case 'code-viewer':
       case 'serial-monitor':
-      case 'ffs-manager':
         return `/${name}`;
       default:
         return null;

@@ -10,7 +10,6 @@ import { TerminalComponent } from '../tools/terminal/terminal.component';
 import { LogComponent } from '../tools/log/log.component';
 import { UiService } from '../services/ui.service';
 import { SerialMonitorComponent } from '../tools/serial-monitor/serial-monitor.component';
-import { FfsManagerComponent } from '../tools/ffs-manager/ffs-manager.component';
 import { ChildToolHostComponent } from '../tools/child-tool-host/child-tool-host.component';
 import { CodeViewerComponent } from '../editors/blockly-editor/tools/code-viewer/code-viewer.component';
 import { ProjectService } from '../services/project.service';
@@ -59,7 +58,6 @@ const RIGHT_SIDER_MAX_WIDTH = 800;
     TerminalComponent,
     LogComponent,
     SerialMonitorComponent,
-    FfsManagerComponent,
     ChildToolHostComponent,
     CodeViewerComponent,
     SimplebarAngularModule,

@@ -15,11 +15,7 @@ const TOOL_ID_ALIASES = Object.freeze({
   'aily-chat': 'aily-chat-react',
   'ffs-manager': 'ffs-manager-child',
   'aily-simulator': 'simulator',
-  'model-store-child': 'model-store',
 });
-// The catalog entry stays disabled for older hosts. Only hosts with the trusted
-// model-store bridge opt into this exact migration entry.
-const ENABLED_CATALOG_OVERRIDES = new Set(['model-store-child']);
 const STARTUP_TIMEOUTS = Object.freeze({
   'aily-chat-react': 30000,
   'ffs-manager-child': 10000,
@@ -543,6 +539,11 @@ function readInstalledState(rootDir, entry) {
     const declaredRuntime = isObject(packageJson?.ailySubapp?.runtime)
       ? packageJson.ailySubapp.runtime
       : {};
+    const apiServer = declaredRuntime.apiServer === 'required'
+      ? 'required'
+      : declaredRuntime.apiServer === 'optional'
+        ? 'optional'
+        : null;
     const startupTimeoutMs = positiveInteger(
       declaredRuntime.startupTimeoutMs,
       STARTUP_TIMEOUTS[toolId] || 0,
@@ -551,6 +552,7 @@ function readInstalledState(rootDir, entry) {
     const resourceLifecycle = readRuntimeResourceLifecycleConfig(declaredRuntime);
     const processMessagePort = readRuntimeProcessMessagePortConfig(declaredRuntime);
     const runtime = {
+      ...(apiServer ? { apiServer } : {}),
       ...(processMessagePort ? { processMessagePort } : {}),
       ...(resourceLifecycle ? { resourceLifecycle } : {}),
     };
@@ -636,7 +638,7 @@ function createCatalogState(rootDir, index, locale, meta = {}) {
     apps: Object.entries(index)
       .filter(([id]) => id !== 'dev')
       .map(([, entry]) => entry)
-      .filter((entry) => entry.app.enabled !== false || ENABLED_CATALOG_OVERRIDES.has(entry.id))
+      .filter((entry) => entry.app.enabled !== false)
       .map((entry) => {
         const installedState = readInstalledState(rootDir, entry);
         const copy = resolveLocalizedCopy(entry, locale);
@@ -656,7 +658,6 @@ function createCatalogState(rootDir, index, locale, meta = {}) {
             ...entry.app,
             name: copy.name,
             description: copy.description,
-            ...(ENABLED_CATALOG_OVERRIDES.has(entry.id) ? { enabled: true } : {}),
           },
           id: entry.id,
           toolId,

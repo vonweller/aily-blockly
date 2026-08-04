@@ -115,10 +115,6 @@ test('routes the installed Simulator package through its dedicated host', () => 
   assert.equal(TOOL_ID_ALIASES['aily-simulator'], 'simulator');
 });
 
-test('routes the model-store migration package through the canonical host id', () => {
-  assert.equal(TOOL_ID_ALIASES['model-store-child'], 'model-store');
-});
-
 test('rejects package targets that are not safe npm package names', () => {
   const index = fixtureIndex();
   index['aily-chat'].package = 'file:../../tmp/app';
@@ -244,39 +240,6 @@ test('omits disabled catalog entries from the subapp list', async (t) => {
   assert.equal(state.apps[0].app.ai, true);
 });
 
-test('new hosts opt into only the disabled model-store migration entry', async (t) => {
-  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'aily-model-store-catalog-'));
-  t.after(() => fs.rmSync(fixtureRoot, { recursive: true, force: true }));
-  const modelStore = {
-    id: 'model-store-child',
-    titleKey: 'MODEL_STORE.TITLE',
-    namespace: 'MODEL_STORE',
-    app: {
-      name: 'MODEL_STORE.TITLE',
-      description: 'MODEL_STORE.DESCRIPTION',
-      icon: 'fa-light fa-microchip-ai',
-      enabled: false,
-    },
-    package: '@aily-project/subapp-model-store',
-    version: '0.1.0',
-    i18n: {
-      defaultLocale: 'en',
-      locales: { en: { TITLE: 'Model Store', DESCRIPTION: 'AI model catalog' } },
-    },
-  };
-  const manager = createSubappManager({
-    rootDir: path.join(fixtureRoot, 'npm-global', 'app'),
-    fetchImpl: async () => ({ ok: true, text: async () => JSON.stringify({ 'model-store-child': modelStore }) }),
-  });
-
-  const state = await manager.list({ locale: 'en', refresh: true });
-  assert.equal(state.apps.length, 1);
-  assert.equal(state.apps[0].id, 'model-store-child');
-  assert.equal(state.apps[0].toolId, 'model-store');
-  assert.equal(state.apps[0].enabled, true);
-  assert.equal(state.apps[0].app.enabled, true);
-});
-
 test('treats an npm-linked source package as an installed subapp', async (t) => {
   const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'aily-subapp-link-'));
   const installRoot = path.join(fixtureRoot, 'npm-global', 'app');
@@ -348,6 +311,7 @@ test('treats an npm-linked source package as an installed subapp', async (t) => 
         },
       },
       runtime: {
+        apiServer: 'required',
         startupTimeoutMs: 20000,
         processMessagePort: {
           transport: 'node-ipc-v1',
@@ -385,6 +349,7 @@ test('treats an npm-linked source package as an installed subapp', async (t) => 
   assert.equal(state.apps[0].config.packagePath, linkedDir);
   assert.equal(state.apps[0].config.startupTimeoutMs, 20000);
   assert.deepEqual(state.apps[0].config.runtime, {
+    apiServer: 'required',
     processMessagePort: {
       transport: 'node-ipc-v1',
       maxMessageBytes: 1048576,
