@@ -43,11 +43,6 @@ type HostStatus = 'idle' | 'starting' | 'ready' | 'error' | 'closed';
 type HostMessageState = 'success' | 'info' | 'warning' | 'error' | 'loading';
 type ChildLifecycleReason = 'close' | 'restart' | 'destroy';
 
-const CHILD_HEALTH_CHECK_INTERVAL_MS = 5_000;
-const CHILD_HEALTH_CHECK_TIMEOUT_MS = 2_500;
-const CHILD_HEALTH_FAILURE_THRESHOLD = 3;
-const CHILD_HEALTH_RECOVERY_SUCCESS_THRESHOLD = 3;
-
 interface HostProjectContext {
   workspace?: string | null;
   version?: number;
@@ -112,11 +107,6 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   private penpalConnection: Connection | null = null;
   private remoteApi: any = null;
   private childReadyTimer: ReturnType<typeof setTimeout> | null = null;
-  private childHealthTimer: ReturnType<typeof setInterval> | null = null;
-  private childHealthCheckInFlight = false;
-  private childHealthFailureCount = 0;
-  private childHealthSuccessCount = 0;
-  private childHealthRecoveryAttempted = false;
   private childToolUrl = '';
   private penpalRemoteWindow: Window | null = null;
   private penpalState: 'idle' | 'connecting' | 'connected' | 'failed' = 'idle';
@@ -322,9 +312,6 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
 
     if (this.initialized && changes['active']) {
       this.syncHostContext(true);
-      if (this.active) {
-        void this.checkChildHealth();
-      }
     }
   }
 
@@ -423,7 +410,6 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   async reloadChildUi(): Promise<void> {
-    this.childHealthRecoveryAttempted = false;
     this.uiHealthFailed = false;
     await this.reloadChildFrame('manual');
   }
@@ -752,7 +738,6 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       this.acquired = true;
       const childToolUrl = this.buildChildToolUrl(this.serverInfo.url);
       this.childToolUrl = childToolUrl;
-      this.resetChildHealthState();
       this.log('server acquired', this.sanitizeHostInfo(this.serverInfo));
       this.log('iframe url prepared', this.sanitizeUrl(childToolUrl));
       this.iframeSrc = this.sanitizer.bypassSecurityTrustResourceUrl(childToolUrl);
@@ -859,7 +844,6 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
         this.beforeCloseNotified = false;
         this.syncHostContext();
         this.pushChatSubappActivities();
-        this.startChildHealthMonitor();
       })
       .catch(error => {
         this.ngZone.run(() => {
@@ -876,6 +860,8 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     const message = this.stringifyHostMessageValue(error?.message ?? error) || `${this.resolvedToolId} child error`;
     const detail = this.stringifyHostMessageValue(error?.detail ?? error?.stack ?? error?.message ?? error) || message;
 
+    this.frameLoaded = false;
+    this.uiHealthFailed = true;
     this.hostStatus = 'error';
     this.errorMessage = message;
     this.logError('child error', this.errorMessage);
@@ -1009,7 +995,6 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
 
   private destroyPenpalConnection(): void {
     this.clearChildReadyTimer();
-    this.stopChildHealthMonitor();
     this.setAilyChatOperationActive(false);
     this.remoteApi = null;
     if (this.penpalConnection) {
@@ -1020,76 +1005,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     this.penpalState = 'idle';
   }
 
-  private startChildHealthMonitor(): void {
-    this.stopChildHealthMonitor();
-    if (typeof this.remoteApi?.healthCheck !== 'function') return;
-
-    this.ngZone.runOutsideAngular(() => {
-      this.childHealthTimer = setInterval(() => {
-        void this.checkChildHealth();
-      }, CHILD_HEALTH_CHECK_INTERVAL_MS);
-    });
-  }
-
-  private stopChildHealthMonitor(): void {
-    if (this.childHealthTimer) {
-      clearInterval(this.childHealthTimer);
-      this.childHealthTimer = null;
-    }
-    this.childHealthCheckInFlight = false;
-  }
-
-  private resetChildHealthState(): void {
-    this.childHealthFailureCount = 0;
-    this.childHealthSuccessCount = 0;
-    this.childHealthRecoveryAttempted = false;
-  }
-
-  private async checkChildHealth(): Promise<void> {
-    if (!this.active || this.hostStatus !== 'ready' || this.childHealthCheckInFlight) return;
-    const remote = this.remoteApi;
-    if (typeof remote?.healthCheck !== 'function') return;
-
-    this.childHealthCheckInFlight = true;
-    try {
-      const health = await this.withTimeout(Promise.resolve(remote.healthCheck()), CHILD_HEALTH_CHECK_TIMEOUT_MS);
-      if (remote !== this.remoteApi || this.hostStatus !== 'ready') return;
-      if (this.isRecord(health) && health['ok'] === false) {
-        throw new Error('Child health check returned an unhealthy status');
-      }
-      this.childHealthFailureCount = 0;
-      this.childHealthSuccessCount += 1;
-      if (this.childHealthSuccessCount >= CHILD_HEALTH_RECOVERY_SUCCESS_THRESHOLD) {
-        this.childHealthRecoveryAttempted = false;
-      }
-    } catch (error) {
-      if (remote !== this.remoteApi) return;
-      this.childHealthSuccessCount = 0;
-      this.childHealthFailureCount += 1;
-      this.logError('child health check failed', {
-        attempt: this.childHealthFailureCount,
-        message: error instanceof Error ? error.message : String(error || '')
-      });
-      if (this.childHealthFailureCount < CHILD_HEALTH_FAILURE_THRESHOLD) return;
-
-      this.childHealthFailureCount = 0;
-      this.ngZone.run(() => {
-        if (!this.childHealthRecoveryAttempted) {
-          this.childHealthRecoveryAttempted = true;
-          void this.reloadChildFrame('health-check');
-          return;
-        }
-        this.frameLoaded = false;
-        this.uiHealthFailed = true;
-        this.hostStatus = 'error';
-        this.errorMessage = this.childUiUnavailableText;
-      });
-    } finally {
-      this.childHealthCheckInFlight = false;
-    }
-  }
-
-  private async reloadChildFrame(reason: 'manual' | 'health-check'): Promise<void> {
+  private async reloadChildFrame(reason: 'manual'): Promise<void> {
     if (!this.childToolUrl || this.hostStatus === 'closed') return;
 
     this.log('reload child UI', { reason });
