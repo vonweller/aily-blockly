@@ -10,11 +10,14 @@ const {
   createMutationProgressTracker,
   createSubappManager,
   isBusyRenameError,
+  isDistRelativePath,
   parseDependencyProgressLog,
   prepareNpmSpawn,
   quoteWindowsShellPath,
   renameWithBusyRetry,
+  resolveRunnablePackage,
   resolveSubappRoot,
+  resolveUiIndex,
   validateIndex,
 } = require('./subapp-manager');
 
@@ -759,4 +762,72 @@ test('install reports real download progress when tarball download succeeds', as
   assert.ok(events.some((event) => event.phase === 'download' && event.percent === 50));
   assert.equal(events.at(-1).phase, 'complete');
   assert.equal(events.at(-1).percent, 100);
+});
+
+test('rejects dist-relative subapp entries and prefers nested portable roots', () => {
+  assert.equal(isDistRelativePath('dist/aily-chat/server/index.js'), true);
+  assert.equal(isDistRelativePath('server/index.js'), false);
+
+  const sourceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'aily-subapp-dist-source-'));
+  try {
+    const nestedRoot = path.join(sourceRoot, 'dist', 'aily-chat');
+    fs.mkdirSync(path.join(nestedRoot, 'server'), { recursive: true });
+    fs.mkdirSync(path.join(nestedRoot, 'ui'), { recursive: true });
+    fs.writeFileSync(path.join(nestedRoot, 'server', 'index.js'), '');
+    fs.writeFileSync(path.join(nestedRoot, 'ui', 'index.html'), '<!doctype html>');
+    fs.writeFileSync(path.join(nestedRoot, 'package.json'), JSON.stringify({
+      name: '@aily-project/subapp-aily-chat',
+      version: '0.1.6',
+      main: 'server/index.js',
+    }));
+    fs.writeFileSync(path.join(sourceRoot, 'package.json'), JSON.stringify({
+      name: 'aily-chat',
+      version: '0.1.6',
+      main: 'dist/aily-chat/server/index.js',
+      aily: { uiIndex: 'dist/aily-chat/ui/index.html' },
+    }));
+
+    assert.equal(
+      resolveUiIndex(sourceRoot, JSON.parse(fs.readFileSync(path.join(sourceRoot, 'package.json'), 'utf8'))),
+      path.join('ui', 'index.html'),
+    );
+
+    const runnable = resolveRunnablePackage(
+      sourceRoot,
+      'aily-chat',
+      JSON.parse(fs.readFileSync(path.join(sourceRoot, 'package.json'), 'utf8')),
+    );
+    assert.equal(runnable.packagePath, nestedRoot);
+    assert.equal(runnable.mainEntry, 'server/index.js');
+    assert.equal(runnable.uiIndex, path.join('ui', 'index.html'));
+  } finally {
+    fs.rmSync(sourceRoot, { recursive: true, force: true });
+  }
+});
+
+test('marks source packages with only dist entries as not installed', async (t) => {
+  const installRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'aily-subapp-dist-reject-'));
+  t.after(() => fs.rmSync(installRoot, { recursive: true, force: true }));
+
+  const packageDir = path.join(installRoot, 'node_modules', '@aily-project', 'subapp-aily-chat');
+  fs.mkdirSync(path.join(packageDir, 'dist', 'aily-chat', 'server'), { recursive: true });
+  fs.mkdirSync(path.join(packageDir, 'dist', 'aily-chat', 'ui'), { recursive: true });
+  fs.writeFileSync(path.join(packageDir, 'dist', 'aily-chat', 'server', 'index.js'), '');
+  fs.writeFileSync(path.join(packageDir, 'dist', 'aily-chat', 'ui', 'index.html'), '<!doctype html>');
+  fs.writeFileSync(path.join(packageDir, 'package.json'), JSON.stringify({
+    name: '@aily-project/subapp-aily-chat',
+    version: '0.1.6',
+    main: 'dist/aily-chat/server/index.js',
+  }));
+
+  const manager = createSubappManager({
+    rootDir: installRoot,
+    fetchImpl: async () => ({
+      ok: true,
+      text: async () => JSON.stringify(fixtureIndex('0.1.6')),
+    }),
+  });
+  const state = await manager.list({ refresh: true, locale: 'en' });
+  assert.equal(state.apps[0].installed, false);
+  assert.match(String(state.apps[0].installError || ''), /package-root/);
 });

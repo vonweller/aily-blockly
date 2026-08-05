@@ -157,20 +157,70 @@ function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, 'utf8'));
 }
 
-function resolveUiIndex(packagePath, catalogId, packageJson) {
+function isDistRelativePath(value) {
+  const normalized = String(value || '').replace(/\\/g, '/').replace(/^\.?\//, '');
+  return normalized === 'dist' || normalized.startsWith('dist/');
+}
+
+function resolveUiIndex(packagePath, packageJson) {
   const configured = typeof packageJson?.aily?.uiIndex === 'string'
     ? packageJson.aily.uiIndex.trim()
     : typeof packageJson?.ailyBlockly?.uiIndex === 'string'
       ? packageJson.ailyBlockly.uiIndex.trim()
       : '';
+  // Host may only serve package-root UI. Never fall back to dist/<id>/ui.
   const candidates = [
-    configured,
+    configured && !isDistRelativePath(configured) ? configured : '',
     path.join('ui', 'index.html'),
-    path.join('dist', catalogId, 'ui', 'index.html'),
   ].filter(Boolean);
   return candidates.find((candidate) => fs.existsSync(path.join(packagePath, candidate)))
     || candidates[0]
     || path.join('ui', 'index.html');
+}
+
+/**
+ * Prefer the package-root portable layout. Source packages that still point
+ * `main` into `dist/<id>/` are rewritten onto that nested root when it already
+ * has a flattened portable package.json; otherwise dist entries are rejected.
+ */
+function resolveRunnablePackage(packagePath, catalogId, packageJson) {
+  const nestedPortablePath = path.join(packagePath, 'dist', catalogId);
+  const nestedPackageJsonPath = path.join(nestedPortablePath, 'package.json');
+  if (fs.existsSync(nestedPackageJsonPath)) {
+    try {
+      const nestedPackageJson = readJson(nestedPackageJsonPath);
+      const nestedMain = typeof nestedPackageJson.main === 'string' && nestedPackageJson.main.trim()
+        ? nestedPackageJson.main.trim()
+        : 'index.js';
+      const nestedUiIndex = resolveUiIndex(nestedPortablePath, nestedPackageJson);
+      if (
+        !isDistRelativePath(nestedMain)
+        && !isDistRelativePath(nestedUiIndex)
+        && fs.existsSync(path.join(nestedPortablePath, nestedMain))
+        && fs.existsSync(path.join(nestedPortablePath, nestedUiIndex))
+      ) {
+        return {
+          packagePath: nestedPortablePath,
+          packageJson: nestedPackageJson,
+          mainEntry: nestedMain,
+          uiIndex: nestedUiIndex,
+        };
+      }
+    } catch {
+      // Fall through to the declared package root.
+    }
+  }
+
+  const mainEntry = typeof packageJson.main === 'string' && packageJson.main.trim()
+    ? packageJson.main.trim()
+    : 'index.js';
+  const uiIndex = resolveUiIndex(packagePath, packageJson);
+  return {
+    packagePath,
+    packageJson,
+    mainEntry,
+    uiIndex,
+  };
 }
 
 function resolvePackageRelativePath(packagePath, relativePath, label) {
@@ -528,16 +578,19 @@ function readInstalledState(rootDir, entry) {
   try {
     const packageJson = readJson(packageJsonPath);
     const installedVersion = typeof packageJson.version === 'string' ? packageJson.version : null;
-    const mainEntry = typeof packageJson.main === 'string' && packageJson.main.trim()
-      ? packageJson.main.trim()
-      : 'index.js';
-    const uiIndex = resolveUiIndex(packagePath, entry.id, packageJson);
-    const complete = fs.existsSync(path.join(packagePath, mainEntry))
-      && fs.existsSync(path.join(packagePath, uiIndex));
+    const runnable = resolveRunnablePackage(packagePath, entry.id, packageJson);
+    const runnablePackagePath = runnable.packagePath;
+    const runnablePackageJson = runnable.packageJson;
+    const mainEntry = runnable.mainEntry;
+    const uiIndex = runnable.uiIndex;
+    const rejectsDistLayout = isDistRelativePath(mainEntry) || isDistRelativePath(uiIndex);
+    const complete = !rejectsDistLayout
+      && fs.existsSync(path.join(runnablePackagePath, mainEntry))
+      && fs.existsSync(path.join(runnablePackagePath, uiIndex));
     const toolId = TOOL_ID_ALIASES[entry.id] || entry.id;
-    const ui = readSubappUiConfig(packagePath, packageJson, uiIndex);
-    const declaredRuntime = isObject(packageJson?.ailySubapp?.runtime)
-      ? packageJson.ailySubapp.runtime
+    const ui = complete ? readSubappUiConfig(runnablePackagePath, runnablePackageJson, uiIndex) : null;
+    const declaredRuntime = isObject(runnablePackageJson?.ailySubapp?.runtime)
+      ? runnablePackageJson.ailySubapp.runtime
       : {};
     const apiServer = declaredRuntime.apiServer === 'required'
       ? 'required'
@@ -559,7 +612,7 @@ function readInstalledState(rootDir, entry) {
     let agent = null;
     let agentError = '';
     try {
-      agent = readSubappAgentConfig(packagePath, packageJson);
+      agent = complete ? readSubappAgentConfig(runnablePackagePath, runnablePackageJson) : null;
     } catch (error) {
       agentError = error.message;
     }
@@ -567,7 +620,7 @@ function readInstalledState(rootDir, entry) {
     return {
       installed: complete,
       installedVersion,
-      packagePath,
+      packagePath: runnablePackagePath,
       config: complete ? {
         id: toolId,
         catalogId: entry.id,
@@ -575,7 +628,7 @@ function readInstalledState(rootDir, entry) {
         namespace: entry.namespace,
         version: installedVersion || '',
         packageName: entry.package,
-        packagePath,
+        packagePath: runnablePackagePath,
         entry: mainEntry,
         uiIndex,
         routePath: `/child-tool/${toolId}`,
@@ -590,7 +643,11 @@ function readInstalledState(rootDir, entry) {
           ...(toolId === 'aily-chat-react' ? { more: 'v2' } : {}),
         },
       } : null,
-      ...(agentError ? { installError: agentError } : {}),
+      ...(rejectsDistLayout
+        ? { installError: `Subapp entry must be package-root (got ${mainEntry}); dist/ layouts are not runnable` }
+        : agentError
+          ? { installError: agentError }
+          : {}),
     };
   } catch (error) {
     return {
@@ -1426,12 +1483,15 @@ module.exports = {
   createSubappManager,
   downloadFileWithProgress,
   isBusyRenameError,
+  isDistRelativePath,
   packagePathFor,
   parseDependencyProgressLog,
   prepareNpmSpawn,
   quoteWindowsShellPath,
   registerSubappManagerHandlers,
   renameWithBusyRetry,
+  resolveRunnablePackage,
   resolveSubappRoot,
+  resolveUiIndex,
   validateIndex,
 };

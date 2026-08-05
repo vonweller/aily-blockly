@@ -300,6 +300,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     this.subappActivitySubscription = this.subappActivityService.activities$.subscribe(() => {
       if (this.initialized && this.isAilyChatTool()) {
         this.pushChatSubappActivities();
+        this.cdr.markForCheck();
       }
     });
     void this.initTool();
@@ -1342,11 +1343,13 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       : '';
     if (sessionId === this.ailyChatSessionId) {
       this.pushChatSubappActivities();
+      this.cdr.markForCheck();
       return { ok: true, sessionId: sessionId || null };
     }
 
     this.ailyChatSessionId = sessionId;
     this.pushChatSubappActivities();
+    this.cdr.markForCheck();
     return { ok: true, sessionId: sessionId || null };
   }
 
