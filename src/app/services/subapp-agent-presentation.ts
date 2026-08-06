@@ -11,6 +11,7 @@ export interface ResolvedSubappAgentPresentation {
 export function resolveSubappAgentPresentation(
   params: Record<string, unknown>,
   definition: ChildToolAgentDefinition,
+  activeMode?: 'window',
 ): ResolvedSubappAgentPresentation {
   const presentation = definition.presentation;
   const condition = presentation?.when;
@@ -36,6 +37,16 @@ export function resolveSubappAgentPresentation(
       };
     }
     return { uiMode: 'none' };
+  }
+
+  // A visible independent window is an authoritative host surface choice.
+  // Do not let a later semantic open that omitted presentUi re-apply the
+  // manifest's Dock default and create a second UI for the shared runtime.
+  if (activeMode === 'window' && presentation) {
+    return {
+      uiMode: 'window',
+      activityPresentation: copyPresentation(definition.presentation, 'window'),
+    };
   }
 
   if (!presentation) return { uiMode: 'none' };
