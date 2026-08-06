@@ -1013,6 +1013,13 @@
         "LOCK_FORCE_OPEN": "仍要開啟",
         "LOCK_ACQUIRE_FAILED": "無法取得專案鎖，請重試"
     },
+    "SUBAPP": {
+        "BUSY_TITLE": "子應用正在使用中",
+        "BUSY_MESSAGE": "相關進程正在使用安裝目錄，無法卸載或更新。是否強制關閉這些進程並繼續？",
+        "BUSY_UNKNOWN_HOLDERS": "未能識別具體進程，仍會嘗試停止相關子應用進程。",
+        "FORCE_CLOSE_CONTINUE": "強制關閉並繼續",
+        "CANCEL": "取消"
+    },
     "LIBRARY_PUBLISH": {
         "RELOAD_TITLE": "重新載入目前專案",
         "RELOAD_RENAMED": "本地庫已從 {{previousName}} 重新命名為 {{nextName}}。",

@@ -21,6 +21,24 @@ const {
   validateIndex,
 } = require('./subapp-manager');
 
+function seedInstalledChatPackage(rootDir, version = '0.1.0') {
+  const packageDir = path.join(rootDir, 'node_modules', '@aily-project', 'subapp-aily-chat');
+  fs.mkdirSync(path.join(packageDir, 'ui'), { recursive: true });
+  fs.writeFileSync(path.join(packageDir, 'index.js'), 'runtime');
+  fs.writeFileSync(path.join(packageDir, 'ui', 'index.html'), '<!doctype html>');
+  fs.writeFileSync(path.join(packageDir, 'package.json'), JSON.stringify({
+    name: '@aily-project/subapp-aily-chat',
+    version,
+    main: 'index.js',
+  }));
+  fs.writeFileSync(path.join(rootDir, 'package.json'), JSON.stringify({
+    name: 'aily-subapps',
+    private: true,
+    dependencies: { '@aily-project/subapp-aily-chat': version },
+  }));
+  return packageDir;
+}
+
 function fixtureIndex(version = '0.1.0') {
   return {
     'aily-chat': {
@@ -592,12 +610,23 @@ test('update restores the previous package when the replacement cannot be verifi
   assert.equal(fs.readFileSync(path.join(packageDir, 'index.js'), 'utf8'), 'old runtime');
 });
 
-test('isBusyRenameError detects npm and fs EBUSY rename failures', () => {
+test('isBusyRenameError detects npm and fs EBUSY rename/rmdir failures', () => {
   assert.equal(
     isBusyRenameError(new Error("npm error EBUSY: resource busy or locked, rename 'a' -> 'b'")),
     true,
   );
+  assert.equal(
+    isBusyRenameError(Object.assign(
+      new Error("EBUSY: resource busy or locked, rmdir 'C:\\\\pkg'"),
+      { code: 'EBUSY' },
+    )),
+    true,
+  );
   assert.equal(isBusyRenameError(Object.assign(new Error('locked'), { code: 'EBUSY' })), true);
+  assert.equal(
+    isBusyRenameError(Object.assign(new Error('operation not permitted, unlink'), { code: 'EPERM' })),
+    true,
+  );
   assert.equal(isBusyRenameError(new Error('ENOTFOUND registry.npmjs.org')), false);
 });
 
@@ -634,6 +663,113 @@ test('renameWithBusyRetry succeeds after a transient Windows EBUSY', async () =>
 
   assert.equal(attempts, 2);
   assert.deepEqual(delays, [1]);
+});
+
+test('windows busy rename without forceClose surfaces EBUSY for in-app UI', async (t) => {
+  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aily-subapp-busy-cancel-'));
+  const packageDir = seedInstalledChatPackage(rootDir);
+  t.after(() => fs.rmSync(rootDir, { recursive: true, force: true }));
+
+  const originalRename = fs.renameSync;
+  let forceStopCount = 0;
+  fs.renameSync = (from, to) => {
+    if (path.resolve(from) === path.resolve(packageDir)) {
+      const error = new Error('EBUSY: resource busy or locked, rename');
+      error.code = 'EBUSY';
+      throw error;
+    }
+    return originalRename(from, to);
+  };
+
+  try {
+    const manager = createSubappManager({
+      rootDir,
+      platform: 'win32',
+      renameRetries: 0,
+      forceCloseSettleMs: 1,
+      sleep: async () => undefined,
+      fetchImpl: async () => ({
+        ok: true,
+        text: async () => JSON.stringify(fixtureIndex()),
+      }),
+      runNpm: async () => ({ code: 0, stdout: '', stderr: '' }),
+      forceStopChildToolByCatalogId: async () => {
+        forceStopCount += 1;
+      },
+      listBusyHolders: async () => [{ pid: 4242, name: 'node.exe' }],
+    });
+
+    await assert.rejects(
+      manager.uninstall({ id: 'aily-chat', locale: 'en' }),
+      (error) => error?.code === 'EBUSY' && error?.requiresForceClose === true,
+    );
+  } finally {
+    fs.renameSync = originalRename;
+  }
+
+  assert.equal(forceStopCount, 0);
+  assert.equal(fs.existsSync(packageDir), true);
+});
+
+test('windows busy rename with forceClose kills holders and finishes uninstall', async (t) => {
+  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aily-subapp-busy-force-'));
+  const packageDir = seedInstalledChatPackage(rootDir);
+  t.after(() => fs.rmSync(rootDir, { recursive: true, force: true }));
+
+  const originalRename = fs.renameSync;
+  let packageRenameAttempts = 0;
+  const killedPids = [];
+  let forceStoppedCatalogId = null;
+  fs.renameSync = (from, to) => {
+    if (path.resolve(from) === path.resolve(packageDir)) {
+      packageRenameAttempts += 1;
+      // 首次 rename 在 forceClose 预清理之后才执行；若仍失败则走重试路径
+      if (packageRenameAttempts === 1 && forceStoppedCatalogId !== 'aily-chat') {
+        const error = new Error('EBUSY: resource busy or locked, rename');
+        error.code = 'EBUSY';
+        throw error;
+      }
+    }
+    return originalRename(from, to);
+  };
+
+  try {
+    const manager = createSubappManager({
+      rootDir,
+      platform: 'win32',
+      renameRetries: 0,
+      forceCloseSettleMs: 1,
+      sleep: async () => undefined,
+      fetchImpl: async () => ({
+        ok: true,
+        text: async () => JSON.stringify(fixtureIndex()),
+      }),
+      runNpm: async (args) => {
+        assert.equal(args[0], 'uninstall');
+        assert.equal(fs.existsSync(packageDir), false);
+        return { code: 0, stdout: '', stderr: '' };
+      },
+      forceStopChildToolByCatalogId: async (catalogId) => {
+        forceStoppedCatalogId = catalogId;
+      },
+      listBusyHolders: async () => [{ pid: 4242, name: 'node.exe' }],
+      listChildToolHolders: async () => [{ pid: 4242, name: 'aily-chat-react', toolId: 'aily-chat-react' }],
+      killProcessTree: async (pid) => {
+        killedPids.push(pid);
+        return true;
+      },
+    });
+
+    const removed = await manager.uninstall({ id: 'aily-chat', locale: 'en', forceClose: true });
+    assert.equal(removed.apps[0].installed, false);
+  } finally {
+    fs.renameSync = originalRename;
+  }
+
+  assert.equal(forceStoppedCatalogId, 'aily-chat');
+  assert.deepEqual(killedPids, [4242]);
+  assert.equal(packageRenameAttempts >= 1, true);
+  assert.equal(fs.existsSync(packageDir), false);
 });
 
 test('uninstall moves the package aside before npm and retries busy npm rename errors', async (t) => {

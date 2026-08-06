@@ -1094,6 +1094,13 @@
         "LOCK_FORCE_OPEN": "Open anyway",
         "LOCK_ACQUIRE_FAILED": "Could not acquire project lock. Please try again."
     },
+    "SUBAPP": {
+        "BUSY_TITLE": "Subapp is in use",
+        "BUSY_MESSAGE": "Related processes are locking the install directory. Force close them to continue uninstall/update?",
+        "BUSY_UNKNOWN_HOLDERS": "No specific process was identified; related child-tool processes will still be stopped.",
+        "FORCE_CLOSE_CONTINUE": "Force close and continue",
+        "CANCEL": "Cancel"
+    },
     "LIBRARY_PUBLISH": {
         "RELOAD_TITLE": "Reload current project",
         "RELOAD_RENAMED": "The local library was renamed from {{previousName}} to {{nextName}}.",

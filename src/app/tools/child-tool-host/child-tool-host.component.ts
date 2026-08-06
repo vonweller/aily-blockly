@@ -627,26 +627,94 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
 
   private async downloadSubappUpdate(item: SubappCatalogItem): Promise<void> {
     const previousInstalledVersion = String(item.installedVersion || '').trim();
+    const processRunning = this.hostStatus === 'ready' || this.hostStatus === 'starting';
+    let forceClose = false;
+
+    if (processRunning) {
+      const confirmed = await this.confirmBusyForceClose('update');
+      if (!confirmed) return;
+      forceClose = true;
+    }
+
     this.subappUpdateInProgress = true;
     this.subappUpdateProgress = 1;
+    this.cdr.markForCheck();
     try {
-      await this.subappManager.update(item.id);
+      // 宿主内更新：先停进程，界面保留并显示「正在更新」，完成后自动重启。
+      if (this.resolvedToolId) {
+        await this.processService.stop(this.resolvedToolId);
+      }
+      try {
+        await this.subappManager.update(item.id, { forceClose });
+      } catch (error) {
+        if (forceClose || !this.isBusyForceRequiredError(error)) {
+          throw error;
+        }
+        const confirmed = await this.confirmBusyForceClose('update');
+        if (!confirmed) return;
+        forceClose = true;
+        this.subappUpdateInProgress = true;
+        this.cdr.markForCheck();
+        await this.subappManager.update(item.id, { forceClose: true });
+      }
+
       const updatedItem = this.currentSubappCatalogItem;
       const updatedInstalledVersion = String(updatedItem?.installedVersion || '').trim();
-      if (updatedItem?.installed
-        && updatedInstalledVersion
-        && updatedInstalledVersion !== previousInstalledVersion) {
-        this.subappRestartRequired = true;
-      }
+      const shouldRestart = !!updatedItem?.installed
+        && !!updatedInstalledVersion
+        && updatedInstalledVersion !== previousInstalledVersion;
       this.message.success(this.translate.instant('APP_STORE.UPDATE_SUCCESS', {
         name: this.getToolDisplayName(),
       }));
+      if (shouldRestart || forceClose || processRunning) {
+        this.subappRestartRequired = false;
+        await this.restartUpdatedSubapp();
+      }
     } catch (error) {
-      this.showSubappActionError(error);
+      if (!this.isBusyCancelledError(error)) {
+        this.showSubappActionError(error);
+      }
     } finally {
       this.subappUpdateInProgress = false;
       this.cdr.markForCheck();
     }
+  }
+
+  private confirmBusyForceClose(action: 'update' | 'uninstall' | string): Promise<boolean> {
+    const name = this.getToolDisplayName();
+    const actionLabel = action === 'uninstall'
+      ? this.translate.instant('APP_STORE.UNINSTALL')
+      : this.translate.instant('APP_STORE.UPDATE');
+    return new Promise((resolve) => {
+      this.modal.confirm({
+        nzClassName: 'subapp-service-confirm-modal',
+        nzTitle: this.translate.instant('APP_STORE.BUSY_TITLE'),
+        nzContent: this.translate.instant('APP_STORE.BUSY_MESSAGE', {
+          name,
+          action: actionLabel,
+        }),
+        nzOkText: this.translate.instant('APP_STORE.FORCE_CLOSE_CONTINUE'),
+        nzCancelText: this.translate.instant('APP_STORE.CANCEL'),
+        nzOkDanger: true,
+        nzMaskClosable: false,
+        nzOnOk: () => resolve(true),
+        nzOnCancel: () => resolve(false),
+      });
+    });
+  }
+
+  private isBusyForceRequiredError(error: unknown): boolean {
+    const err = error as { code?: string; requiresForceClose?: boolean; message?: string } | null;
+    if (!err) return false;
+    if (err.requiresForceClose === true || err.code === 'EBUSY') return true;
+    return /EBUSY|resource busy|被占用/i.test(String(err.message || ''));
+  }
+
+  private isBusyCancelledError(error: unknown): boolean {
+    const err = error as { code?: string; message?: string } | null;
+    if (!err) return false;
+    if (err.code === 'EBUSY_CANCELLED') return true;
+    return /已取消强制关闭|BUSY_CANCELLED/i.test(String(err.message || ''));
   }
 
   private async restartUpdatedSubapp(): Promise<void> {
