@@ -65,6 +65,24 @@ describe('resolveSubappAgentPresentation', () => {
       },
     });
   });
+
+  it('does not let repeated explicit UI arguments bypass the presentation condition', () => {
+    const tool = definition({
+      mode: 'dock',
+      surface: 'compact',
+      autoOpen: 'first-active',
+      when: { param: 'action', values: ['open'] },
+    });
+
+    expect(resolveSubappAgentPresentation(
+      { action: 'status', presentUi: 'embedded' },
+      tool,
+    )).toEqual({ uiMode: 'none' });
+    expect(resolveSubappAgentPresentation(
+      { action: 'close', presentUi: 'window' },
+      tool,
+    )).toEqual({ uiMode: 'none' });
+  });
 });
 
 function definition(
