@@ -1,4 +1,4 @@
-/** 与 child/aily-coder/src/aiEditDiffChannels.ts 契约一致 */
+/** 与独立 aily-coder 子应用包 src/aiEditDiffChannels.ts 契约一致 */
 
 export const AILY_CODER_AI_EDIT_DIFF_CHANNEL = 'aily-coder-ai-edit-diff';
 export const AILY_CODER_AI_EDIT_DIFF_RESULT_CHANNEL = 'aily-coder-ai-edit-diff-result';

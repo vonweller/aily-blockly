@@ -82,6 +82,7 @@ export class AppStoreComponent implements OnInit, AfterViewInit, OnDestroy {
   private layoutSubscription?: Subscription;
   private catalogSubscription?: Subscription;
   private progressSubscription?: Subscription;
+  private runtimeSubscription?: Subscription;
   private confirmUninstallTimer?: ReturnType<typeof setTimeout>;
   private isDraggingToolbarApp = false;
   private activeSubappVersions = new Map<string, string>();
@@ -134,6 +135,9 @@ export class AppStoreComponent implements OnInit, AfterViewInit, OnDestroy {
       this.pendingProgress = Math.max(this.pendingProgress, Math.round(progress.percent || 0));
       this.cdr.markForCheck();
     });
+    this.runtimeSubscription = this.childToolProcess.runtimeStates$.subscribe(() => {
+      this.cdr.markForCheck();
+    });
   }
 
   ngAfterViewInit(): void {
@@ -144,6 +148,7 @@ export class AppStoreComponent implements OnInit, AfterViewInit, OnDestroy {
     this.layoutSubscription?.unsubscribe();
     this.catalogSubscription?.unsubscribe();
     this.progressSubscription?.unsubscribe();
+    this.runtimeSubscription?.unsubscribe();
     this.sortables.forEach(sortable => sortable.destroy());
     this.sortables = [];
     this.closeSubappMore();
@@ -171,7 +176,7 @@ export class AppStoreComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   toggleZone(app: AppItem, zone: AppPlacementZone): void {
-    if (app.lock) {
+    if (app.lock || app.extension) {
       return;
     }
 
@@ -184,7 +189,7 @@ export class AppStoreComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   removeFromZone(app: AppItem, zone: AppPlacementZone): void {
-    if (app.lock) {
+    if (app.lock || app.extension) {
       return;
     }
 
@@ -194,6 +199,9 @@ export class AppStoreComponent implements OnInit, AfterViewInit, OnDestroy {
   openApp(app: AppItem): void {
     if (app.subapp && !app.subapp.installed) {
       this.installSubapp(app);
+      return;
+    }
+    if (app.extension) {
       return;
     }
     const toolName = app.data?.data;
@@ -246,7 +254,34 @@ export class AppStoreComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   isSubappActive(app: AppItem): boolean {
-    return !!app.subapp?.installed && this.uiService.isToolOpen(app.id);
+    if (!app.subapp?.installed) {
+      return false;
+    }
+    return app.extension
+      ? this.isExtensionProcessRunning(app)
+      : this.uiService.isToolOpen(app.id);
+  }
+
+  isExtensionOpenDisabled(app: AppItem): boolean {
+    return app.extension === true && app.subapp?.installed !== false;
+  }
+
+  isExtensionProcessRunning(app: AppItem): boolean {
+    return app.extension === true
+      && this.childToolProcess.getRuntimeSnapshot(app.id).running;
+  }
+
+  getExtensionProcessInfo(app: AppItem): { port?: number; pid?: number } | null {
+    return app.extension === true
+      ? this.childToolProcess.getRuntimeSnapshot(app.id).hostInfo
+      : null;
+  }
+
+  getExtensionProcessVersion(app: AppItem): string {
+    const runtime = this.childToolProcess.getRuntimeSnapshot(app.id);
+    return runtime.running && runtime.version
+      ? runtime.version
+      : String(app.subapp?.installedVersion || '');
   }
 
   isSubappRestartRequired(app: AppItem): boolean {
@@ -440,6 +475,11 @@ export class AppStoreComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   private confirmSubappRestart(app: AppItem): void {
+    if (app.extension) {
+      this.showExtensionClientRestartInfo(app);
+      return;
+    }
+
     this.modal.confirm({
       nzClassName: 'subapp-service-confirm-modal',
       nzTitle: this.translate.instant('APP_STORE.RESTART_CONFIRM', { name: app.name }),
@@ -458,6 +498,7 @@ export class AppStoreComponent implements OnInit, AfterViewInit, OnDestroy {
     const wasActive = this.isSubappActive(app);
     const previousInstalledVersion = String(subapp.installedVersion || '').trim();
     let restartTarget: AppItem | null = null;
+    let extensionClientRestartRequired = false;
     let forceClose = false;
 
     if (wasActive) {
@@ -465,7 +506,9 @@ export class AppStoreComponent implements OnInit, AfterViewInit, OnDestroy {
       if (!confirmed) return;
       forceClose = true;
       // 保持子应用界面打开，便于显示「正在更新」遮罩
-      this.uiService.openTool(app.id);
+      if (!app.extension) {
+        this.uiService.openTool(app.id);
+      }
     }
 
     this.pendingCatalogId = subapp.catalogId;
@@ -473,7 +516,7 @@ export class AppStoreComponent implements OnInit, AfterViewInit, OnDestroy {
     this.cdr.markForCheck();
     try {
       await this.childToolProcess.stop(app.id);
-      if (!wasActive) {
+      if (!wasActive && !app.extension) {
         this.uiService.closeTool(app.id);
       }
       await this.runSubappMutationWithBusyRetry('update', app, { forceClose });
@@ -481,7 +524,9 @@ export class AppStoreComponent implements OnInit, AfterViewInit, OnDestroy {
       const updatedApp = this.subappManager.getCatalogApps()
         .find((item) => item.subapp?.catalogId === subapp.catalogId);
       const updatedInstalledVersion = String(updatedApp?.subapp?.installedVersion || '').trim();
-      if (wasActive && updatedApp?.subapp?.installed) {
+      if (wasActive && updatedApp?.subapp?.installed && app.extension) {
+        extensionClientRestartRequired = true;
+      } else if (wasActive && updatedApp?.subapp?.installed) {
         // 使用中强制更新：完成后自动重启服务（不再弹二次确认）
         restartTarget = updatedApp;
       } else if (
@@ -508,6 +553,9 @@ export class AppStoreComponent implements OnInit, AfterViewInit, OnDestroy {
       // 强制更新前已确认关闭进程，更新完成后自动重启，不再二次确认
       await this.restartSubapp(restartTarget);
     }
+    if (extensionClientRestartRequired) {
+      this.showExtensionClientRestartInfo(app);
+    }
   }
 
   private async runSubappMutationWithBusyRetry(
@@ -531,7 +579,9 @@ export class AppStoreComponent implements OnInit, AfterViewInit, OnDestroy {
         throw cancelled;
       }
       if (action === 'update') {
-        this.uiService.openTool(app.id);
+        if (!app.extension) {
+          this.uiService.openTool(app.id);
+        }
       }
       await this.childToolProcess.stop(app.id);
       await this.subappManager[action](catalogId, { forceClose: true });
@@ -578,6 +628,10 @@ export class AppStoreComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   private async restartSubapp(app: AppItem): Promise<void> {
+    if (app.extension) {
+      this.showExtensionClientRestartInfo(app);
+      return;
+    }
     const catalogId = app.subapp?.catalogId;
     if (!catalogId || this.pendingCatalogId) return;
 
@@ -644,6 +698,10 @@ export class AppStoreComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   private getSubappActiveVersion(app: AppItem): string {
+    const runtime = this.childToolProcess.getRuntimeSnapshot(app.id);
+    if (app.extension && runtime.running && runtime.version) {
+      return runtime.version;
+    }
     const localVersion = this.childHostRegistry.getStatus(app.id)?.['version'];
     if (typeof localVersion === 'string' && localVersion.trim()) {
       return localVersion.trim();
@@ -656,6 +714,10 @@ export class AppStoreComponent implements OnInit, AfterViewInit, OnDestroy {
       this.activeSubappVersions.delete(app.id);
       return;
     }
+    if (app.extension) {
+      this.cdr.markForCheck();
+      return;
+    }
 
     const result = await this.mainUiAutomation.getChildApp({ toolId: app.id });
     const describedApp = result['app'] as Record<string, any> | undefined;
@@ -664,6 +726,16 @@ export class AppStoreComponent implements OnInit, AfterViewInit, OnDestroy {
       this.activeSubappVersions.set(app.id, version.trim());
       this.cdr.markForCheck();
     }
+  }
+
+  private showExtensionClientRestartInfo(app: AppItem): void {
+    this.modal.info({
+      nzClassName: 'subapp-service-confirm-modal',
+      nzTitle: this.translate.instant('APP_STORE.RESTART_CLIENT_TITLE'),
+      nzContent: this.translate.instant('APP_STORE.RESTART_CLIENT_HINT', { name: app.name }),
+      nzOkText: this.translate.instant('APP_STORE.GOT_IT'),
+      nzMaskClosable: false,
+    });
   }
 
   private closeSubappMore(): void {

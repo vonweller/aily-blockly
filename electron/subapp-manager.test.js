@@ -153,6 +153,37 @@ test('preserves extensible catalog and app metadata', () => {
   assert.deepEqual(validated.futureCatalogField, { channel: 'preview' });
 });
 
+test('projects extension metadata from both the catalog and installed package manifest', async (t) => {
+  const catalogIndex = fixtureIndex();
+  catalogIndex['aily-chat'].app.extension = true;
+  assert.equal(validateIndex(catalogIndex)['aily-chat'].app.extension, true);
+
+  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aily-subapp-extension-'));
+  t.after(() => fs.rmSync(rootDir, { recursive: true, force: true }));
+  const packageDir = path.join(rootDir, 'node_modules', '@aily-project', 'subapp-aily-chat');
+  fs.mkdirSync(path.join(packageDir, 'ui'), { recursive: true });
+  fs.writeFileSync(path.join(packageDir, 'index.js'), 'runtime');
+  fs.writeFileSync(path.join(packageDir, 'ui', 'index.html'), '<!doctype html>');
+  fs.writeFileSync(path.join(packageDir, 'package.json'), JSON.stringify({
+    name: '@aily-project/subapp-aily-chat',
+    version: '0.1.0',
+    main: 'index.js',
+    ailySubapp: { app: { extension: true } },
+  }));
+
+  const packageDeclaredManager = createSubappManager({
+    rootDir,
+    fetchImpl: async () => ({
+      ok: true,
+      text: async () => JSON.stringify(fixtureIndex()),
+    }),
+  });
+  const state = await packageDeclaredManager.list({ locale: 'en', refresh: true });
+
+  assert.equal(state.apps[0].extension, true);
+  assert.equal(state.apps[0].config.app.extension, true);
+});
+
 test('accepts the development index flag without treating it as a catalog entry', () => {
   const validated = validateIndex({ dev: true, ...fixtureIndex() });
   assert.equal(validated.dev, true);
@@ -197,6 +228,69 @@ test('does not request or overwrite the remote index while the cached dev flag i
   assert.equal(fetchCount, 1);
   assert.equal(refreshed.source, 'network');
   assert.equal(refreshed.apps[0].availableVersion, '0.2.0');
+});
+
+test('loads the Aily Coder extension from a package-root development fixture', async (t) => {
+  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aily-coder-subapp-dev-'));
+  const packageDir = path.join(rootDir, 'node_modules', '@aily-project', 'subapp-aily-coder');
+  t.after(() => fs.rmSync(rootDir, { recursive: true, force: true }));
+
+  fs.mkdirSync(path.join(packageDir, 'ui'), { recursive: true });
+  fs.writeFileSync(path.join(packageDir, 'index.js'), '');
+  fs.writeFileSync(path.join(packageDir, 'ui', 'index.html'), '<!doctype html>');
+  fs.writeFileSync(path.join(packageDir, 'package.json'), JSON.stringify({
+    name: '@aily-project/subapp-aily-coder',
+    version: '0.1.0',
+    main: 'index.js',
+    aily: { uiIndex: 'ui/index.html' },
+    ailySubapp: {
+      id: 'aily-coder',
+      app: { extension: true },
+      runtime: { startupTimeoutMs: 30000 },
+    },
+  }));
+  fs.writeFileSync(path.join(rootDir, 'subapp-index.json'), JSON.stringify({
+    dev: true,
+    'aily-coder': {
+      id: 'aily-coder',
+      titleKey: 'AILY_CODER.TITLE',
+      namespace: 'AILY_CODER',
+      app: {
+        name: 'AILY_CODER.TITLE',
+        description: 'AILY_CODER.DESCRIPTION',
+        icon: 'fa-light fa-code',
+        enabled: true,
+        extension: true,
+      },
+      package: '@aily-project/subapp-aily-coder',
+      version: '0.1.0',
+      i18n: {
+        defaultLocale: 'en',
+        locales: {
+          en: { TITLE: 'Aily Coder', DESCRIPTION: 'Code workbench extension' },
+        },
+      },
+    },
+  }));
+
+  const manager = createSubappManager({
+    rootDir,
+    fetchImpl: async () => {
+      throw new Error('development catalog must not request the network');
+    },
+  });
+  const state = await manager.list({ locale: 'en', refresh: true });
+  const coder = state.apps[0];
+
+  assert.equal(state.source, 'cache');
+  assert.equal(coder.id, 'aily-coder');
+  assert.equal(coder.installed, true);
+  assert.equal(coder.extension, true);
+  assert.equal(coder.config.packagePath, packageDir);
+  assert.equal(coder.config.entry, 'index.js');
+  assert.equal(coder.config.uiIndex, 'ui/index.html');
+  assert.equal(coder.config.startupTimeoutMs, 30000);
+  assert.equal(coder.config.app.extension, true);
 });
 
 test('omits disabled catalog entries from the subapp list', async (t) => {

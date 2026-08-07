@@ -243,7 +243,7 @@ export class AilyCodeNewDialogComponent {
     this.message.success(this.translate.instant('AILYCODE_NEW_DIALOG.SUCCESS'));
 
     if (result.projectPath) {
-      // Aily Code 无 project.abi：projectOpen 会进入 /main/code-editor-pro（iframe 加载 child/aily-coder）
+      // Aily Code 无 project.abi：projectOpen 会进入 /main/code-editor-pro（iframe 加载独立 aily-coder 子应用）
       const canSwitch = await this.confirmSwitchWithUnsavedIfNeeded();
       if (!canSwitch) {
         this.modal.close({ result: 'created', projectPath: result.projectPath, opened: false });

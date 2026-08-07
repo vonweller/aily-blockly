@@ -1,4 +1,4 @@
-import { Component, OnDestroy, ViewChild } from '@angular/core';
+import { ChangeDetectorRef, Component, OnDestroy, ViewChild } from '@angular/core';
 import { Subscription } from 'rxjs';
 import { SubWindowComponent } from '../../components/sub-window/sub-window.component';
 import { NzButtonModule } from 'ng-zorro-antd/button';
@@ -22,6 +22,11 @@ import { CmdService } from '../../services/cmd.service';
 import { ElectronService } from '../../services/electron.service';
 import { NzToolTipModule } from "ng-zorro-antd/tooltip";
 import { NpmService } from '../../services/npm.service';
+import { AILY_CODER_SUBAPP_ID } from '../../configs/required-subapp.config';
+import {
+  RequiredSubappService,
+  RequiredSubappState,
+} from '../../services/required-subapp.service';
 
 type CacheClearOption = 'all' | 'unused-7' | 'unused-30';
 type DependencyRemovalOption = 'all' | 'unused-30' | 'unused-90';
@@ -281,8 +286,36 @@ export class SettingsComponent implements OnDestroy {
     return this.configService.isCoderEnabled();
   }
 
-  onDevelopmentModePreferenceChange(value: string) {
-    void this.configService.setDevelopmentModePreference(value, 'settings');
+  coderDependencyState: RequiredSubappState = {
+    id: AILY_CODER_SUBAPP_ID,
+    status: 'loading',
+    installed: false,
+    installing: false,
+    percent: 0,
+  };
+  private readonly coderDependencySubscription: Subscription;
+
+  async onDevelopmentModePreferenceChange(value: string) {
+    if (value !== 'coder') {
+      await this.configService.setDevelopmentModePreference(value, 'settings');
+      return;
+    }
+    if (this.coderDependencyState.installing) {
+      return;
+    }
+    try {
+      const { installedNow } = await this.requiredSubapps.ensureInstalled(AILY_CODER_SUBAPP_ID);
+      await this.configService.setDevelopmentModePreference('coder', 'settings');
+      if (installedNow) {
+        this.message.success(this.translateService.instant('SETTINGS.FIELDS.CODER_EXTENSION_INSTALLED'));
+      }
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error || '');
+      this.message.error(
+        this.translateService.instant('SETTINGS.FIELDS.CODER_EXTENSION_INSTALL_FAILED')
+        + (detail ? `: ${detail}` : ''),
+      );
+    }
   }
 
   appdata_path: string
@@ -301,8 +334,15 @@ export class SettingsComponent implements OnDestroy {
     private message: NzMessageService,
     private cmdService: CmdService,
     private electronService: ElectronService,
-    private npmService: NpmService
+    private npmService: NpmService,
+    private readonly requiredSubapps: RequiredSubappService,
+    private readonly cdr: ChangeDetectorRef,
   ) {
+    this.coderDependencySubscription = this.requiredSubapps.observe(AILY_CODER_SUBAPP_ID)
+      .subscribe((state) => {
+        this.coderDependencyState = state;
+        this.cdr.markForCheck();
+      });
   }
 
   ngOnDestroy() {
@@ -311,6 +351,7 @@ export class SettingsComponent implements OnDestroy {
     this.clearAilyBuilderStatusTimer();
     this.clearAilyLinterStatusTimer();
     this._clearCacheSubscription?.unsubscribe();
+    this.coderDependencySubscription.unsubscribe();
     if (this._clearCacheLoadingRef) {
       this.message.remove(this._clearCacheLoadingRef);
       this._clearCacheLoadingRef = null;

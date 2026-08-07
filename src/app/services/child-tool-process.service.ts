@@ -25,6 +25,7 @@ export type ChildToolRuntimeState = 'unknown' | 'starting' | 'ready' | 'stopped'
 
 export interface ChildToolRuntimeSnapshot {
   toolId: string;
+  version?: string;
   state: ChildToolRuntimeState;
   running: boolean;
   refCount: number;
@@ -46,6 +47,7 @@ interface ChildToolBackendMessage {
 
 interface ChildToolSession {
   leaseId: string;
+  version: string;
   streamId: string;
   stdoutBuffer: string;
   stderrBuffer: string;
@@ -178,6 +180,7 @@ export class ChildToolProcessService implements OnDestroy {
       map(() => this.getRuntimeSnapshot(id)),
       distinctUntilChanged((previous, current) =>
         previous.state === current.state
+        && previous.version === current.version
         && previous.running === current.running
         && previous.refCount === current.refCount
         && previous.hostInfo?.url === current.hostInfo?.url
@@ -189,6 +192,7 @@ export class ChildToolProcessService implements OnDestroy {
     const id = String(toolId || '').trim();
     return this.runtimeSnapshots.get(id) || {
       toolId: id,
+      version: undefined,
       state: 'unknown',
       running: false,
       refCount: 0,
@@ -263,6 +267,7 @@ export class ChildToolProcessService implements OnDestroy {
     if (!session) {
       session = {
         leaseId: this.createLeaseId(toolId),
+        version: '',
         streamId: '',
         stdoutBuffer: '',
         stderrBuffer: '',
@@ -321,6 +326,7 @@ export class ChildToolProcessService implements OnDestroy {
     }
 
     if (!session.startPromise) {
+      session.version = config.version || '';
       session.startPromise = this.startOrAcquireSession(config, session);
     }
 
@@ -820,6 +826,7 @@ export class ChildToolProcessService implements OnDestroy {
 
     const snapshot: ChildToolRuntimeSnapshot = {
       toolId: id,
+      ...(session?.version ? { version: session.version } : {}),
       state,
       running: !!session?.running,
       refCount: session?.refCount || 0,
