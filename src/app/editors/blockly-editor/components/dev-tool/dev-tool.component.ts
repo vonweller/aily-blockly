@@ -30,25 +30,30 @@ import { BackgroundAgentService } from '../../../../services/background-agent.se
 })
 export class DevToolComponent implements OnInit, AfterViewInit, OnDestroy {
   @ViewChild('imageViewer') imageViewer!: ImageViewerComponent;
-  @ViewChild('devtoolBox') devtoolBox?: ElementRef<HTMLElement>;
-
-  isDragging = false;
-  dragStartX = 0;
-  dragStartY = 0;
-  currentX = 0;
-  currentY = 1;
-  offsetX = 0;
-  offsetY = 0;
-  positionReady = false;
-  isViewportAdjusting = false;
+  @ViewChild('devtoolBox', { static: true }) private devtoolBox!: ElementRef<HTMLElement>;
+  @ViewChild('dragHandle', { static: true }) private dragHandle!: ElementRef<HTMLElement>;
 
   boardPackagePath = '';
   isReloading = false;
+  dragTooltipVisible?: boolean;
 
   private _autoSave = true;
   private loadBoardInfoTimer: ReturnType<typeof setTimeout> | null = null;
-  private viewportAdjustTimer: ReturnType<typeof setTimeout> | null = null;
+  private positionReady = false;
+  private currentX = 0;
+  private currentY = 1;
+  private pendingX = 0;
+  private pendingY = 1;
+  private activePointerId: number | null = null;
+  private dragPointerStartX = 0;
+  private dragPointerStartY = 0;
+  private dragPositionStartX = 0;
+  private dragPositionStartY = 0;
+  private dragBounds: { maxX: number; minY: number; maxY: number } | null = null;
+  private positionAnimationFrame: number | null = null;
   private resizeAnimationFrame: number | null = null;
+  private initAnimationFrame: number | null = null;
+  private containerResizeObserver: ResizeObserver | null = null;
 
   get autoSave(): boolean {
     return this._autoSave;
@@ -90,136 +95,219 @@ export class DevToolComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   ngAfterViewInit() {
-    setTimeout(() => this.centerAtBottom(), 0);
     this.ngZone.runOutsideAngular(() => {
-      window.addEventListener('resize', this.onViewportResize);
+      const handle = this.dragHandle.nativeElement;
+      handle.addEventListener('pointerdown', this.onDragStart);
+      handle.addEventListener('pointerleave', this.onDragHandleLeave);
+
+      const container = this.getPositionContainer();
+      if (container) {
+        this.containerResizeObserver = new ResizeObserver(this.onContainerResize);
+        this.containerResizeObserver.observe(container);
+      }
+
+      this.initAnimationFrame = window.requestAnimationFrame(() => {
+        this.initAnimationFrame = null;
+        this.centerAtBottom();
+      });
     });
   }
 
   ngOnDestroy() {
-    document.removeEventListener('mousemove', this.onDrag);
-    document.removeEventListener('mouseup', this.onDragEnd);
-    window.removeEventListener('resize', this.onViewportResize);
+    const handle = this.dragHandle?.nativeElement;
+    handle?.removeEventListener('pointerdown', this.onDragStart);
+    handle?.removeEventListener('pointerleave', this.onDragHandleLeave);
+    document.removeEventListener('pointermove', this.onDrag);
+    document.removeEventListener('pointerup', this.onDragEnd);
+    document.removeEventListener('pointercancel', this.onDragEnd);
+    this.containerResizeObserver?.disconnect();
+    this.containerResizeObserver = null;
 
     if (this.loadBoardInfoTimer) {
       clearTimeout(this.loadBoardInfoTimer);
       this.loadBoardInfoTimer = null;
     }
 
-    if (this.viewportAdjustTimer) {
-      clearTimeout(this.viewportAdjustTimer);
-      this.viewportAdjustTimer = null;
+    if (this.positionAnimationFrame !== null) {
+      window.cancelAnimationFrame(this.positionAnimationFrame);
+      this.positionAnimationFrame = null;
     }
 
     if (this.resizeAnimationFrame !== null) {
       window.cancelAnimationFrame(this.resizeAnimationFrame);
       this.resizeAnimationFrame = null;
     }
+
+    if (this.initAnimationFrame !== null) {
+      window.cancelAnimationFrame(this.initAnimationFrame);
+      this.initAnimationFrame = null;
+    }
   }
 
-  onDragStart(event: MouseEvent) {
-    this.isDragging = true;
-    this.dragStartX = event.clientX - this.currentX;
-    this.dragStartY = event.clientY;
-    this.offsetY = window.innerHeight - this.currentY;
+  private onDragStart = (event: PointerEvent) => {
+    if (event.button !== 0 || this.activePointerId !== null) {
+      return;
+    }
 
-    document.addEventListener('mousemove', this.onDrag);
-    document.addEventListener('mouseup', this.onDragEnd);
+    this.setDragTooltipVisible(false);
+    this.activePointerId = event.pointerId;
+    this.dragPointerStartX = event.clientX;
+    this.dragPointerStartY = event.clientY;
+    this.dragBounds = this.getPositionBounds();
+    this.dragPositionStartX = this.clamp(this.currentX, 0, this.dragBounds.maxX);
+    this.dragPositionStartY = this.clamp(this.currentY, this.dragBounds.minY, this.dragBounds.maxY);
+    this.pendingX = this.dragPositionStartX;
+    this.pendingY = this.dragPositionStartY;
+
+    const handle = this.dragHandle.nativeElement;
+    this.devtoolBox.nativeElement.classList.add('dragging');
+    document.addEventListener('pointermove', this.onDrag);
+    document.addEventListener('pointerup', this.onDragEnd);
+    document.addEventListener('pointercancel', this.onDragEnd);
+
+    try {
+      handle.setPointerCapture(event.pointerId);
+    } catch {
+      // Document listeners keep mouse dragging functional if capture is unavailable.
+    }
 
     event.preventDefault();
+  };
+
+  private onDrag = (event: PointerEvent) => {
+    if (event.pointerId !== this.activePointerId) {
+      return;
+    }
+
+    this.updatePendingPosition(event);
+    if (this.positionAnimationFrame === null) {
+      this.positionAnimationFrame = window.requestAnimationFrame(() => {
+        this.positionAnimationFrame = null;
+        this.commitPendingPosition();
+      });
+    }
+
+    event.preventDefault();
+  };
+
+  private onDragEnd = (event: PointerEvent) => {
+    this.finishDrag(event, event.type === 'pointerup');
+  };
+
+  private finishDrag(event: PointerEvent, commitPointerPosition: boolean): void {
+    if (event.pointerId !== this.activePointerId) {
+      return;
+    }
+
+    if (commitPointerPosition) {
+      this.updatePendingPosition(event);
+    }
+    if (this.positionAnimationFrame !== null) {
+      window.cancelAnimationFrame(this.positionAnimationFrame);
+      this.positionAnimationFrame = null;
+    }
+    this.commitPendingPosition();
+
+    const pointerId = this.activePointerId;
+    this.activePointerId = null;
+    this.dragBounds = null;
+    this.devtoolBox.nativeElement.classList.remove('dragging');
+    document.removeEventListener('pointermove', this.onDrag);
+    document.removeEventListener('pointerup', this.onDragEnd);
+    document.removeEventListener('pointercancel', this.onDragEnd);
+
+    const handle = this.dragHandle.nativeElement;
+    if (handle.hasPointerCapture(pointerId)) {
+      handle.releasePointerCapture(pointerId);
+    }
+    if (!handle.matches(':hover')) {
+      this.setDragTooltipVisible(undefined);
+    }
   }
 
-  onDrag = (event: MouseEvent) => {
-    if (!this.isDragging) return;
+  private onDragHandleLeave = () => {
+    if (this.activePointerId === null) {
+      this.setDragTooltipVisible(undefined);
+    }
+  };
 
-    this.currentX = event.clientX - this.dragStartX;
-    this.currentY = window.innerHeight - event.clientY + (this.dragStartY - this.offsetY);
-
-    this.clampToViewport();
+  private setDragTooltipVisible(visible: boolean | undefined): void {
+    if (this.dragTooltipVisible === visible) {
+      return;
+    }
+    this.ngZone.run(() => this.dragTooltipVisible = visible);
   }
 
-  onDragEnd = () => {
-    this.isDragging = false;
+  private updatePendingPosition(event: PointerEvent): void {
+    const bounds = this.dragBounds ?? this.getPositionBounds();
+    const nextX = this.dragPositionStartX + event.clientX - this.dragPointerStartX;
+    const nextY = this.dragPositionStartY - (event.clientY - this.dragPointerStartY);
 
-    document.removeEventListener('mousemove', this.onDrag);
-    document.removeEventListener('mouseup', this.onDragEnd);
+    this.pendingX = this.clamp(nextX, 0, bounds.maxX);
+    this.pendingY = this.clamp(nextY, bounds.minY, bounds.maxY);
+  }
+
+  private commitPendingPosition(): void {
+    if (this.currentX === this.pendingX && this.currentY === this.pendingY) {
+      return;
+    }
+
+    this.currentX = this.pendingX;
+    this.currentY = this.pendingY;
+    this.applyPosition(this.dragBounds ?? undefined);
   }
 
   private centerAtBottom() {
-    const bounds = this.getViewportBounds();
+    const bounds = this.getPositionBounds();
     this.currentX = Math.round(bounds.maxX / 2);
     this.currentY = bounds.minY;
+    this.pendingX = this.currentX;
+    this.pendingY = this.currentY;
+    this.applyPosition(bounds);
     this.positionReady = true;
+    this.devtoolBox.nativeElement.classList.add('position-ready');
   }
 
-  private onViewportResize = () => {
-    if (!this.positionReady) return;
-    if (this.resizeAnimationFrame !== null) return;
+  private applyPosition(bounds = this.getPositionBounds()): void {
+    const x = this.clamp(this.currentX, 0, bounds.maxX);
+    const y = this.clamp(this.currentY, bounds.minY, bounds.maxY);
+    this.devtoolBox.nativeElement.style.transform =
+      `translate3d(${Math.round(x)}px, ${-Math.round(y)}px, 0)`;
+  }
+
+  private onContainerResize = () => {
+    if (!this.positionReady || this.resizeAnimationFrame !== null) {
+      return;
+    }
 
     this.resizeAnimationFrame = window.requestAnimationFrame(() => {
       this.resizeAnimationFrame = null;
-      const clampedPosition = this.getClampedPosition();
-
-      if (clampedPosition.x === this.currentX && clampedPosition.y === this.currentY) {
-        return;
-      }
-
-      this.ngZone.run(() => {
-        this.currentX = clampedPosition.x;
-        this.currentY = clampedPosition.y;
-        this.markViewportAdjusting();
-      });
+      const bounds = this.getPositionBounds();
+      this.dragBounds = this.activePointerId === null ? null : bounds;
+      this.applyPosition(bounds);
     });
+  };
+
+  private getPositionContainer(): HTMLElement | null {
+    return this.devtoolBox.nativeElement.offsetParent as HTMLElement | null;
   }
 
-  private clampToViewport(): boolean {
-    const originalX = this.currentX;
-    const originalY = this.currentY;
-    const clampedPosition = this.getClampedPosition();
-
-    this.currentX = clampedPosition.x;
-    this.currentY = clampedPosition.y;
-
-    return this.currentX !== originalX || this.currentY !== originalY;
-  }
-
-  private getClampedPosition(): { x: number; y: number } {
-    const bounds = this.getViewportBounds();
-
-    return {
-      x: this.clamp(this.currentX, 0, bounds.maxX),
-      y: this.clamp(this.currentY, bounds.minY, bounds.maxY)
-    };
-  }
-
-  private getViewportBounds(): { maxX: number; minY: number; maxY: number } {
-    const topExclusionZone = 70;
+  private getPositionBounds(): { maxX: number; minY: number; maxY: number } {
     const minY = 1;
-    const componentWidth = this.devtoolBox?.nativeElement.offsetWidth || 360;
-    const componentHeight = this.devtoolBox?.nativeElement.offsetHeight || 40;
+    const element = this.devtoolBox.nativeElement;
+    const container = this.getPositionContainer();
+    const containerWidth = container?.clientWidth ?? window.innerWidth;
+    const containerHeight = container?.clientHeight ?? window.innerHeight;
 
     return {
-      maxX: Math.max(0, window.innerWidth - componentWidth),
+      maxX: Math.max(0, containerWidth - element.offsetWidth),
       minY,
-      maxY: Math.max(minY, window.innerHeight - topExclusionZone - componentHeight)
+      maxY: Math.max(minY, containerHeight - element.offsetHeight)
     };
   }
 
   private clamp(value: number, min: number, max: number): number {
     return Math.max(min, Math.min(value, max));
-  }
-
-  private markViewportAdjusting() {
-    this.isViewportAdjusting = true;
-
-    if (this.viewportAdjustTimer) {
-      clearTimeout(this.viewportAdjustTimer);
-    }
-
-    this.viewportAdjustTimer = setTimeout(() => {
-      this.isViewportAdjusting = false;
-      this.viewportAdjustTimer = null;
-    }, 120);
   }
 
   async reload() {
