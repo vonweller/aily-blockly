@@ -16,6 +16,7 @@ import { UiService } from '../../../../services/ui.service';
 import { WorkflowService, ProcessState } from '../../../../services/workflow.service';
 import { ImageViewerComponent } from '../../../../components/image-viewer/image-viewer.component';
 import { BackgroundAgentService } from '../../../../services/background-agent.service';
+import { DevToolDragController, DragBounds, DragPoint } from './dev-tool-drag-controller';
 
 @Component({
   selector: 'app-dev-tool',
@@ -40,17 +41,7 @@ export class DevToolComponent implements OnInit, AfterViewInit, OnDestroy {
   private _autoSave = true;
   private loadBoardInfoTimer: ReturnType<typeof setTimeout> | null = null;
   private positionReady = false;
-  private currentX = 0;
-  private currentY = 1;
-  private pendingX = 0;
-  private pendingY = 1;
-  private activePointerId: number | null = null;
-  private dragPointerStartX = 0;
-  private dragPointerStartY = 0;
-  private dragPositionStartX = 0;
-  private dragPositionStartY = 0;
-  private dragBounds: { maxX: number; minY: number; maxY: number } | null = null;
-  private positionAnimationFrame: number | null = null;
+  private dragController: DevToolDragController | null = null;
   private resizeAnimationFrame: number | null = null;
   private initAnimationFrame: number | null = null;
   private containerResizeObserver: ResizeObserver | null = null;
@@ -97,7 +88,14 @@ export class DevToolComponent implements OnInit, AfterViewInit, OnDestroy {
   ngAfterViewInit() {
     this.ngZone.runOutsideAngular(() => {
       const handle = this.dragHandle.nativeElement;
-      handle.addEventListener('pointerdown', this.onDragStart);
+      this.dragController = new DevToolDragController({
+        handle,
+        initialPosition: { x: 0, y: 1 },
+        getBounds: () => this.getPositionBounds(),
+        applyPosition: (position, bounds) => this.applyPosition(position, bounds),
+        onDraggingChange: dragging => this.setDragging(dragging),
+      });
+      this.dragController.connect();
       handle.addEventListener('pointerleave', this.onDragHandleLeave);
 
       const container = this.getPositionContainer();
@@ -115,22 +113,15 @@ export class DevToolComponent implements OnInit, AfterViewInit, OnDestroy {
 
   ngOnDestroy() {
     const handle = this.dragHandle?.nativeElement;
-    handle?.removeEventListener('pointerdown', this.onDragStart);
     handle?.removeEventListener('pointerleave', this.onDragHandleLeave);
-    document.removeEventListener('pointermove', this.onDrag);
-    document.removeEventListener('pointerup', this.onDragEnd);
-    document.removeEventListener('pointercancel', this.onDragEnd);
+    this.dragController?.disconnect();
+    this.dragController = null;
     this.containerResizeObserver?.disconnect();
     this.containerResizeObserver = null;
 
     if (this.loadBoardInfoTimer) {
       clearTimeout(this.loadBoardInfoTimer);
       this.loadBoardInfoTimer = null;
-    }
-
-    if (this.positionAnimationFrame !== null) {
-      window.cancelAnimationFrame(this.positionAnimationFrame);
-      this.positionAnimationFrame = null;
     }
 
     if (this.resizeAnimationFrame !== null) {
@@ -144,92 +135,21 @@ export class DevToolComponent implements OnInit, AfterViewInit, OnDestroy {
     }
   }
 
-  private onDragStart = (event: PointerEvent) => {
-    if (event.button !== 0 || this.activePointerId !== null) {
-      return;
+  private onDragHandleLeave = () => {
+    if (!this.dragController?.isDragging) {
+      this.setDragTooltipVisible(undefined);
     }
-
-    this.setDragTooltipVisible(false);
-    this.activePointerId = event.pointerId;
-    this.dragPointerStartX = event.clientX;
-    this.dragPointerStartY = event.clientY;
-    this.dragBounds = this.getPositionBounds();
-    this.dragPositionStartX = this.clamp(this.currentX, 0, this.dragBounds.maxX);
-    this.dragPositionStartY = this.clamp(this.currentY, this.dragBounds.minY, this.dragBounds.maxY);
-    this.pendingX = this.dragPositionStartX;
-    this.pendingY = this.dragPositionStartY;
-
-    const handle = this.dragHandle.nativeElement;
-    this.devtoolBox.nativeElement.classList.add('dragging');
-    document.addEventListener('pointermove', this.onDrag);
-    document.addEventListener('pointerup', this.onDragEnd);
-    document.addEventListener('pointercancel', this.onDragEnd);
-
-    try {
-      handle.setPointerCapture(event.pointerId);
-    } catch {
-      // Document listeners keep mouse dragging functional if capture is unavailable.
-    }
-
-    event.preventDefault();
   };
 
-  private onDrag = (event: PointerEvent) => {
-    if (event.pointerId !== this.activePointerId) {
-      return;
-    }
-
-    this.updatePendingPosition(event);
-    if (this.positionAnimationFrame === null) {
-      this.positionAnimationFrame = window.requestAnimationFrame(() => {
-        this.positionAnimationFrame = null;
-        this.commitPendingPosition();
-      });
-    }
-
-    event.preventDefault();
-  };
-
-  private onDragEnd = (event: PointerEvent) => {
-    this.finishDrag(event, event.type === 'pointerup');
-  };
-
-  private finishDrag(event: PointerEvent, commitPointerPosition: boolean): void {
-    if (event.pointerId !== this.activePointerId) {
-      return;
-    }
-
-    if (commitPointerPosition) {
-      this.updatePendingPosition(event);
-    }
-    if (this.positionAnimationFrame !== null) {
-      window.cancelAnimationFrame(this.positionAnimationFrame);
-      this.positionAnimationFrame = null;
-    }
-    this.commitPendingPosition();
-
-    const pointerId = this.activePointerId;
-    this.activePointerId = null;
-    this.dragBounds = null;
-    this.devtoolBox.nativeElement.classList.remove('dragging');
-    document.removeEventListener('pointermove', this.onDrag);
-    document.removeEventListener('pointerup', this.onDragEnd);
-    document.removeEventListener('pointercancel', this.onDragEnd);
-
-    const handle = this.dragHandle.nativeElement;
-    if (handle.hasPointerCapture(pointerId)) {
-      handle.releasePointerCapture(pointerId);
-    }
-    if (!handle.matches(':hover')) {
+  private setDragging(dragging: boolean): void {
+    const element = this.devtoolBox.nativeElement;
+    element.classList.toggle('dragging', dragging);
+    if (dragging) {
+      this.setDragTooltipVisible(false);
+    } else if (!this.dragHandle.nativeElement.matches(':hover')) {
       this.setDragTooltipVisible(undefined);
     }
   }
-
-  private onDragHandleLeave = () => {
-    if (this.activePointerId === null) {
-      this.setDragTooltipVisible(undefined);
-    }
-  };
 
   private setDragTooltipVisible(visible: boolean | undefined): void {
     if (this.dragTooltipVisible === visible) {
@@ -238,39 +158,19 @@ export class DevToolComponent implements OnInit, AfterViewInit, OnDestroy {
     this.ngZone.run(() => this.dragTooltipVisible = visible);
   }
 
-  private updatePendingPosition(event: PointerEvent): void {
-    const bounds = this.dragBounds ?? this.getPositionBounds();
-    const nextX = this.dragPositionStartX + event.clientX - this.dragPointerStartX;
-    const nextY = this.dragPositionStartY - (event.clientY - this.dragPointerStartY);
-
-    this.pendingX = this.clamp(nextX, 0, bounds.maxX);
-    this.pendingY = this.clamp(nextY, bounds.minY, bounds.maxY);
-  }
-
-  private commitPendingPosition(): void {
-    if (this.currentX === this.pendingX && this.currentY === this.pendingY) {
-      return;
-    }
-
-    this.currentX = this.pendingX;
-    this.currentY = this.pendingY;
-    this.applyPosition(this.dragBounds ?? undefined);
-  }
-
   private centerAtBottom() {
     const bounds = this.getPositionBounds();
-    this.currentX = Math.round(bounds.maxX / 2);
-    this.currentY = bounds.minY;
-    this.pendingX = this.currentX;
-    this.pendingY = this.currentY;
-    this.applyPosition(bounds);
+    this.dragController?.setPosition({
+      x: Math.round(bounds.maxX / 2),
+      y: bounds.minY,
+    }, bounds);
     this.positionReady = true;
     this.devtoolBox.nativeElement.classList.add('position-ready');
   }
 
-  private applyPosition(bounds = this.getPositionBounds()): void {
-    const x = this.clamp(this.currentX, 0, bounds.maxX);
-    const y = this.clamp(this.currentY, bounds.minY, bounds.maxY);
+  private applyPosition(position: DragPoint, bounds = this.getPositionBounds()): void {
+    const x = this.clamp(position.x, 0, bounds.maxX);
+    const y = this.clamp(position.y, bounds.minY, bounds.maxY);
     this.devtoolBox.nativeElement.style.transform =
       `translate3d(${Math.round(x)}px, ${-Math.round(y)}px, 0)`;
   }
@@ -283,8 +183,7 @@ export class DevToolComponent implements OnInit, AfterViewInit, OnDestroy {
     this.resizeAnimationFrame = window.requestAnimationFrame(() => {
       this.resizeAnimationFrame = null;
       const bounds = this.getPositionBounds();
-      this.dragBounds = this.activePointerId === null ? null : bounds;
-      this.applyPosition(bounds);
+      this.dragController?.refreshBounds(bounds);
     });
   };
 
@@ -292,7 +191,7 @@ export class DevToolComponent implements OnInit, AfterViewInit, OnDestroy {
     return this.devtoolBox.nativeElement.offsetParent as HTMLElement | null;
   }
 
-  private getPositionBounds(): { maxX: number; minY: number; maxY: number } {
+  private getPositionBounds(): DragBounds {
     const minY = 1;
     const element = this.devtoolBox.nativeElement;
     const container = this.getPositionContainer();

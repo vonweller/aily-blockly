@@ -17,13 +17,13 @@
     cursor: default;
     user-select: none;
     visibility: hidden;
-    will-change: transform;
 
     &.position-ready {
         visibility: visible;
     }
 
     &.dragging {
+        will-change: transform;
         opacity: 0.8;
         box-shadow: var(--aily-shadow-lg);
     }
