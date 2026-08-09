@@ -866,6 +866,7 @@
             "PROGRESS_CORE": "正在编译核心",
             "PROGRESS_LINKING": "正在链接固件",
             "PROGRESS_OBJCOPY": "正在生成固件",
+            "PROGRESS_RESOURCES": "正在请求云端资源",
             "PROGRESS_FINALIZING": "正在完成编译",
             "PROGRESS_COMPLETE": "编译完成",
             "PROCESS_SIGNAL_TERMINATED": "编译进程被信号终止: {{signal}}",

@@ -783,6 +783,7 @@
             "PROGRESS_CORE": "Kern wird kompiliert",
             "PROGRESS_LINKING": "Firmware wird verknüpft",
             "PROGRESS_OBJCOPY": "Firmware wird erstellt",
+            "PROGRESS_RESOURCES": "Cloud-Ressourcen werden angefordert",
             "PROGRESS_FINALIZING": "Kompilierung wird abgeschlossen",
             "PROGRESS_COMPLETE": "Kompilierung abgeschlossen",
             "PROCESS_SIGNAL_TERMINATED": "Build-Prozess wurde durch Signal beendet: {{signal}}",

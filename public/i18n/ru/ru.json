@@ -783,6 +783,7 @@
             "PROGRESS_CORE": "Компиляция ядра",
             "PROGRESS_LINKING": "Компоновка прошивки",
             "PROGRESS_OBJCOPY": "Создание прошивки",
+            "PROGRESS_RESOURCES": "Запрос облачных ресурсов",
             "PROGRESS_FINALIZING": "Завершение сборки",
             "PROGRESS_COMPLETE": "Сборка завершена",
             "PROCESS_SIGNAL_TERMINATED": "Процесс сборки завершен сигналом: {{signal}}",

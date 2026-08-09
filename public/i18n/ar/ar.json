@@ -783,6 +783,7 @@
             "PROGRESS_CORE": "جارٍ تجميع النواة",
             "PROGRESS_LINKING": "جارٍ ربط البرنامج الثابت",
             "PROGRESS_OBJCOPY": "جارٍ إنشاء البرنامج الثابت",
+            "PROGRESS_RESOURCES": "جارٍ طلب الموارد السحابية",
             "PROGRESS_FINALIZING": "جارٍ إنهاء البناء",
             "PROGRESS_COMPLETE": "اكتمل البناء",
             "PROCESS_SIGNAL_TERMINATED": "تم إنهاء عملية البناء بإشارة: {{signal}}",

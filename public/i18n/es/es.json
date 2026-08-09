@@ -783,6 +783,7 @@
             "PROGRESS_CORE": "Compilando el núcleo",
             "PROGRESS_LINKING": "Enlazando el firmware",
             "PROGRESS_OBJCOPY": "Generando el firmware",
+            "PROGRESS_RESOURCES": "Solicitando recursos en la nube",
             "PROGRESS_FINALIZING": "Finalizando la compilación",
             "PROGRESS_COMPLETE": "Compilación completada",
             "PROCESS_SIGNAL_TERMINATED": "El proceso de compilación fue terminado por la señal: {{signal}}",
