@@ -1,0 +1,68 @@
+<section class="remote-files" aria-label="Device files">
+  <header class="remote-files__header">
+    <span class="remote-files__title">Device</span>
+    <button type="button" class="icon-button" aria-label="Refresh device files" title="Refresh" (click)="refresh()" [disabled]="!enabled || isLoading('/')">
+      <span nz-icon nzType="reload"></span>
+    </button>
+  </header>
+
+  <div class="remote-files__toolbar">
+    <input aria-label="New folder name" [(ngModel)]="newFolderName" (keyup.enter)="createDirectory()" placeholder="New folder" [disabled]="!enabled" />
+    <button type="button" class="icon-button" aria-label="Create device folder" title="Create folder" (click)="createDirectory()" [disabled]="!enabled || !newFolderName.trim()">
+      <span nz-icon nzType="folder-add"></span>
+    </button>
+    <button type="button" class="icon-button danger" aria-label="Delete selected device item" title="Delete" (click)="deleteSelected()" [disabled]="!selectedPath">
+      <span nz-icon nzType="delete"></span>
+    </button>
+    <button type="button" class="icon-button" aria-label="Rename selected device item" title="Rename" (click)="beginRename()" [disabled]="!selectedPath || renaming">
+      <span nz-icon nzType="edit"></span>
+    </button>
+    <button type="button" class="icon-button" aria-label="Execute selected device file" title="Run file" (click)="executeSelected()" [disabled]="!selectedPath">
+      <span nz-icon nzType="caret-right"></span>
+    </button>
+  </div>
+
+  @if (renaming) {
+    <div class="remote-files__rename">
+      <input aria-label="New device item name" [(ngModel)]="renameName" (keyup.enter)="renameSelected()" />
+      <button type="button" class="icon-button" aria-label="Confirm rename" title="Confirm" (click)="renameSelected()"><span nz-icon nzType="check"></span></button>
+      <button type="button" class="icon-button" aria-label="Cancel rename" title="Cancel" (click)="renaming = false"><span nz-icon nzType="close"></span></button>
+    </div>
+  }
+
+  @if (error) {
+    <div class="remote-files__error" role="alert">{{ error }}</div>
+  }
+  @if (!enabled) {
+    <div class="remote-files__empty">Connect a board to browse files.</div>
+  } @else if (isLoading('/')) {
+    <div class="remote-files__empty"><span nz-icon nzType="loading"></span> Loading device files...</div>
+  } @else if (nodes.length === 0) {
+    <div class="remote-files__empty">No files on device.</div>
+  } @else {
+    <div class="remote-files__list" role="tree">
+      @for (node of nodes; track node.path) {
+        <ng-container *ngTemplateOutlet="treeNode; context: { node: node, level: 0 }"></ng-container>
+      }
+    </div>
+  }
+</section>
+
+<ng-template #treeNode let-node="node" let-level="level">
+  <button type="button" class="remote-files__row" [class.selected]="selectedPath === node.path" [style.padding-left.px]="8 + level * 16" (click)="select(node)" [attr.aria-expanded]="node.type === 'directory' ? expanded.has(node.path) : null" role="treeitem">
+    @if (node.type === 'directory') {
+      <span class="chevron" [class.expanded]="expanded.has(node.path)" (click)="toggle(node); $event.stopPropagation()"><span nz-icon nzType="right"></span></span>
+      <span nz-icon [nzType]="expanded.has(node.path) ? 'folder-open' : 'folder'"></span>
+    } @else {
+      <span class="chevron spacer"></span>
+      <span nz-icon [nzType]="node.name.toLowerCase().endsWith('.py') ? 'code' : 'file-text'"></span>
+    }
+    <span class="remote-files__name">{{ node.name }}</span>
+    @if (isLoading(node.path)) { <span nz-icon nzType="loading" class="loading"></span> }
+  </button>
+  @if (node.type === 'directory' && expanded.has(node.path)) {
+    @for (child of childrenOf(node); track child.path) {
+      <ng-container *ngTemplateOutlet="treeNode; context: { node: child, level: level + 1 }"></ng-container>
+    }
+  }
+</ng-template>
