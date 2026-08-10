@@ -54,6 +54,7 @@ import {
 } from '../../services/blockly-generator-runtime.service';
 import { BitmapUploadResponse, GlobalServiceManager } from '../../services/bitmap-upload.service';
 import { projectDataRuntime } from '../../../../services/project-data/project-data-runtime';
+import { normalizeBlocklyGeneratorMode } from '../../../../services/python-runtime/python-mode';
 
 import './renderer/aily-icon';
 import './renderer/aily-thrasos/thrasos';
@@ -1438,7 +1439,7 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
 
   initDevMode() {
     console.log('DEV MODE: ', this.devmode);
-    const mode = this.devmode === 'micropython' ? 'micropython' : 'arduino';
+    const mode = normalizeBlocklyGeneratorMode(this.devmode);
     this.generatorRuntime.activate({
       mode,
       boardConfig: this.blocklyService.boardConfig,
