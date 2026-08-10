@@ -88,6 +88,7 @@ child/aily-builder*
 !src/app/services/default-aily-chat-bootstrap.spec.ts
 !src/app/services/child-tool-close-lifecycle.spec.ts
 !src/app/services/child-app-host-registry.service.spec.ts
+!src/app/editors/blockly-editor/board-auth-gate.spec.ts
 !src/app/services/update.service.spec.ts
 !src/app/editors/code-editor-pro/services/code-editor-pro-project.service.spec.ts
 !src/app/editors/blockly-editor/components/dev-tool/dev-tool-drag-controller.spec.ts
