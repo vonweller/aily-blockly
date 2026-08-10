@@ -4,6 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { NzCodeEditorModule, NzCodeEditorComponent } from 'ng-zorro-antd/code-editor';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { ThemeService } from '../../../../services/theme.service';
+import { editorOptionsForPath } from '../../utils/editor-language';
 
 @Component({
   selector: 'app-monaco-editor',
@@ -20,7 +21,7 @@ export class MonacoEditorComponent {
   @ViewChild(NzCodeEditorComponent) codeEditor: NzCodeEditorComponent;
 
   @Input() options: any = {
-    language: 'cpp',
+    language: 'plaintext',
     theme: 'vs-dark',
     lineNumbers: 'on',
     automaticLayout: true
@@ -60,6 +61,10 @@ export class MonacoEditorComponent {
   }
 
   ngOnChanges(changes: SimpleChanges): void {
+    if (changes['filePath']) {
+      this.options = editorOptionsForPath(this.options, this.filePath);
+      this.applyCurrentFileLanguage();
+    }
   }
 
   ngOnDestroy() {
@@ -71,12 +76,21 @@ export class MonacoEditorComponent {
   }
 
   editorInitialized(editor: any): void {
-    this.monacoInstance = (window as any).monaco;
+    this.monacoInstance = editor;
 
     // 在编辑器初始化后设置Tab键处理
     if (editor && this.monacoInstance) {
       // 添加自定义右键菜单项
       this.setupContextMenu(editor);
+      this.applyCurrentFileLanguage();
+    }
+  }
+
+  private applyCurrentFileLanguage(): void {
+    const monaco = (window as any).monaco;
+    const model = this.monacoInstance?.getModel?.();
+    if (monaco && model) {
+      monaco.editor.setModelLanguage(model, editorOptionsForPath(this.options, this.filePath).language);
     }
   }
 

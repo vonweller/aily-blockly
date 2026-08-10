@@ -1,0 +1,60 @@
+<aside class="device-panel" aria-label="CyberCam device">
+  @if (state$ | async; as state) {
+    <header class="device-panel__header">
+      <div>
+        <div class="device-panel__eyebrow">CyberCam</div>
+        <div class="device-panel__status" [class.connected]="state.connectionState === 'connected'">
+          <span class="status-dot"></span>{{ statusText(state) }}
+        </div>
+      </div>
+      <button type="button" class="icon-button" aria-label="Detect CyberCam boards" title="Detect" (click)="detect()" [disabled]="busy">
+        <span nz-icon nzType="search"></span>
+      </button>
+    </header>
+
+    <section class="device-panel__controls">
+      <label for="cybercam-port">Serial port</label>
+      <nz-select id="cybercam-port" class="port-select" nzSize="small" [(ngModel)]="selectedPort" nzPlaceHolder="Select a port" [nzDisabled]="busy || state.connectionState === 'connected'">
+        @for (board of state.boards; track board.port) {
+          <nz-option [nzValue]="board.port" [nzLabel]="board.port + ' / ' + board.name"></nz-option>
+        }
+      </nz-select>
+
+      <div class="device-panel__actions">
+        @if (state.connectionState === 'connected') {
+          <button type="button" class="action-button" (click)="disconnect()" [disabled]="busy"><span nz-icon nzType="disconnect"></span> Disconnect</button>
+        } @else {
+          <button type="button" class="action-button primary" (click)="connect()" [disabled]="busy || !selectedPort"><span nz-icon nzType="link"></span> Connect</button>
+        }
+        <button type="button" class="action-button" (click)="run()" [disabled]="busy || state.connectionState !== 'connected' || state.running"><span nz-icon nzType="caret-right"></span> Run</button>
+        <button type="button" class="action-button" (click)="stop()" [disabled]="busy || !state.running"><span nz-icon nzType="pause"></span> Stop</button>
+      </div>
+
+      <button type="button" class="preview-button" (click)="togglePreview(state)" [disabled]="busy || state.connectionState !== 'connected'">
+        <span nz-icon [nzType]="state.previewing ? 'eye-invisible' : 'eye'"></span>
+        {{ state.previewing ? 'Stop preview' : 'Start preview' }}
+      </button>
+    </section>
+
+    @if (frameUrl) {
+      <section class="device-panel__preview">
+        <div class="section-label">Live preview</div>
+        <img [src]="frameUrl" alt="Live camera preview from CyberCam" />
+      </section>
+    } @else {
+      <section class="device-panel__preview device-panel__preview--empty">
+        <span nz-icon nzType="camera"></span>
+        <span>Preview is off</span>
+      </section>
+    }
+
+    @if (state.boardInfo; as info) {
+      <dl class="device-panel__info">
+        <div><dt>Board</dt><dd>{{ info['boardName'] || info['boardType'] || 'CyberCam' }}</dd></div>
+        <div><dt>Firmware</dt><dd>{{ info['fwVersion'] || 'Unknown' }}</dd></div>
+        <div><dt>Protocol</dt><dd>{{ info['protocolVersion'] || 'Unknown' }}</dd></div>
+      </dl>
+    }
+    @if (error) { <div class="device-panel__error" role="alert">{{ error }}</div> }
+  }
+</aside>

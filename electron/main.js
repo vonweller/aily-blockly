@@ -22,11 +22,29 @@ const {
   createSimulatorProjectRebuildCoordinator,
 } = require("./simulator-project-rebuild-coordinator");
 const { createPackagedRendererServer } = require("./packaged-renderer-server");
+const { CanmvBackend } = require("./python-runtime/backend");
+const { registerPythonRuntimeIpc } = require("./python-runtime/ipc");
+const { resolveCanmvBackendExecutable } = require("./python-runtime/runtime-path");
 const {
   markInstalledForAppVersion,
   shouldInstallForAppVersion,
 } = require("./aily-tools-install-state");
 const ORIGINAL_PROCESS_PATH = process.env.PATH || process.env.Path || "";
+
+const canmvBackendExecutable = resolveCanmvBackendExecutable({
+  override: process.env.CANMV_BACKEND_PATH,
+  isPackaged: app.isPackaged,
+  resourcesPath: process.resourcesPath,
+  moduleDir: path.join(__dirname, 'python-runtime'),
+});
+const canmvBackend = new CanmvBackend({
+  executable: canmvBackendExecutable,
+  cwd: path.dirname(canmvBackendExecutable),
+});
+const pythonRuntimeRegistration = registerPythonRuntimeIpc({
+  ipcMain,
+  backend: canmvBackend,
+});
 
 // 设置应用名称，用于 Windows 系统通知显示
 app.setName("aily blockly");
@@ -3223,6 +3241,7 @@ function cleanupRegisteredChildProcesses() {
     simulatorGateway.stop(),
     simulatorSubappHost.defaultHost.stop(),
     packagedRendererServer.close(),
+    pythonRuntimeRegistration.dispose(),
   ]).then((results) => {
     // console.info('[PROC_TRACE][APP_CLEANUP_DONE]', { results });
   });
