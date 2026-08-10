@@ -119,6 +119,10 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   private hostContextVersion = 0;
   private beforeCloseTask: Promise<boolean> | null = null;
   private restartTask: Promise<Record<string, unknown>> | null = null;
+  private runtimeRecoveryScheduled = false;
+  private runtimeRecoveryRequestTimes: number[] = [];
+  private readonly runtimeRecoveryWindowMs = 2 * 60 * 1000;
+  private readonly maxRuntimeRecoveriesPerWindow = 2;
   private langSubscription: Subscription | null = null;
   private themeSubscription: Subscription | null = null;
   private projectPathSubscription: Subscription | null = null;
@@ -452,13 +456,16 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   private restartForApiServerChange(): Promise<Record<string, unknown>> {
+    return this.forceRestart();
+  }
+
+  private forceRestart(): Promise<Record<string, unknown>> {
     if (this.restartTask) {
       return this.restartTask;
     }
 
-    // A region change invalidates the old authentication endpoint. It is a
-    // host-owned runtime transition, so it must not remain on the old endpoint
-    // when a child beforeClose hook declines a normal user restart.
+    // Host-owned recovery must be able to replace an unhealthy Runtime even
+    // when the child cannot complete its normal beforeClose handshake.
     const task = this.performRestart(true);
     this.restartTask = task;
     const clearRestartTask = () => {
@@ -949,6 +956,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
         },
         notifyUserInteraction: (payload: any) => this.notifyUserInteraction(payload),
         reportHostMessage: (payload: any) => this.ngZone.run(() => this.reportHostMessage(payload)),
+        requestRuntimeRecovery: (payload: any = {}) => this.ngZone.run(() => this.requestRuntimeRecovery(payload)),
         requestClose: () => {
           this.ngZone.run(() => {
             void this.close();
@@ -1032,6 +1040,58 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
 
     this.emitHostMessage(hostMessage);
     return { ok: true };
+  }
+
+  private requestRuntimeRecovery(payload: any): Record<string, unknown> {
+    if (!this.isAilyChatTool()) {
+      return { ok: false, accepted: false, reason: 'unsupported-tool' };
+    }
+    if (this.runtimeRecoveryScheduled || this.restartTask) {
+      return { ok: true, accepted: true, reason: 'already-in-progress' };
+    }
+
+    const now = Date.now();
+    this.runtimeRecoveryRequestTimes = this.runtimeRecoveryRequestTimes.filter(
+      timestamp => now - timestamp < this.runtimeRecoveryWindowMs,
+    );
+    if (this.runtimeRecoveryRequestTimes.length >= this.maxRuntimeRecoveriesPerWindow) {
+      this.logError('Runtime recovery budget exhausted', {
+        signature: String(payload?.signature || ''),
+        commandType: String(payload?.commandType || ''),
+        errorCode: String(payload?.errorCode || ''),
+      });
+      return { ok: false, accepted: false, reason: 'recovery-budget-exhausted' };
+    }
+
+    this.runtimeRecoveryRequestTimes.push(now);
+    this.runtimeRecoveryScheduled = true;
+    const diagnostic = {
+      signature: String(payload?.signature || '').slice(0, 160),
+      commandType: String(payload?.commandType || '').slice(0, 80),
+      errorCode: String(payload?.errorCode || '').slice(0, 80),
+      requestId: String(payload?.requestId || '').slice(0, 120),
+      sessionId: String(payload?.sessionId || '').slice(0, 160),
+      attempt: this.runtimeRecoveryRequestTimes.length,
+    };
+    this.logError('critical child recovery exhausted; replacing Runtime', diagnostic);
+    this.reportHostMessage({
+      state: 'warning',
+      title: `${this.getToolDisplayName()} Runtime 恢复`,
+      message: '关键会话恢复连续失败，宿主正在替换 Runtime。',
+      detail: JSON.stringify(diagnostic),
+      showMessage: false,
+      sendToLog: true,
+    });
+
+    setTimeout(() => {
+      this.ngZone.run(() => {
+        this.runtimeRecoveryScheduled = false;
+        void this.forceRestart().then(result => {
+          if (result['ok'] !== true) this.logError('Runtime recovery restart failed', result);
+        }).catch(error => this.logError('Runtime recovery restart failed', error));
+      });
+    }, 0);
+    return { ok: true, accepted: true };
   }
 
   private normalizeHostMessage(payload: any): NormalizedHostMessage | null {
@@ -1418,7 +1478,8 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
         childFrameFocus: isAilyChat,
         childSurfaceWindow: true,
         aiOperationState: isAilyChat,
-        subappDock: isAilyChat
+        subappDock: isAilyChat,
+        runtimeRecovery: isAilyChat
       }
     };
   }
