@@ -5,7 +5,6 @@ import { OpenedFile } from '../code-editor.component';
 interface CodeEditorComponent {
   openedFiles: OpenedFile[];
   saveFile(index: number): Promise<void>;
-  runProject(): Promise<{ state: string; text: string }>;
 }
 
 @Injectable({
@@ -27,14 +26,9 @@ export class _ProjectService {
     }
     
     this.initialized = true;
-    this.actionService.listen('project-save', data => {
-      return this.save(data.payload?.path);
+    this.actionService.listen('saveProject', data => {
+      this.save(data.payload.path);
     }, 'code-editor-save-project');
-    this.actionService.listen('compile-begin', async () => {
-      if (!this.codeEditorComponent) throw new Error('Code editor is not active');
-      const result = await this.codeEditorComponent.runProject();
-      return { success: true, result };
-    }, 'code-editor-run-project');
     this.actionService.listen('project-check-unsaved', (action) => {
       let result = this.hasUnsavedChanges();
       return { hasUnsavedChanges: result };
@@ -44,7 +38,6 @@ export class _ProjectService {
   destroy() {
     this.actionService.unlisten('code-editor-save-project');
     this.actionService.unlisten('code-editor-check-unsaved');
-    this.actionService.unlisten('code-editor-run-project');
     this.initialized = false; // 重置初始化状态
   }
 
@@ -58,13 +51,14 @@ export class _ProjectService {
     this.codeEditorComponent = null;
   }
 
-  async save(_path?: string): Promise<void> {
+  save(path: string) {
     // 保存所有打开的文件
     if (this.codeEditorComponent && this.codeEditorComponent.openedFiles) {
-      const dirtyFiles = this.codeEditorComponent.openedFiles
-        .map((file: OpenedFile, index: number) => ({ file, index }))
-        .filter(({ file }) => file.isDirty);
-      await Promise.all(dirtyFiles.map(({ index }) => this.codeEditorComponent!.saveFile(index)));
+      this.codeEditorComponent.openedFiles.forEach((file: OpenedFile, index: number) => {
+        if (file.isDirty) {
+          this.codeEditorComponent!.saveFile(index);
+        }
+      });
     }
   }
 
