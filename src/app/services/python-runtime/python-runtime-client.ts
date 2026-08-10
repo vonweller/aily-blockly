@@ -14,6 +14,8 @@ export interface PythonRuntimeBoard {
 }
 
 export interface PythonRuntimeSessionState {
+  runtimeAvailable: boolean;
+  unavailableReason: string | null;
   backendState: PythonRuntimeBackendState;
   connectionState: PythonRuntimeConnectionState;
   boards: PythonRuntimeBoard[];
@@ -25,7 +27,12 @@ export interface PythonRuntimeSessionState {
 }
 
 export interface PythonRuntimeBridge {
-  status(): Promise<{ state: PythonRuntimeBackendState; pid: number | null }>;
+  status(): Promise<{
+    state: PythonRuntimeBackendState;
+    pid: number | null;
+    available?: boolean;
+    unavailableReason?: string | null;
+  }>;
   detectBoards(): Promise<{ boards: PythonRuntimeBoard[] }>;
   connect(options: { port: string; baudRate?: number }): Promise<Record<string, any>>;
   disconnect(): Promise<void>;
@@ -57,6 +64,8 @@ export interface PythonRuntimeBridge {
 }
 
 const INITIAL_STATE: PythonRuntimeSessionState = {
+  runtimeAvailable: false,
+  unavailableReason: null,
   backendState: 'stopped',
   connectionState: 'disconnected',
   boards: [],
@@ -95,7 +104,11 @@ export class PythonRuntimeClient {
       this.api.onStderr(text => this.backendStderrSubject.next(text)),
     ];
     const status = await this.api.status();
-    this.patch({ backendState: status.state });
+    this.patch({
+      backendState: status.state,
+      runtimeAvailable: status.available !== false,
+      unavailableReason: status.unavailableReason || null,
+    });
     this.initialized = true;
   }
 

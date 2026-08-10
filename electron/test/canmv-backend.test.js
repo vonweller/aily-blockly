@@ -44,6 +44,16 @@ async function waitForRequestWrite(child, timeoutMs = 1000) {
   }
 }
 
+async function waitForRequestWrites(child, count, timeoutMs = 1000) {
+  const startedAt = Date.now();
+  while (child.writes.length < count) {
+    if (Date.now() - startedAt > timeoutMs) {
+      throw new Error(`Timed out waiting for ${count} backend request writes`);
+    }
+    await new Promise(resolve => setImmediate(resolve));
+  }
+}
+
 test('starts one backend process and resolves requests by ID', async () => {
   const child = createFakeChild();
   let spawnCalls = 0;
@@ -107,4 +117,62 @@ test('rejects pending requests when the native process exits', async () => {
 
   await assert.rejects(response, /exited unexpectedly/);
   assert.equal(backend.status().state, 'stopped');
+});
+
+test('starts lazily on the first request and shares startup', async () => {
+  const child = createFakeChild();
+  let spawnCalls = 0;
+  const backend = new CanmvBackend({
+    executable: 'C:/app/canmv-backend.exe',
+    spawnProcess: () => { spawnCalls++; return child; },
+  });
+  assert.equal(spawnCalls, 0);
+
+  const firstResponse = backend.request('getFirmwareCommit', {});
+  const secondResponse = backend.request('scriptRunning', {});
+  await waitForRequestWrites(child, 2);
+  const requests = child.writes.map(frame => JSON.parse(frame.subarray(7).toString('utf8')));
+  for (const request of requests) {
+    child.stdout.emit('data', encodeJsonFrame(MSG_RESPONSE, {
+      id: request.id,
+      result: { method: request.method },
+    }));
+  }
+
+  assert.deepEqual(await Promise.all([firstResponse, secondResponse]), [
+    { method: 'getFirmwareCommit' },
+    { method: 'scriptRunning' },
+  ]);
+  assert.equal(spawnCalls, 1);
+});
+
+test('times out unanswered requests and clears pending state', async () => {
+  const child = createFakeChild();
+  const backend = new CanmvBackend({
+    executable: 'C:/app/canmv-backend.exe',
+    spawnProcess: () => child,
+    requestTimeoutMs: 10,
+  });
+
+  await assert.rejects(backend.request('scriptRunning', {}), error => {
+    assert.equal(error.name, 'CanmvBackendError');
+    assert.equal(error.code, 1002);
+    return true;
+  });
+  assert.equal(backend.pending.size, 0);
+});
+
+test('stops idempotently after the backend has exited', async () => {
+  const child = createFakeChild();
+  const backend = new CanmvBackend({
+    executable: 'C:/app/canmv-backend.exe',
+    spawnProcess: () => child,
+  });
+  await backend.start();
+
+  await backend.stop();
+  await backend.stop();
+
+  assert.equal(backend.status().state, 'stopped');
+  assert.equal(backend.pending.size, 0);
 });
