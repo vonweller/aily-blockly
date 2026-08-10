@@ -22,6 +22,10 @@ import { BlocklyService as BlocklyService } from './blockly.service';
 import { PlatformService } from "../../../services/platform.service";
 import { ElectronService } from '../../../services/electron.service';
 import { writeArduinoGeneratedArtifacts } from './generated-code-artifacts';
+import {
+  persistGeneratedProjectCode,
+  resolveGeneratedProjectRoute,
+} from './python-generated-artifacts';
 import { WorkflowService, ProcessState } from '../../../services/workflow.service';
 import { CompileValidationService } from '../../../services/compile-validation.service';
 import { AppDataResourceLockService } from '../../../services/appdata-resource-lock.service';
@@ -363,6 +367,47 @@ export class _BuilderService {
     fsApi.writeFileSync?.(filePath, content);
   }
 
+  private getGeneratedProjectRoute() {
+    return resolveGeneratedProjectRoute(
+      this.projectService.currentPackageData?.devmode,
+      this.projectService.currentBoardConfig,
+    );
+  }
+
+  private async emitPythonSourceForActiveProject(): Promise<string> {
+    const projectPath = this.projectService.currentProjectPath;
+    const projectDocument = this.blocklyService.getProjectDocument();
+    const generated = await runWithPreparedActiveProjectGenerator(
+      this.blocklyService.workspace,
+      (generator) => ({
+        rawCode: generator.workspaceToCode(this.blocklyService.workspace),
+        generator,
+      }),
+      projectDocument,
+    );
+    const persisted = await persistGeneratedProjectCode({
+      mode: this.projectService.currentPackageData?.devmode,
+      board: this.projectService.currentBoardConfig,
+      projectRoot: projectPath,
+      rawCode: generated.rawCode,
+      generator: generated.generator,
+      normalizeArduino: normalizeArduinoGeneratedCode,
+      io: {
+        join: (...parts) => this.electronService.pathJoin(...parts),
+        writeText: (target, content) => this.writeTextFile(target, content),
+      },
+      writeArduino: writeArduinoGeneratedArtifacts,
+    });
+    if (persisted.kind !== 'python') {
+      throw new Error('Active project is not configured for Python generation');
+    }
+    this.blocklyService.publishGeneratedCode(persisted.code);
+    this.currentProjectPath = projectPath;
+    this.lastCode = persisted.code;
+    this.passed = true;
+    return persisted.code;
+  }
+
   private async waitForBackgroundPreprocessIdle(reason: string): Promise<void> {
     const startedAt = Date.now();
     let pendingChatOperations = this.getPendingChatBlockingOperationCount();
@@ -515,6 +560,17 @@ export class _BuilderService {
       // 检查项目加载状态，如果正在加载中则跳过预处理
       if (!data || this.projectService.stateSubject.value === 'loading') {
         console.log('项目正在加载中，跳过依赖预处理');
+        return;
+      }
+
+      const generatedProjectRoute = this.getGeneratedProjectRoute();
+      if (generatedProjectRoute.kind === 'python') {
+        this.pendingPrecompile = false;
+        return;
+      }
+      if (generatedProjectRoute.kind === 'invalid-python') {
+        console.error('Python project requires valid board runtime metadata');
+        this.pendingPrecompile = false;
         return;
       }
 
@@ -1023,6 +1079,14 @@ export class _BuilderService {
    * 运行预编译脚本（同步等待完成）
    */
   private async runPreprocess(): Promise<void> {
+    const generatedProjectRoute = this.getGeneratedProjectRoute();
+    if (generatedProjectRoute.kind === 'python') {
+      await this.emitPythonSourceForActiveProject();
+      return;
+    }
+    if (generatedProjectRoute.kind === 'invalid-python') {
+      throw new Error('Python project requires valid board runtime metadata');
+    }
     await this.waitForAilyBuilderReady();
 
     const currentProjectPath = this.projectService.currentProjectPath;
@@ -1246,6 +1310,17 @@ export class _BuilderService {
       return Promise.reject({
         state: 'error',
         text: 'Provider Build request id is invalid.',
+      });
+    }
+    const generatedProjectRoute = this.getGeneratedProjectRoute();
+    if (generatedProjectRoute.kind === 'python') {
+      await this.emitPythonSourceForActiveProject();
+      return { state: 'done', text: 'Python source generated' };
+    }
+    if (generatedProjectRoute.kind === 'invalid-python') {
+      return Promise.reject({
+        state: 'error',
+        text: 'Python project requires valid board runtime metadata',
       });
     }
     if (!this.workflowService.startBuild()) {

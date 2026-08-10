@@ -23,6 +23,7 @@ import { WorkflowService, ProcessState } from '../../../services/workflow.servic
 import { BleOtaProgress, UploaderBleService } from '../../../services/uploader-ble.service';
 import { AppDataResourceLockService } from '../../../services/appdata-resource-lock.service';
 import { writeArduinoGeneratedArtifacts } from './generated-code-artifacts';
+import { getFirmwareUploadRejection } from './python-generated-artifacts';
 import { appendProjectLog, type ProjectLogLevel } from '../../../utils/project-log.utils';
 import {
   resolveUploadRecoveryPolicy,
@@ -303,6 +304,13 @@ export class _UploaderService {
   }
 
   async upload(): Promise<UploadActionState> {
+    const pythonUploadRejection = getFirmwareUploadRejection(
+      this.projectService.currentPackageData?.devmode,
+      this.projectService.currentBoardConfig,
+    );
+    if (pythonUploadRejection) {
+      return Promise.reject(pythonUploadRejection);
+    }
     this.isErrored = false;
     this.cancelled = false;
     this.uploadCompleted = false;

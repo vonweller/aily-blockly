@@ -112,6 +112,10 @@ import { BlocklyConfirmDialogComponent } from './components/confirm-dialog/confi
 import { CodeViewerIpcService } from '../../services/code-viewer-ipc.service';
 import { writeArduinoGeneratedArtifacts } from '../../services/generated-code-artifacts';
 import {
+  LatestGenerationGate,
+  persistGeneratedProjectCode,
+} from '../../services/python-generated-artifacts';
+import {
   createEmptyProjectDebugConfigurationState,
   getProjectBreakpointMarkerState,
   ProjectBlockBreakpointIntent,
@@ -312,7 +316,8 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   // RxJS debounce optimization
-  private codeGenerationSubject = new Subject<void>();
+  private codeGenerationSubject = new Subject<number>();
+  private readonly codeGenerationGate = new LatestGenerationGate();
   private minimapSyncSubject = new Subject<void>();
   private destroy$ = new Subject<void>();
   private resizeObserver: ResizeObserver | null = null;
@@ -2196,7 +2201,7 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
       this.projectDebugConfigurationService.markWorkspaceDirty(
         this.projectService.currentProjectPath,
       );
-      this.codeGenerationSubject.next();
+      this.codeGenerationSubject.next(this.codeGenerationGate.begin());
     }
   }
 
@@ -2292,7 +2297,7 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
     this.codeGenerationSubject.pipe(
       debounceTime(500),
       takeUntil(this.destroy$)
-    ).subscribe(async () => {
+    ).subscribe(async (generationToken) => {
       try {
         const projectPath = this.projectService.currentProjectPath;
         const projectDocument = this.blocklyService.getProjectDocument();
@@ -2303,16 +2308,35 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
               generator as { blockCodeMap?: Map<string, BlockCodeMapping> }
             ).blockCodeMap;
             return {
-              code: normalizeArduinoGeneratedCode(generator.workspaceToCode(this.workspace)),
+              rawCode: generator.workspaceToCode(this.workspace),
               generator,
               blockCodeMap: activeBlockCodeMap ? new Map(activeBlockCodeMap) : null,
             };
           },
           projectDocument,
         );
-        const { code, generator } = generated;
+        if (!this.codeGenerationGate.isCurrent(generationToken)) return;
+        const { generator } = generated;
+        const persisted = await persistGeneratedProjectCode({
+          mode: this.devmode,
+          board: this.blocklyService.boardConfig,
+          projectRoot: projectPath,
+          rawCode: generated.rawCode,
+          generator,
+          normalizeArduino: normalizeArduinoGeneratedCode,
+          io: {
+            join: (...parts) => window['path'].join(...parts),
+            writeText: async (target, content) => {
+              if (this.codeGenerationGate.isCurrent(generationToken)) {
+                window['fs'].writeFileSync(target, content);
+              }
+            },
+          },
+          writeArduino: writeArduinoGeneratedArtifacts,
+        });
+        if (!this.codeGenerationGate.isCurrent(generationToken)) return;
+        const { code } = persisted;
         const blockCodeMap = generated.blockCodeMap ?? new Map<string, BlockCodeMapping>();
-        await writeArduinoGeneratedArtifacts(projectPath, generator);
         this.blocklyService.publishGeneratedCode(code);
         void this.projectDebugConfigurationService.updateWorkspaceGeneratedCode(
           projectPath,
@@ -2331,7 +2355,9 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
         );
 
         // Extract #include and #define, check for changes
-        const currentDependencies = this.extractDependencies(code);
+        const currentDependencies = persisted.kind === 'arduino'
+          ? this.extractDependencies(code)
+          : '';
         if (currentDependencies !== this.previousDependencies) {
           // console.log('currentDependencies: ', currentDependencies);
           this.blocklyService.dependencySubject.next(currentDependencies);
