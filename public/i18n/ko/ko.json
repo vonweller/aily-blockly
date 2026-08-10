@@ -486,6 +486,10 @@
         "CANCEL_DOWNLOAD": "다운로드 취소",
         "INSTALL_LATER": "나중에 설치",
         "INSTALL_NOW": "지금 설치",
+        "SAVING_BEFORE_INSTALL": "현재 프로젝트와 코드 세션을 저장하고 있습니다. 완료되면 자동으로 설치합니다…",
+        "PREPARATION_FAILED": "작업을 안전하게 저장하지 못해 설치를 취소했습니다. {{detail}}",
+        "SAVE_FAILED": "현재 프로젝트를 저장하지 못했습니다",
+        "SESSION_SAVE_FAILED": "코드 세션을 저장하지 못했습니다",
         "CLOSE": "닫기",
         "RETRY": "다시 시도"
     },

@@ -576,6 +576,10 @@
         "CANCEL_DOWNLOAD": "Cancel Download",
         "INSTALL_LATER": "Install Later",
         "INSTALL_NOW": "Install Now",
+        "SAVING_BEFORE_INSTALL": "Saving the current project and coding sessions. Installation will start automatically…",
+        "PREPARATION_FAILED": "Installation was cancelled because your work could not be saved safely. {{detail}}",
+        "SAVE_FAILED": "Failed to save the current project",
+        "SESSION_SAVE_FAILED": "Failed to save a coding session",
         "CLOSE": "Close",
         "RETRY": "Retry"
     },

@@ -11,7 +11,11 @@ import { combineLatest, firstValueFrom, Subscription } from 'rxjs';
 import { SubWindowComponent } from '../../components/sub-window/sub-window.component';
 import { ToolContainerComponent } from '../../components/tool-container/tool-container.component';
 import { ChildToolConfig, getChildToolConfig } from '../../configs/tool.config';
-import { ChildToolHostInfo, ChildToolProcessService } from '../../services/child-tool-process.service';
+import {
+  ChildToolHostInfo,
+  ChildToolProcessService,
+  type ChildToolRuntimeSnapshot,
+} from '../../services/child-tool-process.service';
 import {
   type SubappCatalogItem,
   type SubappInstallProgress,
@@ -19,6 +23,7 @@ import {
 } from '../../services/subapp-manager.service';
 import {
   ChildAppHostRegistryService,
+  type ChildAppLifecycleOptions,
   type ChildAppWindowPlacement,
 } from '../../services/child-app-host-registry.service';
 import { AuthService } from '../../services/auth.service';
@@ -123,6 +128,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   private configReloadSubscription: Subscription | null = null;
   private aiWritingStateSubscription: Subscription | null = null;
   private authStateSubscription: Subscription | null = null;
+  private runtimeSubscription: Subscription | null = null;
   private subappCatalogSubscription: Subscription | null = null;
   private subappProgressSubscription: Subscription | null = null;
   private subappRestartRequired = false;
@@ -338,6 +344,8 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     this.aiWritingStateSubscription = null;
     this.authStateSubscription?.unsubscribe();
     this.authStateSubscription = null;
+    this.runtimeSubscription?.unsubscribe();
+    this.runtimeSubscription = null;
     this.subappCatalogSubscription?.unsubscribe();
     this.subappCatalogSubscription = null;
     this.subappProgressSubscription?.unsubscribe();
@@ -395,8 +403,8 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     return task;
   }
 
-  async prepareUpdate(): Promise<Record<string, unknown>> {
-    const prepared = await this.notifyChildBeforeClose('update');
+  async prepareUpdate(options: ChildAppLifecycleOptions = {}): Promise<Record<string, unknown>> {
+    const prepared = await this.notifyChildBeforeClose('update', options.strict === true);
     return prepared
       ? { ok: true, toolId: this.resolvedToolId, action: 'prepareUpdate' }
       : { ok: false, toolId: this.resolvedToolId, action: 'prepareUpdate', message: '子应用拒绝更新，可能存在未完成操作。' };
@@ -592,6 +600,10 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
 
     this.config = config;
     this.resolvedToolId = config.id;
+    this.runtimeSubscription?.unsubscribe();
+    this.runtimeSubscription = this.processService.observeRuntime(config.id).subscribe(snapshot => {
+      this.handleRuntimeSnapshot(snapshot);
+    });
     this.childVersion = config.version || '';
     this.subappRestartRequired = false;
     this.titleKey = config.titleKey;
@@ -841,6 +853,50 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       this.errorMessage = error instanceof Error ? error.message : String(error || '');
       this.logError('start failed', this.errorMessage);
     }
+  }
+
+  private handleRuntimeSnapshot(snapshot: ChildToolRuntimeSnapshot): void {
+    const recoveredHost = snapshot.hostInfo;
+    if (
+      !this.initialized
+      || !this.acquired
+      || this.closing
+      || snapshot.state !== 'ready'
+      || !recoveredHost?.url
+      || !this.serverInfo
+    ) {
+      return;
+    }
+
+    const sameRuntime = this.serverInfo.url === recoveredHost.url
+      && this.serverInfo.pid === recoveredHost.pid
+      && this.serverInfo.entry === recoveredHost.entry
+      && this.serverInfo.packagePath === recoveredHost.packagePath;
+    if (sameRuntime) return;
+
+    this.log('adopt recovered Runtime', {
+      previous: this.sanitizeHostInfo(this.serverInfo),
+      recovered: this.sanitizeHostInfo(recoveredHost),
+    });
+    this.serverInfo = recoveredHost;
+    this.childToolUrl = this.buildChildToolUrl(recoveredHost.url);
+    this.frameLoaded = false;
+    this.uiHealthFailed = false;
+    this.hostStatus = 'starting';
+    this.errorMessage = '';
+    this.destroyPenpalConnection();
+    this.iframeSrc = null;
+    this.cdr.detectChanges();
+
+    setTimeout(() => {
+      if (!this.initialized || this.closing || this.serverInfo !== recoveredHost) return;
+      this.ngZone.run(() => {
+        this.iframeSrc = this.sanitizer.bypassSecurityTrustResourceUrl(
+          this.withReloadToken(this.childToolUrl),
+        );
+        this.cdr.markForCheck();
+      });
+    }, 0);
   }
 
   private startPenpalConnection(iframe: HTMLIFrameElement): void {
@@ -1136,12 +1192,12 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       && (this.penpalState === 'connecting' || this.penpalState === 'connected');
   }
 
-  private async notifyChildBeforeClose(reason: ChildLifecycleReason): Promise<boolean> {
+  private async notifyChildBeforeClose(reason: ChildLifecycleReason, strict = false): Promise<boolean> {
     if (this.beforeCloseTask) {
       return this.beforeCloseTask;
     }
 
-    const task = this.runChildBeforeClose(reason);
+    const task = this.runChildBeforeClose(reason, strict);
     this.beforeCloseTask = task;
     const clearBeforeCloseTask = () => {
       if (this.beforeCloseTask === task) {
@@ -1152,7 +1208,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     return task;
   }
 
-  private async runChildBeforeClose(reason: ChildLifecycleReason): Promise<boolean> {
+  private async runChildBeforeClose(reason: ChildLifecycleReason, strict: boolean): Promise<boolean> {
     const beforeClose = this.remoteApi?.beforeClose;
     if (typeof beforeClose !== 'function') {
       return true;
@@ -1198,7 +1254,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
         'beforeClose failed',
         `reason=${reason}${errorCode ? ` code=${errorCode}` : ''} error=${errorMessage}`
       );
-      return true;
+      return !strict;
     }
   }
 

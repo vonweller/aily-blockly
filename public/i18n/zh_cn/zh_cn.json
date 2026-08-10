@@ -572,6 +572,10 @@
         "CANCEL_DOWNLOAD": "取消下载",
         "INSTALL_LATER": "稍后安装",
         "INSTALL_NOW": "立即安装",
+        "SAVING_BEFORE_INSTALL": "正在保存当前项目和代码会话，完成后将自动安装…",
+        "PREPARATION_FAILED": "安装已取消：当前工作尚未安全保存。{{detail}}",
+        "SAVE_FAILED": "当前项目保存失败",
+        "SESSION_SAVE_FAILED": "代码会话保存失败",
         "CLOSE": "关闭",
         "RETRY": "重试"
     },

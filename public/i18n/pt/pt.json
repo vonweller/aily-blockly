@@ -498,6 +498,10 @@
         "CANCEL_DOWNLOAD": "Cancelar download",
         "INSTALL_LATER": "Instalar mais tarde",
         "INSTALL_NOW": "Instalar agora",
+        "SAVING_BEFORE_INSTALL": "A guardar o projeto atual e as sessões de código. A instalação começará automaticamente…",
+        "PREPARATION_FAILED": "A instalação foi cancelada porque o trabalho não pôde ser guardado em segurança. {{detail}}",
+        "SAVE_FAILED": "Não foi possível guardar o projeto atual",
+        "SESSION_SAVE_FAILED": "Não foi possível guardar uma sessão de código",
         "CLOSE": "Fechar",
         "RETRY": "Tentar novamente"
     },
