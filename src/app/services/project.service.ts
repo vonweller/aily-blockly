@@ -47,6 +47,7 @@ interface ProjectPackageData {
   board?: string;
   type?: string;
   framework?: string;
+  devmode?: string;
   cloudId?: string; // 云端项目ID
   blocklyToolboxOrder?: string[];
 }

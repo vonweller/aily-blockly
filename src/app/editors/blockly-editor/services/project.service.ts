@@ -16,6 +16,10 @@ import {
   materializePreparedGenericProjectDataValues,
 } from '../../../services/project-data/project-data-generic-values';
 import { writeArduinoGeneratedArtifacts } from './generated-code-artifacts';
+import {
+  persistGeneratedProjectCode,
+  resolveGeneratedProjectRoute,
+} from './python-generated-artifacts';
 
 
 @Injectable({
@@ -144,8 +148,16 @@ export class _ProjectService {
    * 用于在项目保存时记录当前代码的哈希值
    */
   private async updateCodeHash(path: string, projectDocument?: BlocklyProjectDocument) {
+    let generatedArtifactPersisted = false;
+    const generatedProjectRoute = resolveGeneratedProjectRoute(
+      this.currentPackageData?.devmode,
+      this.blocklyService.boardConfig,
+    );
     try {
       if (!getActiveProjectGenerator() || !this.blocklyService || !this.blocklyService.workspace) {
+        if (generatedProjectRoute.kind !== 'arduino') {
+          throw new Error('Python source cannot be saved without an active generator and workspace');
+        }
         console.warn('无法生成代码哈希，跳过更新');
         return;
       }
@@ -153,15 +165,33 @@ export class _ProjectService {
       // 复用最近一次成功生成的代码；如果工作区已变更但防抖生成尚未完成，再同步生成一次。
       const generated = await runWithPreparedActiveProjectGenerator(
         this.blocklyService.workspace,
-        (generator) => ({
-          code: this.blocklyService.getReusableGeneratedCode()
-            ?? normalizeArduinoGeneratedCode(generator.workspaceToCode(this.blocklyService.workspace)),
-          generator,
-        }),
+        (generator) => {
+          const reusableCode = this.blocklyService.getReusableGeneratedCode();
+          return {
+            rawCode: reusableCode ?? generator.workspaceToCode(this.blocklyService.workspace),
+            alreadyNormalized: reusableCode !== null,
+            generator,
+          };
+        },
         projectDocument ?? this.blocklyService.getProjectDocument(),
       );
-      const { code, generator } = generated;
-      await writeArduinoGeneratedArtifacts(path, generator);
+      const persisted = await persistGeneratedProjectCode({
+        mode: this.currentPackageData?.devmode,
+        board: this.blocklyService.boardConfig,
+        projectRoot: path,
+        rawCode: generated.rawCode,
+        generator: generated.generator,
+        normalizeArduino: generated.alreadyNormalized
+          ? (code) => code
+          : normalizeArduinoGeneratedCode,
+        io: {
+          join: (...parts) => window['path'].join(...parts),
+          writeText: async (target, content) => { window['fs'].writeFileSync(target, content); },
+        },
+        writeArduino: writeArduinoGeneratedArtifacts,
+      });
+      generatedArtifactPersisted = true;
+      const { code } = persisted;
       this.blocklyService.publishGeneratedCode(code);
       
       // 计算哈希
@@ -179,6 +209,9 @@ export class _ProjectService {
           }
       }
     } catch (error) {
+      if (!generatedArtifactPersisted && generatedProjectRoute.kind !== 'arduino') {
+        throw error;
+      }
       console.error('更新代码哈希时出错:', error);
     }
   }
