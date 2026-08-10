@@ -27,6 +27,12 @@ import {
   resolveCoderFrameworkOption,
   resolveDefaultCoderFramework,
 } from '../../utils/coder-board.mapper';
+import { NzRadioModule } from 'ng-zorro-antd/radio';
+import {
+  getBoardProjectModes,
+  getProjectModeTranslationKey,
+  type PublicProjectMode,
+} from '../../services/python-runtime/python-mode';
 
 export type ProjectCreationCategory = 'blockly' | 'coder';
 
@@ -56,6 +62,7 @@ export function resolveInitialProjectCategory(
     NzInputModule,
     NzStepsModule,
     NzSelectModule,
+    NzRadioModule,
     NzTagModule,
     TranslateModule
   ],
@@ -102,6 +109,7 @@ export class ProjectNewComponent implements OnDestroy {
 
   /** Coder 新建：当前开发板可选的 framework（来自 frameworkPlatforms） */
   selectedCoderPlatform: CoderFramework = '';
+  devmodes: PublicProjectMode[] = [];
 
   get coderPlatformOptions(): { value: string; label: string }[] {
     if (this.selectedProjectCategory !== 'coder' || !this.currentBoard) {
@@ -111,6 +119,10 @@ export class ProjectNewComponent implements OnDestroy {
       value: option.value,
       label: this.getCoderFrameworkLabel(option.value),
     }));
+  }
+
+  getProjectModeTranslationKey(mode: PublicProjectMode): string {
+    return getProjectModeTranslationKey(mode);
   }
 
   /** 用户是否手动修改过项目名；未修改时随类别切换自动推荐名称 */
@@ -336,6 +348,9 @@ export class ProjectNewComponent implements OnDestroy {
     this.newProjectData.board.version = boardInfo.version;
     if (this.selectedProjectCategory === 'coder') {
       this.syncCoderPlatformSelection(boardInfo);
+    } else {
+      this.devmodes = getBoardProjectModes(boardInfo);
+      this.newProjectData.devmode = this.devmodes[0];
     }
     if (this.selectedProjectCategory === 'blockly') {
       this.loadMyTemplates(boardInfo.name);

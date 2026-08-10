@@ -34,6 +34,11 @@ import { NzModalService } from 'ng-zorro-antd/modal';
 import { AilyCodeProjectService } from '../../services/aily-code-project.service';
 import type { AilyCodeNewProjectData } from '../../services/aily-code-project.service';
 import { UnsaveDialogComponent } from '../../main-window/components/unsave-dialog/unsave-dialog.component';
+import {
+  getBoardProjectModes,
+  getProjectModeTranslationKey,
+  type PublicProjectMode,
+} from '../../services/python-runtime/python-mode';
 
 @Component({
   selector: 'app-project-new',
@@ -347,7 +352,7 @@ export class ProjectNewComponent implements OnDestroy {
     this.cd.detectChanges();
   }
 
-  devmodes = [];
+  devmodes: PublicProjectMode[] = [];
   hasExamples = false;
   myTemplateList: CloudProjectTemplate[] = [];
   isLoadingTemplates = false;
@@ -365,6 +370,10 @@ export class ProjectNewComponent implements OnDestroy {
     return `${description.slice(0, 20)}......`;
   }
 
+  getProjectModeTranslationKey(mode: PublicProjectMode): string {
+    return getProjectModeTranslationKey(mode);
+  }
+
   selectBoard(boardInfo: any) {
     this.currentBoard = boardInfo;
     this.newProjectData.board.name = boardInfo.name;
@@ -373,9 +382,9 @@ export class ProjectNewComponent implements OnDestroy {
     if (this.selectedProjectCategory === 'coder') {
       this.syncCoderPlatformSelection(boardInfo);
     } else {
-      this.newProjectData.devmode = boardInfo.mode ? this.currentBoard.mode[0] : 'arduino';
+      this.devmodes = getBoardProjectModes(boardInfo);
+      this.newProjectData.devmode = this.devmodes[0];
     }
-    this.devmodes = boardInfo.mode;
     if (this.selectedProjectCategory === 'blockly') {
       this.checkHasExamples(boardInfo.name);
       this.loadMyTemplates(boardInfo.name);

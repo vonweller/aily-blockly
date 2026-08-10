@@ -431,6 +431,9 @@
         },
         "FORM": {
             "DEVMODE": "開發框架",
+            "MODE_ARDUINO": "Arduino",
+            "MODE_PYTHON": "Python",
+            "MODE_FREERTOS": "FreeRTOS",
             "BOARD": "開發板",
             "PLATFORM": "硬體平台",
             "PLATFORM_ARDUINO": "Arduino",

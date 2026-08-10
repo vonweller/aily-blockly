@@ -64,8 +64,18 @@
         } @else {
         <!-- 基本设定页面 -->
         <div class="right-inner">
-          <div class="right-content">
+            <div class="right-content">
+            @if (selectedProjectCategory === 'blockly') {
             <div class="item">
+              <div>{{ 'PROJECT_NEW.FORM.DEVMODE' | translate }}:</div>
+              <nz-radio-group [(ngModel)]="newProjectData.devmode" [nzDisabled]="devmodes.length === 1">
+                @for (mode of devmodes; track mode) {
+                <label nz-radio-button [nzValue]="mode">{{ getProjectModeTranslationKey(mode) | translate }}</label>
+                }
+              </nz-radio-group>
+            </div>
+            }
+              <div class="item">
             <div>{{ 'PROJECT_NEW.FORM.BOARD' | translate }}:</div>
             <nz-input-group [nzSuffix]="suffixIconSearch">
               <input class="board" nz-input [(ngModel)]="newProjectData.board.name" [disabled]="true" />

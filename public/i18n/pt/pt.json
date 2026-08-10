@@ -410,6 +410,9 @@
         },
         "FORM": {
             "DEVMODE": "Framework de desenvolvimento",
+            "MODE_ARDUINO": "Arduino",
+            "MODE_PYTHON": "Python",
+            "MODE_FREERTOS": "FreeRTOS",
             "BOARD": "Placa",
             "PROJECT_NAME": "Nome do projeto",
             "SAVE_PATH": "Caminho de salvamento",

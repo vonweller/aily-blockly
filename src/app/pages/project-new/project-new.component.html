@@ -126,24 +126,16 @@
       <!-- 基本设定页面 -->
       <div class="right-inner">
         <div class="right-content">
-          <!-- <div class="item">
+          @if (selectedProjectCategory === 'blockly') {
+          <div class="item">
             <div>{{ 'PROJECT_NEW.FORM.DEVMODE' | translate }}:</div>
-            <nz-radio-group [(ngModel)]="newProjectData.devmode">
-              @for(mode of devmodes;track mode ){
-              @switch(mode){
-              @case ('arduino') {
-              <label nz-radio-button nzValue="arduino">Arduino</label>
-              }
-              @case ('micropython') {
-              <label nz-radio-button nzValue="micropython">MicroPython</label>
-              }
-              @case ('freertos') {
-              <label nz-radio-button nzValue="freertos">FreeRTOS</label>
-              }
-              }
+            <nz-radio-group [(ngModel)]="newProjectData.devmode" [nzDisabled]="devmodes.length === 1">
+              @for(mode of devmodes; track mode) {
+              <label nz-radio-button [nzValue]="mode">{{ getProjectModeTranslationKey(mode) | translate }}</label>
               }
             </nz-radio-group>
-          </div> -->
+          </div>
+          }
           <div class="item">
             <div>{{ 'PROJECT_NEW.FORM.BOARD' | translate }}:</div>
             <!-- @if(newProjectData.devmode=='arduino'){ -->
