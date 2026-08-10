@@ -731,6 +731,37 @@ contextBridge.exposeInMainWorld("electronAPI", {
      */
     download: (options) => ipcRenderer.invoke("probe-rs-download", options),
   },
+  pythonRuntime: {
+    status: () => ipcRenderer.invoke('python-runtime-status'),
+    detectBoards: () => ipcRenderer.invoke('python-runtime-detect-boards'),
+    connect: (options) => ipcRenderer.invoke('python-runtime-connect', options),
+    disconnect: () => ipcRenderer.invoke('python-runtime-disconnect'),
+    runScript: (script) => ipcRenderer.invoke('python-runtime-run-script', { script }),
+    stopScript: () => ipcRenderer.invoke('python-runtime-stop-script'),
+    scriptRunning: () => ipcRenderer.invoke('python-runtime-script-running'),
+    terminalInput: (text) => ipcRenderer.invoke('python-runtime-terminal-input', { text }),
+    terminalResize: (columns, rows) => ipcRenderer.invoke('python-runtime-terminal-resize', { columns, rows }),
+    startPreview: (options = {}) => ipcRenderer.invoke('python-runtime-start-preview', options),
+    stopPreview: () => ipcRenderer.invoke('python-runtime-stop-preview'),
+    files: {
+      listDir: (path) => ipcRenderer.invoke('python-runtime-list-dir', { path }),
+      stat: (path) => ipcRenderer.invoke('python-runtime-stat', { path }),
+      readFile: (path) => ipcRenderer.invoke('python-runtime-read-file', { path }),
+      writeFile: (path, dataBase64) => ipcRenderer.invoke('python-runtime-write-file', { path, dataBase64 }),
+      deleteFile: (path) => ipcRenderer.invoke('python-runtime-delete-file', { path }),
+      renameFile: (oldPath, newPath) => ipcRenderer.invoke('python-runtime-rename-file', { oldPath, newPath }),
+      mkdir: (path) => ipcRenderer.invoke('python-runtime-mkdir', { path }),
+      rmdir: (path) => ipcRenderer.invoke('python-runtime-rmdir', { path }),
+      exec: (path) => ipcRenderer.invoke('python-runtime-file-exec', { path }),
+    },
+    firmwareCommit: () => ipcRenderer.invoke('python-runtime-firmware-commit'),
+    virtualTouchStatus: () => ipcRenderer.invoke('python-runtime-virtual-touch-status'),
+    virtualTouchEvent: (options) => ipcRenderer.invoke('python-runtime-virtual-touch-event', options),
+    onEvent: (callback) => addIpcListener('python-runtime-event', callback),
+    onFrame: (callback) => addIpcListener('python-runtime-frame', callback),
+    onState: (callback) => addIpcListener('python-runtime-state', callback),
+    onStderr: (callback) => addIpcListener('python-runtime-stderr', callback),
+  },
   // 日志 API - 将渲染进程的日志发送到主进程记录
   log: {
     error: (message, error) => {
@@ -752,3 +783,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
     readText: () => clipboard.readText(),
   }
 });
+
+function addIpcListener(channel, callback) {
+  const listener = (_event, payload) => callback(payload);
+  ipcRenderer.on(channel, listener);
+  return () => ipcRenderer.removeListener(channel, listener);
+}

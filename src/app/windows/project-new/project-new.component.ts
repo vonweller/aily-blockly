@@ -18,6 +18,8 @@ import { CloudService } from '../../tools/cloud-space/services/cloud.service';
 import { firstValueFrom } from 'rxjs';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import type { NewProjectData } from '../../types/project-new';
+import { CYBERCAM_K230_PYTHON_BOARD } from '../../services/python-runtime/python-project';
+import { NzRadioModule } from 'ng-zorro-antd/radio';
 
 @Component({
   selector: 'app-project-new',
@@ -30,6 +32,7 @@ import type { NewProjectData } from '../../types/project-new';
     NzStepsModule,
     NzSelectModule,
     NzTagModule,
+    NzRadioModule,
     TranslateModule
   ],
   templateUrl: './project-new.component.html',
@@ -46,12 +49,17 @@ export class ProjectNewComponent {
   newProjectData: NewProjectData = {
     name: '',
     path: '',
+    projectType: 'blockly',
     board: {
       name: '',
       nickname: '',
       version: '',
     }
   };
+
+  get isPythonProject(): boolean {
+    return this.newProjectData.projectType === 'python';
+  }
 
   boardVersion = '';
 
@@ -107,6 +115,28 @@ export class ProjectNewComponent {
     this.newProjectData.board.name = this.currentBoard.name;
     this.newProjectData.board.version = this.currentBoard.version;
     this.newProjectData.name = this.projectService.generateUniqueProjectName(this.newProjectData.path, 'project_');
+  }
+
+  selectProjectType(projectType: 'blockly' | 'python'): void {
+    this.newProjectData.projectType = projectType;
+    this.selectedTemplateName = '';
+    this.myTemplateList = [];
+    if (projectType === 'python') {
+      this.currentBoard = { ...CYBERCAM_K230_PYTHON_BOARD };
+      this.newProjectData.board = { ...CYBERCAM_K230_PYTHON_BOARD };
+      this.newProjectData.devmode = 'python';
+      this.newProjectData.python = {
+        runtime: 'micropython',
+        adapter: 'canmv-k230',
+        entry: 'main.py',
+      };
+      return;
+    }
+
+    this.newProjectData.python = undefined;
+    if (this.boardList.length > 0) {
+      this.selectBoard(this.boardList[0]);
+    }
   }
 
   process(array) {
@@ -173,7 +203,9 @@ export class ProjectNewComponent {
   async nextStep() {
     this.boardVersionList = [this.newProjectData.board.version];
     this.currentStep = this.currentStep + 1;
-    this.boardVersionList = (await this.npmService.getPackageVersionList(this.newProjectData.board.name)).reverse();
+    if (!this.isPythonProject) {
+      this.boardVersionList = (await this.npmService.getPackageVersionList(this.newProjectData.board.name)).reverse();
+    }
   }
 
   async selectFolder() {
@@ -212,7 +244,7 @@ export class ProjectNewComponent {
     let success = false;
     let extractPath = '';
     try {
-      if (this.selectedTemplateName) {
+      if (this.selectedTemplateName && !this.isPythonProject) {
         const templateProject = await this.findSelectedTemplateProject();
         if (!templateProject?.archive_url) {
           throw new Error('未找到所选模板的归档文件');

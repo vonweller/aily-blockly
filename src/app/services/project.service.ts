@@ -24,6 +24,10 @@ import { assertNoOversizedInlineValues } from './project-data/project-data-polic
 import { createProjectDataMarker } from './project-data/project-data.types';
 import { ProjectDataStore } from './project-data/project-data-store';
 import { migrateLegacyInlineProjectData } from './project-data/project-data-legacy-import';
+import {
+  isEmbeddedPythonProjectRequest,
+  writeEmbeddedPythonStarterProject,
+} from './python-runtime/python-project';
 
 interface ProjectPackageData {
   name: string;
@@ -250,8 +254,30 @@ export class ProjectService {
     try {
       const separator = this.platformService.getPlatformSeparator();
       // console.log('newProjectData: ', newProjectData);
-      const appDataPath = window['path'].getAppDataPath();
       const projectPath = this.buildProjectPath(newProjectData);
+
+      if (isEmbeddedPythonProjectRequest(newProjectData)) {
+        const inputName = String(newProjectData.name ?? '').trim();
+        const packageName = this.containsChineseCharacters(inputName)
+          ? pinyin(inputName, { toneType: 'none', separator: '' }).replace(/\s/g, '_')
+          : inputName;
+        this.uiService.updateFooterState({ state: 'doing', text: this.translate.instant('PROJECT.CREATING_PROJECT') });
+        await writeEmbeddedPythonStarterProject(projectPath, {
+          name: packageName,
+          nickname: inputName,
+          board: { ...newProjectData.board },
+          runtime: newProjectData.python?.runtime,
+          adapter: newProjectData.python?.adapter,
+          entry: newProjectData.python?.entry,
+        }, {
+          createDirectory: path => this.crossPlatformCmdService.createDirectory(path, true),
+          joinPath: (root, fileName) => window['path'].join(root, fileName),
+          writeFile: (path, content) => window['fs'].writeFileSync(path, content, 'utf8'),
+        });
+        return await this.finishProjectCreation(projectPath, options);
+      }
+
+      const appDataPath = window['path'].getAppDataPath();
       const boardPackage = newProjectData.board.name + '@' + newProjectData.board.version;
 
       this.uiService.updateFooterState({ state: 'doing', text: this.translate.instant('PROJECT.CREATING_PROJECT') });

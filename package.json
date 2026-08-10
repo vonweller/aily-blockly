@@ -78,6 +78,14 @@
       {
         "from": "electron/app-update.yml",
         "to": "app-update.yml"
+      },
+      {
+        "from": "electron/python-runtime/bin",
+        "to": "python-runtime/bin"
+      },
+      {
+        "from": "electron/python-runtime/LICENSE.canmv-backend.txt",
+        "to": "python-runtime/LICENSE.canmv-backend.txt"
       }
     ],
     "win": {

@@ -98,3 +98,47 @@ nz-tabset {
         }
     }
 }
+
+.python-files { display: flex; flex-direction: column; min-height: 0; }
+.python-files app-file-tree, .python-files app-remote-file-tree { min-height: 0; flex: 1; }
+.file-source-tabs {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    min-height: 30px;
+    border-bottom: 1px solid var(--aily-border-primary);
+    background: var(--aily-bg-elevated);
+
+    button {
+        padding: 0;
+        color: var(--aily-text-secondary);
+        background: transparent;
+        border: 0;
+        border-bottom: 1px solid transparent;
+        cursor: pointer;
+        font-size: 11px;
+    }
+
+    button:hover, button:focus-visible { color: var(--aily-text-primary); outline: none; }
+    button.active { color: var(--aily-text-primary); border-bottom-color: var(--aily-color-accent); }
+}
+
+.python-workbench {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 300px;
+    grid-template-rows: minmax(0, 1fr) auto;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+    background: var(--aily-editor-bg);
+}
+
+.python-editor-pane { grid-column: 1; grid-row: 1; min-width: 0; min-height: 0; }
+.python-terminal-pane { position: relative; grid-column: 1; grid-row: 2; min-height: 110px; }
+.python-device-pane { grid-column: 2; grid-row: 1 / span 2; min-width: 0; }
+.python-terminal-pane > nz-resize-handle { position: absolute; top: -3px; left: 0; right: 0; z-index: 2; height: 6px; }
+.empty-editor { display: grid; place-items: center; height: 100%; color: var(--aily-text-hint); font-size: 12px; }
+
+@media (max-width: 900px) {
+    .python-workbench { grid-template-columns: minmax(0, 1fr) 250px; }
+}

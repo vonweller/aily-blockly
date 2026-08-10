@@ -3,6 +3,14 @@
     <div class="btn ccenter" (click)="back()" nz-tooltip [nzTooltipTitle]="'LIB_MANAGER.BACK' | translate">
       <i class="fa-regular fa-chevron-left"></i>
     </div>
+    @if (currentStep == 0) {
+    <nz-radio-group class="project-type-switch" [ngModel]="newProjectData.projectType"
+      (ngModelChange)="selectProjectType($event)" nzButtonStyle="solid" nzSize="small">
+      <label nz-radio-button nzValue="blockly">Blockly</label>
+      <label nz-radio-button nzValue="python">Python</label>
+    </nz-radio-group>
+    }
+    @if (!isPythonProject) {
     <nz-input-group [nzSuffix]="suffixIconSearch" [nzSize]="'small'">
       <input type="text" nz-input [placeholder]="'PROJECT_NEW.BOARD.SEARCH' | translate" [(ngModel)]="keyword"
         (ngModelChange)="search()" />
@@ -14,8 +22,9 @@
       <i class="fa-light fa-search"></i>
       }
     </ng-template>
+    }
     <!-- 查看模式：-->
-    @if(currentStep == 0){
+    @if(currentStep == 0 && !isPythonProject){
     <div class="tag-list">
       <nz-tag (click)="changeViewMode('brand')" [nzColor]="listMode === 'brand' ? '#108ee9' : null">{{
         'PROJECT_NEW.BOARD.BY_BRAND' | translate }}</nz-tag>
@@ -31,17 +40,24 @@
         [nzIcon]="currentStep == 2 ? iconTemplate : null"></nz-step>
     </nz-steps>
     <ng-template #iconTemplate><i class="fa-duotone fa-solid fa-spinner-third"></i></ng-template> -->
+    @if (!isPythonProject) {
     <div class="btns">
       <button nz-button nzType="primary" nzGhost nzSize="small" style="margin-right: 10px;" (click)="help()">
         <i class="fa-light fa-question"></i>{{ 'PROJECT_NEW.BOARD.ADD_BOARD' | translate }}
       </button>
     </div>
+    }
   </div>
   <div class="content">
     <div class="left">
       <div class="left-inner">
-        @if (currentStep == 0) {
+        @if (currentStep == 0 && !isPythonProject) {
         <app-brand-list [mode]="listMode" (brandSelected)="onSelected($event)"></app-brand-list>
+        } @else if (currentStep == 0) {
+        <div class="python-side ccenter">
+          <i class="fa-brands fa-python"></i>
+          <span>MicroPython</span>
+        </div>
         } @else {
         <div class="steps-box ccenter">
           <nz-steps [nzCurrent]="currentStep" nzSize="small" [nzDirection]="'vertical'">
@@ -58,6 +74,25 @@
     <div class="right">
       @if (currentStep == 0) {
       <div class="right-inner flex-start">
+        @if (isPythonProject) {
+        <div class="python-board-selector">
+          <button type="button" class="python-board selected" (click)="selectProjectType('python')">
+            <span class="python-board-icon"><i class="fa-light fa-camera-viewfinder"></i></span>
+            <span class="python-board-name">CyberCam / CanMV K230</span>
+            <span class="python-board-runtime">MicroPython</span>
+            <i class="fa-solid fa-circle-check python-board-check"></i>
+          </button>
+        </div>
+        <div class="python-runtime-band">
+          <div>
+            <strong>CyberCam / CanMV K230</strong>
+            <span>CanMV K230 · MicroPython</span>
+          </div>
+          <button nz-button nzType="primary" (click)="nextStep()">
+            {{ 'PROJECT_NEW.BUTTONS.USE_THIS' | translate }}
+          </button>
+        </div>
+        } @else {
         <div class="board-selector-box sscroll">
           <div class="board-selector">
             @for (board of boardList; track board.name) {
@@ -127,6 +162,7 @@
           </div>
 
         </div>
+        }
         }
       </div>
       } @else {
