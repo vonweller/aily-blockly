@@ -16,6 +16,7 @@ import { AilyChatHostInitializerService } from './tools/aily-chat/services/aily-
 import { BlocklyLiveOperationBridgeService } from './services/blockly-live-operation-bridge.service';
 import { McpBridgeService } from './services/mcp-bridge.service';
 import { ChatRuntimeHostBootstrapService } from './tools/aily-chat/services/chat-runtime-host-bootstrap.service';
+import { CANMV_K230_RUNTIME_ADAPTER_PROVIDER } from './services/python-runtime/canmv-k230-runtime.adapter';
 
 export const appConfig: ApplicationConfig = {
   providers: [
@@ -33,6 +34,7 @@ export const appConfig: ApplicationConfig = {
     ),
     provideAnimations(),
     importProvidersFrom(NzModalModule),
+    CANMV_K230_RUNTIME_ADAPTER_PROVIDER,
     provideAppInitializer(() => {
       inject(AilyChatHostInitializerService).ensureInitialized();
       inject(BlocklyLiveOperationBridgeService).ensureInitialized();

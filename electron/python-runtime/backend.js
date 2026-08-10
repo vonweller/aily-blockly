@@ -20,6 +20,7 @@ class CanmvBackend extends EventEmitter {
   constructor(options = {}) {
     super();
     this.executable = options.executable;
+    this.unavailableReason = options.unavailableReason;
     this.args = Array.isArray(options.args) ? options.args : [];
     this.cwd = options.cwd;
     this.spawnProcess = options.spawnProcess || ((command, args, spawnOptions) => spawn(command, args, spawnOptions));
@@ -40,7 +41,10 @@ class CanmvBackend extends EventEmitter {
     if (this.state === 'ready' && this.child) return;
     if (this.startPromise) return this.startPromise;
     if (!this.executable) {
-      throw new CanmvBackendError(1004, 'CanMV backend executable is not configured');
+      throw new CanmvBackendError(
+        1004,
+        this.unavailableReason || 'CanMV backend executable is not configured',
+      );
     }
 
     this.state = 'starting';
@@ -121,6 +125,8 @@ class CanmvBackend extends EventEmitter {
       state: this.state,
       pid: this.child?.pid || null,
       executable: this.executable,
+      available: Boolean(this.executable),
+      unavailableReason: this.executable ? null : (this.unavailableReason || 'CanMV backend executable is not configured'),
     };
   }
 

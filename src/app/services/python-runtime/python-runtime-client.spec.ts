@@ -1,6 +1,10 @@
 import { PythonRuntimeClient } from './python-runtime-client';
 
 describe('PythonRuntimeClient', () => {
+  it('starts unavailable until backend status has been checked', () => {
+    const client = new PythonRuntimeClient(createApi().api);
+    expect(client.snapshot.runtimeAvailable).toBeFalse();
+  });
   function createApi() {
     const listeners: Record<string, (value: any) => void> = {};
     const api: any = {

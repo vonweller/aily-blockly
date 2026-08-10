@@ -46,14 +46,55 @@ test('registers explicit runtime commands and maps them to backend methods', asy
   assert.deepEqual(Array.from(handlers.keys()).sort(), Object.values(PYTHON_RUNTIME_CHANNELS).sort());
   await invoke(PYTHON_RUNTIME_CHANNELS.detectBoards);
   await invoke(PYTHON_RUNTIME_CHANNELS.connect, { port: 'COM8', baudRate: 115200 });
+  await invoke(PYTHON_RUNTIME_CHANNELS.disconnect);
   await invoke(PYTHON_RUNTIME_CHANNELS.runScript, { script: 'print(1)' });
+  await invoke(PYTHON_RUNTIME_CHANNELS.stopScript);
+  await invoke(PYTHON_RUNTIME_CHANNELS.scriptRunning);
+  await invoke(PYTHON_RUNTIME_CHANNELS.terminalInput, { text: 'help()\n' });
+  await invoke(PYTHON_RUNTIME_CHANNELS.terminalResize, { columns: 100, rows: 30 });
+  await invoke(PYTHON_RUNTIME_CHANNELS.startPreview, { fps: 15, resolution: { w: 640, h: 480 } });
+  await invoke(PYTHON_RUNTIME_CHANNELS.stopPreview);
   await invoke(PYTHON_RUNTIME_CHANNELS.listDir, { path: '/sdcard' });
+  await invoke(PYTHON_RUNTIME_CHANNELS.stat, { path: '/sdcard/main.py' });
+  await invoke(PYTHON_RUNTIME_CHANNELS.readFile, { path: '/sdcard/main.py' });
+  await invoke(PYTHON_RUNTIME_CHANNELS.writeFile, { path: '/sdcard/main.py', dataBase64: 'cGFzcwo=' });
+  await invoke(PYTHON_RUNTIME_CHANNELS.deleteFile, { path: '/sdcard/old.py' });
+  await invoke(PYTHON_RUNTIME_CHANNELS.renameFile, { oldPath: '/sdcard/a.py', newPath: '/sdcard/b.py' });
+  await invoke(PYTHON_RUNTIME_CHANNELS.mkdir, { path: '/sdcard/lib' });
+  await invoke(PYTHON_RUNTIME_CHANNELS.rmdir, { path: '/sdcard/lib' });
+  await invoke(PYTHON_RUNTIME_CHANNELS.firmwareCommit);
+  await invoke(PYTHON_RUNTIME_CHANNELS.fileExec, { path: '/sdcard/main.py' });
+  await invoke(PYTHON_RUNTIME_CHANNELS.virtualTouchStatus);
+  await invoke(PYTHON_RUNTIME_CHANNELS.virtualTouchEvent, {
+    x: 10, y: 20, event: 'down', sourceWidth: 640, sourceHeight: 480, trackId: 1,
+  });
 
   assert.deepEqual(backend.calls, [
     { method: 'detectBoards', params: {} },
     { method: 'connectBoard', params: { port: 'COM8', baudRate: 115200 } },
+    { method: 'disconnectBoard', params: {} },
     { method: 'runScript', params: { script: 'print(1)' } },
+    { method: 'stopScript', params: {} },
+    { method: 'scriptRunning', params: {} },
+    { method: 'terminalInput', params: { text: 'help()\n' } },
+    { method: 'terminalSetSize', params: { columns: 100, rows: 30 } },
+    { method: 'startPreview', params: { fps: 15, resolution: { w: 640, h: 480 } } },
+    { method: 'stopPreview', params: {} },
     { method: 'io.listDir', params: { path: '/sdcard' } },
+    { method: 'io.queryFileStat', params: { path: '/sdcard/main.py' } },
+    { method: 'io.readFile', params: { path: '/sdcard/main.py' } },
+    { method: 'io.writeFile', params: { path: '/sdcard/main.py', dataBase64: 'cGFzcwo=' } },
+    { method: 'io.deleteFile', params: { path: '/sdcard/old.py' } },
+    { method: 'io.renameFile', params: { oldPath: '/sdcard/a.py', newPath: '/sdcard/b.py' } },
+    { method: 'io.mkdir', params: { path: '/sdcard/lib' } },
+    { method: 'io.rmdir', params: { path: '/sdcard/lib' } },
+    { method: 'getFirmwareCommit', params: {} },
+    { method: 'io.fileExec', params: { path: '/sdcard/main.py' } },
+    { method: 'virtualTouch.status', params: {} },
+    {
+      method: 'virtualTouch.event',
+      params: { x: 10, y: 20, event: 'down', sourceWidth: 640, sourceHeight: 480, trackId: 1 },
+    },
   ]);
 });
 

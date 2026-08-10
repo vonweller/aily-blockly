@@ -8,7 +8,12 @@ function unavailable(): Promise<never> {
 export function createUnavailablePythonRuntimeBridge(): PythonRuntimeBridge {
   const noOpUnsubscribe = () => undefined;
   return {
-    status: async () => ({ state: 'stopped', pid: null }),
+    status: async () => ({
+      state: 'stopped',
+      pid: null,
+      available: false,
+      unavailableReason: 'Embedded Python runtime is available only in the Electron application',
+    }),
     detectBoards: unavailable,
     connect: unavailable,
     disconnect: unavailable,
@@ -42,11 +47,15 @@ export function createUnavailablePythonRuntimeBridge(): PythonRuntimeBridge {
 
 @Injectable({ providedIn: 'root' })
 export class EmbeddedPythonRuntimeService extends PythonRuntimeClient {
-  readonly available: boolean;
+  private readonly bridgeAvailable: boolean;
 
   constructor() {
     const api = (window as any).pythonRuntime || (window as any).electronAPI?.pythonRuntime;
     super((api || createUnavailablePythonRuntimeBridge()) as PythonRuntimeBridge);
-    this.available = Boolean(api);
+    this.bridgeAvailable = Boolean(api);
+  }
+
+  get available(): boolean {
+    return this.bridgeAvailable && this.snapshot.runtimeAvailable;
   }
 }

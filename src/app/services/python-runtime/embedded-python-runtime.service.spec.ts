@@ -10,6 +10,8 @@ describe('embedded Python runtime fallback', () => {
     await client.initialize();
 
     expect(client.snapshot.backendState).toBe('stopped');
+    expect(client.snapshot.runtimeAvailable).toBeFalse();
+    expect(client.snapshot.unavailableReason).toMatch(/Electron application/);
     await expectAsync(client.detectBoards()).toBeRejectedWithError(/Electron application/);
   });
 });
