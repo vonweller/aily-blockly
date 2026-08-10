@@ -870,6 +870,7 @@
             "PROGRESS_CORE": "Compilation du cœur",
             "PROGRESS_LINKING": "Édition des liens du micrologiciel",
             "PROGRESS_OBJCOPY": "Génération du micrologiciel",
+            "PROGRESS_RESOURCES": "Demande de ressources cloud en cours",
             "PROGRESS_FINALIZING": "Finalisation de la compilation",
             "PROGRESS_COMPLETE": "Compilation terminée",
             "PROCESS_SIGNAL_TERMINATED": "Le processus de compilation a été arrêté par le signal: {{signal}}",

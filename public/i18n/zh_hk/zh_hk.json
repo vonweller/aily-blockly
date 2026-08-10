@@ -947,6 +947,7 @@
             "PROGRESS_CORE": "正在編譯核心",
             "PROGRESS_LINKING": "正在連結韌體",
             "PROGRESS_OBJCOPY": "正在產生韌體",
+            "PROGRESS_RESOURCES": "正在請求雲端資源",
             "PROGRESS_FINALIZING": "正在完成編譯",
             "PROGRESS_COMPLETE": "編譯完成",
             "PROCESS_SIGNAL_TERMINATED": "編譯進程被訊號終止: {{signal}}",

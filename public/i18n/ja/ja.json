@@ -870,6 +870,7 @@
             "PROGRESS_CORE": "コアをコンパイル中",
             "PROGRESS_LINKING": "ファームウェアをリンク中",
             "PROGRESS_OBJCOPY": "ファームウェアを生成中",
+            "PROGRESS_RESOURCES": "クラウドリソースをリクエスト中",
             "PROGRESS_FINALIZING": "ビルドを仕上げています",
             "PROGRESS_COMPLETE": "ビルド完了",
             "PROCESS_SIGNAL_TERMINATED": "ビルドプロセスはシグナルで終了しました: {{signal}}",
