@@ -139,6 +139,7 @@ export class BlocklyEditorComponent implements OnInit, OnDestroy {
           }
           this._projectService.currentProjectPath = requestedProjectPath;
           this.projectService.currentProjectPath = requestedProjectPath;
+          this.projectService.beginBlocklyProjectLoad(requestedProjectPath);
           projectDataRuntime.configure(params['path']);
           await this.loadProject(requestedProjectPath);
           this.loadedProjectPath = requestedProjectPath;
@@ -146,7 +147,7 @@ export class BlocklyEditorComponent implements OnInit, OnDestroy {
           console.error('加载项目失败', error);
           const detail = this.formatProjectLoadError(error);
           this.abortFailedProjectLoad();
-          this.projectService.stateSubject.next('error');
+          this.projectService.markBlocklyProjectLoadFailed(requestedProjectPath, detail);
           this.message.error(detail);
         }
       } else {
@@ -247,8 +248,7 @@ export class BlocklyEditorComponent implements OnInit, OnDestroy {
     this.applyProjectPackageJson(packageJson);
     // 与 Aily Code（code-editor-pro）共用：node_modules 不齐则 npm install
     if (!(await this.npmService.ensureProjectDependenciesInstalled(projectPath))) {
-      this.projectService.stateSubject.next('error');
-      return;
+      throw new Error('项目依赖安装未完成，无法继续加载 Blockly 项目。');
     }
 
     const missingDeclaredLibraries: string[] = [];
@@ -294,8 +294,7 @@ export class BlocklyEditorComponent implements OnInit, OnDestroy {
               sendToLog: false,
             });
           }, 1000);
-          this.projectService.stateSubject.next('error');
-          return;
+          throw new Error(`项目依赖不完整，无法继续加载：${missingDependencyDetail}`);
         }
 
         missingDeclaredLibraries.push(...missingLibraries);
@@ -367,7 +366,7 @@ export class BlocklyEditorComponent implements OnInit, OnDestroy {
       const restored = await this.restoreMissingProjectLibraries(projectPath, missingProjectLibraries);
       if (!restored) {
         this.handleMissingProjectLibrariesCancelled(missingProjectLibraries);
-        return;
+        throw new Error(`项目缺少仍在使用的积木库：${missingProjectLibraries.map((lib) => lib.name).join(', ')}`);
       }
 
       packageJson = this.readProjectPackageJson(projectPath) || packageJson;
@@ -397,7 +396,7 @@ export class BlocklyEditorComponent implements OnInit, OnDestroy {
       state: 'done',
       text: this.translate.instant('BLOCKLY_EDITOR.PROJECT_LOAD_SUCCESS'),
     });
-    this.projectService.stateSubject.next('loaded');
+    this.projectService.markBlocklyProjectLoaded(projectPath);
     this.generatorRuntime.markReady(projectPath);
     this.projectService.markBlocklyLibraryRuntimeReady(projectPath);
     this.scheduleProjectLoadedCodeRefresh();
@@ -1368,7 +1367,6 @@ export class BlocklyEditorComponent implements OnInit, OnDestroy {
   private handleMissingProjectLibrariesCancelled(missingLibraries: MissingLibInfo[]): void {
     const libraryNames = missingLibraries.map((lib) => lib.name).join(', ');
     const text = `项目缺少仍在使用的积木库：${libraryNames}`;
-    this.projectService.stateSubject.next('error');
     this.uiService.updateFooterState({ state: 'error', text });
     this.noticeService.update({
       title: '项目加载已暂停',

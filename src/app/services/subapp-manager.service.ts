@@ -137,7 +137,7 @@ export class SubappManagerService implements OnDestroy {
         icon: item.icon || 'fa-light fa-puzzle-piece',
         ai: item.ai === true || item.app?.ai === true,
         enabled: true,
-        ...(item.toolId === 'aily-chat-react' ? { more: 'v2' } : {}),
+        ...(item.toolId === 'aily-chat-react' ? { more: 'AI' } : {}),
         subapp: {
           catalogId: item.id,
           packageName: item.packageName,

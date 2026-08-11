@@ -695,6 +695,13 @@ export class BlocklyAbsParser {
       this.currentLine++;
       return null;
     }
+
+    if (!isKnownBlock(type)) {
+      this.warnings.push({
+        line: this.currentLine + 1,
+        message: `块类型 "${type}" 未在当前项目已安装的积木定义中找到；已拒绝按 INPUT0/INPUT1 猜测其结构。`,
+      });
+    }
     
     const node: AbsNode = {
       type,

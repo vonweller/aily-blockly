@@ -112,6 +112,19 @@ export class BlocklyLiveOperationBridgeService {
   }
 
   private async execute(payload: BlocklyLiveOperationPayload): Promise<Record<string, any>> {
+    if (payload.operation === 'project_open') {
+      return this.executeProjectOpen(payload.path || '');
+    }
+    if (payload.operation === 'project_close') {
+      return this.executeProjectClose();
+    }
+    if (payload.operation === 'project_load_status') {
+      return {
+        ok: true,
+        operation: 'project_load_status',
+        ...this.projectService.getBlocklyProjectLoadStatus(payload.path || undefined),
+      };
+    }
     if (payload.operation === 'app_info') {
       return this.executeAppInfo();
     }
@@ -190,6 +203,25 @@ export class BlocklyLiveOperationBridgeService {
         message: `当前打开项目不匹配: ${this.projectService.currentProjectPath}`,
         currentProject: this.projectService.currentProjectPath,
       };
+    }
+
+    if (payload.operation !== 'project_reload') {
+      const loadStatus = this.projectService.getBlocklyProjectLoadStatus(
+        this.projectService.currentProjectPath,
+      );
+      if (!loadStatus.ready) {
+        return {
+          ok: false,
+          operation: payload.operation,
+          project: this.projectService.currentProjectPath,
+          reason: loadStatus.error ? 'project_load_failed' : 'project_not_ready',
+          message: loadStatus.error
+            ? `项目加载失败，已阻止后续操作：${loadStatus.error}`
+            : `项目尚未加载完成，已阻止后续操作（state=${loadStatus.state}）`,
+          loadStatus,
+          guidance: '请先关闭项目，在离线状态修复 project.abs/project.abi 或依赖，再重新打开；只有 loadStatus.ready=true 后才能继续。',
+        };
+      }
     }
 
     let toolResult: ToolUseResult;
@@ -709,27 +741,127 @@ export class BlocklyLiveOperationBridgeService {
     };
   }
 
+  private async executeProjectOpen(projectPath: string): Promise<Record<string, any>> {
+    const requestedProject = String(projectPath || '').trim();
+    if (!requestedProject) {
+      return { ok: false, operation: 'project_open', message: '缺少项目路径' };
+    }
+    if (!this.electronService.exists(requestedProject)) {
+      return { ok: false, operation: 'project_open', message: `项目目录不存在: ${requestedProject}` };
+    }
+
+    const sameProject = this.normalizePath(requestedProject)
+      === this.normalizePath(this.projectService.currentProjectPath);
+    try {
+      const opened = await this.projectService.projectOpen(requestedProject, {
+        reason: sameProject ? 'chat-tool-reload' : 'chat-tool-open',
+      });
+      const loadStatus = this.projectService.getBlocklyProjectLoadStatus(requestedProject);
+      const editorReady = this.electronService.exists(
+        this.electronService.pathJoin(requestedProject, 'project.abi'),
+      ) ? loadStatus.ready : loadStatus.state === 'loaded';
+      if (!opened || !editorReady) {
+        return {
+          ok: false,
+          operation: 'project_open',
+          project: requestedProject,
+          reason: loadStatus.error ? 'project_load_failed' : 'project_open_rejected',
+          message: loadStatus.error || `项目未完成加载（state=${loadStatus.state}）`,
+          loadStatus,
+        };
+      }
+      return {
+        ok: true,
+        operation: 'project_open',
+        project: requestedProject,
+        message: '项目已打开并完成加载',
+        loadStatus,
+      };
+    } catch (error) {
+      const loadStatus = this.projectService.getBlocklyProjectLoadStatus(requestedProject);
+      return {
+        ok: false,
+        operation: 'project_open',
+        project: requestedProject,
+        reason: 'project_load_failed',
+        message: error instanceof Error ? error.message : String(error),
+        loadStatus,
+        guidance: '请先关闭项目，在离线状态修复 project.abs/project.abi 或依赖，再重新打开；不要在失败的半初始化工作区继续保存或导入。',
+      };
+    }
+  }
+
+  private async executeProjectClose(): Promise<Record<string, any>> {
+    const projectPath = this.projectService.currentProjectPath;
+    if (!projectPath) {
+      return { ok: true, operation: 'project_close', project: null, message: '当前没有打开的项目' };
+    }
+
+    const loadStatus = this.projectService.getBlocklyProjectLoadStatus(projectPath);
+    if (loadStatus.ready) {
+      const saved = await this.projectService.save(projectPath);
+      if (!saved.success) {
+        return {
+          ok: false,
+          operation: 'project_close',
+          project: projectPath,
+          reason: 'project_save_failed',
+          message: `关闭项目前保存失败：${saved.error || '未知错误'}`,
+          loadStatus,
+        };
+      }
+    }
+
+    const closed = await this.projectService.close({ allowDuringChatTool: true });
+    return {
+      ok: closed === true,
+      operation: 'project_close',
+      project: null,
+      message: closed === true ? '项目已关闭，可安全进行离线修复' : '项目关闭被拒绝',
+      previousLoadStatus: loadStatus,
+    };
+  }
+
   private async executeProjectReload(): Promise<Record<string, any>> {
     const projectPath = this.projectService.currentProjectPath;
     if (!projectPath) {
       return { ok: false, message: '当前未打开 Blockly 项目' };
     }
-    await this.projectService.projectOpen();
-    const state = this.projectService.stateSubject.value;
-    if (state !== 'loaded') {
+    try {
+      const opened = await this.projectService.projectOpen(projectPath, { reason: 'chat-tool-reload' });
+      const loadStatus = this.projectService.getBlocklyProjectLoadStatus(projectPath);
+      const editorReady = this.electronService.exists(
+        this.electronService.pathJoin(projectPath, 'project.abi'),
+      ) ? loadStatus.ready : loadStatus.state === 'loaded';
+      if (!opened || !editorReady) {
+        return {
+          ok: false,
+          operation: 'project_reload',
+          project: projectPath,
+          reason: loadStatus.error ? 'project_load_failed' : 'project_reload_rejected',
+          message: loadStatus.error || `项目从磁盘重新加载失败（state=${loadStatus.state}）`,
+          loadStatus,
+        };
+      }
+      return {
+        ok: true,
+        operation: 'project_reload',
+        project: projectPath,
+        message: '项目已从磁盘重新加载',
+        loadStatus,
+      };
+    } catch (error) {
+      const loadStatus = this.projectService.getBlocklyProjectLoadStatus(projectPath);
       return {
         ok: false,
         operation: 'project_reload',
         project: projectPath,
-        message: `项目从磁盘重新加载失败（state=${state}）`,
+        reason: 'project_load_failed',
+        message: error instanceof Error ? error.message : String(error),
+        loadStatus,
+        guidance: '请关闭项目后离线修复，再重新打开；不要在失败的半初始化工作区继续保存或重复导入。',
       };
     }
-    return {
-      ok: true,
-      operation: 'project_reload',
-      project: projectPath,
-      message: '项目已从磁盘重新加载',
-    };
   }
 
   private async executeSearchBoardsLibraries(params: Record<string, any>): Promise<Record<string, any>> {

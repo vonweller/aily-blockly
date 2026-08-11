@@ -51,7 +51,13 @@ interface ProjectPackageData {
   blocklyToolboxOrder?: string[];
 }
 
-export type ProjectActivationReason = 'new' | 'open' | 'reload' | 'chat-tool-create';
+export type ProjectActivationReason =
+  | 'new'
+  | 'open'
+  | 'reload'
+  | 'chat-tool-create'
+  | 'chat-tool-open'
+  | 'chat-tool-reload';
 
 export interface ProjectActivationEvent {
   path: string;
@@ -71,6 +77,13 @@ interface ProjectCreationOptions {
   deferActivation?: boolean;
 }
 
+export interface BlocklyProjectLoadStatus {
+  project: string;
+  state: 'default' | 'loading' | 'loaded' | 'saving' | 'saved' | 'error';
+  ready: boolean;
+  error?: string;
+}
+
 @Injectable({
   providedIn: 'root',
 })
@@ -88,7 +101,9 @@ export class ProjectService {
 
   private projectActivationSubject = new Subject<ProjectActivationEvent>();
   projectActivation$ = this.projectActivationSubject.asObservable();
-  private projectOpenTask: { path: string; promise: Promise<void> } | null = null;
+  private projectOpenTask: { path: string; promise: Promise<boolean> } | null = null;
+  private loadedBlocklyProjectPath = '';
+  private blocklyProjectLoadFailure: { path: string; error: string } | null = null;
   private blocklyLibraryRuntimeRebuildTask: {
     path: string;
     runtimeSignature: string;
@@ -114,6 +129,48 @@ export class ProjectService {
 
   get isProjectOpening(): boolean {
     return !!this.projectOpenTask || this.stateSubject.value === 'loading';
+  }
+
+  beginBlocklyProjectLoad(projectPath: string): void {
+    this.loadedBlocklyProjectPath = '';
+    this.blocklyProjectLoadFailure = null;
+    this.stateSubject.next('loading');
+  }
+
+  markBlocklyProjectLoaded(projectPath: string): void {
+    if (!this.isSameProjectPath(projectPath, this.currentProjectPath)) {
+      return;
+    }
+    this.loadedBlocklyProjectPath = projectPath;
+    this.blocklyProjectLoadFailure = null;
+    this.stateSubject.next('loaded');
+  }
+
+  markBlocklyProjectLoadFailed(projectPath: string, error: string): void {
+    this.loadedBlocklyProjectPath = '';
+    this.blocklyProjectLoadFailure = {
+      path: projectPath,
+      error: String(error || '未知项目加载错误'),
+    };
+    this.stateSubject.next('error');
+  }
+
+  getBlocklyProjectLoadStatus(projectPath = this.currentProjectPath): BlocklyProjectLoadStatus {
+    const failure = this.blocklyProjectLoadFailure;
+    const sameCurrentProject = this.isSameProjectPath(projectPath, this.currentProjectPath);
+    const ready = sameCurrentProject
+      && this.isSameProjectPath(projectPath, this.loadedBlocklyProjectPath)
+      && !failure
+      && projectDataRuntime.isConfigured();
+    const error = failure && this.isSameProjectPath(projectPath, failure.path)
+      ? failure.error
+      : undefined;
+    return {
+      project: projectPath,
+      state: this.stateSubject.value,
+      ready,
+      ...(error ? { error } : {}),
+    };
   }
 
 
@@ -228,7 +285,7 @@ export class ProjectService {
   }
 
   private shouldBlockForChatRequest(reason?: ProjectActivationReason): boolean {
-    return reason !== 'chat-tool-create' && this.hasBlockingChatRequest();
+    return !reason?.startsWith('chat-tool-') && this.hasBlockingChatRequest();
   }
 
   private warnBlockingChatRequest(): void {
@@ -426,6 +483,8 @@ export class ProjectService {
       || reason === 'open'
       || reason === 'reload'
       || reason === 'chat-tool-create'
+      || reason === 'chat-tool-open'
+      || reason === 'chat-tool-reload'
       ? reason
       : undefined;
   }
@@ -628,7 +687,7 @@ export class ProjectService {
     const promise = this.projectOpenInternal(projectPath, options);
     this.projectOpenTask = { path: projectPath, promise };
     try {
-      await promise;
+      return await promise;
     } finally {
       if (this.projectOpenTask?.promise === promise) {
         this.projectOpenTask = null;
@@ -828,7 +887,7 @@ export class ProjectService {
     });
   }
 
-  private async projectOpenInternal(projectPath = this.currentProjectPath, options: ProjectOpenOptions = {}): Promise<any> {
+  private async projectOpenInternal(projectPath = this.currentProjectPath, options: ProjectOpenOptions = {}): Promise<boolean> {
     const previousProjectPath = this.currentProjectPath;
     const activationReason = options.reason || (this.isSameProjectPath(previousProjectPath, projectPath) ? 'reload' : 'open');
 
@@ -841,7 +900,7 @@ export class ProjectService {
     if (!this.electronService.exists(projectPath)) {
       this.removeRecentlyProject({ path: projectPath })
       this.message.error(this.translate.instant('PROJECT.PATH_NOT_EXIST'));
-      return;
+      return false;
     }
 
     if (this.electronService.isElectron && window['projectLock']) {
@@ -850,23 +909,23 @@ export class ProjectService {
         const action = await this.promptProjectLockConflict(r.holder);
         if (action === 'cancel') {
           this.stateSubject.next('default');
-          return;
+          return false;
         }
         if (action === 'focus') {
           await window['projectLock'].focusProcess(r.holder.pid);
           this.stateSubject.next('default');
-          return;
+          return false;
         }
         r = await window['projectLock'].tryAcquire(projectPath, { force: true });
         if (!r.ok) {
           this.message.error(this.translate.instant('PROJECT.LOCK_ACQUIRE_FAILED'));
           this.stateSubject.next('default');
-          return;
+          return false;
         }
       } else if (!r.ok) {
         this.message.error(this.translate.instant('PROJECT.LOCK_ACQUIRE_FAILED'));
         this.stateSubject.next('default');
-        return;
+        return false;
       }
     }
 
@@ -881,7 +940,7 @@ export class ProjectService {
       }
     }
 
-    this.stateSubject.next('loading');
+    this.beginBlocklyProjectLoad(projectPath);
 
     const abiIsExist = window['path'].isExists(projectPath + '/project.abi');
     const blocklyRouteIsBeingReused = abiIsExist && this.router.url.startsWith('/main/blockly-editor');
@@ -902,7 +961,7 @@ export class ProjectService {
       sessionResource: options.sessionResource ?? null,
     });
 
-    if (activationReason === 'reload') {
+    if (activationReason === 'reload' || activationReason === 'chat-tool-reload') {
       // Angular ignores navigation to the exact same route and query params. Move off the
       // editor first so its services/workspace are destroyed and the project is really
       // rebuilt from disk instead of remaining in the loading state until the timeout.
@@ -934,28 +993,47 @@ export class ProjectService {
     }
 
     await this.waitForProjectOpenCompletion(projectPath);
+    return true;
   }
 
   private waitForProjectOpenCompletion(projectPath: string): Promise<void> {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       let settled = false;
       let subscription: { unsubscribe: () => void } | null = null;
-      const finish = () => {
+      const finish = (error?: Error) => {
         if (settled) {
           return;
         }
         settled = true;
         clearTimeout(timeoutId);
         subscription?.unsubscribe();
-        resolve();
+        if (error) {
+          reject(error);
+        } else {
+          resolve();
+        }
       };
       const timeoutId = setTimeout(() => {
-        finish();
+        const error = new Error(`项目加载超时: ${projectPath}`);
+        this.markBlocklyProjectLoadFailed(projectPath, error.message);
+        finish(error);
         console.warn('[ProjectService] project open completion timed out:', projectPath);
-      }, 60000);
+      }, 120000);
 
       subscription = this.stateSubject.subscribe((state) => {
-        if (state !== 'loaded' && state !== 'error') {
+        const isBlocklyProject = window['path']?.isExists?.(
+          window['path'].join(projectPath, 'project.abi'),
+        );
+        if (!isBlocklyProject && state === 'loaded') {
+          finish();
+          return;
+        }
+        const status = this.getBlocklyProjectLoadStatus(projectPath);
+        if (state === 'error' && status.error) {
+          finish(new Error(status.error));
+          return;
+        }
+        if (!status.ready) {
           return;
         }
         finish();
@@ -975,6 +1053,19 @@ export class ProjectService {
         error: 'project is loading',
         path,
       });
+    }
+
+    if (window['path']?.isExists?.(window['path'].join(path, 'project.abi'))) {
+      const loadStatus = this.getBlocklyProjectLoadStatus(path);
+      if (!loadStatus.ready) {
+        return Promise.resolve({
+          success: false,
+          error: loadStatus.error
+            ? `project load failed: ${loadStatus.error}`
+            : `project is not ready for save (state=${loadStatus.state})`,
+          path,
+        });
+      }
     }
 
     return new Promise<{ success: boolean; error?: string; path?: string }>((resolve) => {
@@ -1041,8 +1132,8 @@ export class ProjectService {
     this.addRecentlyProject({ name: this.currentPackageData.name, path: path, nickname: this.currentPackageData.nickname || this.currentPackageData.name });
   }
 
-  async close() {
-    if (this.shouldBlockForChatRequest()) {
+  async close(options: { allowDuringChatTool?: boolean } = {}) {
+    if (!options.allowDuringChatTool && this.shouldBlockForChatRequest()) {
       this.warnBlockingChatRequest();
       return false;
     }
@@ -1056,6 +1147,8 @@ export class ProjectService {
     }
     this.uiService.closeTerminal();
     this.currentProjectPath = '';
+    this.loadedBlocklyProjectPath = '';
+    this.blocklyProjectLoadFailure = null;
     void window['ipcRenderer']?.invoke?.('logger-set-project-path', '').catch(() => undefined);
     this.currentPackageData = {
       name: 'aily blockly',
