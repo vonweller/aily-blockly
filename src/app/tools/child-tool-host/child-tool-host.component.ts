@@ -1463,6 +1463,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       surface: launch.surface,
       surfaceParams: launch.params,
       workspace: this.resolveHostWorkspace(),
+      activeChatSessionId: isAilyChat ? (this.ailyChatSessionId || null) : null,
       blockResources: isAilyChat && this.active ? this.createSelectedBlockResources() : [],
       capabilities: {
         snapshotRefresh: true,
