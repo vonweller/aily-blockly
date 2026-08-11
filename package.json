@@ -1,7 +1,7 @@
 {
   "name": "aily-blockly",
   "productName": "aily blockly",
-  "version": "0.9.90",
+  "version": "0.9.91",
   "author": "coloz",
   "description": "aily blockly dev",
   "main": "electron/main.js",
@@ -78,7 +78,7 @@
     "win": {
       "target": "nsis",
       "sign": false,
-      "signAndEditExecutable": false,
+      "signAndEditExecutable": true,
       "artifactName": "aily-blockly-${version}.${ext}",
       "icon": "public/icon.ico",
       "fileAssociations": [
