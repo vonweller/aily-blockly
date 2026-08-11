@@ -532,6 +532,20 @@ export class ConfigService {
   }
 
   /**
+   * 获取当前构建版型的官方区域资源 URL。
+   * 法务协议等区分 CN/海外版本的内容必须使用此地址，
+   * 不能跟随 resource_source 的自动镜像切换。
+   */
+  getOfficialRegionResourceUrl(): string {
+    const officialRegion = this.resolveOfficialRegionKey();
+    const currentRegion = this.data?.region || officialRegion;
+    const resourceUrl = this.data?.regions?.[officialRegion]?.resource
+      || this.data?.regions?.[currentRegion]?.resource
+      || '';
+    return this.normalizeResourceSourceUrl(resourceUrl);
+  }
+
+  /**
    * 获取当前区域的NPM Registry URL
    */
   getCurrentNpmRegistry(): string {

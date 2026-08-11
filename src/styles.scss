@@ -193,6 +193,11 @@ nz-modal-container {
   z-index: 100200 !important;
 }
 
+// 登录中打开的协议必须高于全局登录遮罩，否则 modal 会被其覆盖。
+.cdk-overlay-container:has(.login-agreement-modal) {
+  z-index: 100200 !important;
+}
+
 .aily-chat-menu-left-tooltip.ant-tooltip {
   max-width: min(180px, calc(100vw - 24px));
   z-index: 1000040;
