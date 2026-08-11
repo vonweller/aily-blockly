@@ -936,7 +936,9 @@ const { registerAilyServicesStreamHandlers, cancelAllAilyServicesStreams, getAct
 const {
   executeWebviewFetch,
   executeWebviewSearch,
+  getWebviewBridgeStatus,
   registerWebviewBridgeHandlers,
+  wakeWebviewBridge,
 } = require("./webview-bridge");
 const { registerMCPHandlers } = require("./mcp");
 const { registerAppDataResourceLockHandlers, releaseAllAppDataResourceLocks } = require("./appdata-resource-lock");
@@ -1333,6 +1335,26 @@ async function handleCliBridgeCommand(action, payload) {
         return result.result;
       }
       return result;
+    }
+    case 'webview-bridge-status': {
+      const sessionId = typeof payload?.sessionId === 'string'
+        ? payload.sessionId.trim()
+        : '';
+      if (!sessionId) {
+        return { ok: false, error: '缺少 sessionId 参数' };
+      }
+
+      return getWebviewBridgeStatus();
+    }
+    case 'webview-bridge-wake': {
+      const sessionId = typeof payload?.sessionId === 'string'
+        ? payload.sessionId.trim()
+        : '';
+      if (!sessionId) {
+        return { ok: false, error: '缺少 sessionId 参数' };
+      }
+
+      return await wakeWebviewBridge();
     }
     case 'webview-bridge-fetch': {
       const sessionId = typeof payload?.sessionId === 'string'
