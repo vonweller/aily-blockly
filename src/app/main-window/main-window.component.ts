@@ -21,7 +21,7 @@ import { UpdateService } from '../services/update.service';
 import { NzModalModule, NzModalService } from 'ng-zorro-antd/modal';
 import { NpmService } from '../services/npm.service';
 import { NavigationEnd, Router, RouterModule } from '@angular/router';
-import { filter, Subscription } from 'rxjs';
+import { distinctUntilChanged, filter, Subscription } from 'rxjs';
 import { ConfigService } from '../services/config.service';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { CloudSpaceComponent } from '../tools/cloud-space/cloud-space.component';
@@ -122,6 +122,7 @@ export class MainWindowComponent implements OnDestroy {
   private exampleListListener: (() => void) | null = null;
   private configNoticeSubscription: Subscription | null = null;
   private projectContextSubscription: Subscription | null = null;
+  private projectStateSubscription: Subscription | null = null;
   private developmentModePreferencePromptOpen = false;
   private loginDialogSubscription: Subscription | null = null;
   private unregisterApplicationUpdatePreparation: (() => void) | null = null;
@@ -298,6 +299,8 @@ export class MainWindowComponent implements OnDestroy {
     this.configNoticeSubscription = null;
     this.projectContextSubscription?.unsubscribe();
     this.projectContextSubscription = null;
+    this.projectStateSubscription?.unsubscribe();
+    this.projectStateSubscription = null;
     this.oauthResultListener?.();
     this.oauthResultListener = null;
     this.exampleListListener?.();
@@ -427,7 +430,9 @@ export class MainWindowComponent implements OnDestroy {
       this.cd.detectChanges();
     });
 
-    this.projectService.stateSubject.subscribe((state) => {
+    this.projectStateSubscription = this.projectService.stateSubject.pipe(
+      distinctUntilChanged(),
+    ).subscribe((state) => {
       switch (state) {
         case 'loading':
           // this.loaded = false;

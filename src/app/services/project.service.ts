@@ -102,6 +102,7 @@ export class ProjectService {
   private projectActivationSubject = new Subject<ProjectActivationEvent>();
   projectActivation$ = this.projectActivationSubject.asObservable();
   private projectOpenTask: { path: string; promise: Promise<boolean> } | null = null;
+  private loadingBlocklyProjectPath = '';
   private loadedBlocklyProjectPath = '';
   private blocklyProjectLoadFailure: { path: string; error: string } | null = null;
   private blocklyLibraryRuntimeRebuildTask: {
@@ -132,6 +133,13 @@ export class ProjectService {
   }
 
   beginBlocklyProjectLoad(projectPath: string): void {
+    if (
+      this.stateSubject.value === 'loading'
+      && this.isSameProjectPath(projectPath, this.loadingBlocklyProjectPath)
+    ) {
+      return;
+    }
+    this.loadingBlocklyProjectPath = projectPath;
     this.loadedBlocklyProjectPath = '';
     this.blocklyProjectLoadFailure = null;
     this.stateSubject.next('loading');
@@ -141,12 +149,16 @@ export class ProjectService {
     if (!this.isSameProjectPath(projectPath, this.currentProjectPath)) {
       return;
     }
+    this.loadingBlocklyProjectPath = '';
     this.loadedBlocklyProjectPath = projectPath;
     this.blocklyProjectLoadFailure = null;
     this.stateSubject.next('loaded');
   }
 
   markBlocklyProjectLoadFailed(projectPath: string, error: string): void {
+    if (this.isSameProjectPath(projectPath, this.loadingBlocklyProjectPath)) {
+      this.loadingBlocklyProjectPath = '';
+    }
     this.loadedBlocklyProjectPath = '';
     this.blocklyProjectLoadFailure = {
       path: projectPath,
@@ -1147,6 +1159,7 @@ export class ProjectService {
     }
     this.uiService.closeTerminal();
     this.currentProjectPath = '';
+    this.loadingBlocklyProjectPath = '';
     this.loadedBlocklyProjectPath = '';
     this.blocklyProjectLoadFailure = null;
     void window['ipcRenderer']?.invoke?.('logger-set-project-path', '').catch(() => undefined);
