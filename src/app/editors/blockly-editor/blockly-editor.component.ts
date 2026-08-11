@@ -247,6 +247,7 @@ export class BlocklyEditorComponent implements OnInit, OnDestroy {
     this.applyProjectPackageJson(packageJson);
     // 与 Aily Code（code-editor-pro）共用：node_modules 不齐则 npm install
     if (!(await this.npmService.ensureProjectDependenciesInstalled(projectPath))) {
+      this.projectService.stateSubject.next('error');
       return;
     }
 
