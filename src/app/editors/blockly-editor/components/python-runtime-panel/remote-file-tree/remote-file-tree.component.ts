@@ -4,8 +4,8 @@ import { FormsModule } from '@angular/forms';
 import { NzIconModule } from 'ng-zorro-antd/icon';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { NzModalService } from 'ng-zorro-antd/modal';
-import { EmbeddedPythonRuntimeService } from '../../../../services/python-runtime/embedded-python-runtime.service';
-import { joinRemotePath, normalizeRemoteDirectory, RemoteDirectoryNode } from '../../../../services/python-runtime/remote-file-tree';
+import { PythonRuntimeClient } from '../../../../../services/python-runtime/python-runtime-client';
+import { joinRemotePath, normalizeRemoteDirectory, RemoteDirectoryNode } from '../../../../../services/python-runtime/remote-file-tree';
 
 @Component({
   selector: 'app-remote-file-tree',
@@ -16,6 +16,7 @@ import { joinRemotePath, normalizeRemoteDirectory, RemoteDirectoryNode } from '.
 })
 export class RemoteFileTreeComponent implements OnInit, OnChanges {
   @Input() enabled = false;
+  @Input({ required: true }) runtime!: PythonRuntimeClient;
   @Output() fileOpen = new EventEmitter<RemoteDirectoryNode>();
 
   rootPath = '/';
@@ -30,7 +31,6 @@ export class RemoteFileTreeComponent implements OnInit, OnChanges {
   renaming = false;
 
   constructor(
-    private readonly runtime: EmbeddedPythonRuntimeService,
     private readonly modal: NzModalService,
     private readonly message: NzMessageService,
   ) {}

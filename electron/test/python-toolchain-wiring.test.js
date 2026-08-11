@@ -81,3 +81,14 @@ test('Uploader rejects Python before touching serial or firmware build state', (
     'const capturedSerialPort = this.serialService.currentPort;',
   ]);
 });
+
+test('Published generated code is not normalized a second time', () => {
+  const blocklyService = read('src/app/editors/blockly-editor/services/blockly.service.ts');
+  const start = blocklyService.indexOf('publishGeneratedCode(code: unknown)');
+  const end = blocklyService.indexOf('getGeneratedCode()', start);
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+  const method = blocklyService.slice(start, end);
+  assert.doesNotMatch(method, /normalizeArduinoGeneratedCode/);
+  assert.match(method, /typeof code === 'string'/);
+});

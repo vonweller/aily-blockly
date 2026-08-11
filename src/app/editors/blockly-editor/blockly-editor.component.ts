@@ -39,6 +39,12 @@ import { BlocklyGeneratorRuntimeService } from './services/blockly-generator-run
 import { ProjectDataError } from '../../services/project-data/project-data.types';
 import { AuthService } from '../../services/auth.service';
 import { boardRequiresCloudAuth } from './board-auth-gate';
+import { PythonRuntimePanelComponent } from './components/python-runtime-panel/python-runtime-panel.component';
+import {
+  normalizePublicProjectMode,
+  readPythonRuntimeMetadata,
+  type PythonRuntimeMetadata,
+} from '../../services/python-runtime/python-mode';
 
 @Component({
   selector: 'app-blockly-editor',
@@ -48,6 +54,7 @@ import { boardRequiresCloudAuth } from './board-auth-gate';
     NotificationComponent,
     TranslateModule,
     DevToolComponent,
+    PythonRuntimePanelComponent,
   ],
   providers: [_BuilderService, _UploaderService, BitmapUploadService],
   templateUrl: './blockly-editor.component.html',
@@ -90,6 +97,11 @@ export class BlocklyEditorComponent implements OnInit, OnDestroy {
   private loadedProjectPath: string | null = null;
 
   devmode;
+  pythonRuntimeMetadata: PythonRuntimeMetadata | null = null;
+
+  get generatedCode(): string {
+    return this.blocklyService.getGeneratedCode();
+  }
 
   get developerMode(): boolean {
     const devmode = (this.configService.data as any).devmode;
@@ -321,6 +333,9 @@ export class BlocklyEditorComponent implements OnInit, OnDestroy {
     this.projectService.currentBoardConfig = boardJson;
     this.blocklyService.boardConfig = boardJson;
     window['boardConfig'] = boardJson;
+    this.pythonRuntimeMetadata = normalizePublicProjectMode(this.devmode) === 'python'
+      ? readPythonRuntimeMetadata(boardJson)
+      : null;
     await this.projectService.loadBoardMenuConfig();
     this.runtimeCdcEnabled = !!boardJson?._cdcEnabled;
     // 4. 加载blockly library
@@ -620,6 +635,9 @@ export class BlocklyEditorComponent implements OnInit, OnDestroy {
       : null;
 
     this.blocklyService.boardConfig = boardConfig;
+    this.pythonRuntimeMetadata = normalizePublicProjectMode(this.devmode) === 'python'
+      ? readPythonRuntimeMetadata(boardConfig)
+      : null;
     window['boardConfig'] = boardConfig;
     if (this.generatorRuntime.isActive()) {
       this.generatorRuntime.updateBoardConfig(boardConfig);

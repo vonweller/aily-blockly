@@ -1,8 +1,8 @@
 import { CommonModule } from '@angular/common';
-import { AfterViewInit, Component, ElementRef, OnDestroy, ViewChild } from '@angular/core';
+import { AfterViewInit, Component, ElementRef, Input, OnDestroy, ViewChild } from '@angular/core';
 import { Terminal, type ITheme } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import { EmbeddedPythonRuntimeService } from '../../../../services/python-runtime/embedded-python-runtime.service';
+import { PythonRuntimeClient } from '../../../../../services/python-runtime/python-runtime-client';
 
 @Component({
   selector: 'app-python-terminal',
@@ -13,6 +13,7 @@ import { EmbeddedPythonRuntimeService } from '../../../../services/python-runtim
 })
 export class PythonTerminalComponent implements AfterViewInit, OnDestroy {
   @ViewChild('terminal', { static: true }) terminalElement!: ElementRef<HTMLElement>;
+  @Input({ required: true }) runtime!: PythonRuntimeClient;
 
   private terminal?: Terminal;
   private fitAddon?: FitAddon;
@@ -20,8 +21,6 @@ export class PythonTerminalComponent implements AfterViewInit, OnDestroy {
   private resizeTimer?: ReturnType<typeof setTimeout>;
   private disposables: Array<() => void> = [];
   private destroyed = false;
-
-  constructor(public readonly runtime: EmbeddedPythonRuntimeService) {}
 
   ngAfterViewInit(): void {
     this.terminal = new Terminal({

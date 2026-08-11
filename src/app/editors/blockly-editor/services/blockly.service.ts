@@ -334,10 +334,10 @@ export class BlocklyService {
   }
 
   publishGeneratedCode(code: unknown): void {
-    const normalizedCode = normalizeArduinoGeneratedCode(code);
-    this.latestGeneratedCode = normalizedCode;
+    const generatedCode = typeof code === 'string' ? code : String(code ?? '');
+    this.latestGeneratedCode = generatedCode;
     this.generatedCodeRevision = this.workspaceCodeRevision;
-    this.codeSubject.next(normalizedCode);
+    this.codeSubject.next(generatedCode);
   }
 
   getGeneratedCode(): string {
