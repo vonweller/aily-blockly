@@ -1,0 +1,63 @@
+<aside class="python-runtime-panel" aria-label="Python device runtime">
+  @if (visible && runtime && state$ && (state$ | async); as state) {
+    <header class="panel-header">
+      <div>
+        <div class="panel-title">Python Device</div>
+        <div class="panel-status" [class.connected]="state.connectionState === 'connected'">
+          <span class="status-dot"></span>{{ statusText(state) }}
+        </div>
+      </div>
+      <button type="button" class="icon-button" aria-label="Detect Python devices" (click)="detect()" [disabled]="busy || !state.runtimeAvailable">
+        <span nz-icon nzType="search"></span>
+      </button>
+    </header>
+
+    <section class="connection-controls">
+      <nz-select class="port-select" nzSize="small" [(ngModel)]="selectedPort" nzPlaceHolder="Select a device" [nzDisabled]="busy || state.connectionState === 'connected' || !state.runtimeAvailable">
+        @for (board of state.boards; track board.port) {
+          <nz-option [nzValue]="board.port" [nzLabel]="board.port + ' / ' + board.name"></nz-option>
+        }
+      </nz-select>
+      <div class="action-grid">
+        @if (state.connectionState === 'connected') {
+          <button type="button" (click)="disconnect()" [disabled]="busy"><span nz-icon nzType="disconnect"></span>Disconnect</button>
+        } @else {
+          <button type="button" (click)="connect()" [disabled]="busy || !selectedPort || !state.runtimeAvailable"><span nz-icon nzType="link"></span>Connect</button>
+        }
+        @if (showStop(state)) {
+          <button type="button" (click)="stop()" [disabled]="busy"><span nz-icon nzType="pause"></span>Stop</button>
+        } @else {
+          <button type="button" (click)="run()" [disabled]="!canRun(state)"><span nz-icon nzType="caret-right"></span>Run</button>
+        }
+        <button type="button" (click)="togglePreview(state)" [disabled]="busy || state.connectionState !== 'connected'">
+          <span nz-icon [nzType]="state.previewing ? 'eye-invisible' : 'eye'"></span>{{ state.previewing ? 'Stop preview' : 'Preview' }}
+        </button>
+      </div>
+    </section>
+
+    @if (frameUrl) {
+      <img class="preview" [src]="frameUrl" alt="Live Python device camera preview" />
+    }
+
+    <section class="panel-section terminal-section">
+      <app-python-terminal [runtime]="runtime"></app-python-terminal>
+    </section>
+    <section class="panel-section files-section">
+      <app-remote-file-tree
+        [runtime]="runtime"
+        [enabled]="state.connectionState === 'connected'"
+        (fileOpen)="openRemoteFile($event)"></app-remote-file-tree>
+      @if (openedFilePath) {
+        <div class="remote-editor">
+          <div class="remote-editor__header">
+            <span>{{ openedFilePath }}</span>
+            <button type="button" (click)="saveRemoteFile()" [disabled]="busy">Save</button>
+          </div>
+          <textarea [(ngModel)]="openedFileText" spellcheck="false" aria-label="Remote Python file"></textarea>
+        </div>
+      }
+    </section>
+
+    @if (error) { <div class="panel-error" role="alert">{{ error }}</div> }
+  }
+</aside>
