@@ -19,7 +19,6 @@ import {
   AuthQuotaStateService,
   type AuthQuotaInfo,
 } from '../aily-chat/services/auth-quota-state.service';
-import { formatQuotaResetMetaLabel } from '../aily-chat/services/chat-quota-reset-label';
 import { APP_LIST, getChildToolConfig } from '../../configs/tool.config';
 import { MainUiAutomationService } from '../../services/main-ui-automation.service';
 
@@ -500,17 +499,15 @@ export class UserCenterComponent {
       return `${remaining}/${quota}${unitSuffix}`;
     }
 
-    return this.benefits?.ai_calls?.unlimited
-      ? '♾️'
-      : `${this.benefits?.ai_calls?.used ?? 0}/${this.benefits?.ai_calls?.total ?? 0}`;
-  }
-
-  get aiAvailableMeta(): string | null {
-    if (!this.authQuotaInfo) {
-      return null;
+    const aiCalls = this.benefits?.ai_calls;
+    if (aiCalls?.unlimited) {
+      return '♾️';
     }
 
-    return formatQuotaResetMetaLabel(this.authQuotaInfo.resetTime) ?? null;
+    const total = Math.max(0, Number(aiCalls?.total) || 0);
+    const used = Math.max(0, Number(aiCalls?.used) || 0);
+    const remaining = Math.max(0, total - used);
+    return `${remaining}/${total}次`;
   }
 
   private calculateQuotaUsagePercent(): void {
