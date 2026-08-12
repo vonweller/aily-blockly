@@ -84,11 +84,7 @@ export async function buildProjectTool(
     try {
         // 清除编译缓存
         if (clear_cache && projectPath) {
-            try {
-                await builderService.clearCache(projectPath);
-            } catch (e) {
-                console.warn('清除编译缓存失败:', e);
-            }
+            await builderService.clearBuildCache(projectPath);
         }
 
         if (preprocess_only) {
