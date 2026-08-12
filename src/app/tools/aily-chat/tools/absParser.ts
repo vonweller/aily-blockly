@@ -100,6 +100,7 @@ interface BlockMeta {
  */
 export function loadProjectBlockDefinitions(projectPath: string): void {
   try {
+    runtimeBlockMetaCache.clear();
     const electronAPI = (window as any).electronAPI;
     if (!electronAPI) {
       console.warn('[absParser] electronAPI 不可用，使用内置块定义');
@@ -160,7 +161,7 @@ function isKnownBlock(blockType: string): boolean {
   if (dynamicMetas?.has(blockType)) {
     return true;
   }
-  return blockType in FALLBACK_BLOCKS;
+  return blockType in FALLBACK_BLOCKS || !!queryBlocklyRuntimeMeta(blockType);
 }
 
 /**
