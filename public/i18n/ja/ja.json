@@ -352,6 +352,8 @@
             "OPEN_RESOURCE_FOLDER": "リソースフォルダーを開く",
             "REGION_TITLE": "サービスリージョンの切り替え",
             "REGION_DESC": "サービスリージョンを切り替えると再ログインが必要です。続行しますか？",
+            "REGION_CLOSE_APPS_TITLE": "リージョンを切り替えてアプリを閉じますか？",
+            "REGION_CLOSE_APPS_DESC": "サービスリージョンを切り替えると、実行中の次のアプリが閉じます：{{apps}}。未完了の操作が中断される可能性があり、再ログインも必要です。続行しますか？",
             "REGION_CONFIRM": "確認",
             "REGION_CANCEL": "キャンセル",
             "REPOSITORY_URLS": "リポジトリアドレス",

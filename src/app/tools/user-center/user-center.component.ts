@@ -20,7 +20,7 @@ import {
   type AuthQuotaInfo,
 } from '../aily-chat/services/auth-quota-state.service';
 import { APP_LIST, getChildToolConfig } from '../../configs/tool.config';
-import { MainUiAutomationService } from '../../services/main-ui-automation.service';
+import { ProtectedToolCloseError } from '../../services/auth-required-tool-close';
 
 @Component({
   selector: 'app-user-center',
@@ -50,7 +50,6 @@ export class UserCenterComponent {
   private electronService = inject(ElectronService);
   private translate = inject(TranslateService);
   private modal = inject(NzModalService);
-  private mainUiAutomation = inject(MainUiAutomationService);
 
   userInfo = {
     username: '',
@@ -284,25 +283,7 @@ export class UserCenterComponent {
   }
 
   private async closeProtectedTools(toolIds: string[]): Promise<void> {
-    for (const toolId of toolIds) {
-      let closed = false;
-
-      if (getChildToolConfig(toolId)) {
-        const result = await this.mainUiAutomation.controlChildApp({
-          toolId,
-          action: 'close',
-        });
-        closed = result['ok'] === true;
-      }
-
-      if (!closed) {
-        closed = await this.uiService.forceCloseToolEverywhere(toolId);
-      }
-
-      if (!closed) {
-        throw new ProtectedToolCloseError(toolId);
-      }
-    }
+    await this.uiService.closeAuthRequiredTools(toolIds);
   }
 
   private getToolDisplayName(toolId: string): string {
@@ -587,12 +568,5 @@ export class UserCenterComponent {
     // this.message.warning('测试版期间免费使用，无需购买');
     // return;
     this.openUserCenterPage(url);
-  }
-}
-
-class ProtectedToolCloseError extends Error {
-  constructor(toolId: string) {
-    super(`Failed to close protected tool: ${toolId}`);
-    this.name = 'ProtectedToolCloseError';
   }
 }

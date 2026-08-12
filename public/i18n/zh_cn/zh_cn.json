@@ -404,6 +404,8 @@
             "OPEN_RESOURCE_FOLDER": "打开资源文件夹",
             "REGION_TITLE": "切换服务区域",
             "REGION_DESC": "切换服务区域后需要重新登录，是否继续？",
+            "REGION_CLOSE_APPS_TITLE": "切换服务区域并关闭应用？",
+            "REGION_CLOSE_APPS_DESC": "切换服务区域将关闭正在运行的应用：{{apps}}。未完成的操作可能会中断，切换后需要重新登录，是否继续？",
             "REGION_CONFIRM": "确认",
             "REGION_CANCEL": "取消",
             "REPOSITORY_URLS": "仓库地址",

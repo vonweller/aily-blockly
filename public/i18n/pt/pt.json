@@ -352,6 +352,8 @@
             "OPEN_RESOURCE_FOLDER": "Abrir pasta de recursos",
             "REGION_TITLE": "Alterar região de serviço",
             "REGION_DESC": "Será necessário iniciar sessão novamente após alterar a região de serviço. Continuar?",
+            "REGION_CLOSE_APPS_TITLE": "Alterar a região e fechar os aplicativos?",
+            "REGION_CLOSE_APPS_DESC": "Ao alterar a região de serviço, estes aplicativos em execução serão fechados: {{apps}}. O trabalho não concluído pode ser interrompido e será necessário iniciar sessão novamente. Continuar?",
             "REGION_CONFIRM": "Confirmar",
             "REGION_CANCEL": "Cancelar",
             "REPOSITORY_URLS": "URLs de repositório",

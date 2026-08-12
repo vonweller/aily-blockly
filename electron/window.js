@@ -1734,7 +1734,7 @@ function registerWindowHandlers(mainWindow, options = {}) {
                     data: data.data,
                     messageId: messageId
                 });
-                if (data?.data?.action === 'request-login') {
+                if (data?.data?.action === 'request-login' || data?.data?.action === 'switch-service-region') {
                     if (mainWindow.isMinimized()) {
                         mainWindow.restore();
                     }

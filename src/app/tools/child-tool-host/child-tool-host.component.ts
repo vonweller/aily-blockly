@@ -1467,7 +1467,10 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       blockResources: isAilyChat && this.active ? this.createSelectedBlockResources() : [],
       capabilities: {
         snapshotRefresh: true,
-        authStateRefresh: isAilyChat,
+        // A detached surface runs in a separate Angular renderer and therefore
+        // cannot continuously mirror the main window's AuthService subject.
+        // Keep the child's focus/visibility refresh fallback enabled there.
+        authStateRefresh: isAilyChat && !this.isStandalone,
         userInteractionNotifications: true,
         hostGithubLogin: isAilyChat,
         hostLoginDialog: isAilyChat,
@@ -1884,13 +1887,22 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
         data: { action: 'request-login', reason },
         timeout: 3000,
       });
-      return response === 'timeout' || response?.success === false
-        ? { ok: false, message: 'The main-window login request timed out' }
-        : { ok: true };
+      if (response === 'timeout' || response?.success === false) {
+        return { ok: false, message: 'The main-window login request timed out' };
+      }
+
+      const initializationState = String(response?.initializationState || '');
+      if (response?.authenticated === true) {
+        this.pushChildAuthState(true);
+      } else if (response?.authenticated === false && initializationState === 'signed_out') {
+        this.pushChildAuthState(false);
+      }
+      return { ok: true, authenticated: response?.authenticated === true };
     }
 
     this.ngZone.run(() => this.authService.requestLogin(reason));
-    return { ok: true };
+    this.pushChildAuthState(this.authService.isLoggedIn);
+    return { ok: true, authenticated: this.authService.isLoggedIn };
   }
 
   private pushChildAuthState(authenticated: boolean): void {

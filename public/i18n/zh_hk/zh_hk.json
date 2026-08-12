@@ -370,6 +370,8 @@
             "OPEN_RESOURCE_FOLDER": "開啟資源資料夾",
             "REGION_TITLE": "切換服務區域",
             "REGION_DESC": "切換服務區域後需要重新登入，是否繼續？",
+            "REGION_CLOSE_APPS_TITLE": "切換服務區域並關閉應用程式？",
+            "REGION_CLOSE_APPS_DESC": "切換服務區域將關閉正在執行的應用程式：{{apps}}。未完成的操作可能會中斷，切換後需要重新登入，是否繼續？",
             "REGION_CONFIRM": "確認",
             "REGION_CANCEL": "取消",
             "REPOSITORY_URLS": "倉庫地址",

@@ -408,6 +408,8 @@
             "OPEN_RESOURCE_FOLDER": "Open resource folder",
             "REGION_TITLE": "Switch Service Region",
             "REGION_DESC": "You need to log in again after switching the service region. Continue?",
+            "REGION_CLOSE_APPS_TITLE": "Switch Region and Close Apps?",
+            "REGION_CLOSE_APPS_DESC": "Switching the service region will close these running apps: {{apps}}. Unfinished work may be interrupted, and you will need to log in again. Continue?",
             "REGION_CONFIRM": "Confirm",
             "REGION_CANCEL": "Cancel",
             "REPOSITORY_URLS": "Repository URLs",

@@ -352,6 +352,8 @@
             "OPEN_RESOURCE_FOLDER": "Ouvrir le dossier des ressources",
             "REGION_TITLE": "Changer la région de service",
             "REGION_DESC": "Vous devrez vous reconnecter après avoir changé la région de service. Continuer ?",
+            "REGION_CLOSE_APPS_TITLE": "Changer de région et fermer les applications ?",
+            "REGION_CLOSE_APPS_DESC": "Le changement de région de service fermera les applications en cours d’exécution suivantes : {{apps}}. Les opérations inachevées peuvent être interrompues et vous devrez vous reconnecter. Continuer ?",
             "REGION_CONFIRM": "Confirmer",
             "REGION_CANCEL": "Annuler",
             "REPOSITORY_URLS": "URLs des Dépôts",

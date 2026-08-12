@@ -352,6 +352,8 @@
             "OPEN_RESOURCE_FOLDER": "Ressourcenordner öffnen",
             "REGION_TITLE": "Service-Region wechseln",
             "REGION_DESC": "Nach dem Wechsel der Service-Region müssen Sie sich erneut anmelden. Fortfahren?",
+            "REGION_CLOSE_APPS_TITLE": "Region wechseln und Apps schließen?",
+            "REGION_CLOSE_APPS_DESC": "Beim Wechsel der Service-Region werden diese laufenden Apps geschlossen: {{apps}}. Nicht abgeschlossene Vorgänge können unterbrochen werden und Sie müssen sich erneut anmelden. Fortfahren?",
             "REGION_CONFIRM": "Bestätigen",
             "REGION_CANCEL": "Abbrechen",
             "REPOSITORY_URLS": "Repository-URLs",

@@ -24,6 +24,8 @@ import {
 import { collectOpenAuthRequiredToolIds, isAuthRequiredTool } from './auth-required-tool';
 import { ChildAppHostRegistryService } from './child-app-host-registry.service';
 import { closeToolThroughLifecycle } from './child-tool-close-lifecycle';
+import { switchServiceRegionAndRequestLogin } from './service-region-switch';
+import { closeAuthRequiredTools as closeAuthRequiredToolsThroughLifecycle } from './auth-required-tool-close';
 
 @Injectable({
   providedIn: 'root',
@@ -95,12 +97,27 @@ export class UiService {
       window['ipcRenderer'].on('window-receive', async (event, message) => {
         // console.log('window-receive', message);
         let data;
-        if (message.data?.action === 'request-login') {
+        if (message.data?.action === 'get-auth-state') {
+          const initializationState = this.authService.getAuthInitializationState();
+          if (initializationState === 'idle' || initializationState === 'checking') {
+            await this.authService.initializeAuth();
+          }
+          data = {
+            success: true,
+            authenticated: this.authService.isLoggedIn,
+            initializationState: this.authService.getAuthInitializationState(),
+            openProtectedToolIds: this.getOpenAuthRequiredToolIds(),
+          };
+        } else if (message.data?.action === 'request-login') {
           const reason = typeof message.data?.reason === 'string'
             ? message.data.reason.trim().slice(0, 80)
             : '';
           this.authService.requestLogin(reason || 'sub-window');
-          data = { success: true };
+          data = {
+            success: true,
+            authenticated: this.authService.isLoggedIn,
+            initializationState: this.authService.getAuthInitializationState(),
+          };
         } else if (message.data?.action === 'logout') {
           // 处理登出请求
           try {
@@ -109,6 +126,45 @@ export class UiService {
           } catch (error) {
             console.error('登出失败:', error);
             data = { success: false, error: error.message };
+          }
+        } else if (message.data?.action === 'switch-service-region') {
+          try {
+            const regionKey = typeof message.data?.regionKey === 'string'
+              ? message.data.regionKey.trim()
+              : '';
+            if (!this.configService.getEnabledRegionList().some((region) => region.key === regionKey)) {
+              throw new Error('Unknown or disabled service region');
+            }
+            await switchServiceRegionAndRequestLogin(regionKey, {
+              closeProtectedTools: () => this.closeAuthRequiredTools(),
+              logout: () => this.authService.logout(),
+              setRegion: (nextRegionKey) => this.configService.setRegion(nextRegionKey),
+              requestLogin: (reason) => this.authService.requestLogin(reason),
+            });
+            data = { success: true };
+          } catch (error) {
+            console.error('切换服务区域失败:', error);
+            data = {
+              success: false,
+              error: error instanceof Error ? error.message : String(error),
+            };
+          }
+        } else if (message.data?.action === 'set-service-region') {
+          try {
+            const regionKey = typeof message.data?.regionKey === 'string'
+              ? message.data.regionKey.trim()
+              : '';
+            if (!this.configService.getEnabledRegionList().some((region) => region.key === regionKey)) {
+              throw new Error('Unknown or disabled service region');
+            }
+            await this.configService.setRegion(regionKey);
+            data = { success: true };
+          } catch (error) {
+            console.error('设置服务区域失败:', error);
+            data = {
+              success: false,
+              error: error instanceof Error ? error.message : String(error),
+            };
           }
         } else if (message.data?.action === 'log') {
           // 处理子窗口发来的日志
@@ -350,6 +406,19 @@ export class UiService {
 
   getOpenAuthRequiredToolIds(): string[] {
     return collectOpenAuthRequiredToolIds(this.openToolList, this.openWindowPathList);
+  }
+
+  async closeAuthRequiredTools(toolIds = this.getOpenAuthRequiredToolIds()): Promise<void> {
+    const { MainUiAutomationService } = await import('./main-ui-automation.service');
+    const mainUiAutomation = this.injector.get(MainUiAutomationService);
+    await closeAuthRequiredToolsThroughLifecycle(toolIds, {
+      isChildTool: (toolId) => !!getChildToolConfig(toolId),
+      controlChildApp: (toolId) => mainUiAutomation.controlChildApp({
+        toolId,
+        action: 'close',
+      }),
+      forceCloseToolEverywhere: (toolId) => this.forceCloseToolEverywhere(toolId),
+    });
   }
 
   async forceCloseToolEverywhere(name: string): Promise<boolean> {

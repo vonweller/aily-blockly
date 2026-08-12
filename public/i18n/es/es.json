@@ -352,6 +352,8 @@
             "OPEN_RESOURCE_FOLDER": "Abrir carpeta de recursos",
             "REGION_TITLE": "Cambiar región de servicio",
             "REGION_DESC": "Deberá iniciar sesión de nuevo después de cambiar la región de servicio. ¿Continuar?",
+            "REGION_CLOSE_APPS_TITLE": "¿Cambiar de región y cerrar aplicaciones?",
+            "REGION_CLOSE_APPS_DESC": "Al cambiar la región de servicio se cerrarán estas aplicaciones en ejecución: {{apps}}. El trabajo sin terminar puede interrumpirse y deberá iniciar sesión de nuevo. ¿Continuar?",
             "REGION_CONFIRM": "Confirmar",
             "REGION_CANCEL": "Cancelar",
             "REPOSITORY_URLS": "URLs de Repositorio",
