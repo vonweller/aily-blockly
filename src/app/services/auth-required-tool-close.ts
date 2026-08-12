@@ -7,6 +7,7 @@ export class ProtectedToolCloseError extends Error {
 
 export interface AuthRequiredToolCloseDependencies {
   isChildTool: (toolId: string) => boolean;
+  prepareChildApp: (toolId: string) => Promise<{ ok?: unknown; message?: unknown }>;
   controlChildApp: (toolId: string) => Promise<{ ok?: unknown }>;
   forceCloseToolEverywhere: (toolId: string) => Promise<boolean>;
 }
@@ -19,6 +20,10 @@ export async function closeAuthRequiredTools(
     let closed = false;
 
     if (dependencies.isChildTool(toolId)) {
+      const preparation = await dependencies.prepareChildApp(toolId);
+      if (preparation.ok !== true) {
+        throw new ProtectedToolCloseError(toolId);
+      }
       const result = await dependencies.controlChildApp(toolId);
       closed = result.ok === true;
     }

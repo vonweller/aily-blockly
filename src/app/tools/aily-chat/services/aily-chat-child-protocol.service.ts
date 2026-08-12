@@ -122,7 +122,7 @@ export class AilyChatChildProtocolService {
     });
   }
 
-  async prepareForApplicationUpdate(): Promise<{
+  async prepareForHostInterruption(): Promise<{
     ok: boolean;
     interrupted: boolean;
     sessionId?: string;
@@ -151,6 +151,15 @@ export class AilyChatChildProtocolService {
       interrupted,
       ...(sessionId ? { sessionId } : {}),
     };
+  }
+
+  prepareForApplicationUpdate(): Promise<{
+    ok: boolean;
+    interrupted: boolean;
+    sessionId?: string;
+    message?: string;
+  }> {
+    return this.prepareForHostInterruption();
   }
 
   private async handleRequest(request: ChildChatRequest): Promise<void> {

@@ -25,7 +25,11 @@ import { collectOpenAuthRequiredToolIds, isAuthRequiredTool } from './auth-requi
 import { ChildAppHostRegistryService } from './child-app-host-registry.service';
 import { closeToolThroughLifecycle } from './child-tool-close-lifecycle';
 import { switchServiceRegionAndRequestLogin } from './service-region-switch';
-import { closeAuthRequiredTools as closeAuthRequiredToolsThroughLifecycle } from './auth-required-tool-close';
+import {
+  closeAuthRequiredTools as closeAuthRequiredToolsThroughLifecycle,
+  ProtectedToolCloseError,
+} from './auth-required-tool-close';
+import { ChildAppSafetyService } from './child-app-safety.service';
 
 @Injectable({
   providedIn: 'root',
@@ -68,6 +72,7 @@ export class UiService {
     private injector: Injector,
     private chatService: ChatService,
     private childHostRegistry: ChildAppHostRegistryService,
+    private childAppSafety: ChildAppSafetyService,
   ) { }
 
   private get modal(): NzModalService {
@@ -121,8 +126,16 @@ export class UiService {
         } else if (message.data?.action === 'logout') {
           // 处理登出请求
           try {
-            await this.authService.logout();
-            data = { success: true };
+            const protectedToolIds = this.getOpenAuthRequiredToolIds()
+              .filter(toolId => toolId !== 'user-center');
+            const confirmed = await this.childAppSafety.confirmInterruption('logout', protectedToolIds);
+            if (!confirmed) {
+              data = { success: false, cancelled: true };
+            } else {
+              await this.closeAuthRequiredTools(protectedToolIds);
+              await this.authService.logout();
+              data = { success: true };
+            }
           } catch (error) {
             console.error('登出失败:', error);
             data = { success: false, error: error.message };
@@ -411,8 +424,25 @@ export class UiService {
   async closeAuthRequiredTools(toolIds = this.getOpenAuthRequiredToolIds()): Promise<void> {
     const { MainUiAutomationService } = await import('./main-ui-automation.service');
     const mainUiAutomation = this.injector.get(MainUiAutomationService);
+    const shouldPrepareHostWork = toolIds.some(
+      toolId => toolId === 'aily-chat' || toolId === 'aily-chat-react',
+    );
+    if (shouldPrepareHostWork) {
+      try {
+        // This also covers the host-owned legacy Aily Chat session. React child
+        // apps are prepared individually below through their strict lifecycle.
+        await this.childAppSafety.prepareRegisteredWork();
+      } catch {
+        throw new ProtectedToolCloseError('aily-chat');
+      }
+    }
     await closeAuthRequiredToolsThroughLifecycle(toolIds, {
       isChildTool: (toolId) => !!getChildToolConfig(toolId),
+      prepareChildApp: (toolId) => mainUiAutomation.controlChildApp({
+        toolId,
+        action: 'prepareUpdate',
+        strictLifecycle: true,
+      }),
       controlChildApp: (toolId) => mainUiAutomation.controlChildApp({
         toolId,
         action: 'close',

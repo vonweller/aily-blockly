@@ -156,7 +156,7 @@ export class MainWindowComponent implements OnDestroy {
   async ngOnInit(): Promise<void> {
     this.unregisterApplicationUpdatePreparation = this.updateService.registerInstallPreparationHook(
       'host-aily-chat-session',
-      () => this.ailyChatChildProtocol.prepareForApplicationUpdate(),
+      () => this.ailyChatChildProtocol.prepareForHostInterruption(),
     );
     this.loginDialogSubscription = this.authService.loginDialogRequest$.subscribe((state) => {
       this.loginDialogState = state;

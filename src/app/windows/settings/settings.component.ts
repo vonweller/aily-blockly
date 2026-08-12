@@ -23,7 +23,7 @@ import { ElectronService } from '../../services/electron.service';
 import { NzToolTipModule } from "ng-zorro-antd/tooltip";
 import { NpmService } from '../../services/npm.service';
 import { switchServiceRegionAndRequestLogin } from '../../services/service-region-switch';
-import { APP_LIST, getChildToolConfig } from '../../configs/tool.config';
+import { ChildAppSafetyService } from '../../services/child-app-safety.service';
 
 type CacheClearOption = 'all' | 'unused-7' | 'unused-30';
 type DependencyRemovalOption = 'all' | 'unused-30' | 'unused-90';
@@ -234,42 +234,16 @@ export class SettingsComponent implements OnDestroy {
         return;
       }
 
-      const openProtectedAppNames = [...new Set(
-        hostAuthState.openProtectedToolIds.map((toolId) => this.getToolDisplayName(toolId)),
-      )];
-      const hasOpenProtectedApps = openProtectedAppNames.length > 0;
-
-      this.modal.confirm({
-        nzClassName: 'subapp-service-confirm-modal',
-        nzTitle: this.translateService.instant(
-          hasOpenProtectedApps
-            ? 'SETTINGS.FIELDS.REGION_CLOSE_APPS_TITLE'
-            : 'SETTINGS.FIELDS.REGION_TITLE',
-        ),
-        nzContent: this.translateService.instant(
-          hasOpenProtectedApps
-            ? 'SETTINGS.FIELDS.REGION_CLOSE_APPS_DESC'
-            : 'SETTINGS.FIELDS.REGION_DESC',
-          hasOpenProtectedApps ? { apps: openProtectedAppNames.join('、') } : undefined,
-        ),
-        nzOkText: this.translateService.instant('SETTINGS.FIELDS.REGION_CONFIRM'),
-        nzCancelText: this.translateService.instant('SETTINGS.FIELDS.REGION_CANCEL'),
-        nzOkDanger: hasOpenProtectedApps,
-        nzMaskClosable: false,
-        nzOnOk: async () => {
-          try {
-            await this.applyConfirmedRegionChange(regionKey);
-          } catch (error) {
-            console.error('切换服务区域失败:', error);
-            throw error;
-          } finally {
-            this.regionSwitching = false;
-          }
-        },
-        nzOnCancel: () => {
-          this.regionSwitching = false;
-        },
-      });
+      const confirmed = await this.childAppSafety.confirmInterruption(
+        'region-switch',
+        hostAuthState.openProtectedToolIds,
+      );
+      if (!confirmed) {
+        this.regionSwitching = false;
+        return;
+      }
+      await this.applyConfirmedRegionChange(regionKey);
+      this.regionSwitching = false;
     } catch (error) {
       this.regionSwitching = false;
       console.error('读取主窗口登录状态失败:', error);
@@ -331,22 +305,6 @@ export class SettingsComponent implements OnDestroy {
     await this.updateBoardList();
   }
 
-  private getToolDisplayName(toolId: string): string {
-    if (toolId === 'aily-chat' || toolId === 'aily-chat-react') {
-      return 'Aily Chat';
-    }
-
-    const childConfig = getChildToolConfig(toolId);
-    const builtInApp = APP_LIST.find((app) => app.id === toolId);
-    const titleKey = childConfig?.app?.name || childConfig?.titleKey || builtInApp?.name;
-    if (!titleKey) {
-      return toolId;
-    }
-
-    const translatedTitle = this.translateService.instant(titleKey);
-    return translatedTitle && translatedTitle !== titleKey ? translatedTitle : toolId;
-  }
-
   private async applyRegionChange(regionKey: string, updateMainWindow = true): Promise<void> {
     const sendToMain = window['iWindow']?.send;
     if (updateMainWindow && typeof sendToMain === 'function') {
@@ -405,7 +363,8 @@ export class SettingsComponent implements OnDestroy {
     private message: NzMessageService,
     private cmdService: CmdService,
     private electronService: ElectronService,
-    private npmService: NpmService
+    private npmService: NpmService,
+    private childAppSafety: ChildAppSafetyService,
   ) {
   }
 

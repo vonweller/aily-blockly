@@ -809,7 +809,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       close: () => this.close(),
       detach: options => this.detach(options),
       embed: () => this.embed(),
-      prepareUpdate: () => this.prepareUpdate(),
+      prepareUpdate: options => this.prepareUpdate(options),
     }, {
       instanceId: this.hostContextId,
       surface: this.resolveLaunchContext().surface,
@@ -1271,7 +1271,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   private async runChildBeforeClose(reason: ChildLifecycleReason, strict: boolean): Promise<boolean> {
     const beforeClose = this.remoteApi?.beforeClose;
     if (typeof beforeClose !== 'function') {
-      return true;
+      return !strict;
     }
 
     try {

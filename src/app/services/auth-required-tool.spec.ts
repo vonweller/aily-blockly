@@ -38,6 +38,10 @@ describe('closeAuthRequiredTools', () => {
 
     await closeAuthRequiredTools(['aily-chat-react', 'cloud-space'], {
       isChildTool: (toolId) => toolId === 'aily-chat-react',
+      prepareChildApp: async (toolId) => {
+        calls.push(`prepare:${toolId}`);
+        return { ok: true };
+      },
       controlChildApp: async (toolId) => {
         calls.push(`lifecycle:${toolId}`);
         return { ok: toolId !== 'aily-chat-react' };
@@ -49,6 +53,7 @@ describe('closeAuthRequiredTools', () => {
     });
 
     expect(calls).toEqual([
+      'prepare:aily-chat-react',
       'lifecycle:aily-chat-react',
       'force:aily-chat-react',
       'force:cloud-space',
@@ -58,8 +63,24 @@ describe('closeAuthRequiredTools', () => {
   it('aborts when a protected tool cannot be closed', async () => {
     await expectAsync(closeAuthRequiredTools(['cloud-space'], {
       isChildTool: () => false,
+      prepareChildApp: async () => ({ ok: true }),
       controlChildApp: async () => ({ ok: false }),
       forceCloseToolEverywhere: async () => false,
     })).toBeRejectedWith(jasmine.any(ProtectedToolCloseError));
+  });
+
+  it('does not close or force-close a child app when strict preparation fails', async () => {
+    const controlChildApp = jasmine.createSpy('controlChildApp');
+    const forceCloseToolEverywhere = jasmine.createSpy('forceCloseToolEverywhere');
+
+    await expectAsync(closeAuthRequiredTools(['aily-chat-react'], {
+      isChildTool: () => true,
+      prepareChildApp: async () => ({ ok: false, message: 'active turn did not settle' }),
+      controlChildApp,
+      forceCloseToolEverywhere,
+    })).toBeRejectedWith(jasmine.any(ProtectedToolCloseError));
+
+    expect(controlChildApp).not.toHaveBeenCalled();
+    expect(forceCloseToolEverywhere).not.toHaveBeenCalled();
   });
 });
