@@ -9,8 +9,8 @@ const { URL } = require('url');
 const semver = require('semver');
 const { killRegisteredProcessTree } = require('./process-tree');
 
-const DEFAULT_INDEX_URL = 'https://rs1.aily.pro/subapp-index.json';
 const INDEX_CACHE_FILE = 'subapp-index.json';
+const INDEX_CACHE_META_FILE = 'subapp-index.meta.json';
 const MAX_INDEX_BYTES = 2 * 1024 * 1024;
 const TOOL_ID_ALIASES = Object.freeze({
   'aily-chat': 'aily-chat-react',
@@ -23,6 +23,24 @@ const STARTUP_TIMEOUTS = Object.freeze({
 });
 const DEFAULT_TOOLBAR_IDS = new Set(['aily-chat-react']);
 const mutationQueues = new Map();
+
+function buildSubappIndexUrl(resourceUrl) {
+  const normalizedResourceUrl = String(resourceUrl || '').trim().replace(/\/+$/, '');
+  return normalizedResourceUrl ? `${normalizedResourceUrl}/subapp-index.json` : '';
+}
+
+function readDefaultIndexUrl() {
+  try {
+    const config = require('./config/config.json');
+    const defaultRegion = config?.region || 'cn';
+    return buildSubappIndexUrl(config?.regions?.[defaultRegion]?.resource);
+  } catch (error) {
+    console.warn('[subapp-manager] failed to read the default resource config:', error.message || error);
+    return '';
+  }
+}
+
+const DEFAULT_INDEX_URL = readDefaultIndexUrl();
 
 function resolveAppDataPath(env = process.env, platform = process.platform, home = os.homedir()) {
   if (env.AILY_APPDATA_PATH) return path.resolve(env.AILY_APPDATA_PATH);
@@ -1041,16 +1059,28 @@ async function fetchRemoteIndex(indexUrl, fetchImpl = globalThis.fetch) {
   }
 }
 
-function writeIndexCache(rootDir, index) {
+function writeIndexCache(rootDir, index, indexUrl) {
   ensureInstallProject(rootDir);
   const cachePath = path.join(rootDir, INDEX_CACHE_FILE);
   const tempPath = `${cachePath}.${process.pid}.tmp`;
   fs.writeFileSync(tempPath, `${JSON.stringify(index, null, 2)}\n`);
   fs.renameSync(tempPath, cachePath);
+
+  const metaPath = path.join(rootDir, INDEX_CACHE_META_FILE);
+  const metaTempPath = `${metaPath}.${process.pid}.tmp`;
+  fs.writeFileSync(metaTempPath, `${JSON.stringify({ indexUrl }, null, 2)}\n`);
+  fs.renameSync(metaTempPath, metaPath);
 }
 
-function readIndexCache(rootDir) {
+function readIndexCache(rootDir, indexUrl) {
   const cachePath = path.join(rootDir, INDEX_CACHE_FILE);
+  const metaPath = path.join(rootDir, INDEX_CACHE_META_FILE);
+  if (fs.existsSync(metaPath)) {
+    const meta = readJson(metaPath);
+    if (meta?.indexUrl && meta.indexUrl !== indexUrl) {
+      return null;
+    }
+  }
   return fs.existsSync(cachePath) ? validateIndex(readJson(cachePath)) : null;
 }
 
@@ -1644,11 +1674,27 @@ async function replaceInstalledPackage(rootDir, entry, npmRunner, options = {}) 
 
 function createSubappManager(options = {}) {
   const rootDir = resolveSubappRoot(options);
-  const indexUrl = options.indexUrl || process.env.AILY_SUBAPP_INDEX_URL || DEFAULT_INDEX_URL;
   let currentIndex = null;
   let currentMeta = null;
+  let currentIndexUrl = null;
+  let indexUrlGeneration = 0;
+
+  function resolveIndexUrl() {
+    const configuredIndexUrl = typeof options.getIndexUrl === 'function'
+      ? options.getIndexUrl()
+      : options.indexUrl || process.env.AILY_SUBAPP_INDEX_URL || DEFAULT_INDEX_URL;
+    return requireText(configuredIndexUrl, 'subapp index URL');
+  }
 
   async function loadIndex(strategy = 'network-first') {
+    const indexUrl = resolveIndexUrl();
+    if (currentIndexUrl !== indexUrl) {
+      currentIndex = null;
+      currentMeta = null;
+      currentIndexUrl = indexUrl;
+      indexUrlGeneration += 1;
+    }
+    const loadGeneration = indexUrlGeneration;
     let cacheError = null;
     let localIndex = null;
     try {
@@ -1680,7 +1726,7 @@ function createSubappManager(options = {}) {
 
     if (strategy !== 'network-first') {
       try {
-        const cached = readIndexCache(rootDir);
+        const cached = readIndexCache(rootDir, indexUrl);
         if (cached) {
           currentIndex = cached;
           currentMeta = {
@@ -1701,14 +1747,28 @@ function createSubappManager(options = {}) {
 
     try {
       const index = await fetchRemoteIndex(indexUrl, options.fetchImpl);
-      writeIndexCache(rootDir, index);
+      if (
+        loadGeneration !== indexUrlGeneration
+        || currentIndexUrl !== indexUrl
+        || resolveIndexUrl() !== indexUrl
+      ) {
+        return loadIndex(strategy);
+      }
+      writeIndexCache(rootDir, index, indexUrl);
       currentIndex = index;
       currentMeta = { indexUrl, source: 'network', fetchedAt: new Date().toISOString(), warning: null };
       return { index, meta: currentMeta };
     } catch (error) {
+      if (
+        loadGeneration !== indexUrlGeneration
+        || currentIndexUrl !== indexUrl
+        || resolveIndexUrl() !== indexUrl
+      ) {
+        return loadIndex(strategy);
+      }
       let cached = null;
       try {
-        cached = readIndexCache(rootDir);
+        cached = readIndexCache(rootDir, indexUrl);
       } catch (readError) {
         cacheError = readError;
       }
@@ -1799,7 +1859,9 @@ function createSubappManager(options = {}) {
 
   return {
     rootDir,
-    indexUrl,
+    get indexUrl() {
+      return resolveIndexUrl();
+    },
     list,
     install: (payload) => mutate('install', payload),
     update: (payload) => mutate('update', payload),
@@ -1881,6 +1943,7 @@ function registerSubappManagerHandlers(getMainWindow = () => null, handlerOption
 module.exports = {
   DEFAULT_INDEX_URL,
   TOOL_ID_ALIASES,
+  buildSubappIndexUrl,
   clampProgress,
   collectBusyHolders,
   createCatalogState,

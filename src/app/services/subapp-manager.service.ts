@@ -7,6 +7,7 @@ import {
   ChildToolConfig,
   replaceChildToolConfigs,
 } from '../configs/tool.config';
+import { ConfigService } from './config.service';
 
 export interface SubappCatalogItem {
   id: string;
@@ -55,7 +56,7 @@ type CatalogLoadStrategy = 'cache-first' | 'network-first' | 'cache-only';
 const EMPTY_STATE: SubappCatalogState = {
   loading: true,
   source: 'none',
-  indexUrl: 'https://rs1.aily.pro/subapp-index.json',
+  indexUrl: '',
   installRoot: '',
   apps: [],
 };
@@ -69,15 +70,27 @@ export class SubappManagerService implements OnDestroy {
   private removeChangedListener: (() => void) | null = null;
   private removeProgressListener: (() => void) | null = null;
   private languageSubscription?: Subscription;
+  private configSubscription?: Subscription;
+  private configuredIndexUrl = '';
 
   readonly state$ = this.stateSubject.asObservable();
   readonly progress$ = this.progressSubject.asObservable();
 
-  constructor(private translate: TranslateService) {
+  constructor(
+    private translate: TranslateService,
+    private configService: ConfigService,
+  ) {
     this.languageSubscription = this.translate.onLangChange.subscribe((event) => {
       if (this.initialized) {
         void this.load('cache-first', event.lang);
       }
+    });
+    this.configSubscription = this.configService.configReloaded$.subscribe(() => {
+      if (!this.initialized) return;
+      const indexUrl = this.configService.getSubappIndexUrl();
+      if (!indexUrl || indexUrl === this.configuredIndexUrl) return;
+      this.configuredIndexUrl = indexUrl;
+      void this.load('network-first');
     });
   }
 
@@ -91,6 +104,7 @@ export class SubappManagerService implements OnDestroy {
 
   initialize(): Promise<void> {
     if (this.initializePromise) return this.initializePromise;
+    this.configuredIndexUrl = this.configService.getSubappIndexUrl();
     const locale = this.currentLocale();
     this.initializePromise = this.load('cache-first', locale)
       .then(() => {
@@ -159,6 +173,7 @@ export class SubappManagerService implements OnDestroy {
     this.removeChangedListener?.();
     this.removeProgressListener?.();
     this.languageSubscription?.unsubscribe();
+    this.configSubscription?.unsubscribe();
   }
 
   private async load(
@@ -273,7 +288,7 @@ export class SubappManagerService implements OnDestroy {
     this.stateSubject.next({
       loading: false,
       source: result?.source === 'cache' ? 'cache' : 'network',
-      indexUrl: String(result?.indexUrl || EMPTY_STATE.indexUrl),
+      indexUrl: String(result?.indexUrl || this.configuredIndexUrl),
       fetchedAt: typeof result?.fetchedAt === 'string' ? result.fetchedAt : undefined,
       warning: typeof result?.warning === 'string' ? result.warning : null,
       error: null,

@@ -949,7 +949,10 @@ const { registerToolsHandlers } = require("./tools");
 const { registerNotificationHandlers } = require("./notification");
 const { registerProbeRsHandlers } = require("./probe-rs");
 const { registerBleHandlers, registerWebBluetoothChooser } = require("./ble");
-const { registerSubappManagerHandlers } = require("./subapp-manager");
+const {
+  buildSubappIndexUrl,
+  registerSubappManagerHandlers,
+} = require("./subapp-manager");
 const { shouldBeginRendererGeneration } = require("./renderer-lifecycle");
 
 let mainWindow;
@@ -2458,6 +2461,8 @@ function loadEnv() {
   process.env.AILY_OFFICIAL_REGION = officialRegion;
   // npm registry
   process.env.AILY_NPM_REGISTRY = regionConfig.npm_registry;
+  // 子应用目录与当前服务区域共用 regions.<region>.resource 配置。
+  process.env.AILY_SUBAPP_INDEX_URL = buildSubappIndexUrl(regionConfig.resource);
   // 设置 npm 使用应用数据目录下的配置文件，忽略系统 .npmrc
   const appNpmrcPath = path.join(process.env.AILY_APPDATA_PATH, ".npmrc");
   // 如果不存在则创建

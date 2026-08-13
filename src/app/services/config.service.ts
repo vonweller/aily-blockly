@@ -546,6 +546,15 @@ export class ConfigService {
   }
 
   /**
+   * 子应用目录跟随当前服务区域的 regions.<region>.resource，
+   * 不使用 resource_source 的资源镜像选择。
+   */
+  getSubappIndexUrl(): string {
+    const resourceUrl = this.normalizeResourceSourceUrl(this.getCurrentRegionConfig()?.resource || '');
+    return resourceUrl ? `${resourceUrl}/subapp-index.json` : '';
+  }
+
+  /**
    * 获取当前区域的NPM Registry URL
    */
   getCurrentNpmRegistry(): string {
@@ -622,6 +631,7 @@ export class ConfigService {
         window['process'].env['AILY_NPM_REGISTRY'] = regionConfig.npm_registry;
         window['process'].env['AILY_API_SERVER'] = regionConfig.api_server;
         window['process'].env['AILY_TOOL_WEB'] = regionConfig.tool_web;
+        window['process'].env['AILY_SUBAPP_INDEX_URL'] = this.getSubappIndexUrl();
       }
       
       // 通过 ipcRenderer 通知主进程更新环境变量（等待所有更新完成）
@@ -630,7 +640,8 @@ export class ConfigService {
           window['ipcRenderer'].invoke('env-set', { key: 'AILY_REGION', value: regionKey }),
           window['ipcRenderer'].invoke('env-set', { key: 'AILY_NPM_REGISTRY', value: regionConfig.npm_registry }),
           window['ipcRenderer'].invoke('env-set', { key: 'AILY_API_SERVER', value: regionConfig.api_server }),
-          window['ipcRenderer'].invoke('env-set', { key: 'AILY_TOOL_WEB', value: regionConfig.tool_web })
+          window['ipcRenderer'].invoke('env-set', { key: 'AILY_TOOL_WEB', value: regionConfig.tool_web }),
+          window['ipcRenderer'].invoke('env-set', { key: 'AILY_SUBAPP_INDEX_URL', value: this.getSubappIndexUrl() })
         ]);
       }
 
