@@ -19,6 +19,8 @@ export interface ChildToolHostInfo {
   entry?: string;
   /** Absolute package root used as cwd for this Runtime. */
   packagePath?: string;
+  /** Unique `pnpm dev` session served by this Runtime. */
+  devSessionId?: string;
 }
 
 export type ChildToolRuntimeState = 'unknown' | 'starting' | 'ready' | 'stopped' | 'error';
@@ -569,11 +571,14 @@ export class ChildToolProcessService implements OnDestroy {
     const recordedEntry = String(hostInfo.entry || '').replace(/\\/g, '/');
     const recordedPackagePath = String(hostInfo.packagePath || '').replace(/\\/g, '/');
     const expectedPackagePath = String(config.packagePath || '').replace(/\\/g, '/');
+    const expectedDevSessionId = this.readDevelopmentSessionId(config.packagePath);
     const recordedEntryState = classifyRecordedChildToolRuntimeEntry({
       expectedEntry,
       expectedPackagePath,
+      ...(expectedDevSessionId ? { expectedDevSessionId } : {}),
       recordedEntry,
       recordedPackagePath,
+      ...(hostInfo.devSessionId ? { recordedDevSessionId: hostInfo.devSessionId } : {}),
     });
     if (recordedEntryState === 'stale') return true;
     // Modern registrations carry both canonical fields. Trust that metadata:
@@ -604,6 +609,21 @@ export class ChildToolProcessService implements OnDestroy {
       return false;
     }
     return false;
+  }
+
+  private readDevelopmentSessionId(packagePath: string | undefined): string {
+    const fsApi = window['fs'];
+    const pathApi = window['path'];
+    if (!packagePath || !fsApi?.existsSync || !fsApi?.readFileSync || !pathApi?.join) return '';
+
+    const markerPath = pathApi.join(packagePath, '.aily-dev.json');
+    if (!fsApi.existsSync(markerPath)) return '';
+    try {
+      const marker = JSON.parse(fsApi.readFileSync(markerPath, 'utf8'));
+      return typeof marker?.devSessionId === 'string' ? marker.devSessionId.trim() : '';
+    } catch {
+      return '';
+    }
   }
 
   private async startServer(config: ChildToolConfig, session: ChildToolSession): Promise<ChildToolHostInfo> {
