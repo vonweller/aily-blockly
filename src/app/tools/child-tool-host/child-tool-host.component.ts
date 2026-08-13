@@ -978,6 +978,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
         openChildSurfaceWindow: (payload: ChildSurfaceWindowRequest = {}) => this.openChildSurfaceWindow(payload),
         focusChildFrame: () => this.focusChildFrame(),
         writeClipboardText: (payload: { text?: string } = {}) => this.writeClipboardText(payload),
+        openFile: (payload: { path?: string } = {}) => this.openFile(payload),
         reportAiOperationState: (payload: { active?: boolean; sessionId?: string | null } = {}) => {
           return this.ngZone.run(() => this.reportAiOperationState(payload));
         },
@@ -1484,6 +1485,8 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
           && typeof (window as any).dialog?.selectFiles === 'function',
         childAppMenu: isAilyChat,
         clipboardWrite: isAilyChat,
+        openFile: isAilyChat
+          && typeof (window as any).electronAPI?.shell?.showItemInFolder === 'function',
         blockSelectionContext: isAilyChat,
         childFrameFocus: isAilyChat,
         childSurfaceWindow: true,
@@ -1725,6 +1728,37 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       return { ok: false, message: 'Clipboard text is empty' };
     }
     await this.electronService.clipboardWriteText(text);
+    return { ok: true };
+  }
+
+  private openFile(payload: { path?: string }): Record<string, unknown> {
+    if (!this.isAilyChatTool()) {
+      return { ok: false, message: 'File reveal is only available to Aily Chat' };
+    }
+
+    const fullPath = typeof payload?.path === 'string' ? payload.path.trim() : '';
+    const pathApi = (window as any).path;
+    const fs = (window as any).fs;
+    const showItemInFolder = (window as any).electronAPI?.shell?.showItemInFolder;
+
+    if (!fullPath || !pathApi?.isAbsolute?.(fullPath)) {
+      return { ok: false, message: 'File reveal requires an absolute path' };
+    }
+
+    let file: { _isFile?: boolean } | null = null;
+    try {
+      file = fs?.statSync?.(fullPath) ?? null;
+    } catch {
+      file = null;
+    }
+    if (file?._isFile !== true) {
+      return { ok: false, message: 'The file to reveal does not exist' };
+    }
+    if (typeof showItemInFolder !== 'function') {
+      return { ok: false, message: 'Host file reveal is unavailable' };
+    }
+
+    showItemInFolder(fullPath);
     return { ok: true };
   }
 
