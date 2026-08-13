@@ -1,0 +1,11 @@
+{
+  "name": "cybercam-python-e2e",
+  "version": "1.0.0",
+  "nickname": "CyberCAM Python E2E",
+  "board": "CyberCAM",
+  "devmode": "python",
+  "dependencies": {
+    "@aily-project/board-cybercam-e2e": "1.0.0",
+    "@aily-project/lib-cybercam-e2e": "1.0.0"
+  }
+}

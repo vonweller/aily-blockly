@@ -1,7 +1,7 @@
 import { test as base, _electron, expect, type ElectronApplication, type Page } from '@playwright/test';
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -28,6 +28,7 @@ type AilyFixtures = {
   mainWindow: Page;
   executionHostMode: 'off' | 'worker';
   executionHostRuntimeModule: string;
+  pythonRuntimeBackend: 'native' | 'fake';
 };
 
 type LaunchedAilyElectron = {
@@ -290,17 +291,34 @@ export async function openBlocklyProject(win: Page, projectPath: string): Promis
 export const test = base.extend<AilyFixtures>({
   executionHostMode: ['off', { option: true }],
   executionHostRuntimeModule: ['', { option: true }],
+  pythonRuntimeBackend: ['native', { option: true }],
 
-  electronApp: async ({ executionHostMode, executionHostRuntimeModule }, use) => {
+  electronApp: async ({ executionHostMode, executionHostRuntimeModule, pythonRuntimeBackend }, use) => {
+    const fakeBackend = pythonRuntimeBackend === 'fake' ? await buildFakeCanmvBackend() : null;
+    if (fakeBackend) console.log(`[e2e] Fake CanMV backend executable: ${fakeBackend.executable}`);
     const launched = await launchAilyElectron({
       executionHostMode,
       executionHostRuntimeModule,
+      environment: pythonRuntimeBackend === 'fake'
+        ? {
+            CANMV_BACKEND_PATH: fakeBackend!.executable,
+            AILY_FAKE_CANMV_LOG: fakeBackend!.logPath,
+          }
+        : undefined,
     });
 
     try {
       await use(launched.app);
     } finally {
-      await launched.close();
+      try {
+        await launched.close();
+      } finally {
+        if (fakeBackend) {
+          const protocolLog = await readFile(fakeBackend.logPath, 'utf8').catch(() => '<no protocol log>');
+          console.log(`[e2e] Fake CanMV backend protocol log:\n${protocolLog.trim()}`);
+          await fakeBackend.cleanup();
+        }
+      }
     }
   },
 
@@ -313,3 +331,38 @@ export const test = base.extend<AilyFixtures>({
 
 export { expect };
 export { ROOT };
+
+async function buildFakeCanmvBackend(): Promise<{ executable: string; logPath: string; cleanup: () => Promise<void> }> {
+  const outputDir = await mkdtemp(path.join(os.tmpdir(), 'aily-fake-canmv-'));
+  const logPath = path.join(outputDir, 'protocol.log');
+  const project = path.join(ROOT, 'e2e', 'fixtures', 'fake-canmv-backend', 'FakeCanmvBackend.csproj');
+  const result = spawnSync('dotnet', [
+    'build',
+    project,
+    '--configuration',
+    'Release',
+    '--output',
+    outputDir,
+    '--nologo',
+    `-p:BaseIntermediateOutputPath=${path.join(outputDir, 'obj')}${path.sep}`,
+  ], {
+    cwd: ROOT,
+    encoding: 'utf8',
+    timeout: 60_000,
+    windowsHide: true,
+  });
+  if (result.status !== 0) {
+    await rm(outputDir, { recursive: true, force: true }).catch(() => {});
+    throw new Error(`[e2e] Fake CanMV backend build failed: ${result.stderr || result.stdout}`);
+  }
+  const executable = path.join(outputDir, process.platform === 'win32' ? 'FakeCanmvBackend.exe' : 'FakeCanmvBackend');
+  if (!existsSync(executable)) {
+    await rm(outputDir, { recursive: true, force: true }).catch(() => {});
+    throw new Error(`[e2e] Fake CanMV backend executable was not produced: ${executable}`);
+  }
+  return {
+    executable,
+    logPath,
+    cleanup: () => rm(outputDir, { recursive: true, force: true }),
+  };
+}
