@@ -951,6 +951,7 @@
     },
     "COMMON": {
         "FEATURE_COMING_SOON": "Feature coming soon",
+        "AUTH_SESSION_REPLACED_NOTICE": "This account was signed in on another device. You have been logged out on this device. Please sign in again.",
         "SAFE_LOGOUT_TITLE": "Log out?",
         "SAFE_LOGOUT_DESC": "Are you sure you want to log out of this account?",
         "SAFE_LOGOUT_CLOSE_APPS_TITLE": "Log out and close apps?",

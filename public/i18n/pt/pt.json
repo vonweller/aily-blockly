@@ -810,6 +810,7 @@
     },
     "COMMON": {
         "FEATURE_COMING_SOON": "Recurso em breve",
+        "AUTH_SESSION_REPLACED_NOTICE": "Esta conta iniciou sessão noutro dispositivo. A sessão neste dispositivo foi terminada. Inicie sessão novamente.",
         "SAFE_LOGOUT_TITLE": "Sair?",
         "SAFE_LOGOUT_DESC": "Tem certeza de que deseja sair desta conta?",
         "SAFE_LOGOUT_CLOSE_APPS_TITLE": "Sair e fechar os aplicativos?",

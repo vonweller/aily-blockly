@@ -810,6 +810,7 @@
     },
     "COMMON": {
         "FEATURE_COMING_SOON": "Fonctionnalité bientôt disponible",
+        "AUTH_SESSION_REPLACED_NOTICE": "Ce compte s’est connecté sur un autre appareil. Vous avez été déconnecté de cet appareil. Veuillez vous reconnecter.",
         "SAFE_LOGOUT_TITLE": "Se déconnecter ?",
         "SAFE_LOGOUT_DESC": "Voulez-vous vraiment vous déconnecter de ce compte ?",
         "SAFE_LOGOUT_CLOSE_APPS_TITLE": "Se déconnecter et fermer les applications ?",

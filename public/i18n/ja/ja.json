@@ -810,6 +810,7 @@
     },
     "COMMON": {
         "FEATURE_COMING_SOON": "機能は近日公開予定",
+        "AUTH_SESSION_REPLACED_NOTICE": "このアカウントは別のデバイスでログインされました。このデバイスのログインは無効になりました。再度ログインしてください。",
         "SAFE_LOGOUT_TITLE": "ログアウトしますか？",
         "SAFE_LOGOUT_DESC": "このアカウントからログアウトしてもよろしいですか？",
         "SAFE_LOGOUT_CLOSE_APPS_TITLE": "ログアウトしてアプリを閉じますか？",

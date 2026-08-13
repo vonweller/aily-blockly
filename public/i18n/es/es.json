@@ -810,6 +810,7 @@
     },
     "COMMON": {
         "FEATURE_COMING_SOON": "Función próximamente",
+        "AUTH_SESSION_REPLACED_NOTICE": "Esta cuenta inició sesión en otro dispositivo. Se cerró la sesión en este dispositivo. Vuelva a iniciar sesión.",
         "SAFE_LOGOUT_TITLE": "¿Cerrar sesión?",
         "SAFE_LOGOUT_DESC": "¿Seguro que desea cerrar sesión en esta cuenta?",
         "SAFE_LOGOUT_CLOSE_APPS_TITLE": "¿Cerrar sesión y las aplicaciones?",

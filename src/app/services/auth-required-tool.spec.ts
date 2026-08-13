@@ -3,6 +3,7 @@ import {
   closeAuthRequiredTools,
   ProtectedToolCloseError,
 } from './auth-required-tool-close';
+import { runAuthSessionInvalidation } from './auth-session-invalidation';
 
 describe('isAuthRequiredTool', () => {
   it('protects account, cloud, and both Aily Chat implementations', () => {
@@ -82,5 +83,88 @@ describe('closeAuthRequiredTools', () => {
 
     expect(controlChildApp).not.toHaveBeenCalled();
     expect(forceCloseToolEverywhere).not.toHaveBeenCalled();
+  });
+});
+
+describe('runAuthSessionInvalidation', () => {
+  it('saves and closes protected apps before clearing local auth and requesting login', async () => {
+    const calls: string[] = [];
+
+    const result = await runAuthSessionInvalidation({
+      closeProtectedTools: async () => { calls.push('close'); },
+      forceCloseProtectedTools: async () => { calls.push('force-close'); },
+      stopProtectedRuntime: async () => { calls.push('stop-runtime'); },
+      clearLocalAuthSession: async () => { calls.push('clear-auth'); },
+      completeInvalidation: () => { calls.push('complete'); },
+      showSessionReplacedNotice: () => { calls.push('notice'); },
+      requestLogin: () => { calls.push('request-login'); },
+    });
+
+    expect(calls).toEqual([
+      'close',
+      'stop-runtime',
+      'clear-auth',
+      'complete',
+      'notice',
+      'request-login',
+    ]);
+    expect(result).toEqual({ gracefulCloseSucceeded: true, failures: [] });
+  });
+
+  it('forces closure and still clears auth when graceful child preparation fails', async () => {
+    const calls: string[] = [];
+    const failures: string[] = [];
+
+    const result = await runAuthSessionInvalidation({
+      closeProtectedTools: async () => {
+        calls.push('close');
+        throw new Error('prepare failed');
+      },
+      forceCloseProtectedTools: async () => { calls.push('force-close'); },
+      stopProtectedRuntime: async () => { calls.push('stop-runtime'); },
+      clearLocalAuthSession: async () => { calls.push('clear-auth'); },
+      completeInvalidation: () => { calls.push('complete'); },
+      showSessionReplacedNotice: () => { calls.push('notice'); },
+      requestLogin: () => { calls.push('request-login'); },
+      reportFailure: (stage) => { failures.push(stage); },
+    });
+
+    expect(calls).toEqual([
+      'close',
+      'force-close',
+      'stop-runtime',
+      'clear-auth',
+      'complete',
+      'notice',
+      'request-login',
+    ]);
+    expect(failures).toEqual(['graceful-close']);
+    expect(result).toEqual({
+      gracefulCloseSucceeded: false,
+      failures: ['graceful-close'],
+    });
+  });
+
+  it('always settles the login recovery path after runtime or storage errors', async () => {
+    const calls: string[] = [];
+
+    const result = await runAuthSessionInvalidation({
+      closeProtectedTools: async () => { calls.push('close'); },
+      forceCloseProtectedTools: async () => { calls.push('force-close'); },
+      stopProtectedRuntime: async () => {
+        calls.push('stop-runtime');
+        throw new Error('runtime failed');
+      },
+      clearLocalAuthSession: async () => {
+        calls.push('clear-auth');
+        throw new Error('storage failed');
+      },
+      completeInvalidation: () => { calls.push('complete'); },
+      showSessionReplacedNotice: () => { calls.push('notice'); },
+      requestLogin: () => { calls.push('request-login'); },
+    });
+
+    expect(calls.slice(-3)).toEqual(['complete', 'notice', 'request-login']);
+    expect(result.failures).toEqual(['stop-runtime', 'clear-local-auth']);
   });
 });

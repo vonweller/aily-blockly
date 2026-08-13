@@ -123,6 +123,15 @@ export class UiService {
             authenticated: this.authService.isLoggedIn,
             initializationState: this.authService.getAuthInitializationState(),
           };
+        } else if (
+          message.data?.action === 'auth-token-invalid'
+          && message.data?.errorCode === 'AUTH_TOKEN_INVALID'
+        ) {
+          const accepted = this.authService.requestSessionInvalidation(
+            'AUTH_TOKEN_INVALID',
+            'sub-window',
+          );
+          data = { success: true, accepted };
         } else if (message.data?.action === 'logout') {
           // 处理登出请求
           try {

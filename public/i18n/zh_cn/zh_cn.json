@@ -947,6 +947,7 @@
     },
     "COMMON": {
         "FEATURE_COMING_SOON": "功能即将上线",
+        "AUTH_SESSION_REPLACED_NOTICE": "该账号已在其他设备登录，本机登录已失效，请重新登录。",
         "SAFE_LOGOUT_TITLE": "确认退出登录？",
         "SAFE_LOGOUT_DESC": "确定要退出当前账号吗？",
         "SAFE_LOGOUT_CLOSE_APPS_TITLE": "退出登录并关闭应用？",

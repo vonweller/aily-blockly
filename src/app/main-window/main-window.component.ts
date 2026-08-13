@@ -30,7 +30,11 @@ import { OnboardingComponent } from '../components/onboarding/onboarding.compone
 import { OnboardingService } from '../services/onboarding.service';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { isChildTool } from '../configs/tool.config';
-import { AuthService, type LoginDialogRequestState } from '../services/auth.service';
+import {
+  AuthService,
+  type AuthSessionInvalidationRequest,
+  type LoginDialogRequestState,
+} from '../services/auth.service';
 import { ElectronService } from '../services/electron.service';
 import { SubappManagerService } from '../services/subapp-manager.service';
 import { ChildToolProcessService } from '../services/child-tool-process.service';
@@ -48,6 +52,7 @@ import {
   DEFAULT_AILY_CHAT_SUBAPP_BOOTSTRAP_KEY,
   DEFAULT_AILY_CHAT_SUBAPP_TOOL_ID,
 } from '../services/default-aily-chat-bootstrap';
+import { runAuthSessionInvalidation } from '../services/auth-session-invalidation';
 
 const RIGHT_SIDER_WIDTH_STORAGE_KEY = 'aily-main-window.right-sider-width';
 const RIGHT_SIDER_DEFAULT_WIDTH = 450;
@@ -126,6 +131,8 @@ export class MainWindowComponent implements OnDestroy {
   private projectStateSubscription: Subscription | null = null;
   private developmentModePreferencePromptOpen = false;
   private loginDialogSubscription: Subscription | null = null;
+  private authSessionInvalidationSubscription: Subscription | null = null;
+  private authSessionInvalidationPromise: Promise<void> | null = null;
   private unregisterApplicationUpdatePreparation: (() => void) | null = null;
   private cancelAilyChatPrewarm: (() => void) | null = null;
   private ailyChatPrewarmAuthSubscription: Subscription | null = null;
@@ -165,6 +172,8 @@ export class MainWindowComponent implements OnDestroy {
     this.loginDialogSubscription = this.authService.loginDialogRequest$.subscribe((state) => {
       this.loginDialogState = state;
     });
+    this.authSessionInvalidationSubscription = this.authService.authSessionInvalidationRequest$
+      .subscribe((request) => this.handleAuthSessionInvalidation(request));
     void this.chatRuntimeHostResourceOperationHandler.start().catch(error => {
         console.error('[AilyChat][RuntimeHostResourceOperationHandler] Failed to start:', error);
     });
@@ -259,6 +268,74 @@ export class MainWindowComponent implements OnDestroy {
     }
   }
 
+  private handleAuthSessionInvalidation(request: AuthSessionInvalidationRequest): void {
+    if (
+      request.errorCode !== 'AUTH_TOKEN_INVALID'
+      || !this.authService.isSessionInvalidating
+      || this.authSessionInvalidationPromise
+    ) {
+      return;
+    }
+
+    const operation = this.performAuthSessionInvalidation(request);
+    this.authSessionInvalidationPromise = operation;
+    void operation.finally(() => {
+      if (this.authSessionInvalidationPromise === operation) {
+        this.authSessionInvalidationPromise = null;
+      }
+    });
+  }
+
+  private async performAuthSessionInvalidation(
+    request: AuthSessionInvalidationRequest,
+  ): Promise<void> {
+    const protectedToolIds = this.uiService.getOpenAuthRequiredToolIds();
+    console.warn('[Auth] Invalid token reported; invalidating local session immediately.', {
+      errorCode: request.errorCode,
+      source: request.source,
+      protectedToolIds,
+    });
+
+    await runAuthSessionInvalidation({
+      closeProtectedTools: () => this.uiService.closeAuthRequiredTools(protectedToolIds),
+      forceCloseProtectedTools: async () => {
+        for (const toolId of protectedToolIds) {
+          const closed = await this.uiService.forceCloseToolEverywhere(toolId);
+          if (!closed) {
+            throw new Error(`Unable to force close protected tool: ${toolId}`);
+          }
+        }
+      },
+      stopProtectedRuntime: async () => {
+        this.cancelAilyChatPrewarm?.();
+        this.cancelAilyChatPrewarm = null;
+        this.ailyChatPrewarmAuthSubscription?.unsubscribe();
+        this.ailyChatPrewarmAuthSubscription = null;
+        if (this.electronService.isElectron) {
+          await this.childToolProcessService.forceStop(DEFAULT_AILY_CHAT_SUBAPP_TOOL_ID);
+        }
+      },
+      clearLocalAuthSession: () => this.authService.clearLocalAuthSession(),
+      completeInvalidation: () => {
+        this.authService.completeSessionInvalidation();
+        // Re-arm prewarming for the next successful host login.
+        this.scheduleAilyChatPrewarm();
+      },
+      showSessionReplacedNotice: () => {
+        this.message.warning(
+          this.translate.instant('COMMON.AUTH_SESSION_REPLACED_NOTICE'),
+          { nzDuration: 8000 },
+        );
+      },
+      requestLogin: () => {
+        this.authService.requestLogin('auth-token-invalid', { allowSkip: true });
+      },
+      reportFailure: (stage, error) => {
+        console.error(`[Auth] Session invalidation stage failed: ${stage}`, error);
+      },
+    });
+  }
+
   private scheduleAilyChatPrewarm(): void {
     if (this.cancelAilyChatPrewarm) return;
     if (!this.authService.isLoggedIn) {
@@ -339,6 +416,8 @@ export class MainWindowComponent implements OnDestroy {
     this.unregisterApplicationUpdatePreparation = null;
     this.loginDialogSubscription?.unsubscribe();
     this.loginDialogSubscription = null;
+    this.authSessionInvalidationSubscription?.unsubscribe();
+    this.authSessionInvalidationSubscription = null;
     this.configNoticeSubscription?.unsubscribe();
     this.configNoticeSubscription = null;
     this.projectContextSubscription?.unsubscribe();

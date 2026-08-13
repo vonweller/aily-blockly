@@ -810,6 +810,7 @@
     },
     "COMMON": {
         "FEATURE_COMING_SOON": "Funktion demnächst verfügbar",
+        "AUTH_SESSION_REPLACED_NOTICE": "Dieses Konto wurde auf einem anderen Gerät angemeldet. Sie wurden auf diesem Gerät abgemeldet. Bitte melden Sie sich erneut an.",
         "SAFE_LOGOUT_TITLE": "Abmelden?",
         "SAFE_LOGOUT_DESC": "Möchten Sie sich wirklich von diesem Konto abmelden?",
         "SAFE_LOGOUT_CLOSE_APPS_TITLE": "Abmelden und Apps schließen?",

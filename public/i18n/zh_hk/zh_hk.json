@@ -887,6 +887,7 @@
     },
     "COMMON": {
         "FEATURE_COMING_SOON": "功能即將上線",
+        "AUTH_SESSION_REPLACED_NOTICE": "該帳號已在其他裝置登入，本機登入已失效，請重新登入。",
         "SAFE_LOGOUT_TITLE": "確認登出？",
         "SAFE_LOGOUT_DESC": "確定要登出目前帳戶嗎？",
         "SAFE_LOGOUT_CLOSE_APPS_TITLE": "登出並關閉應用程式？",

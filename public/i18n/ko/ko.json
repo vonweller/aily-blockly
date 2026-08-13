@@ -798,6 +798,7 @@
     },
     "COMMON": {
         "FEATURE_COMING_SOON": "기능 출시 예정",
+        "AUTH_SESSION_REPLACED_NOTICE": "이 계정이 다른 기기에서 로그인되어 현재 기기의 로그인이 만료되었습니다. 다시 로그인해 주세요.",
         "SAFE_LOGOUT_TITLE": "로그아웃할까요?",
         "SAFE_LOGOUT_DESC": "이 계정에서 로그아웃하시겠습니까?",
         "SAFE_LOGOUT_CLOSE_APPS_TITLE": "로그아웃하고 앱을 닫을까요?",
