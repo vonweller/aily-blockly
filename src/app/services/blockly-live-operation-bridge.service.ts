@@ -240,6 +240,8 @@ export class BlocklyLiveOperationBridgeService {
         break;
       case 'abs_apply':
         return this.runBlockWritingOperation(() => this.executeAbsApply(payload.params || {}));
+      case 'block_metadata_snapshot':
+        return this.executeBlockMetadataSnapshot();
       case 'project_build':
         return this.executeProjectBuild(payload.params || {});
       case 'serial_ports_list':
@@ -469,6 +471,17 @@ export class BlocklyLiveOperationBridgeService {
       message: this.extractSyncAbsContent(syncResult),
       metadata: syncResult.metadata,
       toolResult: syncResult,
+    };
+  }
+
+  private executeBlockMetadataSnapshot(): Record<string, any> {
+    const snapshot = this.blocklyService.getRuntimeBlockMetadataSnapshot();
+    return {
+      ok: true,
+      operation: 'block_metadata_snapshot',
+      project: this.projectService.currentProjectPath,
+      blocks: snapshot.blocks,
+      failures: snapshot.failures,
     };
   }
 

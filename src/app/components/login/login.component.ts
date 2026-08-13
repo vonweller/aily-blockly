@@ -73,16 +73,17 @@ export class LoginComponent implements OnInit, OnDestroy {
   private emailBindCountdownTimer: ReturnType<typeof setInterval> | null = null;
 
 
-  // 协议文档路径：中文(zh_cn/zh_hk)用 zh 版本，其他语言用英文
+  // 协议所属版本跟随 CN/海外官方区域，文档语言再跟随界面语言。
+  // 不能使用可自动切换的当前资源镜像，否则 CN 版会读到海外协议。
   private getUserAgreementUrl(): string {
-    const base = this.configService.getCurrentResourceUrl();
+    const base = this.configService.getOfficialRegionResourceUrl();
     const lang = this.translate.currentLang || this.translate.defaultLang || 'en';
     const isZh = lang === 'zh_cn' || lang === 'zh_hk' || lang === 'zh-CN' || lang === 'zh-HK';
     const file = isZh ? 'agreement/TERMS-zh.md' : 'agreement/TERMS.md';
     return `${base}/${file}`;
   }
   private getPrivacyPolicyUrl(): string {
-    const base = this.configService.getCurrentResourceUrl();
+    const base = this.configService.getOfficialRegionResourceUrl();
     const lang = this.translate.currentLang || this.translate.defaultLang || 'en';
     const isZh = lang === 'zh_cn' || lang === 'zh_hk' || lang === 'zh-CN' || lang === 'zh-HK';
     const file = isZh ? 'agreement/PRIVACY-zh.md' : 'agreement/PRIVACY.md';
@@ -368,6 +369,7 @@ export class LoginComponent implements OnInit, OnDestroy {
       nzBodyStyle: { padding: '0' },
       nzContent: MarkdownDialogComponent,
       nzWidth: '500px',
+      nzWrapClassName: 'login-agreement-modal',
       nzData: {
         title: this.translate.instant('LOGIN.USER_AGREEMENT'),
         docUrl: this.getUserAgreementUrl(),
@@ -389,6 +391,7 @@ export class LoginComponent implements OnInit, OnDestroy {
       nzClosable: false,
       nzBodyStyle: { padding: '0' },
       nzWidth: '500px',
+      nzWrapClassName: 'login-agreement-modal',
       nzContent: MarkdownDialogComponent,
       nzData: {
         title: this.translate.instant('LOGIN.PRIVACY_POLICY'),

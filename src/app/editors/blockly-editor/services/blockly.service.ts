@@ -25,6 +25,11 @@ import {
   unregisterProjectDataFieldSlots,
 } from '../../../services/project-data/blockly-project-data-adapter';
 import { BlocklyGeneratorRuntimeService } from './blockly-generator-runtime.service';
+import {
+  changedRuntimeBlockTypes,
+  RuntimeBlockMetadata,
+  serializeRuntimeBlockMetadata,
+} from './blockly-runtime-block-metadata';
 
 export interface BlockContextLabel {
   label: string;
@@ -168,6 +173,7 @@ export class BlocklyService {
   // 追踪已加载的库,避免重复加载
   loadedLibraries = new Set<string>(); // libPackagePath
   loadedLibraryInfos = new Map<string, LoadedBlocklyLibraryInfo>(); // libPackagePath -> loaded metadata
+  private runtimeDefinedLibraryBlockTypes = new Set<string>();
   private libraryLoadTasks = new Map<string, Promise<void>>();
   private libraryIntegrityFailureLogSignatures = new Map<string, string>();
   private libraryIntegrityWarningLogSignatures = new Map<string, string>();
@@ -1176,6 +1182,7 @@ export class BlocklyService {
 
     let generatorLoadSuccess = true;
     let loadedBlockTypes: string[] = [];
+    let runtimeDefinedBlockTypes: string[] = [];
     const generatorFilePath = librarySnapshot.paths.generatorJs;
     try {
       // 加载block
@@ -1198,14 +1205,30 @@ export class BlocklyService {
         // 加载generator（必须在 i18n 数据存储后，这样动态定义的块才能读取到正确的多语言）
         const generatorFileIsExist = this.electronService.exists(generatorFilePath);
         if (generatorFileIsExist) {
+          const blockDefinitionsBeforeGenerator = new Map<string, unknown>(
+            Object.entries(Blockly.Blocks || {}),
+          );
           generatorLoadSuccess = await this.loadLibGenerator(generatorFilePath);
           if (!generatorLoadSuccess) {
             throw new Error(`[loadLibrary] generator.js 加载失败: ${libPackageName}`);
           }
+          runtimeDefinedBlockTypes = changedRuntimeBlockTypes(
+            blockDefinitionsBeforeGenerator,
+            Blockly.Blocks || {},
+          );
         }
         // 替换block中静态图片路径
         const staticFileIsExist = this.electronService.exists(this.electronService.pathJoin(libPackagePath, 'static'));
         this.loadLibBlocks(blocks, staticFileIsExist ? this.electronService.pathJoin(libPackagePath, 'static') : null, libPackageName, libVersion, libLocalPath);
+        for (const blockType of runtimeDefinedBlockTypes) {
+          this.runtimeDefinedLibraryBlockTypes.add(blockType);
+          this.blockTypeToLibMap.set(blockType, {
+            name: libPackageName,
+            version: libVersion,
+            localPath: libLocalPath,
+          });
+        }
+        loadedBlockTypes = Array.from(new Set([...loadedBlockTypes, ...runtimeDefinedBlockTypes]));
         // 加载toolbox
         if (librarySnapshot.toolboxRoot) {
           let toolbox = this.cloneJson(librarySnapshot.toolboxRoot);
@@ -1516,6 +1539,7 @@ export class BlocklyService {
     this.loadedGenerators.clear();
     this.loadedLibraries.clear();
     this.loadedLibraryInfos.clear();
+    this.runtimeDefinedLibraryBlockTypes.clear();
     this.libraryLoadTasks.clear();
     this.libraryIntegrityFailureLogSignatures.clear();
     this.libraryIntegrityWarningLogSignatures.clear();
@@ -1767,6 +1791,7 @@ export class BlocklyService {
     this.loadedGenerators.clear();
     this.loadedLibraries.clear();
     this.loadedLibraryInfos.clear();
+    this.runtimeDefinedLibraryBlockTypes.clear();
     this.libraryLoadTasks.clear();
     this.libraryIntegrityFailureLogSignatures.clear();
     this.libraryIntegrityWarningLogSignatures.clear();
@@ -1838,6 +1863,35 @@ export class BlocklyService {
     this.rebuildToolboxFacade();
 
     // console.log('BlocklyService 重置完成');
+  }
+
+  getRuntimeBlockMetadataSnapshot(): { blocks: RuntimeBlockMetadata[]; failures: string[] } {
+    const workspace = new Blockly.Workspace();
+    const blocks: RuntimeBlockMetadata[] = [];
+    const failures: string[] = [];
+
+    try {
+      for (const type of Array.from(this.runtimeDefinedLibraryBlockTypes).sort()) {
+        const library = this.blockTypeToLibMap.get(type)?.name;
+        if (!library || typeof Blockly.Blocks?.[type]?.init !== 'function') {
+          continue;
+        }
+        try {
+          const block = workspace.newBlock(type);
+          try {
+            blocks.push(serializeRuntimeBlockMetadata(type, library, block));
+          } finally {
+            block.dispose(false);
+          }
+        } catch (error) {
+          failures.push(`${type}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+    } finally {
+      workspace.dispose();
+    }
+
+    return { blocks, failures };
   }
 
   getWorkspaceJson() {

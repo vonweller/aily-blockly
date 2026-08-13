@@ -809,7 +809,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       close: () => this.close(),
       detach: options => this.detach(options),
       embed: () => this.embed(),
-      prepareUpdate: () => this.prepareUpdate(),
+      prepareUpdate: options => this.prepareUpdate(options),
     }, {
       instanceId: this.hostContextId,
       surface: this.resolveLaunchContext().surface,
@@ -984,6 +984,12 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
         },
         reportActiveChatSession: (payload: { sessionId?: string | null } = {}) => {
           return this.ngZone.run(() => this.reportActiveChatSession(payload));
+        },
+        reportStartupPhase: (payload: { phase?: string; durationMs?: number } = {}) => {
+          const phase = String(payload.phase || '').trim().slice(0, 80);
+          const durationMs = Math.max(0, Math.round(Number(payload.durationMs) || 0));
+          if (phase) this.log('startup phase', { phase, durationMs });
+          return { ok: true };
         },
         setSubappSurfaceState: (payload: {
           sessionId?: string;
@@ -1272,7 +1278,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   private async runChildBeforeClose(reason: ChildLifecycleReason, strict: boolean): Promise<boolean> {
     const beforeClose = this.remoteApi?.beforeClose;
     if (typeof beforeClose !== 'function') {
-      return true;
+      return !strict;
     }
 
     try {
@@ -1464,10 +1470,14 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       surface: launch.surface,
       surfaceParams: launch.params,
       workspace: this.resolveHostWorkspace(),
+      activeChatSessionId: isAilyChat ? (this.ailyChatSessionId || null) : null,
       blockResources: isAilyChat && this.active ? this.createSelectedBlockResources() : [],
       capabilities: {
         snapshotRefresh: true,
-        authStateRefresh: isAilyChat,
+        // A detached surface runs in a separate Angular renderer and therefore
+        // cannot continuously mirror the main window's AuthService subject.
+        // Keep the child's focus/visibility refresh fallback enabled there.
+        authStateRefresh: isAilyChat && !this.isStandalone,
         userInteractionNotifications: true,
         hostGithubLogin: isAilyChat,
         hostLoginDialog: isAilyChat,
@@ -1917,13 +1927,22 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
         data: { action: 'request-login', reason },
         timeout: 3000,
       });
-      return response === 'timeout' || response?.success === false
-        ? { ok: false, message: 'The main-window login request timed out' }
-        : { ok: true };
+      if (response === 'timeout' || response?.success === false) {
+        return { ok: false, message: 'The main-window login request timed out' };
+      }
+
+      const initializationState = String(response?.initializationState || '');
+      if (response?.authenticated === true) {
+        this.pushChildAuthState(true);
+      } else if (response?.authenticated === false && initializationState === 'signed_out') {
+        this.pushChildAuthState(false);
+      }
+      return { ok: true, authenticated: response?.authenticated === true };
     }
 
     this.ngZone.run(() => this.authService.requestLogin(reason));
-    return { ok: true };
+    this.pushChildAuthState(this.authService.isLoggedIn);
+    return { ok: true, authenticated: this.authService.isLoggedIn };
   }
 
   private pushChildAuthState(authenticated: boolean): void {

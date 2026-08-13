@@ -1,8 +1,8 @@
 import { Injectable } from '@angular/core';
-import { BehaviorSubject, Subject } from 'rxjs';
+import { BehaviorSubject } from 'rxjs';
 import { ElectronService } from './electron.service';
 // import { NzMessageService } from 'ng-zorro-antd/message';
-import { NzModalService } from 'ng-zorro-antd/modal';
+import { NzModalRef, NzModalService } from 'ng-zorro-antd/modal';
 import { UpdateDialogComponent } from '../main-window/components/update-dialog/update-dialog.component';
 import { version } from '../../../package.json';
 import { ConfigService } from './config.service';
@@ -11,6 +11,7 @@ import { UiService } from './ui.service';
 import { ChildAppHostRegistryService } from './child-app-host-registry.service';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { TranslateService } from '@ngx-translate/core';
+import { ChildAppSafetyService } from './child-app-safety.service';
 
 export interface ApplicationUpdatePreparationResult {
   ok: boolean;
@@ -22,6 +23,34 @@ export type ApplicationUpdatePreparationHook = () =>
   | ApplicationUpdatePreparationResult
   | Promise<ApplicationUpdatePreparationResult>;
 
+export type ApplicationUpdateStatus =
+  | ''
+  | 'checking'
+  | 'available'
+  | 'not-available'
+  | 'downloading'
+  | 'downloaded'
+  | 'preparing-install'
+  | 'error';
+
+export interface ApplicationUpdateInfo {
+  version: string;
+  [key: string]: unknown;
+}
+
+const APPLICATION_UPDATE_STATUS_TRANSITIONS: Record<
+  Exclude<ApplicationUpdateStatus, ''>,
+  ApplicationUpdateStatus
+> = {
+  checking: 'checking',
+  available: 'available',
+  'not-available': 'not-available',
+  downloading: 'downloading',
+  downloaded: 'downloaded',
+  'preparing-install': 'preparing-install',
+  error: 'error',
+};
+
 @Injectable({
   providedIn: 'root',
 })
@@ -31,16 +60,16 @@ export class UpdateService {
 
   updateProgress = new BehaviorSubject<number>(0);
 
-  updateStatus = new BehaviorSubject<string>('');
+  updateStatus = new BehaviorSubject<ApplicationUpdateStatus>('');
 
   downloadSourceStatus = new BehaviorSubject<any>(null);
 
-  dialogAction = new Subject();
+  activeUpdateInfo = new BehaviorSubject<ApplicationUpdateInfo | null>(null);
 
   // private updateInfo: any = null;
   private ailyBuilderUpdateDialogOpen = false;
   private installTask: Promise<boolean> | null = null;
-  private readonly installPreparationHooks = new Map<string, ApplicationUpdatePreparationHook>();
+  private updateDialogRef: NzModalRef | null = null;
 
   constructor(
     private electronService: ElectronService,
@@ -52,6 +81,7 @@ export class UpdateService {
     private childHostRegistry: ChildAppHostRegistryService,
     private message: NzMessageService,
     private translate: TranslateService,
+    private childAppSafety: ChildAppSafetyService,
   ) { }
 
   init() {
@@ -68,23 +98,28 @@ export class UpdateService {
           break;
 
         case 'available':
-          this.updateStatus.next('available');
-          // this.updateInfo = status.info;
           // 检查是否已经跳过此版本
           const skippedVersions = this.getSkippedVersions();
           if (skippedVersions.includes(status.info.version)) {
             // console.log(`已跳过版本 ${status.info.version}，不再提示`);
+            this.activeUpdateInfo.next(null);
+            this.updateStatus.next('not-available');
             break;
           }
+          this.activeUpdateInfo.next(status.info);
           // 判断是否已下载，如果已下载则直接显示安装对话框
           if (status.info.isDownloaded) {
-            this.showUpdateDialog(status.info, true);
+            this.updateProgress.next(100);
+            this.updateStatus.next('downloaded');
+            this.openUpdateDialog(status.info, true);
           } else {
-            this.showUpdateDialog(status.info, false);
+            this.updateStatus.next('available');
+            this.openUpdateDialog(status.info, false);
           }
           break;
 
         case 'not-available':
+          this.activeUpdateInfo.next(null);
           this.updateStatus.next('not-available');
           break;
 
@@ -108,6 +143,10 @@ export class UpdateService {
           break;
 
         case 'downloaded':
+          if (status.info?.version) {
+            this.activeUpdateInfo.next(status.info);
+          }
+          this.updateProgress.next(100);
           this.updateStatus.next('downloaded');
           break;
       }
@@ -121,6 +160,19 @@ export class UpdateService {
     }, 3000);
   }
 
+  /** Development-only helper for exercising update UI without contacting an updater server. */
+  simulateUpdate(
+    status: Exclude<ApplicationUpdateStatus, ''> = 'available',
+    versionNumber = '0.9.92',
+    progress = status === 'downloaded' || status === 'preparing-install' ? 100 : 0,
+  ): void {
+    const normalizedVersion = String(versionNumber || '').trim() || '0.9.92';
+    this.activeUpdateInfo.next({ version: normalizedVersion });
+    this.updateProgress.next(Math.max(0, Math.min(100, progress)));
+    this.updateStatus.next(APPLICATION_UPDATE_STATUS_TRANSITIONS[status]);
+    this.openUpdateDialog();
+  }
+
   checkForUpdates(manual: boolean = false) {
     if (this.electronService.isElectron) {
       window['updater'].checkForUpdates();
@@ -131,6 +183,7 @@ export class UpdateService {
   downloadUpdate() {
     this.updateProgress.next(0);
     this.downloadSourceStatus.next(null);
+    this.updateStatus.next('downloading');
     window['updater'].downloadUpdate();
   }
 
@@ -138,6 +191,9 @@ export class UpdateService {
     if (window['updater'].cancelDownload) {
       window['updater'].cancelDownload();
     }
+    this.updateProgress.next(0);
+    this.downloadSourceStatus.next(null);
+    this.updateStatus.next(this.activeUpdateInfo.value ? 'available' : '');
   }
 
   quitAndInstall() {
@@ -145,16 +201,7 @@ export class UpdateService {
   }
 
   registerInstallPreparationHook(id: string, hook: ApplicationUpdatePreparationHook): () => void {
-    const normalizedId = String(id || '').trim();
-    if (!normalizedId) {
-      throw new Error('Application update preparation hook id is required');
-    }
-    this.installPreparationHooks.set(normalizedId, hook);
-    return () => {
-      if (this.installPreparationHooks.get(normalizedId) === hook) {
-        this.installPreparationHooks.delete(normalizedId);
-      }
-    };
+    return this.childAppSafety.registerPreparationHook(id, hook);
   }
 
   prepareAndInstall(): Promise<boolean> {
@@ -173,6 +220,19 @@ export class UpdateService {
   }
 
   private async runInstallPreparation(): Promise<boolean> {
+    const activeChildAppIds = this.childAppSafety.collectActiveChildAppIds(
+      this.uiService.openWindowPathList,
+    );
+    if (activeChildAppIds.length > 0) {
+      const confirmed = await this.childAppSafety.confirmInterruption(
+        'application-update',
+        activeChildAppIds,
+      );
+      if (!confirmed) {
+        return false;
+      }
+    }
+
     this.updateStatus.next('preparing-install');
 
     try {
@@ -183,12 +243,7 @@ export class UpdateService {
 
       await this.prepareStandaloneChildApps();
 
-      for (const [id, hook] of this.installPreparationHooks) {
-        const result = await hook();
-        if (result?.ok === false) {
-          throw new Error(result.message || `Update preparation failed: ${id}`);
-        }
-      }
+      await this.childAppSafety.prepareRegisteredWork();
 
       if (this.projectService.currentProjectPath) {
         const saveResult = await this.projectService.save(this.projectService.currentProjectPath, 15_000);
@@ -261,6 +316,12 @@ export class UpdateService {
       this.configService.save();
       // console.log(`已将版本 ${version} 添加到跳过列表`);
     }
+    if (this.activeUpdateInfo.value?.version === version) {
+      this.activeUpdateInfo.next(null);
+      this.updateProgress.next(0);
+      this.downloadSourceStatus.next(null);
+      this.updateStatus.next('not-available');
+    }
   }
 
   private getSkippedVersions(): string[] {
@@ -270,6 +331,10 @@ export class UpdateService {
   clearSkipVersions() {
     this.configService.data.skippedVersions = [];
     this.configService.save();
+  }
+
+  get hasOpenProject(): boolean {
+    return !!this.projectService.currentProjectPath;
   }
 
   private async checkPackageUpdates(showOptional: boolean) {
@@ -309,10 +374,28 @@ export class UpdateService {
     }
   }
 
-  dialogActionSubscription;
-  private showUpdateDialog(info: any, isDownloaded: boolean = false) {
-    // console.log('showUpdateDialog', info, isDownloaded);
-    const mode = isDownloaded ? 'downloaded' : 'available';
+  openUpdateDialog(
+    info: ApplicationUpdateInfo | null = this.activeUpdateInfo.value,
+    isDownloaded: boolean = false,
+  ): void {
+    if (!info || this.updateDialogRef) {
+      return;
+    }
+
+    this.activeUpdateInfo.next(info);
+    const currentStatus = this.updateStatus.value;
+    const resumableStatuses: ApplicationUpdateStatus[] = [
+      'available',
+      'downloading',
+      'downloaded',
+      'preparing-install',
+      'error',
+    ];
+    const mode = isDownloaded
+      ? 'downloaded'
+      : resumableStatuses.includes(currentStatus)
+        ? currentStatus
+        : 'available';
 
     const modalRef = this.modal.create({
       nzTitle: null,
@@ -331,10 +414,11 @@ export class UpdateService {
       },
       nzMaskClosable: false,
     });
+    this.updateDialogRef = modalRef;
 
     modalRef.afterClose.subscribe(async result => {
-      if (this.dialogActionSubscription) {
-        this.dialogActionSubscription.unsubscribe();
+      if (this.updateDialogRef === modalRef) {
+        this.updateDialogRef = null;
       }
       switch (result) {
         case 'skip':
@@ -350,15 +434,9 @@ export class UpdateService {
           this.cancelDownload();
           break;
         default:
-          // 取消操作
+          // 弹窗收起后，下载和状态监听继续在后台运行。
           break;
       }
     });
-
-    this.dialogActionSubscription = this.dialogAction.subscribe((action) => {
-      if (action === 'download') {
-        this.downloadUpdate();
-      }
-    })
   }
 }

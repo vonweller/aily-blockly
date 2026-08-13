@@ -50,6 +50,8 @@ export interface SubappInstallProgress {
   error?: string;
 }
 
+type CatalogLoadStrategy = 'cache-first' | 'network-first' | 'cache-only';
+
 const EMPTY_STATE: SubappCatalogState = {
   loading: true,
   source: 'none',
@@ -74,7 +76,7 @@ export class SubappManagerService implements OnDestroy {
   constructor(private translate: TranslateService) {
     this.languageSubscription = this.translate.onLangChange.subscribe((event) => {
       if (this.initialized) {
-        void this.load(false, event.lang);
+        void this.load('cache-first', event.lang);
       }
     });
   }
@@ -89,10 +91,13 @@ export class SubappManagerService implements OnDestroy {
 
   initialize(): Promise<void> {
     if (this.initializePromise) return this.initializePromise;
-    this.initializePromise = this.waitForInitialLocale()
-      .then((locale) => this.load(true, locale))
+    const locale = this.currentLocale();
+    this.initializePromise = this.load('cache-first', locale)
       .then(() => {
         this.initialized = true;
+        if (this.state.source === 'cache') {
+          this.refreshCatalogInBackground(locale);
+        }
       })
       .finally(() => {
         const api = (window as any).electronAPI?.subapps;
@@ -109,7 +114,7 @@ export class SubappManagerService implements OnDestroy {
   }
 
   async refresh(force = true): Promise<void> {
-    await this.load(force);
+    await this.load(force ? 'network-first' : 'cache-first');
   }
 
   install(id: string, options: { forceClose?: boolean } = {}): Promise<void> {
@@ -156,7 +161,11 @@ export class SubappManagerService implements OnDestroy {
     this.languageSubscription?.unsubscribe();
   }
 
-  private async load(force: boolean, locale = this.currentLocale()): Promise<void> {
+  private async load(
+    strategy: CatalogLoadStrategy,
+    locale = this.currentLocale(),
+    showLoading = true,
+  ): Promise<void> {
     const api = (window as any).electronAPI?.subapps;
     if (!api?.list) {
       replaceChildToolConfigs([]);
@@ -164,18 +173,31 @@ export class SubappManagerService implements OnDestroy {
       return;
     }
 
-    this.stateSubject.next({ ...this.stateSubject.value, loading: true, error: null });
+    if (showLoading) {
+      this.stateSubject.next({ ...this.stateSubject.value, loading: true, error: null });
+    }
     try {
-      const result = await api.list({ refresh: force, locale });
+      const result = await api.list({ strategy, locale });
       this.applyResult(result);
     } catch (error) {
-      replaceChildToolConfigs([]);
-      this.stateSubject.next({
-        ...this.stateSubject.value,
-        loading: false,
-        error: this.errorMessage(error),
-      });
+      if (showLoading || this.stateSubject.value.apps.length === 0) {
+        replaceChildToolConfigs([]);
+        this.stateSubject.next({
+          ...this.stateSubject.value,
+          loading: false,
+          error: this.errorMessage(error),
+        });
+      } else {
+        this.stateSubject.next({
+          ...this.stateSubject.value,
+          warning: this.errorMessage(error),
+        });
+      }
     }
+  }
+
+  private refreshCatalogInBackground(locale: string): void {
+    void this.load('network-first', locale, false);
   }
 
   private async mutate(
@@ -262,24 +284,6 @@ export class SubappManagerService implements OnDestroy {
 
   private currentLocale(): string {
     return this.translate.currentLang || this.translate.defaultLang || 'en';
-  }
-
-  private waitForInitialLocale(): Promise<string> {
-    if (this.translate.currentLang) {
-      return Promise.resolve(this.translate.currentLang);
-    }
-
-    return new Promise((resolve) => {
-      const subscription = this.translate.onLangChange.subscribe((event) => {
-        clearTimeout(timer);
-        subscription.unsubscribe();
-        resolve(event.lang || this.currentLocale());
-      });
-      const timer = setTimeout(() => {
-        subscription.unsubscribe();
-        resolve(this.currentLocale());
-      }, 10000);
-    });
   }
 
   private errorMessage(error: unknown): string {

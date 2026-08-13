@@ -1648,8 +1648,14 @@ function createSubappManager(options = {}) {
   let currentIndex = null;
   let currentMeta = null;
 
-  async function loadIndex(forceRefresh = false) {
-    const localIndex = readDevelopmentIndexCache(rootDir);
+  async function loadIndex(strategy = 'network-first') {
+    let cacheError = null;
+    let localIndex = null;
+    try {
+      localIndex = readDevelopmentIndexCache(rootDir);
+    } catch (error) {
+      cacheError = error;
+    }
     if (localIndex?.dev === true) {
       currentIndex = localIndex;
       currentMeta = {
@@ -1664,7 +1670,35 @@ function createSubappManager(options = {}) {
       currentIndex = null;
       currentMeta = null;
     }
-    if (currentIndex && !forceRefresh) return { index: currentIndex, meta: currentMeta };
+
+    if (strategy !== 'network-first' && strategy !== 'cache-first' && strategy !== 'cache-only') {
+      throw new Error(`Unsupported subapp catalog load strategy: ${strategy}`);
+    }
+    if (currentIndex && strategy !== 'network-first') {
+      return { index: currentIndex, meta: currentMeta };
+    }
+
+    if (strategy !== 'network-first') {
+      try {
+        const cached = readIndexCache(rootDir);
+        if (cached) {
+          currentIndex = cached;
+          currentMeta = {
+            indexUrl,
+            source: 'cache',
+            fetchedAt: new Date().toISOString(),
+            warning: null,
+          };
+          return { index: cached, meta: currentMeta };
+        }
+      } catch (error) {
+        cacheError = error;
+      }
+      if (strategy === 'cache-only') {
+        throw cacheError || new Error('Subapp index cache is unavailable');
+      }
+    }
+
     try {
       const index = await fetchRemoteIndex(indexUrl, options.fetchImpl);
       writeIndexCache(rootDir, index);
@@ -1672,7 +1706,12 @@ function createSubappManager(options = {}) {
       currentMeta = { indexUrl, source: 'network', fetchedAt: new Date().toISOString(), warning: null };
       return { index, meta: currentMeta };
     } catch (error) {
-      const cached = readIndexCache(rootDir);
+      let cached = null;
+      try {
+        cached = readIndexCache(rootDir);
+      } catch (readError) {
+        cacheError = readError;
+      }
       if (!cached) throw error;
       currentIndex = cached;
       currentMeta = {
@@ -1686,7 +1725,12 @@ function createSubappManager(options = {}) {
   }
 
   async function list(payload = {}) {
-    const { index, meta } = await loadIndex(payload.refresh === true);
+    const strategy = typeof payload.strategy === 'string'
+      ? payload.strategy
+      : payload.refresh === true
+        ? 'network-first'
+        : 'cache-first';
+    const { index, meta } = await loadIndex(strategy);
     return createCatalogState(rootDir, index, payload.locale || 'en', meta);
   }
 
@@ -1702,7 +1746,7 @@ function createSubappManager(options = {}) {
 
   async function mutate(action, payload = {}) {
     return enqueueMutation(async () => {
-      const { index } = await loadIndex(false);
+      const { index } = await loadIndex('cache-first');
       const id = validateId(payload.id);
       const entry = index[id];
       if (!entry) throw new Error(`Subapp is not present in the remote index: ${id}`);
