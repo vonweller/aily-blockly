@@ -53,7 +53,13 @@ export class PythonRuntimePanelComponent implements OnChanges, OnDestroy {
   async activate(): Promise<void> {
     this.deactivateRuntime();
     if (!this.runtimeMetadata) return;
-    const adapter = this.registry.resolve(this.runtimeMetadata);
+    let adapter;
+    try {
+      adapter = this.registry.resolve(this.runtimeMetadata);
+    } catch (error) {
+      this.error = error instanceof Error ? error.message : String(error);
+      return;
+    }
     this.runtime = adapter.runtime;
     this.state$ = this.runtime.state$;
     this.frameSubscription = this.runtime.frame$.subscribe(frame => {
@@ -160,7 +166,13 @@ export class PythonRuntimePanelComponent implements OnChanges, OnDestroy {
     this.frameSubscription?.unsubscribe();
     this.frameSubscription = null;
     this.clearPreview();
-    this.runtime?.dispose();
+    const runtime = this.runtime;
+    if (runtime?.snapshot.connectionState === 'connected') {
+      void runtime.disconnect().catch(() => undefined);
+      runtime.dispose();
+    } else {
+      runtime?.dispose();
+    }
     this.runtime = null;
     this.state$ = null;
   }
