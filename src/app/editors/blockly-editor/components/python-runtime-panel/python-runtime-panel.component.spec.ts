@@ -75,4 +75,28 @@ describe('PythonRuntimePanelComponent', () => {
     expect(runtime.disconnect).toHaveBeenCalledOnceWith();
     expect(runtime.dispose).toHaveBeenCalledOnceWith();
   });
+
+  it('surfaces an unsupported adapter without an unhandled activation rejection', async () => {
+    const { component, registry } = createHarness();
+    registry.resolve.and.throwError('Unsupported Python runtime adapter: missing');
+    component.runtimeMetadata = { kind: 'python', adapter: 'missing', entry: 'main.py' };
+
+    await expectAsync(component.activate()).toBeResolved();
+
+    expect(component.visible).toBeFalse();
+    expect(component.error).toContain('Unsupported Python runtime adapter: missing');
+  });
+
+  it('disconnects an active device before disposing the runtime on destroy', async () => {
+    const { component, runtime } = createHarness();
+    runtime.snapshot = { connectionState: 'connected' };
+    component.runtimeMetadata = metadata;
+    await component.activate();
+
+    component.ngOnDestroy();
+    await Promise.resolve();
+
+    expect(runtime.disconnect).toHaveBeenCalledOnceWith();
+    expect(runtime.dispose).toHaveBeenCalledOnceWith();
+  });
 });
