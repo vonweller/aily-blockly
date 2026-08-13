@@ -1,0 +1,14 @@
+{
+  "blocks": {
+    "languageVersion": 0,
+    "blocks": [
+      {
+        "type": "cybercam_e2e_start",
+        "id": "cybercam-e2e-start",
+        "x": 30,
+        "y": 60,
+        "deletable": false
+      }
+    ]
+  }
+}
