@@ -984,6 +984,12 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
         reportActiveChatSession: (payload: { sessionId?: string | null } = {}) => {
           return this.ngZone.run(() => this.reportActiveChatSession(payload));
         },
+        reportStartupPhase: (payload: { phase?: string; durationMs?: number } = {}) => {
+          const phase = String(payload.phase || '').trim().slice(0, 80);
+          const durationMs = Math.max(0, Math.round(Number(payload.durationMs) || 0));
+          if (phase) this.log('startup phase', { phase, durationMs });
+          return { ok: true };
+        },
         setSubappSurfaceState: (payload: {
           sessionId?: string;
           toolId?: string;

@@ -199,6 +199,87 @@ test('does not request or overwrite the remote index while the cached dev flag i
   assert.equal(refreshed.apps[0].availableVersion, '0.2.0');
 });
 
+test('returns the cached catalog without touching the network for cache-first startup', async (t) => {
+  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aily-subapp-cache-first-'));
+  t.after(() => fs.rmSync(rootDir, { recursive: true, force: true }));
+  fs.mkdirSync(rootDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(rootDir, 'subapp-index.json'),
+    `${JSON.stringify(fixtureIndex('0.1.0'), null, 2)}\n`,
+  );
+  seedInstalledChatPackage(rootDir, '0.1.0');
+
+  let fetchCount = 0;
+  const manager = createSubappManager({
+    rootDir,
+    fetchImpl: async () => {
+      fetchCount += 1;
+      return { ok: true, text: async () => JSON.stringify(fixtureIndex('0.2.0')) };
+    },
+  });
+
+  const startup = await manager.list({ locale: 'en', strategy: 'cache-first' });
+
+  assert.equal(fetchCount, 0);
+  assert.equal(startup.source, 'cache');
+  assert.equal(startup.apps[0].installed, true);
+  assert.equal(startup.apps[0].availableVersion, '0.1.0');
+
+  const refreshed = await manager.list({ locale: 'en', strategy: 'network-first' });
+  assert.equal(fetchCount, 1);
+  assert.equal(refreshed.source, 'network');
+  assert.equal(refreshed.apps[0].availableVersion, '0.2.0');
+});
+
+test('falls back to the network when cache-first startup has no catalog cache', async (t) => {
+  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aily-subapp-cache-miss-'));
+  t.after(() => fs.rmSync(rootDir, { recursive: true, force: true }));
+
+  let fetchCount = 0;
+  const manager = createSubappManager({
+    rootDir,
+    fetchImpl: async () => {
+      fetchCount += 1;
+      return { ok: true, text: async () => JSON.stringify(fixtureIndex('0.2.0')) };
+    },
+  });
+
+  const startup = await manager.list({ locale: 'en', strategy: 'cache-first' });
+
+  assert.equal(fetchCount, 1);
+  assert.equal(startup.source, 'network');
+  assert.equal(startup.apps[0].availableVersion, '0.2.0');
+});
+
+test('repairs a corrupted cache from the network during cache-first startup', async (t) => {
+  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aily-subapp-corrupt-cache-'));
+  t.after(() => fs.rmSync(rootDir, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(rootDir, 'subapp-index.json'), '{broken');
+
+  let fetchCount = 0;
+  const manager = createSubappManager({
+    rootDir,
+    fetchImpl: async () => {
+      fetchCount += 1;
+      return { ok: true, text: async () => JSON.stringify(fixtureIndex('0.2.0')) };
+    },
+  });
+
+  const startup = await manager.list({ locale: 'en', strategy: 'cache-first' });
+
+  assert.equal(fetchCount, 1);
+  assert.equal(startup.source, 'network');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(rootDir, 'subapp-index.json'), 'utf8'))['aily-chat'].version, '0.2.0');
+});
+
+test('rejects unsupported catalog load strategies', async () => {
+  const manager = createSubappManager({ rootDir: os.tmpdir() });
+  await assert.rejects(
+    () => manager.list({ locale: 'en', strategy: 'prefer-magic' }),
+    /Unsupported subapp catalog load strategy/,
+  );
+});
+
 test('omits disabled catalog entries from the subapp list', async (t) => {
   const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'aily-subapp-disabled-'));
   const installRoot = path.join(fixtureRoot, 'npm-global', 'app');

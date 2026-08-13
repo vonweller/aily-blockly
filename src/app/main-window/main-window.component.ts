@@ -21,7 +21,7 @@ import { UpdateService } from '../services/update.service';
 import { NzModalModule, NzModalService } from 'ng-zorro-antd/modal';
 import { NpmService } from '../services/npm.service';
 import { NavigationEnd, Router, RouterModule } from '@angular/router';
-import { distinctUntilChanged, filter, Subscription } from 'rxjs';
+import { distinctUntilChanged, filter, Subscription, take } from 'rxjs';
 import { ConfigService } from '../services/config.service';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { CloudSpaceComponent } from '../tools/cloud-space/cloud-space.component';
@@ -33,6 +33,7 @@ import { isChildTool } from '../configs/tool.config';
 import { AuthService, type LoginDialogRequestState } from '../services/auth.service';
 import { ElectronService } from '../services/electron.service';
 import { SubappManagerService } from '../services/subapp-manager.service';
+import { ChildToolProcessService } from '../services/child-tool-process.service';
 import { LoginComponent } from '../components/login/login.component';
 import { resolveTranslatedApiErrorMessage } from '../utils/api-error.utils';
 import { ToolI18nService } from '../services/tool-i18n.service';
@@ -126,6 +127,8 @@ export class MainWindowComponent implements OnDestroy {
   private developmentModePreferencePromptOpen = false;
   private loginDialogSubscription: Subscription | null = null;
   private unregisterApplicationUpdatePreparation: (() => void) | null = null;
+  private cancelAilyChatPrewarm: (() => void) | null = null;
+  private ailyChatPrewarmAuthSubscription: Subscription | null = null;
 
   loginDialogState: LoginDialogRequestState | null = null;
 
@@ -148,6 +151,7 @@ export class MainWindowComponent implements OnDestroy {
     private electronService: ElectronService,
     private appStoreService: AppStoreService,
     private subappManager: SubappManagerService,
+    private childToolProcessService: ChildToolProcessService,
     private toolI18n: ToolI18nService,
     private readonly chatRuntimeHostResourceOperationHandler: ChatRuntimeHostResourceOperationHandlerService,
     private readonly ailyChatChildProtocol: AilyChatChildProtocolService
@@ -249,9 +253,45 @@ export class MainWindowComponent implements OnDestroy {
           await this.configService.save();
         },
       });
+      this.scheduleAilyChatPrewarm();
     } catch (error) {
       console.warn('[Subapp] Default Aily Chat installation failed:', error);
     }
+  }
+
+  private scheduleAilyChatPrewarm(): void {
+    if (this.cancelAilyChatPrewarm) return;
+    if (!this.authService.isLoggedIn) {
+      if (!this.ailyChatPrewarmAuthSubscription) {
+        this.ailyChatPrewarmAuthSubscription = this.authService.isLoggedIn$
+          .pipe(filter(Boolean), take(1))
+          .subscribe(() => {
+            this.ailyChatPrewarmAuthSubscription = null;
+            this.scheduleAilyChatPrewarm();
+          });
+      }
+      return;
+    }
+    const installed = this.subappManager.state.apps.some(
+      item => item.toolId === DEFAULT_AILY_CHAT_SUBAPP_TOOL_ID && item.installed && item.config,
+    );
+    if (!installed) return;
+
+    const run = () => {
+      this.cancelAilyChatPrewarm = null;
+      void this.childToolProcessService.prewarm(DEFAULT_AILY_CHAT_SUBAPP_TOOL_ID, 90000).catch(error => {
+        console.warn('[Subapp] Aily Chat prewarm failed:', error);
+      });
+    };
+
+    if (typeof window.requestIdleCallback === 'function') {
+      const idleId = window.requestIdleCallback(run, { timeout: 3000 });
+      this.cancelAilyChatPrewarm = () => window.cancelIdleCallback(idleId);
+      return;
+    }
+
+    const timer = setTimeout(run, 1000);
+    this.cancelAilyChatPrewarm = () => clearTimeout(timer);
   }
 
   private async promptDevelopmentModePreferenceIfNeeded(): Promise<void> {
@@ -291,6 +331,10 @@ export class MainWindowComponent implements OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.cancelAilyChatPrewarm?.();
+    this.cancelAilyChatPrewarm = null;
+    this.ailyChatPrewarmAuthSubscription?.unsubscribe();
+    this.ailyChatPrewarmAuthSubscription = null;
     this.unregisterApplicationUpdatePreparation?.();
     this.unregisterApplicationUpdatePreparation = null;
     this.loginDialogSubscription?.unsubscribe();

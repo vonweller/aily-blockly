@@ -75,6 +75,7 @@ interface ChildToolSession {
 })
 export class ChildToolProcessService implements OnDestroy {
   private sessions = new Map<string, ChildToolSession>();
+  private readonly prewarmReleaseTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly releaseGraceMs = 15000;
   private readonly recoveryBaseDelayMs = 500;
   private readonly maxRecoveryAttempts = 3;
@@ -148,6 +149,28 @@ export class ChildToolProcessService implements OnDestroy {
     }
   }
 
+  async prewarm(toolId: string, holdMs = 90000): Promise<ChildToolHostInfo> {
+    const config = this.requireConfig(toolId);
+    const normalizedHoldMs = Math.max(this.releaseGraceMs, Math.min(5 * 60 * 1000, Math.round(holdMs)));
+    const existingTimer = this.prewarmReleaseTimers.get(config.id);
+    const existingSession = this.sessions.get(config.id);
+    if (existingTimer && existingSession?.running && existingSession.hostInfo) {
+      clearTimeout(existingTimer);
+      this.schedulePrewarmRelease(config.id, normalizedHoldMs);
+      return existingSession.hostInfo;
+    }
+
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+      this.prewarmReleaseTimers.delete(config.id);
+      await this.release(config.id);
+    }
+
+    const hostInfo = await this.acquire(config.id);
+    this.schedulePrewarmRelease(config.id, normalizedHoldMs);
+    return hostInfo;
+  }
+
   async restart(toolId: string): Promise<ChildToolHostInfo> {
     const config = this.requireConfig(toolId);
     const session = this.ensureSession(config.id);
@@ -169,6 +192,7 @@ export class ChildToolProcessService implements OnDestroy {
     const config = getChildToolConfig(toolId);
     const session = this.sessions.get(toolId);
     if (config && session) {
+      this.clearPrewarmRelease(config.id);
       this.cancelReleaseTimer(session);
       this.cancelRecovery(session, true);
       await this.stopSession(config, session, 'shutdown');
@@ -185,6 +209,7 @@ export class ChildToolProcessService implements OnDestroy {
     const normalizedToolId = config?.id || toolId;
     const session = this.sessions.get(normalizedToolId);
     if (config && session) {
+      this.clearPrewarmRelease(normalizedToolId);
       this.cancelReleaseTimer(session);
       this.cancelRecovery(session, true);
       await this.forceStopSession(config, session, 'shutdown');
@@ -201,6 +226,9 @@ export class ChildToolProcessService implements OnDestroy {
   }
 
   async stopAll(): Promise<void> {
+    for (const toolId of this.prewarmReleaseTimers.keys()) {
+      this.clearPrewarmRelease(toolId);
+    }
     const entries = Array.from(this.sessions.entries());
     for (const [toolId, session] of entries) {
       const config = getChildToolConfig(toolId);
@@ -294,6 +322,9 @@ export class ChildToolProcessService implements OnDestroy {
     this.removeSessionStateListener?.();
     this.removeSessionStateListener = null;
     this.processMessageListeners.clear();
+    for (const toolId of this.prewarmReleaseTimers.keys()) {
+      this.clearPrewarmRelease(toolId);
+    }
     for (const session of this.sessions.values()) this.cancelRecovery(session, true);
     void this.stopAll();
   }
@@ -355,6 +386,22 @@ export class ChildToolProcessService implements OnDestroy {
         }
       });
     }, this.releaseGraceMs);
+  }
+
+  private schedulePrewarmRelease(toolId: string, holdMs: number): void {
+    const timer = setTimeout(() => {
+      if (this.prewarmReleaseTimers.get(toolId) !== timer) return;
+      this.prewarmReleaseTimers.delete(toolId);
+      void this.release(toolId);
+    }, holdMs);
+    this.prewarmReleaseTimers.set(toolId, timer);
+  }
+
+  private clearPrewarmRelease(toolId: string): void {
+    const timer = this.prewarmReleaseTimers.get(toolId);
+    if (!timer) return;
+    clearTimeout(timer);
+    this.prewarmReleaseTimers.delete(toolId);
   }
 
   private cancelReleaseTimer(session: ChildToolSession): void {
