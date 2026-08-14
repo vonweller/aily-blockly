@@ -37,6 +37,8 @@ import { projectDataRuntime } from '../../services/project-data/project-data-run
 import { projectResourceGc } from './services/project-resource-gc.service';
 import { BlocklyGeneratorRuntimeService } from './services/blockly-generator-runtime.service';
 import { ProjectDataError } from '../../services/project-data/project-data.types';
+import { AuthService } from '../../services/auth.service';
+import { boardRequiresCloudAuth } from './board-auth-gate';
 
 @Component({
   selector: 'app-blockly-editor',
@@ -118,6 +120,7 @@ export class BlocklyEditorComponent implements OnInit, OnDestroy {
     private codeViewerIpcService: CodeViewerIpcService,
     private blocklyLibraryPackageService: BlocklyLibraryPackageService,
     private generatorRuntime: BlocklyGeneratorRuntimeService,
+    private authService: AuthService,
   ) { }
 
   ngOnInit(): void {
@@ -136,6 +139,7 @@ export class BlocklyEditorComponent implements OnInit, OnDestroy {
           }
           this._projectService.currentProjectPath = requestedProjectPath;
           this.projectService.currentProjectPath = requestedProjectPath;
+          this.projectService.beginBlocklyProjectLoad(requestedProjectPath);
           projectDataRuntime.configure(params['path']);
           await this.loadProject(requestedProjectPath);
           this.loadedProjectPath = requestedProjectPath;
@@ -143,7 +147,7 @@ export class BlocklyEditorComponent implements OnInit, OnDestroy {
           console.error('加载项目失败', error);
           const detail = this.formatProjectLoadError(error);
           this.abortFailedProjectLoad();
-          this.projectService.stateSubject.next('error');
+          this.projectService.markBlocklyProjectLoadFailed(requestedProjectPath, detail);
           this.message.error(detail);
         }
       } else {
@@ -244,7 +248,7 @@ export class BlocklyEditorComponent implements OnInit, OnDestroy {
     this.applyProjectPackageJson(packageJson);
     // 与 Aily Code（code-editor-pro）共用：node_modules 不齐则 npm install
     if (!(await this.npmService.ensureProjectDependenciesInstalled(projectPath))) {
-      return;
+      throw new Error('项目依赖安装未完成，无法继续加载 Blockly 项目。');
     }
 
     const missingDeclaredLibraries: string[] = [];
@@ -290,8 +294,7 @@ export class BlocklyEditorComponent implements OnInit, OnDestroy {
               sendToLog: false,
             });
           }, 1000);
-          this.projectService.stateSubject.next('error');
-          return;
+          throw new Error(`项目依赖不完整，无法继续加载：${missingDependencyDetail}`);
         }
 
         missingDeclaredLibraries.push(...missingLibraries);
@@ -363,7 +366,7 @@ export class BlocklyEditorComponent implements OnInit, OnDestroy {
       const restored = await this.restoreMissingProjectLibraries(projectPath, missingProjectLibraries);
       if (!restored) {
         this.handleMissingProjectLibrariesCancelled(missingProjectLibraries);
-        return;
+        throw new Error(`项目缺少仍在使用的积木库：${missingProjectLibraries.map((lib) => lib.name).join(', ')}`);
       }
 
       packageJson = this.readProjectPackageJson(projectPath) || packageJson;
@@ -393,9 +396,11 @@ export class BlocklyEditorComponent implements OnInit, OnDestroy {
       state: 'done',
       text: this.translate.instant('BLOCKLY_EDITOR.PROJECT_LOAD_SUCCESS'),
     });
-    this.projectService.stateSubject.next('loaded');
+    this.projectService.markBlocklyProjectLoaded(projectPath);
     this.generatorRuntime.markReady(projectPath);
+    this.projectService.markBlocklyLibraryRuntimeReady(projectPath);
     this.scheduleProjectLoadedCodeRefresh();
+    void this.promptLoginForAuthRequiredBoard(projectPath);
 
     if (missingDeclaredLibraries.length > 0) {
       const libraryNames = missingDeclaredLibraries.join(', ');
@@ -427,6 +432,35 @@ export class BlocklyEditorComponent implements OnInit, OnDestroy {
         console.log('install board dependencies success');
       })
       .catch(() => undefined);
+  }
+
+  private async promptLoginForAuthRequiredBoard(projectPath: string): Promise<void> {
+    try {
+      const boardPackageJson = await this.projectService.getBoardPackageJson();
+      if (!boardRequiresCloudAuth(boardPackageJson)) {
+        return;
+      }
+
+      const authState = this.authService.getAuthInitializationState();
+      if (authState === 'idle' || authState === 'checking') {
+        await this.authService.initializeAuth();
+      }
+
+      if (
+        this.projectService.currentProjectPath !== projectPath
+        || this.authService.isLoggedIn
+      ) {
+        return;
+      }
+
+      this.message.warning(
+        this.translate.instant('BLOCKLY_EDITOR.BOARD_CLOUD_AUTH_REQUIRED'),
+        { nzDuration: 6000 },
+      );
+      this.authService.requestLogin('board-cloud-service');
+    } catch (error) {
+      console.warn('[ProjectLoad] Failed to check board authentication requirement:', error);
+    }
   }
 
   private async loadProjectAbiDocument(projectPath: string): Promise<{
@@ -844,7 +878,33 @@ export class BlocklyEditorComponent implements OnInit, OnDestroy {
     }
 
     if (shouldRebuildRuntime && this.watchedPackageJsonProjectPath === projectPath) {
-      await this.projectService.rebuildBlocklyRuntimeAfterLibraryChange(projectPath);
+      try {
+        await this.projectService.rebuildBlocklyRuntimeAfterLibraryChange(projectPath);
+        candidateNames.forEach((name) => this.pendingLibraryLoadAttempts.delete(name));
+      } catch (error) {
+        const errorMessage = (error as Error)?.message || String(error);
+        if (errorMessage.startsWith('[BlocklyLibraryRuntime] retained dependencies are not ready:')) {
+          let shouldRetry = false;
+          for (const libPackageName of stillRemovedLibraryNames) {
+            const attempts = (this.pendingLibraryLoadAttempts.get(libPackageName) || 0) + 1;
+            if (attempts < this.maxPendingLibraryLoadAttempts) {
+              this.pendingLibraryLoadAttempts.set(libPackageName, attempts);
+              this.pendingRemovedLibraryDependencies.add(libPackageName);
+              shouldRetry = true;
+            } else {
+              this.pendingLibraryLoadAttempts.delete(libPackageName);
+            }
+          }
+          if (shouldRetry) {
+            console.warn('[PackageJsonWatch] retained libraries are not ready; retrying runtime rebuild:', errorMessage);
+            this.scheduleRemovedLibrarySettle(projectPath);
+            return;
+          }
+        }
+
+        console.error('[PackageJsonWatch] Blockly runtime rebuild after library removal failed:', error);
+        this.message.error(`卸载积木库后刷新工作区失败: ${errorMessage}`);
+      }
     }
   }
 
@@ -1307,7 +1367,6 @@ export class BlocklyEditorComponent implements OnInit, OnDestroy {
   private handleMissingProjectLibrariesCancelled(missingLibraries: MissingLibInfo[]): void {
     const libraryNames = missingLibraries.map((lib) => lib.name).join(', ');
     const text = `项目缺少仍在使用的积木库：${libraryNames}`;
-    this.projectService.stateSubject.next('error');
     this.uiService.updateFooterState({ state: 'error', text });
     this.noticeService.update({
       title: '项目加载已暂停',

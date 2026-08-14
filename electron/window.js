@@ -12,6 +12,7 @@ const { killRegisteredProcessTree } = require('./process-tree');
 const {
     acquireOwner: acquireChildToolOwner,
     authorizeMessagePortSend: authorizeChildToolMessagePortSend,
+    classifyRegistration: classifyChildToolSessionRegistration,
     electMessageControllerOwner: electChildToolMessageControllerOwner,
     ownerCount: childToolOwnerCount,
     releaseOwner: releaseChildToolOwner,
@@ -373,7 +374,10 @@ async function restartChildToolSession(toolId) {
     }
 
     cancelChildToolRelease(session);
-    await stopChildToolSessionProcess(session);
+    const stopped = await stopChildToolSessionProcess(session);
+    if (!stopped) {
+        return { success: false, reason: 'process-still-running' };
+    }
     pendingChildToolProcessMessages.delete(session.streamId);
     childToolSessions.delete(normalizedToolId);
     return { success: true };
@@ -413,11 +417,16 @@ function listChildToolHoldersForCatalogId(catalogId) {
 async function forceStopChildToolByCatalogId(catalogId) {
     const toolIds = resolveChildToolIdsForCatalogId(catalogId);
     let stopped = false;
+    let failed = false;
     for (const toolId of toolIds) {
         const session = childToolSessions.get(toolId);
         if (!session) continue;
         cancelChildToolRelease(session);
-        await stopChildToolSessionProcess(session);
+        const processStopped = await stopChildToolSessionProcess(session);
+        if (!processStopped) {
+            failed = true;
+            continue;
+        }
         if (session.streamId) {
             pendingChildToolProcessMessages.delete(session.streamId);
         }
@@ -427,7 +436,10 @@ async function forceStopChildToolByCatalogId(catalogId) {
     if (stopped) {
         broadcastChildToolSessionStateChanged();
     }
-    return { success: stopped, reason: stopped ? undefined : 'not-found' };
+    return {
+        success: stopped && !failed,
+        reason: failed ? 'process-still-running' : stopped ? undefined : 'not-found'
+    };
 }
 
 function isChildToolSessionAlive(session) {
@@ -1453,14 +1465,36 @@ function registerWindowHandlers(mainWindow, options = {}) {
         const existing = childToolSessions.get(toolId);
         const ownerId = trackChildToolSessionOwner(event.sender);
         const leaseId = String(payload.leaseId || 'legacy-renderer');
-        if (existing && existing.streamId === payload.streamId) {
+        const registration = classifyChildToolSessionRegistration(
+            existing,
+            payload.streamId,
+            isChildToolSessionAlive(existing),
+        );
+        if (registration === 'same-stream') {
             cancelChildToolRelease(existing);
             const acquired = acquireChildToolOwner(existing, ownerId, leaseId);
             return acquired.success
                 ? { success: true, session: cloneChildToolSession(existing) }
                 : { success: false, reason: acquired.reason };
         }
-        if (existing && existing.streamId && existing.streamId !== payload.streamId) {
+        if (registration === 'reuse-existing') {
+            cancelChildToolRelease(existing);
+            const acquired = acquireChildToolOwner(existing, ownerId, leaseId);
+            if (!acquired.success) {
+                return { success: false, reason: acquired.reason };
+            }
+            console.info('[ChildToolSession] Concurrent Runtime start reused existing process', {
+                toolId,
+                existingStreamId: existing.streamId,
+                candidateStreamId: payload.streamId,
+                ownerId,
+                leaseId,
+                refCount: childToolOwnerCount(existing),
+            });
+            notifyChildToolSessionStateChanged();
+            return { success: true, reused: true, session: cloneChildToolSession(existing) };
+        }
+        if (registration === 'replace-stale' && existing?.streamId) {
             cancelChildToolRelease(existing);
             await stopChildToolSessionProcess(existing);
             pendingChildToolProcessMessages.delete(existing.streamId);
@@ -1541,7 +1575,10 @@ function registerWindowHandlers(mainWindow, options = {}) {
             return { success: false, reason: 'not-found' };
         }
         cancelChildToolRelease(session);
-        await stopChildToolSessionProcess(session);
+        const stopped = await stopChildToolSessionProcess(session);
+        if (!stopped) {
+            return { success: false, reason: 'process-still-running' };
+        }
         pendingChildToolProcessMessages.delete(session.streamId);
         childToolSessions.delete(normalizedToolId);
         notifyChildToolSessionStateChanged();
@@ -1697,6 +1734,18 @@ function registerWindowHandlers(mainWindow, options = {}) {
                     data: data.data,
                     messageId: messageId
                 });
+                if (data?.data?.action === 'request-login'
+                    || data?.data?.action === 'switch-service-region'
+                    || data?.data?.action === 'auth-token-invalid') {
+                    if (mainWindow.isMinimized()) {
+                        mainWindow.restore();
+                    }
+                    mainWindow.show();
+                    if (typeof mainWindow.moveTop === 'function') {
+                        mainWindow.moveTop();
+                    }
+                    mainWindow.focus();
+                }
                 // 自定义超时或默认9秒超�?
                 setTimeout(() => {
                     ipcMain.removeListener('main-window-response', responseListener);

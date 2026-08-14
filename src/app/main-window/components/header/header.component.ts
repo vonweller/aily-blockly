@@ -20,7 +20,6 @@ import { Router } from '@angular/router';
 import { ElectronService } from '../../../services/electron.service';
 import { ConfigService } from '../../../services/config.service';
 import { AuthService } from '../../../services/auth.service';
-import { LoginDialogComponent } from '../login-dialog/login-dialog.component';
 import { PlatformService } from '../../../services/platform.service';
 import { ProbeRsService } from '../../../services/probe-rs.service';
 import { AppItem } from '../../../configs/tool.config';
@@ -36,6 +35,10 @@ import {
   type UiAutomationMenuItem,
   type UiAutomationMenuListOptions,
 } from '../../../services/ui-automation-registry.service';
+import {
+  HOST_EXIT_REQUIRES_USER_REASON,
+  mainMenuAutomationRejection,
+} from '../../../services/main-menu-automation-policy';
 
 interface NetworkOtaTarget {
   id: string;
@@ -332,7 +335,11 @@ export class HeaderComponent implements OnInit, OnDestroy {
           enabled: item.disabled !== true,
           visible,
           dangerous: item.action === 'app-exit',
-          mayPrompt: ['project-new', 'project-open', 'recent-project-open', 'project-close', 'app-exit']
+          automationBlocked: item.action === 'app-exit',
+          ...(item.action === 'app-exit'
+            ? { automationBlockedReason: HOST_EXIT_REQUIRES_USER_REASON }
+            : {}),
+          mayPrompt: ['project-new', 'project-open', 'recent-project-open', 'project-close']
             .includes(item.action || ''),
           ...(children.length ? { children } : {}),
         };
@@ -347,7 +354,7 @@ export class HeaderComponent implements OnInit, OnDestroy {
 
   private async executeHeaderMenuAutomationItem(
     itemId: string,
-    options: { confirm?: boolean } = {},
+    _options: { confirm?: boolean } = {},
   ): Promise<UiAutomationCommandResult> {
     const snapshot = this.createHeaderMenuAutomationSnapshot({ includeHidden: true });
     const item = snapshot.sourceById.get(String(itemId || '').trim());
@@ -363,8 +370,9 @@ export class HeaderComponent implements OnInit, OnDestroy {
     if (item.children?.length || item.action === 'recent-projects-root') {
       return { ok: false, message: `菜单项 ${itemId} 是分组，请选择其 children 中的具体 itemId。` };
     }
-    if (item.action === 'app-exit' && options.confirm !== true) {
-      return { ok: false, message: '退出主软件需要显式传 confirm=true。' };
+    const policyRejection = mainMenuAutomationRejection(item.action, itemId);
+    if (policyRejection) {
+      return policyRejection;
     }
 
     if (item.action === 'recent-project-open') {
@@ -876,7 +884,7 @@ export class HeaderComponent implements OnInit, OnDestroy {
         this.electronService.openUrl(item.data.url);
         break;
       case 'app-exit':
-        this.close();
+        await this.close();
         break;
       case 'example-open':
         if (this.isLoaded()) { // 只在已加载项目时检查
@@ -1013,11 +1021,13 @@ export class HeaderComponent implements OnInit, OnDestroy {
     }
   }
 
-  async close() {
+  async close(): Promise<boolean> {
     const canClose = await this.checkUnsavedChanges('close');
-    if (canClose) {
-      window['iWindow'].close();
+    if (!canClose) {
+      return false;
     }
+    window['iWindow'].close();
+    return true;
   }
 
   // 快捷键功能，监听键盘事件,执行对应的操作
@@ -1218,19 +1228,6 @@ export class HeaderComponent implements OnInit, OnDestroy {
             break;
         }
       });
-    });
-  }
-
-  openLoginDialog() {
-    const modalRef = this.modal.create({
-      nzTitle: null,
-      nzFooter: null,
-      nzClosable: false,
-      nzBodyStyle: {
-        padding: '0',
-      },
-      nzWidth: '350px',
-      nzContent: LoginDialogComponent
     });
   }
 

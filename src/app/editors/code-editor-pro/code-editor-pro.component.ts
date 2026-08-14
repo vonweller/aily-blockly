@@ -13,7 +13,10 @@ import { BuilderService as TopBuilderService } from '../../services/builder.serv
 import { UploaderService } from '../../services/uploader.service';
 import { ElectronService } from '../../services/electron.service';
 import { ThemeService } from '../../services/theme.service';
-import { CodeEditorProProjectService } from './services/code-editor-pro-project.service';
+import {
+  CodeEditorProProjectService,
+  type CodeEditorProPersistenceBridge,
+} from './services/code-editor-pro-project.service';
 import { NpmService } from '../../services/npm.service';
 import { resolveActualBuildOutputs, type BuildArtifactV1 } from '../../utils/builder.utils';
 import { resolvePlatformPackagesForCurrentProject } from '../../utils/platform-packages.utils';
@@ -56,6 +59,8 @@ const CODER_LOADER_DELAY_MS = 150;
 const CODER_LEGACY_READY_FALLBACK_MS = 2400;
 const CODER_READY_TIMEOUT_MS = 30000;
 const CODER_REVEAL_DURATION_MS = 480;
+const AILY_CODER_HOST_LIFECYCLE_REQUEST_CHANNEL = 'aily-coder-host-lifecycle-request';
+const AILY_CODER_HOST_LIFECYCLE_RESPONSE_CHANNEL = 'aily-coder-host-lifecycle-response';
 
 @Component({
   selector: 'app-code-editor-pro',
@@ -75,6 +80,7 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
   coderEmbedLoading = true;
   coderEmbedLoaderVisible = false;
   coderEmbedFrameReady = false;
+  private coderWorkbenchReady = false;
   coderEmbedRevealing = false;
   coderLoadingStage: CoderLoadingStage = 'project';
   /** 内嵌 iframe 打开的本地工程根路径（Electron postMessage FS 断言用） */
@@ -91,6 +97,19 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
   private destroyed = false;
 
   private readonly coderNativeFsBridgeListener = (ev: MessageEvent) => this.onCoderNativeFsMessage(ev);
+  private readonly coderPersistenceBridge: CodeEditorProPersistenceBridge = {
+    saveAll: async () => {
+      const result = await this.requestCoderLifecycle('save-all');
+      return { ok: result.ok, ...(result.message ? { message: result.message } : {}) };
+    },
+    hasUnsavedChanges: async () => {
+      const result = await this.requestCoderLifecycle('status');
+      if (!result.ok) {
+        throw new Error(result.message || '无法检查 Aily Coder 未保存状态');
+      }
+      return result.dirtyAfter > 0;
+    },
+  };
 
   /** Worker 内扩展通过 BroadcastChannel 请求访达/资源管理器高亮 */
   private ailyOsRevealBc?: BroadcastChannel;
@@ -138,6 +157,7 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
   }
 
   ngOnInit() {
+    this.proProject.registerPersistenceBridge(this.coderPersistenceBridge);
     window.addEventListener('message', this.coderNativeFsBridgeListener);
     try {
       this.ailyOsRevealBc = new BroadcastChannel(AILY_EMBED_OS_REVEAL_CHANNEL);
@@ -265,6 +285,8 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
   ngOnDestroy(): void {
     this.destroyed = true;
     this.clearCoderEmbedLoadingTimers();
+    this.proProject.unregisterPersistenceBridge(this.coderPersistenceBridge);
+    this.coderWorkbenchReady = false;
     this.embedHostResizeObserver?.disconnect();
     this.embedHostResizeObserver = undefined;
     window.removeEventListener('resize', this.onEmbedLayoutResize);
@@ -292,6 +314,69 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
     this.builderService.cancel();
     this.uploadService.cancel();
     this.electronService.setTitle('aily blockly');
+  }
+
+  private requestCoderLifecycle(
+    action: 'status' | 'save-all',
+    timeoutMs = 10_000,
+  ): Promise<{ ok: boolean; dirtyBefore: number; dirtyAfter: number; message?: string }> {
+    const target = this.coderEmbedFrame?.nativeElement?.contentWindow;
+    if (!target || !this.coderWorkbenchReady) {
+      return Promise.resolve({
+        ok: false,
+        dirtyBefore: 0,
+        dirtyAfter: 0,
+        message: 'Aily Coder 编辑器尚未就绪',
+      });
+    }
+
+    const requestId = `aily-coder-lifecycle-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    return new Promise(resolve => {
+      let settled = false;
+      const finish = (result: { ok: boolean; dirtyBefore: number; dirtyAfter: number; message?: string }) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        window.removeEventListener('message', listener);
+        resolve(result);
+      };
+      const listener = (event: MessageEvent) => {
+        if (event.source !== target) return;
+        const payload = event.data as {
+          channel?: string;
+          requestId?: string;
+          ok?: boolean;
+          dirtyBefore?: number;
+          dirtyAfter?: number;
+          message?: string;
+        };
+        if (
+          payload?.channel !== AILY_CODER_HOST_LIFECYCLE_RESPONSE_CHANNEL ||
+          payload.requestId !== requestId
+        ) {
+          return;
+        }
+        finish({
+          ok: payload.ok === true,
+          dirtyBefore: Number.isFinite(payload.dirtyBefore) ? Number(payload.dirtyBefore) : 0,
+          dirtyAfter: Number.isFinite(payload.dirtyAfter) ? Number(payload.dirtyAfter) : 0,
+          ...(typeof payload.message === 'string' && payload.message ? { message: payload.message } : {}),
+        });
+      };
+      const timer = setTimeout(() => finish({
+        ok: false,
+        dirtyBefore: 0,
+        dirtyAfter: 0,
+        message: '等待 Aily Coder 保存确认超时',
+      }), timeoutMs);
+
+      window.addEventListener('message', listener);
+      target.postMessage({
+        channel: AILY_CODER_HOST_LIFECYCLE_REQUEST_CHANNEL,
+        requestId,
+        action,
+      }, '*');
+    });
   }
 
   /**
@@ -434,6 +519,7 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
   onCoderEmbedFrameLoad(): void {
     const frame = this.coderEmbedFrame?.nativeElement;
     const root = this.coderEmbedWorkspaceRoot;
+    this.coderWorkbenchReady = false;
     if (this.coderEmbedLoading) {
       this.coderLoadingStage = 'workbench';
     }
@@ -467,6 +553,7 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
     this.coderEmbedLoading = true;
     this.coderEmbedLoaderVisible = false;
     this.coderEmbedFrameReady = false;
+    this.coderWorkbenchReady = false;
     this.coderEmbedRevealing = false;
     this.coderReadyProtocolSupported = false;
     this.coderLoadingStage = 'project';
@@ -1137,19 +1224,23 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
       if (
         !frameWindow
         || ev.source !== frameWindow
-        || msg.version !== AILY_CODER_READY_PROTOCOL_VERSION
       ) {
         return;
       }
       if (msg.channel === AILY_CODER_READY_PROTOCOL_CHANNEL) {
+        if (msg.version !== AILY_CODER_READY_PROTOCOL_VERSION) return;
         if (!this.coderEmbedLoading) return;
         this.coderReadyProtocolSupported = true;
         this.coderLoadingStage = 'workbench';
         this.clearCoderLegacyReadyTimer();
         this.armCoderReadyTimeout();
-      } else if (this.coderEmbedLoading) {
+      } else if (
+        msg.version === undefined
+        || msg.version === AILY_CODER_READY_PROTOCOL_VERSION
+      ) {
         this.coderReadyProtocolSupported = true;
-        this.completeCoderEmbedLoading();
+        this.coderWorkbenchReady = true;
+        if (this.coderEmbedLoading) this.completeCoderEmbedLoading();
       }
       return;
     }

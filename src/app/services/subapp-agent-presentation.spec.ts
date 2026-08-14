@@ -159,6 +159,23 @@ describe('independent-window Runtime attachment', () => {
     })).toBe('unknown');
   });
 
+  it('rejects a Runtime retained from an earlier pnpm dev session', () => {
+    expect(classifyRecordedChildToolRuntimeEntry({
+      ...expectedEntry,
+      expectedDevSessionId: 'dev-current',
+      recordedEntry: 'index.js',
+      recordedPackagePath: '/installed/subapp-serial-debugger',
+      recordedDevSessionId: 'dev-old',
+    })).toBe('stale');
+    expect(classifyRecordedChildToolRuntimeEntry({
+      ...expectedEntry,
+      expectedDevSessionId: 'dev-current',
+      recordedEntry: 'index.js',
+      recordedPackagePath: '/installed/subapp-serial-debugger',
+      recordedDevSessionId: 'dev-current',
+    })).toBe('current');
+  });
+
   it('holds a shared Runtime across window startup and releases it only once', async () => {
     const calls: string[] = [];
     const owner = {

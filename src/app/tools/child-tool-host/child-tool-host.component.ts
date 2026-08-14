@@ -11,7 +11,11 @@ import { combineLatest, firstValueFrom, Subscription } from 'rxjs';
 import { SubWindowComponent } from '../../components/sub-window/sub-window.component';
 import { ToolContainerComponent } from '../../components/tool-container/tool-container.component';
 import { ChildToolConfig, getChildToolConfig } from '../../configs/tool.config';
-import { ChildToolHostInfo, ChildToolProcessService } from '../../services/child-tool-process.service';
+import {
+  ChildToolHostInfo,
+  ChildToolProcessService,
+  type ChildToolRuntimeSnapshot,
+} from '../../services/child-tool-process.service';
 import {
   type SubappCatalogItem,
   type SubappInstallProgress,
@@ -19,6 +23,7 @@ import {
 } from '../../services/subapp-manager.service';
 import {
   ChildAppHostRegistryService,
+  type ChildAppLifecycleOptions,
   type ChildAppWindowPlacement,
 } from '../../services/child-app-host-registry.service';
 import { AuthService } from '../../services/auth.service';
@@ -41,7 +46,7 @@ import { ChatSubappDockComponent } from '../aily-chat/components/subapp-activity
 
 type HostStatus = 'idle' | 'starting' | 'ready' | 'error' | 'closed';
 type HostMessageState = 'success' | 'info' | 'warning' | 'error' | 'loading';
-type ChildLifecycleReason = 'close' | 'restart' | 'destroy';
+type ChildLifecycleReason = 'close' | 'restart' | 'update';
 
 interface HostProjectContext {
   workspace?: string | null;
@@ -112,9 +117,12 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   private penpalState: 'idle' | 'connecting' | 'connected' | 'failed' = 'idle';
   private readonly hostContextId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   private hostContextVersion = 0;
-  private beforeCloseNotified = false;
   private beforeCloseTask: Promise<boolean> | null = null;
   private restartTask: Promise<Record<string, unknown>> | null = null;
+  private runtimeRecoveryScheduled = false;
+  private runtimeRecoveryRequestTimes: number[] = [];
+  private readonly runtimeRecoveryWindowMs = 2 * 60 * 1000;
+  private readonly maxRuntimeRecoveriesPerWindow = 2;
   private langSubscription: Subscription | null = null;
   private themeSubscription: Subscription | null = null;
   private projectPathSubscription: Subscription | null = null;
@@ -123,6 +131,8 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   private subappActivitySubscription: Subscription | null = null;
   private configReloadSubscription: Subscription | null = null;
   private aiWritingStateSubscription: Subscription | null = null;
+  private authStateSubscription: Subscription | null = null;
+  private runtimeSubscription: Subscription | null = null;
   private subappCatalogSubscription: Subscription | null = null;
   private subappProgressSubscription: Subscription | null = null;
   private subappRestartRequired = false;
@@ -184,6 +194,9 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       if (!writing && !waitWriting && !this.ailyChatOperationActive) {
         this.clearAiOperationNotice();
       }
+    });
+    this.authStateSubscription = this.authService.isLoggedIn$.subscribe((authenticated) => {
+      this.pushChildAuthState(authenticated);
     });
     this.lastKnownApiServer = this.normalizeApiServer(this.configService.getCurrentApiServer());
     this.configReloadSubscription = this.configService.configReloaded$.subscribe(() => {
@@ -333,6 +346,10 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     this.configReloadSubscription = null;
     this.aiWritingStateSubscription?.unsubscribe();
     this.aiWritingStateSubscription = null;
+    this.authStateSubscription?.unsubscribe();
+    this.authStateSubscription = null;
+    this.runtimeSubscription?.unsubscribe();
+    this.runtimeSubscription = null;
     this.subappCatalogSubscription?.unsubscribe();
     this.subappCatalogSubscription = null;
     this.subappProgressSubscription?.unsubscribe();
@@ -345,13 +362,10 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     this.unregisterHostController = null;
     const releaseToolId = this.acquired ? this.resolvedToolId : '';
     this.acquired = false;
-    const finishDestroy = () => {
-      this.destroyPenpalConnection();
-      if (releaseToolId) {
-        void this.processService.release(releaseToolId);
-      }
-    };
-    void this.notifyChildBeforeClose('destroy').then(finishDestroy, finishDestroy);
+    this.destroyPenpalConnection();
+    if (releaseToolId) {
+      void this.processService.release(releaseToolId);
+    }
   }
 
   async close(): Promise<Record<string, unknown>> {
@@ -370,7 +384,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     }
 
     if (this.resolvedToolId) {
-      this.uiService.closeTool(this.resolvedToolId);
+      this.uiService.completeToolClose(this.resolvedToolId);
     } else {
       this.closing = false;
     }
@@ -391,6 +405,13 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     };
     void task.then(clearRestartTask, clearRestartTask);
     return task;
+  }
+
+  async prepareUpdate(options: ChildAppLifecycleOptions = {}): Promise<Record<string, unknown>> {
+    const prepared = await this.notifyChildBeforeClose('update', options.strict === true);
+    return prepared
+      ? { ok: true, toolId: this.resolvedToolId, action: 'prepareUpdate' }
+      : { ok: false, toolId: this.resolvedToolId, action: 'prepareUpdate', message: '子应用拒绝更新，可能存在未完成操作。' };
   }
 
   async runSubappVersionAction(event: Event): Promise<void> {
@@ -435,13 +456,16 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   private restartForApiServerChange(): Promise<Record<string, unknown>> {
+    return this.forceRestart();
+  }
+
+  private forceRestart(): Promise<Record<string, unknown>> {
     if (this.restartTask) {
       return this.restartTask;
     }
 
-    // A region change invalidates the old authentication endpoint. It is a
-    // host-owned runtime transition, so it must not remain on the old endpoint
-    // when a child beforeClose hook declines a normal user restart.
+    // Host-owned recovery must be able to replace an unhealthy Runtime even
+    // when the child cannot complete its normal beforeClose handshake.
     const task = this.performRestart(true);
     this.restartTask = task;
     const clearRestartTask = () => {
@@ -476,6 +500,17 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     await this.startServer(true);
     const restartedStatus = this.hostStatus as HostStatus;
     if (restartedStatus === 'ready') {
+      const expectedVersion = String(this.currentSubappCatalogItem?.installedVersion || '').trim();
+      const runningVersion = String(this.childVersion || '').trim();
+      if (expectedVersion && runningVersion !== expectedVersion) {
+        this.subappRestartRequired = true;
+        return {
+          ok: false,
+          toolId: this.resolvedToolId,
+          action: 'restart',
+          message: `子应用运行版本校验失败：应为 ${expectedVersion}，实际为 ${runningVersion || '未知'}`
+        };
+      }
       this.subappRestartRequired = false;
       return { ok: true, toolId: this.resolvedToolId, action: 'restart', host: this.hostAutomationStatus() };
     }
@@ -498,7 +533,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     if (!opened) {
       return { ok: false, message: `无法为子应用创建独立窗口: ${this.resolvedToolId}` };
     }
-    this.uiService.closeTool(this.resolvedToolId);
+    this.uiService.completeToolClose(this.resolvedToolId);
     return { ok: true, toolId: this.resolvedToolId, action: 'detach', mode: 'window' };
   }
 
@@ -572,6 +607,10 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
 
     this.config = config;
     this.resolvedToolId = config.id;
+    this.runtimeSubscription?.unsubscribe();
+    this.runtimeSubscription = this.processService.observeRuntime(config.id).subscribe(snapshot => {
+      this.handleRuntimeSnapshot(snapshot);
+    });
     this.childVersion = config.version || '';
     this.subappRestartRequired = false;
     this.titleKey = config.titleKey;
@@ -640,9 +679,13 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     this.subappUpdateProgress = 1;
     this.cdr.markForCheck();
     try {
+      const preparation = await this.prepareUpdate();
+      if (preparation['ok'] !== true) {
+        throw new Error(String(preparation['message'] || '子应用尚未准备好更新'));
+      }
       // 宿主内更新：先停进程，界面保留并显示「正在更新」，完成后自动重启。
       if (this.resolvedToolId) {
-        await this.processService.stop(this.resolvedToolId);
+        await this.processService.forceStop(this.resolvedToolId);
       }
       try {
         await this.subappManager.update(item.id, { forceClose });
@@ -766,6 +809,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       close: () => this.close(),
       detach: options => this.detach(options),
       embed: () => this.embed(),
+      prepareUpdate: options => this.prepareUpdate(options),
     }, {
       instanceId: this.hostContextId,
       surface: this.resolveLaunchContext().surface,
@@ -818,6 +862,50 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     }
   }
 
+  private handleRuntimeSnapshot(snapshot: ChildToolRuntimeSnapshot): void {
+    const recoveredHost = snapshot.hostInfo;
+    if (
+      !this.initialized
+      || !this.acquired
+      || this.closing
+      || snapshot.state !== 'ready'
+      || !recoveredHost?.url
+      || !this.serverInfo
+    ) {
+      return;
+    }
+
+    const sameRuntime = this.serverInfo.url === recoveredHost.url
+      && this.serverInfo.pid === recoveredHost.pid
+      && this.serverInfo.entry === recoveredHost.entry
+      && this.serverInfo.packagePath === recoveredHost.packagePath;
+    if (sameRuntime) return;
+
+    this.log('adopt recovered Runtime', {
+      previous: this.sanitizeHostInfo(this.serverInfo),
+      recovered: this.sanitizeHostInfo(recoveredHost),
+    });
+    this.serverInfo = recoveredHost;
+    this.childToolUrl = this.buildChildToolUrl(recoveredHost.url);
+    this.frameLoaded = false;
+    this.uiHealthFailed = false;
+    this.hostStatus = 'starting';
+    this.errorMessage = '';
+    this.destroyPenpalConnection();
+    this.iframeSrc = null;
+    this.cdr.detectChanges();
+
+    setTimeout(() => {
+      if (!this.initialized || this.closing || this.serverInfo !== recoveredHost) return;
+      this.ngZone.run(() => {
+        this.iframeSrc = this.sanitizer.bypassSecurityTrustResourceUrl(
+          this.withReloadToken(this.childToolUrl),
+        );
+        this.cdr.markForCheck();
+      });
+    }, 0);
+  }
+
   private startPenpalConnection(iframe: HTMLIFrameElement): void {
     this.destroyPenpalConnection();
     this.penpalRemoteWindow = iframe.contentWindow;
@@ -868,6 +956,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
         },
         notifyUserInteraction: (payload: any) => this.notifyUserInteraction(payload),
         reportHostMessage: (payload: any) => this.ngZone.run(() => this.reportHostMessage(payload)),
+        requestRuntimeRecovery: (payload: any = {}) => this.ngZone.run(() => this.requestRuntimeRecovery(payload)),
         requestClose: () => {
           this.ngZone.run(() => {
             void this.close();
@@ -882,17 +971,25 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
           (window as any).electronAPI?.other?.openByBrowser?.(url);
         },
         startGithubLogin: (payload: { inviteCode?: string } = {}) => this.startGithubLogin(payload),
+        requestLogin: (payload: { reason?: string } = {}) => this.requestHostLogin(payload),
         selectChatResources: () => this.selectChatResources(),
         listChildApps: (payload: { limit?: number } = {}) => this.listChatChildApps(payload),
         openChildApp: (payload: { toolId?: string; mode?: 'embedded' | 'window' } = {}) => this.openChatChildApp(payload),
         openChildSurfaceWindow: (payload: ChildSurfaceWindowRequest = {}) => this.openChildSurfaceWindow(payload),
         focusChildFrame: () => this.focusChildFrame(),
         writeClipboardText: (payload: { text?: string } = {}) => this.writeClipboardText(payload),
+        openFile: (payload: { path?: string } = {}) => this.openFile(payload),
         reportAiOperationState: (payload: { active?: boolean; sessionId?: string | null } = {}) => {
           return this.ngZone.run(() => this.reportAiOperationState(payload));
         },
         reportActiveChatSession: (payload: { sessionId?: string | null } = {}) => {
           return this.ngZone.run(() => this.reportActiveChatSession(payload));
+        },
+        reportStartupPhase: (payload: { phase?: string; durationMs?: number } = {}) => {
+          const phase = String(payload.phase || '').trim().slice(0, 80);
+          const durationMs = Math.max(0, Math.round(Number(payload.durationMs) || 0));
+          if (phase) this.log('startup phase', { phase, durationMs });
+          return { ok: true };
         },
         setSubappSurfaceState: (payload: {
           sessionId?: string;
@@ -910,7 +1007,6 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
         this.log('penpal connected');
         this.remoteApi = remote;
         this.penpalState = 'connected';
-        this.beforeCloseNotified = false;
         this.syncHostContext();
         this.pushChatSubappActivities();
       })
@@ -951,6 +1047,58 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
 
     this.emitHostMessage(hostMessage);
     return { ok: true };
+  }
+
+  private requestRuntimeRecovery(payload: any): Record<string, unknown> {
+    if (!this.isAilyChatTool()) {
+      return { ok: false, accepted: false, reason: 'unsupported-tool' };
+    }
+    if (this.runtimeRecoveryScheduled || this.restartTask) {
+      return { ok: true, accepted: true, reason: 'already-in-progress' };
+    }
+
+    const now = Date.now();
+    this.runtimeRecoveryRequestTimes = this.runtimeRecoveryRequestTimes.filter(
+      timestamp => now - timestamp < this.runtimeRecoveryWindowMs,
+    );
+    if (this.runtimeRecoveryRequestTimes.length >= this.maxRuntimeRecoveriesPerWindow) {
+      this.logError('Runtime recovery budget exhausted', {
+        signature: String(payload?.signature || ''),
+        commandType: String(payload?.commandType || ''),
+        errorCode: String(payload?.errorCode || ''),
+      });
+      return { ok: false, accepted: false, reason: 'recovery-budget-exhausted' };
+    }
+
+    this.runtimeRecoveryRequestTimes.push(now);
+    this.runtimeRecoveryScheduled = true;
+    const diagnostic = {
+      signature: String(payload?.signature || '').slice(0, 160),
+      commandType: String(payload?.commandType || '').slice(0, 80),
+      errorCode: String(payload?.errorCode || '').slice(0, 80),
+      requestId: String(payload?.requestId || '').slice(0, 120),
+      sessionId: String(payload?.sessionId || '').slice(0, 160),
+      attempt: this.runtimeRecoveryRequestTimes.length,
+    };
+    this.logError('critical child recovery exhausted; replacing Runtime', diagnostic);
+    this.reportHostMessage({
+      state: 'warning',
+      title: `${this.getToolDisplayName()} Runtime 恢复`,
+      message: '关键会话恢复连续失败，宿主正在替换 Runtime。',
+      detail: JSON.stringify(diagnostic),
+      showMessage: false,
+      sendToLog: true,
+    });
+
+    setTimeout(() => {
+      this.ngZone.run(() => {
+        this.runtimeRecoveryScheduled = false;
+        void this.forceRestart().then(result => {
+          if (result['ok'] !== true) this.logError('Runtime recovery restart failed', result);
+        }).catch(error => this.logError('Runtime recovery restart failed', error));
+      });
+    }, 0);
+    return { ok: true, accepted: true };
   }
 
   private normalizeHostMessage(payload: any): NormalizedHostMessage | null {
@@ -1111,16 +1259,12 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       && (this.penpalState === 'connecting' || this.penpalState === 'connected');
   }
 
-  private async notifyChildBeforeClose(reason: ChildLifecycleReason): Promise<boolean> {
-    if (this.beforeCloseNotified && reason === 'destroy') {
-      return true;
-    }
-
+  private async notifyChildBeforeClose(reason: ChildLifecycleReason, strict = false): Promise<boolean> {
     if (this.beforeCloseTask) {
       return this.beforeCloseTask;
     }
 
-    const task = this.runChildBeforeClose(reason);
+    const task = this.runChildBeforeClose(reason, strict);
     this.beforeCloseTask = task;
     const clearBeforeCloseTask = () => {
       if (this.beforeCloseTask === task) {
@@ -1131,11 +1275,10 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     return task;
   }
 
-  private async runChildBeforeClose(reason: ChildLifecycleReason): Promise<boolean> {
+  private async runChildBeforeClose(reason: ChildLifecycleReason, strict: boolean): Promise<boolean> {
     const beforeClose = this.remoteApi?.beforeClose;
     if (typeof beforeClose !== 'function') {
-      this.beforeCloseNotified = true;
-      return true;
+      return !strict;
     }
 
     try {
@@ -1145,7 +1288,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
           toolId: this.resolvedToolId,
           context: this.createHostContext()
         })),
-        1500
+        reason === 'restart' || reason === 'update' ? 10_000 : 1500
       );
       const canClose = result !== false && result?.canClose !== false;
 
@@ -1164,14 +1307,12 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
         return false;
       }
 
-      this.beforeCloseNotified = true;
       this.log('beforeClose complete', {
         reason,
         result: this.sanitizeLifecycleResult(result)
       });
       return true;
     } catch (error) {
-      this.beforeCloseNotified = true;
       const errorRecord = this.isRecord(error) ? error : {};
       const errorMessage = this.stringifyHostMessageValue(errorRecord['message'] ?? error)
         || 'Unknown child lifecycle error';
@@ -1180,7 +1321,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
         'beforeClose failed',
         `reason=${reason}${errorCode ? ` code=${errorCode}` : ''} error=${errorMessage}`
       );
-      return true;
+      return !strict;
     }
   }
 
@@ -1329,20 +1470,29 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       surface: launch.surface,
       surfaceParams: launch.params,
       workspace: this.resolveHostWorkspace(),
+      activeChatSessionId: isAilyChat ? (this.ailyChatSessionId || null) : null,
       blockResources: isAilyChat && this.active ? this.createSelectedBlockResources() : [],
       capabilities: {
         snapshotRefresh: true,
+        // A detached surface runs in a separate Angular renderer and therefore
+        // cannot continuously mirror the main window's AuthService subject.
+        // Keep the child's focus/visibility refresh fallback enabled there.
+        authStateRefresh: isAilyChat && !this.isStandalone,
         userInteractionNotifications: true,
         hostGithubLogin: isAilyChat,
+        hostLoginDialog: isAilyChat,
         resourcePicker: isAilyChat
           && typeof (window as any).dialog?.selectFiles === 'function',
         childAppMenu: isAilyChat,
         clipboardWrite: isAilyChat,
+        openFile: isAilyChat
+          && typeof (window as any).electronAPI?.shell?.showItemInFolder === 'function',
         blockSelectionContext: isAilyChat,
         childFrameFocus: isAilyChat,
         childSurfaceWindow: true,
         aiOperationState: isAilyChat,
-        subappDock: isAilyChat
+        subappDock: isAilyChat,
+        runtimeRecovery: isAilyChat
       }
     };
   }
@@ -1581,6 +1731,37 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     return { ok: true };
   }
 
+  private openFile(payload: { path?: string }): Record<string, unknown> {
+    if (!this.isAilyChatTool()) {
+      return { ok: false, message: 'File reveal is only available to Aily Chat' };
+    }
+
+    const fullPath = typeof payload?.path === 'string' ? payload.path.trim() : '';
+    const pathApi = (window as any).path;
+    const fs = (window as any).fs;
+    const showItemInFolder = (window as any).electronAPI?.shell?.showItemInFolder;
+
+    if (!fullPath || !pathApi?.isAbsolute?.(fullPath)) {
+      return { ok: false, message: 'File reveal requires an absolute path' };
+    }
+
+    let file: { _isFile?: boolean } | null = null;
+    try {
+      file = fs?.statSync?.(fullPath) ?? null;
+    } catch {
+      file = null;
+    }
+    if (file?._isFile !== true) {
+      return { ok: false, message: 'The file to reveal does not exist' };
+    }
+    if (typeof showItemInFolder !== 'function') {
+      return { ok: false, message: 'Host file reveal is unavailable' };
+    }
+
+    showItemInFolder(fullPath);
+    return { ok: true };
+  }
+
   private focusChildFrame(): Record<string, unknown> {
     if (!this.isAilyChatTool() || !this.penpalRemoteWindow) {
       return { ok: false };
@@ -1725,6 +1906,60 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
 
     this.electronService.openUrl(response.authorization_url);
     return { ok: true, state: response.state };
+  }
+
+  private async requestHostLogin(payload: { reason?: string } = {}): Promise<Record<string, unknown>> {
+    if (!this.isAilyChatTool()) {
+      return { ok: false, message: 'The main-window login dialog is unavailable' };
+    }
+
+    const reason = typeof payload.reason === 'string' && payload.reason.trim()
+      ? payload.reason.trim().slice(0, 80)
+      : 'aily-chat-react';
+
+    if (this.isStandalone) {
+      const sendToMain = window['iWindow']?.send;
+      if (typeof sendToMain !== 'function') {
+        return { ok: false, message: 'The main-window bridge is unavailable' };
+      }
+      const response = await sendToMain({
+        to: 'main',
+        data: { action: 'request-login', reason },
+        timeout: 3000,
+      });
+      if (response === 'timeout' || response?.success === false) {
+        return { ok: false, message: 'The main-window login request timed out' };
+      }
+
+      const initializationState = String(response?.initializationState || '');
+      if (response?.authenticated === true) {
+        this.pushChildAuthState(true);
+      } else if (response?.authenticated === false && initializationState === 'signed_out') {
+        this.pushChildAuthState(false);
+      }
+      return { ok: true, authenticated: response?.authenticated === true };
+    }
+
+    this.ngZone.run(() => this.authService.requestLogin(reason));
+    this.pushChildAuthState(this.authService.isLoggedIn);
+    return { ok: true, authenticated: this.authService.isLoggedIn };
+  }
+
+  private pushChildAuthState(authenticated: boolean): void {
+    if (typeof this.remoteApi?.refreshAuthState === 'function') {
+      void Promise.resolve(this.remoteApi.refreshAuthState({ authenticated })).catch(() => {
+        this.postLegacyChildAuthState(authenticated);
+      });
+      return;
+    }
+    this.postLegacyChildAuthState(authenticated);
+  }
+
+  private postLegacyChildAuthState(authenticated: boolean): void {
+    this.penpalRemoteWindow?.postMessage({
+      type: 'aily-auth-complete',
+      authenticated,
+    }, '*');
   }
 
   private async notifyUserInteraction(payload: any): Promise<Record<string, unknown>> {

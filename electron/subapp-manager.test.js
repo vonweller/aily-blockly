@@ -5,7 +5,9 @@ const path = require('node:path');
 const test = require('node:test');
 
 const {
+  DEFAULT_INDEX_URL,
   TOOL_ID_ALIASES,
+  buildSubappIndexUrl,
   clampProgress,
   createMutationProgressTracker,
   createSubappManager,
@@ -20,6 +22,8 @@ const {
   resolveUiIndex,
   validateIndex,
 } = require('./subapp-manager');
+
+const defaultConfig = require('./config/config.json');
 
 function seedInstalledChatPackage(rootDir, version = '0.1.0') {
   const packageDir = path.join(rootDir, 'node_modules', '@aily-project', 'subapp-aily-chat');
@@ -70,6 +74,20 @@ test('resolves the required user npm-global/app installation root', () => {
     resolveSubappRoot({ platform: 'darwin', home: '/Users/test', env: {} }),
     '/Users/test/Library/aily-project/npm-global/app',
   );
+});
+
+test('builds the subapp catalog URL from the configured region resource', () => {
+  assert.equal(
+    buildSubappIndexUrl(defaultConfig.regions.cn.resource),
+    'https://blockly.yiyu.pro/subapp-index.json',
+  );
+  assert.equal(
+    buildSubappIndexUrl(`${defaultConfig.regions.eu.resource}/`),
+    'https://rs1.aily.pro/subapp-index.json',
+  );
+  assert.equal(DEFAULT_INDEX_URL, buildSubappIndexUrl(
+    defaultConfig.regions[defaultConfig.region].resource,
+  ));
 });
 
 test('quotes Windows npm paths that contain spaces for shell:true', (t) => {
@@ -291,6 +309,174 @@ test('loads the Aily Coder extension from a package-root development fixture', a
   assert.equal(coder.config.uiIndex, 'ui/index.html');
   assert.equal(coder.config.startupTimeoutMs, 30000);
   assert.equal(coder.config.app.extension, true);
+});
+
+test('returns the cached catalog without touching the network for cache-first startup', async (t) => {
+  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aily-subapp-cache-first-'));
+  t.after(() => fs.rmSync(rootDir, { recursive: true, force: true }));
+  fs.mkdirSync(rootDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(rootDir, 'subapp-index.json'),
+    `${JSON.stringify(fixtureIndex('0.1.0'), null, 2)}\n`,
+  );
+  seedInstalledChatPackage(rootDir, '0.1.0');
+
+  let fetchCount = 0;
+  const manager = createSubappManager({
+    rootDir,
+    fetchImpl: async () => {
+      fetchCount += 1;
+      return { ok: true, text: async () => JSON.stringify(fixtureIndex('0.2.0')) };
+    },
+  });
+
+  const startup = await manager.list({ locale: 'en', strategy: 'cache-first' });
+
+  assert.equal(fetchCount, 0);
+  assert.equal(startup.source, 'cache');
+  assert.equal(startup.apps[0].installed, true);
+  assert.equal(startup.apps[0].availableVersion, '0.1.0');
+
+  const refreshed = await manager.list({ locale: 'en', strategy: 'network-first' });
+  assert.equal(fetchCount, 1);
+  assert.equal(refreshed.source, 'network');
+  assert.equal(refreshed.apps[0].availableVersion, '0.2.0');
+});
+
+test('falls back to the network when cache-first startup has no catalog cache', async (t) => {
+  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aily-subapp-cache-miss-'));
+  t.after(() => fs.rmSync(rootDir, { recursive: true, force: true }));
+
+  let fetchCount = 0;
+  const manager = createSubappManager({
+    rootDir,
+    fetchImpl: async () => {
+      fetchCount += 1;
+      return { ok: true, text: async () => JSON.stringify(fixtureIndex('0.2.0')) };
+    },
+  });
+
+  const startup = await manager.list({ locale: 'en', strategy: 'cache-first' });
+
+  assert.equal(fetchCount, 1);
+  assert.equal(startup.source, 'network');
+  assert.equal(startup.apps[0].availableVersion, '0.2.0');
+});
+
+test('switches catalog endpoints when the configured region resource changes', async (t) => {
+  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aily-subapp-region-switch-'));
+  t.after(() => fs.rmSync(rootDir, { recursive: true, force: true }));
+
+  let indexUrl = buildSubappIndexUrl(defaultConfig.regions.cn.resource);
+  const requestedUrls = [];
+  const manager = createSubappManager({
+    rootDir,
+    getIndexUrl: () => indexUrl,
+    fetchImpl: async (url) => {
+      requestedUrls.push(url);
+      return { ok: true, text: async () => JSON.stringify(fixtureIndex()) };
+    },
+  });
+
+  const cnState = await manager.list({ locale: 'zh_CN', strategy: 'network-first' });
+  indexUrl = buildSubappIndexUrl(defaultConfig.regions.eu.resource);
+  const globalState = await manager.list({ locale: 'en', strategy: 'network-first' });
+
+  assert.deepEqual(requestedUrls, [
+    'https://blockly.yiyu.pro/subapp-index.json',
+    'https://rs1.aily.pro/subapp-index.json',
+  ]);
+  assert.equal(cnState.indexUrl, requestedUrls[0]);
+  assert.equal(globalState.indexUrl, requestedUrls[1]);
+  assert.equal(manager.indexUrl, requestedUrls[1]);
+});
+
+test('does not use a cached catalog from a different configured resource', async (t) => {
+  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aily-subapp-region-cache-'));
+  t.after(() => fs.rmSync(rootDir, { recursive: true, force: true }));
+
+  let indexUrl = buildSubappIndexUrl(defaultConfig.regions.cn.resource);
+  let shouldFail = false;
+  const manager = createSubappManager({
+    rootDir,
+    getIndexUrl: () => indexUrl,
+    fetchImpl: async () => {
+      if (shouldFail) throw new Error('configured endpoint unavailable');
+      return { ok: true, text: async () => JSON.stringify(fixtureIndex()) };
+    },
+  });
+
+  await manager.list({ locale: 'zh_CN', strategy: 'network-first' });
+  indexUrl = buildSubappIndexUrl(defaultConfig.regions.eu.resource);
+  shouldFail = true;
+
+  await assert.rejects(
+    () => manager.list({ locale: 'en', strategy: 'network-first' }),
+    /configured endpoint unavailable/,
+  );
+});
+
+test('discards an in-flight catalog response after the configured resource changes', async (t) => {
+  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aily-subapp-region-race-'));
+  t.after(() => fs.rmSync(rootDir, { recursive: true, force: true }));
+
+  const cnUrl = buildSubappIndexUrl(defaultConfig.regions.cn.resource);
+  const globalUrl = buildSubappIndexUrl(defaultConfig.regions.eu.resource);
+  let indexUrl = cnUrl;
+  let releaseCnRequest;
+  const cnRequestBlocked = new Promise((resolve) => {
+    releaseCnRequest = resolve;
+  });
+  const manager = createSubappManager({
+    rootDir,
+    getIndexUrl: () => indexUrl,
+    fetchImpl: async (url) => {
+      if (url === cnUrl) await cnRequestBlocked;
+      return { ok: true, text: async () => JSON.stringify(fixtureIndex()) };
+    },
+  });
+
+  const staleRequest = manager.list({ locale: 'zh_CN', strategy: 'network-first' });
+  indexUrl = globalUrl;
+  const currentState = await manager.list({ locale: 'en', strategy: 'network-first' });
+  releaseCnRequest();
+  const staleRequestResult = await staleRequest;
+
+  assert.equal(currentState.indexUrl, globalUrl);
+  assert.equal(staleRequestResult.indexUrl, globalUrl);
+  assert.equal(
+    JSON.parse(fs.readFileSync(path.join(rootDir, 'subapp-index.meta.json'), 'utf8')).indexUrl,
+    globalUrl,
+  );
+});
+
+test('repairs a corrupted cache from the network during cache-first startup', async (t) => {
+  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aily-subapp-corrupt-cache-'));
+  t.after(() => fs.rmSync(rootDir, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(rootDir, 'subapp-index.json'), '{broken');
+
+  let fetchCount = 0;
+  const manager = createSubappManager({
+    rootDir,
+    fetchImpl: async () => {
+      fetchCount += 1;
+      return { ok: true, text: async () => JSON.stringify(fixtureIndex('0.2.0')) };
+    },
+  });
+
+  const startup = await manager.list({ locale: 'en', strategy: 'cache-first' });
+
+  assert.equal(fetchCount, 1);
+  assert.equal(startup.source, 'network');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(rootDir, 'subapp-index.json'), 'utf8'))['aily-chat'].version, '0.2.0');
+});
+
+test('rejects unsupported catalog load strategies', async () => {
+  const manager = createSubappManager({ rootDir: os.tmpdir() });
+  await assert.rejects(
+    () => manager.list({ locale: 'en', strategy: 'prefer-magic' }),
+    /Unsupported subapp catalog load strategy/,
+  );
 });
 
 test('omits disabled catalog entries from the subapp list', async (t) => {
