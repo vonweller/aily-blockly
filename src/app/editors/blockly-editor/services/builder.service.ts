@@ -1,4 +1,4 @@
-import { Injectable } from '@angular/core';
+import { Injectable, NgZone } from '@angular/core';
 import { TranslateService } from '@ngx-translate/core';
 import { CmdOutput, CmdService } from '../../../services/cmd.service';
 import { CrossPlatformCmdService } from '../../../services/cross-platform-cmd.service';
@@ -9,13 +9,18 @@ import { LogService } from '../../../services/log.service';
 import { ConfigService } from '../../../services/config.service';
 import { ActionState } from '../../../services/ui.service';
 import { ActionService } from '../../../services/action.service';
-import { arduinoGenerator } from '../components/blockly/generators/arduino/arduino';
+import {
+  normalizeArduinoGeneratedCode,
+  type BlockCodeMapping,
+} from '../components/blockly/generators/arduino/arduino';
+import {
+  runWithPreparedActiveProjectGenerator,
+} from './blockly-generator-runtime.service';
 
 import { BlocklyService as BlocklyService } from './blockly.service';
 
 import { PlatformService } from "../../../services/platform.service";
 import { ElectronService } from '../../../services/electron.service';
-import { prepareBlocklyProjectDataForCodeGeneration } from '../../../services/project-data/blockly-project-data-adapter';
 import { writeArduinoGeneratedArtifacts } from './generated-code-artifacts';
 import { WorkflowService, ProcessState } from '../../../services/workflow.service';
 import { CompileValidationService } from '../../../services/compile-validation.service';
@@ -28,6 +33,19 @@ import {
   isAilyBuilderProgressLine,
   parseAilyBuilderProgressLine
 } from '../../../utils/aily-builder-progress.utils';
+import { ChatPerformanceTracer } from '../../../tools/aily-chat/services/chat-perf-tracer';
+import { appendProjectLog, type ProjectLogLevel } from '../../../utils/project-log.utils';
+import { ProjectDebugConfigurationService } from '../../../services/project-debug-configuration.service';
+
+const AILY_CHAT_LEX_COMPLETION_PENDING_COUNT_KEY = '__AILY_CHAT_LEX_COMPLETION_PENDING_COUNT__';
+const AILY_CHAT_AGENT_LOOP_PENDING_COUNT_KEY = '__AILY_CHAT_AGENT_LOOP_PENDING_COUNT__';
+const PREPROCESS_IDLE_TIMEOUT_MS = 1800;
+const PREPROCESS_PENDING_CHAT_POLL_MS = 500;
+const PREPROCESS_PENDING_RETRY_MS = 2000;
+const PREPROCESS_PENDING_CHAT_MAX_WAIT_MS = 10_000;
+const PREPROCESS_POST_CHAT_QUIET_MS = 1500;
+const PREPROCESS_SLOW_PHASE_MS = 32;
+const PREPROCESS_ERROR_OUTPUT_LIMIT = 64 * 1024;
 
 @Injectable()
 export class _BuilderService {
@@ -48,13 +66,17 @@ export class _BuilderService {
     private electronService: ElectronService,
     private npmService: NpmService,
     private compileValidationService: CompileValidationService,
-    private appDataResourceLock: AppDataResourceLockService
+    private appDataResourceLock: AppDataResourceLockService,
+    private ngZone: NgZone,
+    private projectDebugConfigurationService:
+      ProjectDebugConfigurationService,
   ) { }
 
   // buildInProgress = false;
   private streamId: string | null = null;
   private buildSubscription: any = null; // 保存订阅引用
   private buildPromiseReject: any = null; // 保存 Promise 的 reject 函数
+  private activeBuildRequestId: string | null = null;
   private buildCompleted = false;
   private isErrored = false; // 标识是否为错误状态
   private buildStartTime: number = 0; // 编译开始时间
@@ -67,6 +89,9 @@ export class _BuilderService {
   private preprocessError: string | null = null; // 保存预编译错误信息
   private preprocessFullError: string = ''; // 保存预编译完整错误日志
   private pendingPrecompile: boolean = false; // 标记是否有待处理的预编译
+  private preprocessRunGeneration = 0;
+  private pendingPrecompileTimer: ReturnType<typeof setTimeout> | null = null;
+  private pendingPrecompileBlockedLogged = false;
   private aiWaitingSubscription: any = null; // 保存 AI 等待状态订阅引用
   private workflowStateSubscription: any = null; // 保存流程状态订阅引用
   private lastWorkflowState: ProcessState | null = null;
@@ -94,6 +119,10 @@ export class _BuilderService {
     return translated === translationKey ? progress.message : translated;
   }
 
+  private appendCompileLog(message: string, level: ProjectLogLevel = 'INFO'): void {
+    appendProjectLog(this.projectService.currentProjectPath, 'compile', level, message);
+  }
+
   private messageWithDuration(message: string, seconds: string): string {
     return this.t('MESSAGE_WITH_DURATION', { message, seconds });
   }
@@ -112,16 +141,291 @@ export class _BuilderService {
     return this.npmService.isInstalling || this.workflowService.currentState === ProcessState.INSTALLING;
   }
 
+  private getPendingChatBackgroundOperationCount(): number {
+    const value = (globalThis as Record<string, unknown>)[AILY_CHAT_LEX_COMPLETION_PENDING_COUNT_KEY];
+    return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : 0;
+  }
+
+  private getPendingChatAgentLoopCount(): number {
+    const value = (globalThis as Record<string, unknown>)[AILY_CHAT_AGENT_LOOP_PENDING_COUNT_KEY];
+    return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : 0;
+  }
+
+  private getPendingChatBlockingOperationCount(): number {
+    return this.getPendingChatBackgroundOperationCount() + this.getPendingChatAgentLoopCount();
+  }
+
+  private waitForOneIdleBoundary(): Promise<void> {
+    return new Promise(resolve => {
+      const requestIdle = (globalThis as any).requestIdleCallback as
+        | ((callback: () => void, options?: { timeout?: number }) => number)
+        | undefined;
+      if (typeof requestIdle === 'function') {
+        requestIdle(() => resolve(), { timeout: PREPROCESS_IDLE_TIMEOUT_MS });
+        return;
+      }
+
+      setTimeout(resolve, PREPROCESS_PENDING_CHAT_POLL_MS);
+    });
+  }
+
+  private waitForDelay(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  private recordPreprocessDuration(tag: string, startedAt: number, detail?: string): void {
+    const durationMs = Date.now() - startedAt;
+    ChatPerformanceTracer.recordDuration(
+      `builder_preprocess_${tag}`,
+      durationMs,
+      detail,
+      { slowThresholdMs: PREPROCESS_SLOW_PHASE_MS },
+    );
+    if (durationMs >= PREPROCESS_SLOW_PHASE_MS) {
+      console.info('[Builder][PreprocessSchedule] slow phase', {
+        tag,
+        durationMs,
+        detail,
+      });
+    }
+  }
+
+  private async runBuilderPreprocessPhase<T>(
+    tag: string,
+    operation: () => T | Promise<T>,
+    detail?: string,
+  ): Promise<T> {
+    const startedAt = Date.now();
+    try {
+      return await ChatPerformanceTracer.runWithSurface(
+        'builder_preprocess',
+        operation,
+        detail ? `${tag}:${detail}` : tag,
+      );
+    } finally {
+      this.recordPreprocessDuration(tag, startedAt, detail);
+    }
+  }
+
+  private async generateWorkspaceCodeForPreprocess(
+    workspace: unknown,
+    detail?: string,
+  ): Promise<string> {
+    // Code-generation events publish the exact workspace revision before they
+    // trigger preprocessing. Reuse it to avoid generating the same workspace
+    // synchronously again on the renderer thread.
+    const reusableCode = this.blocklyService.getReusableGeneratedCode();
+    if (reusableCode !== null) {
+      return reusableCode;
+    }
+
+    await this.waitForOneIdleBoundary();
+    const projectPath = this.projectService.currentProjectPath;
+    const projectDocument = this.blocklyService.getProjectDocument();
+    const generated = await this.runBuilderPreprocessPhase(
+      'workspace_to_code',
+      () => runWithPreparedActiveProjectGenerator(
+        workspace as any,
+        (generator) => ({
+          code: normalizeArduinoGeneratedCode(generator.workspaceToCode(workspace as any)),
+          generator,
+        }),
+        projectDocument,
+      ),
+      detail,
+    );
+    await writeArduinoGeneratedArtifacts(
+      projectPath,
+      generated.generator,
+    );
+    // The workspace can become dirty while the dependency debounce is pending.
+    // Cache this fallback generation for the remaining preprocess/build flow.
+    this.blocklyService.publishGeneratedCode(generated.code);
+    return generated.code;
+  }
+
+  /**
+   * Capture code and its serialized Blockly source map inside the same
+   * synchronous workspaceToCode() phase. The active project generator's
+   * blockCodeMap is mutable runtime state, so reading it after an await could
+   * pair a newer map with older sketch bytes.
+   */
+  private async generateWorkspaceBuildSnapshotForPreprocess(
+    workspace: unknown,
+    detail?: string,
+  ): Promise<{
+    code: string;
+    blockSourceMappings: Array<{
+      blockId: string;
+      executionRole: 'statement' | 'value';
+      ranges: Array<{ startLine: number; endLine: number }>;
+      executableRanges: Array<{ startLine: number; endLine: number }>;
+      supportRanges: Array<{ startLine: number; endLine: number }>;
+    }>;
+  }> {
+    await this.waitForOneIdleBoundary();
+    const projectPath = this.projectService.currentProjectPath;
+    const projectDocument = this.blocklyService.getProjectDocument();
+    const generated = await this.runBuilderPreprocessPhase(
+      'workspace_to_code',
+      () => runWithPreparedActiveProjectGenerator(
+        workspace as any,
+        (generator) => {
+          const code = normalizeArduinoGeneratedCode(generator.workspaceToCode(workspace as any));
+          const activeGenerator = generator as {
+            blockCodeMap?: Map<string, BlockCodeMapping>;
+          };
+          const blockCodeMap = activeGenerator.blockCodeMap
+            ?? new Map<string, BlockCodeMapping>();
+          return {
+            code,
+            blockSourceMappings: this.createBlockSourceMappings(
+              blockCodeMap,
+              workspace,
+            ),
+            generator,
+          };
+        },
+        projectDocument,
+      ),
+      detail,
+    );
+    await writeArduinoGeneratedArtifacts(
+      projectPath,
+      generated.generator,
+    );
+    return {
+      code: generated.code,
+      blockSourceMappings: generated.blockSourceMappings,
+    };
+  }
+
+  private appendPreprocessErrorOutput(value: unknown): void {
+    const text = typeof value === 'string' ? value : String(value ?? '');
+    if (!text) {
+      return;
+    }
+
+    this.preprocessFullError = `${this.preprocessFullError}${text}\n`
+      .slice(-PREPROCESS_ERROR_OUTPUT_LIMIT);
+  }
+
+  private cancelBackgroundPreprocess(): void {
+    const subscription = this.preprocessProcess;
+    const streamId = this.preprocessStreamId;
+    this.preprocessProcess = null;
+    this.preprocessStreamId = null;
+
+    subscription?.unsubscribe?.();
+    if (streamId) {
+      void this.cmdService.kill(streamId).catch((error) => {
+        console.warn('终止预编译进程失败:', error);
+      });
+    }
+  }
+
+  private async unlinkFileIfExists(filePath: string): Promise<boolean> {
+    if (!window['path'].isExists(filePath)) {
+      return false;
+    }
+
+    const fsApi = window['fs'] as {
+      unlinkSync?: (path: string) => void;
+      promises?: {
+        unlink?: (path: string) => Promise<void>;
+      };
+    };
+
+    if (typeof fsApi.promises?.unlink === 'function') {
+      await fsApi.promises.unlink(filePath);
+      return true;
+    }
+
+    await this.waitForOneIdleBoundary();
+    fsApi.unlinkSync?.(filePath);
+    return true;
+  }
+
+  private async writeTextFile(filePath: string, content: string): Promise<void> {
+    const fsApi = window['fs'] as {
+      writeFileSync?: (path: string, content: string) => void;
+      promises?: {
+        writeFile?: (path: string, content: string) => Promise<void>;
+      };
+    };
+
+    if (typeof fsApi.promises?.writeFile === 'function') {
+      await fsApi.promises.writeFile(filePath, content);
+      return;
+    }
+
+    await this.waitForOneIdleBoundary();
+    fsApi.writeFileSync?.(filePath, content);
+  }
+
+  private async waitForBackgroundPreprocessIdle(reason: string): Promise<void> {
+    const startedAt = Date.now();
+    let pendingChatOperations = this.getPendingChatBlockingOperationCount();
+
+    while (pendingChatOperations > 0 && Date.now() - startedAt < PREPROCESS_PENDING_CHAT_MAX_WAIT_MS) {
+      console.info('[Builder][PreprocessSchedule] waiting for chat background completion', {
+        reason,
+        pendingChatOperations,
+        pendingAgentLoops: this.getPendingChatAgentLoopCount(),
+        pendingCompletions: this.getPendingChatBackgroundOperationCount(),
+        waitMs: Date.now() - startedAt,
+      });
+      await this.waitForDelay(PREPROCESS_PENDING_CHAT_POLL_MS);
+      pendingChatOperations = this.getPendingChatBlockingOperationCount();
+    }
+
+    if (reason === 'ai-complete') {
+      await this.waitForDelay(PREPROCESS_POST_CHAT_QUIET_MS);
+    }
+    await this.waitForOneIdleBoundary();
+
+    console.info('[Builder][PreprocessSchedule] idle boundary reached', {
+      reason,
+      waitMs: Date.now() - startedAt,
+      pendingChatOperations: this.getPendingChatBlockingOperationCount(),
+      pendingAgentLoops: this.getPendingChatAgentLoopCount(),
+      pendingCompletions: this.getPendingChatBackgroundOperationCount(),
+    });
+  }
+
+  private shouldCancelBackgroundPreprocess(runGeneration: number): boolean {
+    const shouldCancel = runGeneration !== this.preprocessRunGeneration
+      || this.blocklyService.aiWaiting
+      || this.getPendingChatBlockingOperationCount() > 0;
+    if (shouldCancel) {
+      this.pendingPrecompile = true;
+    }
+    return shouldCancel;
+  }
+
   private triggerPendingPrecompile(reason: string, logMessage: string): void {
     if (!this.pendingPrecompile) {
       return;
     }
 
-    console.log(logMessage);
-    this.pendingPrecompile = false;
-    setTimeout(() => {
-      if (this.blocklyService.aiWaiting) {
-        this.pendingPrecompile = true;
+    if (this.pendingPrecompileTimer) {
+      return;
+    }
+
+    this.pendingPrecompileTimer = setTimeout(() => {
+      this.pendingPrecompileTimer = null;
+      const pendingChatOperations = this.getPendingChatBlockingOperationCount();
+      if (this.blocklyService.aiWaiting || pendingChatOperations > 0) {
+        if (!this.pendingPrecompileBlockedLogged) {
+          this.pendingPrecompileBlockedLogged = true;
+          console.info('[Builder][PreprocessSchedule] agent loop still active, keep preprocess pending', {
+            reason,
+            pendingChatOperations,
+            pendingAgentLoops: this.getPendingChatAgentLoopCount(),
+            pendingCompletions: this.getPendingChatBackgroundOperationCount(),
+          });
+        }
+        this.schedulePendingPrecompileRetry(reason, logMessage);
         return;
       }
 
@@ -131,8 +435,22 @@ export class _BuilderService {
         return;
       }
 
+      console.log(logMessage);
+      this.pendingPrecompileBlockedLogged = false;
+      this.pendingPrecompile = false;
       this.blocklyService.dependencySubject.next(reason);
-    }, 100);
+    }, 800);
+  }
+
+  private schedulePendingPrecompileRetry(reason: string, logMessage: string): void {
+    this.pendingPrecompile = true;
+    if (this.pendingPrecompileTimer) {
+      return;
+    }
+    this.pendingPrecompileTimer = setTimeout(() => {
+      this.pendingPrecompileTimer = null;
+      this.triggerPendingPrecompile(reason, logMessage);
+    }, PREPROCESS_PENDING_RETRY_MS);
   }
 
   private async getMissingBoardDependencies(): Promise<string[]> {
@@ -153,14 +471,18 @@ export class _BuilderService {
     this.initialized = true;
     this.actionService.listen('compile-begin', async (action) => {
       try {
-        const result = await this.build();
+        const graphSemanticRevision =
+          action.payload?.graphSemanticRevision as string | undefined;
+        const requestId = action.payload?.requestId as string | undefined;
+        const result = await this.build(graphSemanticRevision, requestId);
         return { success: true, result };
       } catch (msg) {
         return { success: false, result: msg };
       }
     }, 'builder-compile-begin');
     this.actionService.listen('compile-cancel', (action) => {
-      this.cancel();
+      const requestId = action.payload?.requestId as string | undefined;
+      this.cancel(requestId);
     }, 'builder-compile-cancel');
     this.actionService.listen('compile-reset', async (action) => {
       this.passed = false;
@@ -185,9 +507,11 @@ export class _BuilderService {
     }, 'builder-preprocess-trigger');
 
     // 保存订阅引用以便后续取消
-    this.dependencySubscription = this.blocklyService.dependencySubject.pipe(
-      debounceTime(500),
-    ).subscribe(async (data) => {
+    this.dependencySubscription = this.ngZone.runOutsideAngular(() => (
+      this.blocklyService.dependencySubject.pipe(
+        debounceTime(500),
+      ).subscribe(async (data) => {
+      const runGeneration = ++this.preprocessRunGeneration;
       // 检查项目加载状态，如果正在加载中则跳过预处理
       if (!data || this.projectService.stateSubject.value === 'loading') {
         console.log('项目正在加载中，跳过依赖预处理');
@@ -195,7 +519,7 @@ export class _BuilderService {
       }
 
       // 互斥条件1：AI操作期间不触发自动预编译，但标记需要延迟执行
-      if (this.blocklyService.aiWaiting) {
+      if (this.blocklyService.aiWaiting || this.getPendingChatBlockingOperationCount() > 0) {
         console.log('AI操作进行中，标记延迟预编译');
         this.pendingPrecompile = true;
         return;
@@ -204,6 +528,18 @@ export class _BuilderService {
       // 互斥条件2：依赖安装进行中不触发自动预编译，但保留一次待补执行
       if (this.isInstallInProgress()) {
         console.log('依赖安装进行中，标记延迟预编译');
+        this.pendingPrecompile = true;
+        return;
+      }
+
+      await this.waitForBackgroundPreprocessIdle(String(data || 'dependency'));
+      if (this.shouldCancelBackgroundPreprocess(runGeneration)) {
+        console.log('AI操作进行中，idle 后继续延迟预编译');
+        return;
+      }
+
+      if (this.isInstallInProgress()) {
+        console.log('依赖安装进行中，idle 后继续延迟预编译');
         this.pendingPrecompile = true;
         return;
       }
@@ -222,6 +558,9 @@ export class _BuilderService {
         console.warn('[后台预处理] 检查开发板依赖失败，跳过自动预编译:', error);
         return;
       }
+      if (this.shouldCancelBackgroundPreprocess(runGeneration)) {
+        return;
+      }
       if (missingBoardDependencies.length > 0) {
         console.warn('[后台预处理] 开发板依赖未安装完成，跳过自动预编译:', missingBoardDependencies);
         this.pendingPrecompile = false;
@@ -237,6 +576,7 @@ export class _BuilderService {
       // 1. 先终止正在运行的预处理进程（如果有）
       if (this.preprocessProcess || this.preprocessStreamId) {
         console.log('终止正在运行的预处理进程...');
+        const stopStartedAt = Date.now();
         try {
           // 先取消订阅
           if (this.preprocessProcess) {
@@ -250,29 +590,42 @@ export class _BuilderService {
           }
         } catch (error) {
           console.warn('终止旧的预处理进程失败:', error);
+        } finally {
+          this.recordPreprocessDuration('stop_existing_process', stopStartedAt);
         }
       }
 
       // 2. 删除预编译缓存文件
-      if (window['path'].isExists(preprocessCachePath)) {
-        try {
-          window['fs'].unlinkSync(preprocessCachePath);
-          console.log('已删除预编译缓存文件:', preprocessCachePath);
-        } catch (error) {
-          console.warn('删除预编译缓存文件失败:', error);
+      try {
+        if (this.shouldCancelBackgroundPreprocess(runGeneration)) {
           return;
         }
+        const unlinkStartedAt = Date.now();
+        if (await this.unlinkFileIfExists(preprocessCachePath)) {
+          console.log('已删除预编译缓存文件:', preprocessCachePath);
+          this.recordPreprocessDuration('delete_cache', unlinkStartedAt);
+        }
+      } catch (error) {
+        console.warn('删除预编译缓存文件失败:', error);
+        return;
+      }
+      if (this.shouldCancelBackgroundPreprocess(runGeneration)) {
+        return;
       }
 
       // 2. 在后台运行预处理脚本
       try {
+        await this.waitForOneIdleBoundary();
+        if (this.shouldCancelBackgroundPreprocess(runGeneration)) {
+          return;
+        }
         // 检查 workspace 是否已初始化
         if (!this.blocklyService.workspace) {
           console.log('Blockly workspace 未初始化，跳过自动预编译');
           return;
         }
         
-        const code = await this.generateWorkspaceCode();
+        const code = await this.generateWorkspaceCodeForPreprocess(this.blocklyService.workspace, 'background_preprocess');
         if (!code) {
           return;
         }
@@ -284,6 +637,9 @@ export class _BuilderService {
         }
         const currentProjectPath = this.projectService.currentProjectPath;
         const boardModule = await this.projectService.getBoardModule();
+        if (this.shouldCancelBackgroundPreprocess(runGeneration)) {
+          return;
+        }
         const appDataPath = window['path'].getAppDataPath();
         const ailyChildPath = window['path'].getAilyChildPath();
 
@@ -319,49 +675,56 @@ export class _BuilderService {
         // 写入配置文件
         const configFilePath = this.electronService.pathJoin(tempPath, 'build-config.json');
         if (!window['path'].isExists(tempPath)) {
+          const mkdirStartedAt = Date.now();
           await this.crossPlatformCmdService.createDirectory(tempPath, true);
+          this.recordPreprocessDuration('create_temp_dir', mkdirStartedAt);
         }
-        await window['fs'].writeFileSync(configFilePath, JSON.stringify(buildConfig, null, 2));
+        const writeConfigStartedAt = Date.now();
+        await this.writeTextFile(configFilePath, JSON.stringify(buildConfig, null, 2));
+        this.recordPreprocessDuration('write_config', writeConfigStartedAt);
+        await this.waitForOneIdleBoundary();
+        if (this.shouldCancelBackgroundPreprocess(runGeneration)) {
+          return;
+        }
 
         // 运行预处理脚本（后台运行）
         const preprocessScriptPath = this.electronService.pathJoin(window['path'].getAilyChildPath(), 'scripts', 'preprocess.js');
-        const preprocessCommand = `node "${preprocessScriptPath}" "${configFilePath}"`;
-
         console.log('开始后台运行预处理脚本');
 
         // 重置预编译错误状态
         this.preprocessError = null;
         this.preprocessFullError = '';
 
-        // 使用 cmdService 后台静默运行预处理脚本
-        const subscription = this.cmdService.run(preprocessCommand, null, false).subscribe({
+        // 使用 cmdService 在后台运行预处理脚本，并把标准输出转发到日志面板。
+        const spawnStartedAt = Date.now();
+        const preprocessStreamId = `builder_preprocess_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+        this.preprocessStreamId = preprocessStreamId;
+        const subscription = this.cmdService.spawn(
+          'node',
+          [preprocessScriptPath, configFilePath],
+          { streamId: preprocessStreamId, forwardStdout: true },
+          true,
+        ).subscribe({
           next: (output) => {
-            // 捕获 streamId
-            if (!this.preprocessStreamId && output.streamId) {
-              this.preprocessStreamId = output.streamId;
-              console.log('捕获到预处理 streamId:', this.preprocessStreamId);
-            }
-            
             // 将预编译普通输出发送到日志（错误信息先收集，最后统一发送）
             if (output.data) {
               // 检查输出中是否包含错误信息
               if (output.data.includes('[ERROR]') || output.data.toLowerCase().includes('error:')) {
-                this.preprocessFullError += output.data + '\n';
+                this.appendPreprocessErrorOutput(output.data);
                 // 提取关键错误信息
-                const errorLine = output.data.split('\n').find((line: string) => 
+                const errorLine = output.data.split('\n').find((line: string) =>
                   line.includes('[ERROR]') || line.toLowerCase().includes('error:')
                 );
                 if (errorLine) {
                   this.preprocessError = errorLine.trim();
                 }
               } else {
-                // 非错误信息正常发送到日志
                 this.logService.update({ "detail": output.data, "state": "doing" });
               }
             }
             if (output.type === 'error') {
               const processError = output.error || '预编译进程启动失败';
-              this.preprocessFullError += processError + '\n';
+              this.appendPreprocessErrorOutput(processError);
               if (!this.preprocessError) {
                 this.preprocessError = processError;
               }
@@ -370,7 +733,7 @@ export class _BuilderService {
 
             if (output.error) {
               // 收集错误信息，不单独发送
-              this.preprocessFullError += output.error + '\n';
+              this.appendPreprocessErrorOutput(output.error);
               if (!this.preprocessError) {
                 this.preprocessError = output.error;
               }
@@ -383,7 +746,7 @@ export class _BuilderService {
                   : `预编译进程异常退出，退出码: ${output.code}`;
               }
               if (!this.preprocessFullError) {
-                this.preprocessFullError = this.preprocessError + '\n';
+                this.appendPreprocessErrorOutput(this.preprocessError);
               }
             }
           },
@@ -392,7 +755,7 @@ export class _BuilderService {
             console.warn('后台预处理失败:', errorMsg);
             // 收集错误信息
             this.preprocessError = '后台预处理失败: ' + errorMsg;
-            this.preprocessFullError += '后台预处理失败: ' + errorMsg + '\n';
+            this.appendPreprocessErrorOutput('后台预处理失败: ' + errorMsg);
             // 清理引用
             if (this.preprocessProcess === subscription) {
               this.preprocessProcess = null;
@@ -406,6 +769,7 @@ export class _BuilderService {
               // 清理 ANSI 颜色代码并一次性发送所有错误
               const cleanFullError = this.preprocessFullError.replace(/\[\d+(;\d+)*m/g, '');
               this.logService.update({ "detail": cleanFullError, "state": "error" });
+              this.appendCompileLog(cleanFullError, 'ERROR');
             } else {
               console.log('后台预处理完成');
               // this.logService.update({ "detail": '后台预处理完成', "state": "done" });
@@ -417,16 +781,19 @@ export class _BuilderService {
             }
           }
         });
-        
+        this.recordPreprocessDuration('spawn_command_stream', spawnStartedAt);
+
         // 保存订阅引用以便后续终止
         this.preprocessProcess = subscription;
       } catch (error) {
         console.warn('启动后台预处理失败:', error);
       }
-    });
+      })
+    ));
 
     this.lastWorkflowState = this.workflowService.currentState;
-    this.workflowStateSubscription = this.workflowService.state$.subscribe(async (state) => {
+    this.workflowStateSubscription = this.ngZone.runOutsideAngular(() => (
+      this.workflowService.state$.subscribe(async (state) => {
       const previousState = this.lastWorkflowState;
       this.lastWorkflowState = state;
 
@@ -446,33 +813,30 @@ export class _BuilderService {
       if (previousState === ProcessState.INSTALLING && state === ProcessState.IDLE) {
         this.triggerPendingPrecompile('install-complete', '依赖安装完成，触发延迟的预编译');
       }
-    });
+      })
+    ));
 
     // 监听 AI 操作状态变化
-    this.aiWaitingSubscription = this.blocklyService.aiWaiting$.subscribe(async (waiting) => {
-      if (waiting) {
-        // AI 操作开始，终止正在运行的预编译（结果会过时）
-        if (this.preprocessProcess || this.preprocessStreamId) {
-          console.log('AI操作开始，终止正在运行的预编译');
-          this.pendingPrecompile = true; // 标记需要重新预编译
-          try {
-            if (this.preprocessProcess) {
-              this.preprocessProcess.unsubscribe();
-              this.preprocessProcess = null;
-            }
-            if (this.preprocessStreamId) {
-              await this.cmdService.kill(this.preprocessStreamId);
-              this.preprocessStreamId = null;
-            }
-          } catch (error) {
-            console.warn('终止预编译进程失败:', error);
-          }
-        }
-      } else {
-        // AI 操作完成，触发延迟的预编译
-        this.triggerPendingPrecompile('ai-complete', 'AI操作已完成，触发延迟的预编译');
+    this.aiWaitingSubscription = this.ngZone.runOutsideAngular(() => (
+      this.blocklyService.aiExecutionActive$.subscribe((waiting) => {
+        this.handleAiExecutionActiveChange(waiting);
+      })
+    ));
+  }
+
+  private handleAiExecutionActiveChange(waiting: boolean): void {
+    if (waiting) {
+      this.preprocessRunGeneration += 1;
+      // AI 操作开始，终止正在运行的预编译（结果会过时）
+      if (this.preprocessProcess || this.preprocessStreamId) {
+        console.log('AI操作开始，终止正在运行的预编译');
+        this.pendingPrecompile = true; // 标记需要重新预编译
+        this.cancelBackgroundPreprocess();
       }
-    });
+    } else {
+      // AI 操作完成，触发延迟的预编译
+      this.triggerPendingPrecompile('ai-complete', 'AI操作已完成，触发延迟的预编译');
+    }
   }
 
   destroy() {
@@ -482,7 +846,12 @@ export class _BuilderService {
     this.actionService.unlisten('builder-preprocess-stop');
     this.actionService.unlisten('builder-preprocess-trigger');
     this.clearProgressTimer(); // 清理定时器
-    
+    if (this.pendingPrecompileTimer) {
+      clearTimeout(this.pendingPrecompileTimer);
+      this.pendingPrecompileTimer = null;
+    }
+    this.pendingPrecompileBlockedLogged = false;
+
     // 终止正在运行的预处理进程
     if (this.preprocessProcess || this.preprocessStreamId) {
       try {
@@ -569,25 +938,86 @@ export class _BuilderService {
     }
   }
 
-  private async generateWorkspaceCode(): Promise<string> {
-    // Dependency changes are emitted immediately after code generation. Reuse
-    // that exact revision so background preprocessing does not synchronously
-    // generate the same workspace again on the renderer thread.
-    const reusableCode = this.blocklyService.getReusableGeneratedCode();
-    if (reusableCode !== null) {
-      return reusableCode;
+    /**
+     * 从当前工作区生成并写入 sketch.ino 文件（不触发完整预编译）
+     * 在项目打开时调用，确保 sketch.ino 文件可供 AI 工具和代码预览读取
+     */
+    async generateAndWriteSketchIno(): Promise<void> {
+        try {
+            const workspace = this.blocklyService.workspace;
+            if (!workspace) return;
+
+            const code = await this.generateWorkspaceCodeForPreprocess(workspace, 'sketch_ino');
+            if (!code) return;
+
+            const currentProjectPath = this.projectService.currentProjectPath;
+            if (!currentProjectPath) return;
+
+            const tempPath = this.electronService.pathJoin(currentProjectPath, '.temp');
+            const sketchPath = this.electronService.pathJoin(tempPath, 'sketch');
+            const sketchFilePath = this.electronService.pathJoin(sketchPath, 'sketch.ino');
+
+            if (!window['path'].isExists(tempPath)) {
+                await this.crossPlatformCmdService.createDirectory(tempPath, true);
+            }
+            if (!window['path'].isExists(sketchPath)) {
+                await this.crossPlatformCmdService.createDirectory(sketchPath, true);
+            }
+
+            await this.writeTextFile(sketchFilePath, code);
+            console.log('[Builder] sketch.ino 已自动生成:', sketchFilePath);
+        } catch (error) {
+            console.warn('[Builder] 自动生成 sketch.ino 失败:', error);
+        }
     }
 
-    const projectDocument = this.blocklyService.getProjectDocument();
-    await prepareBlocklyProjectDataForCodeGeneration(this.blocklyService.workspace, projectDocument);
-    const code = arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
-    await writeArduinoGeneratedArtifacts(this.projectService.currentProjectPath, arduinoGenerator);
+    private async ensureAilyBuilderReady(): Promise<void> {
+        if (window['builder']?.ensure) {
+            await window['builder'].ensure();
+        }
+    }
 
-    // A revision can become dirty while the dependency debounce is pending.
-    // Cache that fallback generation for the rest of the preprocess/build flow.
-    this.blocklyService.publishGeneratedCode(code);
-    return code;
-  }
+    private async getAilyBuilderRuntimeConfig(): Promise<{ ailyBuilderPath: string; ailyBuilderCommand: string }> {
+        await this.ensureAilyBuilderReady();
+        return {
+            ailyBuilderPath: window['path'].getAilyBuilderPath(),
+            ailyBuilderCommand: window['path'].getAilyBuilderCommand()
+        };
+    }
+
+    private async invalidateBuildCacheIfBuilderChanged(tempPath: string, buildPath: string): Promise<void> {
+        const configFilePath = this.electronService.pathJoin(tempPath, 'build-config.json');
+        if (!window['path'].isExists(configFilePath)) {
+            return;
+        }
+
+        try {
+            const buildConfig = JSON.parse(window['fs'].readFileSync(configFilePath, 'utf8'));
+            const currentBuilder = await this.getAilyBuilderRuntimeConfig();
+            if (
+                buildConfig.ailyBuilderPath !== currentBuilder.ailyBuilderPath ||
+                buildConfig.ailyBuilderCommand !== currentBuilder.ailyBuilderCommand
+            ) {
+                this.removeDirIfExists(tempPath);
+                this.removeDirIfExists(buildPath);
+                console.log('aily-builder 已切换，清除旧构建缓存');
+            }
+        } catch (error) {
+            console.warn('检查 aily-builder 构建缓存状态失败:', error);
+        }
+    }
+
+    private removeDirIfExists(dirPath: string): void {
+        if (!window['path'].isExists(dirPath)) {
+            return;
+        }
+
+        try {
+            window['fs'].rmdirSync(dirPath);
+        } catch (error) {
+            console.warn('删除目录失败:', dirPath, error);
+        }
+    }
 
   /**
    * 运行预编译脚本（同步等待完成）
@@ -627,7 +1057,7 @@ export class _BuilderService {
     const tempPath = this.electronService.pathJoin(currentProjectPath, '.temp');
     
     // 生成代码
-    const code = await this.generateWorkspaceCode();
+    const code = await this.generateWorkspaceCodeForPreprocess(this.blocklyService.workspace, 'sync_preprocess');
     this.lastCode = code; // 保存代码用于后续 hash 计算
 
     // 构建配置对象
@@ -646,7 +1076,7 @@ export class _BuilderService {
     if (!window['path'].isExists(tempPath)) {
       await this.crossPlatformCmdService.createDirectory(tempPath, true);
     }
-    await window['fs'].writeFileSync(configFilePath, JSON.stringify(buildConfig, null, 2));
+    await this.writeTextFile(configFilePath, JSON.stringify(buildConfig, null, 2));
 
     // 运行预处理脚本（同步等待完成）
     const preprocessScriptPath = this.electronService.pathJoin(window['path'].getAilyChildPath(), 'scripts', 'preprocess.js');
@@ -699,6 +1129,7 @@ export class _BuilderService {
             } else {
               // 非错误信息正常发送到日志
               this.logService.update({ "detail": output.data, "state": "doing" });
+              this.appendCompileLog(output.data, 'DEBUG');
             }
           }
           if (output.type === 'error') {
@@ -749,9 +1180,11 @@ export class _BuilderService {
             // 清理 ANSI 颜色代码并一次性发送所有错误
             const cleanFullError = this.preprocessFullError.replace(/\[\d+(;\d+)*m/g, '');
             this.logService.update({ "detail": cleanFullError, "state": "error" });
+            this.appendCompileLog(cleanFullError, 'ERROR');
           } else {
             console.log('同步预处理完成');
             this.logService.update({ "detail": '同步预处理完成', "state": "done" });
+            this.appendCompileLog('同步预处理完成', 'INFO');
           }
           // 清理引用
           if (this.preprocessProcess === subscription) {
@@ -793,7 +1226,28 @@ export class _BuilderService {
   }
 
 
-  async build(): Promise<ActionState> {
+  async build(
+    graphSemanticRevision?: string,
+    requestId?: string,
+  ): Promise<ActionState> {
+    if (
+      graphSemanticRevision !== undefined
+      && !/^[a-f0-9]{64}$/.test(graphSemanticRevision)
+    ) {
+      return Promise.reject({
+        state: 'error',
+        text: 'Simulator graph semantic revision is invalid.',
+      });
+    }
+    if (
+      requestId !== undefined
+      && !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(requestId)
+    ) {
+      return Promise.reject({
+        state: 'error',
+        text: 'Provider Build request id is invalid.',
+      });
+    }
     if (!this.workflowService.startBuild()) {
       const state = this.workflowService.currentState;
       let msg = this.t('BUSY_SYSTEM');
@@ -805,6 +1259,7 @@ export class _BuilderService {
       return Promise.reject({ state: 'warn', text: this.t('BUSY_WAIT', { message: msg }) });
     }
 
+    this.activeBuildRequestId = requestId ?? null;
     this.buildCompleted = false;
     this.isErrored = false;
     this.cancelled = false;
@@ -814,7 +1269,7 @@ export class _BuilderService {
     this.currentProgress = 0; // 重置进度
     this.hasReceivedRealProgress = false; // 重置进度标记
 
-    return this.appDataResourceLock.runShared('build:preprocess-and-compile', () => {
+    const completion = this.appDataResourceLock.runShared('build:preprocess-and-compile', () => {
       if (this.cancelled) {
         return Promise.reject({ state: 'warn', text: this.t('CANCELLED_TITLE') });
       }
@@ -1004,7 +1459,7 @@ export class _BuilderService {
           console.log('发现预编译缓存，跳过预编译');
           // 即使有缓存，也需要生成代码以保存到 lastCode（用于后续 hash 计算）
           if (!this.lastCode) {
-            const code = await this.generateWorkspaceCode();
+            const code = await this.generateWorkspaceCodeForPreprocess(this.blocklyService.workspace, 'cache_hit');
             this.lastCode = code;
           }
         }
@@ -1024,8 +1479,14 @@ export class _BuilderService {
         let completeTitle: string = this.t('COMPLETE_TITLE');
 
         try {
-          // 获取最新代码
-          const code = await this.generateWorkspaceCode();
+          // 获取最新代码，并在同一次同步 generator 调用内冻结其块映射。
+          const {
+            code,
+            blockSourceMappings,
+          } = await this.generateWorkspaceBuildSnapshotForPreprocess(
+            this.blocklyService.workspace,
+            'compile_config',
+          );
           this.lastCode = code;
           
           const boardJson = await this.projectService.getBoardJson();
@@ -1033,15 +1494,21 @@ export class _BuilderService {
           const configFilePath = this.electronService.pathJoin(tempPath, 'build-config.json');
           await this.waitForAilyBuilderReady();
 
-          // 更新配置文件中的 code（compile.js 会负责写入 sketch 文件）
+          // 更新配置文件中的 code（compile.js：Blockly 写入 sketch.ino；Aily Code 写入 project.aci.entry）
           let buildConfig: any = {};
           if (window['path'].isExists(configFilePath)) {
             buildConfig = JSON.parse(window['fs'].readFileSync(configFilePath, 'utf8'));
           }
           buildConfig.code = code;
+          buildConfig.blockSourceMappings = blockSourceMappings;
+          if (graphSemanticRevision) {
+            buildConfig.graphSemanticRevision = graphSemanticRevision;
+          } else {
+            delete buildConfig.graphSemanticRevision;
+          }
           delete buildConfig.ailyBuilderPath;
           delete buildConfig.ailyBuilderCommand;
-          window['fs'].writeFileSync(configFilePath, JSON.stringify(buildConfig, null, 2));
+          await this.writeTextFile(configFilePath, JSON.stringify(buildConfig, null, 2));
 
           // 运行编译脚本
           const compileScriptPath = this.electronService.pathJoin(window['path'].getAilyChildPath(), 'scripts', 'compile.js');
@@ -1218,6 +1685,7 @@ export class _BuilderService {
                       outputComplete = true;
                       this.buildCompleted = true;
                       this.logService.update({ "detail": trimmedLine, "state": "done" });
+                      this.appendCompileLog(trimmedLine, 'INFO');
                     } else if (
                       // 检测更多编译成功标志
                       // Arduino/ESP32: "Sketch uses xxx bytes"
@@ -1235,6 +1703,7 @@ export class _BuilderService {
                       outputComplete = true;
                       this.buildCompleted = true;
                       this.logService.update({ "detail": trimmedLine, "state": "done" });
+                      this.appendCompileLog(trimmedLine, 'INFO');
                     } else {
                       if (!outputComplete) {
                         if (outputType === 'stderr') {
@@ -1247,6 +1716,7 @@ export class _BuilderService {
                           }
                         } else {
                           this.logService.update({ "detail": trimmedLine, "state": "doing" });
+                          this.appendCompileLog(trimmedLine, 'DEBUG');
                         }
                       }
                     }
@@ -1302,7 +1772,20 @@ export class _BuilderService {
                 this.safeUpdateNotice({ title: completeTitle, text: displayTextWithTime, state: 'done', setTimeout: 600000 });
                 
                 this.passed = true;
-                
+
+                void this.projectDebugConfigurationService
+                  .updateWorkspaceGeneratedCode(
+                    this.currentProjectPath,
+                    this.lastCode,
+                    { refreshArtifact: true },
+                  )
+                  .catch((error) => {
+                    console.warn(
+                      '编译成功后核对 Blockly Artifact 失败:',
+                      error,
+                    );
+                  });
+
                 // 保存编译元数据（不阻塞）
                 this.electronService.calculateHash(this.lastCode).then(codeHash => {
                   this.saveBuildInfo('success', buildDuration, codeHash);
@@ -1318,6 +1801,7 @@ export class _BuilderService {
                 lastStdErr = lastStdErr.replace(/\[\d+(;\d+)*m/g, '');
                 this.handleCompileError(lastStdErr || this.t('INCOMPLETE'), false, fullStdErr || lastStdErr || this.t('INCOMPLETE'));
                 this.logService.update({ detail: fullStdErr, state: 'error' });
+                this.appendCompileLog(fullStdErr || lastStdErr || this.t('INCOMPLETE'), 'ERROR');
                 this.passed = false;
                 
                 // 记录编译失败状态（不阻塞）
@@ -1383,7 +1867,73 @@ export class _BuilderService {
       }
       });
     });
-  }
+    return completion.finally(() => {
+      if (this.activeBuildRequestId === (requestId ?? null)) {
+        this.activeBuildRequestId = null;
+      }
+    });
+    }
+
+    /**
+     * Keep the build hand-off independent from Blockly generator internals.
+     * compile.js combines these ranges with a hash of the exact sketch bytes.
+     */
+    private createBlockSourceMappings(
+      generatedCodeMap: ReadonlyMap<string, BlockCodeMapping>,
+      generatedWorkspace: unknown = this.blocklyService.workspace,
+    ): Array<{
+      blockId: string;
+      executionRole: 'statement' | 'value';
+      ranges: Array<{ startLine: number; endLine: number }>;
+      executableRanges: Array<{ startLine: number; endLine: number }>;
+      supportRanges: Array<{ startLine: number; endLine: number }>;
+    }> {
+      return [...generatedCodeMap.values()]
+        .map((mapping) => {
+          const block = (generatedWorkspace as {
+            getBlockById?: (blockId: string) => {
+              outputConnection?: unknown;
+            } | null;
+          } | null | undefined)?.getBlockById?.(
+            mapping.blockId,
+          );
+          return {
+            blockId: mapping.blockId,
+            executionRole: block?.outputConnection
+              ? 'value' as const
+              : 'statement' as const,
+            ranges: this.normalizeBlockSourceRanges(mapping.lineRanges),
+            executableRanges: this.normalizeBlockSourceRanges(
+              mapping.executableLineRanges ?? mapping.lineRanges,
+            ),
+            supportRanges: this.normalizeBlockSourceRanges(
+              mapping.supportLineRanges ?? [],
+            ),
+          };
+        })
+        .filter((mapping) => mapping.blockId.length > 0 && mapping.ranges.length > 0)
+        .sort((left, right) => left.blockId.localeCompare(right.blockId));
+    }
+
+    private normalizeBlockSourceRanges(
+      ranges: ReadonlyArray<{ startLine: number; endLine: number }>,
+    ): Array<{ startLine: number; endLine: number }> {
+      return ranges
+        .filter((range) => (
+          Number.isSafeInteger(range.startLine)
+          && Number.isSafeInteger(range.endLine)
+          && range.startLine >= 1
+          && range.endLine >= range.startLine
+        ))
+        .map((range) => ({
+          startLine: range.startLine,
+          endLine: range.endLine,
+        }))
+        .sort((left, right) => (
+          left.startLine - right.startLine
+          || left.endLine - right.endLine
+        ));
+    }
 
   /**
    * 保存编译元数据到 package.json
@@ -1574,7 +2124,17 @@ export class _BuilderService {
   /**
    * 取消当前编译过程
    */
-  cancel() {
+  cancel(requestId?: string) {
+    if (
+      requestId !== undefined
+      && requestId !== this.activeBuildRequestId
+    ) {
+      console.warn('Ignoring cancellation for a non-active Build request.', {
+        requestId,
+        activeBuildRequestId: this.activeBuildRequestId,
+      });
+      return;
+    }
     if (this.cancelled) {
       console.log('已经处于取消状态，跳过');
       return; // 避免重复取消

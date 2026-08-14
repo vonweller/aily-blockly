@@ -273,6 +273,18 @@ export class SettingsComponent implements OnDestroy {
     return this.configService.data;
   }
 
+  get developmentModePreference() {
+    return this.configService.getDevelopmentModePreference();
+  }
+
+  get coderEnabled() {
+    return this.configService.isCoderEnabled();
+  }
+
+  onDevelopmentModePreferenceChange(value: string) {
+    void this.configService.setDevelopmentModePreference(value, 'settings');
+  }
+
   appdata_path: string
 
   mcpServiceList = []

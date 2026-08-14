@@ -18,7 +18,7 @@ import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { stripAnsi } from 'fancy-ansi';
 import { Subscription } from 'rxjs';
 
-import { version } from '../../../../package.json';
+import packageJson from '../../../../package.json';
 
 @Component({
   selector: 'app-feedback-dialog',
@@ -252,7 +252,7 @@ export class FeedbackDialogComponent implements OnDestroy {
 
     return `
 - OS Version: ${window['platform'].type}
-- Software Version: ${version}${this.isCnRegion ? '-cn' : ''}
+- Software Version: ${packageJson.version}${this.isCnRegion ? '-cn' : ''}
 - Project Dependencies:
 \`\`\`json
 ${dependenciesStr}

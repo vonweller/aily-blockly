@@ -7,7 +7,6 @@ import { Subject, takeUntil } from 'rxjs';
 import { ElectronService } from '../../services/electron.service';
 import { NzModalService } from 'ng-zorro-antd/modal';
 import { NzMessageService } from 'ng-zorro-antd/message';
-import { LoginComponent } from '../../components/login/login.component';
 import { NzButtonModule } from 'ng-zorro-antd/button';
 import { NzProgressModule } from 'ng-zorro-antd/progress';
 import { NzInputModule } from 'ng-zorro-antd/input';
@@ -16,6 +15,13 @@ import { NzToolTipModule } from "ng-zorro-antd/tooltip";
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { resolveTranslatedApiErrorMessage } from '../../utils/api-error.utils';
 import { ToolI18nService } from '../../services/tool-i18n.service';
+import {
+  AuthQuotaStateService,
+  type AuthQuotaInfo,
+} from '../aily-chat/services/auth-quota-state.service';
+import { formatQuotaResetMetaLabel } from '../aily-chat/services/chat-quota-reset-label';
+import { APP_LIST, getChildToolConfig } from '../../configs/tool.config';
+import { MainUiAutomationService } from '../../services/main-ui-automation.service';
 
 @Component({
   selector: 'app-user-center',
@@ -23,7 +29,6 @@ import { ToolI18nService } from '../../services/tool-i18n.service';
     FormsModule,
     CommonModule,
     ToolContainerComponent,
-    LoginComponent,
     NzButtonModule,
     NzProgressModule,
     NzInputModule,
@@ -42,8 +47,11 @@ export class UserCenterComponent {
   private destroy$ = new Subject<void>();
   private message = inject(NzMessageService);
   private authService = inject(AuthService);
+  private authQuotaStateService = inject(AuthQuotaStateService);
   private electronService = inject(ElectronService);
   private translate = inject(TranslateService);
+  private modal = inject(NzModalService);
+  private mainUiAutomation = inject(MainUiAutomationService);
 
   userInfo = {
     username: '',
@@ -60,8 +68,10 @@ export class UserCenterComponent {
   nicknameSaving = false;
   nicknameError = '';
   quotaUsagePercent = 0;
+  private logoutConfirmOpen = false;
 
   benefits: any = null;
+  authQuotaInfo: AuthQuotaInfo | null = null;
 
   constructor(
     private uiService: UiService,
@@ -73,17 +83,35 @@ export class UserCenterComponent {
   async ngOnInit() {
     await this.toolI18n.load('user-center');
 
+    const wasLoggedInBeforeSync = this.authService.isLoggedIn;
+
     // 首先检查并同步登录状态
     await this.checkAndSyncAuthStatus();
+    this.authQuotaStateService.syncAuthSnapshotFromHost();
+
+    let previousLoginState = this.authService.isLoggedIn;
 
     // 监听登录状态
     this.authService.isLoggedIn$
       .pipe(takeUntil(this.destroy$))
       .subscribe(isLoggedIn => {
-        if (isLoggedIn) {
+        if (isLoggedIn && !previousLoginState) {
           this.refreshMe();
           this.refreshBenefits();
         }
+        previousLoginState = isLoggedIn;
+      });
+
+    this.authService.authSnapshot$
+      .pipe(takeUntil(this.destroy$))
+      .subscribe((authSnapshot) => {
+        this.authQuotaStateService.acceptAuthSnapshot(authSnapshot);
+      });
+
+    this.authQuotaStateService.quotaInfo$
+      .pipe(takeUntil(this.destroy$))
+      .subscribe((quotaInfo) => {
+        this.authQuotaInfo = quotaInfo;
       });
 
     // 监听用户信息
@@ -94,6 +122,13 @@ export class UserCenterComponent {
         this.currentUser = userInfo;
         this.calculateQuotaUsagePercent();
       });
+
+    if (this.authService.isLoggedIn) {
+      if (wasLoggedInBeforeSync) {
+        this.refreshMe();
+      }
+      this.refreshBenefits();
+    }
 
     // 由于app.component已经设置了全局OAuth监听器，这里不需要再设置
     // 但是我们可以监听AuthService的登录状态变化来处理UI状态
@@ -118,13 +153,6 @@ export class UserCenterComponent {
       console.warn('刷新用户信息失败:', error);
     });
   }
-
-
-  ngAfterViewInit(): void {
-    this.refreshMe();
-    this.refreshBenefits();
-  }
-
   refreshBenefits() {
     if (!this.authService.isLoggedIn) return;
     this.authService.getBenefits()
@@ -191,16 +219,107 @@ export class UserCenterComponent {
   }
 
   async onLogout() {
+    if (this.isWaiting || this.logoutConfirmOpen) {
+      return;
+    }
+
+    const openProtectedToolIds = this.uiService.getOpenAuthRequiredToolIds()
+      .filter((toolId) => toolId !== 'user-center');
+    const confirmed = await this.confirmLogout(openProtectedToolIds);
+    if (!confirmed) {
+      return;
+    }
+
     this.isWaiting = true;
     try {
+      await this.closeProtectedTools(openProtectedToolIds);
       await this.authService.logout();
       this.message.success(this.t('USER_CENTER.LOGOUT_SUCCESS', '已退出登录'));
+      this.close();
     } catch (error) {
       console.warn('退出登录失败:', error);
-      this.message.error(this.t('USER_CENTER.LOGOUT_FAILED', '退出登录失败'));
+      const messageKey = error instanceof ProtectedToolCloseError
+        ? 'USER_CENTER.LOGOUT_CLOSE_APPS_FAILED'
+        : 'USER_CENTER.LOGOUT_FAILED';
+      const fallback = error instanceof ProtectedToolCloseError
+        ? '无法关闭正在运行的应用，请稍后重试'
+        : '退出登录失败';
+      this.message.error(this.t(messageKey, fallback));
     } finally {
       this.isWaiting = false;
     }
+  }
+
+  private confirmLogout(openProtectedToolIds: string[]): Promise<boolean> {
+    const hasOtherProtectedTools = openProtectedToolIds.length > 0;
+    const appNames = [...new Set(openProtectedToolIds.map((toolId) => this.getToolDisplayName(toolId)))];
+    this.logoutConfirmOpen = true;
+
+    return new Promise<boolean>((resolve) => {
+      const finish = (confirmed: boolean) => {
+        this.logoutConfirmOpen = false;
+        resolve(confirmed);
+      };
+
+      this.modal.confirm({
+        nzClassName: 'subapp-service-confirm-modal',
+        nzTitle: this.t(
+          hasOtherProtectedTools
+            ? 'USER_CENTER.LOGOUT_CLOSE_APPS_TITLE'
+            : 'USER_CENTER.LOGOUT_CONFIRM_TITLE',
+          hasOtherProtectedTools ? '退出登录并关闭应用？' : '确认退出登录？',
+        ),
+        nzContent: hasOtherProtectedTools
+          ? this.translate.instant('USER_CENTER.LOGOUT_CLOSE_APPS_CONTENT', {
+              apps: appNames.join('、'),
+            })
+          : this.t('USER_CENTER.LOGOUT_CONFIRM_CONTENT', '确定要退出当前账号吗？'),
+        nzOkText: this.t('USER_CENTER.LOGOUT_CONFIRM_OK', '退出登录'),
+        nzCancelText: this.t('USER_CENTER.LOGOUT_CANCEL', '取消'),
+        nzOkDanger: true,
+        nzMaskClosable: false,
+        nzOnOk: () => finish(true),
+        nzOnCancel: () => finish(false),
+      });
+    });
+  }
+
+  private async closeProtectedTools(toolIds: string[]): Promise<void> {
+    for (const toolId of toolIds) {
+      let closed = false;
+
+      if (getChildToolConfig(toolId)) {
+        const result = await this.mainUiAutomation.controlChildApp({
+          toolId,
+          action: 'close',
+        });
+        closed = result['ok'] === true;
+      }
+
+      if (!closed) {
+        closed = await this.uiService.forceCloseToolEverywhere(toolId);
+      }
+
+      if (!closed) {
+        throw new ProtectedToolCloseError(toolId);
+      }
+    }
+  }
+
+  private getToolDisplayName(toolId: string): string {
+    if (toolId === 'aily-chat' || toolId === 'aily-chat-react') {
+      return 'Aily Chat';
+    }
+
+    const childConfig = getChildToolConfig(toolId);
+    const builtInApp = APP_LIST.find((app) => app.id === toolId);
+    const titleKey = childConfig?.app?.name || childConfig?.titleKey || builtInApp?.name;
+    if (!titleKey) {
+      return toolId;
+    }
+
+    const translatedTitle = this.translate.instant(titleKey);
+    return translatedTitle && translatedTitle !== titleKey ? translatedTitle : toolId;
   }
 
   toggleRegisterMode() {
@@ -368,6 +487,32 @@ export class UserCenterComponent {
     return Math.max(0, 100 - this.quotaUsagePercent);
   }
 
+  get aiAvailableValue(): string {
+    if (this.authQuotaInfo) {
+      const unlimited = this.authQuotaInfo.unlimited === true || this.authQuotaInfo.quota < 0;
+      if (unlimited) {
+        return '♾️';
+      }
+
+      const remaining = Math.max(0, this.authQuotaInfo.remaining);
+      const quota = Math.max(0, this.authQuotaInfo.quota);
+      const unitSuffix = this.authQuotaInfo.usageUnit === 'interactions' ? '次' : ' tokens';
+      return `${remaining}/${quota}${unitSuffix}`;
+    }
+
+    return this.benefits?.ai_calls?.unlimited
+      ? '♾️'
+      : `${this.benefits?.ai_calls?.used ?? 0}/${this.benefits?.ai_calls?.total ?? 0}`;
+  }
+
+  get aiAvailableMeta(): string | null {
+    if (!this.authQuotaInfo) {
+      return null;
+    }
+
+    return formatQuotaResetMetaLabel(this.authQuotaInfo.resetTime) ?? null;
+  }
+
   private calculateQuotaUsagePercent(): void {
     // console.log('=== 开始计算配额使用百分比 ===');
     // console.log('currentUser 完整对象:', JSON.stringify(this.currentUser, null, 2));
@@ -445,5 +590,12 @@ export class UserCenterComponent {
     // this.message.warning('测试版期间免费使用，无需购买');
     // return;
     this.openUserCenterPage(url);
+  }
+}
+
+class ProtectedToolCloseError extends Error {
+  constructor(toolId: string) {
+    super(`Failed to close protected tool: ${toolId}`);
+    this.name = 'ProtectedToolCloseError';
   }
 }

@@ -7,17 +7,24 @@ import { ElectronService } from '../../../services/electron.service';
 import { LogService } from '../../../services/log.service';
 import { NoticeService } from '../../../services/notice.service';
 import { BlocklyLibraryDiagnostics, BlocklyLibraryPackageService, BlocklyLibraryPackageSnapshot } from '../../../services/blockly-library-package.service';
-import { BlockCodeMapping, CodeLineRange } from '../components/blockly/generators/arduino/arduino';
+import {
+  BlockCodeMapping,
+  CodeLineRange,
+  normalizeArduinoGeneratedCode,
+} from '../components/blockly/generators/arduino/arduino';
 import { convertBlockTreeToAbs, convertAbiToAbsWithLineMap } from '../../../tools/aily-chat/public-api';
 import { BlockSearcher } from '../components/blockly/plugins/toolbox-search/src/block_searcher';
-import { dragSelectionWeakMap } from '../components/blockly/plugins/workspace-multiselect/index.js';
+import {
+  dragSelectionWeakMap,
+  registerFieldInputIncrementPolicy,
+} from '../components/blockly/plugins/workspace-multiselect/index.js';
 import { exportWorkspaceToSvg } from './workspace-svg-exporter';
 import { createProjectDataMarker, isAilyProjectDataMarker } from '../../../services/project-data/project-data.types';
 import {
   decorateLibraryBlockDefinitionForProjectData,
   unregisterProjectDataFieldSlots,
-  wrapProjectDataGeneratorFunctions,
 } from '../../../services/project-data/blockly-project-data-adapter';
+import { BlocklyGeneratorRuntimeService } from './blockly-generator-runtime.service';
 
 export interface BlockContextLabel {
   label: string;
@@ -76,6 +83,13 @@ interface LoadedBlocklyLibraryInfo {
   generatorPath: string;
 }
 
+export interface BlocklyLibraryRuntimeRebuildOptions {
+  projectPath: string;
+  packageJson: any;
+  libraryNames: string[];
+  projectService: unknown;
+}
+
 export const AILY_BLOCKLY_USED_LIBRARIES_FIELD = 'ailyBlocklyUsedLibraries';
 
 export interface BlocklyUsedLibraryManifestEntry {
@@ -104,6 +118,11 @@ export interface WorkspaceBlockSearchState {
   query: string;
   results: WorkspaceBlockSearchResult[];
   currentIndex: number;
+}
+
+export interface BlocklyDebugExecutionMarkerState {
+  projectPath: string;
+  blockId: string;
 }
 
 @Injectable({
@@ -152,6 +171,7 @@ export class BlocklyService {
   private libraryLoadTasks = new Map<string, Promise<void>>();
   private libraryIntegrityFailureLogSignatures = new Map<string, string>();
   private libraryIntegrityWarningLogSignatures = new Map<string, string>();
+  private rebuildingLibraryRuntime = false;
   // blockType → 库信息映射（用于跨实例复制粘贴时携带库元信息）
   blockTypeToLibMap = new Map<string, { name: string; version: string; localPath?: string }>();
 
@@ -169,6 +189,9 @@ export class BlocklyService {
   selectedBlockIdsSubject = new BehaviorSubject<string[]>([]);
   /** block → 代码行号映射（每次代码生成后更新） */
   blockCodeMapSubject = new BehaviorSubject<Map<string, BlockCodeMapping>>(new Map());
+  /** GDB 当前执行块；与 Blockly 用户 selection 完全独立。 */
+  debugExecutionMarkerSubject =
+    new BehaviorSubject<BlocklyDebugExecutionMarkerState | null>(null);
   /** block → ABS 行号映射（由 abs-auto-sync 生成 ABS 时同步更新，确保与用户看到的 .abs 文件一致） */
   absBlockLineMap = new BehaviorSubject<Map<string, { startLine: number; endLine: number }>>(new Map());
   codeViewerRefreshRequested$ = this.codeViewerRefreshRequestSubject.asObservable();
@@ -181,6 +204,31 @@ export class BlocklyService {
   toolboxSearchQuerySubject = new BehaviorSubject<string>('');
   workspaceBlockSearchSubject = new BehaviorSubject<WorkspaceBlockSearchState>(this.createWorkspaceBlockSearchState());
 
+  setDebugExecutionMarker(projectPath: string, blockId: string): void {
+    const normalizedProjectPath = String(projectPath || '').trim();
+    const normalizedBlockId = String(blockId || '').trim();
+    const next = normalizedProjectPath && normalizedBlockId
+      ? {
+          projectPath: normalizedProjectPath,
+          blockId: normalizedBlockId.slice(0, 256),
+        }
+      : null;
+    const current = this.debugExecutionMarkerSubject.value;
+    if (
+      current?.projectPath === next?.projectPath
+      && current?.blockId === next?.blockId
+    ) {
+      return;
+    }
+    this.debugExecutionMarkerSubject.next(next);
+  }
+
+  clearDebugExecutionMarker(projectPath?: string): void {
+    const current = this.debugExecutionMarkerSubject.value;
+    if (!current || (projectPath && current.projectPath !== projectPath)) return;
+    this.debugExecutionMarkerSubject.next(null);
+  }
+
   boardConfig;
 
   draggingBlock: any;
@@ -192,28 +240,102 @@ export class BlocklyService {
   private toolboxSortOrder: string[] = [];
   private loadLibraryFinishedLoadingSubject = new Subject<void>();
 
-  aiWaiting = false;
   private _aiWriting = new BehaviorSubject<boolean>(false);
   aiWriting$ = this._aiWriting.asObservable();
-  private _aiWaiting = new BehaviorSubject<boolean>(false);
-  aiWaiting$ = this._aiWaiting.asObservable();
+  private readonly aiWritingSources = new Set<string>();
+  private _aiExecutionActive = new BehaviorSubject<boolean>(false);
+  /** AI 回合 / 子应用操作进行中。与 `aiWaiting` getter/setter 同源。 */
+  aiExecutionActive$ = this._aiExecutionActive.asObservable();
+  private readonly aiExecutionActiveSources = new Set<string>();
+  private _aiWaitWriting = new BehaviorSubject<boolean>(false);
+  /** 短暂的“等待写入”提示态，不等于 AI 执行中。 */
+  aiWaitWriting$ = this._aiWaitWriting.asObservable();
+  /**
+   * 兼容旧订阅：必须与 `aiWaiting` getter 一致，指向 `_aiExecutionActive`。
+   * 历史上误绑到 `_aiWaitWriting`，会导致遮罩亮起但「AI正在操作」通知不出现。
+   */
+  aiWaiting$ = this._aiExecutionActive.asObservable();
+
+  get aiWaiting() {
+    return this._aiExecutionActive.value;
+  }
+
+  set aiWaiting(value: boolean) {
+    this.setAiExecutionActive('legacy-aily-chat', value);
+  }
+
+  setAiExecutionActive(source: string, value: boolean): void {
+    const normalizedSource = String(source || '').trim();
+    if (!normalizedSource) {
+      return;
+    }
+
+    if (value) {
+      this.aiExecutionActiveSources.add(normalizedSource);
+    } else {
+      this.aiExecutionActiveSources.delete(normalizedSource);
+    }
+
+    const active = this.aiExecutionActiveSources.size > 0;
+    if (this._aiExecutionActive.value !== active) {
+      this._aiExecutionActive.next(active);
+    }
+  }
 
   get aiWaitWriting() {
-    return this._aiWaiting.value;
+    return this._aiWaitWriting.value;
   }
 
   set aiWaitWriting(value: boolean) {
-    this._aiWaiting.next(value);
+    if (this._aiWaitWriting.value !== value) {
+      this._aiWaitWriting.next(value);
+    }
+  }
+
+  get aiWriting(): boolean {
+    return this._aiWriting.value;
+  }
+
+  set aiWriting(value: boolean) {
+    this.setAiWritingActive('legacy-aily-chat', value);
+  }
+
+  /** 积木写入态多源合并，供遮罩 / 「AI正在操作」通知使用。 */
+  setAiWritingActive(source: string, value: boolean): void {
+    const normalizedSource = String(source || '').trim();
+    if (!normalizedSource) {
+      return;
+    }
+
+    if (value) {
+      this.aiWritingSources.add(normalizedSource);
+    } else {
+      this.aiWritingSources.delete(normalizedSource);
+    }
+
+    const active = this.aiWritingSources.size > 0;
+    if (this._aiWriting.value !== active) {
+      this._aiWriting.next(active);
+    }
   }
 
   markWorkspaceCodeDirty(): void {
     this.workspaceCodeRevision++;
   }
 
-  publishGeneratedCode(code: string): void {
-    this.latestGeneratedCode = code;
+  getWorkspaceContentRevision(): number {
+    return this.workspaceCodeRevision;
+  }
+
+  publishGeneratedCode(code: unknown): void {
+    const normalizedCode = normalizeArduinoGeneratedCode(code);
+    this.latestGeneratedCode = normalizedCode;
     this.generatedCodeRevision = this.workspaceCodeRevision;
-    this.codeSubject.next(code);
+    this.codeSubject.next(normalizedCode);
+  }
+
+  getGeneratedCode(): string {
+    return this.latestGeneratedCode || this.codeSubject.value || '';
   }
 
   getReusableGeneratedCode(): string | null {
@@ -228,14 +350,6 @@ export class BlocklyService {
     this.codeViewerRefreshRequestSubject.next(forceGenerate);
   }
 
-  get aiWriting(): boolean {
-    return this._aiWriting.value;
-  }
-
-  set aiWriting(value: boolean) {
-    this._aiWriting.next(value);
-  }
-
   private overlayChaffObserver: MutationObserver | null = null;
   private documentPointerDownHandler: ((event: PointerEvent) => void) | null = null;
 
@@ -248,7 +362,8 @@ export class BlocklyService {
     private electronService: ElectronService,
     private logService: LogService,
     private noticeService: NoticeService,
-    private blocklyLibraryPackageService: BlocklyLibraryPackageService
+    private blocklyLibraryPackageService: BlocklyLibraryPackageService,
+    private generatorRuntime: BlocklyGeneratorRuntimeService,
   ) {
     (window as any).__ailyBlockDefinitionsMap = this.blockDefinitionsMap;
     (window as any).__ailyBlockTypeToLibMap = this.blockTypeToLibMap;
@@ -1077,9 +1192,7 @@ export class BlocklyService {
         const i18nFilePath = this.electronService.pathJoin(libPackagePath, 'i18n', this.translateService.currentLang + '.json');
         if (this.electronService.exists(i18nFilePath)) {
           i18nData = JSON.parse(this.electronService.readFile(i18nFilePath));
-          // 将 i18n 数据按库名存储到全局，供动态扩展使用
-          (window as any).__BLOCKLY_LIB_I18N__ = (window as any).__BLOCKLY_LIB_I18N__ || {};
-          (window as any).__BLOCKLY_LIB_I18N__[libPackageName] = i18nData;
+          this.generatorRuntime.setLibraryI18n(libPackageName, i18nData);
           blocks = processI18n(blocks, i18nData);
         }
         // 加载generator（必须在 i18n 数据存储后，这样动态定义的块才能读取到正确的多语言）
@@ -1087,7 +1200,7 @@ export class BlocklyService {
         if (generatorFileIsExist) {
           generatorLoadSuccess = await this.loadLibGenerator(generatorFilePath);
           if (!generatorLoadSuccess) {
-            console.error(`[loadLibrary] generator.js 加载失败: ${libPackageName}，库将不会标记为已加载，下次可重试`);
+            throw new Error(`[loadLibrary] generator.js 加载失败: ${libPackageName}`);
           }
         }
         // 替换block中静态图片路径
@@ -1122,6 +1235,7 @@ export class BlocklyService {
       this.loadLibraryFinishedLoadingSubject.next();
     } catch (error) {
       console.error('加载库失败:', libPackageName, error);
+      throw error;
     }
   }
 
@@ -1259,14 +1373,6 @@ export class BlocklyService {
     }
   }
 
-  // 卸载库（通过包名和项目路径）
-  async unloadLibrary(libPackageName, projectPath) {
-    const libPackagePath = this.blocklyLibraryPackageService.getPackagePath(projectPath, libPackageName);
-
-    // 直接调用 removeLibrary 函数
-    this.removeLibrary(libPackagePath);
-  }
-
   loadLibBlocks(blocks, libStaticPath, libPackageName = '', libVersion = '', libLocalPath?: string) {
     for (let index = 0; index < blocks.length; index++) {
       let block = blocks[index];
@@ -1289,8 +1395,40 @@ export class BlocklyService {
         libPackageName,
         (key) => this.translateService.instant(key),
       );
+      this.registerBlockFieldInputIncrementPolicy(block);
       Blockly.defineBlocksWithJsonArray([block]);
     }
+  }
+
+  private registerBlockFieldInputIncrementPolicy(block: any): void {
+    const blockType = typeof block?.type === 'string' ? block.type : '';
+    if (!blockType) {
+      return;
+    }
+
+    let hasExplicitPolicy = false;
+    const incrementableFields: string[] = [];
+    Object.keys(block)
+      .filter((key) => /^args\d+$/.test(key) && Array.isArray(block[key]))
+      .forEach((key) => {
+        block[key].forEach((arg: any) => {
+          if (arg?.type !== 'field_input' || typeof arg.autoIncrement !== 'boolean') {
+            return;
+          }
+          hasExplicitPolicy = true;
+          if (arg.autoIncrement && typeof arg.name === 'string') {
+            incrementableFields.push(arg.name);
+          }
+          // autoIncrement belongs to Aily's library schema, not Blockly's
+          // FieldTextInput JSON contract.
+          delete arg.autoIncrement;
+        });
+      });
+
+    registerFieldInputIncrementPolicy(
+      blockType,
+      hasExplicitPolicy ? incrementableFields : null,
+    );
   }
 
   loadLibBlocksJS(filePath) {
@@ -1321,12 +1459,75 @@ export class BlocklyService {
 
     this.ensureToolboxItemIds(this.toolbox.contents);
     this.applyToolboxSortOrderToContents(this.toolbox.contents);
-    if (this.workspace) {
-      this.workspace.updateToolbox(this.toolbox);
-      this.workspace.render();
+    if (!this.rebuildingLibraryRuntime) {
+      this.refreshToolboxFromContents();
     }
-    this.rebuildToolboxFacade();
-    this.syncToolboxFacadeWithWorkspace();
+  }
+
+  async rebuildLibraryRuntimeInPlace(options: BlocklyLibraryRuntimeRebuildOptions): Promise<void> {
+    if (this.rebuildingLibraryRuntime) {
+      throw new Error('Blockly library runtime rebuild is already in progress');
+    }
+
+    const projectDocument = this.getProjectDocument();
+    this.hideChaff(true);
+    this.rebuildingLibraryRuntime = true;
+
+    try {
+      // Replacing the iframe restores the host Blockly checkpoint first. The
+      // workspace DOM stays mounted; only the project-owned library layer is
+      // registered again from the dependencies that still exist on disk.
+      this.generatorRuntime.rebuild({
+        projectPath: options.projectPath,
+        packageJson: options.packageJson,
+        boardConfig: this.boardConfig,
+        projectService: options.projectService,
+      });
+      this.clearLoadedLibraryStateForRuntimeRebuild();
+
+      for (const libraryName of options.libraryNames) {
+        await this.loadLibrary(libraryName, options.projectPath);
+      }
+
+      const missingBlockTypes = this.collectBlockTypesFromProjectDocument(projectDocument)
+        .filter((blockType) => typeof Blockly.Blocks[blockType]?.init !== 'function');
+      if (missingBlockTypes.length > 0) {
+        throw new Error(
+          '[BlocklyLibraryRuntime] project block definitions are not ready: '
+          + missingBlockTypes.join(', '),
+        );
+      }
+
+      this.refreshToolboxFromContents();
+      // Recreate block instances so extensions/callbacks owned by the old
+      // iframe Realm cannot survive through the in-place runtime swap.
+      this.loadProjectDocument(projectDocument, false);
+      this.generatorRuntime.markReady(options.projectPath);
+      this.requestCodeViewerRefresh(true);
+    } finally {
+      this.rebuildingLibraryRuntime = false;
+    }
+  }
+
+  private clearLoadedLibraryStateForRuntimeRebuild(): void {
+    unregisterProjectDataFieldSlots(Array.from(this.blockTypeToLibMap.keys()));
+    this.iconsMap.clear();
+    this.blockDefinitionsMap.clear();
+    this.loadedGenerators.clear();
+    this.loadedLibraries.clear();
+    this.loadedLibraryInfos.clear();
+    this.libraryLoadTasks.clear();
+    this.libraryIntegrityFailureLogSignatures.clear();
+    this.libraryIntegrityWarningLogSignatures.clear();
+    this.blockTypeToLibMap.clear();
+    this.toolbox = {
+      kind: 'categoryToolbox',
+      contents: [{
+        kind: 'search',
+        name: 'Search',
+        contents: [],
+      }],
+    };
   }
 
   syncSerialDynamicToolboxBlocks(workspace: Blockly.WorkspaceSvg | null = this._workspace): void {
@@ -1334,15 +1535,8 @@ export class BlocklyService {
       return;
     }
 
-    const ensureListener = (window as any).ensureSerialToolboxListener;
-    if (typeof ensureListener === 'function') {
-      ensureListener(workspace);
-    }
-
-    const syncFn = (window as any).loadExistingSerialBlockToToolbox;
-    if (typeof syncFn === 'function') {
-      syncFn(workspace);
-    }
+    this.generatorRuntime.invokeGlobal('ensureSerialToolboxListener', workspace);
+    this.generatorRuntime.invokeGlobal('loadExistingSerialBlockToToolbox', workspace);
   }
 
   snapshotSerialFieldValues(): Map<string, string> {
@@ -1482,8 +1676,17 @@ export class BlocklyService {
 
     try {
       const blocksData = JSON.parse(this.electronService.readFile(libBlockPath));
-      const abiJson = JSON.stringify(this.getProjectDocument());
-      return blocksData.some((block: any) => block?.type && abiJson.includes(block.type));
+      const libraryBlockTypes = Array.isArray(blocksData)
+        ? blocksData
+          .map((block: any) => block?.type)
+          .filter((blockType): blockType is string => typeof blockType === 'string' && blockType.length > 0)
+        : [];
+      if (libraryBlockTypes.length === 0) {
+        return false;
+      }
+
+      const usedBlockTypes = new Set(this.collectBlockTypesFromProjectDocument(this.getProjectDocument()));
+      return libraryBlockTypes.some((blockType) => usedBlockTypes.has(blockType));
     } catch (error) {
       console.error('检查库使用情况失败:', libPackagePath, error);
       return false;
@@ -1504,216 +1707,29 @@ export class BlocklyService {
       return false;
     }
 
-    const abiJson = JSON.stringify(this.getProjectDocument());
-    return blockTypes.some((blockType) => abiJson.includes(blockType));
+    const usedBlockTypes = new Set(this.collectBlockTypesFromProjectDocument(this.getProjectDocument()));
+    return blockTypes.some((blockType) => usedBlockTypes.has(blockType));
   }
 
   loadLibGenerator(filePath): Promise<boolean> {
-    return new Promise((resolve, reject) => {
-      // 检查是否已加载
-      if (this.loadedGenerators.has(filePath)) {
-        console.warn(`Generator ${filePath} 已加载,跳过重复加载`);
-        resolve(true);
-        return;
-      }
-
-      // 在加载前记录当前已有的generator函数
-      const blockTypesBefore = this.getRegisteredGenerators();
-
-      let script = document.createElement('script');
-      script.type = 'text/javascript';
-      script.src = 'file:///' + filePath;
-      script.setAttribute('data-generator-path', filePath); // 标记script来源
-
-      script.onload = () => {
-        // 加载后检测新增的generator函数
-        const blockTypesAfter = this.getRegisteredGenerators();
-        const newBlockTypes = blockTypesAfter.filter(type => !blockTypesBefore.includes(type));
-        wrapProjectDataGeneratorFunctions((window as any).Arduino, blockTypesAfter);
-        wrapProjectDataGeneratorFunctions(
-          (window as any).MPY || (window as any).MicropPython,
-          blockTypesAfter,
-        );
-        this.loadedGenerators.set(filePath, new Set(newBlockTypes));
-        // console.log(`Generator loaded from ${filePath}, registered blocks:`, newBlockTypes);
-        resolve(true);
-      };
-
-      script.onerror = (error: any) => {
-        console.error(`Generator loading failed: ${filePath}`, error);
-        resolve(false);
-      };
-
-      document.getElementsByTagName('head')[0].appendChild(script);
-    });
-  }
-
-  // 获取当前已注册的所有generator函数对应的block类型
-  private getRegisteredGenerators(): string[] {
-    const generators = [];
-    // generator 脚本通过 window.Arduino.forBlock / window.MPY.forBlock 注册
-    const arduinoGen = (window as any).Arduino;
-    if (arduinoGen?.forBlock) {
-      generators.push(...Object.keys(arduinoGen.forBlock).filter(key =>
-        typeof arduinoGen.forBlock[key] === 'function'
-      ));
-    }
-    const mpyGen = (window as any).MPY || (window as any).MicropPython;
-    if (mpyGen?.forBlock) {
-      generators.push(...Object.keys(mpyGen.forBlock).filter(key =>
-        typeof mpyGen.forBlock[key] === 'function'
-      ));
-    }
-    return generators;
-  }
-
-  removeLibrary(libPackagePath) {
-    // 路径已经是标准格式，无需再次分割
-    // electronService.pathJoin已经处理了路径分隔符
-    this.libraryIntegrityFailureLogSignatures.delete(libPackagePath);
-    this.libraryIntegrityWarningLogSignatures.delete(libPackagePath);
-
-    // 即使库完整性检查失败、没有标记为已加载，也需要移除其 toolbox 占位项。
-    const removedToolboxByMetadata = this.removeLibToolboxByLibraryPath(libPackagePath);
-
-    // 检查是否已加载
-    if (!this.loadedLibraries.has(libPackagePath)) {
-      if (!removedToolboxByMetadata) {
-        console.warn(`库 ${libPackagePath} 未加载,无需移除`);
-      }
-      return;
+    if (this.loadedGenerators.has(filePath)) {
+      console.warn(`Generator ${filePath} 已加载,跳过重复加载`);
+      return Promise.resolve(true);
     }
 
-    console.log(`开始移除库: ${libPackagePath}`);
-    const loadedLibraryInfo = this.loadedLibraryInfos.get(libPackagePath);
-
-    // 读取要移除的库的信息
-    // 移除block定义
-    const blockFileIsExist = this.electronService.exists(this.electronService.pathJoin(libPackagePath, 'block.json'));
-    if (blockFileIsExist) {
-      let blocks = JSON.parse(this.electronService.readFile(this.electronService.pathJoin(libPackagePath, 'block.json')));
-      this.removeLibBlocks(blocks);
-    } else if (loadedLibraryInfo?.blockTypes?.length) {
-      this.removeLibBlockTypes(loadedLibraryInfo.blockTypes);
-    } else {
-      // 对于JS形式加载的block，需要使用block文件名作为标识
-      const blockJsPath = this.electronService.pathJoin(libPackagePath, 'block.js');
-      this.removeLibBlocksJS(blockJsPath);
+    try {
+      const source = this.electronService.readFile(filePath);
+      const result = this.generatorRuntime.loadGenerator(filePath, source);
+      const registered = result.arduinoBlockTypes.length > 0
+        ? result.arduinoBlockTypes
+        : result.micropythonBlockTypes;
+      this.loadedGenerators.set(filePath, new Set(registered));
+      return Promise.resolve(true);
+    } catch (error) {
+      console.error(`Generator loading failed: ${filePath}`, error);
+      this.generatorRuntime.destroy();
+      return Promise.resolve(false);
     }
-
-    // 移除toolbox项
-    const toolboxFileIsExist = this.electronService.exists(this.electronService.pathJoin(libPackagePath, 'toolbox.json'));
-    if (!removedToolboxByMetadata && toolboxFileIsExist) {
-      let toolbox = JSON.parse(this.electronService.readFile(this.electronService.pathJoin(libPackagePath, 'toolbox.json')));
-      // 检查多语言文件是否存在，（2025.5.29 修复因为多语言造成的移除不了toolbox的问题）
-      let i18nData = null;
-      const i18nFilePath = this.electronService.pathJoin(libPackagePath, 'i18n', this.translateService.currentLang + '.json');
-      if (this.electronService.exists(i18nFilePath)) {
-        i18nData = JSON.parse(this.electronService.readFile(i18nFilePath));
-        if (i18nData) toolbox.name = i18nData.toolbox_name;
-      }
-      this.removeLibToolbox(toolbox);
-    }
-
-    // 移除generator相关引用
-    const generatorFilePath = loadedLibraryInfo?.generatorPath || this.electronService.pathJoin(libPackagePath, 'generator.js');
-    const generatorFileIsExist = this.electronService.exists(generatorFilePath);
-    if (generatorFileIsExist || loadedLibraryInfo?.generatorPath) {
-      this.removeLibGenerator(generatorFilePath);
-    }
-
-    // 从已加载库列表中移除
-    this.loadedLibraries.delete(libPackagePath);
-    this.loadedLibraryInfos.delete(libPackagePath);
-    console.log(`库 ${libPackagePath} 移除完成`);
-  }
-
-  // 移除已加载的block定义
-  removeLibBlocks(blocks) {
-    const blockTypes = blocks
-      .map((block: any) => block?.type)
-      .filter((type: any): type is string => typeof type === 'string' && type.length > 0);
-    this.removeLibBlockTypes(blockTypes);
-  }
-
-  private removeLibBlockTypes(blockTypes: string[]) {
-    unregisterProjectDataFieldSlots(blockTypes);
-    for (const blockType of blockTypes) {
-      // 从Blockly中删除block定义
-      if (Blockly.Blocks[blockType]) {
-        console.log(`- delete ${blockType}`);
-        delete Blockly.Blocks[blockType];
-        const arduinoGen = (window as any).Arduino;
-        if (arduinoGen?.forBlock?.[blockType]) {
-          delete arduinoGen.forBlock[blockType];
-        }
-        const mpyGen = (window as any).MPY || (window as any).MicropPython;
-        if (mpyGen?.forBlock?.[blockType]) {
-          delete mpyGen.forBlock[blockType];
-        }
-        if ((Blockly as any).JavaScript?.forBlock?.[blockType]) {
-          delete (Blockly as any).JavaScript.forBlock[blockType];
-        }
-      }
-      this.blockDefinitionsMap.delete(blockType);
-      this.blockTypeToLibMap.delete(blockType);
-    }
-  }
-
-  // 移除通过JS加载的block定义
-  removeLibBlocksJS(scriptSrc) {
-    // 查找并移除相关脚本标签
-    const scripts = document.getElementsByTagName('script');
-    for (let i = 0; i < scripts.length; i++) {
-      if (scripts[i].src.includes(scriptSrc)) {
-        scripts[i].parentNode.removeChild(scripts[i]);
-        break;
-      }
-    }
-    // 注意：已执行的JS代码效果无法直接撤销，这里只是移除了脚本标签
-  }
-
-  // 从toolbox中移除项
-  removeLibToolbox(toolboxItem) {
-    // 通过比较找到要移除的toolbox项
-    console.log(`即将移除：`, toolboxItem);
-    const index = this.findToolboxItemIndex(toolboxItem);
-    if (index !== -1) {
-      this.toolbox.contents.splice(index, 1);
-      if (this.workspace) {
-        this.workspace.updateToolbox(this.toolbox);
-      }
-      this.rebuildToolboxFacade();
-      this.syncToolboxFacadeWithWorkspace();
-    }
-  }
-
-  private removeLibToolboxByLibraryPath(libraryPath: string): boolean {
-    const removeFromContents = (contents: any[]): boolean => {
-      let removed = false;
-      for (let index = contents.length - 1; index >= 0; index--) {
-        const item = contents[index];
-        if (item?.ailyLibraryPath === libraryPath) {
-          contents.splice(index, 1);
-          removed = true;
-          continue;
-        }
-        if (Array.isArray(item?.contents) && removeFromContents(item.contents)) {
-          removed = true;
-        }
-      }
-      return removed;
-    };
-
-    const removed = removeFromContents(this.toolbox.contents);
-    if (removed) {
-      if (this.workspace) {
-        this.workspace.updateToolbox(this.toolbox);
-      }
-      this.rebuildToolboxFacade();
-      this.syncToolboxFacadeWithWorkspace();
-    }
-    return removed;
   }
 
   // 查找toolbox项在contents数组中的索引
@@ -1734,46 +1750,18 @@ export class BlocklyService {
     return -1;
   }
 
-  // 移除generator相关引用
-  removeLibGenerator(scriptSrc) {
-    // 移除注册的generator函数
-    const registeredBlocks = this.loadedGenerators.get(scriptSrc);
-    if (registeredBlocks && registeredBlocks.size > 0) {
-      registeredBlocks.forEach(blockType => {
-        // 清理各种语言的generator（使用与脚本注册相同的全局对象）
-        const arduinoGen = (window as any).Arduino;
-        if (arduinoGen?.forBlock?.[blockType]) {
-          console.log(`- delete Arduino generator for ${blockType}`);
-          delete arduinoGen.forBlock[blockType];
-        }
-        const mpyGen = (window as any).MPY || (window as any).MicropPython;
-        if (mpyGen?.forBlock?.[blockType]) {
-          console.log(`- delete Python generator for ${blockType}`);
-          delete mpyGen.forBlock[blockType];
-        }
-        if ((Blockly as any).JavaScript?.forBlock?.[blockType]) {
-          delete (Blockly as any).JavaScript.forBlock[blockType];
-        }
-      });
-    }
-    this.loadedGenerators.delete(scriptSrc);
-
-    // 查找并移除相关脚本标签
-    const scripts = document.getElementsByTagName('script');
-    for (let i = scripts.length - 1; i >= 0; i--) { // 倒序遍历避免索引问题
-      const script = scripts[i];
-      const dataPath = script.getAttribute('data-generator-path');
-      if (script.src.includes(scriptSrc) || dataPath === scriptSrc) {
-        script.parentNode?.removeChild(script);
-        console.log(`- removed script tag for ${scriptSrc}`);
-        break;
-      }
-    }
-  }
-
   reset() {
     console.log('开始重置 BlocklyService...');
 
+    // Workspace dispose may call project-defined callbacks, so it must happen
+    // before the iframe and host registry snapshot are released.
+    if (this.workspace) {
+      this.workspace.dispose();
+      this.workspace = null;
+    }
+    this.generatorRuntime.destroy();
+
+    unregisterProjectDataFieldSlots(Array.from(this.blockTypeToLibMap.keys()));
     this.iconsMap.clear();
     this.blockDefinitionsMap.clear();
     this.loadedGenerators.clear();
@@ -1823,13 +1811,6 @@ export class BlocklyService {
       }
     });
 
-    // 处理工作区
-    if (this.workspace) {
-      this.workspace.dispose();
-      this.workspace = null;
-      // console.log('工作区已销毁');
-    }
-
     // 重置工具箱
     this.toolbox = {
       kind: 'categoryToolbox',
@@ -1846,6 +1827,7 @@ export class BlocklyService {
     this.codeSubject.next('');
     this.selectedBlockSubject.next(null);
     this.selectedBlockIdsSubject.next([]);
+    this.debugExecutionMarkerSubject.next(null);
     this.blockCodeMapSubject.next(new Map());
     this.absBlockLineMap.next(new Map());
     this.closeWorkspaceBlockSearch();
@@ -2618,6 +2600,29 @@ export class BlocklyService {
   getCodeLinesForBlock(blockId: string): CodeLineRange[] {
     const mapping = this.getCodeForBlock(blockId);
     return mapping?.lineRanges || [];
+  }
+
+  /**
+   * Resolve the most specific Blockly block for a generated source line
+   * without changing the user's current Blockly selection.
+   */
+  getBlockIdByGeneratedLine(line: number): string | null {
+    if (!Number.isSafeInteger(line) || line < 1) return null;
+    const candidates = [...this.blockCodeMapSubject.value.values()]
+      .filter((mapping) => mapping.lineRanges.some(
+        (range) => line >= range.startLine && line <= range.endLine,
+      ))
+      .sort((left, right) => {
+        const leftSpan = Math.min(...left.lineRanges.map(
+          (range) => range.endLine - range.startLine,
+        ));
+        const rightSpan = Math.min(...right.lineRanges.map(
+          (range) => range.endLine - range.startLine,
+        ));
+        return leftSpan - rightSpan;
+      });
+    const blockId = candidates[0]?.blockId;
+    return blockId || null;
   }
 
   private createWorkspaceBlockSearchState(): WorkspaceBlockSearchState {

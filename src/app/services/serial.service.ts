@@ -16,6 +16,11 @@ export class SerialService {
     private electronService: ElectronService
   ) { }
 
+  private normalizeUsbId(value: unknown): string | undefined {
+    const normalized = String(value || '').trim().replace(/^0x/i, '').toLowerCase();
+    return normalized || undefined;
+  }
+
   // 此处还未考虑linux、macos适配
   async getSerialPorts(): Promise<PortItem[]> {
     if (this.electronService.isElectron) {
@@ -46,11 +51,13 @@ export class SerialService {
           return {
             name: item.path,
             text: friendlyName,
-            // boardName: boardName,
             type: 'serial',
             icon: icon,
-            // vendorId,
-            // productId,
+            vendorId: this.normalizeUsbId(item.vendorId),
+            productId: this.normalizeUsbId(item.productId),
+            serialNumber: item.serialNumber,
+            manufacturer: item.manufacturer,
+            pnpId: item.pnpId,
           }
         });
       } else if (window['platform'].isMacOS) {
@@ -69,11 +76,13 @@ export class SerialService {
           return {
             name: devicePath, // 使用转换后的 cu 路径
             text: friendlyName,
-            // boardName: boardName,
             type: 'serial',
             icon: icon,
-            // vendorId,
-            // productId,
+            vendorId: this.normalizeUsbId(item.vendorId),
+            productId: this.normalizeUsbId(item.productId),
+            serialNumber: item.serialNumber,
+            manufacturer: item.manufacturer,
+            pnpId: item.pnpId,
           }
         });
       } else if (window['platform'].isLinux) {
@@ -85,6 +94,32 @@ export class SerialService {
       const port = await navigator['serial'].requestPort();
       return [{ port: port, name: '' }];
     }
+  }
+
+  async selectSerialPort(portName: string): Promise<PortItem> {
+    const normalizedPortName = String(portName || '').trim();
+    if (!normalizedPortName) {
+      throw new Error('A serial port is required.');
+    }
+
+    const ports = await this.getSerialPorts();
+    const selectedPort = ports.find(port => String(port.name || '').trim() === normalizedPortName);
+    if (!selectedPort) {
+      const availablePorts = ports
+        .map(port => String(port.name || '').trim())
+        .filter(Boolean)
+        .join(', ');
+      throw new Error(availablePorts
+        ? `Serial port "${normalizedPortName}" is no longer available. Available ports: ${availablePorts}.`
+        : `Serial port "${normalizedPortName}" is no longer available. No serial ports are connected.`);
+    }
+
+    this.currentPort = selectedPort.name;
+    this.currentPortInfo = {
+      ...selectedPort,
+      type: selectedPort.type || 'serial',
+    };
+    return this.currentPortInfo;
   }
 }
 
@@ -99,9 +134,13 @@ export interface PortItem {
   disabled?: boolean,
   probeSerial?: string,
   probeVidPid?: string,
+  vendorId?: string,
+  productId?: string,
+  serialNumber?: string,
+  manufacturer?: string,
+  pnpId?: string,
   action?: string,
   sep?: boolean,
   extra?: any,
   current?: boolean,
 }
-

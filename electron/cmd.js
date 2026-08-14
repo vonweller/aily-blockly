@@ -5,6 +5,11 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { isWin32, isDarwin, isLinux } = require('./platform');
+const { killRegisteredProcessTree } = require('./process-tree');
+const {
+  normalizeProcessMessage,
+  normalizeProcessMessagePortConfig,
+} = require('./child-process-message-port');
 
 function summarizeArgs(args = []) {
   return args.join(' ').slice(0, 1000);
@@ -255,54 +260,6 @@ function buildCommandEnv(extraEnv = {}) {
   return env;
 }
 
-function killRegisteredProcessTree(pid, label) {
-  if (!pid) {
-    return Promise.resolve(false);
-  }
-
-  return new Promise((resolve) => {
-    const startedAt = Date.now();
-    if (isWin32) {
-      exec(`taskkill /PID ${pid} /T /F`, (error, stdout, stderr) => {
-        const success = !error;
-        // console.info('[PROC_TRACE][PROCESS_TREE_KILL]', {
-        //   label,
-        //   pid,
-        //   method: 'taskkill',
-        //   success,
-        //   durationMs: Date.now() - startedAt,
-        //   error: error?.message || '',
-        //   stderr: stderr?.trim?.() || ''
-        // });
-        resolve(success);
-      });
-      return;
-    }
-
-    try {
-      process.kill(pid, 'SIGTERM');
-      console.info('[PROC_TRACE][PROCESS_TREE_KILL]', {
-        label,
-        pid,
-        method: 'SIGTERM',
-        success: true,
-        durationMs: Date.now() - startedAt
-      });
-      resolve(true);
-    } catch (error) {
-      console.warn('[PROC_TRACE][PROCESS_TREE_KILL]', {
-        label,
-        pid,
-        method: 'SIGTERM',
-        success: false,
-        durationMs: Date.now() - startedAt,
-        error: error?.message || String(error)
-      });
-      resolve(false);
-    }
-  });
-}
-
 function sendRendererLog(targetWebContents, detail, state = 'doing', mergeKey) {
   if (!targetWebContents || targetWebContents.isDestroyed()) {
     return;
@@ -381,11 +338,21 @@ class CommandManager {
   constructor() {
     this.processes = new Map(); // 存储进程
     this.streams = new Map(); // 存储流监听器
+    this.processMessageListeners = new Set();
   }
 
   // 执行命令并返回流式数据
   executeCommand(options) {
-    let { command, args = [], cwd, env, streamId } = options;
+    let {
+      command,
+      args = [],
+      cwd,
+      env,
+      streamId,
+      shellProfile = true,
+      messagePort: rawMessagePort,
+    } = options;
+    const messagePort = normalizeProcessMessagePortConfig(rawMessagePort);
     
     // 根据平台选择正确的 shell
     let shell;
@@ -406,7 +373,7 @@ class CommandManager {
       shell = true; // 使用系统默认 shell
     }
 
-    // 【核心修复】Windows 环境下的特殊处理
+    // Windows：npm/npx 用 shell:true + 命令名（非 npm.cmd），与 electron/npm.js 一致
     if (isWin32) {
       // 1. 如果是 npm/npx 命令，强制加上 .cmd 后缀
       // 只有这样，spawn 才能准确找到可执行文件，不再依赖 Shell 的智能猜测
@@ -425,6 +392,20 @@ class CommandManager {
         shellKind = resolvedShell.kind;
         shellDiagnostics = resolvedShell.diagnostics;
       }
+    }
+
+    if (shellProfile === false && !command.endsWith('.cmd') && !command.endsWith('.bat')) {
+      shell = false;
+      shellKind = 'direct';
+      shellDiagnostics = undefined;
+    }
+    if (messagePort) {
+      if (command.endsWith('.cmd') || command.endsWith('.bat')) {
+        throw new Error('Process message ports require a directly spawned executable.');
+      }
+      shell = false;
+      shellKind = 'direct-node-ipc';
+      shellDiagnostics = undefined;
     }
 
     // 为 npm install 命令自动添加 --foreground-scripts，确保 postinstall 输出可见
@@ -453,13 +434,28 @@ class CommandManager {
     console.log(`[CMD] 执行命令: ${fullCommand}`);
     console.log(`[CMD] 工作目录: ${cwd || process.cwd()}`);
     console.log(`[CMD] Shell: ${shell}`);
-    
-    const child = spawn(command, args, {
-      cwd: cwd || process.cwd(),
-      env: buildCommandEnv(env),
-      shell: shell,
-      stdio: ['pipe', 'pipe', 'pipe']
-    });
+
+    const isWin32NpmFamily =
+      isWin32 && (command === 'npm' || command === 'npx');
+
+    const childStdio = messagePort
+      ? ['pipe', 'pipe', 'pipe', 'ipc']
+      : ['pipe', 'pipe', 'pipe'];
+    const child = isWin32NpmFamily
+      ? spawn(fullCommand, {
+          cwd: cwd || process.cwd(),
+          env: buildCommandEnv(env),
+          shell: true,
+          windowsHide: true,
+          stdio: childStdio,
+        })
+      : spawn(command, args, {
+          cwd: cwd || process.cwd(),
+          env: buildCommandEnv(env),
+          shell: shell,
+          windowsHide: true,
+          stdio: childStdio,
+        });
 
     const startedAt = Date.now();
     this.processes.set(streamId, {
@@ -470,8 +466,30 @@ class CommandManager {
       shell,
       shellKind,
       shellDiagnostics,
+      messagePort,
       startedAt
     });
+    if (messagePort) {
+      child.on('message', (message) => {
+        try {
+          const normalized = normalizeProcessMessage(
+            message,
+            messagePort.maxMessageBytes,
+          );
+          this.notifyProcessMessage({
+            streamId,
+            message: normalized.message,
+            sizeBytes: normalized.sizeBytes,
+          });
+        } catch (error) {
+          console.warn('[PROC_TRACE][CMD_MESSAGE_REJECTED]', {
+            streamId,
+            pid: child.pid,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      });
+    }
     console.info('[PROC_TRACE][CMD_SPAWN]', {
       streamId,
       pid: child.pid,
@@ -495,7 +513,7 @@ class CommandManager {
   }
 
   // 终止进程
-  killProcess(streamId) {
+  async killProcess(streamId) {
     const entry = this.processes.get(streamId);
     if (entry?.process) {
       console.info('[PROC_TRACE][CMD_KILL]', {
@@ -503,7 +521,7 @@ class CommandManager {
         pid: entry.process.pid,
         command: entry.command
       });
-      void killRegisteredProcessTree(entry.process.pid, `cmd:${streamId}`);
+      await killRegisteredProcessTree(entry.process.pid, `cmd:${streamId}`);
       this.processes.delete(streamId);
       this.streams.delete(streamId);
       return true;
@@ -522,8 +540,79 @@ class CommandManager {
       pid: entry.process?.pid,
       command: entry.command,
       cwd: entry.cwd,
-      durationMs: Date.now() - entry.startedAt
+      durationMs: Date.now() - entry.startedAt,
+      messagePort: !!entry.messagePort
     }));
+  }
+
+  getProcessMessagePortInfo(streamId) {
+    const messagePort = this.processes.get(streamId)?.messagePort;
+    return messagePort ? { ...messagePort } : null;
+  }
+
+  async sendProcessMessage(streamId, message) {
+    const entry = this.processes.get(streamId);
+    const child = entry?.process;
+    if (!entry?.messagePort || !child || !child.connected || typeof child.send !== 'function') {
+      return {
+        success: false,
+        reason: 'message-port-unavailable',
+        streamId,
+      };
+    }
+    let normalized;
+    try {
+      normalized = normalizeProcessMessage(
+        message,
+        entry.messagePort.maxMessageBytes,
+      );
+    } catch (error) {
+      return {
+        success: false,
+        reason: 'invalid-message',
+        error: error instanceof Error ? error.message : String(error),
+        streamId,
+      };
+    }
+    return await new Promise((resolve) => {
+      child.send(normalized.message, (error) => {
+        if (error) {
+          resolve({
+            success: false,
+            reason: 'message-send-failed',
+            error: error.message,
+            streamId,
+          });
+          return;
+        }
+        resolve({
+          success: true,
+          streamId,
+          sizeBytes: normalized.sizeBytes,
+        });
+      });
+    });
+  }
+
+  onProcessMessage(listener) {
+    if (typeof listener !== 'function') {
+      throw new TypeError('Process message listener must be a function.');
+    }
+    this.processMessageListeners.add(listener);
+    return () => this.processMessageListeners.delete(listener);
+  }
+
+  notifyProcessMessage(event) {
+    for (const listener of this.processMessageListeners) {
+      try {
+        listener(event);
+      } catch (error) {
+        console.warn('[PROC_TRACE][CMD_MESSAGE_LISTENER_ERROR]', {
+          streamId: event.streamId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
   }
 
   async killAllProcesses() {
@@ -564,11 +653,13 @@ function registerCmdHandlers(mainWindow) {
         if (result.shouldLogOutput) {
           logCommandOutput(streamId, 'stdout', output, senderWindow);
         }
-        sendCmdData(senderWindow, `cmd-data-${streamId}`, {
-          type: 'stdout',
-          data: output,
-          streamId
-        });
+        if (options.forwardStdout !== false) {
+          sendCmdData(senderWindow, `cmd-data-${streamId}`, {
+            type: 'stdout',
+            data: output,
+            streamId
+          });
+        }
       });
 
       // 监听错误输出
@@ -648,7 +739,7 @@ function registerCmdHandlers(mainWindow) {
 
   // 终止命令
   ipcMain.handle('cmd-kill', async (event, { streamId }) => {
-    const success = commandManager.killProcess(streamId);
+    const success = await commandManager.killProcess(streamId);
     return { success, streamId };
   });
 
@@ -670,7 +761,12 @@ function registerCmdHandlers(mainWindow) {
 }
 
 module.exports = {
+  CommandManager,
   registerCmdHandlers,
+  getCmdProcessMessagePortInfo: (streamId) => commandManager.getProcessMessagePortInfo(streamId),
+  killCmdProcess: (streamId) => commandManager.killProcess(streamId),
   killAllCmdProcesses: () => commandManager.killAllProcesses(),
-  getActiveCmdProcesses: () => commandManager.getActiveProcessSummaries()
+  getActiveCmdProcesses: () => commandManager.getActiveProcessSummaries(),
+  onCmdProcessMessage: (listener) => commandManager.onProcessMessage(listener),
+  sendCmdProcessMessage: (streamId, message) => commandManager.sendProcessMessage(streamId, message),
 };

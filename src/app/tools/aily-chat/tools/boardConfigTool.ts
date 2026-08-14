@@ -1,4 +1,4 @@
-import { ToolUseResult } from "./tools";
+import type { ToolUseResult } from '../core/tool-types';
 
 interface GetBoardConfigInput {
     /** 不需要参数，自动获取当前开发板的配置 */
@@ -122,7 +122,7 @@ export async function getBoardConfigTool(
 export async function setBoardConfigTool(
     projectService: any,
     builderService: any,
-    input: SetBoardConfigInput
+    input: SetBoardConfigInput,
 ): Promise<ToolUseResult> {
     const { config_key, config_value } = input;
 
@@ -169,6 +169,29 @@ export async function setBoardConfigTool(
             console.warn('Board configuration side effect failed:', error);
         }
 
+        // 如果是 STM32 的 pnum 配置变更，处理引脚配置同步
+        const boardConfig = projectService.currentBoardConfig;
+        if (boardConfig && boardConfig['core']?.indexOf('stm32') > -1 &&
+            boardConfig['description']?.indexOf('Series') > -1 &&
+            config_key === 'pnum') {
+            // 构造 subItem 兼容对象用于比较引脚配置
+            try {
+                const boardType = boardConfig['type'] || '';
+                const typeParts = boardType.split(':');
+                const boardIdent = typeParts[typeParts.length - 1];
+                const stm32Config = await projectService.getStm32BoardConfig(boardIdent);
+                if (stm32Config?.board) {
+                    const matchedItem = stm32Config.board.find((item: any) => item.data === config_value);
+                    if (matchedItem) {
+                        projectService.compareStm32PinConfig(matchedItem);
+                    }
+                }
+            } catch (e) {
+                console.warn('STM32 引脚配置同步失败:', e);
+            }
+        }
+
+        // 触发预编译操作：配置变更后自动触发预编译
         if (builderService?.triggerPreprocess) {
             builderService.triggerPreprocess('config-changed');
         }

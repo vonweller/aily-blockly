@@ -6,12 +6,11 @@ import { ChildToolConfig, getChildToolConfig, getChildToolConfigs } from '../con
 
 export const TOOL_I18N_NAMESPACES = {
   'aily-chat': ['AILY_CHAT'],
+  'aily-chat-react': ['AILY_CHAT'],
   'app-store': ['APP_STORE'],
   'ble-debugger': ['BLE_DEBUGGER'],
-  'ffs-manager': ['FFS_MANAGER'],
   'industrial-bus-debugger': ['INDUSTRIAL_BUS_DEBUGGER'],
   'log': ['LOG'],
-  'model-store': ['MODEL_STORE'],
   'mqtt-debugger': ['MQTT_DEBUGGER'],
   'network-debugger': ['NETWORK_DEBUGGER'],
   'serial-monitor': ['SERIAL'],
@@ -107,12 +106,12 @@ export class ToolI18nService {
       return null;
     }
 
-    const toolDir = config.childDir || pathApi.join('tools', config.id);
+    const toolDir = config.packagePath || pathApi.join(childPath, config.childDir || pathApi.join('tools', config.id));
     const candidates = lang === 'en' ? [lang] : [lang, 'en'];
 
     for (const candidate of candidates) {
       try {
-        const filePath = pathApi.join(childPath, toolDir, 'i18n', `${candidate}.json`);
+        const filePath = pathApi.join(toolDir, 'i18n', `${candidate}.json`);
         if (!fsApi.existsSync(filePath)) {
           continue;
         }

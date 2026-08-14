@@ -13,6 +13,12 @@
     "esModuleInterop": true,
     "experimentalDecorators": true,
     "moduleResolution": "bundler",
+    "baseUrl": ".",
+    "paths": {
+      "ngx-x-markdown": [
+        "packages/ngx-x-markdown/src/public-api.ts"
+      ]
+    },
     "importHelpers": true,
     "target": "ES2022",
     "module": "ES2022",
@@ -28,6 +34,7 @@
     "strictTemplates": true
   },
   "exclude": [
+    "archive/**/*",
     "child",
     "electron",
     "dist",
@@ -35,6 +42,7 @@
     "**/*.spec.ts",
     "**/*.test.ts",
     "src/environments/*.ts",
-    "temp/**/*"
+    "temp/**/*",
+    "src/app/tools/aily-chat/tools/claude_code/**/*"
   ]
 }

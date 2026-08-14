@@ -39,7 +39,10 @@
                 </div>
                 <div class="content">
                     <span class="label">{{ 'USER_CENTER.AI_CALLS' | translate }}</span>
-                    <span class="value"><span class="mode">{{ 'USER_CENTER.AUTO_MODE' | translate }}</span> {{ benefits?.ai_calls?.unlimited ? '♾️' : (benefits?.ai_calls?.used ?? 0) + '/' + (benefits?.ai_calls?.total ?? 0) }}</span>
+                    <span class="value">{{ aiAvailableValue }}</span>
+                    @if(aiAvailableMeta) {
+                    <span class="meta">{{ aiAvailableMeta }}</span>
+                    }
                 </div>
                 @if (!isProPlanSubscriber || displayAiCallsResetDate) {
                 <div class="action-stack">
@@ -104,5 +107,4 @@
             ad iframe
         </div> -->
     </div>
-    <app-login></app-login>
 </ng-template>

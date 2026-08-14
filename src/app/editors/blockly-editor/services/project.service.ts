@@ -1,11 +1,20 @@
 import { Injectable } from '@angular/core';
 import { AILY_BLOCKLY_USED_LIBRARIES_FIELD, BlocklyProjectDocument, BlocklyService } from './blockly.service';
 import { ActionService } from '../../../services/action.service';
-import { arduinoGenerator } from '../components/blockly/generators/arduino/arduino';
+import {
+  normalizeArduinoGeneratedCode,
+} from '../components/blockly/generators/arduino/arduino';
+import {
+  getActiveProjectGenerator,
+  runWithPreparedActiveProjectGenerator,
+} from './blockly-generator-runtime.service';
 import { ElectronService } from '../../../services/electron.service';
 import { projectDataRuntime } from '../../../services/project-data/project-data-runtime';
-import { prepareBlocklyProjectDataForCodeGeneration } from '../../../services/project-data/blockly-project-data-adapter';
 import { assertNoOversizedInlineValues } from '../../../services/project-data/project-data-policy';
+import {
+  externalizeGenericProjectDataValues,
+  materializePreparedGenericProjectDataValues,
+} from '../../../services/project-data/project-data-generic-values';
 import { writeArduinoGeneratedArtifacts } from './generated-code-artifacts';
 
 
@@ -58,7 +67,13 @@ export class _ProjectService {
 
       // 读取并解析已保存的 JSON 数据
       const savedJsonStr = window['fs'].readFileSync(`${this.currentProjectPath}/project.abi`, 'utf8');
-      const savedJson = this.blocklyService.normalizeProjectAbi(JSON.parse(savedJsonStr));
+      const savedExternalJson = JSON.parse(savedJsonStr);
+      const savedJson = this.blocklyService.normalizeProjectAbi(
+        materializePreparedGenericProjectDataValues(
+          savedExternalJson,
+          (ref) => projectDataRuntime.getPrepared(ref),
+        ),
+      );
 
       // 将当前工作区 JSON 和保存的 JSON 转为字符串进行比较
       const currentJsonStr = JSON.stringify(this.blocklyService.normalizeProjectAbi(currentProjectAbi));
@@ -76,7 +91,12 @@ export class _ProjectService {
   async save(path: string, createHistory: boolean = true) {
     await projectDataRuntime.flushPending();
     const projectDocument = this.blocklyService.getProjectDocument();
-    const jsonData = this.blocklyService.getProjectAbiForSave(projectDocument);
+    const inlineJsonData = this.blocklyService.getProjectAbiForSave(projectDocument);
+    const { document: jsonData } = await externalizeGenericProjectDataValues(
+      inlineJsonData,
+      projectDataRuntime,
+    );
+    await projectDataRuntime.flushPending();
     assertNoOversizedInlineValues(jsonData);
     const refs = projectDataRuntime.getStore().collectReferences(jsonData);
     const validation = await projectDataRuntime.getStore().validateReferences(refs);
@@ -125,19 +145,23 @@ export class _ProjectService {
    */
   private async updateCodeHash(path: string, projectDocument?: BlocklyProjectDocument) {
     try {
-      if (!arduinoGenerator || !this.blocklyService || !this.blocklyService.workspace) {
+      if (!getActiveProjectGenerator() || !this.blocklyService || !this.blocklyService.workspace) {
         console.warn('无法生成代码哈希，跳过更新');
         return;
       }
 
       // 复用最近一次成功生成的代码；如果工作区已变更但防抖生成尚未完成，再同步生成一次。
-      await prepareBlocklyProjectDataForCodeGeneration(
+      const generated = await runWithPreparedActiveProjectGenerator(
         this.blocklyService.workspace,
+        (generator) => ({
+          code: this.blocklyService.getReusableGeneratedCode()
+            ?? normalizeArduinoGeneratedCode(generator.workspaceToCode(this.blocklyService.workspace)),
+          generator,
+        }),
         projectDocument ?? this.blocklyService.getProjectDocument(),
       );
-      const code = this.blocklyService.getReusableGeneratedCode()
-        ?? arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
-      await writeArduinoGeneratedArtifacts(path, arduinoGenerator);
+      const { code, generator } = generated;
+      await writeArduinoGeneratedArtifacts(path, generator);
       this.blocklyService.publishGeneratedCode(code);
       
       // 计算哈希

@@ -21,6 +21,9 @@ import { UiService } from '../../services/ui.service';
 import { TranslateService } from '@ngx-translate/core';
 import { Subscription } from 'rxjs';
 import { ToolI18nService } from '../../services/tool-i18n.service';
+import {
+  SimulatorIframeBridgeService,
+} from '../../services/simulator-iframe-bridge.service';
 
 /** iframe IPC 统一载荷（规范：docs/iframe-ipc-spec.md） */
 export interface IframeIpcPayload<T = unknown> {
@@ -59,6 +62,7 @@ export interface IframeModalData {
 export class IframeComponent implements OnInit, OnDestroy {
   @Input() url?: string;
   @Input() embedded?: boolean;
+  @Input() simulationBridgeEnabled = false;
 
   iframeSrc: SafeResourceUrl = '';
   private iframeData: unknown;
@@ -102,6 +106,7 @@ export class IframeComponent implements OnInit, OnDestroy {
     private uiService: UiService,
     private translate: TranslateService,
     private toolI18n: ToolI18nService,
+    private simulatorIframeBridge: SimulatorIframeBridgeService,
   ) {
     if (this.data) {
       if (this.data.url) {
@@ -118,14 +123,6 @@ export class IframeComponent implements OnInit, OnDestroy {
 
   async ngOnInit() {
     await this.toolI18n.load('aily-chat');
-
-    // 延迟显示无数据状态（如果加载失败）
-    setTimeout(() => {
-      if (this.isLoading) {
-        this.isLoading = false;
-        this.showEmptyState = true;
-      }
-    }, 10000); // 10秒超时
 
     await new Promise((resolve) => setTimeout(resolve, 100));
 
@@ -166,6 +163,7 @@ export class IframeComponent implements OnInit, OnDestroy {
     }
     if (url.includes('connection-graph')) {
       this.isConnectionGraphWindow = true;
+      this.startConnectionGraphIpcListener();
     }
     if (url.includes('component-viewer')) {
       this.isComponentViewerWindow = true;
@@ -243,8 +241,8 @@ export class IframeComponent implements OnInit, OnDestroy {
               showProgress: false,
             });
             // this.backgroundAgent.generateSchematic();
-            // this.uiService.openAndSendToChat('@schematicAgent 生成项目连线图', { autoSend: true });
-            this.sendToChat('@schematicAgent 生成项目连线图');
+            // this.uiService.openAndSendToChat('@SchematicAgent 生成项目连线图', { autoSend: true });
+            this.sendToChat('@SchematicAgent 生成项目连线图');
             // this.sendToMain('generate-graph-data');
           },
           regenerateGraphData: () => {
@@ -286,6 +284,20 @@ export class IframeComponent implements OnInit, OnDestroy {
                 // 获取当前 payload 数据（包含 componentConfigs, components, connections）
                 const currentPayload = this.iframeData as any;
                 if (currentPayload && currentPayload.components) {
+                  if (currentPayload.autoSave === false) {
+                    this.iframeData = {
+                      ...currentPayload,
+                      connections,
+                    };
+                    return;
+                  }
+                  if (
+                    JSON.stringify(currentPayload.connections ?? []) ===
+                    JSON.stringify(connections)
+                  ) {
+                    console.log('[IframeComponent] 跳过未变化的连线回写');
+                    return;
+                  }
                   // 通过 IPC 让主窗口保存数据（子窗口无法直接访问 projectPath）
                   const updatedData = {
                     version: '1.0.0',
@@ -319,7 +331,13 @@ export class IframeComponent implements OnInit, OnDestroy {
           },
           noticeUpdate: (notification: any) => {
             this.noticeService.update(notification);
-          }
+          },
+          invokeSimulationOperation: (request: unknown) => {
+            if (!this.simulationBridgeEnabled) {
+              throw new Error('当前 iframe 未获得本地仿真操作能力。');
+            }
+            return this.simulatorIframeBridge.invoke(request);
+          },
         },
       });
 
@@ -338,9 +356,8 @@ export class IframeComponent implements OnInit, OnDestroy {
       this.isLoading = false;
       this.showEmptyState = false;
 
-      // 开始监听 connection-graph IPC（统一按 type 分发）
-      if (this.isConnectionGraphWindow) {
-        this.startConnectionGraphIpcListener();
+      if (this.isConnectionGraphWindow && this.iframeData !== undefined) {
+        await this.pushDataToRemote();
       }
 
       // TODO:如果是 component-viewer 窗口，立即推送数据给子页面，新版本为web主动调用，这里临时多推送一次，待web更新后可删除
@@ -426,7 +443,11 @@ export class IframeComponent implements OnInit, OnDestroy {
    * 开始监听 connection-graph IPC（统一按 type 分发，规范：docs/iframe-ipc-spec.md）
    */
   private startConnectionGraphIpcListener(): void {
-    if (!this.electronService.isElectron || !window['ipcRenderer']) return;
+    if (
+      this.connectionGraphIpcCleanup
+      || !this.electronService.isElectron
+      || !window['ipcRenderer']
+    ) return;
 
     const handler = (_event: unknown, payload: IframeIpcPayload) => {
       const { type, data } = payload ?? {};
@@ -458,10 +479,10 @@ export class IframeComponent implements OnInit, OnDestroy {
 
     window['ipcRenderer'].on(IFRAME_CHANNEL_CONNECTION_GRAPH, handler);
     this.connectionGraphIpcCleanup = () => {
-      // window['ipcRenderer'].removeListener(
-      //   IFRAME_CHANNEL_CONNECTION_GRAPH,
-      //   handler,
-      // );
+      window['ipcRenderer']?.removeListener?.(
+        IFRAME_CHANNEL_CONNECTION_GRAPH,
+        handler,
+      );
     };
   }
 
@@ -505,6 +526,12 @@ export class IframeComponent implements OnInit, OnDestroy {
         components: data.components || [],
         connections: data.connections || [],
         theme: data.theme || currentPayload?.theme || 'dark',
+        ...(typeof data.autoRoutingMode === 'boolean'
+          ? { autoRoutingMode: data.autoRoutingMode }
+          : {}),
+        ...(typeof data.autoSave === 'boolean'
+          ? { autoSave: data.autoSave }
+          : {}),
       };
       this.iframeData = newPayload;
       await this.pushDataToRemote();
@@ -558,7 +585,7 @@ export class IframeComponent implements OnInit, OnDestroy {
       state: 'doing',
       showProgress: false,
     });
-    this.sendToChat('@schematicAgent 请根据当前项目的引脚配置和组件信息，重新生成连线图方案。');
+    this.sendToChat('@SchematicAgent 请根据当前项目的引脚配置和组件信息，重新生成连线图方案。');
   }
 
   /**

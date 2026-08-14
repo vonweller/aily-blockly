@@ -1,13 +1,24 @@
 ﻿import { Injectable } from '@angular/core';
 import { AilyHost } from '../core/host';
-import { prepareBlocklyProjectDataForCodeGeneration } from '../../../services/project-data/blockly-project-data-adapter';
 import {
   syncArduinoProjectSourceToSketch,
   writeArduinoGeneratedArtifacts,
 } from '../../../editors/blockly-editor/services/generated-code-artifacts';
+import { isAilyCategoryDebugEnabled } from '../core/chat-debug-flags';
+import { normalizeArduinoGeneratedCode } from '../../../editors/blockly-editor/components/blockly/generators/arduino/arduino';
+import { runWithPreparedActiveProjectGenerator } from '../../../editors/blockly-editor/services/blockly-generator-runtime.service';
 
 // Arduino 代码检查器
-declare const arduinoGenerator: any;
+
+function createLintCodeFingerprint(code: string): string {
+  let hash = 2166136261;
+  for (let index = 0; index < code.length; index += 1) {
+    hash ^= code.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
 
 /**
  * Lint 检测模式
@@ -17,7 +28,20 @@ export type LintMode = 'fast' | 'accurate' | 'auto';
 /**
  * Lint 输出格式
  */
-export type LintFormat = 'human' | 'vscode' | 'json';
+export type LintFormat = 'human' | 'diagnostic' | 'json';
+
+type AilyBuilderLintFormat = 'human' | 'vscode' | 'json';
+
+function toAilyBuilderLintFormat(format: LintFormat): AilyBuilderLintFormat {
+  return format === 'diagnostic' ? 'vscode' : format;
+}
+
+function isArduinoLintTraceEnabled(): boolean {
+  return isAilyCategoryDebugEnabled('aily.chat.traceArduinoLint', [
+    '__AILY_CHAT_TRACE_ARDUINO_LINT__',
+    'AILY_CHAT_TRACE_ARDUINO_LINT',
+  ]);
+}
 
 /**
  * Lint 检查选项
@@ -25,7 +49,13 @@ export type LintFormat = 'human' | 'vscode' | 'json';
 export interface LintOptions {
   mode?: LintMode;           // 检测模式，默认 'fast'
   format?: LintFormat;       // 输出格式，默认 'json'
-  timeout?: number;          // 兼容字段；不强制中断可能较慢的 accurate 检查
+  timeout?: number;          // 超时时间，默认 10000ms，兼容字段；不强制中断可能较慢的 accurate 检查
+  projectContext?: {
+    projectPath?: string;
+    packageJson?: any;
+    boardJson?: any;
+    boardPackageJson?: any;
+  };
 }
 
 /**
@@ -73,7 +103,8 @@ export class ArduinoLintService {
   
   // 当前项目路径 - 像 BuilderService 一样在方法开始时赋值，确保路径一致性
   private currentProjectPath = "";
-  
+  private currentProjectContext: NonNullable<LintOptions['projectContext']> | null = null;
+
   // 库缓存机制 - 避免重复处理
   private libraryCache = new Map<string, {
     timestamp: number;
@@ -138,7 +169,18 @@ export class ArduinoLintService {
       this.lintInProgress = true;
       
       // 像 BuilderService 一样，在方法开始时统一赋值项目路径
-      this.currentProjectPath = this.projectService.currentProjectPath;
+      this.currentProjectContext = options.projectContext ?? null;
+      this.currentProjectPath = this.resolveCurrentProjectPath(options.projectContext);
+
+      if (isArduinoLintTraceEnabled()) {
+        console.info('[ArduinoLintService] checkSyntax start', {
+          projectPath: this.currentProjectPath,
+          mode,
+          format,
+          length: code.length,
+          fingerprint: createLintCodeFingerprint(code),
+        });
+      }
 
       // console.log(`🔍 开始 Arduino 语法检查 (模式: ${mode}, 格式: ${format})...`);
 
@@ -184,7 +226,41 @@ export class ArduinoLintService {
       };
     } finally {
       this.lintInProgress = false;
+      this.currentProjectContext = null;
     }
+  }
+
+  private resolveCurrentProjectPath(projectContext?: LintOptions['projectContext']): string {
+    const scopedPath = typeof projectContext?.projectPath === 'string'
+      ? projectContext.projectPath.trim()
+      : '';
+    if (scopedPath) {
+      return scopedPath;
+    }
+    return typeof this.projectService?.currentProjectPath === 'string'
+      ? this.projectService.currentProjectPath.trim()
+      : '';
+  }
+
+  private async getProjectPackageJson(): Promise<any> {
+    if (this.currentProjectContext?.packageJson && typeof this.currentProjectContext.packageJson === 'object') {
+      return this.currentProjectContext.packageJson;
+    }
+    return await this.projectService.getPackageJson();
+  }
+
+  private async getProjectBoardJson(): Promise<any> {
+    if (this.currentProjectContext?.boardJson && typeof this.currentProjectContext.boardJson === 'object') {
+      return this.currentProjectContext.boardJson;
+    }
+    return await this.projectService.getBoardJson();
+  }
+
+  private async getProjectBoardPackageJson(): Promise<any> {
+    if (this.currentProjectContext?.boardPackageJson && typeof this.currentProjectContext.boardPackageJson === 'object') {
+      return this.currentProjectContext.boardPackageJson;
+    }
+    return await this.projectService.getBoardPackageJson();
   }
 
   /**
@@ -203,12 +279,20 @@ export class ArduinoLintService {
   async checkCurrentWorkspace(options: LintOptions = {}): Promise<LintResult> {
     try {
       // 从 Blockly 工作区生成代码
-      await prepareBlocklyProjectDataForCodeGeneration(
+      const projectPath = this.currentProjectPath;
+      const projectDocument = this.blocklyService.getProjectDocument();
+      const generated = await runWithPreparedActiveProjectGenerator(
         this.blocklyService.workspace,
-        this.blocklyService.getProjectDocument(),
+        (generator) => ({
+          code: normalizeArduinoGeneratedCode(
+            generator.workspaceToCode(this.blocklyService.workspace),
+          ),
+          generator,
+        }),
+        projectDocument,
       );
-      const code = arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
-      await writeArduinoGeneratedArtifacts(this.currentProjectPath, arduinoGenerator);
+      const { code, generator } = generated;
+      await writeArduinoGeneratedArtifacts(projectPath, generator);
       
       if (!code || code.trim().length === 0) {
         return {
@@ -273,6 +357,13 @@ export class ArduinoLintService {
       // 高效写入代码到 sketch.ino 文件（覆盖模式，无需预先删除）
       await AilyHost.get().fs.writeFileSync(sketchFilePath, code);
       syncArduinoProjectSourceToSketch(this.currentProjectPath, sketchPath);
+      if (isArduinoLintTraceEnabled()) {
+        console.info('[ArduinoLintService] lint sketch prepared', {
+          sketchFilePath,
+          length: code.length,
+          fingerprint: createLintCodeFingerprint(code),
+        });
+      }
       // console.log(`✅ 写入代码到: ${sketchFilePath} (${code.length} 字符)`);
 
       // console.log(`✅ 临时环境准备完成，复用项目 .temp 目录: ${tempPath}`);
@@ -358,8 +449,8 @@ export class ArduinoLintService {
     format: LintFormat
   ): Promise<{ command: string; args: string[] }> {
     // 获取项目配置
-    const packageJson = await this.projectService.getPackageJson();
-    const boardJson = await this.projectService.getBoardJson();
+    const packageJson = await this.getProjectPackageJson();
+    const boardJson = await this.getProjectBoardJson();
 
     if (!boardJson) {
       throw new Error('未找到板子信息(board.json)');
@@ -390,7 +481,7 @@ export class ArduinoLintService {
     let toolsPath = '';
 
     if (mode !== 'fast') {
-      const boardDependencies = (await this.projectService.getBoardPackageJson()).boardDependencies || {};
+      const boardDependencies = (await this.getProjectBoardPackageJson())?.boardDependencies || {};
       Object.entries(boardDependencies).forEach(([key, version]) => {
         if (key.startsWith('@aily-project/compiler-')) {
           const compiler = key.replace(/^@aily-project\/compiler-/, '') + '@' + version;
@@ -562,9 +653,9 @@ export class ArduinoLintService {
           executionTime: jsonResult.executionTime || executionTime,
           mode: jsonResult.mode || mode
         };
-      } else if (format === 'vscode') {
-        // VS Code 格式解析
-        return this.parseVSCodeFormat(output, executionTime, mode);
+      } else if (format === 'diagnostic') {
+        // 诊断定位格式解析
+        return this.parseDiagnosticFormat(output, executionTime, mode);
       } else {
         // Human 格式解析
         return this.parseHumanFormat(output, executionTime, mode);
@@ -589,9 +680,9 @@ export class ArduinoLintService {
   }
 
   /**
-   * 解析 VS Code 格式输出
+   * 解析诊断定位格式输出
    */
-  private parseVSCodeFormat(output: string, executionTime: number, mode: LintMode): LintResult {
+  private parseDiagnosticFormat(output: string, executionTime: number, mode: LintMode): LintResult {
     const errors: LintError[] = [];
     const warnings: LintError[] = [];
     const notes: LintError[] = [];
@@ -823,8 +914,8 @@ export class ArduinoLintService {
    */
   private async prepareProjectLibraries(librariesPath: string): Promise<void> {
     try {
-      const packageJson = await this.projectService.getPackageJson();
-      const dependencies = packageJson.dependencies || {};
+      const packageJson = await this.getProjectPackageJson();
+      const dependencies = packageJson?.dependencies || {};
 
       const libsList: string[] = [];
       Object.entries(dependencies).forEach(([key, version]) => {

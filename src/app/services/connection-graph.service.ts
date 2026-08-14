@@ -10,11 +10,46 @@ import { NoticeOptions } from './notice.service';
 
 /** 组件图片 */
 export interface ComponentImage {
+  id?: string;
   url: string;
   x: number;
   y: number;
   width: number;
   height: number;
+  version?: 'v1' | string;
+  rotation?: number;
+  appearanceLayer?: 'background' | 'foreground';
+}
+
+export interface VersionedComponentIdentity {
+  id: string;
+  version: string;
+}
+
+export interface PinmapAppearanceSlot {
+  id: string;
+  role: string;
+  layer: 'dynamic' | 'interaction';
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  shape?: 'rect' | 'circle';
+  clip?: boolean;
+}
+
+export interface PinmapComponentAppearance
+  extends VersionedComponentIdentity {
+  schemaVersion: 1;
+  source: 'pinmap';
+  overflow: 'visible' | 'hidden';
+  slots: PinmapAppearanceSlot[];
+}
+
+export interface ComponentSimulationBinding {
+  schemaVersion: 1;
+  model: VersionedComponentIdentity;
+  viewAdapter: VersionedComponentIdentity;
 }
 
 /** 引脚功能 */
@@ -68,6 +103,8 @@ export interface ComponentConfig {
   images: ComponentImage[];
   pins: ConfigPin[];
   functionTypes: FunctionTypeDef[];
+  appearance?: VersionedComponentIdentity | PinmapComponentAppearance;
+  simulation?: ComponentSimulationBinding;
   /** 同库下的类似组件列表（来自 pinmap_catalog.json，仅 pinmapId 加载时有） */
   similarComponents?: SimilarComponent[];
 }
@@ -155,6 +192,10 @@ export interface ConnectionGraphPayload {
   connections: ConnectionDef[];
   /** 主题 */
   theme?: 'light' | 'dark';
+  /** 是否启用子页面自动布线（仅用于传输，不持久化） */
+  autoRoutingMode?: boolean;
+  /** 是否启用子页面自动保存（仅用于传输，不持久化） */
+  autoSave?: boolean;
 }
 
 /** 引脚摘要（精简版，供 LLM 使用） */
@@ -173,6 +214,31 @@ export interface ValidationResult {
   ruleId: string;
   level: 'error' | 'warning';
   message: string;
+}
+
+export interface ConnectionGraphTextFileWriteEvent {
+  filePath: string;
+  existedBefore: boolean;
+  beforeContent: string | null;
+  afterContent: string;
+}
+
+/** savePinmapConfig / updateCatalogStatus 的可选写入回调与 catalog 版本 */
+export type SavePinmapConfigOptions = {
+  catalogVersion?: string | number;
+  onFileWrite?: (event: ConnectionGraphTextFileWriteEvent) => void;
+};
+
+function normalizeSavePinmapConfigOptions(
+  options?: string | number | SavePinmapConfigOptions,
+): SavePinmapConfigOptions {
+  if (typeof options === 'string' || typeof options === 'number') {
+    return { catalogVersion: options };
+  }
+  if (typeof options === 'object' && options !== null) {
+    return options;
+  }
+  return {};
 }
 
 // =====================================================
@@ -1879,26 +1945,23 @@ export class ConnectionGraphService {
     packageSlug: string,
     resolvedPackagePath: string,
     config: ComponentConfig,
+    onFileWrite?: (event: ConnectionGraphTextFileWriteEvent) => void,
   ): void {
     if (!packageSlug.startsWith('board-')) {
       return;
     }
-    try {
-      const rootPath = this.electronService.pathJoin(resolvedPackagePath, 'pinmap.json');
-      if (!this.electronService.exists(rootPath)) {
-        return;
-      }
-      this.electronService.writeFile(rootPath, JSON.stringify(config, null, 2));
-    } catch (e) {
-      console.warn('[overwriteBoardRootPinmapIfPresent] 写入根目录 pinmap.json 失败:', e);
+    const rootPath = this.electronService.pathJoin(resolvedPackagePath, 'pinmap.json');
+    if (!this.electronService.exists(rootPath)) {
+      return;
     }
+    this.writeTextFileWithObserver(rootPath, JSON.stringify(config, null, 2), onFileWrite);
   }
 
   savePinmapConfig(
     pinmapId: string,
     config: ComponentConfig,
     packagesBasePath: string,
-    catalogVersion?: string | number,
+    options?: string | number | SavePinmapConfigOptions,
   ): {
     success: boolean;
     filePath?: string;
@@ -1906,6 +1969,7 @@ export class ConnectionGraphService {
     resolvedPackagePath?: string;
     error?: string;
   } {
+    const normalizedOptions = normalizeSavePinmapConfigOptions(options);
     try {
       const ref = this.parsePinmapId(pinmapId);
       let packagePath = `${packagesBasePath}/@aily-project/${ref.packageSlug}`;
@@ -1962,9 +2026,10 @@ export class ConnectionGraphService {
       // 生成文件名
       const fileName = `${ref.modelId}_${ref.variantId}.json`;
       const filePath = this.electronService.pathJoin(pinmapsDir, fileName);
+      const pinmapContent = JSON.stringify(config, null, 2);
 
       // 保存文件
-      this.electronService.writeFile(filePath, JSON.stringify(config, null, 2));
+      this.writeTextFileWithObserver(filePath, pinmapContent, normalizedOptions.onFileWrite);
 
       // 更新 catalog 状态（传入已解析的 packagePath，避免重新从 packageSlug 构建错误路径）
       const catalogUpdated = this.updateCatalogStatus(
@@ -1973,7 +2038,7 @@ export class ConnectionGraphService {
         `pinmaps/${fileName}`,
         packagePath,
         config,
-        catalogVersion,
+        normalizedOptions,
       );
       if (!catalogUpdated) {
         console.warn('[savePinmapConfig] catalog 更新失败，但 pinmap 文件已保存');
@@ -2055,8 +2120,9 @@ export class ConnectionGraphService {
     pinmapFile: string,
     resolvedPackagePath: string,
     componentConfig?: ComponentConfig,
-    catalogVersion?: string | number,
+    options?: SavePinmapConfigOptions,
   ): boolean {
+    const catalogVersion = options?.catalogVersion;
     try {
       const ref = this.parsePinmapId(pinmapId);
       const packagePath = resolvedPackagePath;
@@ -2124,7 +2190,7 @@ export class ConnectionGraphService {
       // 保存 catalog
       console.log('[updateCatalogStatus] 保存前 models 数量:', catalog.models.length, 'model IDs:', catalog.models.map(m => m.id).join(', '));
       const catalogContent = JSON.stringify(catalog, null, 2);
-      this.electronService.writeFile(catalogPath, catalogContent);
+      this.writeTextFileWithObserver(catalogPath, catalogContent, options?.onFileWrite);
       console.log('[updateCatalogStatus] catalog 已更新:', catalogPath);
       
       return true;
@@ -2150,6 +2216,23 @@ export class ConnectionGraphService {
       type: 'library',
       models: []
     };
+  }
+
+  private writeTextFileWithObserver(
+    filePath: string,
+    content: string,
+    onFileWrite?: (event: ConnectionGraphTextFileWriteEvent) => void,
+  ): void {
+    const existedBefore = this.electronService.exists(filePath);
+    const beforeContent = existedBefore ? this.electronService.readFile(filePath) : null;
+
+    this.electronService.writeFile(filePath, content);
+    onFileWrite?.({
+      filePath,
+      existedBefore,
+      beforeContent,
+      afterContent: content,
+    });
   }
 
   /**

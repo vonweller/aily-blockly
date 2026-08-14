@@ -1,7 +1,10 @@
 @if (isStandalone) {
-<app-sub-window [title]="titleKey | translate" [winBtns]="['go-main', 'minimize', 'maximize', 'close']">
+<app-sub-window [title]="titleKey | translate" [winBtns]="['go-main', 'minimize', 'maximize']">
   <ng-container header-title-prefix>
     <ng-container *ngTemplateOutlet="hostStatusTpl"></ng-container>
+  </ng-container>
+  <ng-container header-title-suffix>
+    <ng-container *ngTemplateOutlet="subappVersionActionTpl"></ng-container>
   </ng-container>
   <ng-container header-btns>
     <ng-container *ngTemplateOutlet="headerTpl"></ng-container>
@@ -13,6 +16,9 @@
   <ng-container header-title-prefix>
     <ng-container *ngTemplateOutlet="hostStatusTpl"></ng-container>
   </ng-container>
+  <ng-container header-title-suffix>
+    <ng-container *ngTemplateOutlet="subappVersionActionTpl"></ng-container>
+  </ng-container>
   <ng-container header-btns>
     <ng-container *ngTemplateOutlet="headerTpl"></ng-container>
   </ng-container>
@@ -22,6 +28,9 @@
 
 <ng-template #hostStatusTooltip>
   <div class="host-status-tooltip">
+    @if (childVersion) {
+    <div>{{ resolvedToolId }} v{{ childVersion }}</div>
+    }
     @if (serverInfo?.port) {
     <div class="mono">127.0.0.1:{{ serverInfo?.port }}</div>
     }
@@ -31,12 +40,33 @@
   </div>
 </ng-template>
 
+<ng-template #subappVersionActionTpl>
+  @if (showSubappVersionAction) {
+  <button class="subapp-version-action" type="button"
+    [class.update]="!isSubappRestartRequired"
+    [class.restart]="isSubappRestartRequired"
+    [class.busy]="subappVersionActionBusy"
+    [disabled]="subappVersionActionBusy"
+    (click)="runSubappVersionAction($event)"
+    (dblclick)="$event.stopPropagation()"
+    nz-tooltip nzTooltipPlacement="bottom" [nzTooltipTitle]="subappVersionActionTooltip"
+    [attr.aria-label]="subappVersionActionLabel">
+    @if (subappVersionActionBusy) {
+    <i class="fa-light fa-spinner-third subapp-version-spin" aria-hidden="true"></i>
+    } @else if (isSubappRestartRequired) {
+    <i class="fa-light fa-arrow-rotate-right" aria-hidden="true"></i>
+    }
+    <span>{{ subappVersionActionLabel }}</span>
+  </button>
+  }
+</ng-template>
+
 <ng-template #hostStatusTpl>
   <span class="child-host-status ccenter" nz-tooltip nzTooltipPlacement="bottom"
-    [nzTooltipTitle]="(serverInfo?.port || serverInfo?.pid) ? hostStatusTooltip : null"
+    [nzTooltipTitle]="(childVersion || serverInfo?.port || serverInfo?.pid) ? hostStatusTooltip : null"
     [attr.aria-label]="hostStatus" role="status">
-    <span class="host-status-dot" [class.ready]="hostStatus === 'ready'"
-      [class.starting]="hostStatus === 'starting'" [class.error]="hostStatus === 'error'"
+    <span class="host-status-dot" [class.ready]="hostStatus === 'ready' && frameLoaded"
+      [class.starting]="hostStatus === 'starting' || (hostStatus === 'ready' && !frameLoaded)" [class.error]="hostStatus === 'error'"
       [class.closed]="hostStatus === 'closed'" [class.idle]="hostStatus === 'idle'"></span>
   </span>
 </ng-template>
@@ -47,27 +77,49 @@
       (click)="restart()" nz-tooltip nzTooltipPlacement="bottom" nzTooltipTitle="Restart" aria-label="Restart">
       <i class="fa-light fa-rotate-right"></i>
     </button>
+    @if (isStandalone) {
+    <button class="child-host-header-btn ccenter" type="button" [disabled]="closing"
+      (click)="close()" nz-tooltip nzTooltipPlacement="bottom" nzTooltipTitle="Close" aria-label="Close">
+      <i class="fa-light fa-xmark"></i>
+    </button>
+    }
   </div>
 </ng-template>
 
 <ng-template #contentTpl>
   <div class="child-tool-host">
+    @if (isAilyChat) {
+    <aily-chat-subapp-dock [sessionId]="ailyChatSessionId"></aily-chat-subapp-dock>
+    }
     <div class="iframe-shell">
       @if (iframeSrc) {
       <iframe [src]="iframeSrc" (load)="onFrameLoad($event)"></iframe>
       }
 
-      @if (isLoading) {
+      @if (subappUpdateInProgress) {
+      <div class="host-overlay loading" role="status" aria-live="polite" aria-busy="true">
+        <div class="host-loading-spinner" aria-hidden="true"></div>
+        <div class="host-loading-text">
+          {{ 'APP_STORE.UPDATING_IN_PROGRESS' | translate:{ name: (titleKey | translate), progress: subappUpdateProgress } }}
+        </div>
+      </div>
+      } @else if (isLoading) {
       <div class="host-overlay loading" role="status" aria-live="polite" aria-busy="true">
         <div class="host-loading-spinner" aria-hidden="true"></div>
         <div class="host-loading-text">{{ titleKey | translate }}加载中</div>
       </div>
       }
 
-      @if (hostStatus === 'error') {
+      @if (!subappUpdateInProgress && hostStatus === 'error') {
       <div class="host-overlay error">
-        <strong>{{ backendFailedText }}</strong>
+        <strong>{{ uiHealthFailed ? childUiUnavailableTitle : backendFailedText }}</strong>
         <span>{{ errorMessage }}</span>
+        @if (canReloadChildUi) {
+        <button type="button" class="host-overlay-action" (click)="reloadChildUi()">
+          <i class="fa-light fa-rotate-right" aria-hidden="true"></i>
+          <span>{{ reloadChildUiText }}</span>
+        </button>
+        }
       </div>
       }
     </div>

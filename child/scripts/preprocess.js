@@ -2,6 +2,8 @@ const fs = require('fs');
 const path = require('path');
 const { spawn, exec, execFileSync } = require('child_process');
 const os = require('os');
+const ailyCodeProject = require('./aily-code-project');
+const platformRuntime = require('./platform-runtime');
 
 // 简单的日志工具
 const logger = {

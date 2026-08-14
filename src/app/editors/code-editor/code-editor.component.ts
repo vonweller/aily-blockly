@@ -17,20 +17,12 @@ import { ShortcutService, ShortcutAction, ShortcutKeyMapping } from './services/
 import { Subscription } from 'rxjs';
 import { ViewChild, AfterViewInit, OnInit, OnDestroy } from '@angular/core';
 import { _ProjectService } from './services/project.service';
-import { EmbeddedPythonRuntimeService } from '../../services/python-runtime/embedded-python-runtime.service';
-import { isEmbeddedPythonProject } from '../../services/python-runtime/python-project';
-import { RemoteDirectoryNode } from '../../services/python-runtime/remote-file-tree';
-import { PythonDevicePanelComponent } from './components/python-device-panel/python-device-panel.component';
-import { PythonTerminalComponent } from './components/python-terminal/python-terminal.component';
-import { RemoteFileTreeComponent } from './components/remote-file-tree/remote-file-tree.component';
 
 export interface OpenedFile {
   path: string;      // 文件路径
   title: string;     // 显示的文件名
   content: string;   // 文件内容
   isDirty: boolean;  // 是否有未保存的更改
-  source?: 'local' | 'device';
-  remotePath?: string;
   editorState?: {    // 编辑器状态
     scrollTop?: number;       // 滚动位置
     scrollLeft?: number;      // 水平滚动位置
@@ -51,9 +43,6 @@ export interface OpenedFile {
     NzLayoutComponent,
     NzLayoutModule,
     NzResizableModule,
-    PythonDevicePanelComponent,
-    PythonTerminalComponent,
-    RemoteFileTreeComponent,
   ],
   templateUrl: './code-editor.component.html',
   styleUrl: './code-editor.component.scss'
@@ -72,9 +61,6 @@ export class CodeEditorComponent implements OnInit, AfterViewInit, OnDestroy {
   selectedIndex = 0;
 
   loaded = false;
-  isPythonProject = false;
-  pythonEntry = 'main.py';
-  pythonFileSource: 'local' | 'device' = 'local';
 
   // 快捷键订阅
   private shortcutSubscription?: Subscription;
@@ -97,7 +83,6 @@ export class CodeEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     private uploadService: UploaderService,
     private electronService: ElectronService,
     private shortcutService: ShortcutService,
-    public pythonRuntime: EmbeddedPythonRuntimeService,
   ) {
   }
 
@@ -109,20 +94,7 @@ export class CodeEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     this._ProjectService.registerCodeEditor(this);
 
     this.activatedRoute.queryParams.subscribe(params => {
-      if (params['path']) {
-        console.log('project path', params['path']);
-        try {
-          void this.loadProject(params['path']).catch(error => {
-            console.error('加载项目失败', error);
-            this.message.error('加载项目失败，请检查项目文件是否完整');
-          });
-        } catch (error) {
-          console.error('加载项目失败', error);
-          this.message.error('加载项目失败，请检查项目文件是否完整');
-        }
-      } else {
-        this.message.error('没有找到项目路径');
-      }
+      void this.applyRouteQueryParams(params);
     });
 
     // 初始化快捷键监听
@@ -156,13 +128,53 @@ export class CodeEditorComponent implements OnInit, AfterViewInit, OnDestroy {
 
     // 清理快捷键监听器
     this.cleanupShortcutListeners();
-    if (this.isPythonProject) {
-      this.pythonRuntime.dispose();
-    }
   }
 
   ngAfterViewInit(): void {
 
+  }
+
+  private async applyRouteQueryParams(params: Record<string, unknown>): Promise<void> {
+    const projectPath = typeof params['path'] === 'string' ? params['path'].trim() : '';
+    if (!projectPath) {
+      this.message.error('没有找到项目路径');
+      return;
+    }
+
+    try {
+      if (this.projectService.currentProjectPath !== projectPath) {
+        console.log('project path', projectPath);
+        await this.loadProject(projectPath);
+      }
+
+      const openFilePath = typeof params['openFile'] === 'string' ? params['openFile'].trim() : '';
+      if (!openFilePath) {
+        return;
+      }
+
+      this.openFileByPath(openFilePath, {
+        title: openFilePath.split(/[\/\\]/).pop() || '',
+        position: this.readRoutePosition(params),
+      });
+    } catch (error) {
+      console.error('加载项目失败', error);
+      this.message.error('加载项目失败，请检查项目文件是否完整');
+    }
+  }
+
+  private readRoutePosition(params: Record<string, unknown>): { lineNumber?: number; column?: number } | undefined {
+    const lineNumber = Number(params['lineNumber']);
+    const column = Number(params['column']);
+    const position: { lineNumber?: number; column?: number } = {};
+
+    if (Number.isFinite(lineNumber) && lineNumber > 0) {
+      position.lineNumber = lineNumber;
+    }
+    if (Number.isFinite(column) && column > 0) {
+      position.column = column;
+    }
+
+    return Object.keys(position).length > 0 ? position : undefined;
   }
 
   async loadProject(projectPath: string) {
@@ -181,11 +193,6 @@ export class CodeEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     }
 
     const packageJson = JSON.parse(this.electronService.readFile(`${projectPath}/package.json`));
-    this.isPythonProject = isEmbeddedPythonProject(packageJson);
-    this.pythonEntry = this.isPythonProject ? packageJson.aily.entry : 'main.py';
-    if (this.isPythonProject) {
-      await this.pythonRuntime.initialize();
-    }
     this.electronService.setTitle(`aily blockly - ${packageJson.name}`);
     this.projectService.currentPackageData = packageJson;
     // 添加到最近打开的项目
@@ -194,16 +201,14 @@ export class CodeEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     this.projectService.currentPackageData = packageJson;
     this.projectService.currentProjectPath = projectPath;
 
-    if (!this.isPythonProject) {
-      try {
-        const boardJson = await this.projectService.resolveBoardConfigForRuntime();
-        this.projectService.currentBoardConfig = boardJson;
-        window['boardConfig'] = boardJson;
-      } catch (error) {
-        console.warn('[CodeEditor] failed to load board config:', error);
-      }
-      await this.projectService.loadBoardMenuConfig();
+    try {
+      const boardJson = await this.projectService.resolveBoardConfigForRuntime();
+      this.projectService.currentBoardConfig = boardJson;
+      window['boardConfig'] = boardJson;
+    } catch (error) {
+      console.warn('[CodeEditor] failed to load board config:', error);
     }
+    await this.projectService.loadBoardMenuConfig();
 
     this.projectService.stateSubject.next('loaded');
     // 7. 后台安装开发板依赖
@@ -221,38 +226,9 @@ export class CodeEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     // 先保存当前标签页的状态
     this.saveCurrentTabState();
 
-    if (file.source === 'device' || file.remotePath) {
-      await this.openRemoteFile(file as RemoteDirectoryNode);
-      return;
-    }
-
-    const filePath = file.path;
-    // 检查文件是否已经打开
-    const existingFileIndex = this.openedFiles.findIndex(f => f.path === filePath);
-
-    if (existingFileIndex >= 0) {
-      // 如果已经打开，切换到该标签页
-      this.selectedIndex = existingFileIndex;
-    } else {
-      // 否则新建标签页
-      const content = window['fs'].readFileSync(filePath);
-      const newFile: OpenedFile = {
-        path: filePath,
-        title: file.title,
-        content: content,
-        isDirty: false,
-        source: 'local',
-        editorState: {} // 初始化编辑器状态
-      };
-
-      this.openedFiles.push(newFile);
-      this.selectedIndex = this.openedFiles.length - 1;
-    }
-
-    // 延迟更新代码，确保界面已更新
-    setTimeout(() => {
-      this.updateCurrentCode();
-    }, 0);
+    this.openFileByPath(file.path, {
+      title: file.title,
+    });
   }
 
   /**
@@ -331,11 +307,7 @@ export class CodeEditorComponent implements OnInit, AfterViewInit, OnDestroy {
   // 保存文件
   async saveFile(index: number): Promise<void> {
     const file = this.openedFiles[index];
-    if (file.source === 'device' && file.remotePath) {
-      await this.pythonRuntime.writeRemoteTextFile(file.remotePath, file.content);
-    } else {
-      window['fs'].writeFileSync(file.path, file.content);
-    }
+    window['fs'].writeFileSync(file.path, file.content);
     file.isDirty = false;
   }
 
@@ -343,75 +315,6 @@ export class CodeEditorComponent implements OnInit, AfterViewInit, OnDestroy {
   async saveCurrentFile(): Promise<void> {
     if (this.selectedIndex >= 0 && this.selectedIndex < this.openedFiles.length) {
       await this.saveFile(this.selectedIndex);
-    }
-  }
-
-  async runProject(): Promise<{ state: string; text: string }> {
-    if (!this.isPythonProject) {
-      throw new Error('This code project does not define an embedded Python runtime');
-    }
-    const dirtyFiles = this.openedFiles
-      .map((file, index) => ({ file, index }))
-      .filter(({ file }) => file.isDirty);
-    await Promise.all(dirtyFiles.map(({ index }) => this.saveFile(index)));
-    if (this.pythonRuntime.snapshot.connectionState !== 'connected') {
-      throw new Error('Connect CyberCam before running the Python project');
-    }
-    const entryPath = window['path'].join(this.projectPath, this.pythonEntry);
-    if (!window['fs'].existsSync(entryPath)) {
-      throw new Error(`Python entry file not found: ${this.pythonEntry}`);
-    }
-    const script = window['fs'].readFileSync(entryPath, 'utf8');
-    await this.pythonRuntime.runScript(script);
-    return { state: 'done', text: `${this.pythonEntry} started` };
-  }
-
-  async stopProject(): Promise<void> {
-    if (this.isPythonProject) {
-      await this.pythonRuntime.stopScript();
-    }
-  }
-
-  async openRemoteFile(node: RemoteDirectoryNode): Promise<void> {
-    const tabPath = `device:${node.path}`;
-    const existingFileIndex = this.openedFiles.findIndex(file => file.path === tabPath);
-    if (existingFileIndex >= 0) {
-      this.selectedIndex = existingFileIndex;
-      await this.updateCurrentCode();
-      return;
-    }
-    try {
-      const content = await this.pythonRuntime.readRemoteTextFile(node.path);
-      this.openedFiles.push({
-        path: tabPath,
-        title: `${node.name} / device`,
-        content,
-        isDirty: false,
-        source: 'device',
-        remotePath: node.path,
-        editorState: {},
-      });
-      this.selectedIndex = this.openedFiles.length - 1;
-      await this.updateCurrentCode();
-    } catch (error) {
-      this.message.error(`Unable to open ${node.path}: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-
-  async onPythonRun(): Promise<void> {
-    try {
-      await this.runProject();
-      this.message.success(`${this.pythonEntry} started`);
-    } catch (error) {
-      this.message.error(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  async onPythonStop(): Promise<void> {
-    try {
-      await this.stopProject();
-    } catch (error) {
-      this.message.error(error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -516,14 +419,31 @@ export class CodeEditorComponent implements OnInit, AfterViewInit, OnDestroy {
   onOpenFileRequest(event: { filePath: string, position: any }): void {
     console.log('收到打开文件请求:', event);
 
+    this.openFileByPath(event.filePath, {
+      position: event.position,
+    });
+  }
+
+  private openFileByPath(
+    filePath: string,
+    options?: {
+      title?: string;
+      position?: any;
+    },
+  ): boolean {
+    const normalizedPath = typeof filePath === 'string' ? filePath.trim() : '';
+    if (!normalizedPath) {
+      return false;
+    }
+
     // 检查文件是否存在
-    if (!this.electronService.exists(event.filePath)) {
-      this.message.error(`文件不存在: ${event.filePath}`);
-      return;
+    if (!this.electronService.exists(normalizedPath)) {
+      this.message.error(`文件不存在: ${normalizedPath}`);
+      return false;
     }
 
     // 检查文件是否已经打开
-    const existingFileIndex = this.openedFiles.findIndex(f => f.path === event.filePath);
+    const existingFileIndex = this.openedFiles.findIndex(f => f.path === normalizedPath);
 
     if (existingFileIndex >= 0) {
       // 如果已经打开，切换到该标签页
@@ -531,11 +451,11 @@ export class CodeEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     } else {
       try {
         // 否则新建标签页
-        const content = window['fs'].readFileSync(event.filePath);
-        const fileName = event.filePath.split(/[\/\\]/).pop() || '';
+        const content = window['fs'].readFileSync(normalizedPath);
+        const fileName = options?.title || normalizedPath.split(/[\/\\]/).pop() || '';
 
         const newFile: OpenedFile = {
-          path: event.filePath,
+          path: normalizedPath,
           title: fileName,
           content: content,
           isDirty: false,
@@ -546,8 +466,8 @@ export class CodeEditorComponent implements OnInit, AfterViewInit, OnDestroy {
         this.selectedIndex = this.openedFiles.length - 1;
       } catch (error) {
         console.error('读取文件失败:', error);
-        this.message.error(`无法打开文件: ${event.filePath}`);
-        return;
+        this.message.error(`无法打开文件: ${normalizedPath}`);
+        return false;
       }
     }
 
@@ -556,10 +476,14 @@ export class CodeEditorComponent implements OnInit, AfterViewInit, OnDestroy {
       this.updateCurrentCode();
 
       // 等待编辑器准备就绪后跳转到指定位置
-      setTimeout(() => {
-        this.jumpToPosition(event.position);
-      }, 100);
+      if (options?.position) {
+        setTimeout(() => {
+          this.jumpToPosition(options.position);
+        }, 100);
+      }
     }, 0);
+
+    return true;
   }
 
   /**
@@ -721,13 +645,8 @@ export class CodeEditorComponent implements OnInit, AfterViewInit, OnDestroy {
 
 
   siderWidth = 250;
-  terminalHeight = 190;
   onSideResize({ width }: NzResizeEvent): void {
     this.siderWidth = width!;
-  }
-
-  onTerminalResize({ height }: NzResizeEvent): void {
-    if (height) this.terminalHeight = Math.max(110, Math.min(360, height));
   }
 
   /**

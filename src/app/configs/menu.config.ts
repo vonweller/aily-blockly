@@ -7,6 +7,7 @@ export interface IMenuItem {
   icon?: string;
   color?: string;
   more?: string;
+  ai?: boolean;
   sep?: boolean;
   state?: 'default' | 'doing' | 'done' | 'error' | 'warn';
   disabled?: boolean;
@@ -15,10 +16,12 @@ export interface IMenuItem {
   children?: IMenuItem[],
   extra?: any,
   check?: boolean,
+  current?: boolean,
+  tooltip?: string,
+  hideChildrenArrow?: boolean,
   key?: string; // 用于标识编译和上传配置
   /** 行内操作按钮，如重命名/删除 */
   actions?: { icon: string; action: string; title?: string }[];
-  current?: boolean;
   /** 子菜单不使用单选勾选（如最近项目列表） */
   submenuNoRadio?: boolean;
 }
@@ -33,7 +36,7 @@ export let HEADER_BTNS: IMenuItem[] = [
     type: 'act-btn',
     color: '#006adc',
     state: 'default',
-    router: ['/main/blockly-editor', '/main/code-editor']
+    router: ['/main/blockly-editor', '/main/code-editor', '/main/code-editor-pro']
   },
   {
     name: 'MENU.RUN',
@@ -44,7 +47,7 @@ export let HEADER_BTNS: IMenuItem[] = [
     type: 'act-btn',
     color: '#009600',
     state: 'default',
-    router: ['/main/blockly-editor', '/main/code-editor']
+    router: ['/main/blockly-editor', '/main/code-editor', '/main/code-editor-pro']
   },
   // {
   //   name: 'MENU.DEBUG',
@@ -85,7 +88,7 @@ export let HEADER_MENU: IMenuItem[] = [
     action: 'project-save',
     data: { type: 'cmd', data: 'save' },
     icon: 'fa-light fa-file-circle-check',
-    router: ['/main/blockly-editor', '/main/code-editor']
+    router: ['/main/blockly-editor', '/main/code-editor', '/main/code-editor-pro']
   },
   {
     name: 'MENU.PROJECT_SAVE_AS',
@@ -93,7 +96,7 @@ export let HEADER_MENU: IMenuItem[] = [
     action: 'project-save-as',
     data: { type: 'cmd', data: 'save-as' },
     icon: 'fa-light fa-copy',
-    router: ['/main/blockly-editor', '/main/code-editor']
+    router: ['/main/blockly-editor', '/main/code-editor', '/main/code-editor-pro']
   },
   {
     name: 'MENU.IMAGE_EXPORT',
@@ -106,14 +109,14 @@ export let HEADER_MENU: IMenuItem[] = [
     action: 'project-open-by-explorer',
     data: { type: 'other', action: 'openByExplorer', data: 'project' },
     icon: 'fa-light fa-browser',
-    router: ['/main/blockly-editor', '/main/code-editor']
+    router: ['/main/blockly-editor', '/main/code-editor', '/main/code-editor-pro']
   },
   {
     name: 'MENU.PROJECT_CLOSE',
     action: 'project-close',
     data: { type: 'cmd', data: 'close' },
     icon: 'fa-light fa-folder-closed',
-    router: ['/main/blockly-editor', '/main/code-editor']
+    router: ['/main/blockly-editor', '/main/code-editor', '/main/code-editor-pro']
   },
   // {
   //   name: 'MENU.CODE_EXPORT',

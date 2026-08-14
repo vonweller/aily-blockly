@@ -2,35 +2,44 @@
 const path = require("path");
 const os = require("os");
 const fs = require("fs");
+const http = require("http");
+const { spawn, exec } = require("child_process");
+const url = require("url");
 const WinState = require('electron-win-state').default;
-const { app, BrowserWindow, ipcMain, dialog, screen, shell, Menu } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, screen, shell, Menu, powerMonitor } = require("electron");
 
 const { isWin32, isDarwin, isLinux } = require("./platform");
 const projectLock = require("./project-lock");
+const { startCliBridge } = require("./cli-bridge");
 const builder = require("./builder");
 const linter = require("./linter");
-const { CanmvBackend } = require('./python-runtime/backend');
-const { registerPythonRuntimeIpc } = require('./python-runtime/ipc');
-const { resolveCanmvBackendExecutable } = require('./python-runtime/runtime-path');
+const simulatorGateway = require("./simulator-gateway");
+const simulatorSubappHost = require("./simulator-subapp-host");
+const {
+  createProjectSceneGenerationBroker,
+} = require("./project-scene-generation-broker");
+const {
+  createSimulatorProjectRebuildCoordinator,
+} = require("./simulator-project-rebuild-coordinator");
+const { createPackagedRendererServer } = require("./packaged-renderer-server");
+const { createPythonRuntimeRegistration } = require("./python-runtime/bootstrap");
 const {
   markInstalledForAppVersion,
   shouldInstallForAppVersion,
 } = require("./aily-tools-install-state");
+const ORIGINAL_PROCESS_PATH = process.env.PATH || process.env.Path || "";
 
-const canmvBackendExecutable = resolveCanmvBackendExecutable({
+const pythonRuntime = createPythonRuntimeRegistration({
+  ipcMain,
   override: process.env.CANMV_BACKEND_PATH,
   isPackaged: app.isPackaged,
   resourcesPath: process.resourcesPath,
   moduleDir: path.join(__dirname, 'python-runtime'),
 });
-const canmvBackend = new CanmvBackend({
-  executable: canmvBackendExecutable,
-  cwd: path.dirname(canmvBackendExecutable),
-});
-const pythonRuntimeRegistration = registerPythonRuntimeIpc({
-  ipcMain,
-  backend: canmvBackend,
-});
+const pythonRuntimeRegistration = pythonRuntime.registration;
+if (!pythonRuntime.available) {
+  console.warn(`[PythonRuntime] ${pythonRuntime.unavailableReason}`);
+}
 
 // 设置应用名称，用于 Windows 系统通知显示
 app.setName("aily blockly");
@@ -319,6 +328,41 @@ app.removeAsDefaultProtocolClient(PROTOCOL);
 const args = process.argv.slice(1);
 const serve = args.some((val) => val === "--serve");
 process.env.DEV = serve;
+const packagedRendererServer = createPackagedRendererServer();
+
+async function ensurePackagedRendererServerStarted() {
+  if (serve) return null;
+  return packagedRendererServer.start({
+    rootDirectory: path.join(__dirname, "..", "renderer"),
+  });
+}
+
+function resolveAppRendererUrl(hash = "") {
+  if (!serve) {
+    return packagedRendererServer.rendererUrl(hash);
+  }
+  if (hash === undefined || hash === null || hash === "") {
+    return "http://localhost:4200";
+  }
+  if (
+    typeof hash !== "string"
+    || hash.length > 16 * 1024
+    || /[\u0000-\u001f\u007f]/.test(hash)
+  ) {
+    throw new TypeError("Renderer hash is invalid.");
+  }
+  return `http://localhost:4200/${hash.startsWith("#") ? hash : `#${hash}`}`;
+}
+
+function loadAppRenderer(targetWindow, hash = "") {
+  return targetWindow.loadURL(resolveAppRendererUrl(hash));
+}
+
+// Angular dev server 会把依赖预构建到 .angular/cache 下；重启后路径可能变化。
+// 开发态若继续复用 Electron 的 HTTP cache，容易命中已失效的旧 chunk URL
+if (serve) {
+  app.commandLine.appendSwitch('disable-http-cache');
+}
 
 // 注册协议处理
 if (process.defaultApp) {
@@ -335,6 +379,276 @@ let pendingRoute = null;
 let pendingQueryParams = null;
 /** 当前主进程已持有的项目锁（规范化路径） */
 let heldProjectLockNormalized = null;
+
+/** 内嵌 coder：开发态挂 child/coder 的 Vite；生产态本地静态 child/coder/dist */
+let coderEmbedHttpServer = null;
+/** 防止并发多次进入启动逻辑（重复 spawn Vite） */
+let coderEmbedEnsureInFlight = null;
+
+const CODER_EMBED_VITE_PORT_MIN = 5174;
+const CODER_EMBED_VITE_PORT_RANGE = 24;
+
+function getCoderEmbedPackageDir() {
+  const childRoot = serve
+    ? path.join(__dirname, "..", "child")
+    : path.join(process.resourcesPath, "child");
+  return path.join(childRoot, "aily-coder");
+}
+
+function getCoderEmbedDistPath() {
+  return path.join(getCoderEmbedPackageDir(), "dist");
+}
+
+function probeCoderEmbedViteListening(port) {
+  return new Promise((resolve) => {
+    const req = http.get(`http://127.0.0.1:${port}/`, { timeout: 800 }, (res) => {
+      res.resume();
+      resolve(true);
+    });
+    req.on("error", () => resolve(false));
+    req.on("timeout", () => {
+      req.destroy();
+      resolve(false);
+    });
+  });
+}
+
+async function findListeningCoderEmbedDevPort() {
+  for (let i = 0; i < CODER_EMBED_VITE_PORT_RANGE; i++) {
+    const port = CODER_EMBED_VITE_PORT_MIN + i;
+    if (await probeCoderEmbedViteListening(port)) {
+      return port;
+    }
+  }
+  return null;
+}
+
+function spawnCoderEmbedViteDevServer(coderDir) {
+  // Windows 上直接 spawn npm.cmd 会 EINVAL（Node 22+）；与 electron/npm.js 一致需 shell: true
+  if (isWin32) {
+    return spawn("npm run start", {
+      cwd: coderDir,
+      env: process.env,
+      stdio: "inherit",
+      shell: true,
+      windowsHide: true,
+    });
+  }
+  return spawn("npm", ["run", "start"], {
+    cwd: coderDir,
+    env: process.env,
+    stdio: "inherit",
+  });
+}
+
+function killCoderEmbedSpawnedDevProcess(devProcess) {
+  if (!devProcess || typeof devProcess.pid !== "number") {
+    return;
+  }
+  try {
+    if (isWin32) {
+      exec(`taskkill /pid ${devProcess.pid} /T /F`, () => {});
+    } else {
+      devProcess.kill("SIGTERM");
+    }
+  } catch (e) {
+    console.warn("kill coder vite dev:", e.message);
+  }
+}
+
+function coderEmbedMimeType(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  const map = {
+    ".html": "text/html; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".mjs": "text/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+    ".ico": "image/x-icon",
+    ".svg": "image/svg+xml",
+    ".woff": "font/woff",
+    ".woff2": "font/woff2",
+    ".ttf": "font/ttf",
+    ".wasm": "application/wasm",
+    ".map": "application/json; charset=utf-8",
+  };
+  return map[ext] || "application/octet-stream";
+}
+
+function ensureCoderEmbedServerStartedImpl() {
+  if (serve) {
+    const coderDir = getCoderEmbedPackageDir();
+    const pkgJson = path.join(coderDir, "package.json");
+    if (!fs.existsSync(pkgJson)) {
+      return Promise.reject(new Error(`Coder 开发目录无效，缺少 package.json: ${coderDir}`));
+    }
+    return findListeningCoderEmbedDevPort().then((existingPort) => {
+      if (existingPort != null) {
+        coderEmbedHttpServer = {
+          kind: "dev",
+          port: existingPort,
+          devProcess: null,
+          spawned: false,
+        };
+        return existingPort;
+      }
+      return new Promise((resolve, reject) => {
+        let settled = false;
+        const devProcess = spawnCoderEmbedViteDevServer(coderDir);
+        const deadline = Date.now() + 120000;
+        const fail = (err) => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          killCoderEmbedSpawnedDevProcess(devProcess);
+          reject(err);
+        };
+        devProcess.on("error", (err) => {
+          fail(new Error(`无法启动 child/coder 开发服务器: ${err.message}`));
+        });
+        devProcess.once("exit", (code) => {
+          if (!settled) {
+            fail(new Error(`child/coder Vite 异常退出，代码: ${code}`));
+          }
+        });
+        const poll = () => {
+          if (settled) {
+            return;
+          }
+          findListeningCoderEmbedDevPort()
+            .then((port) => {
+              if (port != null) {
+                if (settled) {
+                  return;
+                }
+                settled = true;
+                coderEmbedHttpServer = {
+                  kind: "dev",
+                  port,
+                  devProcess,
+                  spawned: true,
+                };
+                resolve(port);
+                return;
+              }
+              if (Date.now() > deadline) {
+                fail(new Error("等待 child/coder Vite 就绪超时"));
+                return;
+              }
+              setTimeout(poll, 400);
+            })
+            .catch((e) => fail(e || new Error(String(e))));
+        };
+        devProcess.once("spawn", () => poll());
+      });
+    });
+  }
+  const dist = getCoderEmbedDistPath();
+  if (!fs.existsSync(dist)) {
+    return Promise.reject(new Error(`Coder 静态资源未找到: ${dist}`));
+  }
+  const distResolved = path.resolve(dist);
+  const distPrefix = distResolved.endsWith(path.sep) ? distResolved : distResolved + path.sep;
+
+  const server = http.createServer((req, res) => {
+    res.setHeader("Cross-Origin-Embedder-Policy", "credentialless");
+    res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      res.writeHead(405);
+      res.end();
+      return;
+    }
+    const parsed = url.parse(req.url);
+    let pathname = decodeURIComponent(parsed.pathname || "/");
+    if (pathname.includes("\0")) {
+      res.writeHead(400);
+      res.end();
+      return;
+    }
+    pathname = path.posix.normalize("/" + pathname.replace(/\\/g, "/"));
+    if (pathname.includes("..")) {
+      res.writeHead(403);
+      res.end();
+      return;
+    }
+    let rel = pathname.replace(/^\//, "");
+    if (!rel || rel.endsWith("/")) {
+      rel = path.posix.join(rel || ".", "index.html");
+    }
+    const filePath = path.join(distResolved, rel);
+    const fileResolved = path.resolve(filePath);
+    if (fileResolved !== distResolved && !fileResolved.startsWith(distPrefix)) {
+      res.writeHead(403);
+      res.end();
+      return;
+    }
+    fs.stat(fileResolved, (err, st) => {
+      if (!err && st.isFile()) {
+        if (req.method === "HEAD") {
+          res.writeHead(200, { "Content-Type": coderEmbedMimeType(fileResolved) });
+          res.end();
+          return;
+        }
+        fs.readFile(fileResolved, (e2, data) => {
+          if (e2) {
+            res.writeHead(500);
+            res.end();
+            return;
+          }
+          res.writeHead(200, { "Content-Type": coderEmbedMimeType(fileResolved) });
+          res.end(data);
+        });
+        return;
+      }
+      const indexPath = path.join(distResolved, "index.html");
+      if (req.method === "HEAD") {
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        res.end();
+        return;
+      }
+      fs.readFile(indexPath, (e3, data) => {
+        if (e3) {
+          res.writeHead(404);
+          res.end();
+          return;
+        }
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        res.end(data);
+      });
+    });
+  });
+
+  return new Promise((resolve, reject) => {
+    server.listen(0, "127.0.0.1", () => {
+      const addr = server.address();
+      const port = typeof addr === "object" && addr ? addr.port : null;
+      if (!port) {
+        try {
+          server.close();
+        } catch (_) {}
+        reject(new Error("无法为 Coder 嵌入服务分配端口"));
+        return;
+      }
+      coderEmbedHttpServer = { kind: "static", server, port };
+      resolve(port);
+    });
+    server.on("error", reject);
+  });
+}
+
+function ensureCoderEmbedServerStarted() {
+  if (coderEmbedHttpServer) {
+    return Promise.resolve(coderEmbedHttpServer.port);
+  }
+  if (coderEmbedEnsureInFlight) {
+    return coderEmbedEnsureInFlight;
+  }
+  coderEmbedEnsureInFlight = ensureCoderEmbedServerStartedImpl().finally(() => {
+    coderEmbedEnsureInFlight = null;
+  });
+  return coderEmbedEnsureInFlight;
+}
 
 /** 主进程读取 i18n JSON：开发态在仓库 public；打包后 Angular 资源在 app.asar/renderer */
 function getMainProcessI18nJsonPath(pack) {
@@ -598,7 +912,7 @@ function handleProtocol(url) {
         version: version || ''
       };
 
-      if (mainWindow && mainWindow.webContents && isRendererReady) {
+      if (isCurrentRendererGenerationReady()) {
         mainWindow.webContents.send('open-example-list', data);
         if (mainWindow.isMinimized()) {
           mainWindow.restore();
@@ -623,10 +937,20 @@ function handleProtocol(url) {
 
 // ipc handlers模块
 const { registerTerminalHandlers, killAllTerminals, getActiveTerminals } = require("./terminal");
-const { registerWindowHandlers } = require("./window");
+const {
+  registerWindowHandlers,
+  forceStopChildToolByCatalogId,
+  listChildToolHoldersForCatalogId,
+} = require("./window");
 const { registerNpmHandlers, killAllNpmProcesses, getActiveNpmProcesses } = require("./npm");
 const { registerUpdaterHandlers } = require("./updater");
 const { registerCmdHandlers, killAllCmdProcesses, getActiveCmdProcesses } = require("./cmd");
+const { registerAilyServicesStreamHandlers, cancelAllAilyServicesStreams, getActiveAilyServicesStreams } = require("./aily-services-stream");
+const {
+  executeWebviewFetch,
+  executeWebviewSearch,
+  registerWebviewBridgeHandlers,
+} = require("./webview-bridge");
 const { registerMCPHandlers } = require("./mcp");
 const { registerAppDataResourceLockHandlers, releaseAllAppDataResourceLocks } = require("./appdata-resource-lock");
 // debug模块
@@ -636,11 +960,465 @@ const { registerToolsHandlers } = require("./tools");
 const { registerNotificationHandlers } = require("./notification");
 const { registerProbeRsHandlers } = require("./probe-rs");
 const { registerBleHandlers, registerWebBluetoothChooser } = require("./ble");
+const { registerSubappManagerHandlers } = require("./subapp-manager");
+const { shouldBeginRendererGeneration } = require("./renderer-lifecycle");
 
 let mainWindow;
 let userConf;
 let isProcessCleanupInProgress = false;
 let hasProcessCleanupCompleted = false;
+let processHealthDiagnosticsRegistered = false;
+let projectContextState = {
+  workspace: null,
+  version: 0,
+};
+
+function registerProcessHealthDiagnostics() {
+  if (processHealthDiagnosticsRegistered) return;
+  processHealthDiagnosticsRegistered = true;
+
+  app.on('render-process-gone', (_event, webContents, details) => {
+    console.error('[ProcessHealth][RendererGone]', JSON.stringify({
+      reason: details.reason,
+      exitCode: details.exitCode,
+      webContentsId: webContents?.id,
+      url: sanitizeDiagnosticUrl(webContents),
+      gpuFeatureStatus: app.getGPUFeatureStatus(),
+      processes: summarizeAppProcessMetrics()
+    }));
+  });
+
+  app.on('child-process-gone', (_event, details) => {
+    console.error('[ProcessHealth][ChildGone]', JSON.stringify({
+      type: details.type,
+      reason: details.reason,
+      exitCode: details.exitCode,
+      serviceName: details.serviceName,
+      name: details.name,
+      gpuFeatureStatus: app.getGPUFeatureStatus(),
+      processes: summarizeAppProcessMetrics()
+    }));
+  });
+
+  console.info('[ProcessHealth][GPUFeatureStatus]', JSON.stringify(app.getGPUFeatureStatus()));
+  void app.getGPUInfo('basic')
+    .then(info => console.info('[ProcessHealth][GPUInfo]', JSON.stringify(info)))
+    .catch(error => console.warn('[ProcessHealth][GPUInfoFailed]', error));
+}
+
+function sanitizeDiagnosticUrl(webContents) {
+  try {
+    const rawUrl = webContents?.getURL?.() || '';
+    if (!rawUrl) return '';
+    const parsed = new URL(rawUrl);
+    return `${parsed.protocol}//${parsed.host}${parsed.pathname}`;
+  } catch {
+    return '';
+  }
+}
+
+function summarizeAppProcessMetrics() {
+  return app.getAppMetrics().map(metric => ({
+    pid: metric.pid,
+    type: metric.type,
+    name: metric.name,
+    serviceName: metric.serviceName,
+    cpuPercent: metric.cpu?.percentCPUUsage,
+    workingSetSize: metric.memory?.workingSetSize,
+    peakWorkingSetSize: metric.memory?.peakWorkingSetSize,
+    privateBytes: metric.memory?.privateBytes
+  }));
+}
+
+// === CLI Bridge：供外部 CLI 通过本地回环接口驱动主程序（附加能力） ===
+let cliBridge = null;
+
+/** 导航主窗口到指定 hash（复用 dev/prod 既有加载方式） */
+function navigateMainWindowHash(targetHash) {
+  if (!mainWindow || !mainWindow.webContents || mainWindow.isDestroyed()) {
+    return false;
+  }
+  void loadAppRenderer(mainWindow, targetHash);
+  try {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+    mainWindow.show();
+  } catch (_) {
+    /* ignore */
+  }
+  return true;
+}
+
+/** 从当前窗口 URL 中解析正在打开的项目路径（反映 GUI 打开的项目） */
+function getOpenedProjectPathFromWindow() {
+  try {
+    const currentUrl = mainWindow && mainWindow.webContents ? mainWindow.webContents.getURL() : '';
+    const m = currentUrl.match(/[?&]path=([^&]+)/);
+    return m ? decodeURIComponent(m[1]) : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function requestMainWindow(channel, responseChannel, payload, timeoutMs = 12000, signal) {
+  return new Promise((resolve) => {
+    if (!mainWindow || !mainWindow.webContents || mainWindow.isDestroyed()) {
+      resolve({ ok: false, message: '主窗口不可用' });
+      return;
+    }
+    if (!isCurrentRendererGenerationReady()) {
+      resolve({ ok: false, message: '渲染进程尚未就绪' });
+      return;
+    }
+
+    const requestGeneration = rendererGeneration;
+    const requestId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      ipcMain.removeListener(responseChannel, listener);
+      resolve({ ok: false, message: '等待渲染进程响应超时' });
+    }, timeoutMs);
+
+    const listener = (event, message) => {
+      if (!isCurrentMainRenderer(event.sender)
+        || rendererGeneration !== requestGeneration
+        || readyRendererGeneration !== requestGeneration
+        || !message
+        || message.requestId !== requestId
+        || Number(message.rendererGeneration) !== requestGeneration) {
+        return;
+      }
+      signal?.removeEventListener('abort', onAbort);
+      clearTimeout(timer);
+      ipcMain.removeListener(responseChannel, listener);
+      resolve(message);
+    };
+
+    const onAbort = () => {
+      clearTimeout(timer);
+      ipcMain.removeListener(responseChannel, listener);
+      resolve({
+        ok: false,
+        errorCode: 'RENDERER_REQUEST_CANCELLED',
+        message: 'Renderer request was cancelled.',
+      });
+    };
+
+    ipcMain.on(responseChannel, listener);
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
+    signal?.addEventListener('abort', onAbort, { once: true });
+    mainWindow.webContents.send(channel, {
+      ...payload,
+      requestId,
+      rendererGeneration: requestGeneration,
+    });
+  });
+}
+
+let projectSceneGenerationBroker = null;
+
+function getProjectSceneGenerationBroker() {
+  if (projectSceneGenerationBroker) return projectSceneGenerationBroker;
+  projectSceneGenerationBroker = createProjectSceneGenerationBroker({
+    async resolveHardwareIntent(request, { signal }) {
+      const response = await requestMainWindow(
+        'cli-bridge:blockly-live-operation',
+        'cli-bridge:blockly-live-operation:response',
+        {
+          path: '',
+          operation: 'project_hardware_intent_snapshot',
+          params: { request },
+        },
+        120000,
+        signal,
+      );
+      if (response?.ok !== true || !response.snapshot) {
+        throw new Error(
+          response?.message || 'Project hardware intent provider is unavailable.',
+        );
+      }
+      return response.snapshot;
+    },
+    async requestProposal(input, { signal }) {
+      const requestId = typeof input?.request?.requestId === 'string'
+        ? input.request.requestId
+        : '';
+      const cancelProviderRequest = () => {
+        if (!requestId) return;
+        void requestMainWindow(
+          'cli-bridge:blockly-live-operation',
+          'cli-bridge:blockly-live-operation:response',
+          {
+            path: '',
+            operation: 'project_scene_proposal_cancel',
+            params: { requestId },
+          },
+          15000,
+        ).catch(() => undefined);
+      };
+      signal?.addEventListener('abort', cancelProviderRequest, { once: true });
+      if (signal?.aborted) cancelProviderRequest();
+      try {
+        const response = await requestMainWindow(
+          'cli-bridge:blockly-live-operation',
+          'cli-bridge:blockly-live-operation:response',
+          {
+            path: '',
+            operation: 'project_scene_proposal_request',
+            params: input,
+          },
+          10 * 60 * 1000,
+          signal,
+        );
+        if (response?.ok !== true || !response.proposal) {
+          throw new Error(
+            response?.message || 'Project Scene proposal provider is unavailable.',
+          );
+        }
+        return response.proposal;
+      } finally {
+        signal?.removeEventListener('abort', cancelProviderRequest);
+      }
+    },
+    async onProposalReady(candidate) {
+      await simulatorSubappHost.defaultHost.stageSceneGenerationCandidate(
+        candidate,
+      );
+    },
+  });
+  return projectSceneGenerationBroker;
+}
+
+let simulatorProjectRebuildCoordinator = null;
+
+function getSimulatorProjectRebuildCoordinator() {
+  if (simulatorProjectRebuildCoordinator) {
+    return simulatorProjectRebuildCoordinator;
+  }
+  simulatorProjectRebuildCoordinator =
+    createSimulatorProjectRebuildCoordinator({
+      async requestProjectRebuild(request) {
+        const response = await requestMainWindow(
+          'simulator-project-rebuild-request',
+          'simulator-project-rebuild-response',
+          { request },
+          30 * 60 * 1000,
+        );
+        return response?.result;
+      },
+      onStateChanged(artifactRebuild) {
+        if (!isCurrentRendererGenerationReady()) return;
+        mainWindow.webContents.send('simulator-subapp-state-changed', {
+          state: 'artifact-rebuild-state-changed',
+          artifactRebuild,
+        });
+      },
+      async onCandidateReady(candidateEvent) {
+        await simulatorSubappHost.defaultHost.stageRebuildCandidate(
+          candidateEvent,
+        );
+      },
+    });
+  return simulatorProjectRebuildCoordinator;
+}
+
+/** 处理来自 CLI 的命令 */
+async function handleCliBridgeCommand(action, payload) {
+  const requestedPath = payload && typeof payload.path === 'string' ? payload.path : '';
+  switch (action) {
+    case 'open': {
+      if (!requestedPath) return { ok: false, message: '缺少 path 参数' };
+      if (!fs.existsSync(requestedPath)) return { ok: false, message: `项目目录不存在: ${requestedPath}` };
+      const dir = path.resolve(requestedPath);
+      const ok = navigateMainWindowHash(`#/main/blockly-editor?path=${encodeURIComponent(dir)}`);
+      return { ok, message: ok ? `已打开项目: ${dir}` : '主窗口不可用', project: ok ? dir : null };
+    }
+    case 'reload':
+    case 'refresh': {
+      const dir = requestedPath ? path.resolve(requestedPath) : getOpenedProjectPathFromWindow();
+      if (!dir) return { ok: false, message: '当前没有打开的项目,且未提供 path' };
+      if (!fs.existsSync(dir)) return { ok: false, message: `项目目录不存在: ${dir}` };
+      const current = getOpenedProjectPathFromWindow();
+      if (current && path.resolve(current) === dir) {
+        const result = await requestMainWindow(
+          'cli-bridge:blockly-live-operation',
+          'cli-bridge:blockly-live-operation:response',
+          {
+            path: dir,
+            operation: 'project_reload',
+            params: {},
+          },
+          120000,
+        );
+        if (result && typeof result === 'object' && result.ok === true) {
+          return { ok: true, message: `已重载项目(刷新库/积木): ${dir}`, project: dir };
+        }
+      }
+      const ok = navigateMainWindowHash(`#/main/blockly-editor?path=${encodeURIComponent(dir)}`);
+      return { ok, message: ok ? `已重载项目(刷新库/积木): ${dir}` : '主窗口不可用', project: ok ? dir : null };
+    }
+    case 'close': {
+      const ok = navigateMainWindowHash(`#/main/guide`);
+      return { ok, message: ok ? '已关闭当前项目' : '主窗口不可用', project: null };
+    }
+    case 'blockly-live-operation': {
+      const dir = requestedPath ? path.resolve(requestedPath) : getOpenedProjectPathFromWindow();
+      const operation = payload && payload.operation;
+      const projectOptionalOperations = new Set([
+        'search_boards_libraries',
+        'project_create',
+        'app_info',
+        'main_menu_list',
+        'main_menu_execute',
+        'child_app_list',
+        'child_app_get',
+        'child_app_open',
+        'child_app_control',
+        'child_app_window_list',
+        'child_app_window_set_bounds',
+        'child_app_window_arrange',
+        'subapp_agent_call',
+      ]);
+      if (!dir && !projectOptionalOperations.has(operation)) return { ok: false, message: '当前没有打开的项目,且未提供 path' };
+      const liveOperationTimeoutMs = operation === 'project_build'
+        ? 620000
+        : operation === 'project_upload'
+          ? 920000
+        : operation === 'project_create'
+          ? 300000
+          : operation === 'abs_apply'
+            ? 120000
+            : operation === 'subapp_agent_call'
+              ? 620000
+              : operation === 'child_app_control'
+              || operation === 'child_app_open'
+              || operation === 'child_app_window_set_bounds'
+              || operation === 'child_app_window_arrange'
+                ? 120000
+                : 12000;
+      const result = await requestMainWindow(
+        'cli-bridge:blockly-live-operation',
+        'cli-bridge:blockly-live-operation:response',
+        {
+          path: dir || '',
+          operation,
+          params: payload && payload.params,
+        },
+        liveOperationTimeoutMs,
+      );
+      return result && typeof result === 'object' ? result : { ok: false, message: '渲染进程返回了无效结果' };
+    }
+    case 'mcp-runtime': {
+      const dir = requestedPath ? path.resolve(requestedPath) : getOpenedProjectPathFromWindow();
+      const namespace = payload && payload.namespace;
+      const method = payload && payload.method;
+      const requestedTimeoutMs = Number(payload && payload.timeoutMs);
+      const runtimeTimeoutMs = Number.isFinite(requestedTimeoutMs) && requestedTimeoutMs > 0
+        ? Math.max(1000, Math.min(requestedTimeoutMs, 620000))
+        : method === 'notify_schematic_saved'
+          ? 20000
+          : 15000;
+      if (!dir) {
+        return { ok: false, message: '当前没有打开的项目,且未提供 path' };
+      }
+      if (!fs.existsSync(dir)) {
+        return { ok: false, message: `项目目录不存在: ${dir}` };
+      }
+      const result = await requestMainWindow(
+        'mcp:request',
+        'mcp:response',
+        {
+          namespace,
+          method,
+          args: payload && payload.args,
+          targetProjectPath: dir,
+          timeoutMs: runtimeTimeoutMs,
+        },
+        runtimeTimeoutMs,
+      );
+      if (!result || typeof result !== 'object') {
+        return { ok: false, message: '渲染进程返回了无效结果' };
+      }
+      if (result.ok === true && result.result && typeof result.result === 'object') {
+        return result.result;
+      }
+      return result;
+    }
+    case 'webview-bridge-fetch': {
+      const sessionId = typeof payload?.sessionId === 'string'
+        ? payload.sessionId.trim()
+        : '';
+      if (!sessionId) {
+        return { ok: false, error: '缺少 sessionId 参数' };
+      }
+
+      const result = await executeWebviewFetch({
+        sessionId,
+        url: payload?.url,
+        timeoutMs: payload?.timeoutMs,
+        waitAfterLoadMs: payload?.waitAfterLoadMs,
+        captureFullContent: true,
+      });
+      if (!result?.ok) {
+        return result && typeof result === 'object'
+          ? result
+          : { ok: false, error: 'WebView fetch 返回了无效结果' };
+      }
+
+      return {
+        ok: true,
+        text: String(result.html || result.text || ''),
+        status: Number.isFinite(result.status) ? Number(result.status) : 200,
+        contentType: typeof result.contentType === 'string'
+          ? result.contentType
+          : 'text/html; charset=utf-8',
+      };
+    }
+    case 'webview-bridge-search': {
+      const sessionId = typeof payload?.sessionId === 'string'
+        ? payload.sessionId.trim()
+        : '';
+      if (!sessionId) {
+        return { ok: false, error: '缺少 sessionId 参数' };
+      }
+
+      const result = await executeWebviewSearch({
+        sessionId,
+        url: payload?.url,
+        timeoutMs: payload?.timeoutMs,
+        captureFullContent: true,
+      });
+      return result && typeof result === 'object'
+        ? result
+        : { ok: false, error: 'WebView search 返回了无效结果' };
+    }
+    default:
+      return { ok: false, message: `未知命令: ${action}` };
+  }
+}
+
+function getCliBridgeStatus() {
+  return {
+    pid: process.pid,
+    project: getOpenedProjectPathFromWindow(),
+    serve: !!serve,
+  };
+}
+
+function startCliBridgeIfPossible() {
+  if (cliBridge) return;
+  try {
+    cliBridge = startCliBridge({
+      handleCommand: handleCliBridgeCommand,
+      getStatus: getCliBridgeStatus,
+    });
+  } catch (e) {
+    console.error('启动 CLI bridge 失败:', e);
+  }
+}
 const DEFAULT_BUILD_FLAVOR = 'cn';
 const BUILD_FLAVOR_TO_OFFICIAL_REGION = {
   cn: 'cn',
@@ -660,11 +1438,11 @@ function normalizeBuildFlavor(flavor) {
     : DEFAULT_BUILD_FLAVOR;
 }
 
-let cachedPackagedBuildFlavor;
+let cachedPackagedMetadata;
 
-function getPackagedBuildFlavor() {
-  if (cachedPackagedBuildFlavor !== undefined) {
-    return cachedPackagedBuildFlavor;
+function getPackagedMetadata() {
+  if (cachedPackagedMetadata !== undefined) {
+    return cachedPackagedMetadata;
   }
 
   const candidatePaths = [];
@@ -682,16 +1460,43 @@ function getPackagedBuildFlavor() {
       }
 
       const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
-      cachedPackagedBuildFlavor = packageJson.ailyBuildFlavor;
-      return cachedPackagedBuildFlavor;
+      cachedPackagedMetadata = packageJson;
+      return cachedPackagedMetadata;
     } catch (error) {
-      console.warn('读取构建版型失败:', error.message || error);
+      console.warn('读取打包元数据失败:', error.message || error);
     }
   }
 
-  cachedPackagedBuildFlavor = null;
-  return cachedPackagedBuildFlavor;
+  cachedPackagedMetadata = null;
+  return cachedPackagedMetadata;
 }
+
+function getPackagedBuildFlavor() {
+  return getPackagedMetadata()?.ailyBuildFlavor;
+}
+
+function configurePackagedChatExecutionHost() {
+  const packageMetadata = getPackagedMetadata();
+  const configuredMode = typeof packageMetadata?.ailyChatExecutionHost === 'string'
+    ? packageMetadata.ailyChatExecutionHost.trim()
+    : '';
+  const configuredRuntimeModule = typeof packageMetadata?.ailyChatExecutionHostRuntimeModule === 'string'
+    ? packageMetadata.ailyChatExecutionHostRuntimeModule.trim()
+    : '';
+
+  if (!configuredMode || !configuredRuntimeModule) {
+    return;
+  }
+
+  if (!process.env.AILY_CHAT_EXECUTION_HOST) {
+    process.env.AILY_CHAT_EXECUTION_HOST = configuredMode;
+  }
+  if (!process.env.AILY_CHAT_EXECUTION_HOST_RUNTIME_MODULE) {
+    process.env.AILY_CHAT_EXECUTION_HOST_RUNTIME_MODULE = path.resolve(app.getAppPath(), configuredRuntimeModule);
+  }
+}
+
+configurePackagedChatExecutionHost();
 
 function getBuildFlavor(conf) {
   return normalizeBuildFlavor(process.env.AILY_BUILD_FLAVOR || getPackagedBuildFlavor() || conf?.build_flavor);
@@ -791,12 +1596,63 @@ function getZipUrlState(conf = {}) {
 function buildZipUrls(conf = {}) {
   return JSON.stringify(getZipUrlState(conf).urls);
 }
-let isRendererReady = false;
+let rendererGeneration = 0;
+let readyRendererGeneration = 0;
+let powerMonitorListenersRegistered = false;
+
+function isCurrentMainRenderer(sender) {
+  return !!mainWindow
+    && !mainWindow.isDestroyed()
+    && !!mainWindow.webContents
+    && !mainWindow.webContents.isDestroyed()
+    && sender?.id === mainWindow.webContents.id;
+}
+
+function isCurrentRendererGenerationReady() {
+  return rendererGeneration > 0
+    && readyRendererGeneration === rendererGeneration
+    && isCurrentMainRenderer(mainWindow?.webContents);
+}
+
+function invalidateRendererGeneration(reason) {
+  readyRendererGeneration = 0;
+  console.info('[RendererLifecycle] unavailable', {
+    generation: rendererGeneration,
+    reason,
+  });
+}
+
+function beginRendererGeneration(reason) {
+  rendererGeneration += 1;
+  invalidateRendererGeneration(reason);
+  console.info('[RendererLifecycle] loading', {
+    generation: rendererGeneration,
+    reason,
+  });
+  return rendererGeneration;
+}
+
+ipcMain.handle('get-renderer-generation', (event) => {
+  return isCurrentMainRenderer(event.sender) ? rendererGeneration : 0;
+});
 
 // 监听渲染进程就绪事件
-ipcMain.on('renderer-ready', () => {
-  console.log('渲染进程已就绪');
-  isRendererReady = true;
+ipcMain.on('renderer-ready', (event, payload = {}) => {
+  const requestedGeneration = Number(payload?.generation);
+  if (!isCurrentMainRenderer(event.sender)
+    || !Number.isInteger(requestedGeneration)
+    || requestedGeneration !== rendererGeneration) {
+    console.warn('[RendererLifecycle] ignored stale renderer-ready', {
+      requestedGeneration,
+      currentGeneration: rendererGeneration,
+      senderId: event.sender?.id,
+    });
+    return;
+  }
+
+  console.log('渲染进程已就绪', { generation: requestedGeneration });
+  readyRendererGeneration = requestedGeneration;
+  event.sender.send('renderer-ready-ack', { generation: requestedGeneration });
 
   // 检查是否有待处理的OAuth回调
   if (global.pendingOAuthCallback) {
@@ -812,6 +1668,29 @@ ipcMain.on('renderer-ready', () => {
     global.pendingExampleListOpen = null;
   }
 });
+
+function registerPowerMonitorLifecycle() {
+  if (powerMonitorListenersRegistered) {
+    return;
+  }
+  powerMonitorListenersRegistered = true;
+  powerMonitor.on('suspend', () => {
+    if (isCurrentRendererGenerationReady()) {
+      mainWindow.webContents.send('renderer-lifecycle', {
+        kind: 'suspend',
+        generation: rendererGeneration,
+      });
+    }
+  });
+  powerMonitor.on('resume', () => {
+    if (isCurrentRendererGenerationReady()) {
+      mainWindow.webContents.send('renderer-lifecycle', {
+        kind: 'resume',
+        generation: rendererGeneration,
+      });
+    }
+  });
+}
 
 // 检查并解压 child 目录下的平台组件包
 function installChildEnv(childPath, options) {
@@ -1239,6 +2118,91 @@ function normalizeWindowsPathValue(value) {
   return normalized;
 }
 
+function appendExecutableDirIfExists(pathValue, segment, executableName) {
+  if (!segment || !executableName) {
+    return pathValue;
+  }
+  const executablePath = path.join(segment, executableName);
+  if (!fs.existsSync(executablePath)) {
+    return pathValue;
+  }
+  return appendPathSegment(pathValue, segment);
+}
+
+function uniquePathSegments(segments) {
+  const seen = new Set();
+  const result = [];
+  for (const segment of segments) {
+    if (!segment || typeof segment !== "string") {
+      continue;
+    }
+    const normalized = segment.trim();
+    if (!normalized) {
+      continue;
+    }
+    const key = isWin32 ? normalized.toLowerCase() : normalized;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    result.push(normalized);
+  }
+  return result;
+}
+
+function appendGitToolPaths(pathValue) {
+  const envGitPath = process.env.AILY_GIT_PATH || process.env.GIT_EXECUTABLE || "";
+  if (envGitPath) {
+    const gitPathStatTarget = fs.existsSync(envGitPath) ? envGitPath : "";
+    if (gitPathStatTarget) {
+      try {
+        const stat = fs.statSync(gitPathStatTarget);
+        const gitDir = stat.isDirectory() ? gitPathStatTarget : path.dirname(gitPathStatTarget);
+        pathValue = appendExecutableDirIfExists(pathValue, gitDir, isWin32 ? "git.exe" : "git");
+      } catch (_) {}
+    }
+  }
+
+  if (isWin32) {
+    const pathGitDirs = uniquePathSegments(
+      ORIGINAL_PROCESS_PATH
+        .split(path.delimiter)
+        .filter(segment => segment && fs.existsSync(path.join(segment, "git.exe")))
+    );
+    for (const gitDir of pathGitDirs) {
+      pathValue = appendExecutableDirIfExists(pathValue, gitDir, "git.exe");
+    }
+
+    const programFilesRoots = uniquePathSegments([
+      process.env.ProgramFiles,
+      process.env["ProgramFiles(x86)"],
+      process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, "Programs") : "",
+      "C:\\Program Files",
+      "C:\\Program Files (x86)",
+    ]);
+    for (const root of programFilesRoots) {
+      pathValue = appendExecutableDirIfExists(pathValue, path.join(root, "Git", "cmd"), "git.exe");
+      pathValue = appendExecutableDirIfExists(pathValue, path.join(root, "Git", "bin"), "git.exe");
+    }
+    return pathValue;
+  }
+
+  if (isDarwin) {
+    for (const gitDir of ["/usr/bin", "/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin"]) {
+      pathValue = appendExecutableDirIfExists(pathValue, gitDir, "git");
+    }
+    return pathValue;
+  }
+
+  if (isLinux) {
+    for (const gitDir of ["/usr/bin", "/usr/local/bin", "/snap/bin"]) {
+      pathValue = appendExecutableDirIfExists(pathValue, gitDir, "git");
+    }
+  }
+
+  return pathValue;
+}
+
 // child 工具解压完成后再注入 PATH 与相关环境变量
 function applyChildToolEnv(childPath) {
   const nodeBinPath = path.join(childPath, isDarwin ? "node/bin" : "node");
@@ -1277,6 +2241,7 @@ function applyChildToolEnv(childPath) {
   const probeRsPath = path.join(probeRsDir, `probe-rs${isWin32 ? ".exe" : ""}`);
 
   customPath = appendPathSegment(customPath, probeRsDir);
+  customPath = appendGitToolPaths(customPath);
 
   process.env.PATH = customPath;
   builder.applyCommandEnv(childPath);
@@ -1342,6 +2307,7 @@ function loadEnv() {
   try {
     initLogger(process.env.AILY_APPDATA_PATH);
     registerLoggerHandlers();
+    registerProcessHealthDiagnostics();
   } catch (error) {
     console.error("initLogger error: ", error);
   }
@@ -1390,7 +2356,7 @@ function loadEnv() {
   // 读取用户配置文件
   try {
     userConf = JSON.parse(fs.readFileSync(userConfigPath));
-    
+
     // TODO: 下一版删除，统一修正 regions.cn 下所有地址为标准地址
     let needSave = false;
     if (userConf.regions && userConf.regions.cn) {
@@ -1408,7 +2374,7 @@ function loadEnv() {
         }
       }
     }
-    
+
     // 合并配置文件
     Object.assign(conf, userConf);
 
@@ -1447,7 +2413,7 @@ function loadEnv() {
     : (conf.region || officialRegion);
   const regionConfig = conf.regions && conf.regions[currentRegion] ? conf.regions[currentRegion] : conf.regions[officialRegion];
   const zipUrlState = getZipUrlState(conf);
-  
+
   // 当前区域
   process.env.AILY_REGION = currentRegion;
   process.env.AILY_BUILD_FLAVOR = buildFlavor;
@@ -1606,11 +2572,7 @@ async function updateMainWindowWithPendingData() {
 
   // 如果有目标URL，导航到该页面
   if (targetUrl) {
-    if (serve) {
-      mainWindow.loadURL(`http://localhost:4200/${targetUrl}`);
-    } else {
-      mainWindow.loadFile(`renderer/index.html`, { hash: targetUrl });
-    }
+    await loadAppRenderer(mainWindow, targetUrl);
   }
 }
 
@@ -1701,6 +2663,12 @@ function createWindow() {
   });
 
   registerWebBluetoothChooser(mainWindow);
+  mainWindow.webContents.on('did-start-navigation', (details) => {
+    if (!shouldBeginRendererGeneration(details)) {
+      return;
+    }
+    beginRendererGeneration('did-start-navigation');
+  });
 
   mainWindow.setBounds(winState.state);
 
@@ -1757,21 +2725,16 @@ function createWindow() {
 
   // 加载页面
   if (targetUrl) {
-    if (serve) {
-      mainWindow.loadURL(`http://localhost:4200/${targetUrl}`);
-    } else {
-      mainWindow.loadFile(`renderer/index.html`, { hash: targetUrl });
-    }
+    void loadAppRenderer(mainWindow, targetUrl);
   } else {
-    if (serve) {
-      mainWindow.loadURL("http://localhost:4200");
-    } else {
-      mainWindow.loadFile(`renderer/index.html`);
-    }
+    void loadAppRenderer(mainWindow);
   }
 
   mainWindow.webContents.on('render-process-gone', (event, details) => {
     console.error('Renderer process gone:', details.reason, 'exitCode:', details.exitCode);
+    invalidateRendererGeneration(`render-process-gone:${details.reason}`);
+    void simulatorGateway.stop();
+    void simulatorSubappHost.defaultHost.stop();
     if (!serve) return;
 
     setTimeout(() => {
@@ -1814,48 +2777,48 @@ function createWindow() {
 
   // 当主窗口被关闭时，进行相应的处理
   mainWindow.on("closed", () => {
+    invalidateRendererGeneration('window-closed');
     mainWindow = null;
-    isRendererReady = false;
     app.quit();
   });
 
   // 注册ipc handlers
   registerUpdaterHandlers(mainWindow);
   registerTerminalHandlers(mainWindow);
-  registerWindowHandlers(mainWindow);
+  registerWindowHandlers(mainWindow, {
+    resolveRendererUrl: resolveAppRendererUrl,
+  });
   registerNpmHandlers(mainWindow);
   registerCmdHandlers(mainWindow);
+  registerAilyServicesStreamHandlers(mainWindow);
+  registerWebviewBridgeHandlers();
   registerMCPHandlers(mainWindow);
   registerToolsHandlers(mainWindow);
   registerNotificationHandlers(mainWindow);
   registerProbeRsHandlers(mainWindow);
   registerBleHandlers();
+  registerSubappManagerHandlers(() => mainWindow, {
+    forceStopChildToolByCatalogId,
+    listChildToolHoldersForCatalogId,
+  });
   builder.registerHandlers(() => mainWindow);
   linter.registerHandlers(() => mainWindow);
-
-  // 检查是否有待处理的OAuth回调
-  // 注意：这里不再使用 setTimeout 自动发送，而是等待 renderer-ready 事件
-  // 但为了兼容性（如果 renderer-ready 没触发），保留一个较长时间的超时检查
-  if (global.pendingOAuthCallback) {
-    setTimeout(() => {
-      if (global.pendingOAuthCallback && mainWindow && mainWindow.webContents) {
-        console.log('超时检查：发送待处理的OAuth回调');
-        mainWindow.webContents.send('oauth-callback', global.pendingOAuthCallback);
-        global.pendingOAuthCallback = null;
-      }
-    }, 5000);
-  }
-
-  // 检查是否有待处理的示例列表打开请求
-  if (global.pendingExampleListOpen) {
-    setTimeout(() => {
-      if (global.pendingExampleListOpen && mainWindow && mainWindow.webContents) {
-        console.log('超时检查：发送待处理的示例列表请求');
-        mainWindow.webContents.send('open-example-list', global.pendingExampleListOpen);
-        global.pendingExampleListOpen = null;
-      }
-    }, 5000);
-  }
+  simulatorGateway.registerHandlers({
+    ipcMain,
+    app,
+    mainWindow: () => mainWindow,
+  });
+  simulatorSubappHost.registerHandlers({
+    ipcMain,
+    app,
+    mainWindow: () => mainWindow,
+  });
+  simulatorSubappHost.defaultHost.setRebuildCoordinator(
+    getSimulatorProjectRebuildCoordinator(),
+  );
+  simulatorSubappHost.defaultHost.setSceneGenerationBroker(
+    getProjectSceneGenerationBroker(),
+  );
 
   // 在多实例模式下，监听OAuth回调文件的变化
   if (shouldUseMultiInstance()) {
@@ -2148,7 +3111,32 @@ app.on("ready", async () => {
   }
 
   // 创建主窗口
+  try {
+    await ensurePackagedRendererServerStarted();
+  } catch (error) {
+    console.error("Failed to start packaged renderer server:", error);
+    dialog.showErrorBox(
+      "Unable to start aily blockly",
+      `The application interface could not be loaded: ${error.message}`,
+    );
+    app.quit();
+    return;
+  }
+
   createWindow();
+  registerPowerMonitorLifecycle();
+
+  // 启动 CLI bridge（供外部 CLI 驱动打开/关闭/重载项目）
+  startCliBridgeIfPossible();
+});
+
+// 退出时关闭 CLI bridge 并清理发现文件
+app.on('before-quit', () => {
+  try {
+    if (cliBridge) cliBridge.close();
+  } catch (_) {
+    /* ignore */
+  }
 });
 
 // === Web Serial API 支持 ===
@@ -2236,14 +3224,19 @@ function cleanupRegisteredChildProcesses() {
   console.info('[PROC_TRACE][APP_CLEANUP_START]', {
     cmd: getActiveCmdProcesses(),
     npm: getActiveNpmProcesses(),
-    terminals: getActiveTerminals()
+    terminals: getActiveTerminals(),
+    ailyServicesStreams: getActiveAilyServicesStreams()
   });
 
   return Promise.allSettled([
     killAllCmdProcesses(),
     killAllNpmProcesses(),
     killAllTerminals(),
-    pythonRuntimeRegistration.dispose()
+    cancelAllAilyServicesStreams(),
+    simulatorGateway.stop(),
+    simulatorSubappHost.defaultHost.stop(),
+    packagedRendererServer.close(),
+    pythonRuntimeRegistration.dispose(),
   ]).then((results) => {
     // console.info('[PROC_TRACE][APP_CLEANUP_DONE]', { results });
   });
@@ -2275,7 +3268,8 @@ app.on("will-quit", () => {
   console.info('[PROC_TRACE][APP_WILL_QUIT]', {
     cmd: getActiveCmdProcesses(),
     npm: getActiveNpmProcesses(),
-    terminals: getActiveTerminals()
+    terminals: getActiveTerminals(),
+    ailyServicesStreams: getActiveAilyServicesStreams()
   });
 
   releaseAllAppDataResourceLocks();
@@ -2297,10 +3291,23 @@ app.on("will-quit", () => {
     }
     heldInstanceLockPath = null;
   }
+  if (coderEmbedHttpServer) {
+    if (coderEmbedHttpServer.kind === "static") {
+      try {
+        coderEmbedHttpServer.server.close();
+      } catch (e) {
+        console.warn("will-quit coder embed server:", e.message);
+      }
+    } else if (coderEmbedHttpServer.spawned && coderEmbedHttpServer.devProcess) {
+      killCoderEmbedSpawnedDevProcess(coderEmbedHttpServer.devProcess);
+    }
+    coderEmbedHttpServer = null;
+  }
+  coderEmbedEnsureInFlight = null;
 });
 
 // 在 macOS 上，当应用被激活时（如点击 Dock 图标），重新创建窗口
-app.on("activate", () => {
+app.on("activate", async () => {
   if (mainWindow === null) {
     // 先加载环境变量
     try {
@@ -2309,7 +3316,16 @@ app.on("activate", () => {
       console.error("loadEnv error: ", error);
     }
     // 创建主窗口
-    createWindow();
+    try {
+      await ensurePackagedRendererServerStarted();
+      createWindow();
+    } catch (error) {
+      console.error("Failed to restart packaged renderer server:", error);
+      dialog.showErrorBox(
+        "Unable to start aily blockly",
+        `The application interface could not be loaded: ${error.message}`,
+      );
+    }
   }
 });
 // 用于嵌入的iframe打开外部链接
@@ -2337,11 +3353,7 @@ app.on('open-file', (event, filePath) => {
         const routePath = `main/blockly-editor?path=${encodeURIComponent(projectDir)}`;
         console.log('Navigating to route:', routePath);
 
-        if (serve) {
-          mainWindow.loadURL(`http://localhost:4200/#/${routePath}`);
-        } else {
-          mainWindow.loadFile(`renderer/index.html`, { hash: `#/${routePath}` });
-        }
+        await loadAppRenderer(mainWindow, `#/${routePath}`);
       })();
     } else {
       pendingFileToOpen = projectDir;
@@ -2354,6 +3366,12 @@ app.on('open-url', (event, url) => {
   event.preventDefault();
   console.log('macOS open-url:', url);
   handleProtocol(url);
+});
+
+// 内嵌 Coder（开发: child/coder Vite；生产: child/coder/dist）服务根地址
+ipcMain.handle("coder-embed-get-base-url", async () => {
+  const port = await ensureCoderEmbedServerStarted();
+  return `http://127.0.0.1:${port}/`;
 });
 
 // 文件选择
@@ -2453,7 +3471,13 @@ ipcMain.handle("select-folder-saveAs", async (event, data) => {
 ipcMain.handle("dialog-select-files", async (event, options) => {
   const senderWindow = BrowserWindow.fromWebContents(event.sender);
   try {
-    const result = await dialog.showOpenDialog(senderWindow, options);
+    const normalizedOptions = {
+      ...(options || {}),
+      properties: Array.isArray(options?.properties) && options.properties.length > 0
+        ? options.properties
+        : ["openFile"],
+    };
+    const result = await dialog.showOpenDialog(senderWindow, normalizedOptions);
     return result;
   } catch (error) {
     throw error;
@@ -2564,9 +3588,41 @@ ipcMain.handle("open-new-instance", async (event, data) => {
 
 // settingChanged
 ipcMain.on("setting-changed", (event, data) => {
-  const senderWindow = BrowserWindow.fromWebContents(event.sender);
-  mainWindow.webContents.send("setting-changed", data);
+  BrowserWindow.getAllWindows().forEach((win) => {
+    try {
+      if (win && !win.isDestroyed() && win.webContents && !win.webContents.isDestroyed()) {
+        win.webContents.send("setting-changed", data);
+      }
+    } catch (error) {
+      console.error("setting-changed broadcast failed:", error.message);
+    }
+  });
 });
+
+ipcMain.on("host-project-context-changed", (event, data = {}) => {
+  const senderWindow = BrowserWindow.fromWebContents(event.sender);
+  if (!mainWindow || senderWindow !== mainWindow) {
+    return;
+  }
+
+  const rawWorkspace = typeof data.workspace === "string" ? data.workspace : "";
+  projectContextState = {
+    workspace: rawWorkspace.trim() ? rawWorkspace : null,
+    version: projectContextState.version + 1,
+  };
+
+  BrowserWindow.getAllWindows().forEach((win) => {
+    try {
+      if (win && !win.isDestroyed() && win.webContents && !win.webContents.isDestroyed()) {
+        win.webContents.send("host-project-context-changed", projectContextState);
+      }
+    } catch (error) {
+      console.error("host-project-context-changed broadcast failed:", error.message);
+    }
+  });
+});
+
+ipcMain.handle("host-project-context-get", () => ({ ...projectContextState }));
 
 // OAuth状态管理的IPC处理器
 ipcMain.handle("oauth-register-state", (event, state) => {
@@ -2641,6 +3697,30 @@ cleanupOldInstances();
 // Ripgrep 搜索功能
 // ============================================
 const ripgrep = require('./ripgrep');
+const activeRipgrepSearches = new Map();
+
+function createRipgrepSearchController(requestId) {
+  const normalizedRequestId = typeof requestId === 'string' ? requestId.trim() : '';
+  const controller = new AbortController();
+  if (normalizedRequestId) {
+    activeRipgrepSearches.get(normalizedRequestId)?.abort();
+    activeRipgrepSearches.set(normalizedRequestId, controller);
+  }
+  return {
+    controller,
+    dispose() {
+      if (normalizedRequestId && activeRipgrepSearches.get(normalizedRequestId) === controller) {
+        activeRipgrepSearches.delete(normalizedRequestId);
+      }
+    }
+  };
+}
+
+ipcMain.on('ripgrep-cancel-search', (_event, requestId) => {
+  const normalizedRequestId = typeof requestId === 'string' ? requestId.trim() : '';
+  if (!normalizedRequestId) return;
+  activeRipgrepSearches.get(normalizedRequestId)?.abort();
+});
 
 // 检查 ripgrep 是否可用
 ipcMain.handle("ripgrep-check-available", async (event) => {
@@ -2695,6 +3775,40 @@ ipcMain.handle("ripgrep-search-content", async (event, params) => {
       matches: [],
       error: error.message
     };
+  }
+});
+
+// v2 file search: path glob only, backed by `rg --files`.
+ipcMain.handle('ripgrep-list-files-v2', async (_event, params = {}) => {
+  const search = createRipgrepSearchController(params.requestId);
+  try {
+    return await ripgrep.listFiles(params, { signal: search.controller.signal });
+  } catch (error) {
+    return {
+      success: false,
+      files: [],
+      numFiles: 0,
+      error: error?.message || String(error)
+    };
+  } finally {
+    search.dispose();
+  }
+});
+
+// v2 content search: structured, globally bounded `rg --json` results.
+ipcMain.handle('ripgrep-search-text-v2', async (_event, params = {}) => {
+  const search = createRipgrepSearchController(params.requestId);
+  try {
+    return await ripgrep.searchText(params, { signal: search.controller.signal });
+  } catch (error) {
+    return {
+      success: false,
+      matches: [],
+      numMatches: 0,
+      error: error?.message || String(error)
+    };
+  } finally {
+    search.dispose();
   }
 });
 

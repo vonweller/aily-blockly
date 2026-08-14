@@ -1,4 +1,23 @@
 import { Injectable } from '@angular/core';
+import { BehaviorSubject, Subject } from 'rxjs';
+
+export interface RendererLifecycleEvent {
+  readonly kind: 'suspend' | 'resume';
+  readonly generation: number;
+}
+
+export interface UserInteractionNotificationPayload {
+  readonly key?: string;
+  readonly title?: string;
+  readonly body?: string;
+}
+
+export interface UserInteractionNotificationResult extends Record<string, unknown> {
+  readonly ok: boolean;
+  readonly notified: boolean;
+  readonly reason?: 'foreground' | 'empty-body';
+  readonly key?: string;
+}
 
 @Injectable({
   providedIn: 'root',
@@ -6,6 +25,12 @@ import { Injectable } from '@angular/core';
 export class ElectronService {
   isElectron = false;
   electron: any = window['electronAPI'];
+  private readonly rendererGenerationSubject = new BehaviorSubject<number>(0);
+  private readonly rendererLifecycleSubject = new Subject<RendererLifecycleEvent>();
+  private rendererLifecycleListenersRegistered = false;
+
+  readonly rendererGeneration$ = this.rendererGenerationSubject.asObservable();
+  readonly rendererLifecycle$ = this.rendererLifecycleSubject.asObservable();
 
   constructor() { }
 
@@ -19,6 +44,7 @@ export class ElectronService {
         // console.log('load ' + key);
         window[key] = this.electron[key];
       }
+      this.registerRendererLifecycleListeners();
     } else {
       console.log('Running in browser');
     }
@@ -29,6 +55,11 @@ export class ElectronService {
   */
   readFile(filePath: string) {
     return window['fs'].readFileSync(filePath, 'utf8');
+  }
+
+  readFileBytes(filePath: string): Uint8Array {
+    const data = window['fs'].readFileBuffer(filePath);
+    return data instanceof Uint8Array ? data : new Uint8Array(data);
   }
 
   async readFileAsync(filePath: string, encoding = 'utf8'): Promise<string> {
@@ -52,6 +83,10 @@ export class ElectronService {
    */
   writeFile(filePath: string, content: string) {
     window['fs'].writeFileSync(filePath, content);
+  }
+
+  writeFileBytes(filePath: string, content: Uint8Array) {
+    window['fs'].writeFileBuffer(filePath, content);
   }
 
   /**
@@ -250,6 +285,33 @@ export class ElectronService {
     }
   }
 
+  async notifyUserInteraction(
+    payload: UserInteractionNotificationPayload,
+  ): Promise<UserInteractionNotificationResult> {
+    if (this.isWindowFocused() && !this.isWindowMinimized()) {
+      return { ok: true, notified: false, reason: 'foreground' };
+    }
+
+    const title = String(payload?.title || 'Aily').trim().slice(0, 120) || 'Aily';
+    const body = String(payload?.body || '').trim().slice(0, 500);
+    if (!body) {
+      return { ok: false, notified: false, reason: 'empty-body' };
+    }
+
+    await this.requestWindowAttention().catch(() => undefined);
+    const platform = (window as any).electronAPI?.platform?.type;
+    const result = await this.notify(title, body, {
+      silent: false,
+      timeoutType: 'never',
+      ...(platform === 'linux' ? { urgency: 'critical' as const } : {}),
+    });
+    return {
+      ok: result?.success !== false,
+      notified: result?.success !== false,
+      key: String(payload?.key || ''),
+    };
+  }
+
   /**
    * 检查是否支持通知
    * @returns Promise<boolean>
@@ -422,10 +484,47 @@ export class ElectronService {
   /**
    * 发送渲染进程就绪信号
    */
-  sendRendererReady() {
-    if (this.isElectron) {
-      window['ipcRenderer'].send('renderer-ready');
+  async sendRendererReady(): Promise<number> {
+    if (!this.isElectron) {
+      return 0;
     }
+
+    const generation = Number(await window['ipcRenderer'].invoke('get-renderer-generation'));
+    if (!Number.isInteger(generation) || generation <= 0) {
+      console.warn('[RendererLifecycle] Main process did not provide a valid renderer generation.');
+      return 0;
+    }
+
+    window['ipcRenderer'].send('renderer-ready', { generation });
+    return generation;
+  }
+
+  get currentRendererGeneration(): number {
+    return this.rendererGenerationSubject.value;
+  }
+
+  private registerRendererLifecycleListeners(): void {
+    if (this.rendererLifecycleListenersRegistered || !window['ipcRenderer']?.on) {
+      return;
+    }
+    this.rendererLifecycleListenersRegistered = true;
+    window['ipcRenderer'].on('renderer-ready-ack', (_event: unknown, payload: { generation?: unknown }) => {
+      const generation = Number(payload?.generation);
+      if (Number.isInteger(generation) && generation > 0) {
+        this.rendererGenerationSubject.next(generation);
+      }
+    });
+    window['ipcRenderer'].on('renderer-lifecycle', (_event: unknown, payload: RendererLifecycleEvent) => {
+      const generation = Number(payload?.generation);
+      if ((payload?.kind === 'suspend' || payload?.kind === 'resume')
+        && Number.isInteger(generation)
+        && generation === this.rendererGenerationSubject.value) {
+        this.rendererLifecycleSubject.next({
+          kind: payload.kind,
+          generation,
+        });
+      }
+    });
   }
 
   /**

@@ -1,24 +1,39 @@
 import { Injectable } from '@angular/core';
+import { Subject } from 'rxjs';
 import { ProjectService } from './project.service';
-import { ActionState } from './ui.service';
-import { NzMessageService } from 'ng-zorro-antd/message';
-import { NoticeService } from '../services/notice.service';
-import { CmdOutput, CmdService } from './cmd.service';
+import { CmdService } from './cmd.service';
 import { CrossPlatformCmdService } from './cross-platform-cmd.service';
 import { ActionService } from './action.service';
 import { ElectronService } from './electron.service';
+import { AilyCodeProCompileService } from './aily-code-pro-compile.service';
+
+export interface BuildFinishedEvent {
+  success: boolean;
+  result?: any;
+  error?: any;
+}
+
+export interface ActiveBlocklyProjectBuildInput {
+  projectPath: string;
+  graphSemanticRevision: string;
+  requestId: string;
+}
 
 @Injectable({
   providedIn: 'root'
 })
 export class BuilderService {
 
+  /** 编译流程结束（成功/失败/取消）后广播；订阅者用于刷新依赖产物路径的视图（如内嵌 Coder 的 main.hex）。 */
+  readonly buildFinishedSubject = new Subject<BuildFinishedEvent>();
+
   constructor(
     private actionService: ActionService,
     private projectService: ProjectService,
     private cmdService: CmdService,
     private crossPlatformCmdService: CrossPlatformCmdService,
-    private electronService: ElectronService
+    private electronService: ElectronService,
+    private ailyCodeProCompile: AilyCodeProCompileService,
   ) {
     this.init();
   }
@@ -44,9 +59,72 @@ export class BuilderService {
   /*
    * 开始编译
    */
-  async build() {
+  async build(projectPath?: string) {
+    if (projectPath) {
+      return this.buildFromProjectPath(projectPath);
+    }
+
+    return this.buildCurrentBlocklyProject({});
+  }
+
+  /**
+   * Build one exact active Blockly Project for a provider-owned request.
+   * The request id is forwarded so cancellation cannot terminate an unrelated
+   * manual build.
+   */
+  async buildActiveBlocklyProject(input: ActiveBlocklyProjectBuildInput) {
+    const projectPath = String(input?.projectPath || '').trim();
+    const graphSemanticRevision = String(
+      input?.graphSemanticRevision || '',
+    );
+    const requestId = String(input?.requestId || '');
+    if (
+      !projectPath
+      || !/^[a-f0-9]{64}$/.test(graphSemanticRevision)
+      || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(requestId)
+    ) {
+      throw new Error('Active Blockly Project Build input is invalid.');
+    }
+    if (
+      this.projectService.isProjectOpening
+      || !this.isSameProjectPath(
+        projectPath,
+        this.projectService.currentProjectPath,
+      )
+      || this.projectService.isAilyCodeProject(projectPath)
+      || !this.actionService.hasListener('builder-compile-begin')
+    ) {
+      throw new Error('The requested Blockly Project is not active.');
+    }
+    return this.buildCurrentBlocklyProject({
+      graphSemanticRevision,
+      requestId,
+    });
+  }
+
+  private async buildCurrentBlocklyProject(
+    payload: {
+      graphSemanticRevision?: string;
+      requestId?: string;
+    },
+  ) {
     try {
-      const feedback = await this.actionService.dispatchWithFeedback('compile-begin', {}, 600000).toPromise();
+      // Pro / code-editor-pro 路由下 Blockly 未挂载，compile-begin 无监听者会一直等反馈；
+      // 含 project.aci 时改为直接走磁盘源码 + 同一套 preprocess/compile 脚本。
+      let feedback: any;
+      if (!this.actionService.hasListener('builder-compile-begin')) {
+        const r = await this.ailyCodeProCompile.runCompileFromDisk();
+        feedback = {
+          success: true,
+          data: { success: r.success, result: r.result },
+        };
+      } else {
+        feedback = await this.actionService.dispatchWithFeedback(
+          'compile-begin',
+          payload,
+          600000,
+        ).toPromise();
+      }
 
       // listener handler 内部 catch 了编译错误，所以 feedback.success 总是 true
       // 需要检查 data.success 来判断编译是否真正成功
@@ -67,26 +145,69 @@ export class BuilderService {
         error.text = buildResult?.text || feedback?.error || '编译失败';
         error.fullStdErr = buildResult?.fullStdErr;
         error.buildResult = buildResult;
+        this.buildFinishedSubject.next({ success: false, result: buildResult, error });
         throw error;
       }
 
+      this.buildFinishedSubject.next({ success: true, result: buildResult });
       return buildResult;
     } catch (error: any) {
       // console.error('编译失败:', error);
       if (!this.electronService.isWindowFocused()) {
         this.electronService.notify('编译', error?.text || error?.message || '编译失败');
       }
+      // 上面 buildSuccess 分支已经发过一次；这里捕获的是其它异常路径，统一兜底
+      if (!error?.__buildFinishedEmitted) {
+        this.buildFinishedSubject.next({ success: false, error });
+      }
       throw error;
     }
+  }
+
+  private isSameProjectPath(left: string, right: string): boolean {
+    const normalize = (value: string) => String(value || '')
+      .replace(/\\/g, '/')
+      .replace(/\/+$/u, '')
+      .toLowerCase();
+    return normalize(left) === normalize(right);
+  }
+
+  private async buildFromProjectPath(projectPath: string) {
+    const compileResult = await this.ailyCodeProCompile.runCompileFromDisk({ projectPath });
+    const buildResult = compileResult.result;
+    if (!compileResult.success || buildResult?.state === 'error') {
+      const error: any = new Error(buildResult?.text || 'Build failed');
+      error.state = buildResult?.state || 'error';
+      error.text = buildResult?.text || 'Build failed';
+      error.fullStdErr = buildResult?.fullStdErr;
+      error.buildResult = buildResult;
+      this.buildFinishedSubject.next({ success: false, result: buildResult, error });
+      throw error;
+    }
+
+    this.buildFinishedSubject.next({ success: true, result: buildResult });
+    return buildResult;
   }
 
   /*
    * 取消当前编译过程
    */
   cancel() {
+    this.ailyCodeProCompile.cancel();
     this.actionService.dispatch('compile-cancel', {}, result => {
       if (result.success) {
       } else {
+      }
+    });
+  }
+
+  cancelActiveBlocklyProjectBuild(requestId: string): void {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(requestId)) {
+      return;
+    }
+    this.actionService.dispatch('compile-cancel', { requestId }, result => {
+      if (!result.success) {
+        console.warn('Scoped Blockly Build cancellation was rejected.', result);
       }
     });
   }

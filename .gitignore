@@ -6,20 +6,14 @@
 /out-tsc
 /bazel-out
 /out
+/build/simulator-runtime
+/electron/chat-runtime-lex-execution-runtime.bundle.mjs
 
 # Node
 /node_modules
 npm-debug.log
 yarn-error.log
 yarn.lock
-/child/node
-/child/clangd
-/child/aily-builder
-/child/tools
-/child/7zz
-/child/7za.exe
-/child/rg
-/child/rg.exe
 
 # IDEs and editors
 .idea/
@@ -54,11 +48,27 @@ testem.log
 .DS_Store
 Thumbs.db
 temp
-child/node*
-child/aily-builder*
 
 aily-todos/*.json
 docs/performance-optimization.md
+
+# child
+child/node*
+child/aily-builder*
+/child/node
+/child/clangd
+/child/aily-builder
+/child/tools
+/child/7zz
+/child/7za.exe
+/child/rg
+/child/rg.exe
+/child/probe-rs
+/child/aily-coder
+/child/tools/*/node_modules/*
+/child/aily-lex
+/child/aily-subapp
+/child/xpm
 
 # Playwright E2E
 /renderer
@@ -67,6 +77,44 @@ docs/performance-optimization.md
 /e2e/logs
 /out-tsc/e2e
 /e2e/.artifacts
-/child/rg.exe
-/child/probe-rs
-/child/tools/*/node_modules/*
+
+**/*.spec.ts
+!src/app/utils/language-code.spec.ts
+!src/app/services/project-debug-configuration.service.spec.ts
+!src/app/services/project-data/project-data-legacy-import.spec.ts
+!src/app/services/serial-port-selection.spec.ts
+!src/app/services/subapp-agent-presentation.spec.ts
+!src/app/services/aily-chat-tool-routing.spec.ts
+!src/app/services/auth-required-tool.spec.ts
+!src/app/services/default-aily-chat-bootstrap.spec.ts
+!src/app/services/child-tool-close-lifecycle.spec.ts
+!src/app/services/child-app-host-registry.service.spec.ts
+!src/app/editors/blockly-editor/board-auth-gate.spec.ts
+!src/app/services/update.service.spec.ts
+!src/app/editors/code-editor-pro/services/code-editor-pro-project.service.spec.ts
+!src/app/editors/blockly-editor/components/dev-tool/dev-tool-drag-controller.spec.ts
+!src/app/editors/blockly-editor/components/blockly/plugins/workspace-multiselect/global.spec.ts
+!src/app/tools/app-store/app-store.service.spec.ts
+!src/app/tools/aily-chat/tools/editorOperationEvents.spec.ts
+!src/app/tools/aily-chat/tools/blocklyEditorOperationQueue.spec.ts
+!src/app/tools/aily-chat/components/x-dialog/x-markdown-target-morph.spec.ts
+!src/app/tools/aily-chat/core/blockly-subapp-agent-tools.spec.ts
+!src/app/tools/aily-chat/services/chat-engine-part-progress.spec.ts
+!src/app/tools/aily-chat/helpers/chat-provider-request-snapshot.spec.ts
+!src/app/tools/aily-chat/helpers/host-session-provider-restore.spec.ts
+!src/app/tools/aily-chat/helpers/session-lifecycle-provider-snapshot.spec.ts
+!src/app/tools/aily-chat/services/chat-engine-permission-preset.spec.ts
+!/e2e/tests/**/*.spec.ts
+**/__tests__/**/*
+.tmp
+.temp
+src/app/tools/aily-chat/logs
+src/app/components/float-sider/new_idea
+src/app/tools/aily-chat/docs
+src/app/tools/aily-chat/tools/kode
+src/app/tools/aily-chat/tools/info
+src/app/tools/aily-chat/tools/docs
+src/app/tools/aily-chat/tools/libraries
+src/app/tools/aily-chat/tools/new_idea
+src/app/tools/aily-chat/tools/tests
+src/app/tools/aily-chat/tools/自定义库-函数

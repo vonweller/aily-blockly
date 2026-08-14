@@ -1,4 +1,4 @@
-import { ToolUseResult } from "./tools";
+import type { ToolUseResult } from '../core/tool-types';
 
 interface SwitchBoardInput {
     /** 开发板包名称，如 "@aily-project/board-esp32_devkitc" */
@@ -14,7 +14,7 @@ interface SwitchBoardInput {
  */
 export async function switchBoardTool(
     projectService: any,
-    input: SwitchBoardInput
+    input: SwitchBoardInput,
 ): Promise<ToolUseResult> {
     const { board_name, board_version } = input;
 

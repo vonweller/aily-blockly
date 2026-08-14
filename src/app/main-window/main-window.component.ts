@@ -10,13 +10,13 @@ import { TerminalComponent } from '../tools/terminal/terminal.component';
 import { LogComponent } from '../tools/log/log.component';
 import { UiService } from '../services/ui.service';
 import { SerialMonitorComponent } from '../tools/serial-monitor/serial-monitor.component';
-import { FfsManagerComponent } from '../tools/ffs-manager/ffs-manager.component';
 import { ChildToolHostComponent } from '../tools/child-tool-host/child-tool-host.component';
 import { CodeViewerComponent } from '../editors/blockly-editor/tools/code-viewer/code-viewer.component';
 import { ProjectService } from '../services/project.service';
 import { SimplebarAngularModule } from 'simplebar-angular';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { AppStoreComponent } from '../tools/app-store/app-store.component';
+import { AppStoreService } from '../tools/app-store/app-store.service';
 import { UpdateService } from '../services/update.service';
 import { NzModalModule, NzModalService } from 'ng-zorro-antd/modal';
 import { NpmService } from '../services/npm.service';
@@ -26,15 +26,32 @@ import { ConfigService } from '../services/config.service';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { CloudSpaceComponent } from '../tools/cloud-space/cloud-space.component';
 import { UserCenterComponent } from '../tools/user-center/user-center.component';
-import { ModelStoreComponent } from '../tools/model-store/model-store.component';
 import { OnboardingComponent } from '../components/onboarding/onboarding.component';
 import { OnboardingService } from '../services/onboarding.service';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { isChildTool } from '../configs/tool.config';
-import { AuthService } from '../services/auth.service';
+import { AuthService, type LoginDialogRequestState } from '../services/auth.service';
 import { ElectronService } from '../services/electron.service';
+import { SubappManagerService } from '../services/subapp-manager.service';
+import { LoginComponent } from '../components/login/login.component';
 import { resolveTranslatedApiErrorMessage } from '../utils/api-error.utils';
 import { ToolI18nService } from '../services/tool-i18n.service';
+import { LibManagerToolComponent } from '../tools/lib-manager-tool/lib-manager-tool.component';
+import { ModeWelcomeComponent } from '../components/mode-welcome/mode-welcome.component';
+import { SimulatorSubappHostComponent } from '../tools/simulator/simulator-subapp-host.component';
+import type { DevelopmentModePreference } from '../services/config.service';
+import { ChatRuntimeHostResourceOperationHandlerService } from '../tools/aily-chat/services/chat-runtime-host-resource-operation-handler.service';
+import { AilyChatChildProtocolService } from '../tools/aily-chat/services/aily-chat-child-protocol.service';
+import {
+  bootstrapDefaultAilyChatSubapp,
+  DEFAULT_AILY_CHAT_SUBAPP_BOOTSTRAP_KEY,
+  DEFAULT_AILY_CHAT_SUBAPP_TOOL_ID,
+} from '../services/default-aily-chat-bootstrap';
+
+const RIGHT_SIDER_WIDTH_STORAGE_KEY = 'aily-main-window.right-sider-width';
+const RIGHT_SIDER_DEFAULT_WIDTH = 450;
+const RIGHT_SIDER_MIN_WIDTH = 400;
+const RIGHT_SIDER_MAX_WIDTH = 800;
 
 @Component({
   selector: 'app-main-window',
@@ -49,7 +66,6 @@ import { ToolI18nService } from '../services/tool-i18n.service';
     TerminalComponent,
     LogComponent,
     SerialMonitorComponent,
-    FfsManagerComponent,
     ChildToolHostComponent,
     CodeViewerComponent,
     SimplebarAngularModule,
@@ -60,9 +76,12 @@ import { ToolI18nService } from '../services/tool-i18n.service';
     NzModalModule,
     CloudSpaceComponent,
     UserCenterComponent,
-    ModelStoreComponent,
     OnboardingComponent,
-    TranslateModule
+    TranslateModule,
+    LibManagerToolComponent,
+    ModeWelcomeComponent,
+    SimulatorSubappHostComponent,
+    LoginComponent,
   ],
   templateUrl: './main-window.component.html',
   styleUrl: './main-window.component.scss',
@@ -85,7 +104,9 @@ export class MainWindowComponent implements OnDestroy {
   }
 
   isChildTool(toolId: string): boolean {
-    return isChildTool(toolId);
+    // Simulator is installed as a Subapp package, but its UI is owned by the
+    // dedicated exact-origin host instead of the generic Penpal child host.
+    return toolId !== 'simulator' && isChildTool(toolId);
   }
 
   options = {
@@ -100,6 +121,15 @@ export class MainWindowComponent implements OnDestroy {
   private oauthResultListener: (() => void) | null = null;
   private exampleListListener: (() => void) | null = null;
   private configNoticeSubscription: Subscription | null = null;
+  private projectContextSubscription: Subscription | null = null;
+  private developmentModePreferencePromptOpen = false;
+  private loginDialogSubscription: Subscription | null = null;
+  private unregisterApplicationUpdatePreparation: (() => void) | null = null;
+
+  loginDialogState: LoginDialogRequestState | null = null;
+
+  // 首次开发模式选择（全屏引导）
+  showModeWelcome = false;
 
   constructor(
     private uiService: UiService,
@@ -115,20 +145,43 @@ export class MainWindowComponent implements OnDestroy {
     private onboardingService: OnboardingService,
     private authService: AuthService,
     private electronService: ElectronService,
-    private toolI18n: ToolI18nService
+    private appStoreService: AppStoreService,
+    private subappManager: SubappManagerService,
+    private toolI18n: ToolI18nService,
+    private readonly chatRuntimeHostResourceOperationHandler: ChatRuntimeHostResourceOperationHandlerService,
+    private readonly ailyChatChildProtocol: AilyChatChildProtocolService
   ) { }
 
   async ngOnInit(): Promise<void> {
+    this.unregisterApplicationUpdatePreparation = this.updateService.registerInstallPreparationHook(
+      'host-aily-chat-session',
+      () => this.ailyChatChildProtocol.prepareForApplicationUpdate(),
+    );
+    this.loginDialogSubscription = this.authService.loginDialogRequest$.subscribe((state) => {
+      this.loginDialogState = state;
+    });
+    void this.chatRuntimeHostResourceOperationHandler.start().catch(error => {
+        console.error('[AilyChat][RuntimeHostResourceOperationHandler] Failed to start:', error);
+    });
     this.watchConfigNotices();
-    await this.toolI18n.loadChildTools();
+    await Promise.all([
+      this.toolI18n.loadChildTools(),
+      this.toolI18n.load('aily-chat'),
+    ]);
     this.uiService.init();
     this.projectService.init();
+    this.projectContextSubscription = this.projectService.currentProjectPath$.subscribe(workspace => {
+      window['ipcRenderer']?.send?.('host-project-context-changed', {
+        workspace: workspace || null
+      });
+    });
     this.updateService.init();
     this.npmService.init();
-    await this.authService.initializeAuth();
     this.setupGlobalOAuthListener();
     this.setupExampleListListener();
-    this.electronService.sendRendererReady();
+    void this.electronService.sendRendererReady();
+    void this.initializeAuthAndPromptIfNeeded();
+    void this.ensureDefaultAilyChatSubapp();
     // 重置 footer 状态
     this.uiService.updateFooterState({ text: '', timeout: 0 });
 
@@ -150,7 +203,7 @@ export class MainWindowComponent implements OnDestroy {
     });
 
     // 语言设置变化后，重新加载项目
-    window['ipcRenderer'].on('setting-changed', async (event, data) => {
+    window['ipcRenderer']?.on?.('setting-changed', async (event, data) => {
       await this.configService.load();
       if (data.action == 'language-changed' && this.router.url.includes('/main/blockly-editor')) {
         console.log('mainwindow setLanguage', data);
@@ -160,11 +213,91 @@ export class MainWindowComponent implements OnDestroy {
         }, 100);
       }
     });
+
+    setTimeout(() => {
+      void this.promptDevelopmentModePreferenceIfNeeded();
+    }, 0);
+  }
+
+  closeLoginDialog(): void {
+    this.authService.dismissLoginDialog();
+  }
+
+  private async initializeAuthAndPromptIfNeeded(): Promise<void> {
+    try {
+      await this.authService.initializeAuth();
+      if (this.authService.getAuthInitializationState() === 'signed_out') {
+        this.authService.requestLogin('startup', { allowSkip: true });
+      }
+    } catch (error) {
+      console.warn('[Auth] Background authentication initialization failed:', error);
+    }
+  }
+
+  private async ensureDefaultAilyChatSubapp(): Promise<void> {
+    try {
+      await bootstrapDefaultAilyChatSubapp({
+        completed: !!this.configService.data?.[DEFAULT_AILY_CHAT_SUBAPP_BOOTSTRAP_KEY],
+        initialize: () => this.subappManager.initialize(),
+        readCatalog: () => this.subappManager.state.apps,
+        install: catalogId => this.subappManager.install(catalogId),
+        isPinned: () => this.appStoreService.isAppInZone('header', DEFAULT_AILY_CHAT_SUBAPP_TOOL_ID),
+        pin: () => this.appStoreService.addAppToZone('header', DEFAULT_AILY_CHAT_SUBAPP_TOOL_ID),
+        markCompleted: async () => {
+          this.configService.data[DEFAULT_AILY_CHAT_SUBAPP_BOOTSTRAP_KEY] = Date.now();
+          await this.configService.save();
+        },
+      });
+    } catch (error) {
+      console.warn('[Subapp] Default Aily Chat installation failed:', error);
+    }
+  }
+
+  private async promptDevelopmentModePreferenceIfNeeded(): Promise<void> {
+    if (this.developmentModePreferencePromptOpen || this.showModeWelcome) {
+      return;
+    }
+
+    if (!this.configService.data || Object.keys(this.configService.data).length === 0) {
+      await this.configService.init();
+    }
+
+    if (!this.configService.shouldPromptDevelopmentModePreference()) {
+      return;
+    }
+
+    this.developmentModePreferencePromptOpen = true;
+    this.showModeWelcome = true;
+    this.cd.detectChanges();
+  }
+
+  // 用户在全屏引导中选择了某个开发模式
+  async onModeWelcomeSelect(preference: DevelopmentModePreference): Promise<void> {
+    await this.configService.setDevelopmentModePreference(preference, 'onboarding');
+    this.closeModeWelcome();
+  }
+
+  // 用户选择「稍后再说」
+  async onModeWelcomeSkip(): Promise<void> {
+    await this.configService.markDevelopmentModePreferencePrompted();
+    this.closeModeWelcome();
+  }
+
+  private closeModeWelcome(): void {
+    this.showModeWelcome = false;
+    this.developmentModePreferencePromptOpen = false;
+    this.cd.detectChanges();
   }
 
   ngOnDestroy(): void {
+    this.unregisterApplicationUpdatePreparation?.();
+    this.unregisterApplicationUpdatePreparation = null;
+    this.loginDialogSubscription?.unsubscribe();
+    this.loginDialogSubscription = null;
     this.configNoticeSubscription?.unsubscribe();
     this.configNoticeSubscription = null;
+    this.projectContextSubscription?.unsubscribe();
+    this.projectContextSubscription = null;
     this.oauthResultListener?.();
     this.oauthResultListener = null;
     this.exampleListListener?.();
@@ -332,10 +465,34 @@ export class MainWindowComponent implements OnDestroy {
   }
 
   bottomHeight = 210;
-  siderWidth = 450;
+  siderWidth = this.readPersistedSiderWidth();
 
   onSideResize({ width }: NzResizeEvent): void {
-    this.siderWidth = width!;
+    if (!Number.isFinite(width)) {
+      return;
+    }
+    this.siderWidth = this.normalizeSiderWidth(width!);
+    try {
+      localStorage.setItem(RIGHT_SIDER_WIDTH_STORAGE_KEY, String(this.siderWidth));
+    } catch (error) {
+      console.warn('[MainWindow] Failed to persist right sider width:', error);
+    }
+  }
+
+  private readPersistedSiderWidth(): number {
+    try {
+      const persistedWidth = Number(localStorage.getItem(RIGHT_SIDER_WIDTH_STORAGE_KEY));
+      return Number.isFinite(persistedWidth) && persistedWidth > 0
+        ? this.normalizeSiderWidth(persistedWidth)
+        : RIGHT_SIDER_DEFAULT_WIDTH;
+    } catch (error) {
+      console.warn('[MainWindow] Failed to restore right sider width:', error);
+      return RIGHT_SIDER_DEFAULT_WIDTH;
+    }
+  }
+
+  private normalizeSiderWidth(width: number): number {
+    return Math.min(RIGHT_SIDER_MAX_WIDTH, Math.max(RIGHT_SIDER_MIN_WIDTH, Math.round(width)));
   }
 
   onContentResize({ height }: NzResizeEvent): void {

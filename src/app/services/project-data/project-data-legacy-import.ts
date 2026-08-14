@@ -1,8 +1,25 @@
 import { PutProjectDataRequest } from './project-data-store';
-import { AilyDataRef, ProjectDataError } from './project-data.types';
+import { assertNoOversizedInlineValues } from './project-data-policy';
+import {
+  externalizeGenericProjectDataValues,
+  GenericProjectDataValueEntry,
+} from './project-data-generic-values';
+import {
+  AilyDataRef,
+  createProjectDataMarker,
+  isAilyProjectDataMarker,
+  ProjectDataError,
+  ProjectDataValidationResult,
+} from './project-data.types';
 
 interface ProjectDataWriter {
-  put(request: PutProjectDataRequest<Uint8Array>): Promise<AilyDataRef>;
+  put<TValue>(request: PutProjectDataRequest<TValue>): Promise<AilyDataRef>;
+}
+
+interface ProjectDataImportStore extends ProjectDataWriter {
+  flushPending(): Promise<void>;
+  collectReferences(value: unknown): AilyDataRef[];
+  validateReferences(refs: readonly AilyDataRef[]): Promise<ProjectDataValidationResult>;
 }
 
 export interface LegacyProjectDataMigrationEntry {
@@ -14,6 +31,70 @@ export interface LegacyProjectDataMigrationEntry {
 
 export interface LegacyProjectDataMigrationResult {
   readonly migrated: readonly LegacyProjectDataMigrationEntry[];
+}
+
+export interface ExternalProjectDataImportResult {
+  readonly document: Record<string, unknown>;
+  readonly upgradedLegacyDocument: boolean;
+  readonly documentChanged: boolean;
+  readonly migration: LegacyProjectDataMigrationResult;
+  readonly genericExternalized: readonly GenericProjectDataValueEntry[];
+}
+
+/**
+ * Normalizes an ABI into the external-only schema. Known legacy payloads use
+ * specialized codecs; remaining oversized string/JSON field values use the
+ * generic persistence envelope. The input is cloned so a failed migration
+ * cannot mutate the caller's parsed project document.
+ */
+export async function ensureExternalProjectDataDocument(
+  document: unknown,
+  store: ProjectDataImportStore,
+): Promise<ExternalProjectDataImportResult> {
+  if (!document || typeof document !== 'object' || Array.isArray(document)) {
+    throw new ProjectDataError('corrupt', 'project.abi root must be a JSON object.');
+  }
+
+  const source = document as Record<string, unknown>;
+  const hasMarker = Object.prototype.hasOwnProperty.call(source, '$ailyProjectData');
+  if (hasMarker && !isAilyProjectDataMarker(source['$ailyProjectData'])) {
+    throw new ProjectDataError(
+      'corrupt',
+      'Unsupported project.abi $ailyProjectData schema marker.',
+    );
+  }
+
+  // Always work on a clone. A failed normalization must not partially mutate a
+  // parsed ABI that may still be displayed or retried by the caller.
+  let candidate = cloneJsonDocument(source);
+  const migration = await migrateLegacyInlineProjectData(candidate, store);
+  const generic = await externalizeGenericProjectDataValues(candidate, store);
+  candidate = generic.document;
+
+  await store.flushPending();
+  assertNoOversizedInlineValues(candidate);
+  if (!hasMarker) {
+    candidate['$ailyProjectData'] = createProjectDataMarker();
+  }
+
+  const validation = await store.validateReferences(store.collectReferences(candidate));
+  if (!validation.valid) {
+    throw new ProjectDataError(
+      'missing',
+      `Project data validation failed: ${validation.issues.map((issue) => issue.error).join('; ')}`,
+      { issues: validation.issues },
+    );
+  }
+
+  return {
+    document: hasMarker && migration.migrated.length === 0 && generic.externalized.length === 0
+      ? source
+      : candidate,
+    upgradedLegacyDocument: !hasMarker,
+    documentChanged: !hasMarker || migration.migrated.length > 0 || generic.externalized.length > 0,
+    migration,
+    genericExternalized: generic.externalized,
+  };
 }
 
 /**
@@ -205,4 +286,14 @@ function isPositiveSafeInteger(value: unknown): value is number {
 
 function escapeJsonPointer(value: string): string {
   return value.replace(/~/g, '~0').replace(/\//g, '~1');
+}
+
+function cloneJsonDocument(document: Record<string, unknown>): Record<string, unknown> {
+  try {
+    return JSON.parse(JSON.stringify(document));
+  } catch (error) {
+    throw new ProjectDataError('corrupt', 'Legacy project.abi is not valid serializable JSON.', {
+      cause: String(error),
+    });
+  }
 }

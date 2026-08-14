@@ -16,6 +16,33 @@
     flex-direction: column;
     overflow: hidden;
 
+    // 主窗口右侧工具栏内嵌：取消全屏遮罩，单列卡片适配窄栏
+    &.lib-manager-box--panel {
+        position: relative;
+        top: auto;
+        left: auto;
+        z-index: 1;
+        min-height: 0;
+        height: 100%;
+
+        .lib-list {
+            grid-template-columns: 1fr;
+            padding: 8px;
+            gap: 10px;
+
+            .lib-item {
+                max-width: none;
+                height: auto;
+                min-height: 140px;
+            }
+        }
+
+        .header nz-input-group {
+            width: 120px;
+            margin-left: 8px;
+        }
+    }
+
     .header {
         position: relative;
         flex-shrink: 0;

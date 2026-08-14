@@ -12,14 +12,50 @@
  * x-markdown 只需解析 <10KB 的 markdown，每帧 <50ms。
  */
 
-const store = new Map<string, string>();
+import {
+  appendToContentBuffer,
+  createAppendOnlyContentBuffer,
+  materializeContentBuffer,
+  readContentBufferWindow,
+  type AppendOnlyContentBuffer,
+} from './append-only-content-buffer';
+
+const store = new Map<string, AppendOnlyContentBuffer>();
 
 export function storeThinkContent(key: string, content: string): void {
-  store.set(key, content);
+  store.set(key, createAppendOnlyContentBuffer(content));
+}
+
+export function appendThinkContent(key: string, delta: string): void {
+  if (!delta) {
+    return;
+  }
+
+  const existing = store.get(key);
+  if (!existing) {
+    storeThinkContent(key, delta);
+    return;
+  }
+
+  appendToContentBuffer(existing, delta);
 }
 
 export function getThinkContent(key: string): string {
-  return store.get(key) || '';
+  const existing = store.get(key);
+  return existing ? materializeContentBuffer(existing) : '';
+}
+
+export function getThinkContentLength(key: string): number {
+  return store.get(key)?.length ?? 0;
+}
+
+export function getThinkContentWindow(key: string, maxChars: number, omittedMarker = ''): string {
+  const existing = store.get(key);
+  if (!existing) {
+    return '';
+  }
+
+  return readContentBufferWindow(existing, maxChars, omittedMarker);
 }
 
 export function deleteThinkContent(key: string): void {

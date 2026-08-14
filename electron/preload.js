@@ -3,43 +3,221 @@ const { contextBridge, ipcRenderer, shell, safeStorage, webFrame, clipboard } = 
 const { SerialPort } = require("serialport");
 const { createThrottledSerialPort, createRawSerialPort, listPorts } = require("./serial");
 const { exec } = require("child_process");
-const { createHash } = require("crypto");
-const { existsSync, statSync } = require("fs");
+const { createHash, randomUUID } = require("crypto");
+const { existsSync, statSync, createReadStream } = require("fs");
+const { createInterface } = require("readline");
 const { isAbsolute } = require("path");
 const { tmpdir } = require("os");
+const nodeFsp = require("node:fs/promises");
 
 // 单双杠虽不影响实用性，为了路径规范好看，还是单独使用
 const pt = process.platform === "win32" ? "\\" : "/"
+const ailyBuilderEnv = {
+  path: process.env.AILY_BUILDER_PATH,
+  command: process.env.AILY_BUILDER_COMMAND,
+};
+
+function updateAilyBuilderEnv(result) {
+  if (result?.path) {
+    ailyBuilderEnv.path = result.path;
+  }
+  if (result?.command) {
+    ailyBuilderEnv.command = result.command;
+  }
+  return result;
+}
+
+const pathApi = {
+  getUserHome: () => require("os").homedir(),
+  getAilyChildPath: () => process.env.AILY_CHILD_PATH,
+  getAppDataPath: () => process.env.AILY_APPDATA_PATH,
+  getAilyBuilderPath: () => process.env.AILY_BUILDER_PATH,
+  getUserDocuments: () => require("os").homedir() + `${pt}Documents`,
+  isExists: (path) => existsSync(path),
+  getElectronPath: () => {
+    // 当 preload.js 从 asar 解包后，将路径重定向到 asar 内部以便 fs 操作正常工作
+    if (__dirname.includes('app.asar.unpacked')) {
+      return __dirname.replace('app.asar.unpacked', 'app.asar');
+    }
+    return __dirname;
+  },
+  isDir: (path) => statSync(path).isDirectory(),
+  join: (...args) => require("path").join(...args),
+  dirname: (path) => require("path").dirname(path),
+  extname: (path) => require("path").extname(path),
+  normalize: (path) => require("path").normalize(path),
+  resolve: (path) => require("path").resolve(path),
+  relative: (from, to) => require("path").relative(from, to),
+  basename: (path, suffix = undefined) => require("path").basename(path, suffix),
+  isAbsolute: (path) => isAbsolute(path),
+};
+
+const fspApi = {
+  glob: (...args) => nodeFsp.glob(...args),
+  readFile: (...args) => nodeFsp.readFile(...args),
+  writeFile: (...args) => nodeFsp.writeFile(...args),
+  appendFile: (...args) => nodeFsp.appendFile(...args),
+  readdir: (...args) => nodeFsp.readdir(...args),
+  stat: (...args) => nodeFsp.stat(...args),
+  mkdir: (...args) => nodeFsp.mkdir(...args),
+  rm: (...args) => nodeFsp.rm(...args),
+  access: (...args) => nodeFsp.access(...args),
+  unlink: (...args) => nodeFsp.unlink(...args),
+  open: (...args) => nodeFsp.open(...args),
+};
+
+async function writeFileBufferAtomic(filePath, data) {
+  const directory = require("path").dirname(filePath);
+  const baseName = require("path").basename(filePath);
+  await nodeFsp.mkdir(directory, { recursive: true });
+  const temporaryPath = require("path").join(
+    directory,
+    `.${baseName}.${process.pid}.${randomUUID()}.tmp`,
+  );
+  let handle = null;
+  try {
+    handle = await nodeFsp.open(temporaryPath, "wx", 0o600);
+    await handle.writeFile(Buffer.from(data));
+    await handle.sync();
+    await handle.close();
+    handle = null;
+    await nodeFsp.rename(temporaryPath, filePath);
+  } finally {
+    await handle?.close().catch(() => undefined);
+    await nodeFsp.rm(temporaryPath, { force: true }).catch(() => undefined);
+  }
+}
+
+async function readLinesWithMode(filePath, options = {}) {
+  const mode = options?.mode === 'head' || options?.mode === 'sed' ? options.mode : 'tail';
+  const maxLines = Number.isFinite(options?.maxLines) ? Math.max(1, Math.floor(options.maxLines)) : 20;
+  const startLine = Number.isFinite(options?.startLine) ? Math.max(1, Math.floor(options.startLine)) : 1;
+  const endLine = Number.isFinite(options?.endLine) ? Math.max(startLine, Math.floor(options.endLine)) : startLine;
+  const filterPattern = typeof options?.filterPattern === 'string' && options.filterPattern.trim() ? new RegExp(options.filterPattern) : null;
+  const timestampFromMs = Number.isFinite(options?.timestampFromMs) ? Number(options.timestampFromMs) : null;
+  const timestampToMs = Number.isFinite(options?.timestampToMs) ? Number(options.timestampToMs) : null;
+
+  return await new Promise((resolve, reject) => {
+    const input = createReadStream(filePath, { encoding: 'utf8' });
+    const rl = createInterface({
+      input,
+      crlfDelay: Infinity,
+    });
+
+    const headLines = [];
+    const tailLines = [];
+    const sedLines = [];
+    let matchedLineNumber = 0;
+    let settled = false;
+
+    const finalize = (lines) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      resolve(lines);
+    };
+    const fail = (error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+    const cleanup = () => {
+      rl.removeAllListeners();
+      input.removeAllListeners();
+    };
+    const stopEarly = (lines) => {
+      rl.close();
+      input.destroy();
+      finalize(lines);
+    };
+
+    rl.on('line', (line) => {
+      if (filterPattern && !filterPattern.test(line)) {
+        return;
+      }
+      if (!matchesTimestampRange(line, timestampFromMs, timestampToMs)) {
+        return;
+      }
+
+      matchedLineNumber += 1;
+      if (mode === 'head') {
+        headLines.push(line);
+        if (headLines.length >= maxLines) {
+          stopEarly(headLines);
+        }
+        return;
+      }
+
+      if (mode === 'sed') {
+        if (matchedLineNumber >= startLine && matchedLineNumber <= endLine) {
+          sedLines.push(line);
+        }
+        if (matchedLineNumber >= endLine) {
+          stopEarly(sedLines);
+        }
+        return;
+      }
+
+      tailLines.push(line);
+      if (tailLines.length > maxLines) {
+        tailLines.shift();
+      }
+    });
+
+    rl.once('close', () => {
+      if (settled) {
+        return;
+      }
+      finalize(mode === 'head' ? headLines : mode === 'sed' ? sedLines : tailLines);
+    });
+    rl.once('error', fail);
+    input.once('error', fail);
+  });
+}
+
+function matchesTimestampRange(line, timestampFromMs, timestampToMs) {
+  if (timestampFromMs === null && timestampToMs === null) {
+    return true;
+  }
+
+  const timestampMs = extractLeadingTimestampMs(line);
+  if (timestampMs === null) {
+    return false;
+  }
+  if (timestampFromMs !== null && timestampMs < timestampFromMs) {
+    return false;
+  }
+  if (timestampToMs !== null && timestampMs > timestampToMs) {
+    return false;
+  }
+  return true;
+}
+
+function extractLeadingTimestampMs(line) {
+  const match = String(line || '').match(/^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})\]/);
+  if (!match) {
+    return null;
+  }
+  const parsed = Date.parse(match[1].replace(' ', 'T'));
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
 contextBridge.exposeInMainWorld("electronAPI", {
   ipcRenderer: {
     send: (channel, data) => ipcRenderer.send(channel, data),
-    on: (channel, callback) => ipcRenderer.on(channel, callback),
+    on: (channel, callback) => {
+      ipcRenderer.on(channel, callback);
+      return () => ipcRenderer.removeListener(channel, callback);
+    },
     invoke: (channel, data) => ipcRenderer.invoke(channel, data),
   },
-  path: {
-    getUserHome: () => require("os").homedir(),
-    getAilyChildPath: () => process.env.AILY_CHILD_PATH,
-    getAppDataPath: () => process.env.AILY_APPDATA_PATH,
-    getAilyBuilderPath: () => process.env.AILY_BUILDER_PATH,
-    getUserDocuments: () => require("os").homedir() + `${pt}Documents`,
-    isExists: (path) => existsSync(path),
-    getElectronPath: () => {
-      // 当 preload.js 从 asar 解包后，将路径重定向到 asar 内部以便 fs 操作正常工作
-      if (__dirname.includes('app.asar.unpacked')) {
-        return __dirname.replace('app.asar.unpacked', 'app.asar');
-      }
-      return __dirname;
-    },
-    isDir: (path) => statSync(path).isDirectory(),
-    join: (...args) => require("path").join(...args),
-    dirname: (path) => require("path").dirname(path),
-    extname: (path) => require("path").extname(path),
-    normalize: (path) => require("path").normalize(path),
-    resolve: (path) => require("path").resolve(path),
-    relative: (from, to) => require("path").relative(from, to),
-    basename: (path, suffix = undefined) => require("path").basename(path, suffix),
-    isAbsolute: (path) => isAbsolute(path),
-  },
+  path: pathApi,
+  fsp: fspApi,
   versions: () => process.versions,
   SerialPort: {
     list: async () => await listPorts(),
@@ -57,6 +235,15 @@ contextBridge.exposeInMainWorld("electronAPI", {
     isLinux: process.platform === "linux",
     lang: process.env.AILY_SYSTEM_LANG || 'zh-CN'
   },
+  /** 在访达 / 资源管理器中高亮真实路径（须为绝对路径） */
+  shell: {
+    showItemInFolder: (fullPath) => {
+      if (typeof fullPath !== "string" || !fullPath) {
+        return;
+      }
+      shell.showItemInFolder(fullPath);
+    },
+  },
   terminal: {
     init: (data) => ipcRenderer.invoke("terminal-create", data),
     getShell: () => ipcRenderer.invoke("terminal-get-shell"),
@@ -65,7 +252,28 @@ contextBridge.exposeInMainWorld("electronAPI", {
         callback(data);
       });
     },
+    onPidData: (pid, callback) => {
+      const channel = `terminal-inc-data-${pid}`;
+      const listener = (event, payload) => {
+        callback(payload);
+      };
+      ipcRenderer.on(channel, listener);
+      return () => {
+        ipcRenderer.removeListener(channel, listener);
+      };
+    },
+    onPidExit: (pid, callback) => {
+      const channel = `terminal-exit-${pid}`;
+      const listener = (event, payload) => {
+        callback(payload);
+      };
+      ipcRenderer.on(channel, listener);
+      return () => {
+        ipcRenderer.removeListener(channel, listener);
+      };
+    },
     sendInput: (data) => ipcRenderer.send("terminal-to-pty", data),
+    spawnCommand: (data) => ipcRenderer.invoke("terminal-spawn-command", data),
     sendInputAsync: (data) => ipcRenderer.invoke("terminal-to-pty-async", data),
     close: (data) => ipcRenderer.send("terminal-close", data),
     resize: (data) => ipcRenderer.send("terminal-resize", data),
@@ -105,6 +313,47 @@ contextBridge.exposeInMainWorld("electronAPI", {
     // 强制终止进程（当普通中断无效时）
     killProcess: (pid, processName) => ipcRenderer.invoke("terminal-kill-process", { pid, processName }),
   },
+  ailyServicesStream: {
+    start: (data) => ipcRenderer.invoke("aily-services-stream-start", data),
+    cancel: (streamId) => ipcRenderer.invoke("aily-services-stream-cancel", { streamId }),
+    onEvent: (streamId, callback) => {
+      const channel = `aily-services-stream-event-${streamId}`;
+      const listener = (_event, payload) => callback(payload);
+      ipcRenderer.on(channel, listener);
+      return () => {
+        ipcRenderer.removeListener(channel, listener);
+      };
+    },
+  },
+  chatRuntimeHost: {
+    registerRuntimeOwner: (runtimeOwnerId) => ipcRenderer.invoke("aily-chat-runtime-owner-register", { runtimeOwnerId }),
+    unregisterRuntimeOwner: (runtimeOwnerId) => ipcRenderer.invoke("aily-chat-runtime-owner-unregister", { runtimeOwnerId }),
+    registerResourceOperationHandler: (handlerId) => ipcRenderer.invoke("aily-chat-runtime-resource-handler-register", { handlerId }),
+    unregisterResourceOperationHandler: (handlerId) => ipcRenderer.invoke("aily-chat-runtime-resource-handler-unregister", { handlerId }),
+    call: (method, args) => ipcRenderer.invoke("aily-chat-runtime-host-command", { method, args }),
+    onRuntimeOwnerCommand: (callback) => {
+      const listener = (_event, payload) => callback(payload);
+      ipcRenderer.on("aily-chat-runtime-owner-command", listener);
+      return () => ipcRenderer.removeListener("aily-chat-runtime-owner-command", listener);
+    },
+    onResourceOperationCommand: (callback) => {
+      const listener = (_event, payload) => callback(payload);
+      ipcRenderer.on("aily-chat-runtime-resource-handler-command", listener);
+      return () => ipcRenderer.removeListener("aily-chat-runtime-resource-handler-command", listener);
+    },
+    sendRuntimeOwnerResponse: (payload) => ipcRenderer.send("aily-chat-runtime-owner-response", payload),
+    sendResourceOperationResponse: (payload) => ipcRenderer.send("aily-chat-runtime-resource-handler-response", payload),
+    emitRuntimeOwnerEvent: (payload) => ipcRenderer.send("aily-chat-runtime-owner-event", payload),
+    onEvent: (callback) => {
+      const listener = (_event, payload) => callback(payload);
+      ipcRenderer.on("aily-chat-runtime-host-event", listener);
+      return () => ipcRenderer.removeListener("aily-chat-runtime-host-event", listener);
+    },
+  },
+  webviewBridge: {
+    fetchPage: (data) => ipcRenderer.invoke("webview-bridge-fetch", data),
+    searchWeb: (data) => ipcRenderer.invoke("webview-bridge-search", data),
+  },
   iWindow: {
     minimize: () => ipcRenderer.send("window-minimize"),
     maximize: () => ipcRenderer.send("window-maximize"),
@@ -114,6 +363,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     close: () => ipcRenderer.send("window-close"),
     // 子窗口收回到主窗口事件
     goMain: (data) => ipcRenderer.send("window-go-main", data),
+    returnMain: (data) => ipcRenderer.invoke("window-return-main", data),
     // 向其他窗口发送消息
     send: (data) => ipcRenderer.invoke("window-send", data),
     onReceive: (callback) => ipcRenderer.on("window-receive", callback),
@@ -167,6 +417,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
     release: (projectPath) => ipcRenderer.invoke("project-lock-release", { projectPath }),
     focusProcess: (pid) => ipcRenderer.invoke("project-lock-focus", { pid }),
   },
+  coderEmbed: {
+    getBaseUrl: () => ipcRenderer.invoke("coder-embed-get-base-url"),
+  },
   subWindow: (() => {
     // 立即监听 window-init-data，缓存数据，避免 Angular 组件注册监听前数据丢失
     let _cachedInitData = null;
@@ -182,6 +435,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
     return {
       open: (options) => ipcRenderer.send("window-open", options),
       focus: (path) => ipcRenderer.invoke("window-focus-by-url", path),
+      getState: (path) => ipcRenderer.invoke("window-state-by-url", path),
+      list: () => ipcRenderer.invoke("window-list"),
+      control: (path, action) => ipcRenderer.invoke("window-control-by-url", { path, action }),
+      setBounds: (path, options) => ipcRenderer.invoke("window-set-bounds-by-url", { path, ...options }),
+      arrange: (options) => ipcRenderer.invoke("window-arrange", options),
+      command: (path, command) => ipcRenderer.invoke("child-app-host-command-by-url", { path, command }),
       close: () => ipcRenderer.send("window-close"),
       onInitData: (callback) => {
         _initDataCallback = callback;
@@ -193,6 +452,52 @@ contextBridge.exposeInMainWorld("electronAPI", {
       },
     };
   })(),
+  childAppHost: {
+    onCommand: (callback) => {
+      const listener = (_event, payload = {}) => {
+        callback(payload.command, payload.requestId);
+      };
+      ipcRenderer.on('child-app-host-command', listener);
+      return () => ipcRenderer.removeListener('child-app-host-command', listener);
+    },
+    respond: (requestId, result) => ipcRenderer.send('child-app-host-command-response', { requestId, result }),
+  },
+  childToolSession: {
+    acquire: (toolId) => ipcRenderer.invoke("child-tool-session-acquire", toolId),
+    register: (payload) => ipcRenderer.invoke("child-tool-session-register", payload),
+    release: (toolIdOrPayload) => ipcRenderer.invoke("child-tool-session-release", toolIdOrPayload),
+    restart: (toolId) => ipcRenderer.invoke("child-tool-session-restart", toolId),
+    unregister: (payload) => ipcRenderer.invoke("child-tool-session-unregister", payload),
+    list: () => ipcRenderer.invoke("child-tool-session-list"),
+    stop: (toolId) => ipcRenderer.invoke("child-tool-session-stop", toolId),
+    sendMessage: (payload) => ipcRenderer.invoke("child-tool-session-message-send", payload),
+    onMessage: (callback) => {
+      const listener = (_event, payload) => callback(payload);
+      ipcRenderer.on("child-tool-session-message", listener);
+      return () => ipcRenderer.removeListener("child-tool-session-message", listener);
+    },
+    onStateChanged: (callback) => {
+      const listener = (_event, payload) => callback(payload);
+      ipcRenderer.on("child-tool-session-state-changed", listener);
+      return () => ipcRenderer.removeListener("child-tool-session-state-changed", listener);
+    },
+  },
+  subapps: {
+    list: (options = {}) => ipcRenderer.invoke("subapp-manager-list", options),
+    install: (options) => ipcRenderer.invoke("subapp-manager-install", options),
+    update: (options) => ipcRenderer.invoke("subapp-manager-update", options),
+    uninstall: (options) => ipcRenderer.invoke("subapp-manager-uninstall", options),
+    onChanged: (callback) => {
+      const listener = (_event, payload) => callback(payload);
+      ipcRenderer.on("subapp-manager-changed", listener);
+      return () => ipcRenderer.removeListener("subapp-manager-changed", listener);
+    },
+    onProgress: (callback) => {
+      const listener = (_event, payload) => callback(payload);
+      ipcRenderer.on("subapp-manager-progress", listener);
+      return () => ipcRenderer.removeListener("subapp-manager-progress", listener);
+    },
+  },
   codeViewer: {
     publishState: (state) => ipcRenderer.send("blockly-code-viewer-state-update", state),
     getState: () => ipcRenderer.invoke("blockly-code-viewer-state-get"),
@@ -207,6 +512,93 @@ contextBridge.exposeInMainWorld("electronAPI", {
     checkForUpdate: () => ipcRenderer.invoke("aily-builder-check-update"),
     update: () => ipcRenderer.invoke("aily-builder-update"),
     waitForReady: () => ipcRenderer.invoke("aily-builder-wait-ready"),
+  },
+  simulatorGateway: {
+    iframeUrlOverride:
+      process.env.AILY_E2E === "1"
+        ? process.env.AILY_E2E_SIMULATOR_IFRAME_URL || ""
+        : "",
+    start: (projectPath, ownerId) => ipcRenderer.invoke(
+      "simulator-gateway-start",
+      projectPath,
+      ownerId,
+    ),
+    status: () => ipcRenderer.invoke("simulator-gateway-status"),
+    stop: (expectedProjectPath, expectedOwnerId) => ipcRenderer.invoke(
+      "simulator-gateway-stop",
+      expectedProjectPath,
+      expectedOwnerId,
+    ),
+    onStateChanged: (callback) => {
+      const listener = (_event, payload) => callback(payload);
+      ipcRenderer.on("simulator-gateway-state-changed", listener);
+      return () => ipcRenderer.removeListener(
+        "simulator-gateway-state-changed",
+        listener,
+      );
+    },
+  },
+  simulatorSubapp: {
+    open: (options) => ipcRenderer.invoke("simulator-subapp-open", options),
+    openProjectScene: (options) => ipcRenderer.invoke(
+      "simulator-subapp-open-project-scene",
+      options,
+    ),
+    requestProjectSceneGeneration: (options) => ipcRenderer.invoke(
+      "simulator-subapp-request-project-scene-generation",
+      options,
+    ),
+    resolveProjectSceneRegeneration: (options) => ipcRenderer.invoke(
+      "simulator-subapp-resolve-project-scene-regeneration",
+      options,
+    ),
+    applyProjectSceneAgentProposal: (options) => ipcRenderer.invoke(
+      "simulator-subapp-apply-project-scene-agent-proposal",
+      options,
+    ),
+    attachProjectSceneSession: (ownerId) => ipcRenderer.invoke(
+      "simulator-subapp-attach-project-scene-session",
+      { ownerId },
+    ),
+    detachProjectSceneSession: (ownerId) => ipcRenderer.invoke(
+      "simulator-subapp-detach-project-scene-session",
+      { ownerId },
+    ),
+    status: () => ipcRenderer.invoke("simulator-subapp-status"),
+    close: (ownerId) => ipcRenderer.invoke(
+      "simulator-subapp-close",
+      { ownerId },
+    ),
+    onStateChanged: (callback) => {
+      const listener = (_event, payload) => callback(payload);
+      ipcRenderer.on("simulator-subapp-state-changed", listener);
+      return () => ipcRenderer.removeListener(
+        "simulator-subapp-state-changed",
+        listener,
+      );
+    },
+    onProjectRebuildRequested: (callback) => {
+      const listener = (_event, payload) => callback(
+        payload?.request,
+        {
+          requestId: payload?.requestId,
+          rendererGeneration: payload?.rendererGeneration,
+        },
+      );
+      ipcRenderer.on("simulator-project-rebuild-request", listener);
+      return () => ipcRenderer.removeListener(
+        "simulator-project-rebuild-request",
+        listener,
+      );
+    },
+    respondProjectRebuild: (transport, result) => ipcRenderer.send(
+      "simulator-project-rebuild-response",
+      {
+        requestId: transport?.requestId,
+        rendererGeneration: transport?.rendererGeneration,
+        result,
+      },
+    ),
   },
   linter: {
     status: () => ipcRenderer.invoke("aily-linter-status"),
@@ -243,6 +635,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
     writeFileBufferAsync: async (path, data) => {
       await require("fs").promises.writeFile(path, Buffer.from(data));
     },
+    writeFileBufferAtomicAsync: async (path, data) => {
+      await writeFileBufferAtomic(path, data);
+    },
+    realpathAsync: (path) => require("fs").promises.realpath(path),
     md5Buffer: (data) => {
       return createHash("md5").update(Buffer.from(data)).digest("hex");
     },
@@ -270,6 +666,15 @@ contextBridge.exposeInMainWorld("electronAPI", {
     linkSync: (existingPath, newPath) => require("fs").linkSync(existingPath, newPath),
     chmodSync: (path, mode) => require("fs").chmodSync(path, mode),
     appendFileSync: (path, data) => require("fs").appendFileSync(path, data),
+    readHeadLines: async (path, options = {}) => {
+      return await readLinesWithMode(path, { ...options, mode: 'head' });
+    },
+    readTailLines: async (path, options = {}) => {
+      return await readLinesWithMode(path, { ...options, mode: 'tail' });
+    },
+    readLineRange: async (path, options = {}) => {
+      return await readLinesWithMode(path, { ...options, mode: 'sed' });
+    },
     watch: (path, callback, options = {}) => {
       const watcher = require("fs").watch(
         path,
@@ -637,7 +1042,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
     listAllContentFiles: (searchPath, limit) => {
       return new Promise((resolve, reject) => {
         ipcRenderer
-          .invoke("ripgrep-list-files", searchPath, limit)
+          .invoke('ripgrep-list-files-v2', {
+            pattern: '**/*',
+            path: searchPath,
+            maxResults: limit,
+            includeHidden: true
+          })
           .then((result) => resolve(result))
           .catch((error) => reject(error));
       });
@@ -648,11 +1058,26 @@ contextBridge.exposeInMainWorld("electronAPI", {
     searchContent: (params) => {
       return new Promise((resolve, reject) => {
         ipcRenderer
-          .invoke("ripgrep-search-content", params)
+          .invoke('ripgrep-search-text-v2', {
+            ...params,
+            includeHidden: true
+          })
           .then((result) => resolve(result))
           .catch((error) => reject(error));
       });
-    }
+    },
+    /**
+     * v2 path-only file search backed by `rg --files`.
+     */
+    listFiles: (params) => ipcRenderer.invoke('ripgrep-list-files-v2', params),
+    /**
+     * v2 structured content search backed by `rg --json`.
+     */
+    searchText: (params) => ipcRenderer.invoke('ripgrep-search-text-v2', params),
+    /**
+     * Cancel an active v2 search by request id.
+     */
+    cancelSearch: (requestId) => ipcRenderer.send('ripgrep-cancel-search', requestId)
   },
   // BLE API
   ble: {

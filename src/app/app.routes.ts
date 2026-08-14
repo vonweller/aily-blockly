@@ -1,4 +1,9 @@
 import { Routes } from '@angular/router';
+import {
+    AILY_CHAT_VIEW_PROVIDERS,
+} from './tools/aily-chat/aily-chat.providers';
+import { inject, provideEnvironmentInitializer } from '@angular/core';
+import { AilyChatChildProtocolService } from './tools/aily-chat/services/aily-chat-child-protocol.service';
 
 export const routes: Routes = [
     {
@@ -8,6 +13,9 @@ export const routes: Routes = [
     },
     {
         path: 'main',
+        providers: [
+            ...AILY_CHAT_VIEW_PROVIDERS,
+        ],
         loadComponent: () => import('./main-window/main-window.component').then(m => m.MainWindowComponent),
         children: [
             {
@@ -49,6 +57,10 @@ export const routes: Routes = [
             {
                 path: 'code-editor',
                 loadComponent: () => import('./editors/code-editor/code-editor.component').then(m => m.CodeEditorComponent)
+            },
+            {
+                path: 'code-editor-pro',
+                loadComponent: () => import('./editors/code-editor-pro/code-editor-pro.component').then(m => m.CodeEditorProComponent)
             }
         ]
     },
@@ -92,6 +104,17 @@ export const routes: Routes = [
         pathMatch: "full"
     },
     {
+        path: "child-tool/aily-chat-react",
+        providers: [
+            ...AILY_CHAT_VIEW_PROVIDERS,
+            provideEnvironmentInitializer(() => {
+                inject(AilyChatChildProtocolService);
+            })
+        ],
+        data: { childToolId: 'aily-chat-react' },
+        loadComponent: () => import('./tools/child-tool-host/child-tool-host.component').then(m => m.ChildToolHostComponent)
+    },
+    {
         path: "child-tool/:toolId",
         loadComponent: () => import('./tools/child-tool-host/child-tool-host.component').then(m => m.ChildToolHostComponent)
     },
@@ -101,17 +124,20 @@ export const routes: Routes = [
         pathMatch: "full"
     },
     {
-        path: "ffs-manager",
-        loadComponent: () => import('./tools/ffs-manager/ffs-manager.component').then(m => m.FfsManagerComponent)
-    },
-    {
         path: "ffs-manager-child",
         redirectTo: "child-tool/ffs-manager-child",
         pathMatch: "full"
     },
     {
         path: "aily-chat",
+        providers: [
+            ...AILY_CHAT_VIEW_PROVIDERS,
+        ],
         loadComponent: () => import('./tools/aily-chat/aily-chat.component').then(m => m.AilyChatComponent)
+    },
+    {
+        path: "aily-chat-process-detail/:sessionId/:processId",
+        loadComponent: () => import('./tools/aily-chat/components/process-detail-window/chat-process-detail-window.component').then(m => m.ChatProcessDetailWindowComponent)
     },
     {
         path: "code-viewer",
@@ -125,68 +151,4 @@ export const routes: Routes = [
         path: "graph-editor",
         loadComponent: () => import('./editors/graph-editor/graph-editor.component').then(m => m.GraphEditorComponent)
     },
-    {
-        path: "model-store",
-        loadComponent: () => import('./tools/model-store/model-store.component').then(m => m.ModelStoreComponent)
-    },
-    {
-        path: "model-deploy",
-        children: [
-            {
-                path: '',
-                redirectTo: 'sscma',
-                pathMatch: 'full'
-            },
-            // 独立测试页面（带框架）- 必须放在 :step 路由之前
-            {
-                path: 'sscma/test',
-                loadComponent: () => import('./windows/model-deploy/sscma-config/sscma-config.component').then(m => m.SscmaConfigComponent)
-            },
-            // SSCMA 模型类型路由 - 支持步骤参数
-            {
-                path: 'sscma',
-                loadComponent: () => import('./windows/model-deploy/sscma-deploy/sscma-deploy.component').then(m => m.SscmaDeployComponent)
-            },
-            {
-                path: 'sscma/:step',
-                loadComponent: () => import('./windows/model-deploy/sscma-deploy/sscma-deploy.component').then(m => m.SscmaDeployComponent)
-            }
-            // 未来扩展示例：
-            // {
-            //     path: 'chipintelli',
-            //     loadComponent: () => import('./windows/model-deploy/chipintelli-deploy/chipintelli-deploy.component').then(m => m.ChipintelliDeployComponent),
-            //     children: [...]
-            // }
-        ]
-    },
-    {
-        path: "model-train",
-        children: [
-            {
-                path: '',
-                loadComponent: () => import('./windows/model-train/model-train.component').then(m => m.ModelTrainComponent)
-            },
-            {
-                path: 'vision',
-                loadComponent: () => import('./windows/model-train/vision-train/vision-train.component').then(m => m.VisionTrainComponent)
-            },
-            {
-                path: 'vision/classification',
-                loadComponent: () => import('./windows/model-train/vision-train/classification-train/classification-train.component').then(m => m.ClassificationTrainComponent)
-            },
-            {
-                path: 'vision/detection',
-                loadComponent: () => import('./windows/model-train/vision-train/detection-train/detection-train.component').then(m => m.DetectionTrainComponent)
-            }
-            // 未来扩展：
-            // {
-            //     path: 'vision/pose',
-            //     loadComponent: () => import('./windows/model-train/vision-train/pose-train/pose-train.component').then(m => m.PoseTrainComponent)
-            // },
-            // {
-            //     path: 'audio',
-            //     loadComponent: () => import('./windows/model-train/audio-train/audio-train.component').then(m => m.AudioTrainComponent)
-            // }
-        ]
-    }
 ];

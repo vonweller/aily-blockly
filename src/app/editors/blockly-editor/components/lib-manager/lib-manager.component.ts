@@ -1,4 +1,4 @@
-import { ChangeDetectorRef, Component, EventEmitter, OnDestroy, Output } from '@angular/core';
+import { ChangeDetectorRef, Component, EventEmitter, Input, OnDestroy, Output } from '@angular/core';
 import { NzInputModule } from 'ng-zorro-antd/input';
 import { NzButtonModule } from 'ng-zorro-antd/button';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
@@ -43,6 +43,9 @@ import type { PackageInfo } from './lib-manager.service';
   styleUrl: './lib-manager.component.scss'
 })
 export class LibManagerComponent implements OnDestroy {
+
+  /** 嵌入主窗口右侧工具栏时为 true（非 Blockly 全屏遮罩） */
+  @Input() embedInPanel = false;
 
   @Output() close = new EventEmitter();
 
@@ -300,6 +303,7 @@ export class LibManagerComponent implements OnDestroy {
   output = '';
   private libraryOperationQueue: LibraryOperation[] = [];
   private isProcessingLibraryOperationQueue = false;
+  private libraryOperationRequiresRuntimeRebuild = false;
   private libraryOperationStates = new Map<string, LibraryOperationState>();
 
   async installLib(lib: PackageInfo) {
@@ -379,6 +383,11 @@ export class LibManagerComponent implements OnDestroy {
       if (workflowStarted) {
         this.workflowService.finishInstall(errors.length === 0, errors.join('\n'));
       }
+      if (this.libraryOperationRequiresRuntimeRebuild) {
+        this.libraryOperationRequiresRuntimeRebuild = false;
+        const projectPath = this.projectService.currentProjectPath;
+        await this.projectService.rebuildBlocklyRuntimeAfterLibraryChange(projectPath);
+      }
     }
   }
 
@@ -415,14 +424,7 @@ export class LibManagerComponent implements OnDestroy {
   private async runUninstallOperation(lib: PackageInfo): Promise<LibraryOperationResult> {
     this.setLibraryOperationState(lib.name, 'uninstalling');
     this.message.loading(`${this.getLibraryDisplayName(lib)} ${this.translate.instant('LIB_MANAGER.UNINSTALLING')}...`);
-    // 使用pathJoin处理路径，正确处理包含'/'的包名（如@aily-project/test）
-    const libPackagePath = this.electronService.pathJoin(
-      this.projectService.currentProjectPath,
-      'node_modules',
-      ...lib.name.split('/')
-    );
     this.output = '';
-    let libraryRemoved = false;
 
     try {
       if (this.checkLibUsage(lib)) {
@@ -430,9 +432,6 @@ export class LibManagerComponent implements OnDestroy {
         this.message.warning(message, { nzDuration: 5000 });
         throw new Error(message);
       }
-
-      this.blocklyService.removeLibrary(libPackagePath);
-      libraryRemoved = true;
 
       const { code, stderr } = await this.cmdService.runAsync(`npm uninstall ${lib.name}`, this.projectService.currentProjectPath);
       if (code !== 0) {
@@ -443,15 +442,12 @@ export class LibManagerComponent implements OnDestroy {
       await this.refreshCurrentLibraryList();
       // lib.state = 'default';
       this.message.success(`${this.getLibraryDisplayName(lib)} ${this.translate.instant('LIB_MANAGER.UNINSTALLED')}`);
+      this.libraryOperationRequiresRuntimeRebuild = true;
       return { type: 'uninstall', lib, success: true };
     } catch (error) {
       const errorMessage = this.getErrorMessage(error, 'Uninstall failed');
       this.clearLibraryOperationState(lib.name);
       await this.refreshCurrentLibraryList();
-
-      if (libraryRemoved) {
-        await this.blocklyService.loadLibrary(lib.name, this.projectService.currentProjectPath);
-      }
 
       this.message.error(`${this.getLibraryDisplayName(lib)} ${this.translate.instant('NPM.UNINSTALL_FAILED_TITLE')}: ${errorMessage}`);
       return { type: 'uninstall', lib, success: false, error: errorMessage };

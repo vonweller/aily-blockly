@@ -1,18 +1,32 @@
-import type { ArduinoGenerator } from '../components/blockly/generators/arduino/arduino';
+import type { ArduinoGeneratedArtifact } from '../components/blockly/generators/arduino/arduino';
 
 const GENERATED_HEADER_PATTERN = /^(?:variables|objects)_[a-zA-Z0-9_-]+-[a-f0-9]{8}\.h$/;
+
+interface ArduinoGeneratedArtifactSource {
+  getGeneratedArtifacts(): readonly ArduinoGeneratedArtifact[];
+}
+
+function isArduinoGeneratedArtifactSource(
+  generator: unknown,
+): generator is ArduinoGeneratedArtifactSource {
+  return typeof (generator as ArduinoGeneratedArtifactSource | null)?.getGeneratedArtifacts === 'function';
+}
 
 /**
  * Materialize large generator declarations in the project's regular Arduino
  * source directory. The build and lint boundaries copy project/src into the
  * temporary sketch root, so generated includes follow the same rules as user
  * authored headers.
+ *
+ * Project generators are runtime-scoped and may be Arduino or MicroPython.
+ * Artifact emission is an Arduino capability, so non-Arduino generators are a
+ * deliberate no-op instead of falling back to the old global generator.
  */
 export async function writeArduinoGeneratedArtifacts(
   projectPath: string | null | undefined,
-  generator: ArduinoGenerator,
+  generator: unknown,
 ): Promise<void> {
-  if (!projectPath) return;
+  if (!projectPath || !isArduinoGeneratedArtifactSource(generator)) return;
   const fsApi = window['fs'];
   const pathApi = window['path'];
   const artifacts = generator.getGeneratedArtifacts();

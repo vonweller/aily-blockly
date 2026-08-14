@@ -1,15 +1,29 @@
 /* 这个服务用来控制窗口、工具的显示和隐藏，通过 Subject 来实现组件之间的通信。
  */
 import { Injectable, Injector } from '@angular/core';
-import { Subject } from 'rxjs';
+import { filter, Observable, Subject } from 'rxjs';
+import { ChatService } from '../tools/aily-chat/services/chat.service';
 import { ElectronService } from './electron.service';
 import { TerminalService } from '../tools/terminal/terminal.service';
+import { Router } from '@angular/router';
 import { FeedbackDialogComponent } from '../components/feedback-dialog/feedback-dialog.component';
 import { NzModalService } from 'ng-zorro-antd/modal';
 import { ProjectSettingDialogComponent } from '../components/project-setting-dialog/project-setting-dialog.component';
 import { AuthService } from './auth.service';
 import { LogService } from './log.service';
 import { getChildToolConfig } from '../configs/tool.config';
+import { ConfigService } from './config.service';
+import { BoardSelectorDialogComponent } from '../main-window/components/board-selector-dialog/board-selector-dialog.component';
+import {
+  findPreferredAilyChatTool,
+  LEGACY_AILY_CHAT_MOUNT_DELAY_MS,
+  resolveAilyChatExternalInputOptions,
+  resolveAilyChatMountDelay,
+  resolvePreferredAilyChatTool,
+} from './aily-chat-tool-routing';
+import { collectOpenAuthRequiredToolIds, isAuthRequiredTool } from './auth-required-tool';
+import { ChildAppHostRegistryService } from './child-app-host-registry.service';
+import { closeToolThroughLifecycle } from './child-tool-close-lifecycle';
 
 @Injectable({
   providedIn: 'root',
@@ -38,22 +52,20 @@ export class UiService {
   theme = 'dark';
   isMainWindow = false;
 
-  /**
-   * 向 aily-chat 发送消息的 Subject。
-   * 外部组件通过 openAndSendToChat() 触发，
-   * aily-chat 模组内部订阅 chatMessage$ 消费。
-   */
-  private chatMessageSubject = new Subject<{ text: string; options?: Record<string, any> }>();
-  chatMessage$ = this.chatMessageSubject.asObservable();
   private modalService: NzModalService | null = null;
+  private legacyAilyChatReadyAt = 0;
 
 
   constructor(
     private electronService: ElectronService,
     private terminalService: TerminalService,
+    private router: Router,
     private authService: AuthService,
     private logService: LogService,
-    private injector: Injector
+    private configService: ConfigService,
+    private injector: Injector,
+    private chatService: ChatService,
+    private childHostRegistry: ChildAppHostRegistryService,
   ) { }
 
   private get modal(): NzModalService {
@@ -73,7 +85,7 @@ export class UiService {
     if (this.electronService.isElectron) {
       this.isMainWindow = true;
       window['ipcRenderer'].on('window-go-main', (event, toolName) => {
-        this.openToolInMainWindow(toolName);
+        this.openToolInMainWindow(this.resolveToolNameFromWindowPath(toolName));
       });
 
       window['ipcRenderer'].on('sub-window-state-changed', (_event, state) => {
@@ -83,7 +95,13 @@ export class UiService {
       window['ipcRenderer'].on('window-receive', async (event, message) => {
         // console.log('window-receive', message);
         let data;
-        if (message.data?.action === 'logout') {
+        if (message.data?.action === 'request-login') {
+          const reason = typeof message.data?.reason === 'string'
+            ? message.data.reason.trim().slice(0, 80)
+            : '';
+          this.authService.requestLogin(reason || 'sub-window');
+          data = { success: true };
+        } else if (message.data?.action === 'logout') {
           // 处理登出请求
           try {
             await this.authService.logout();
@@ -137,8 +155,32 @@ export class UiService {
     window['subWindow'].open(opt);
   }
 
+  openToolWindow(name: string, options?: Omit<WindowOpts, 'path'>) {
+    const toolWindowPath = this.getToolWindowPath(name);
+    if (!toolWindowPath) {
+      return false;
+    }
+
+    this.openWindow({
+      path: toolWindowPath.replace(/^\/+/, ''),
+      title: options?.title || name,
+      width: options?.width ?? 1200,
+      height: options?.height ?? 800,
+      ...(options?.x !== undefined ? { x: options.x } : {}),
+      ...(options?.y !== undefined ? { y: options.y } : {}),
+      ...(options?.displayId !== undefined ? { displayId: options.displayId } : {}),
+      relativeToDisplay: options?.relativeToDisplay !== false,
+      clampToWorkArea: options?.clampToWorkArea !== false,
+      applyInitialBounds: options?.applyInitialBounds === true,
+    });
+    return true;
+  }
+
   // 这个方法是给header用的
   turnTool(opt: ToolOpts) {
+    if (this.requestLoginForProtectedTool(opt?.data)) {
+      return;
+    }
     if (this.topTool == opt.data) {
       this.closeTool(opt.data);
     } else {
@@ -148,6 +190,9 @@ export class UiService {
 
   // 如果其它组件/程序要打开工具，调用这个方法
   openTool(name: string) {
+    if (this.requestLoginForProtectedTool(name)) {
+      return;
+    }
     // if (name == 'terminal') {
     //   this.openTerminal();
     //   return;
@@ -167,10 +212,49 @@ export class UiService {
     this.openToolInMainWindow(name);
   }
 
+  /**
+   * Open a tool in the main-window embedded stack without first attempting
+   * to focus a detached child window. Host automation has already resolved
+   * the requested presentation mode before calling this method.
+   */
+  openToolEmbedded(name: string): boolean {
+    if (this.requestLoginForProtectedTool(name)) {
+      return false;
+    }
+    this.openToolInMainWindow(name);
+    return this.topTool === name;
+  }
+
   private openToolInMainWindow(name: string) {
+    if (!name || this.requestLoginForProtectedTool(name)) {
+      return;
+    }
     this.openToolList = this.openToolList.filter((e) => e !== name);
     this.openToolList.push(name);
     this.actionSubject.next({ action: 'open', type: 'tool', data: name });
+  }
+
+  private requestLoginForProtectedTool(name: string | null | undefined): boolean {
+    if (!isAuthRequiredTool(name) || this.authService.isLoggedIn) {
+      return false;
+    }
+
+    this.authService.requestLogin(`tool:${name}`);
+    return true;
+  }
+
+  private resolveToolNameFromWindowPath(pathOrName: string | null | undefined): string {
+    const normalizedPath = this.normalizeToolWindowPath(pathOrName);
+    if (!normalizedPath) {
+      return '';
+    }
+
+    const childToolMatch = normalizedPath.match(/^\/child-tool\/([^/?#]+)/);
+    if (childToolMatch?.[1]) {
+      return decodeURIComponent(childToolMatch[1]);
+    }
+
+    return normalizedPath.replace(/^\/+/, '');
   }
 
   private getToolWindowPath(name: string): string | null {
@@ -182,9 +266,6 @@ export class UiService {
     switch (name) {
       case 'code-viewer':
       case 'serial-monitor':
-      case 'ffs-manager':
-      case 'simulator':
-      case 'model-store':
         return `/${name}`;
       default:
         return null;
@@ -221,6 +302,10 @@ export class UiService {
   }
 
   private isToolWindowOpen(name: string): boolean {
+    if (this.getOpenWindowPathForTool(name)) {
+      return true;
+    }
+
     const toolWindowPath = this.getToolWindowPath(name);
     if (!toolWindowPath) {
       return false;
@@ -230,20 +315,72 @@ export class UiService {
     return !!normalizedPath && this.openWindowPathList.includes(normalizedPath);
   }
 
-  closeTool(name: string) {
+  private getOpenWindowPathForTool(name: string): string | null {
+    return this.openWindowPathList.find((path) => this.resolveToolNameFromWindowPath(path) === name) || null;
+  }
+
+  closeTool(name: string): void {
+    void this.closeToolAndWait(name);
+  }
+
+  async closeToolAndWait(name: string): Promise<boolean> {
     if (name == 'terminal') {
       this.closeTerminal();
-      return;
+      return true;
     }
+
+    const childHostRegistered = !!getChildToolConfig(name) && this.childHostRegistry.has(name);
+    try {
+      return await closeToolThroughLifecycle({
+        childHostRegistered,
+        requestChildClose: () => this.childHostRegistry.control(name, 'close'),
+        completeClose: () => this.completeToolClose(name),
+      });
+    } catch (error) {
+      console.warn(`关闭子应用失败: ${name}`, error);
+      return false;
+    }
+  }
+
+  /** Complete a close after the child lifecycle guard has already settled. */
+  completeToolClose(name: string): void {
     this.openToolList = this.openToolList.filter((e) => e !== name);
     this.actionSubject.next({ action: 'close', type: 'tool', data: name });
   }
 
-  closeToolAll() {
-    this.openToolList.forEach((name) => {
-      this.closeTool(name);
-    });
-    this.openToolList = [];
+  getOpenAuthRequiredToolIds(): string[] {
+    return collectOpenAuthRequiredToolIds(this.openToolList, this.openWindowPathList);
+  }
+
+  async forceCloseToolEverywhere(name: string): Promise<boolean> {
+    if (this.openToolList.includes(name)) {
+      const closed = await this.closeToolAndWait(name);
+      if (!closed) {
+        return false;
+      }
+    }
+
+    const openWindowPath = this.getOpenWindowPathForTool(name);
+    if (openWindowPath) {
+      try {
+        const result = await window['subWindow']?.control?.(openWindowPath, 'close');
+        if (result?.success !== true) {
+          return false;
+        }
+        this.updateSubWindowState(openWindowPath, false);
+      } catch (error) {
+        console.warn(`关闭独立工具窗口失败: ${name}`, error);
+        return false;
+      }
+    }
+
+    return !this.openToolList.includes(name) && !this.getOpenWindowPathForTool(name);
+  }
+
+  async closeToolAll(): Promise<void> {
+    for (const name of [...this.openToolList].reverse()) {
+      await this.closeToolAndWait(name);
+    }
   }
 
   // 发送工具信号，格式为 "toolname:action"，如 "serial-monitor:disconnect"
@@ -254,16 +391,117 @@ export class UiService {
   /**
    * 打开 aily-chat 面板并发送消息。
    * 标准接口：任何需要「代为向大模型发送消息」的场景，统一调用此方法。
-   * aily-chat 模组内部订阅 chatMessage$ 处理，外部无需导入 aily-chat 的任何服务。
+   * 输入通过 ChatService 的单一路径缓冲，聊天面板挂载后由
+   * ChatExternalInputCoordinator 进入统一提交管线。
    *
    * @param text 要发送的文本内容
    * @param options 发送选项，如 { autoSend: true, cover: true }
    */
   openAndSendToChat(text: string, options?: Record<string, any>): void {
-    this.openTool('aily-chat');
-    setTimeout(() => {
-      this.chatMessageSubject.next({ text, options });
-    }, 100);
+    const targetToolId = this.openPreferredAilyChat();
+    const deliver = () => {
+      const deliveryOptions = resolveAilyChatExternalInputOptions(
+        targetToolId,
+        options,
+        this.chatService.currentSessionId,
+      );
+      console.info('[AilyChat][ExternalInputDelivery]', {
+        phase: 'deliver',
+        target: targetToolId,
+        textLength: typeof text === 'string' ? text.length : 0,
+        autoSend: deliveryOptions?.['autoSend'] === true,
+      });
+      if (targetToolId === 'aily-chat') {
+        this.chatService.sendTextToChat(text, deliveryOptions);
+        return;
+      }
+
+      this.sendToolSignal(`${targetToolId}:external-input`, {
+        targetToolId,
+        text,
+        options: deliveryOptions || {},
+      });
+    };
+
+    const mountDelay = resolveAilyChatMountDelay(
+      targetToolId,
+      this.legacyAilyChatReadyAt,
+      Date.now(),
+    );
+    if (mountDelay > 0) {
+      setTimeout(deliver, mountDelay);
+      return;
+    }
+
+    deliver();
+  }
+
+  /**
+   * Open the Aily Chat surface that is currently highest in the embedded tool
+   * stack. When neither chat is open, use the installed React child as the
+   * default; the Angular implementation remains hidden as a compatibility
+   * reference only.
+   */
+  openPreferredAilyChat(): string {
+    const targetToolId = resolvePreferredAilyChatTool(this.openToolList);
+    if (targetToolId === 'aily-chat' && !this.openToolList.includes(targetToolId)) {
+      this.legacyAilyChatReadyAt = Date.now() + LEGACY_AILY_CHAT_MOUNT_DELAY_MS;
+    }
+    this.openTool(targetToolId);
+    return targetToolId;
+  }
+
+  /** The highest currently open Aily Chat, or null when neither chat is open. */
+  getActiveAilyChatToolId(): string | null {
+    return findPreferredAilyChatTool(this.openToolList);
+  }
+
+  isActiveAilyChatTool(toolId: string): boolean {
+    return this.getActiveAilyChatToolId() === toolId;
+  }
+
+  openCodeEditorFile(
+    projectPath: string,
+    filePath: string,
+    position?: {
+      lineNumber?: number;
+      column?: number;
+      line?: number;
+      character?: number;
+    },
+  ): Promise<boolean> {
+    const normalizedProjectPath = typeof projectPath === 'string' ? projectPath.trim() : '';
+    const normalizedFilePath = typeof filePath === 'string' ? filePath.trim() : '';
+    if (!normalizedProjectPath || !normalizedFilePath) {
+      return Promise.resolve(false);
+    }
+
+    const lineNumber = typeof position?.lineNumber === 'number'
+      ? position.lineNumber
+      : typeof position?.line === 'number'
+        ? position.line + 1
+        : undefined;
+    const column = typeof position?.column === 'number'
+      ? position.column
+      : typeof position?.character === 'number'
+        ? position.character + 1
+        : undefined;
+
+    const queryParams: Record<string, string | number> = {
+      path: normalizedProjectPath,
+      openFile: normalizedFilePath,
+    };
+    if (typeof lineNumber === 'number' && Number.isFinite(lineNumber) && lineNumber > 0) {
+      queryParams['lineNumber'] = lineNumber;
+    }
+    if (typeof column === 'number' && Number.isFinite(column) && column > 0) {
+      queryParams['column'] = column;
+    }
+
+    return this.router.navigate(['/main/code-editor'], {
+      queryParams,
+      replaceUrl: true,
+    });
   }
 
   // 判断某个工具是否打开
@@ -328,7 +566,7 @@ export class UiService {
   // 更新footer右下角的状态
   updateFooterState(state: ActionState) {
     // 判断当前url是否是main-window
-    if (this.isMainWindow) {
+    if (this.isMainWindow || !window['ipcRenderer']?.send) {
       this.stateSubject.next(state);
     } else {
       window['ipcRenderer'].send('state-update', state);
@@ -384,15 +622,56 @@ export class UiService {
       }
     });
   }
+
+  /** 打开切换开发板弹窗（Header 菜单与 Aily View MCU 节点共用） */
+  async openBoardSelector(): Promise<void> {
+    const { ProjectService } = await import('./project.service');
+    const projectService = this.injector.get(ProjectService);
+    const useCoderBoardList = projectService.isAilyCodeProject();
+
+    // Aily Code 使用 coder_board_index；Blockly 使用 boards.json
+    let boardList = useCoderBoardList
+      ? this.configService.getCoderBoardListForSelector()
+      : this.configService.getBoardListForSelector();
+    if (!boardList.length) {
+      boardList = useCoderBoardList
+        ? await this.configService.loadCoderBoardList()
+        : await this.configService.loadBoardList();
+    }
+
+    this.modal.create({
+      nzTitle: null,
+      nzFooter: null,
+      nzClosable: false,
+      nzBodyStyle: {
+        padding: '0',
+      },
+      nzWidth: '400px',
+      nzContent: BoardSelectorDialogComponent,
+      nzData: {
+        boardList,
+        isAilyCode: useCoderBoardList,
+      },
+    });
+  }
 }
 
 export interface WindowOpts {
+  /** 子窗口业务标识，如 settings-open / project-new，与 preload 路由一致 */
+  type?: string;
   path: string;
   data?: any;
   title?: string;
   alwaysOnTop?: boolean;
   width?: number;
   height?: number;
+  x?: number;
+  y?: number;
+  displayId?: string | number;
+  relativeToDisplay?: boolean;
+  clampToWorkArea?: boolean;
+  /** 复用现有窗口时，是否应用本次携带的位置与尺寸。 */
+  applyInitialBounds?: boolean;
 }
 
 export interface ToolOpts {

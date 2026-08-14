@@ -12,11 +12,16 @@ export interface Tool {
   agents?: string[];
 }
 
+import type { ChatImageAttachmentDraft, ChatImageMimeType } from './chat-image-attachment';
+
 export interface ResourceItem {
-  type: 'file' | 'folder' | 'url' | 'block';
+  type: 'file' | 'folder' | 'url' | 'block' | 'image';
   path?: string;
   url?: string;
   name: string;
+  /** First-class model image. It is never projected into the textual <attachments> block. */
+  imageAttachment?: ChatImageAttachmentDraft;
+  mimeType?: ChatImageMimeType;
   /** block 类型时存储 formatted 上下文信息（LLM 友好文本） */
   blockContext?: string;
   /** block 类型时存储关联的 blockId */
@@ -31,6 +36,10 @@ export interface ChatMessage {
   source?: string;
   /** 该消息对应的模型名称（创建时快照） */
   modelName?: string;
+  /** 该消息对应的计费倍率（创建时快照） */
+  modelBillingLabel?: string;
+  /** ★ Phase 1.3：关联的 lex turn ID，用于恢复时按 turn 粒度分消息 */
+  turnId?: string;
 }
 
 export enum ToolCallState {

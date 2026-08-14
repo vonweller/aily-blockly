@@ -22,7 +22,7 @@
                 <div>{{ 'SETTINGS.FIELDS.PROJECT_FOLDER' | translate }}:</div>
                 <input nz-input [(ngModel)]="configData.project_path" [disabled]="true" />
               </div>
-              <div class="item">
+              <div class="item lang-item">
                 <div>{{ 'SETTINGS.FIELDS.LANGUAGE' | translate }}:</div>
                 <div class="langs">
                   @for(lang of langList; track lang) {
@@ -30,6 +30,27 @@
                     <img src="i18n/{{ lang.code }}/{{ lang.code }}.jpg" alt="" srcset="" />
                     <span>{{ lang.name }}</span>
                   </div>
+                  }
+                </div>
+              </div>
+              <div class="item development-mode-item">
+                <div>{{ 'SETTINGS.FIELDS.DEVELOPMENT_MODE_PREFERENCE' | translate }}:</div>
+                <div class="development-mode-buttons">
+                  <button
+                    nz-button
+                    nzSize="small"
+                    [nzType]="developmentModePreference === 'blockly' ? 'primary' : 'default'"
+                    (click)="onDevelopmentModePreferenceChange('blockly')">
+                    {{ 'PROJECT_NEW.BOARD.MODE_BLOCKLY' | translate }}
+                  </button>
+                  @if (coderEnabled) {
+                  <button
+                    nz-button
+                    nzSize="small"
+                    [nzType]="developmentModePreference === 'coder' ? 'primary' : 'default'"
+                    (click)="onDevelopmentModePreferenceChange('coder')">
+                    {{ 'PROJECT_NEW.BOARD.MODE_CODER' | translate }}
+                  </button>
                   }
                 </div>
               </div>

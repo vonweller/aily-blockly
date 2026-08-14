@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const os = require('os');
+const platformRuntime = require('./platform-runtime');
 
 // 简单的日志工具
 const logger = {
@@ -405,7 +406,12 @@ async function main() {
             throw new Error(`未找到板子包文件: ${boardPackageJsonPath}`);
         }
         const boardPackageJson = JSON.parse(fs.readFileSync(boardPackageJsonPath, 'utf8'));
-        const boardDependencies = boardPackageJson.boardDependencies || {};
+        const platformRef = platformRuntime.readPlatformRefFromProjectAci(currentProjectPath);
+        const boardDependencies = platformRuntime.resolveEffectiveBoardDependencies(
+            boardPackageJson.boardDependencies,
+            appDataPath,
+            platformRef?.packageName,
+        );
 
         // 4. 获取上传参数：ESP32 优先使用 preprocess.json；其他板卡仅在
         // board.json 未提供 uploadParam 时使用 preprocess.json。
