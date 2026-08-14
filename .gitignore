@@ -98,6 +98,7 @@ child/aily-builder*
 !src/app/editors/blockly-editor/components/dev-tool/dev-tool-drag-controller.spec.ts
 !src/app/editors/blockly-editor/components/blockly/plugins/workspace-multiselect/global.spec.ts
 !src/app/editors/blockly-editor/services/blockly-runtime-block-metadata.spec.ts
+!src/app/editors/blockly-editor/components/blockly/generators/micropython/micropython.spec.ts
 !src/app/tools/app-store/app-store.service.spec.ts
 !src/app/tools/aily-chat/tools/editorOperationEvents.spec.ts
 !src/app/tools/aily-chat/tools/blocklyEditorOperationQueue.spec.ts

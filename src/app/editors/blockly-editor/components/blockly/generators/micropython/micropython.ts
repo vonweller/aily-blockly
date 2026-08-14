@@ -30,6 +30,7 @@ const inputTypes = Blockly.inputs.inputTypes;
 
 export class MicroPythonGenerator extends Blockly.CodeGenerator {
   codeDict = {};
+  private cleanupOrder: string[] = [];
 
   /** @param name Name of the language the generator is for. */
   constructor(name = 'MicroPython') {
@@ -120,6 +121,9 @@ export class MicroPythonGenerator extends Blockly.CodeGenerator {
     this.codeDict['loops_begin'] = Object.create(null);
     // 用户自定义loop结束
     this.codeDict['loops_end'] = Object.create(null);
+    // 资源清理代码
+    this.codeDict['cleanups'] = Object.create(null);
+    this.cleanupOrder = [];
 
     this.isInitialized = true;
   }
@@ -144,6 +148,7 @@ export class MicroPythonGenerator extends Blockly.CodeGenerator {
     let loops = [];
     let loops_begin = [];
     let loops_end = [];
+    let cleanups = [];
 
     for (const key in this.codeDict['imports']) {
       imports.push(this.codeDict['imports'][key]);
@@ -172,6 +177,13 @@ export class MicroPythonGenerator extends Blockly.CodeGenerator {
     for (const key in this.codeDict['loops']) {
       loops.push(this.codeDict['loops'][key]);
     }
+    for (let index = this.cleanupOrder.length - 1; index >= 0; index--) {
+      const key = this.cleanupOrder[index];
+      const cleanup = this.codeDict['cleanups'][key];
+      if (cleanup.trim()) {
+        cleanups.push(cleanup);
+      }
+    }
 
     this.isInitialized = false;
 
@@ -192,45 +204,114 @@ export class MicroPythonGenerator extends Blockly.CodeGenerator {
       newcode += `${functions.join('\n\n')}\n\n`;
     }
 
-    // 添加初始化代码
-    if (setups.length > 0 || setups_begin.length > 0 || setups_end.length > 0) {
-      newcode += `# 初始化\n`;
+    const hasSetup = setups.length > 0 || setups_begin.length > 0 || setups_end.length > 0;
+    const hasLoop = loops.length > 0 || loops_begin.length > 0 || loops_end.length > 0 || code.trim();
+
+    const setupCode = () => {
+      let result = `# 初始化\n`;
       if (setups_begin.length > 0) {
-        newcode += `${setups_begin.join('\n')}\n`;
+        result += `${setups_begin.join('\n')}\n`;
       }
       if (setups.length > 0) {
-        newcode += `${setups.join('\n')}\n`;
+        result += `${setups.join('\n')}\n`;
       }
       if (setups_end.length > 0) {
-        newcode += `${setups_end.join('\n')}\n`;
+        result += `${setups_end.join('\n')}\n`;
       }
-      newcode += `\n`;
-    }
+      return result;
+    };
 
-    // 添加主循环
-    if (loops.length > 0 || loops_begin.length > 0 || loops_end.length > 0 || code.trim()) {
-      newcode += `# 主循环\n`;
-      newcode += `try:\n`;
-      newcode += `    while True:\n`;
-      
+    const loopBodyCode = () => {
+      let result = `while True:\n`;
       if (loops_begin.length > 0) {
-        newcode += `        ${loops_begin.join('\n        ')}\n`;
+        result += `    ${loops_begin.join('\n    ')}\n`;
       }
       if (loops.length > 0) {
-        newcode += `        ${loops.join('\n        ')}\n`;
+        result += `    ${loops.join('\n    ')}\n`;
       }
       if (loops_end.length > 0) {
-        newcode += `        ${loops_end.join('\n        ')}\n`;
+        result += `    ${loops_end.join('\n    ')}\n`;
       }
       if (code.trim()) {
-        const userCode = code.split('\n').map(line => line ? '        ' + line : '').join('\n');
-        newcode += userCode;
+        result += code.split('\n').map(line => line ? '    ' + line : '').join('\n');
+        if (!result.endsWith('\n')) {
+          result += '\n';
+        }
       }
-      
+      return result;
+    };
+
+    const indent = (value: string, spaces: number) => {
+      const prefix = ' '.repeat(spaces);
+      return value.split('\n').map(line => line ? prefix + line : '').join('\n');
+    };
+
+    if (cleanups.length > 0) {
+      newcode += `try:\n`;
+      if (hasSetup) {
+        newcode += indent(setupCode(), 4);
+      }
+      if (hasLoop) {
+        newcode += `    # 主循环\n`;
+        newcode += indent(loopBodyCode(), 4);
+      }
+      if (!hasSetup && !hasLoop) {
+        newcode += `    pass\n`;
+      }
       newcode += `except KeyboardInterrupt:\n`;
-      newcode += `    print("程序已停止")`;
-    } else if (code.trim()) {
-      newcode += code;
+      newcode += `    print("程序已停止")\n`;
+      newcode += `finally:\n`;
+      for (const cleanup of cleanups) {
+        newcode += `    try:\n`;
+        const indentedCleanup = indent(cleanup, 8);
+        newcode += indentedCleanup;
+        if (!indentedCleanup.endsWith('\n')) {
+          newcode += `\n`;
+        }
+        newcode += `    except Exception:\n`;
+        newcode += `        pass\n`;
+      }
+    } else {
+      // 添加初始化代码
+      if (hasSetup) {
+        newcode += `# 初始化\n`;
+        if (setups_begin.length > 0) {
+          newcode += `${setups_begin.join('\n')}\n`;
+        }
+        if (setups.length > 0) {
+          newcode += `${setups.join('\n')}\n`;
+        }
+        if (setups_end.length > 0) {
+          newcode += `${setups_end.join('\n')}\n`;
+        }
+        newcode += `\n`;
+      }
+
+      // 添加主循环
+      if (hasLoop) {
+        newcode += `# 主循环\n`;
+        newcode += `try:\n`;
+        newcode += `    while True:\n`;
+
+        if (loops_begin.length > 0) {
+          newcode += `        ${loops_begin.join('\n        ')}\n`;
+        }
+        if (loops.length > 0) {
+          newcode += `        ${loops.join('\n        ')}\n`;
+        }
+        if (loops_end.length > 0) {
+          newcode += `        ${loops_end.join('\n        ')}\n`;
+        }
+        if (code.trim()) {
+          const userCode = code.split('\n').map(line => line ? '        ' + line : '').join('\n');
+          newcode += userCode;
+        }
+
+        newcode += `except KeyboardInterrupt:\n`;
+        newcode += `    print("程序已停止")`;
+      } else if (code.trim()) {
+        newcode += code;
+      }
     }
 
     return newcode;
@@ -432,6 +513,16 @@ export class MicroPythonGenerator extends Blockly.CodeGenerator {
   addLoopEnd(tag, code, overwrite = false) {
     if (this.codeDict['loops_end'][tag] === undefined || overwrite) {
       this.codeDict['loops_end'][tag] = code;
+    }
+  }
+
+  addCleanup(tag, code, overwrite = false) {
+    const key = String(tag);
+    if (this.codeDict['cleanups'][key] === undefined) {
+      this.codeDict['cleanups'][key] = code;
+      this.cleanupOrder.push(key);
+    } else if (overwrite) {
+      this.codeDict['cleanups'][key] = code;
     }
   }
 
