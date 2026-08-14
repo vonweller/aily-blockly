@@ -1,34 +1,30 @@
-# CyberCAM Python Blockly 开发续接检查点
+# CyberCAM Python Blockly 开发交接
 
-生成时间：2026-08-14（Asia/Shanghai）
+更新时间：2026-08-14（Asia/Shanghai）
 
-## 目标与当前结论
+## 交付范围
 
-目标是交付完整 CyberCAM Python 积木能力，包括摄像头、屏幕/图像、AI/KPU、GPIO/PWM/UART、网络、文件、音频、IMU 和系统能力，并让 Aily Blockly 支持 CanMV K230 的 Python 项目生成、运行、终端、远端文件和摄像头预览。
+本次工作为 Aily Blockly 增加完整的 CyberCAM K230 Python 项目链路：
 
-相关代码已提交并推送到 `vonweller` GitHub 仓库。下一台电脑应以 `codex/cybercam-main-integration` 作为主应用的可测试交付分支。`codex/python-runtime-foundation` 是同一功能的分步开发线，保留用于追溯和对照，不要直接叠加合并到最终集成分支。
+- 本地 CyberCAM 板卡项目，不依赖远程板卡列表创建或加载；
+- Blockly 生成并保存 `main.py`；
+- USB 自动发现、连接、运行、停止和终端输入；
+- 设备 `scriptOutput` 终端输出、`scriptState` 运行状态回传，以及独立的本地 backend stderr 诊断通道；
+- CanMV 远程文件和摄像头预览接口；
+- 摄像头、屏幕、OpenCV、KPU、GPIO、PWM、UART、网络、文件、音频、IMU、系统等积木；
+- CyberCAM 的 `canmv-k230` 运行/部署 profile；另有兼容性文档记录核桃派和树莓派的建议模型，但对应 adapter 尚未实现。
 
-## 已推送仓库与精确提交
+## 三个仓库和交付分支
 
-| 范围 | 仓库 | 分支 | 功能实现提交/基线 |
-| --- | --- | --- | --- |
-| 主应用最终集成 | `https://github.com/vonweller/aily-blockly.git` | `codex/cybercam-main-integration` | `7c691649b848c3ec08f83f83d167ce400733d79f`（handoff 文档在后续提交） |
-| 主应用分步开发线 | `https://github.com/vonweller/aily-blockly.git` | `codex/python-runtime-foundation` | `88d6f84787c499fa11733f46d03fd14e93be8667` |
-| CyberCAM 主板包 | `https://github.com/vonweller/aily-blockly-boards.git` | `codex/cybercam-python-board` | `8a4e81b2e73a988170250fabedfe4e74e9e0370c` |
-| CyberCAM 完整积木库 | `https://github.com/vonweller/aily-blockly-libraries.git` | `codex/cybercam-python-blocks` | `694d358289ff79d0e9bb7b5146e469c681ba1c87` |
+| 范围 | 仓库 | 分支 |
+| --- | --- | --- |
+| 桌面应用和运行时 | `https://github.com/vonweller/aily-blockly.git` | `codex/cybercam-main-integration` |
+| CyberCAM 板卡包 | `https://github.com/vonweller/aily-blockly-boards.git` | `codex/cybercam-python-board` |
+| CyberCAM 积木库 | `https://github.com/vonweller/aily-blockly-libraries.git` | `codex/cybercam-python-blocks` |
 
-推送后已用 `git ls-remote --heads origin <branch>` 对账，四个分支的本地 SHA 与远端 SHA 全部一致。
+换机后以远端分支为准，用 `git rev-parse HEAD` 和 `git ls-remote --heads origin <branch>` 核对最新提交。不要叠加旧的 `codex/python-runtime-foundation` 分支。
 
-## 新电脑建议目录与拉取命令
-
-三个仓库保持同级目录：
-
-```text
-Aily/
-├── aily-blockly/
-├── aily-blockly-boards/
-└── aily-blockly-libraries/
-```
+## 新电脑拉取
 
 ```powershell
 New-Item -ItemType Directory -Force Aily | Out-Null
@@ -46,84 +42,168 @@ git clone https://github.com/vonweller/aily-blockly-libraries.git
 git -C aily-blockly-libraries fetch origin codex/cybercam-python-blocks
 git -C aily-blockly-libraries switch --track origin/codex/cybercam-python-blocks
 
-git -C aily-blockly rev-parse HEAD
-git -C aily-blockly-boards rev-parse HEAD
-git -C aily-blockly-libraries rev-parse HEAD
-```
-
-主应用安装依赖：
-
-```powershell
 Set-Location aily-blockly
 npm ci
 ```
 
-## 已完成能力
+## 创建离线 CyberCAM 项目
 
-- CyberCAM 主板包：Python-only 项目模式、`canmv-k230` 运行时元数据、`main.py` 入口、模板、USB 识别信息、板载能力说明与图片授权。
-- CyberCAM 积木库：自包含 Python 基础积木，以及摄像头、显示/图像、二维码/条码/AprilTag、14 类已验证 KPU 模型、AI 结果、GPIO、PWM、UART、Socket、MQTT、HTTP、文件、音频、QMI8658 IMU、CPU 温度与芯片 ID。
-- 主应用：按主板元数据识别 Python 项目，生成并保存 `main.py`，绕开 Arduino 预处理和固件上传；支持运行/停止、终端、远端文件、摄像头帧、后端状态和资源清理。
-- 桌面打包：内置六个平台架构的 CanMV 后端资源及许可文件，运行时按平台解析并延迟启动。
-- 自动化：Electron 单元测试、Angular 专项测试、Electron E2E、打包资源检查和硬件冒烟文档。
-
-详细设计和实施计划不要复制维护，直接查看最终集成分支中的：
-
-- `docs/superpowers/specs/2026-08-11-cybercam-python-blockly-design.md`
-- `docs/superpowers/plans/2026-08-11-cybercam-python-blockly.md`
-- `docs/cybercam-hardware-smoke-test.md`
-- 积木覆盖清单：相邻积木库的 `cybercam/API-COVERAGE.md`
-
-## 最近一次验证证据
-
-在提交 `7c691649` 和上述两个子仓库提交上执行：
-
-- `aily-blockly-boards/cybercam`: `npm test`，主板包契约与合规检查全部通过。
-- `aily-blockly-libraries/cybercam`: `npm test`，25/25 通过。
-- 主应用 Electron/CanMV/Python wiring：26/26 通过。
-- 主应用 Angular Python/Blockly 专项：69/69 通过。
-- `npx tsc -p e2e/tsconfig.json --noEmit`：通过。
-- `npm run test:e2e:fast -- --grep "CyberCAM"`：通过，退出码 0。
-- `npx ng build --configuration development`：通过，退出码 0。
-- `git diff --check`：通过。
-
-测试机没有 Google Chrome；Angular Karma 测试使用 Edge：
+保持三个仓库为同级目录，然后在主仓库运行：
 
 ```powershell
-$env:CHROME_BIN='C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
-npx ng test --watch=false --browsers=ChromeHeadless `
-  --include 'src/app/services/python-runtime/*.spec.ts' `
-  --include 'src/app/editors/blockly-editor/**/*.spec.ts'
+npm run create:cybercam-project
 ```
 
-## 下一步优先事项
-
-1. 用真实 CyberCAM 按 `docs/cybercam-hardware-smoke-test.md` 完成 USB 检测、连接、运行/停止、终端、文件、预览与断线恢复测试。
-2. 在实际固件上分别验证摄像头、屏幕、KPU、GPIO/PWM/UART、MQTT/HTTP、音频和 IMU 生成代码；记录固件/API 差异，不要凭猜测扩展 API。
-3. 若要合入默认分支，先同步目标仓库最新默认分支并处理冲突，再在合并结果上重跑上述验证。当前只推送了功能分支，没有创建 PR。
-4. 如果需要发版，确认主板包 `1.1.0` 与积木库 `1.0.0` 的发布流程和仓库 CI，再发布包版本。
-
-## 已知残余风险与注意事项
-
-- 尚未在真实 CyberCAM 硬件上执行测试；自动化使用 Fake CanMV backend。
-- 主应用最终集成分支和 `codex/python-runtime-foundation` 有重叠实现，后续开发只选一条线；默认选最终集成分支。
-- 本机没有 `gh` CLI，因此未自动创建 PR。
-- 原积木库工作区存在未提交且与 CyberCAM 无关的 `.baoyu-skills/baoyu-translate/EXTEND.md` 删除，以及本地 `.learnings/`；它们没有被提交或推送。新电脑不需要复制这些状态。
-- 最终独立审查 Agent 未在超时前返回；已做本地聚焦复核，未发现阻断项。真实硬件测试仍是最终质量门槛。
-
-## Suggested skills
-
-新会话建议依次调用：
-
-- `using-superpowers`：先确定适用流程。
-- `executing-plans`：继续执行现有 CyberCAM 计划和硬件检查点。
-- `systematic-debugging`：处理真实设备、串口、后端或生成代码失败。
-- `test-driven-development`：修复任何硬件/API 差异时先补回归测试。
-- `verification-before-completion`：每次声称修复或可发布前重跑完整验证。
-- `requesting-code-review`：准备合入默认分支或发版前做最终审查。
-- `finishing-a-development-branch`：验证通过后选择 PR、合并或保留分支。
-
-## 给下一位 Agent 的启动提示
+默认创建：
 
 ```text
-请先读取这份 handoff，然后在三个同级仓库中核对四个远端 SHA。主应用以 codex/cybercam-main-integration 为唯一继续开发基线，不要叠加合并 codex/python-runtime-foundation。先重跑自动化，再按 docs/cybercam-hardware-smoke-test.md 进行真实 CyberCAM 验证；发现问题时补回归测试并提交到对应 codex/* 分支。
+%USERPROFILE%\Documents\aily-project\CyberCAM_Starter
 ```
+
+项目内置：
+
+```text
+package.json
+project.abi
+node_modules/@aily-project/board-cybercam
+node_modules/@aily-project/lib-cybercam
+```
+
+因此打开现有项目时不依赖远程 `boards.json`，也不需要在线安装板卡包或积木库。创建器会拒绝覆盖已有同名目录。创建其他项目：
+
+```powershell
+node scripts/create-local-cybercam-project.mjs `
+  --target "$env:USERPROFILE\Documents\aily-project\CyberCAM_Test_2" `
+  --name "CyberCAM Test 2"
+```
+
+## 运行和测试
+
+启动桌面开发版：
+
+```powershell
+npm run electron
+```
+
+打开 `%USERPROFILE%\Documents\aily-project\CyberCAM_Starter`。进入项目后 Python Device 面板会自动扫描设备；正常情况下无需先点击刷新。
+
+安全的真实 CyberCAM 冒烟：
+
+```powershell
+npm run smoke:cybercam-hardware -- --port COM9
+```
+
+自动化验证：
+
+```powershell
+node --test electron/test/canmv-backend.test.js electron/test/canmv-ipc.test.js electron/test/python-runtime-bootstrap.test.js
+node --test electron/test/canmv-packaged-resources.test.js
+npm run test:create-cybercam-project
+npm run test:cybercam-hardware-smoke
+npm run test:e2e:fast -- --grep "CyberCAM"
+npx tsc --noEmit -p tsconfig.spec.json
+npx tsc -p e2e/tsconfig.json --noEmit
+git diff --check
+```
+
+Karma 如果不能自动找到 Chrome，可使用 Playwright Chromium：
+
+```powershell
+$env:CHROME_BIN="$env:LOCALAPPDATA\ms-playwright\chromium-1200\chrome-win64\chrome.exe"
+npx ng test --watch=false --browsers=ChromeHeadless --progress=false `
+  --include src/app/services/python-runtime/python-mode.spec.ts `
+  --include src/app/editors/blockly-editor/components/python-runtime-panel/python-runtime-panel.component.spec.ts
+```
+
+板卡仓库和积木库没有可用的顶层统一 `npm test`。CyberCAM 包的实际验证命令是：
+
+```powershell
+# aily-blockly-boards
+npm test --prefix cybercam
+node .scripts/validate-boards-compliance.js cybercam
+
+# aily-blockly-libraries
+npm test --prefix cybercam
+node .scripts_git_action/validate-library-compliance.js cybercam
+```
+
+## 2026-08-14 最终验证结果
+
+以下结果均为提交前重新执行所得：
+
+| 范围 | 结果 |
+| --- | --- |
+| Electron runtime、IPC、协议、资源和 bootstrap | 27/27 通过 |
+| 离线 CyberCAM 项目创建器 | 20/20 通过 |
+| 安全硬件冒烟脚本单元测试 | 7/7 通过 |
+| Python runtime Angular spec | 42/42 通过 |
+| 主应用 TypeScript 编译 | 通过 |
+| E2E TypeScript 编译 | 通过 |
+| CyberCAM Electron E2E | 1/1 通过 |
+| CyberCAM 板卡包契约和规范 | 通过 |
+| CyberCAM 积木库 | 25/25 通过 |
+| CyberCAM 积木通用规范检查 | 命令成功；只有建议级提示 |
+
+Electron E2E 使用协议兼容的假 CanMV backend，明确断言自动扫描、连接、远程目录、运行输出、预览启停、远程文件读取、停止和断开。它不验证终端尺寸，也不证明应用退出后真实 backend PID 或物理 USB 句柄已经释放；顽固 backend 进程终止由独立 Electron Node 测试覆盖，真实设备基础能力由下一节的 COM9 安全冒烟单独记录。
+
+## 本轮并发和清理加固
+
+- CanMV backend 的 stdout、stderr、error 和 exit 都绑定到创建它们的 child；旧 child 的晚到事件不能清理或破坏新 backend。
+- 请求超时会使当前 backend 失效并终止，下一次请求创建全新 backend。
+- Python Device 面板为每次 runtime activation 分配代际 ID；旧初始化或扫描不能覆盖新 runtime 的设备、错误或 busy 状态。
+- 硬件冒烟在等待运行请求时发生 evidence 超时，也会执行 `stopScript`、`disconnectBoard` 和 backend 关闭，且不会产生未处理 Promise rejection。
+- 硬件冒烟只有在脚本最终报告 `running: false` 时才会输出 `status: "passed"`。
+
+## 真实 CyberCAM K230 证据
+
+2026-08-14 已在真实设备完成安全基础硬件冒烟：
+
+```text
+端口: COM9
+名称: CyberCAM K230
+VID/PID: 1209:abd1
+序列号: 53EB63EA_ECF5223E
+固件: v1.1.0
+```
+
+验证链路：
+
+```text
+detectBoards
+connectBoard
+runScript
+scriptOutput
+scriptState
+scriptRunning
+io.listDir("/")
+getFirmwareCommit
+stopScript
+disconnectBoard
+```
+
+运行脚本只打印唯一标记，设备回传：
+
+```text
+# python3 -u /vscode-current-file.py
+
+AILY_CYBERCAM_SMOKE_9552CCF249C94E32B1BB303C8545C4A2
+```
+
+脚本状态依次包含 `started`、`finished`，最终 `scriptRunning.running` 为 `false`。根目录读取成功并包含 `/boot`、`/data`、`/home`、`/root`、`/usr`、`/etc` 等。该测试不写文件、不操作 GPIO、不启动摄像头或音频。
+
+如果命令报告 `Serial port busy`，先检查是否已有 Aily Blockly 的 `canmv-backend` 连接了同一串口。释放旧连接后再运行；不要同时让桌面 UI、硬件冒烟和其他串口工具占用 COM9。
+
+## 平台能力边界
+
+- CyberCAM K230：`canmv-k230` adapter 已实现并完成真实设备基础冒烟。
+- 核桃派 Linux：官方同样使用 `/boot/start/*.sh` 自启动，但串口/SSH shell adapter 尚未实现，也未进行实机验证。
+- 树莓派 Linux：应使用 SSH/SFTP、`python3 -u`、进程组停止和 systemd；adapter 尚未实现，也未进行实机验证。
+- GPIO、摄像头、显示、音频、IMU、网络和 KPU 仍需按照 `docs/cybercam-hardware-smoke-test.md` 做非破坏性专项验收。
+
+详细运行模型见 `docs/python-board-runtime-compatibility.md`。
+
+## 注意事项
+
+- 积木库工作区可能存在与 CyberCAM 无关的 `.baoyu-skills/baoyu-translate/EXTEND.md` 删除状态；不要提交、恢复或覆盖它。
+- 本地项目中的 `.temp`、`node_modules` 和 `project.abi.pre-project-data.bak` 都有用途，不应作为“多余文件夹”删除。
+- 只在三个分支均完成验证和推送后，才把本交接文档视为最终交付状态。
