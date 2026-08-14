@@ -60,6 +60,7 @@ $footer-inner-height: 28px;
   display: grid;
   width: $footer-inner-height;
   height: $footer-inner-height;
+  margin-right: 4px;
   padding: 0;
   place-items: center;
   color: var(--aily-text-secondary);
