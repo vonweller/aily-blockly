@@ -29,6 +29,7 @@ export class RemoteFileTreeComponent implements OnInit, OnChanges {
   newFolderName = '';
   renameName = '';
   renaming = false;
+  private requestGeneration = 0;
 
   constructor(
     private readonly modal: NzModalService,
@@ -42,45 +43,60 @@ export class RemoteFileTreeComponent implements OnInit, OnChanges {
   ngOnChanges(changes: SimpleChanges): void {
     if (changes['enabled']?.currentValue === true && changes['enabled'].previousValue !== true) {
       void this.refresh();
+    } else if (changes['enabled']?.currentValue === false) {
+      this.clearDeviceState();
     }
   }
 
   async refresh(): Promise<void> {
     if (!this.enabled) return;
+    const generation = this.requestGeneration;
     this.error = '';
     this.selectedPath = '';
     this.children.clear();
     this.loading.add(this.rootPath);
     try {
       const response = await this.runtime.listRemoteDirectory(this.rootPath);
+      if (!this.isCurrentRequest(generation)) return;
       const entries = normalizeRemoteDirectory(this.rootPath, response);
       this.children.set(this.rootPath, entries);
       this.nodes = entries;
       this.expanded.clear();
     } catch (error) {
-      this.error = this.errorText(error);
+      if (this.isCurrentRequest(generation)) {
+        this.error = this.errorText(error);
+      }
     } finally {
-      this.loading.delete(this.rootPath);
+      if (this.isCurrentRequest(generation)) {
+        this.loading.delete(this.rootPath);
+      }
     }
   }
 
   async toggle(node: RemoteDirectoryNode): Promise<void> {
-    if (node.type !== 'directory') return;
+    if (!this.enabled || node.type !== 'directory') return;
     if (this.expanded.has(node.path)) {
       this.expanded.delete(node.path);
       return;
     }
     this.expanded.add(node.path);
     if (this.children.has(node.path)) return;
+    const generation = this.requestGeneration;
     this.loading.add(node.path);
     try {
       const response = await this.runtime.listRemoteDirectory(node.path);
-      this.children.set(node.path, normalizeRemoteDirectory(node.path, response));
+      if (this.isCurrentRequest(generation)) {
+        this.children.set(node.path, normalizeRemoteDirectory(node.path, response));
+      }
     } catch (error) {
-      this.expanded.delete(node.path);
-      this.error = this.errorText(error);
+      if (this.isCurrentRequest(generation)) {
+        this.expanded.delete(node.path);
+        this.error = this.errorText(error);
+      }
     } finally {
-      this.loading.delete(node.path);
+      if (this.isCurrentRequest(generation)) {
+        this.loading.delete(node.path);
+      }
     }
   }
 
@@ -89,11 +105,13 @@ export class RemoteFileTreeComponent implements OnInit, OnChanges {
   }
 
   select(node: RemoteDirectoryNode): void {
+    if (!this.enabled) return;
     this.selectedPath = node.path;
     if (node.type === 'file') this.fileOpen.emit(node);
   }
 
   async createDirectory(): Promise<void> {
+    if (!this.enabled) return;
     const name = this.newFolderName.trim();
     if (!name) return;
     if (!/^[^\\/]+$/.test(name) || name === '.' || name === '..') {
@@ -112,6 +130,7 @@ export class RemoteFileTreeComponent implements OnInit, OnChanges {
   }
 
   deleteSelected(): void {
+    if (!this.enabled) return;
     const node = this.findNode(this.selectedPath);
     if (!node) return;
     this.modal.confirm({
@@ -120,6 +139,7 @@ export class RemoteFileTreeComponent implements OnInit, OnChanges {
       nzOkText: 'Delete',
       nzCancelText: 'Cancel',
       nzOnOk: async () => {
+        if (!this.enabled) return;
         try {
           if (node.type === 'directory') await this.runtime.removeRemoteDirectory(node.path);
           else await this.runtime.deleteRemoteFile(node.path);
@@ -133,6 +153,7 @@ export class RemoteFileTreeComponent implements OnInit, OnChanges {
   }
 
   beginRename(): void {
+    if (!this.enabled) return;
     const node = this.findNode(this.selectedPath);
     if (!node) return;
     this.renameName = node.name;
@@ -140,6 +161,7 @@ export class RemoteFileTreeComponent implements OnInit, OnChanges {
   }
 
   async renameSelected(): Promise<void> {
+    if (!this.enabled) return;
     const node = this.findNode(this.selectedPath);
     const name = this.renameName.trim();
     if (!node || !name) return;
@@ -158,6 +180,7 @@ export class RemoteFileTreeComponent implements OnInit, OnChanges {
   }
 
   async executeSelected(): Promise<void> {
+    if (!this.enabled) return;
     const node = this.findNode(this.selectedPath);
     if (!node || node.type !== 'file') return;
     try {
@@ -177,7 +200,10 @@ export class RemoteFileTreeComponent implements OnInit, OnChanges {
   }
 
   private async reloadDirectory(path: string): Promise<void> {
+    if (!this.enabled) return;
+    const generation = this.requestGeneration;
     const response = await this.runtime.listRemoteDirectory(path);
+    if (!this.isCurrentRequest(generation)) return;
     this.children.set(path, normalizeRemoteDirectory(path, response));
     if (path === this.rootPath) this.nodes = this.children.get(path) || [];
   }
@@ -203,5 +229,22 @@ export class RemoteFileTreeComponent implements OnInit, OnChanges {
 
   private errorText(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
+  }
+
+  private clearDeviceState(): void {
+    this.requestGeneration += 1;
+    this.nodes = [];
+    this.children.clear();
+    this.expanded.clear();
+    this.loading.clear();
+    this.selectedPath = '';
+    this.error = '';
+    this.newFolderName = '';
+    this.renameName = '';
+    this.renaming = false;
+  }
+
+  private isCurrentRequest(generation: number): boolean {
+    return this.enabled && generation === this.requestGeneration;
   }
 }

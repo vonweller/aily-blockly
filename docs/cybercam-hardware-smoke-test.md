@@ -6,13 +6,13 @@ Record the app version, host OS/architecture, CyberCAM firmware commit, camera m
 
 ## Automated coverage (no hardware)
 
-The automated E2E test uses a protocol-compatible fake backend and a self-contained Python project. It verifies:
+The automated E2E test uses a protocol-compatible fake backend and a self-contained Python project. Its explicit assertions cover:
 
 - canonical `devmode: "python"` and board runtime metadata (`canmv-k230`, `main.py`);
 - Blockly generation and persistence of `main.py`;
-- backend detect, connect, run, terminal output, preview frame, remote file list/read, stop, and disconnect;
-- Electron shutdown disposal of the backend process;
-- packaged-resource configuration and resolution for Windows x64/arm64, macOS x64/arm64, Linux x64/arm64, and `LICENSE.canmv-backend.txt`.
+- automatic backend discovery, connect, remote file listing, run output, preview start/stop, remote file read, stop, and disconnect.
+
+Separate Electron Node tests cover backend process shutdown, including a helper process that ignores stdin EOF and `SIGTERM`, and packaged-resource configuration/resolution for Windows x64/arm64, macOS x64/arm64, Linux x64/arm64, and `LICENSE.canmv-backend.txt`. The fake-backend E2E itself does not prove that a real backend PID or physical USB handle has exited during application shutdown.
 
 Run:
 
@@ -24,12 +24,51 @@ npx tsc -p e2e/tsconfig.json --noEmit
 
 The automated suite does not prove USB drivers, electrical IO, camera/display quality, model accuracy, Wi-Fi services, audio quality, IMU calibration, or cleanup on the physical board. Complete every hardware-only section below.
 
+## Safe reusable K230 hardware smoke
+
+The repository includes a non-destructive command-line smoke test for a real CyberCAM K230:
+
+```powershell
+npm run smoke:cybercam-hardware
+```
+
+Without arguments, it detects boards and selects the first device identified as CyberCAM. To select a detected port explicitly:
+
+```powershell
+npm run smoke:cybercam-hardware -- --port COM9
+```
+
+The command performs this fixed sequence:
+
+1. `detectBoards`;
+2. `connectBoard`;
+3. `runScript` with Python containing only `print("<unique marker>")`;
+4. wait for matching `scriptOutput` and a terminal `scriptState`;
+5. `scriptRunning`;
+6. `io.listDir` for `/`;
+7. `getFirmwareCommit`;
+8. `stopScript`;
+9. `disconnectBoard`;
+10. close the local CanMV backend process.
+
+The smoke script does not access GPIO, start a camera or preview, or call any remote file write, rename, delete, directory creation, or directory removal API. Its Python source contains no device-file operations. If a failure occurs after connection, cleanup still attempts Stop and Disconnect before closing the backend.
+
+A successful run prints one JSON object containing `status: "passed"`, the selected board and connection metadata, the unique marker and captured output, observed script states, running-state response, root-directory listing response, and firmware response. A failure prints an error to stderr and exits non-zero.
+
+Run the deterministic tests without hardware:
+
+```powershell
+npm run test:cybercam-hardware-smoke
+```
+
+The test uses an event-compatible fake backend and asserts the exact safe request order, default and explicit port selection, script contents, output/state evidence, and cleanup after failure.
+
 ## Hardware-only setup and baseline
 
 1. Power the CyberCAM off. Inspect camera/display flex cables, antenna, speaker/microphone, and expansion wiring. Remove external loads from GPIO52 (LED), GPIO21 (KEY), GPIO46 (fill light/PWM2), and GPIO47 (buzzer/PWM3).
 2. Start the packaged Aily Blockly build. Create a Blockly project with board **CyberCAM** and verify the only product mode is **Python**. Open it and verify the Python Device panel is visible.
-3. Connect USB. Click **Detect Python devices** and record the detected port, VID/PID, and board name. Connect and confirm the panel says **Connected** and the terminal accepts input.
-4. Click **Disconnect**, unplug USB for five seconds, reconnect, detect again, and reconnect. Repeat while a preview is stopped and while a script is stopped. Pass if the same board returns without restarting the app and no stale port remains selected.
+3. Connect USB and wait for automatic discovery. Record the detected port, VID/PID, and board name without clicking **Detect Python devices**. Connect and confirm the panel says **Connected** and the terminal accepts input. Use the Detect button only as a manual retry fallback.
+4. Click **Disconnect**, unplug USB for five seconds, reconnect, wait for automatic rediscovery, and reconnect. Repeat while a preview is stopped and while a script is stopped. Pass if the same board returns without restarting the app and no stale port remains selected.
 5. Unplug USB while connected. Pass if controls return to disconnected state, Run/Preview/files become unavailable, the Blockly workspace remains intact, and reconnect succeeds after replugging.
 
 ## LED, key, PWM, buzzer, and UART2
@@ -105,4 +144,24 @@ Pass the family only if model initialization errors are surfaced without crashin
 4. Start preview and a long script, then quit Aily Blockly normally. Verify in the OS process list that `canmv-backend` exits, serial/USB handles close, and no app-owned Python/backend process remains. Reopen the app and reconnect without power-cycling the board.
 5. Repeat normal quit while disconnected and after a physical USB unplug. Pass if shutdown does not hang, report an unhandled rejection, leave a locked `/data` file, or require force termination.
 
-The hardware smoke test is complete only when all applicable checks pass or each failure has a recorded issue containing logs, generated `main.py`, firmware/model versions, exact reproduction steps, and captured terminal/frame evidence.
+## Verified real-device baseline
+
+On 2026-08-14, the safe reusable smoke completed against a real CyberCAM K230 on `COM9`:
+
+```text
+Name: CyberCAM K230
+VID/PID: 1209:abd1
+Serial: 53EB63EA_ECF5223E
+Firmware: v1.1.0
+Marker: AILY_CYBERCAM_OK_20260814
+```
+
+The backend detected and connected the board, ran the print-only script, returned `scriptOutput` and terminal `scriptState` events, reported the running state, listed `/`, returned the firmware version, stopped, and disconnected. The root listing included the expected `/boot`, `/data`, `/home`, `/root`, `/usr`, and `/etc` locations.
+
+The final pre-delivery rerun on the same date returned marker
+`AILY_CYBERCAM_SMOKE_6BB65392133E43F4AF362C209F199655`, observed
+`started` and `finished`, and confirmed `scriptRunning.running` was `false`.
+
+This proves the safe USB/runtime baseline only. GPIO, camera, display, KPU, network, audio, and IMU remain subject to the non-destructive hardware sections above.
+
+The full hardware acceptance is complete only when all applicable checks pass or each failure has a recorded issue containing logs, generated `main.py`, firmware/model versions, exact reproduction steps, and captured terminal/frame evidence.

@@ -13,6 +13,7 @@ string? logPath = Environment.GetEnvironmentVariable("AILY_FAKE_CANMV_LOG");
 using StreamWriter? log = string.IsNullOrWhiteSpace(logPath) ? null : new StreamWriter(logPath, append: true) { AutoFlush = true };
 log?.WriteLine($"start pid={Environment.ProcessId}");
 var header = new byte[HeaderSize];
+var detectBoardRequests = 0;
 
 while (ReadExact(input, header))
 {
@@ -29,7 +30,18 @@ while (ReadExact(input, header))
     JsonElement parameters = root.GetProperty("params");
     int sourceLength = method == "runScript" ? parameters.GetProperty("script").GetString()?.Length ?? 0 : 0;
     log?.WriteLine($"receive id={id} method={method} bytes={length} sourceChars={sourceLength}");
-    object result = ResultFor(method, parameters);
+    object result;
+    if (method == "detectBoards")
+    {
+        detectBoardRequests++;
+        result = detectBoardRequests == 1
+            ? new { boards = Array.Empty<object>() }
+            : new { boards = new[] { new { port = "COM-CYBERCAM", name = "CyberCAM E2E", vid = "1209", pid = "abd1" } } };
+    }
+    else
+    {
+        result = ResultFor(method, parameters);
+    }
     WriteJson(output, Response, new { id, result });
     log?.WriteLine($"respond id={id} method={method}");
     if (method == "startPreview") WritePreview(output);
@@ -38,7 +50,6 @@ log?.WriteLine("stdin-eof");
 
 static object ResultFor(string method, JsonElement parameters) => method switch
 {
-    "detectBoards" => new { boards = new[] { new { port = "COM-CYBERCAM", name = "CyberCAM E2E", vid = "1209", pid = "abd1" } } },
     "connectBoard" => new { port = parameters.GetProperty("port").GetString(), board = "CyberCAM E2E", firmware = "fake" },
     "runScript" => new { status = "ok", output = "fake CyberCAM output\n" },
     "scriptRunning" => new { running = true },

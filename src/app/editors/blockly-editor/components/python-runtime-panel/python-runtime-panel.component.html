@@ -7,7 +7,7 @@
           <span class="status-dot"></span>{{ statusText(state) }}
         </div>
       </div>
-      <button type="button" class="icon-button" aria-label="Detect Python devices" (click)="detect()" [disabled]="busy || !state.runtimeAvailable">
+      <button type="button" class="icon-button" aria-label="Detect Python devices" (click)="detect()" [disabled]="busy || !state.runtimeAvailable || state.connectionState === 'connected'">
         <span nz-icon nzType="search"></span>
       </button>
     </header>
@@ -51,9 +51,9 @@
         <div class="remote-editor">
           <div class="remote-editor__header">
             <span>{{ openedFilePath }}</span>
-            <button type="button" (click)="saveRemoteFile()" [disabled]="busy">Save</button>
+            <button type="button" (click)="saveRemoteFile()" [disabled]="busy || state.connectionState !== 'connected'">Save</button>
           </div>
-          <textarea [(ngModel)]="openedFileText" spellcheck="false" aria-label="Remote Python file"></textarea>
+          <textarea [(ngModel)]="openedFileText" spellcheck="false" aria-label="Remote Python file" [disabled]="state.connectionState !== 'connected'"></textarea>
         </div>
       }
     </section>

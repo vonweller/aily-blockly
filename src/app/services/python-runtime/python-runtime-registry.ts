@@ -25,6 +25,7 @@ export class PythonRuntimeRegistry {
     if (!adapter) {
       throw new Error(`Unsupported Python runtime adapter: ${metadata.adapter}`);
     }
+    adapter.validateMetadata?.(metadata);
     return adapter;
   }
 

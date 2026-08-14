@@ -98,6 +98,29 @@ test('registers explicit runtime commands and maps them to backend methods', asy
   ]);
 });
 
+test('preserves all detected board identity fields returned by the backend', async () => {
+  const { backend, invoke } = createHarness();
+  const detectedBoards = {
+    boards: [{
+      port: 'COM9',
+      name: 'CyberCAM K230',
+      vid: '1209',
+      pid: 'abd1',
+      serialNumber: '53EB63EA_ECF5223E',
+      description: 'USB Serial Device (COM9)',
+    }],
+  };
+  backend.request = async (method, params) => {
+    backend.calls.push({ method, params });
+    return detectedBoards;
+  };
+
+  const result = await invoke(PYTHON_RUNTIME_CHANNELS.detectBoards);
+
+  assert.deepEqual(result, detectedBoards);
+  assert.deepEqual(backend.calls, [{ method: 'detectBoards', params: {} }]);
+});
+
 test('rejects invalid renderer input before it reaches the native backend', async () => {
   const { backend, invoke } = createHarness();
 

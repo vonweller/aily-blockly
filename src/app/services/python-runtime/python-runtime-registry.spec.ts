@@ -10,10 +10,12 @@ describe('PythonRuntimeRegistry', () => {
   };
 
   it('resolves an adapter from board runtime metadata', () => {
-    const canmvAdapter = { id: 'canmv-k230' } as PythonRuntimeAdapter;
+    const validateMetadata = jasmine.createSpy('validateMetadata');
+    const canmvAdapter = { id: 'canmv-k230', validateMetadata } as unknown as PythonRuntimeAdapter;
     const registry = new PythonRuntimeRegistry([canmvAdapter]);
 
     expect(registry.resolve(metadata)).toBe(canmvAdapter);
+    expect(validateMetadata).toHaveBeenCalledOnceWith(metadata);
   });
 
   it('rejects unsupported or malformed adapter metadata', () => {

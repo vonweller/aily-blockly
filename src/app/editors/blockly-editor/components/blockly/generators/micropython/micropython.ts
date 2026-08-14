@@ -1,4 +1,8 @@
 import * as Blockly from 'blockly';
+import {
+  PythonGenerator as BlocklyPythonGenerator,
+  pythonGenerator,
+} from 'blockly/python';
 
 export enum Order {
   ATOMIC = 0,           // 0 literals, identifiers
@@ -28,7 +32,7 @@ export enum Order {
 const stringUtils = Blockly.utils.string;
 const inputTypes = Blockly.inputs.inputTypes;
 
-export class MicroPythonGenerator extends Blockly.CodeGenerator {
+export class MicroPythonGenerator extends BlocklyPythonGenerator {
   codeDict = {};
   private cleanupOrder: string[] = [];
 
@@ -36,6 +40,7 @@ export class MicroPythonGenerator extends Blockly.CodeGenerator {
   constructor(name = 'MicroPython') {
     super(name);
     this.isInitialized = false;
+    Object.assign(this.forBlock, pythonGenerator.forBlock);
 
     for (const key in Order) {
       const value = Order[key];
@@ -56,7 +61,8 @@ export class MicroPythonGenerator extends Blockly.CodeGenerator {
       'input,int,isinstance,issubclass,iter,len,list,locals,map,max,' +
       'memoryview,min,next,object,oct,open,ord,pow,print,property,range,' +
       'repr,reversed,round,set,setattr,slice,sorted,staticmethod,str,sum,' +
-      'super,tuple,type,vars,zip',
+      'super,tuple,type,vars,zip,' +
+      'math,random,Number',
     );
   }
 
@@ -135,8 +141,7 @@ export class MicroPythonGenerator extends Blockly.CodeGenerator {
    * @returns Completed code.
    */
   override finish(code: string): string {
-    super.finish(code);
-    this.nameDB_!.reset();
+    const standardPreamble = super.finish('').trim();
 
     // 提取代码
     let imports = [];
@@ -192,6 +197,11 @@ export class MicroPythonGenerator extends Blockly.CodeGenerator {
     // 添加导入模块
     if (imports.length > 0) {
       newcode += `${imports.join('\n')}\n\n`;
+    }
+
+    // 添加标准 Blockly Python 生成器收集的导入、变量和辅助函数
+    if (standardPreamble) {
+      newcode += `${standardPreamble}\n\n`;
     }
 
     // 添加变量定义
@@ -335,7 +345,7 @@ export class MicroPythonGenerator extends Blockly.CodeGenerator {
    * @param string Text to encode.
    * @returns Python string.
    */
-  quote_(string: string): string {
+  override quote_(string: string): string {
     string = string
       .replace(/\\/g, '\\\\')
       .replace(/\n/g, '\\n')
@@ -351,7 +361,7 @@ export class MicroPythonGenerator extends Blockly.CodeGenerator {
    * @param string Text to encode.
    * @returns Python string.
    */
-  multiline_quote_(string: string): string {
+  override multiline_quote_(string: string): string {
     const lines = string.split(/\n/g).map(this.quote_);
     return lines.join(" + '\\n' +\\\n");
   }

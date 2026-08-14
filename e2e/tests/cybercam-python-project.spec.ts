@@ -9,6 +9,10 @@ import {
   test,
 } from '../fixtures/electron-app';
 
+const {
+  cleanupTemporaryProject,
+} = require('../../scripts/e2e-temp-project-cleanup');
+
 const PROJECT_FIXTURE = path.join(ROOT, 'e2e', 'fixtures', 'projects', 'cybercam-python');
 
 test.describe('CyberCAM Python project', () => {
@@ -19,17 +23,17 @@ test.describe('CyberCAM Python project', () => {
     const projectPath = path.join(tempRoot, 'project');
     await cp(PROJECT_FIXTURE, projectPath, { recursive: true });
     const win = await getMainWindow(electronApp);
+    let primaryError: unknown;
     try {
       await openBlocklyProject(win, projectPath);
 
       const panel = win.locator('app-python-runtime-panel');
       await expect(panel).toBeVisible({ timeout: 60_000 });
-      await expect(panel.getByText('Python Device')).toBeVisible();
+      await expect(panel.getByText('Python Device', { exact: true })).toBeVisible();
       await expect.poll(async () => readFile(path.join(projectPath, 'main.py'), 'utf8').catch(() => ''))
         .toContain('cybercam-e2e');
 
-      await panel.getByRole('button', { name: 'Detect Python devices' }).click();
-      await expect(panel.getByText('COM-CYBERCAM / CyberCAM E2E')).toBeVisible();
+      await expect(panel.getByText('COM-CYBERCAM / CyberCAM E2E')).toBeVisible({ timeout: 10_000 });
       await panel.getByRole('button', { name: 'Connect', exact: true }).click();
       await expect(panel.getByText('Connected', { exact: true })).toBeVisible();
       await expect(panel.getByRole('treeitem', { name: 'main.py' })).toBeVisible();
@@ -50,8 +54,19 @@ test.describe('CyberCAM Python project', () => {
       await expect(panel.getByRole('button', { name: 'Run', exact: true })).toBeVisible();
       await panel.getByRole('button', { name: 'Disconnect', exact: true }).click();
       await expect(panel.getByText('Ready to connect')).toBeVisible();
+    } catch (error) {
+      primaryError = error;
+      throw error;
     } finally {
-      await rm(tempRoot, { recursive: true, force: true });
+      await cleanupTemporaryProject({
+        target: tempRoot,
+        primaryError,
+        leaveProject: async () => {
+          await win.evaluate(() => { window.location.hash = '#/main/guide'; });
+          await win.waitForTimeout(100);
+        },
+        removeDirectory: (target: string) => rm(target, { recursive: true, force: true }),
+      });
     }
   });
 });

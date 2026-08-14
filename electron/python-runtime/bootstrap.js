@@ -35,6 +35,7 @@ function createPythonRuntimeRegistration(options) {
     executable,
     unavailableReason,
     cwd: executable ? path.dirname(executable) : undefined,
+    platform: options.platform || process.platform,
   });
   const registration = registerPythonRuntimeIpc({
     ipcMain: options.ipcMain,

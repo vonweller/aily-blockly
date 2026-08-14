@@ -190,6 +190,10 @@
     "test:e2e:simulator-debug": "node ./scripts/run-simulator-debug-e2e.mjs",
     "test:e2e:simulator-subapp-mainline": "node ./scripts/run-simulator-subapp-mainline-e2e.mjs",
     "validate:e2e:simulator-debug": "node ./scripts/validate-simulator-debug-e2e-report.mjs",
+    "create:cybercam-project": "node scripts/create-local-cybercam-project.mjs",
+    "test:create-cybercam-project": "node --test scripts/create-local-cybercam-project.test.mjs",
+    "smoke:cybercam-hardware": "node scripts/run-cybercam-hardware-smoke.mjs",
+    "test:cybercam-hardware-smoke": "node --test scripts/run-cybercam-hardware-smoke.test.mjs",
     "setup:external-tools": "node scripts/install-external-tools.js",
     "setup:local-builder": "node scripts/use-local-builder.mjs"
   },
