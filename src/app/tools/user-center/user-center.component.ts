@@ -5,7 +5,6 @@ import { CommonModule } from '@angular/common';
 import { AuthService, LoginRequest, RegisterRequest } from '../../services/auth.service';
 import { Subject, takeUntil } from 'rxjs';
 import { ElectronService } from '../../services/electron.service';
-import { NzModalService } from 'ng-zorro-antd/modal';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { NzButtonModule } from 'ng-zorro-antd/button';
 import { NzProgressModule } from 'ng-zorro-antd/progress';
@@ -19,8 +18,8 @@ import {
   AuthQuotaStateService,
   type AuthQuotaInfo,
 } from '../aily-chat/services/auth-quota-state.service';
-import { APP_LIST, getChildToolConfig } from '../../configs/tool.config';
-import { MainUiAutomationService } from '../../services/main-ui-automation.service';
+import { ProtectedToolCloseError } from '../../services/auth-required-tool-close';
+import { ChildAppSafetyService } from '../../services/child-app-safety.service';
 
 @Component({
   selector: 'app-user-center',
@@ -49,8 +48,7 @@ export class UserCenterComponent {
   private authQuotaStateService = inject(AuthQuotaStateService);
   private electronService = inject(ElectronService);
   private translate = inject(TranslateService);
-  private modal = inject(NzModalService);
-  private mainUiAutomation = inject(MainUiAutomationService);
+  private childAppSafety = inject(ChildAppSafetyService);
 
   userInfo = {
     username: '',
@@ -224,7 +222,13 @@ export class UserCenterComponent {
 
     const openProtectedToolIds = this.uiService.getOpenAuthRequiredToolIds()
       .filter((toolId) => toolId !== 'user-center');
-    const confirmed = await this.confirmLogout(openProtectedToolIds);
+    this.logoutConfirmOpen = true;
+    let confirmed = false;
+    try {
+      confirmed = await this.childAppSafety.confirmInterruption('logout', openProtectedToolIds);
+    } finally {
+      this.logoutConfirmOpen = false;
+    }
     if (!confirmed) {
       return;
     }
@@ -249,76 +253,8 @@ export class UserCenterComponent {
     }
   }
 
-  private confirmLogout(openProtectedToolIds: string[]): Promise<boolean> {
-    const hasOtherProtectedTools = openProtectedToolIds.length > 0;
-    const appNames = [...new Set(openProtectedToolIds.map((toolId) => this.getToolDisplayName(toolId)))];
-    this.logoutConfirmOpen = true;
-
-    return new Promise<boolean>((resolve) => {
-      const finish = (confirmed: boolean) => {
-        this.logoutConfirmOpen = false;
-        resolve(confirmed);
-      };
-
-      this.modal.confirm({
-        nzClassName: 'subapp-service-confirm-modal',
-        nzTitle: this.t(
-          hasOtherProtectedTools
-            ? 'USER_CENTER.LOGOUT_CLOSE_APPS_TITLE'
-            : 'USER_CENTER.LOGOUT_CONFIRM_TITLE',
-          hasOtherProtectedTools ? '退出登录并关闭应用？' : '确认退出登录？',
-        ),
-        nzContent: hasOtherProtectedTools
-          ? this.translate.instant('USER_CENTER.LOGOUT_CLOSE_APPS_CONTENT', {
-              apps: appNames.join('、'),
-            })
-          : this.t('USER_CENTER.LOGOUT_CONFIRM_CONTENT', '确定要退出当前账号吗？'),
-        nzOkText: this.t('USER_CENTER.LOGOUT_CONFIRM_OK', '退出登录'),
-        nzCancelText: this.t('USER_CENTER.LOGOUT_CANCEL', '取消'),
-        nzOkDanger: true,
-        nzMaskClosable: false,
-        nzOnOk: () => finish(true),
-        nzOnCancel: () => finish(false),
-      });
-    });
-  }
-
   private async closeProtectedTools(toolIds: string[]): Promise<void> {
-    for (const toolId of toolIds) {
-      let closed = false;
-
-      if (getChildToolConfig(toolId)) {
-        const result = await this.mainUiAutomation.controlChildApp({
-          toolId,
-          action: 'close',
-        });
-        closed = result['ok'] === true;
-      }
-
-      if (!closed) {
-        closed = await this.uiService.forceCloseToolEverywhere(toolId);
-      }
-
-      if (!closed) {
-        throw new ProtectedToolCloseError(toolId);
-      }
-    }
-  }
-
-  private getToolDisplayName(toolId: string): string {
-    if (toolId === 'aily-chat' || toolId === 'aily-chat-react') {
-      return 'Aily Chat';
-    }
-
-    const childConfig = getChildToolConfig(toolId);
-    const builtInApp = APP_LIST.find((app) => app.id === toolId);
-    const titleKey = childConfig?.app?.name || childConfig?.titleKey || builtInApp?.name;
-    if (!titleKey) {
-      return toolId;
-    }
-
-    const translatedTitle = this.translate.instant(titleKey);
-    return translatedTitle && translatedTitle !== titleKey ? translatedTitle : toolId;
+    await this.uiService.closeAuthRequiredTools(toolIds);
   }
 
   toggleRegisterMode() {
@@ -587,12 +523,5 @@ export class UserCenterComponent {
     // this.message.warning('测试版期间免费使用，无需购买');
     // return;
     this.openUserCenterPage(url);
-  }
-}
-
-class ProtectedToolCloseError extends Error {
-  constructor(toolId: string) {
-    super(`Failed to close protected tool: ${toolId}`);
-    this.name = 'ProtectedToolCloseError';
   }
 }

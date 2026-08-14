@@ -24,7 +24,7 @@
         "LOGOUT_CONFIRM_TITLE": "确认退出登录？",
         "LOGOUT_CONFIRM_CONTENT": "确定要退出当前账号吗？",
         "LOGOUT_CLOSE_APPS_TITLE": "退出登录并关闭应用？",
-        "LOGOUT_CLOSE_APPS_CONTENT": "退出登录将关闭正在运行的应用：{{apps}}。未完成的操作可能会中断，是否继续？",
+        "LOGOUT_CLOSE_APPS_CONTENT": "退出前会先安全结束或中断正在进行的任务并保存可恢复状态，然后关闭这些应用：{{apps}}。任一步失败都不会退出登录，是否继续？",
         "LOGOUT_CONFIRM_OK": "退出登录",
         "LOGOUT_CANCEL": "取消",
         "LOGOUT_CLOSE_APPS_FAILED": "无法关闭正在运行的应用，请稍后重试",

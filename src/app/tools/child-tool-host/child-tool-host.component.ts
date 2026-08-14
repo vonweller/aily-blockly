@@ -809,7 +809,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       close: () => this.close(),
       detach: options => this.detach(options),
       embed: () => this.embed(),
-      prepareUpdate: () => this.prepareUpdate(),
+      prepareUpdate: options => this.prepareUpdate(options),
     }, {
       instanceId: this.hostContextId,
       surface: this.resolveLaunchContext().surface,
@@ -978,11 +978,18 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
         openChildSurfaceWindow: (payload: ChildSurfaceWindowRequest = {}) => this.openChildSurfaceWindow(payload),
         focusChildFrame: () => this.focusChildFrame(),
         writeClipboardText: (payload: { text?: string } = {}) => this.writeClipboardText(payload),
+        openFile: (payload: { path?: string } = {}) => this.openFile(payload),
         reportAiOperationState: (payload: { active?: boolean; sessionId?: string | null } = {}) => {
           return this.ngZone.run(() => this.reportAiOperationState(payload));
         },
         reportActiveChatSession: (payload: { sessionId?: string | null } = {}) => {
           return this.ngZone.run(() => this.reportActiveChatSession(payload));
+        },
+        reportStartupPhase: (payload: { phase?: string; durationMs?: number } = {}) => {
+          const phase = String(payload.phase || '').trim().slice(0, 80);
+          const durationMs = Math.max(0, Math.round(Number(payload.durationMs) || 0));
+          if (phase) this.log('startup phase', { phase, durationMs });
+          return { ok: true };
         },
         setSubappSurfaceState: (payload: {
           sessionId?: string;
@@ -1271,7 +1278,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   private async runChildBeforeClose(reason: ChildLifecycleReason, strict: boolean): Promise<boolean> {
     const beforeClose = this.remoteApi?.beforeClose;
     if (typeof beforeClose !== 'function') {
-      return true;
+      return !strict;
     }
 
     try {
@@ -1467,7 +1474,10 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       blockResources: isAilyChat && this.active ? this.createSelectedBlockResources() : [],
       capabilities: {
         snapshotRefresh: true,
-        authStateRefresh: isAilyChat,
+        // A detached surface runs in a separate Angular renderer and therefore
+        // cannot continuously mirror the main window's AuthService subject.
+        // Keep the child's focus/visibility refresh fallback enabled there.
+        authStateRefresh: isAilyChat && !this.isStandalone,
         userInteractionNotifications: true,
         hostGithubLogin: isAilyChat,
         hostLoginDialog: isAilyChat,
@@ -1475,6 +1485,8 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
           && typeof (window as any).dialog?.selectFiles === 'function',
         childAppMenu: isAilyChat,
         clipboardWrite: isAilyChat,
+        openFile: isAilyChat
+          && typeof (window as any).electronAPI?.shell?.showItemInFolder === 'function',
         blockSelectionContext: isAilyChat,
         childFrameFocus: isAilyChat,
         childSurfaceWindow: true,
@@ -1719,6 +1731,37 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     return { ok: true };
   }
 
+  private openFile(payload: { path?: string }): Record<string, unknown> {
+    if (!this.isAilyChatTool()) {
+      return { ok: false, message: 'File reveal is only available to Aily Chat' };
+    }
+
+    const fullPath = typeof payload?.path === 'string' ? payload.path.trim() : '';
+    const pathApi = (window as any).path;
+    const fs = (window as any).fs;
+    const showItemInFolder = (window as any).electronAPI?.shell?.showItemInFolder;
+
+    if (!fullPath || !pathApi?.isAbsolute?.(fullPath)) {
+      return { ok: false, message: 'File reveal requires an absolute path' };
+    }
+
+    let file: { _isFile?: boolean } | null = null;
+    try {
+      file = fs?.statSync?.(fullPath) ?? null;
+    } catch {
+      file = null;
+    }
+    if (file?._isFile !== true) {
+      return { ok: false, message: 'The file to reveal does not exist' };
+    }
+    if (typeof showItemInFolder !== 'function') {
+      return { ok: false, message: 'Host file reveal is unavailable' };
+    }
+
+    showItemInFolder(fullPath);
+    return { ok: true };
+  }
+
   private focusChildFrame(): Record<string, unknown> {
     if (!this.isAilyChatTool() || !this.penpalRemoteWindow) {
       return { ok: false };
@@ -1884,13 +1927,22 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
         data: { action: 'request-login', reason },
         timeout: 3000,
       });
-      return response === 'timeout' || response?.success === false
-        ? { ok: false, message: 'The main-window login request timed out' }
-        : { ok: true };
+      if (response === 'timeout' || response?.success === false) {
+        return { ok: false, message: 'The main-window login request timed out' };
+      }
+
+      const initializationState = String(response?.initializationState || '');
+      if (response?.authenticated === true) {
+        this.pushChildAuthState(true);
+      } else if (response?.authenticated === false && initializationState === 'signed_out') {
+        this.pushChildAuthState(false);
+      }
+      return { ok: true, authenticated: response?.authenticated === true };
     }
 
     this.ngZone.run(() => this.authService.requestLogin(reason));
-    return { ok: true };
+    this.pushChildAuthState(this.authService.isLoggedIn);
+    return { ok: true, authenticated: this.authService.isLoggedIn };
   }
 
   private pushChildAuthState(authenticated: boolean): void {
