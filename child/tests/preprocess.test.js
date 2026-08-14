@@ -5,10 +5,16 @@ const path = require('node:path');
 const test = require('node:test');
 
 const {
+    collectComponentLibraries,
     collectLibraryPackages,
     normalizeExtractedSourceDirectory,
+    processComponentLibraries,
     processLibrariesParallel,
 } = require('../scripts/preprocess');
+const {
+    readPlatformRefFromProjectAci,
+    resolveEffectiveBoardDependencies,
+} = require('../scripts/platform-runtime');
 
 function createPackage(packagePath, packageJson) {
     fs.mkdirSync(packagePath, { recursive: true });
@@ -125,4 +131,89 @@ test('normalizes extracted library archives into src directory', t => {
     assert.equal(fs.existsSync(path.join(sourcePath, 'src', 'Nested.h')), true);
     assert.equal(fs.existsSync(path.join(sourcePath, 'README.md')), true);
     assert.equal(fs.existsSync(mixedExtractPath), false);
+});
+
+test('collects only immediate project component library roots', t => {
+    const projectPath = fs.mkdtempSync(path.join(os.tmpdir(), 'aily-preprocess-components-'));
+    t.after(() => fs.rmSync(projectPath, { recursive: true, force: true }));
+
+    fs.mkdirSync(path.join(projectPath, 'components', 'BlinkPattern', 'src'), { recursive: true });
+    fs.mkdirSync(path.join(projectPath, 'components', 'WireCompat', 'src'), { recursive: true });
+    fs.writeFileSync(path.join(projectPath, 'components', 'README.md'), 'not a library root\n');
+    fs.mkdirSync(path.join(projectPath, 'components', '.cache'), { recursive: true });
+
+    const result = collectComponentLibraries(projectPath);
+
+    assert.deepEqual(result.map(item => item.name), ['BlinkPattern', 'WireCompat']);
+    assert.deepEqual(
+        result.map(item => item.sourcePath),
+        [
+            path.join(projectPath, 'components', 'BlinkPattern'),
+            path.join(projectPath, 'components', 'WireCompat'),
+        ]
+    );
+});
+
+test('materializes Arduino-layout components as compiler libraries', async t => {
+    const projectPath = fs.mkdtempSync(path.join(os.tmpdir(), 'aily-preprocess-components-'));
+    t.after(() => fs.rmSync(projectPath, { recursive: true, force: true }));
+
+    const componentRoot = path.join(projectPath, 'components', 'BlinkPattern');
+    const librariesPath = path.join(projectPath, '.temp', 'libraries');
+    fs.mkdirSync(path.join(componentRoot, 'src'), { recursive: true });
+    fs.mkdirSync(librariesPath, { recursive: true });
+    fs.writeFileSync(
+        path.join(componentRoot, 'library.properties'),
+        'name=BlinkPattern\nversion=1.0.0\narchitectures=*\n'
+    );
+    fs.writeFileSync(path.join(componentRoot, 'src', 'BlinkPattern.h'), '#pragma once\n');
+    fs.writeFileSync(path.join(componentRoot, 'src', 'BlinkPattern.cpp'), '#include "BlinkPattern.h"\n');
+
+    const copied = await processComponentLibraries(
+        collectComponentLibraries(projectPath),
+        librariesPath
+    );
+
+    assert.deepEqual(copied, ['BlinkPattern']);
+    assert.equal(
+        fs.readFileSync(path.join(librariesPath, 'BlinkPattern', 'library.properties'), 'utf8'),
+        'name=BlinkPattern\nversion=1.0.0\narchitectures=*\n'
+    );
+    assert.equal(
+        fs.existsSync(path.join(librariesPath, 'BlinkPattern', 'src', 'BlinkPattern.cpp')),
+        true
+    );
+});
+
+test('resolves Coder compiler and SDK dependencies from the platform manifest', t => {
+    const projectPath = fs.mkdtempSync(path.join(os.tmpdir(), 'aily-preprocess-platform-'));
+    const appDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'aily-appdata-platform-'));
+    t.after(() => fs.rmSync(projectPath, { recursive: true, force: true }));
+    t.after(() => fs.rmSync(appDataPath, { recursive: true, force: true }));
+
+    const platformName = '@aily-project/platform-avr-arduino';
+    fs.writeFileSync(path.join(projectPath, 'project.aci'), JSON.stringify({
+        target: { platform: platformName },
+    }));
+    const platformPath = path.join(appDataPath, 'node_modules', platformName);
+    fs.mkdirSync(platformPath, { recursive: true });
+    fs.writeFileSync(path.join(platformPath, 'platform.json'), JSON.stringify({
+        runtimeDependencies: [
+            { package: '@aily-project/compiler-avr-gcc', version: '7.3.0' },
+            { package: '@aily-project/sdk-arduino-avr', version: '1.8.6' },
+        ],
+    }));
+
+    const platformRef = readPlatformRefFromProjectAci(projectPath);
+    const result = resolveEffectiveBoardDependencies(
+        { '@aily-project/tool-avrdude': '6.3.0' },
+        appDataPath,
+        platformRef.packageName
+    );
+
+    assert.deepEqual(result, {
+        '@aily-project/tool-avrdude': '6.3.0',
+        '@aily-project/compiler-avr-gcc': '7.3.0',
+        '@aily-project/sdk-arduino-avr': '1.8.6',
+    });
 });

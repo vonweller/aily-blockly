@@ -457,6 +457,13 @@
         "HELP": "라이브러리 개발 방법",
         "LIB_IN_USE": "이 라이브러리는 현재 사용 중입니다. 이 라이브러리를 제거하기 전에 작업 공간에서 관련 블록을 먼저 삭제하세요"
     },
+    "CODER_COMPONENT_LIBRARY": {
+        "TITLE": "Component Libraries", "SEARCH": "Search platform libraries", "REFRESH": "Refresh",
+        "HINT": "Arduino libraries bundled with the active board platform. Add one to copy its complete source into the project components directory for local editing.",
+        "ADD": "Add to Project", "IN_PROJECT": "In Project", "ADDED": "{{name}} was added to components",
+        "ADD_FAILED": "Failed to add the component library", "LOAD_FAILED": "Failed to load platform libraries",
+        "LOADING": "Loading platform libraries...", "EMPTY": "No Arduino libraries were found in the active platform"
+    },
     "COMPATIBILITY_DIALOG": {
         "TITLE": "라이브러리 호환성 안내",
         "WARNING_MESSAGE": "이 라이브러리는 현재 보드에서 동작하지 않을 수 있습니다. 설치를 계속하시겠습니까?",

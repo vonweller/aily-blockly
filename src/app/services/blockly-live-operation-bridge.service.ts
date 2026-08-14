@@ -214,7 +214,23 @@ export class BlocklyLiveOperationBridgeService {
       const loadStatus = this.projectService.getBlocklyProjectLoadStatus(
         this.projectService.currentProjectPath,
       );
-      if (!loadStatus.ready) {
+      const isBlocklyProject = this.electronService.exists(
+        this.electronService.pathJoin(this.projectService.currentProjectPath, 'project.abi'),
+      );
+      const editorReady = isBlocklyProject
+        ? loadStatus.ready
+        : loadStatus.state === 'loaded' && !loadStatus.error;
+      if (!isBlocklyProject && this.isBlocklyWorkspaceOperation(payload.operation)) {
+        return {
+          ok: false,
+          operation: payload.operation,
+          project: this.projectService.currentProjectPath,
+          reason: 'coder_operation_mismatch',
+          message: `Coder 工程不支持 Blockly 工作区操作: ${payload.operation}`,
+          loadStatus,
+        };
+      }
+      if (!editorReady) {
         return {
           ok: false,
           operation: payload.operation,
@@ -224,7 +240,9 @@ export class BlocklyLiveOperationBridgeService {
             ? `项目加载失败，已阻止后续操作：${loadStatus.error}`
             : `项目尚未加载完成，已阻止后续操作（state=${loadStatus.state}）`,
           loadStatus,
-          guidance: '请先关闭项目，在离线状态修复 project.abs/project.abi 或依赖，再重新打开；只有 loadStatus.ready=true 后才能继续。',
+          guidance: isBlocklyProject
+            ? '请先关闭项目，在离线状态修复 project.abs/project.abi 或依赖，再重新打开；只有 loadStatus.ready=true 后才能继续。'
+            : '请等待 Coder 工程完成加载；若持续失败，请重新打开工程并检查 project.aci 与依赖。',
         };
       }
     }
@@ -294,6 +312,19 @@ export class BlocklyLiveOperationBridgeService {
     } finally {
       this.endBlockWriting();
     }
+  }
+
+  private isBlocklyWorkspaceOperation(operation?: string): boolean {
+    return new Set([
+      'abi_add',
+      'abi_delete',
+      'abi_connect',
+      'abi_set_field',
+      'abs_apply',
+      'block_metadata_snapshot',
+      'blocks_tidy',
+      'project_save',
+    ]).has(String(operation || ''));
   }
 
   private beginBlockWriting(): void {

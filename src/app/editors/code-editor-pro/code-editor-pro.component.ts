@@ -173,8 +173,9 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
     try {
       this.ailyOpenLibManagerBc = new BroadcastChannel(AILY_EMBED_OPEN_LIBRARY_MANAGER_CHANNEL);
       this.ailyOpenLibManagerBc.addEventListener('message', (ev: MessageEvent) => {
-        const open = (ev.data as { open?: boolean })?.open !== false;
-        this.syncHostLibraryManager(open);
+        const data = ev.data as { open?: boolean; view?: 'packages' | 'components' };
+        const open = data?.open !== false;
+        this.syncHostLibraryManager(open, data?.view);
       });
     } catch {
       /* 浏览器极旧环境无 BroadcastChannel */
@@ -1199,9 +1200,12 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
   }
 
   /** 与 Aily View 中 Installed Libraries 展开状态同步库管理侧栏 */
-  private syncHostLibraryManager(open: boolean): void {
+  private syncHostLibraryManager(
+    open: boolean,
+    view: 'packages' | 'components' = 'packages',
+  ): void {
     if (open) {
-      this.uiService.openTool('lib-manager');
+      this.uiService.openLibraryManager(view);
     } else {
       this.uiService.closeTool('lib-manager');
     }
@@ -1252,7 +1256,8 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
     if (msg?.channel === AILY_CODER_OPEN_LIBRARY_MANAGER_CHANNEL) {
       const open =
         (msg as { open?: boolean }).open !== false;
-      this.syncHostLibraryManager(open);
+      const view = (msg as { view?: 'packages' | 'components' }).view;
+      this.syncHostLibraryManager(open, view);
       return;
     }
     if (msg?.channel === AILY_CODER_OPEN_BOARD_SELECTOR_CHANNEL) {

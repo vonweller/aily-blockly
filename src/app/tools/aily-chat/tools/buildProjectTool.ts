@@ -120,10 +120,12 @@ export async function buildProjectTool(
 
         // 提取关键错误信息
         const compileErrors = extractCompileErrors(fullStdErr);
+        const diagnosticDetail = compileErrors
+            || stripAnsi(fullStdErr).trim().slice(0, 3000);
 
         // 缓存编译错误供 get_errors 工具使用
-        if (compileErrors) {
-            setLastBuildErrors(compileErrors);
+        if (diagnosticDetail) {
+            setLastBuildErrors(diagnosticDetail);
         }
 
         return {
@@ -131,7 +133,7 @@ export async function buildProjectTool(
             content: JSON.stringify({
                 success: false,
                 message: `编译失败: ${errorSummary}`,
-                errors: compileErrors || undefined
+                errors: diagnosticDetail || undefined
             })
         };
     }

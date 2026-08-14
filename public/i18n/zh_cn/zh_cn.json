@@ -540,6 +540,19 @@
         "OTHERS": "其他",
         "LIB_IN_USE": "该库正在被使用，请先在工作区删除相关块，再移除本库"
     },
+    "CODER_COMPONENT_LIBRARY": {
+        "TITLE": "组件库",
+        "SEARCH": "搜索平台公共库",
+        "REFRESH": "刷新",
+        "HINT": "这里展示当前开发板平台内置的 Arduino 公共库。添加后会把完整源码复制到工程 components 目录，供本地编辑和构建。",
+        "ADD": "添加到工程",
+        "IN_PROJECT": "已在工程中",
+        "ADDED": "{{name}} 已添加到 components",
+        "ADD_FAILED": "添加组件库失败",
+        "LOAD_FAILED": "加载平台公共库失败",
+        "LOADING": "正在加载平台公共库...",
+        "EMPTY": "当前平台未找到 Arduino 公共库"
+    },
     "COMPATIBILITY_DIALOG": {
         "TITLE": "库兼容性提示",
         "WARNING_MESSAGE": "该库可能无法在当前开发板上使用，是否继续安装？",
