@@ -1,9 +1,12 @@
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { spawn, exec, execFileSync } = require('child_process');
 const os = require('os');
 const ailyCodeProject = require('./aily-code-project');
 const platformRuntime = require('./platform-runtime');
+
+const LIBRARY_CACHE_SCHEMA_VERSION = 2;
 
 // 简单的日志工具
 const logger = {
@@ -57,6 +60,7 @@ async function main() {
         devmode,
         partitionFilePath: customPartitionFilePath
     } = config;
+    const developmentMode = devmode === true || devmode?.enabled === true;
 
     // 1. 路径准备
     const tempPath = path.join(currentProjectPath, '.temp');
@@ -121,7 +125,14 @@ async function main() {
         const libsPath = collectLibraryPackages(dependencies, currentProjectPath);
 
         logger.log(`开始处理 ${libsPath.length} 个库文件`);
-        const copiedLibraries = await processLibrariesParallel(libsPath, librariesPath, currentProjectPath, za7Path, devmode, libraryCache);
+        const copiedLibraries = await processLibrariesParallel(
+            libsPath,
+            librariesPath,
+            currentProjectPath,
+            za7Path,
+            developmentMode,
+            libraryCache
+        );
         
         // 保存缓存
         try {
@@ -473,12 +484,6 @@ async function processLibrariesParallel(libsPath, librariesPath, currentProjectP
 async function processLibrary(lib, librariesPath, currentProjectPath, za7Path, devmode, libraryCache) {
     try {
         const sourcePathBase = path.join(currentProjectPath, 'node_modules', lib, 'src');
-        
-        // Check cache
-        const cached = libraryCache[lib];
-        if (cached && isLibraryCacheValid(cached, sourcePathBase)) {
-                return { targetNames: cached.targetNames, success: true };
-        }
 
         // Prepare source
         let sourcePath = sourcePathBase;
@@ -497,17 +502,26 @@ async function processLibrary(lib, librariesPath, currentProjectPath, za7Path, d
 
         sourcePath = resolveNestedSrcPath(sourcePath);
 
+        const sourceFingerprint = createLibrarySourceFingerprint(sourcePath);
+        const cached = libraryCache[lib];
+        if (!devmode && cached && isLibraryCacheValid(cached, sourceFingerprint, librariesPath)) {
+            return { targetNames: cached.targetNames, success: true };
+        }
+
+        removeCachedLibraryTargets(cached, librariesPath);
+
         const hasHeaders = checkForHeaderFiles(sourcePath);
         let result;
         if (hasHeaders) {
-            result = await processLibraryWithHeaders(lib, sourcePath, librariesPath, devmode);
+            result = await processLibraryWithHeaders(lib, sourcePath, librariesPath);
         } else {
-            result = await processLibraryDirectories(lib, sourcePath, librariesPath, devmode);
+            result = await processLibraryDirectories(lib, sourcePath, librariesPath);
         }
 
         if (result.success) {
             libraryCache[lib] = {
-                timestamp: Date.now(),
+                schemaVersion: LIBRARY_CACHE_SCHEMA_VERSION,
+                sourceFingerprint,
                 hasHeaderFiles: hasHeaders,
                 targetNames: result.targetNames
             };
@@ -545,14 +559,100 @@ function normalizeExtractedSourceDirectory(extractPath, sourcePath) {
     fs.renameSync(extractedSourcePath, sourcePath);
 }
 
-function isLibraryCacheValid(cached, sourcePath) {
-    if (!fs.existsSync(sourcePath)) return false;
-    try {
-        const stat = fs.statSync(sourcePath);
-        return stat.mtime.getTime() <= cached.timestamp;
-    } catch {
-        return false;
+function createLibrarySourceFingerprint(sourcePath) {
+    const rootRealPath = fs.realpathSync(sourcePath);
+    const activeDirectories = new Set();
+    const hash = crypto.createHash('sha256');
+
+    const visit = (currentPath, relativePath) => {
+        const realPath = fs.realpathSync(currentPath);
+        if (!isPathWithin(rootRealPath, realPath)) {
+            throw new Error(`Library source link escapes its root: ${currentPath}`);
+        }
+
+        const stat = fs.statSync(currentPath);
+        const normalizedPath = relativePath.split(path.sep).join('/');
+
+        if (stat.isDirectory()) {
+            if (activeDirectories.has(realPath)) {
+                throw new Error(`Library source contains a directory link cycle: ${currentPath}`);
+            }
+
+            hash.update(`directory\0${normalizedPath}\0`);
+            activeDirectories.add(realPath);
+
+            const items = fs.readdirSync(currentPath).sort((left, right) => left.localeCompare(right));
+            for (const item of items) {
+                visit(path.join(currentPath, item), path.join(relativePath, item));
+            }
+
+            activeDirectories.delete(realPath);
+            return;
+        }
+
+        if (stat.isFile()) {
+            const content = fs.readFileSync(currentPath);
+            hash.update(`file\0${normalizedPath}\0${content.length}\0`);
+            hash.update(content);
+            hash.update('\0');
+            return;
+        }
+
+        hash.update(`other\0${normalizedPath}\0`);
+    };
+
+    visit(sourcePath, '');
+    return `sha256:${hash.digest('hex')}`;
+}
+
+function isPathWithin(rootPath, candidatePath) {
+    const relativePath = path.relative(rootPath, candidatePath);
+    return relativePath === ''
+        || (!relativePath.startsWith(`..${path.sep}`) && relativePath !== '..' && !path.isAbsolute(relativePath));
+}
+
+function isLibraryCacheValid(cached, sourceFingerprint, librariesPath) {
+    return cached.schemaVersion === LIBRARY_CACHE_SCHEMA_VERSION
+        && cached.sourceFingerprint === sourceFingerprint
+        && Array.isArray(cached.targetNames)
+        && cached.targetNames.every(targetName => {
+            const targetPath = resolveLibraryTargetPath(librariesPath, targetName);
+            if (!targetPath) return false;
+
+            try {
+                return fs.statSync(targetPath).isDirectory();
+            } catch {
+                return false;
+            }
+        });
+}
+
+function removeCachedLibraryTargets(cached, librariesPath) {
+    if (!Array.isArray(cached?.targetNames)) return;
+
+    for (const targetName of cached.targetNames) {
+        const targetPath = resolveLibraryTargetPath(librariesPath, targetName);
+        if (!targetPath) {
+            logger.warn(`忽略不安全的库缓存目标: ${String(targetName)}`);
+            continue;
+        }
+
+        rm(targetPath);
     }
+}
+
+function resolveLibraryTargetPath(librariesPath, targetName) {
+    if (typeof targetName !== 'string'
+        || !targetName
+        || targetName === '.'
+        || targetName === '..'
+        || path.basename(targetName) !== targetName) {
+        return null;
+    }
+
+    const librariesRoot = path.resolve(librariesPath);
+    const targetPath = path.resolve(librariesRoot, targetName);
+    return isPathWithin(librariesRoot, targetPath) ? targetPath : null;
 }
 
 function resolveNestedSrcPath(sourcePath) {
@@ -579,30 +679,11 @@ function checkForHeaderFiles(sourcePath) {
     }
 }
 
-async function processLibraryWithHeaders(lib, sourcePath, librariesPath, devmode) {
+async function processLibraryWithHeaders(lib, sourcePath, librariesPath) {
     const targetName = lib.split('@aily-project/')[1];
     const targetPath = path.join(librariesPath, targetName);
-    
-    // Check if target exists (valid or broken symlink)
-    let exists = false;
-    let isBroken = false;
-    try {
-        fs.lstatSync(targetPath);
-        exists = true;
-        try {
-            fs.statSync(targetPath);
-        } catch (e) {
-            isBroken = true;
-        }
-    } catch (e) {}
 
-    if (exists) {
-        if (devmode || isBroken) {
-            rm(targetPath);
-        } else {
-            return { targetNames: [targetName], success: true };
-        }
-    }
+    rm(targetPath);
 
     try {
         linkItem(sourcePath, targetPath);
@@ -612,7 +693,7 @@ async function processLibraryWithHeaders(lib, sourcePath, librariesPath, devmode
     }
 }
 
-async function processLibraryDirectories(lib, sourcePath, librariesPath, devmode) {
+async function processLibraryDirectories(lib, sourcePath, librariesPath) {
     const targetNames = [];
     if (!fs.existsSync(sourcePath)) return { targetNames: [], success: true };
 
@@ -622,27 +703,7 @@ async function processLibraryDirectories(lib, sourcePath, librariesPath, devmode
         if (fs.statSync(fullSourcePath).isDirectory()) {
             const targetPath = path.join(librariesPath, item);
             
-            // Check if target exists (valid or broken symlink)
-            let exists = false;
-            let isBroken = false;
-            try {
-                fs.lstatSync(targetPath);
-                exists = true;
-                try {
-                    fs.statSync(targetPath);
-                } catch (e) {
-                    isBroken = true;
-                }
-            } catch (e) {}
-
-            if (exists) {
-                if (devmode || isBroken) {
-                    rm(targetPath);
-                } else {
-                    targetNames.push(item);
-                    continue;
-                }
-            }
+            rm(targetPath);
 
             try {
                 linkItem(fullSourcePath, targetPath);
@@ -702,6 +763,7 @@ if (require.main === module) {
 
 module.exports = {
     collectLibraryPackages,
+    createLibrarySourceFingerprint,
     isCompilableLibraryPackage,
     normalizeExtractedSourceDirectory,
     processLibrariesParallel,

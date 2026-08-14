@@ -24,7 +24,7 @@
         "LOGOUT_CONFIRM_TITLE": "確認登出？",
         "LOGOUT_CONFIRM_CONTENT": "確定要登出目前帳戶嗎？",
         "LOGOUT_CLOSE_APPS_TITLE": "登出並關閉應用程式？",
-        "LOGOUT_CLOSE_APPS_CONTENT": "登出將關閉正在執行的應用程式：{{apps}}。未完成的操作可能會中斷，是否繼續？",
+        "LOGOUT_CLOSE_APPS_CONTENT": "登出前會先安全結束或中斷進行中的任務並儲存可復原狀態，然後關閉這些應用程式：{{apps}}。任一步驟失敗都不會登出，是否繼續？",
         "LOGOUT_CONFIRM_OK": "登出",
         "LOGOUT_CANCEL": "取消",
         "LOGOUT_CLOSE_APPS_FAILED": "無法關閉正在執行的應用程式，請稍後再試",
