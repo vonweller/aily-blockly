@@ -708,6 +708,11 @@ function registerWindowHandlers(mainWindow, options = {}) {
 
     // 添加一个映射来存储已打开的窗�?
     const openWindows = new Map();
+    const SETTINGS_WINDOW_URL = '/settings';
+    let settingsWarmWindow = null;
+    let settingsWarmWindowReady = false;
+    let pendingSettingsOpenData = null;
+    let settingsWarmCreateTimer = null;
     let codeViewerState = {
         code: '',
         selectedBlockId: null,
@@ -1133,6 +1138,16 @@ function registerWindowHandlers(mainWindow, options = {}) {
         webContents.loadURL('about:blank');
     };
 
+    const resolveSubWindowRouteUrl = (routePath) => {
+        if (isDevServeSubWindow()) {
+            return `http://localhost:4200/#/${routePath}`;
+        }
+        if (!resolveRendererUrl) {
+            throw new Error('Packaged renderer URL resolver is unavailable.');
+        }
+        return resolveRendererUrl(`#/${routePath}`);
+    };
+
     /**
      * @param {import('electron').BrowserWindow} subWindow
      * @param {string} windowUrl
@@ -1183,6 +1198,178 @@ function registerWindowHandlers(mainWindow, options = {}) {
             notifySubWindowState(windowUrl, false);
         });
     };
+
+    const clearSettingsWarmReadyTimer = (win) => {
+        if (win?.__settingsWarmReadyTimer) {
+            clearTimeout(win.__settingsWarmReadyTimer);
+            delete win.__settingsWarmReadyTimer;
+        }
+    };
+
+    function scheduleSettingsWarmWindow(delayMs = 0) {
+        if (applicationIsQuitting || settingsWarmCreateTimer
+            || (settingsWarmWindow && !settingsWarmWindow.isDestroyed())) {
+            return;
+        }
+        settingsWarmCreateTimer = setTimeout(() => {
+            settingsWarmCreateTimer = null;
+            createSettingsWarmWindow();
+        }, delayMs);
+    }
+
+    function createSettingsWarmWindow() {
+        if (applicationIsQuitting
+            || (settingsWarmWindow && !settingsWarmWindow.isDestroyed())) {
+            return;
+        }
+
+        let win;
+        try {
+            win = new BrowserWindow({
+                frame: false,
+                show: false,
+                opacity: 0,
+                backgroundColor: getSubWindowBackgroundColor(),
+                skipTaskbar: true,
+                autoHideMenuBar: true,
+                thickFrame: true,
+                titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+                alwaysOnTop: false,
+                width: 700,
+                height: 550,
+                minWidth: SUB_WINDOW_MIN_WIDTH,
+                minHeight: SUB_WINDOW_MIN_HEIGHT,
+                webPreferences: getSubWindowWebPreferences(),
+            });
+        } catch (error) {
+            console.warn('[SettingsWindowWarmup] 创建窗口失败:', error.message);
+            if (pendingSettingsOpenData) {
+                scheduleSettingsWarmWindow(1000);
+            }
+            return;
+        }
+
+        settingsWarmWindow = win;
+        settingsWarmWindowReady = false;
+        win.__settingsWarmRetryDelayMs = 0;
+
+        const replaceFailedWarmWindow = (reason) => {
+            if (win.isDestroyed()) {
+                return;
+            }
+            win.__settingsWarmRetryDelayMs = 1000;
+            console.warn(`[SettingsWindowWarmup] ${reason}，稍后重试`);
+            win.destroy();
+        };
+
+        win.webContents.on('did-fail-load', (_event, errorCode, errorDescription, _validatedURL, isMainFrame) => {
+            if (!isMainFrame || errorCode === -3) {
+                return;
+            }
+            replaceFailedWarmWindow(`页面加载失败 (${errorCode}: ${errorDescription})`);
+        });
+        win.webContents.on('render-process-gone', (_event, details) => {
+            replaceFailedWarmWindow(`渲染进程退出 (${details.reason})`);
+        });
+        win.once('closed', () => {
+            clearSettingsWarmReadyTimer(win);
+            const wasActive = openWindows.get(SETTINGS_WINDOW_URL) === win;
+            const retryDelayMs = Number(win.__settingsWarmRetryDelayMs) || 0;
+            if (settingsWarmWindow === win) {
+                settingsWarmWindow = null;
+                settingsWarmWindowReady = false;
+            }
+            if (!applicationIsQuitting && (wasActive || retryDelayMs === 0 || pendingSettingsOpenData)) {
+                scheduleSettingsWarmWindow(retryDelayMs);
+            }
+        });
+
+        win.__settingsWarmReadyTimer = setTimeout(() => {
+            if (settingsWarmWindow === win && !settingsWarmWindowReady) {
+                replaceFailedWarmWindow('页面就绪超时');
+            }
+        }, 15000);
+
+        try {
+            void win.loadURL(resolveSubWindowRouteUrl('settings'))
+                .catch(error => replaceFailedWarmWindow(`页面加载失败 (${error.message})`));
+        } catch (error) {
+            replaceFailedWarmWindow(`页面加载失败 (${error.message})`);
+        }
+    }
+
+    function revealSettingsWarmWindow(data) {
+        const win = settingsWarmWindow;
+        if (!win || win.isDestroyed() || !settingsWarmWindowReady
+            || openWindows.get(SETTINGS_WINDOW_URL) === win) {
+            return false;
+        }
+
+        const width = data.width ? data.width : 700;
+        const height = data.height ? data.height : 550;
+        try {
+            win.setAlwaysOnTop(!!data.alwaysOnTop);
+            applySubWindowMinimumSize(win);
+            placeSubWindowBeforeReveal(win, mainWindow, data, width, height);
+
+            if (data.data || data.url || data.title) {
+                win.webContents.send('window-init-data', {
+                    url: data.url,
+                    title: data.title,
+                    data: data.data,
+                });
+            }
+
+            win.setOpacity(1);
+            win.setSkipTaskbar(false);
+            if (!focusSubWindow(win)) {
+                throw new Error('窗口已不可用');
+            }
+        } catch (e) {
+            console.warn('[SettingsWindowWarmup] 显示窗口失败:', e.message);
+            win.__settingsWarmRetryDelayMs = 1000;
+            if (!win.isDestroyed()) {
+                win.destroy();
+            }
+            return false;
+        }
+
+        pendingSettingsOpenData = null;
+        openWindows.set(SETTINGS_WINDOW_URL, win);
+        notifySubWindowState(SETTINGS_WINDOW_URL, true);
+        attachSubWindowLifecycleListeners(win, SETTINGS_WINDOW_URL);
+        return true;
+    }
+
+    const onSettingsWindowReady = (event) => {
+        if (!settingsWarmWindow || settingsWarmWindow.isDestroyed()
+            || event.sender !== settingsWarmWindow.webContents) {
+            return;
+        }
+        settingsWarmWindowReady = true;
+        clearSettingsWarmReadyTimer(settingsWarmWindow);
+        if (pendingSettingsOpenData) {
+            revealSettingsWarmWindow(pendingSettingsOpenData);
+        }
+    };
+    ipcMain.on('settings-window-ready', onSettingsWindowReady);
+
+    const onMainRendererReadyForSettingsWarmup = (event) => {
+        if (!mainWindow.isDestroyed() && event.sender === mainWindow.webContents) {
+            scheduleSettingsWarmWindow();
+        }
+    };
+    ipcMain.on('renderer-ready', onMainRendererReadyForSettingsWarmup);
+
+    mainWindow.once('closed', () => {
+        ipcMain.removeListener('settings-window-ready', onSettingsWindowReady);
+        ipcMain.removeListener('renderer-ready', onMainRendererReadyForSettingsWarmup);
+        if (settingsWarmCreateTimer) {
+            clearTimeout(settingsWarmCreateTimer);
+            settingsWarmCreateTimer = null;
+        }
+        clearSettingsWarmReadyTimer(settingsWarmWindow);
+    });
 
     mainWindow.on('focus', () => {
         try {
@@ -1258,7 +1445,10 @@ function registerWindowHandlers(mainWindow, options = {}) {
 
 
     ipcMain.on("window-open", (event, data) => {
-        const windowUrl = normalizeSubWindowUrl(data.path);
+        const normalizedWindowUrl = normalizeSubWindowUrl(data.path);
+        const windowUrl = /^\/settings\/?(?:\?.*)?$/.test(normalizedWindowUrl)
+            ? SETTINGS_WINDOW_URL
+            : normalizedWindowUrl;
         const width = data.width ? data.width : 800;
         const height = data.height ? data.height : 600;
         const alwaysOnTop = data.alwaysOnTop ? data.alwaysOnTop : false;
@@ -1287,6 +1477,18 @@ function registerWindowHandlers(mainWindow, options = {}) {
                 // 如果窗口已被销毁，从映射中移除
                 openWindows.delete(windowUrl);
             }
+        }
+
+        if (windowUrl === SETTINGS_WINDOW_URL) {
+            pendingSettingsOpenData = data;
+            if (!settingsWarmWindow || settingsWarmWindow.isDestroyed()) {
+                settingsWarmWindow = null;
+                createSettingsWarmWindow();
+            }
+            if (settingsWarmWindowReady) {
+                revealSettingsWarmWindow(data);
+            }
+            return;
         }
 
         let subWindow = null;
@@ -1385,14 +1587,7 @@ function registerWindowHandlers(mainWindow, options = {}) {
         subWindow.webContents.once('did-navigate-in-page', revealAfterRendererPaint);
         revealFallbackTimer = setTimeout(revealAfterRendererPaint, 3000);
 
-        if (isDevServeSubWindow()) {
-            subWindow.loadURL(`http://localhost:4200/#/${data.path}`);
-        } else {
-            if (!resolveRendererUrl) {
-                throw new Error('Packaged renderer URL resolver is unavailable.');
-            }
-            subWindow.loadURL(resolveRendererUrl(`#/${data.path}`));
-        }
+        subWindow.loadURL(resolveSubWindowRouteUrl(data.path));
     });
 
     ipcMain.handle("window-focus-by-url", (_event, windowUrl) => {
