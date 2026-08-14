@@ -132,6 +132,7 @@ export class SettingsComponent implements OnDestroy {
   regionSwitching = false;
   private ailyBuilderStatusTimer: ReturnType<typeof setTimeout> | null = null;
   private ailyLinterStatusTimer: ReturnType<typeof setTimeout> | null = null;
+  private settingsReadyObserver: MutationObserver | null = null;
 
   // 搜索关键字
   boardSearchKeyword: string = '';
@@ -366,6 +367,8 @@ export class SettingsComponent implements OnDestroy {
 
   ngOnDestroy() {
     this.cacheStatsRequestId++;
+    this.settingsReadyObserver?.disconnect();
+    this.settingsReadyObserver = null;
     this.scrollElement?.removeEventListener('scroll', this.scrollHandler);
     this.clearScrollEndTimer();
     this.clearAilyBuilderStatusTimer();
@@ -388,6 +391,29 @@ export class SettingsComponent implements OnDestroy {
     void this.loadAilyBuilderStatus();
     void this.loadAilyLinterStatus();
     void this.loadCacheStats();
+    this.notifySettingsWindowReady();
+  }
+
+  private notifySettingsWindowReady() {
+    const sendReady = () => {
+      this.settingsReadyObserver?.disconnect();
+      this.settingsReadyObserver = null;
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        window['ipcRenderer']?.send?.('settings-window-ready');
+      }));
+    };
+
+    if (!document.getElementById('app-loading-box')) {
+      sendReady();
+      return;
+    }
+
+    this.settingsReadyObserver = new MutationObserver(() => {
+      if (!document.getElementById('app-loading-box')) {
+        sendReady();
+      }
+    });
+    this.settingsReadyObserver.observe(document.body, { childList: true });
   }
 
   updateBoardList() {
