@@ -33,11 +33,6 @@ interface CacheStats {
   totalSizeFormatted: string;
 }
 
-interface DirectoryStats {
-  size: number;
-  count: number;
-}
-
 interface HostAuthState {
   authenticated: boolean;
   openProtectedToolIds: string[];
@@ -124,6 +119,7 @@ export class SettingsComponent implements OnDestroy {
   cacheSizeLoading = false;
   cacheClearing: CacheClearOption | null = null;
   dependencyRemoving: DependencyRemovalOption | null = null;
+  private cacheStatsRequestId = 0;
   private _clearCacheSubscription: Subscription | null = null;
   private _clearCacheLoadingRef: string | null = null;
 
@@ -369,6 +365,7 @@ export class SettingsComponent implements OnDestroy {
   }
 
   ngOnDestroy() {
+    this.cacheStatsRequestId++;
     this.scrollElement?.removeEventListener('scroll', this.scrollHandler);
     this.clearScrollEndTimer();
     this.clearAilyBuilderStatusTimer();
@@ -384,27 +381,27 @@ export class SettingsComponent implements OnDestroy {
     // await this.configService.init();
   }
 
-  async ngAfterViewInit() {
+  ngAfterViewInit() {
     this.scrollElement = this.scrollContainer?.SimpleBar?.getScrollElement() || null;
     this.scrollElement?.addEventListener('scroll', this.scrollHandler);
-    await this.updateBoardList();
-    await Promise.all([
-      this.loadAilyBuilderStatus(),
-      this.loadAilyLinterStatus()
-    ]);
-    this.loadCacheStats();
+    this.updateBoardList();
+    void this.loadAilyBuilderStatus();
+    void this.loadAilyLinterStatus();
+    void this.loadCacheStats();
   }
 
-  async updateBoardList() {
+  updateBoardList() {
     const platform = this.configService.data.platform;
     // this.appdata_path = this.configService.data.appdata_path[platform].replace('%HOMEPATH%', window['path'].getUserHome());
     this.appdata_path = window['path'].getAppDataPath();
     // 使用当前区域的仓库地址
     const npmRegistry = this.configService.getCurrentNpmRegistry();
     // this.settingsService.getBoardList(this.appdata_path, npmRegistry);
-    this.settingsService.getToolList(this.appdata_path, npmRegistry);
-    this.settingsService.getSdkList(this.appdata_path, npmRegistry);
-    this.settingsService.getCompilerList(this.appdata_path, npmRegistry);
+    void Promise.all([
+      this.settingsService.getToolList(this.appdata_path, npmRegistry),
+      this.settingsService.getSdkList(this.appdata_path, npmRegistry),
+      this.settingsService.getCompilerList(this.appdata_path, npmRegistry)
+    ]).catch(error => console.warn('加载依赖列表失败:', error));
   }
 
   async loadAilyBuilderStatus() {
@@ -748,6 +745,7 @@ export class SettingsComponent implements OnDestroy {
   }
 
   async loadCacheStats() {
+    const requestId = ++this.cacheStatsRequestId;
     const builderPath = this.getAilyBuilderPath();
     if (!builderPath) {
       this.cacheStats = this.getEmptyCacheStats();
@@ -757,12 +755,24 @@ export class SettingsComponent implements OnDestroy {
 
     this.cacheSizeLoading = true;
     try {
-      this.cacheStats = this.calculateCacheStats(builderPath);
+      const { size, count } = await window['fsp'].directoryStats(builderPath);
+      if (requestId !== this.cacheStatsRequestId) {
+        return;
+      }
+      this.cacheStats = {
+        totalFiles: count,
+        totalSizeFormatted: this.formatFileSize(size)
+      };
     } catch (e) {
+      if (requestId !== this.cacheStatsRequestId) {
+        return;
+      }
       console.error('Failed to load cache stats', e);
       this.cacheStats = this.getEmptyCacheStats();
     } finally {
-      this.cacheSizeLoading = false;
+      if (requestId === this.cacheStatsRequestId) {
+        this.cacheSizeLoading = false;
+      }
     }
   }
 
@@ -776,51 +786,6 @@ export class SettingsComponent implements OnDestroy {
 
   private getEmptyCacheStats(): CacheStats {
     return { totalFiles: 0, totalSizeFormatted: '0 B' };
-  }
-
-  private calculateCacheStats(builderPath: string): CacheStats {
-    let totalSize = 0;
-    let totalFiles = 0;
-    const entries = window['fs'].readDirSync(builderPath);
-
-    for (const entry of entries) {
-      if (!entry._isDirectory) {
-        continue;
-      }
-
-      const dirPath = window['path'].join(builderPath, entry.name);
-      const { size, count } = this.calcDirSize(dirPath);
-      totalSize += size;
-      totalFiles += count;
-    }
-
-    return {
-      totalFiles,
-      totalSizeFormatted: this.formatFileSize(totalSize)
-    };
-  }
-
-  private calcDirSize(dirPath: string): DirectoryStats {
-    let size = 0;
-    let count = 0;
-    try {
-      const entries = window['fs'].readDirSync(dirPath);
-      for (const entry of entries) {
-        const fullPath = window['path'].join(dirPath, entry.name);
-        if (entry._isDirectory) {
-          const sub = this.calcDirSize(fullPath);
-          size += sub.size;
-          count += sub.count;
-        } else {
-          try {
-            const stat = window['fs'].statSync(fullPath);
-            size += stat.size;
-            count++;
-          } catch { }
-        }
-      }
-    } catch { }
-    return { size, count };
   }
 
   private formatFileSize(bytes: number): string {
