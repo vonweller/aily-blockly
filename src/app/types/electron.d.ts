@@ -8,7 +8,13 @@ interface PythonRuntimeBoard {
 }
 
 interface PythonRuntimeApi {
-  status: () => Promise<{ state: 'stopped' | 'starting' | 'ready'; pid: number | null; executable: string }>;
+  status: () => Promise<{
+    state: 'stopped' | 'starting' | 'ready';
+    pid: number | null;
+    executable: string | null;
+    available: boolean;
+    unavailableReason: string | null;
+  }>;
   detectBoards: () => Promise<{ boards: PythonRuntimeBoard[] }>;
   connect: (options: { port: string; baudRate?: number }) => Promise<any>;
   disconnect: () => Promise<void>;

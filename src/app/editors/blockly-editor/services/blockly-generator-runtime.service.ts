@@ -12,8 +12,9 @@ import {
   prepareBlocklyProjectDataForCodeGeneration,
   wrapProjectDataGeneratorFunctions,
 } from '../../../services/project-data/blockly-project-data-adapter';
+import { normalizeBlocklyGeneratorMode } from '../../../services/python-runtime/python-mode';
 
-export type BlocklyGeneratorMode = 'arduino' | 'micropython';
+export type BlocklyGeneratorMode = 'arduino' | 'python' | 'micropython';
 export type ProjectGenerator = ArduinoGenerator | MicroPythonGenerator;
 
 export interface GeneratorRuntimeContext {
@@ -150,7 +151,8 @@ export class BlocklyGeneratorRuntimeService {
       throw new Error('Unable to create Blockly generator runtime realm');
     }
 
-    const generator = context.mode === 'micropython'
+    const generatorMode = normalizeBlocklyGeneratorMode(context.mode);
+    const generator = generatorMode === 'micropython'
       ? createMicroPythonGenerator()
       : createArduinoGenerator();
     const session: RuntimeSession = {
@@ -337,9 +339,12 @@ export class BlocklyGeneratorRuntimeService {
 
     realm['Blockly'] = blocklyFacade;
     realm['global'] = session.realmWindow;
-    realm['Arduino'] = session.context.mode === 'arduino' ? session.generator : undefined;
-    realm['MPY'] = session.context.mode === 'micropython' ? session.generator : undefined;
-    realm['MicropPython'] = session.context.mode === 'micropython' ? session.generator : undefined;
+    const generatorMode = normalizeBlocklyGeneratorMode(session.context.mode);
+    const isPython = generatorMode === 'micropython';
+    realm['Arduino'] = generatorMode === 'arduino' ? session.generator : undefined;
+    realm['Python'] = isPython ? session.generator : undefined;
+    realm['MPY'] = isPython ? session.generator : undefined;
+    realm['MicropPython'] = isPython ? session.generator : undefined;
     realm['pinyinPro'] = (globalThis as Record<string, unknown>)['pinyinPro'];
     realm['__BLOCKLY_LIB_I18N__'] = Object.create(null);
 

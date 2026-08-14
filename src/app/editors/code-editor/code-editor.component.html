@@ -1,70 +1,45 @@
 <div class="code-editor">
-  @if (isPythonProject) {
     <nz-layout>
-      <nz-sider [nzWidth]="siderWidth" nz-resizable [nzMinWidth]="220" [nzMaxWidth]="500" (nzResize)="onSideResize($event)">
-        <nz-resize-handle nzDirection="right" nzCursorType="grid"></nz-resize-handle>
-        <div class="left-box python-files">
-          <div class="file-source-tabs" role="tablist" aria-label="File source">
-            <button type="button" role="tab" [attr.aria-selected]="pythonFileSource === 'local'" [class.active]="pythonFileSource === 'local'" (click)="pythonFileSource = 'local'">Local</button>
-            <button type="button" role="tab" [attr.aria-selected]="pythonFileSource === 'device'" [class.active]="pythonFileSource === 'device'" (click)="pythonFileSource = 'device'">Device</button>
-          </div>
-          @if (pythonRuntime.state$ | async; as pythonState) {
-            @if (pythonFileSource === 'local') {
-              <app-file-tree [rootPath]="projectPath" [(selectedFile)]="selectedFile" (selectedFileChange)="selectedFileChange($event)" (filesDeleted)="onFilesDeleted($event)"></app-file-tree>
-            } @else {
-              <app-remote-file-tree [enabled]="pythonState.connectionState === 'connected'" (fileOpen)="openRemoteFile($event)"></app-remote-file-tree>
-            }
-          }
-        </div>
-      </nz-sider>
-
-      <nz-content>
-        <div class="python-workbench">
-          <div class="right-box python-editor-pane">
-            <ng-container *ngTemplateOutlet="editorPane"></ng-container>
-          </div>
-          <div class="python-terminal-pane" nz-resizable [nzMinHeight]="110" [nzMaxHeight]="360" [style.height.px]="terminalHeight" (nzResize)="onTerminalResize($event)">
-            <nz-resize-handle nzDirection="top"></nz-resize-handle>
-            <app-python-terminal></app-python-terminal>
-          </div>
-          <app-python-device-panel class="python-device-pane" (runRequested)="onPythonRun()" (stopRequested)="onPythonStop()"></app-python-device-panel>
-        </div>
-      </nz-content>
+        <nz-sider [nzWidth]="siderWidth" nz-resizable [nzMinWidth]="250" [nzMaxWidth]="600"
+            (nzResize)="onSideResize($event)">
+            <nz-resize-handle nzDirection="right" nzCursorType="grid">
+                <!-- <div class="sider-resize-line"></div> -->
+            </nz-resize-handle>
+            <div class="left-box">
+                <app-file-tree [rootPath]="projectPath" [(selectedFile)]="selectedFile"
+                    (selectedFileChange)="selectedFileChange($event)"
+                    (filesDeleted)="onFilesDeleted($event)"></app-file-tree>
+            </div>
+        </nz-sider>
+        <nz-content>
+            <div class="right-box">
+                @if (openedFiles.length > 0) {
+                <nz-tabset [nzSize]="'small'" [nzSelectedIndex]="selectedIndex"
+                    (nzSelectedIndexChange)="onTabChange($event)" nzType="editable-card" [nzHideAdd]="true"
+                    (nzClose)="closeTab($event)">
+                    @for (file of openedFiles; track file.path; let i = $index) {
+                    <nz-tab nzClosable [nzTitle]="titleTemplate">
+                        <ng-template #titleTemplate>
+                            <span class="tab-inner" (mousedown)="handleMiddleClick($event, i)">
+                                {{ file.title }} <span class="blue-point" *ngIf="file.isDirty"></span>
+                            </span>
+                        </ng-template>
+                    </nz-tab>
+                    }
+                </nz-tabset>
+                <app-monaco-editor [code]="code" (codeChange)="onCodeChange($event)" [filePath]="selectedFile"
+                    (openFileRequest)="onOpenFileRequest($event)"></app-monaco-editor>
+                } @else {
+                <div class="empty-editor" style="padding: 15px;">
+                    <div>这是代码编辑器，是一个测试功能，还不能正常使用</div>
+                    <div>进入到这个页面是因为你打开了一个不存在.abi文件的目录</div>
+                    <div>你可以通过界面左上角的菜单重新打开正确的项目</div>
+                    <div>奈何col 2025.3.20</div>
+                </div>
+                }
+            </div>
+        </nz-content>
     </nz-layout>
-  } @else {
-    <nz-layout>
-      <nz-sider [nzWidth]="siderWidth" nz-resizable [nzMinWidth]="250" [nzMaxWidth]="600" (nzResize)="onSideResize($event)">
-        <nz-resize-handle nzDirection="right" nzCursorType="grid"></nz-resize-handle>
-        <div class="left-box">
-          <app-file-tree [rootPath]="projectPath" [(selectedFile)]="selectedFile" (selectedFileChange)="selectedFileChange($event)" (filesDeleted)="onFilesDeleted($event)"></app-file-tree>
-        </div>
-      </nz-sider>
-      <nz-content>
-        <div class="right-box">
-          <ng-container *ngTemplateOutlet="editorPane"></ng-container>
-        </div>
-      </nz-content>
-    </nz-layout>
-  }
 </div>
-
-<ng-template #editorPane>
-  @if (openedFiles.length > 0) {
-    <nz-tabset [nzSize]="'small'" [nzSelectedIndex]="selectedIndex" (nzSelectedIndexChange)="onTabChange($event)" nzType="editable-card" [nzHideAdd]="true" (nzClose)="closeTab($event)">
-      @for (file of openedFiles; track file.path; let i = $index) {
-        <nz-tab nzClosable [nzTitle]="titleTemplate">
-          <ng-template #titleTemplate>
-            <span class="tab-inner" (mousedown)="handleMiddleClick($event, i)">
-              {{ file.title }} <span class="blue-point" *ngIf="file.isDirty"></span>
-            </span>
-          </ng-template>
-        </nz-tab>
-      }
-    </nz-tabset>
-    <app-monaco-editor [code]="code" (codeChange)="onCodeChange($event)" [filePath]="selectedFile" (openFileRequest)="onOpenFileRequest($event)"></app-monaco-editor>
-  } @else {
-    <div class="empty-editor">No file open</div>
-  }
-</ng-template>
 
 <app-notification></app-notification>

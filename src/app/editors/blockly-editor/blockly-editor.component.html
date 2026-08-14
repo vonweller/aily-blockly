@@ -1,7 +1,14 @@
 @if (devmode) {
-<blockly-main
-  [devmode]="devmode"
-  (libraryManagerRequested)="openProjectManager()"></blockly-main>
+<div class="editor-runtime-layout">
+  <blockly-main
+    [devmode]="devmode"
+    (libraryManagerRequested)="openProjectManager()"></blockly-main>
+  @if (pythonRuntimeMetadata) {
+    <app-python-runtime-panel
+      [runtimeMetadata]="pythonRuntimeMetadata"
+      [source]="generatedCode"></app-python-runtime-panel>
+  }
+</div>
 }
 <app-dev-tool></app-dev-tool>
 

@@ -408,6 +408,9 @@
         },
         "FORM": {
             "DEVMODE": "Entwicklungs-Framework",
+            "MODE_ARDUINO": "Arduino",
+            "MODE_PYTHON": "Python",
+            "MODE_FREERTOS": "FreeRTOS",
             "BOARD": "Board",
             "PROJECT_NAME": "Projektname",
             "SAVE_PATH": "Speicherpfad",

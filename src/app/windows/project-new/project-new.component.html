@@ -15,21 +15,6 @@
       <div class="right">
         @if (currentStep == 0) {
         <div class="right-inner flex-start">
-          <nz-radio-group class="project-type-switch" [ngModel]="newProjectData.projectType"
-            (ngModelChange)="selectProjectType($event)" nzButtonStyle="solid" nzSize="small">
-            <label nz-radio-button nzValue="blockly">Blockly</label>
-            <label nz-radio-button nzValue="python">Python</label>
-          </nz-radio-group>
-          @if (isPythonProject) {
-          <div class="python-board-selector">
-            <button type="button" class="python-board selected" (click)="selectProjectType('python')">
-              <span class="python-board-icon"><i class="fa-light fa-camera-viewfinder"></i></span>
-              <span class="python-board-name">CyberCam / CanMV K230</span>
-              <span class="python-board-runtime">MicroPython</span>
-              <i class="fa-solid fa-circle-check python-board-check"></i>
-            </button>
-          </div>
-          } @else {
           <div class="search-box">
             <div class="search-field">
               <nz-input-group [nzPrefix]="prefixIconSearch" [nzSize]="'small'">
@@ -75,13 +60,22 @@
             <div class="content">{{ currentBoard._description }}</div>
           </div>
           }
-          }
         </div>
         } @else {
         <!-- 基本设定页面 -->
         <div class="right-inner">
-          <div class="right-content">
+            <div class="right-content">
+            @if (selectedProjectCategory === 'blockly') {
             <div class="item">
+              <div>{{ 'PROJECT_NEW.FORM.DEVMODE' | translate }}:</div>
+              <nz-radio-group [(ngModel)]="newProjectData.devmode" [nzDisabled]="devmodes.length === 1">
+                @for (mode of devmodes; track mode) {
+                <label nz-radio-button [nzValue]="mode">{{ getProjectModeTranslationKey(mode) | translate }}</label>
+                }
+              </nz-radio-group>
+            </div>
+            }
+              <div class="item">
             <div>{{ 'PROJECT_NEW.FORM.BOARD' | translate }}:</div>
             <nz-input-group [nzSuffix]="suffixIconSearch">
               <input class="board" nz-input [(ngModel)]="newProjectData.board.name" [disabled]="true" />

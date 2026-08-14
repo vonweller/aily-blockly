@@ -38,11 +38,6 @@
     flex-shrink: 0;
     margin: 0 15px 0 10px;
   }
-
-  .project-type-switch {
-    margin-left: 10px;
-    flex-shrink: 0;
-  }
 }
 
 
@@ -161,101 +156,6 @@
         }
       }
     }
-  }
-}
-
-.python-side {
-  height: 100%;
-  flex-direction: column;
-  gap: 8px;
-  color: var(--aily-text-tertiary);
-
-  i {
-    font-size: 38px;
-    color: var(--aily-color-accent);
-  }
-}
-
-.python-board-selector {
-  display: grid;
-  grid-template-columns: minmax(260px, 420px);
-  gap: 12px;
-}
-
-.python-board {
-  position: relative;
-  min-height: 96px;
-  display: grid;
-  grid-template-columns: 56px minmax(0, 1fr) 24px;
-  grid-template-rows: 1fr 1fr;
-  align-items: center;
-  padding: 14px;
-  border: 1px solid var(--aily-border-secondary);
-  border-radius: 5px;
-  background: var(--aily-bg-tertiary);
-  color: var(--aily-text-primary);
-  text-align: left;
-  cursor: pointer;
-
-  &.selected {
-    border-color: var(--aily-color-primary);
-  }
-}
-
-.python-board-icon {
-  grid-row: 1 / 3;
-  width: 42px;
-  height: 42px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 5px;
-  background: var(--aily-bg-card);
-  color: var(--aily-color-accent);
-  font-size: 21px;
-}
-
-.python-board-name {
-  align-self: end;
-  font-weight: 600;
-}
-
-.python-board-runtime {
-  align-self: start;
-  color: var(--aily-text-tertiary);
-  font-size: 12px;
-}
-
-.python-board-check {
-  grid-column: 3;
-  grid-row: 1 / 3;
-  color: var(--aily-color-primary);
-}
-
-.python-runtime-band {
-  margin-top: 15px;
-  padding: 14px 0;
-  border-top: 1px solid var(--aily-border-secondary);
-  border-bottom: 1px solid var(--aily-border-secondary);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-
-  > div {
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  span {
-    color: var(--aily-text-tertiary);
-    font-size: 12px;
-  }
-
-  button {
-    flex-shrink: 0;
   }
 }
 
