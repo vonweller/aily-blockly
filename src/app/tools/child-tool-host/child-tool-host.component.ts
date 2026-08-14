@@ -201,6 +201,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     this.lastKnownApiServer = this.normalizeApiServer(this.configService.getCurrentApiServer());
     this.configReloadSubscription = this.configService.configReloaded$.subscribe(() => {
       this.handleApiServerChange();
+      this.syncHostContext();
     });
   }
 
@@ -1467,6 +1468,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       theme: this.normalizeTheme(this.themeService.theme()),
       platform: (window as any).electronAPI?.platform?.type || 'browser',
       embedded: !this.isStandalone,
+      developmentMode: this.configService.getDevelopmentModePreference(),
       surface: launch.surface,
       surfaceParams: launch.params,
       workspace: this.resolveHostWorkspace(),
