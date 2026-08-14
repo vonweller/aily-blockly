@@ -1,4 +1,4 @@
-﻿import { ConfigService } from '../../../services/config.service';
+﻿import type { ConfigService } from '../../../services/config.service';
 
 // ==================== 新索引格式接口（boards-index.json / libraries-index.json）====================
 interface NewBoardItem {
