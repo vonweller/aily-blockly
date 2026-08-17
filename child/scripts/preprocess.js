@@ -23,6 +23,16 @@ function formatFatalError(error) {
     return String(error);
 }
 
+function getBoardOptionEntries(projectConfig) {
+    if (!projectConfig || typeof projectConfig !== 'object') {
+        return [];
+    }
+
+    return Object.entries(projectConfig).filter(([, value]) => (
+        value !== null && value !== undefined && value !== ''
+    ));
+}
+
 function exitWithFatalError(error) {
     logger.error(`[ERROR] ${formatFatalError(error)}`);
     process.exit(1);
@@ -224,10 +234,8 @@ async function main() {
         let buildProperties = '';
         if (projectConfig) {
             const buildPropertyParams = [];
-            for (const [key, value] of Object.entries(projectConfig)) {
-                if (value !== null && value !== undefined && value !== '') {
-                    buildPropertyParams.push(`--board-options ${key}=${value}`);
-                }
+            for (const [key, value] of getBoardOptionEntries(projectConfig)) {
+                buildPropertyParams.push(`--board-options ${key}=${value}`);
 
                 if (key === 'PartitionScheme' && value === 'custom') {
                     copyCustomPartitionFile({
@@ -284,10 +292,8 @@ async function main() {
 
         // 添加项目配置参数（如 UploadSpeed, FlashMode, FlashSize, PartitionScheme, PSRAM 等）
         if (projectConfig) {
-            for (const [key, value] of Object.entries(projectConfig)) {
-                if (value !== null && value !== undefined && value !== '') {
-                    pre_args.push('--board-options', `${key}=${value}`);
-                }
+            for (const [key, value] of getBoardOptionEntries(projectConfig)) {
+                pre_args.push('--board-options', `${key}=${value}`);
             }
         }
 

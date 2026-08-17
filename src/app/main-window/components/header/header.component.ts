@@ -39,6 +39,12 @@ import {
   HOST_EXIT_REQUIRES_USER_REASON,
   mainMenuAutomationRejection,
 } from '../../../services/main-menu-automation-policy';
+import {
+  persistBoardConfigSelection,
+  shouldRunBoardConfigSelectionEffects,
+} from './board-config-selection';
+import { hasLinkUploadParam } from '../../../services/debugger-upload-policy';
+import { selectSerialPort } from '../../../services/serial-port-selection';
 
 interface NetworkOtaTarget {
   id: string;
@@ -85,14 +91,14 @@ export class HeaderComponent implements OnInit, OnDestroy {
   private unsubscribeCloseRequest?: () => void;
   private bleDevicesSubscription?: Subscription;
   private appStoreSubscription?: Subscription;
+  private boardChangeSubscription?: Subscription;
   private blePortListRefreshTimer: ReturnType<typeof setTimeout> | null = null;
   private networkOtaDiscoveredTargets: NetworkOtaTarget[] = [];
   private networkOtaScanInProgress = false;
   private networkOtaScanCancelled = false;
   private networkOtaScanStreamId: string | null = null;
   private unsaveDialogOpen = false; // 标记未保存对话框是否已打开
-  private selectDebounceTimer: ReturnType<typeof setTimeout> | null = null; // 防抖计时器
-  private lastSelectedSubItemKey: string | null = null; // 上次选择子菜单项的key（用于判断重复选择）
+  private selectDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   private unregisterHeaderMenuAutomation: (() => void) | null = null;
 
   get projectData() {
@@ -167,6 +173,9 @@ export class HeaderComponent implements OnInit, OnDestroy {
     this.appStoreSubscription = this.appStoreService.layout$.subscribe(() => {
       this.refreshHeaderApps();
       setTimeout(() => this.cd.detectChanges(), 0);
+    });
+    this.boardChangeSubscription = this.projectService.boardChangeSubject.subscribe(() => {
+      void this.resetDebuggerSelectionAfterBoardChange();
     });
   }
 
@@ -273,6 +282,38 @@ export class HeaderComponent implements OnInit, OnDestroy {
     } catch (error) {
       console.warn('获取串口列表失败:', error);
     }
+  }
+
+  private async resetDebuggerSelectionAfterBoardChange(): Promise<void> {
+    // Invalidate an in-flight probe scan and never carry probe cache across boards.
+    this.portListGeneration += 1;
+    this.cachedDebuggerItems = [];
+
+    if (this.serialService.currentPortInfo?.type === 'debugger') {
+      this.serialService.currentPort = null;
+      this.serialService.currentPortInfo = null;
+
+      try {
+        const ports = await this.serialService.getSerialPorts();
+        const selection = selectSerialPort(ports, {
+          boardConfig: this.projectService.currentBoardConfig,
+        });
+        if (selection.selected?.name) {
+          this.serialService.currentPort = selection.selected.name;
+          this.serialService.currentPortInfo = {
+            ...selection.selected,
+            type: selection.selected.type || 'serial',
+          };
+        }
+      } catch (error) {
+        console.warn('Failed to select the default serial port after board change:', error);
+      }
+    }
+
+    if (this.showPortList) {
+      await this.getDevicePortList();
+    }
+    this.cd.detectChanges();
   }
 
   showMenu = false;
@@ -600,8 +641,10 @@ export class HeaderComponent implements OnInit, OnDestroy {
     }
 
     // 加载当前开发板包声明的可选配置菜单。
-    if (core.includes('stm32') || core.includes('nrf5')) {
+    if (hasLinkUploadParam(this.projectService.currentBoardConfig)) {
       this.detectProbes(generation, portList0, skipDetect);
+    } else {
+      this.cachedDebuggerItems = [];
     }
 
     const boardConfigMenu = await this.projectService.getBoardConfigMenu();
@@ -993,6 +1036,7 @@ export class HeaderComponent implements OnInit, OnDestroy {
     this.unregisterHeaderMenuAutomation?.();
     this.unregisterHeaderMenuAutomation = null;
     this.appStoreSubscription?.unsubscribe();
+    this.boardChangeSubscription?.unsubscribe();
     if (this.bleDevicesSubscription) {
       this.bleDevicesSubscription.unsubscribe();
     }
@@ -1499,52 +1543,48 @@ export class HeaderComponent implements OnInit, OnDestroy {
     });
   }
 
-  private async ensureCustomPartitionFileForUserSelection(): Promise<boolean> {
+  private async ensureCustomPartitionFileForUserSelection(): Promise<{ ready: boolean; changed: boolean }> {
     const paths = this.getCustomPartitionPaths();
     if (!paths) {
       this.message.error('当前没有打开的项目，无法设置自定义分区');
-      return false;
+      return { ready: false, changed: false };
     }
 
     if (this.fileExists(paths.requiredFilePath)) {
-      return true;
+      return { ready: true, changed: false };
     }
 
     if (this.fileExists(paths.legacyFilePath)) {
       try {
         this.copyPartitionFile(paths.legacyFilePath, paths.requiredFilePath, paths.srcDir);
         this.message.info(`已将分区文件迁移到 ${paths.requiredFilePath}`);
-        return true;
+        return { ready: true, changed: true };
       } catch (error) {
         console.warn('迁移分区文件失败:', error);
         this.message.error(`迁移分区文件失败，请手动放置到 ${paths.requiredFilePath}`);
-        return false;
+        return { ready: false, changed: false };
       }
     }
 
     const selectedFilePath = await this.selectCustomPartitionFile(paths.srcDir);
     if (!selectedFilePath) {
       this.message.warning('未选择分区文件，已取消自定义分区设置');
-      return false;
+      return { ready: false, changed: false };
     }
 
     try {
       this.copyPartitionFile(selectedFilePath, paths.requiredFilePath, paths.srcDir);
-      return true;
+      return { ready: true, changed: true };
     } catch (error) {
       console.warn('复制分区文件失败:', error);
       this.message.error(`复制分区文件失败，请手动放置到 ${paths.requiredFilePath}`);
-      return false;
+      return { ready: false, changed: false };
     }
   }
 
   // 选择子菜单项-修改编译上传配置
   async selectSubItem(subItem: IMenuItem) {
     // console.log('选择子菜单项:', subItem);
-    if (this.lastSelectedSubItemKey === (subItem.key + '_' + subItem.name)) {
-      return;
-    }
-
     if (this.selectDebounceTimer !== null) {
       clearTimeout(this.selectDebounceTimer);
     }
@@ -1552,23 +1592,29 @@ export class HeaderComponent implements OnInit, OnDestroy {
     this.selectDebounceTimer = setTimeout(async () => {
       this.selectDebounceTimer = null;
 
-      let packageJson = await this.projectService.getPackageJson();
-      packageJson['projectConfig'] = packageJson['projectConfig'] || {};
+      let customPartitionChanged = false;
+      if (this.isCustomPartitionSubItem(subItem)) {
+        const partitionResult = await this.ensureCustomPartitionFileForUserSelection();
+        if (!partitionResult.ready) {
+          return;
+        }
+        customPartitionChanged = partitionResult.changed;
+      }
 
-      if (this.isCustomPartitionSubItem(subItem) && !await this.ensureCustomPartitionFileForUserSelection()) {
-        this.lastSelectedSubItemKey = '';
+      const configChanged = await persistBoardConfigSelection(this.projectService, subItem);
+      const shouldRunEffects = shouldRunBoardConfigSelectionEffects(
+        configChanged || customPartitionChanged,
+        subItem,
+      );
+      if (!shouldRunEffects) {
         return;
       }
 
-      this.lastSelectedSubItemKey = subItem.key + '_' + subItem.name;
-
-      packageJson['projectConfig'][subItem.key] = subItem.data;
-      await this.projectService.setPackageJson(packageJson);
       if (subItem.extra?.refreshRuntimeBoardConfig) {
         await this.projectService.refreshRuntimeBoardConfig();
       }
 
-      if (subItem.extra?.syncPinConfig) {
+      if (configChanged && subItem.extra?.syncPinConfig) {
         await this.projectService.syncBoardPinConfig(subItem);
       }
 
@@ -1581,7 +1627,9 @@ export class HeaderComponent implements OnInit, OnDestroy {
         await this.uploaderService.flashSoftdevice(subItem.data, this.serialService.currentPort);
       }
 
-      this.builderService.triggerPreprocess('config-changed');
+      if (configChanged || customPartitionChanged) {
+        this.builderService.triggerPreprocess('config-changed');
+      }
     }, 500);
   }
 
