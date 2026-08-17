@@ -716,6 +716,7 @@ function registerWindowHandlers(mainWindow, options = {}) {
     let codeViewerState = {
         code: '',
         selectedBlockId: null,
+        selectedBlockIds: [],
         blockCodeMap: [],
         updatedAt: 0,
     };
