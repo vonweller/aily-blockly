@@ -1438,6 +1438,106 @@ export class HeaderComponent implements OnInit, OnDestroy {
       .filter((target: NetworkOtaTarget | null): target is NetworkOtaTarget => !!target);
   }
 
+  private isCustomPartitionSubItem(subItem: IMenuItem): boolean {
+    return subItem.key === 'PartitionScheme'
+      && String(subItem.data || '').toLowerCase() === 'custom';
+  }
+
+  private getCustomPartitionPaths(): { srcDir: string; requiredFilePath: string; legacyFilePath: string } | null {
+    const projectRoot = this.projectService.currentProjectPath;
+    if (!projectRoot) {
+      return null;
+    }
+    const pathApi = window['path'];
+    return {
+      srcDir: pathApi.join(projectRoot, 'src'),
+      requiredFilePath: pathApi.join(projectRoot, 'src', 'partitions.csv'),
+      legacyFilePath: pathApi.join(projectRoot, 'partitions.csv'),
+    };
+  }
+
+  private fileExists(filePath: string): boolean {
+    try {
+      return window['fs']?.existsSync?.(filePath) === true;
+    } catch {
+      return false;
+    }
+  }
+
+  private normalizeComparablePath(filePath: string): string {
+    return String(filePath || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  }
+
+  private copyPartitionFile(sourcePath: string, targetPath: string, srcDir: string): void {
+    if (!this.fileExists(srcDir)) {
+      window['fs'].mkdirSync(srcDir, { recursive: true });
+    }
+    if (this.normalizeComparablePath(sourcePath) === this.normalizeComparablePath(targetPath)) {
+      return;
+    }
+    window['fs'].copySync(sourcePath, targetPath);
+  }
+
+  private async selectCustomPartitionFile(defaultPath: string): Promise<string> {
+    const dialog = (window as any).dialog;
+    if (dialog?.selectFiles) {
+      const result = await dialog.selectFiles({
+        title: '选择 ESP32 分区文件',
+        defaultPath,
+        properties: ['openFile'],
+        filters: [
+          { name: 'CSV', extensions: ['csv'] },
+          { name: 'All Files', extensions: ['*'] },
+        ],
+      });
+      return result?.canceled ? '' : String(result?.filePaths?.[0] || '');
+    }
+
+    return await window['ipcRenderer'].invoke('select-file', {
+      title: '选择 ESP32 分区文件',
+      path: defaultPath,
+    });
+  }
+
+  private async ensureCustomPartitionFileForUserSelection(): Promise<boolean> {
+    const paths = this.getCustomPartitionPaths();
+    if (!paths) {
+      this.message.error('当前没有打开的项目，无法设置自定义分区');
+      return false;
+    }
+
+    if (this.fileExists(paths.requiredFilePath)) {
+      return true;
+    }
+
+    if (this.fileExists(paths.legacyFilePath)) {
+      try {
+        this.copyPartitionFile(paths.legacyFilePath, paths.requiredFilePath, paths.srcDir);
+        this.message.info(`已将分区文件迁移到 ${paths.requiredFilePath}`);
+        return true;
+      } catch (error) {
+        console.warn('迁移分区文件失败:', error);
+        this.message.error(`迁移分区文件失败，请手动放置到 ${paths.requiredFilePath}`);
+        return false;
+      }
+    }
+
+    const selectedFilePath = await this.selectCustomPartitionFile(paths.srcDir);
+    if (!selectedFilePath) {
+      this.message.warning('未选择分区文件，已取消自定义分区设置');
+      return false;
+    }
+
+    try {
+      this.copyPartitionFile(selectedFilePath, paths.requiredFilePath, paths.srcDir);
+      return true;
+    } catch (error) {
+      console.warn('复制分区文件失败:', error);
+      this.message.error(`复制分区文件失败，请手动放置到 ${paths.requiredFilePath}`);
+      return false;
+    }
+  }
+
   // 选择子菜单项-修改编译上传配置
   async selectSubItem(subItem: IMenuItem) {
     // console.log('选择子菜单项:', subItem);
@@ -1451,41 +1551,19 @@ export class HeaderComponent implements OnInit, OnDestroy {
 
     this.selectDebounceTimer = setTimeout(async () => {
       this.selectDebounceTimer = null;
-      this.lastSelectedSubItemKey = subItem.key + '_' + subItem.name;
 
       let packageJson = await this.projectService.getPackageJson();
       packageJson['projectConfig'] = packageJson['projectConfig'] || {};
 
-      // // 判断是否为PartitionScheme并且值为'custom'，如果是则弹出文件选择
-      // if (subItem.key === 'PartitionScheme' && subItem.data.toLowerCase() === 'custom') {
-      //   const folderPath = await window['ipcRenderer'].invoke('select-file', {
-      //     title: '选择分区文件',
-      //     path: this.projectService.currentProjectPath,
-      //   });
+      if (this.isCustomPartitionSubItem(subItem) && !await this.ensureCustomPartitionFileForUserSelection()) {
+        this.lastSelectedSubItemKey = '';
+        return;
+      }
 
-      //   // console.log('选中的分区文件路径：', folderPath);
-
-      //   if (!folderPath) {
-      //     this.message.warning('未选择分区文件，已取消');
-      //     return;
-      //   }
-
-      //   // 执行复制操作，复制到项目根目录下的 'partitions.csv'
-      //   const destPath = window['path'].join(this.projectService.currentProjectPath, 'partitions.csv');
-      //   if (folderPath != destPath) {
-      //     // console.log('复制分区文件到项目目录:', destPath);
-      //     try {
-      //       window['fs'].copySync(folderPath, destPath);
-      //     } catch (error) {
-      //       console.warn('复制分区文件失败:', error);
-      //       this.message.error('复制分区文件失败');
-      //       return;
-      //     }
-      //   }
-      // }
+      this.lastSelectedSubItemKey = subItem.key + '_' + subItem.name;
 
       packageJson['projectConfig'][subItem.key] = subItem.data;
-      this.projectService.setPackageJson(packageJson);
+      await this.projectService.setPackageJson(packageJson);
       if (subItem.extra?.refreshRuntimeBoardConfig) {
         await this.projectService.refreshRuntimeBoardConfig();
       }
