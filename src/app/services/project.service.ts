@@ -2021,6 +2021,7 @@ export class ProjectService {
       }
 
       const currentValue = currentProjectConfig[menuItem.key];
+      let hasSelectedChild = false;
       for (const child of children) {
         child.key = child.key || menuItem.key;
         child.extra = {
@@ -2028,12 +2029,19 @@ export class ProjectService {
           ...(child.extra || {}),
         };
         child.check = currentValue !== undefined && this.compareConfigs(child.data, currentValue);
+        hasSelectedChild ||= child.check;
 
         if (child.check && child.extra?.syncPinConfig) {
           this.currentBoardPinConfig.board = child.data;
           this.currentBoardPinConfig.variant = child.extra?.build?.variant || null;
           this.currentBoardPinConfig.variant_h = child.extra?.build?.variant_h || null;
         }
+      }
+
+      // boards.txt treats the first option as the effective default. Keep the
+      // menu aligned with that behavior when the project has no matching value.
+      if (!hasSelectedChild && children.length > 0) {
+        children[0].check = true;
       }
 
       if (
