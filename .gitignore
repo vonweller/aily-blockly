@@ -93,6 +93,7 @@ child/aily-builder*
 !src/app/editors/blockly-editor/board-auth-gate.spec.ts
 !src/app/services/update.service.spec.ts
 !src/app/services/child-app-safety.service.spec.ts
+!src/app/services/compile-validation.service.spec.ts
 !src/app/main-window/components/footer/footer.component.spec.ts
 !src/app/editors/code-editor-pro/services/code-editor-pro-project.service.spec.ts
 !src/app/editors/blockly-editor/components/dev-tool/dev-tool-drag-controller.spec.ts
