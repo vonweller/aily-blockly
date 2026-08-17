@@ -93,11 +93,14 @@ child/aily-builder*
 !src/app/editors/blockly-editor/board-auth-gate.spec.ts
 !src/app/services/update.service.spec.ts
 !src/app/services/child-app-safety.service.spec.ts
+!src/app/services/compile-validation.service.spec.ts
 !src/app/main-window/components/footer/footer.component.spec.ts
 !src/app/editors/code-editor-pro/services/code-editor-pro-project.service.spec.ts
 !src/app/editors/blockly-editor/components/dev-tool/dev-tool-drag-controller.spec.ts
 !src/app/editors/blockly-editor/components/blockly/plugins/workspace-multiselect/global.spec.ts
 !src/app/editors/blockly-editor/services/blockly-runtime-block-metadata.spec.ts
+!src/app/editors/blockly-editor/components/blockly/generators/arduino/arduino-entrypoint-mapping.spec.ts
+!src/app/editors/blockly-editor/tools/code-viewer/code-viewer-range.spec.ts
 !src/app/tools/app-store/app-store.service.spec.ts
 !src/app/tools/aily-chat/tools/editorOperationEvents.spec.ts
 !src/app/tools/aily-chat/tools/blocklyEditorOperationQueue.spec.ts

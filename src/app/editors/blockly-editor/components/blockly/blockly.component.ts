@@ -969,7 +969,10 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
           this.blocklyService.selectedBlockSubject.next(selectedBlockId);
           queueMicrotask(() => {
             this.blocklyService.syncSelectedBlocksFromWorkspace();
-            this.codeViewerIpcService.publishSelection(this.blocklyService.selectedBlockSubject.value);
+            this.codeViewerIpcService.publishSelection(
+              this.blocklyService.selectedBlockSubject.value,
+              this.blocklyService.selectedBlockIdsSubject.value,
+            );
           });
         }
       });
@@ -2069,7 +2072,10 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
       this.blocklyService.selectedBlockIdsSubject.next([block.id]);
       this.blocklyService.selectedBlockSubject.next(block.id);
     }
-    this.codeViewerIpcService.publishSelection(this.blocklyService.selectedBlockSubject.value);
+    this.codeViewerIpcService.publishSelection(
+      this.blocklyService.selectedBlockSubject.value,
+      this.blocklyService.selectedBlockIdsSubject.value,
+    );
 
     const prompt = this.translateService.instant('BLOCKLY_EDITOR.EXPLAIN_BLOCK_PROMPT');
     this.uiService.openAndSendToChat(prompt, {
@@ -2182,6 +2188,7 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
         reusableCode,
         this.blocklyService.blockCodeMapSubject.value,
         this.blocklyService.selectedBlockSubject.value,
+        this.blocklyService.selectedBlockIdsSubject.value,
       );
       return;
     }
@@ -2327,6 +2334,7 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
           code,
           blockCodeMap,
           this.blocklyService.selectedBlockSubject.value,
+          this.blocklyService.selectedBlockIdsSubject.value,
         );
 
         // Extract #include and #define, check for changes
