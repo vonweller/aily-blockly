@@ -295,7 +295,8 @@ export class SettingsComponent implements OnDestroy {
 
     await switchServiceRegionAndRequestLogin(regionKey, {
       closeProtectedTools: () => this.uiService.closeAuthRequiredTools(),
-      logout: () => this.authService.logout(),
+      clearLocalAuthSession: () => this.authService.clearLocalAuthSession(),
+      stopProtectedRuntime: () => this.uiService.stopDefaultAilyChatRuntime(),
       setRegion: (nextRegionKey) => this.configService.setRegion(nextRegionKey),
       requestLogin: (reason) => this.authService.requestLogin(reason),
     });

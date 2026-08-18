@@ -356,6 +356,12 @@ export class MainWindowComponent implements OnDestroy {
 
     const run = () => {
       this.cancelAilyChatPrewarm = null;
+
+      if (!this.authService.isLoggedIn) {
+        this.scheduleAilyChatPrewarm();
+        return;
+      }
+
       void this.childToolProcessService.prewarm(DEFAULT_AILY_CHAT_SUBAPP_TOOL_ID, 90000).catch(error => {
         console.warn('[Subapp] Aily Chat prewarm failed:', error);
       });

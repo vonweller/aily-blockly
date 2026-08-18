@@ -387,7 +387,7 @@ export class AuthService {
 
   /** Clear only this renderer/install's auth state without notifying logout. */
   async clearLocalAuthSession(): Promise<void> {
-    await this.clearAuthData();
+    await this.clearAuthData(true);
   }
 
   /**
@@ -832,7 +832,7 @@ export class AuthService {
    * 移除.aily文件和localStorage中的认证数据
    */
 
-  async clearAuthDataFile(): Promise<void> {
+  async clearAuthDataFile(throwOnError = false): Promise<void> {
     try {
       if (this.electronService.isElectron && (window as any).electronAPI?.path && (window as any).electronAPI?.fs) {
         const appDataPath = (window as any).electronAPI.path.getAppDataPath();
@@ -850,6 +850,9 @@ export class AuthService {
       }
     } catch (error) {
       console.error('清除认证数据失败:', error);
+      if (throwOnError) {
+        throw error;
+      }
     }
   }
 
@@ -903,16 +906,16 @@ export class AuthService {
   /**
    * 清除所有认证数据
    */
-  private async clearAuthData(): Promise<void> {
+  private async clearAuthData(requireCredentialRemoval = false): Promise<void> {
     localStorage.removeItem(this.TOKEN_KEY);
     localStorage.removeItem(this.REFRESH_TOKEN_KEY);
     localStorage.removeItem(this.USER_INFO_KEY);
     this.clearPendingAuthQuotaInfoSnapshotRetry();
     this.clearPendingAuthHydrationRetry();
-    await this.clearAuthDataFile();
     this.isLoggedInSubject.next(false);
     this.setCurrentUserInfo(null);
     this.authInitializationStateSubject.next('signed_out');
+    await this.clearAuthDataFile(requireCredentialRemoval);
   }
 
   /**

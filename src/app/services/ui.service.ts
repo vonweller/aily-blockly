@@ -30,6 +30,8 @@ import {
   ProtectedToolCloseError,
 } from './auth-required-tool-close';
 import { ChildAppSafetyService } from './child-app-safety.service';
+import { ChildToolProcessService } from './child-tool-process.service';
+import { DEFAULT_AILY_CHAT_SUBAPP_TOOL_ID } from './default-aily-chat-bootstrap';
 
 @Injectable({
   providedIn: 'root',
@@ -159,7 +161,8 @@ export class UiService {
             }
             await switchServiceRegionAndRequestLogin(regionKey, {
               closeProtectedTools: () => this.closeAuthRequiredTools(),
-              logout: () => this.authService.logout(),
+              clearLocalAuthSession: () => this.authService.clearLocalAuthSession(),
+              stopProtectedRuntime: () => this.stopDefaultAilyChatRuntime(),
               setRegion: (nextRegionKey) => this.configService.setRegion(nextRegionKey),
               requestLogin: (reason) => this.authService.requestLogin(reason),
             });
@@ -458,6 +461,15 @@ export class UiService {
       }),
       forceCloseToolEverywhere: (toolId) => this.forceCloseToolEverywhere(toolId),
     });
+  }
+
+  async stopDefaultAilyChatRuntime(): Promise<void> {
+    if (!this.electronService.isElectron) {
+      return;
+    }
+
+    const childToolProcess = this.injector.get(ChildToolProcessService);
+    await childToolProcess.forceStop(DEFAULT_AILY_CHAT_SUBAPP_TOOL_ID);
   }
 
   async forceCloseToolEverywhere(name: string): Promise<boolean> {
