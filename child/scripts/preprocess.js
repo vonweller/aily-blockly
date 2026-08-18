@@ -23,6 +23,16 @@ function formatFatalError(error) {
     return String(error);
 }
 
+function getBoardOptionEntries(projectConfig) {
+    if (!projectConfig || typeof projectConfig !== 'object') {
+        return [];
+    }
+
+    return Object.entries(projectConfig).filter(([, value]) => (
+        value !== null && value !== undefined && value !== ''
+    ));
+}
+
 function exitWithFatalError(error) {
     logger.error(`[ERROR] ${formatFatalError(error)}`);
     process.exit(1);
@@ -224,31 +234,15 @@ async function main() {
         let buildProperties = '';
         if (projectConfig) {
             const buildPropertyParams = [];
-            for (const [key, value] of Object.entries(projectConfig)) {
-                if (value !== null && value !== undefined && value !== '') {
-                    buildPropertyParams.push(`--board-options ${key}=${value}`);
-                }
+            for (const [key, value] of getBoardOptionEntries(projectConfig)) {
+                buildPropertyParams.push(`--board-options ${key}=${value}`);
 
                 if (key === 'PartitionScheme' && value === 'custom') {
-                    let partitionFile = path.join(currentProjectPath, 'partitions.csv');
-                    if (!fs.existsSync(partitionFile) && customPartitionFilePath) {
-                        partitionFile = customPartitionFilePath;
-                    }
-
-                    if (!partitionFile || !fs.existsSync(partitionFile)) {
-                        partitionFile = path.join(boardModulePath, 'partitions.csv');
-                    }
-
-                    if (!partitionFile || !fs.existsSync(partitionFile)) {
-                        throw new Error('选择了自定义分区方案，但未找到 partitions.csv 分区文件');
-                    }
-
-                    const destPartitionFilePath = path.join(sketchPath, 'partitions.csv');
-                    try {
-                        fs.copyFileSync(partitionFile, destPartitionFilePath);
-                    } catch (error) {
-                        throw new Error(`复制分区文件失败: ${error.message}`);
-                    }
+                    copyCustomPartitionFile({
+                        currentProjectPath,
+                        sketchPath,
+                        customPartitionFilePath
+                    });
                 }
             }
             buildProperties = buildPropertyParams.join(' ');
@@ -298,10 +292,8 @@ async function main() {
 
         // 添加项目配置参数（如 UploadSpeed, FlashMode, FlashSize, PartitionScheme, PSRAM 等）
         if (projectConfig) {
-            for (const [key, value] of Object.entries(projectConfig)) {
-                if (value !== null && value !== undefined && value !== '') {
-                    pre_args.push('--board-options', `${key}=${value}`);
-                }
+            for (const [key, value] of getBoardOptionEntries(projectConfig)) {
+                pre_args.push('--board-options', `${key}=${value}`);
             }
         }
 
@@ -388,6 +380,32 @@ function copyProjectSrcToSketch(currentProjectPath, sketchPath) {
     }
 
     copyDirectoryContents(projectSrcPath, sketchPath);
+}
+
+function copyCustomPartitionFile({ currentProjectPath, sketchPath, customPartitionFilePath }) {
+    const sourcePartitionFile = path.join(currentProjectPath, 'src', 'partitions.csv');
+    const legacyPartitionFile = path.join(currentProjectPath, 'partitions.csv');
+    const candidates = [
+        { filePath: sourcePartitionFile, kind: 'source' },
+        { filePath: legacyPartitionFile, kind: 'legacy' },
+        { filePath: customPartitionFilePath, kind: 'configured' }
+    ].filter(candidate => candidate.filePath && fs.existsSync(candidate.filePath));
+
+    const selected = candidates[0];
+    if (!selected) {
+        throw new Error(`选择了自定义分区方案，但未找到 partitions.csv 分区文件。请将文件保存到 ${sourcePartitionFile}`);
+    }
+
+    if (selected.kind === 'legacy') {
+        logger.warn(`检测到旧位置分区文件，建议迁移到 ${sourcePartitionFile}`);
+    }
+
+    const destPartitionFilePath = path.join(sketchPath, 'partitions.csv');
+    try {
+        fs.copyFileSync(selected.filePath, destPartitionFilePath);
+    } catch (error) {
+        throw new Error(`复制分区文件失败: ${error.message}`);
+    }
 }
 
 function copyDirectoryContents(sourceDir, targetDir) {

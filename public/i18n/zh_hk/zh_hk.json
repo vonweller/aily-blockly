@@ -451,7 +451,7 @@
             "CREATING_AILY_CODE": "正在創建 Aily Code 專案"
         },
         "WARNINGS": {
-            "BETA_VERSION": "內測版本，未經驗證，謹慎使用",
+            "BETA_VERSION": "測試版本，未經驗證，謹慎使用",
             "TODO": "該設備支持即將上線"
         },
         "PROJECT_CATEGORY": {

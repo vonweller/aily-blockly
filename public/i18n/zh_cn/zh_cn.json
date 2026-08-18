@@ -493,7 +493,7 @@
             "NONE": "不使用模板"
         },
         "WARNINGS": {
-            "BETA_VERSION": "内测版本，未经验证，谨慎使用",
+            "BETA_VERSION": "测试版本，未经验证，谨慎使用",
             "TODO": "该设备支持即将上线"
         },
         "PROJECT_CATEGORY": {

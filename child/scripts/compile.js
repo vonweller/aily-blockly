@@ -83,6 +83,11 @@ async function main() {
             ? ailyCodeProject.resolveCompileSourcePath(currentProjectPath)
             : sketchFilePath;
         const preprocessCachePath = path.join(tempPath, 'preprocess.json');
+        const projectPackageJsonPath = path.join(currentProjectPath, 'package.json');
+        const projectPackageJson = fs.existsSync(projectPackageJsonPath)
+            ? JSON.parse(fs.readFileSync(projectPackageJsonPath, 'utf8'))
+            : {};
+        const projectConfig = projectPackageJson.projectConfig || {};
         let frameworkOutputDir = null;
         if (isAilyCode) {
             frameworkOutputDir = ailyCodeProject.resolveFrameworkBuildDir(currentProjectPath);
@@ -94,6 +99,7 @@ async function main() {
         mkdirp(path.dirname(compileSourcePath));
         fs.writeFileSync(compileSourcePath, code);
         copyProjectSrcToSketch(currentProjectPath, sketchPath);
+        ensureCustomPartitionFile(projectConfig, currentProjectPath, sketchPath);
 
         // 纯 Blockly 仍会写 sketch.ino，便于与其它工具对齐；Aily Code 仅以 entry 为准
         if (!isAilyCode) {
@@ -516,4 +522,31 @@ function copyProjectSrcToSketch(currentProjectPath, sketchPath) {
         return;
     }
     fs.cpSync(projectSrcPath, sketchPath, { recursive: true });
+}
+
+function ensureCustomPartitionFile(projectConfig, currentProjectPath, sketchPath) {
+    if (!projectConfig || projectConfig.PartitionScheme !== 'custom') {
+        return;
+    }
+
+    const sourcePartitionFile = path.join(currentProjectPath, 'src', 'partitions.csv');
+    const legacyPartitionFile = path.join(currentProjectPath, 'partitions.csv');
+    const sketchPartitionFile = path.join(sketchPath, 'partitions.csv');
+
+    if (fs.existsSync(sketchPartitionFile)) {
+        return;
+    }
+
+    if (fs.existsSync(sourcePartitionFile)) {
+        fs.copyFileSync(sourcePartitionFile, sketchPartitionFile);
+        return;
+    }
+
+    if (fs.existsSync(legacyPartitionFile)) {
+        logger.warn(`检测到旧位置分区文件，建议迁移到 ${sourcePartitionFile}`);
+        fs.copyFileSync(legacyPartitionFile, sketchPartitionFile);
+        return;
+    }
+
+    throw new Error(`已选择自定义分区 PartitionScheme=custom，但未找到分区文件。请将 CSV 放到 ${sourcePartitionFile}`);
 }
