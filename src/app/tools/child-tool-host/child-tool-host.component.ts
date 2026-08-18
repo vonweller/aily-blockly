@@ -972,6 +972,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
         },
         startGithubLogin: (payload: { inviteCode?: string } = {}) => this.startGithubLogin(payload),
         requestLogin: (payload: { reason?: string } = {}) => this.requestHostLogin(payload),
+        openUserSubscription: () => this.openUserSubscription(),
         selectChatResources: () => this.selectChatResources(),
         listChildApps: (payload: { limit?: number } = {}) => this.listChatChildApps(payload),
         openChildApp: (payload: { toolId?: string; mode?: 'embedded' | 'window' } = {}) => this.openChatChildApp(payload),
@@ -1481,6 +1482,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
         userInteractionNotifications: true,
         hostGithubLogin: isAilyChat,
         hostLoginDialog: isAilyChat,
+        userSubscription: isAilyChat,
         resourcePicker: isAilyChat
           && typeof (window as any).dialog?.selectFiles === 'function',
         childAppMenu: isAilyChat,
@@ -1943,6 +1945,24 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     this.ngZone.run(() => this.authService.requestLogin(reason));
     this.pushChildAuthState(this.authService.isLoggedIn);
     return { ok: true, authenticated: this.authService.isLoggedIn };
+  }
+
+  private async openUserSubscription(): Promise<Record<string, unknown>> {
+    if (!this.isAilyChatTool()) {
+      return { ok: false, message: 'The user subscription page is only available to Aily Chat' };
+    }
+    if (!this.authService.isLoggedIn) {
+      return { ok: false, message: 'The user is not signed in' };
+    }
+
+    const response = await firstValueFrom(this.authService.generateSSOToken('/user/subscription'));
+    const targetUrl = typeof response?.target_url === 'string' ? response.target_url.trim() : '';
+    if (!targetUrl) {
+      return { ok: false, message: 'The user subscription URL is unavailable' };
+    }
+
+    this.electronService.openUrl(targetUrl);
+    return { ok: true };
   }
 
   private pushChildAuthState(authenticated: boolean): void {
