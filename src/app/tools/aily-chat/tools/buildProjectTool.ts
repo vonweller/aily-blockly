@@ -98,8 +98,9 @@ export async function buildProjectTool(
             };
         }
 
-        // 执行完整编译 - 成功时返回结果，失败时会 throw
-        const result = await builderService.build(projectPath);
+        // 当前项目已由宿主桥接完成路径匹配；这里必须与主界面手动编译一样走活动项目入口。
+        // 传入 projectPath 会切到磁盘直编译旁路，绕过 Blockly 的日志、进度和构建状态编排。
+        const result = await builderService.build();
 
         // 编译成功 → 清除缓存的编译错误
         clearLastBuildErrors();
