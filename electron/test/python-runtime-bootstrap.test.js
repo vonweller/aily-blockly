@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const { EventEmitter } = require('node:events');
 const test = require('node:test');
 
 const { createPythonRuntimeRegistration } = require('../python-runtime/bootstrap');
@@ -66,5 +67,66 @@ test('unsupported hosts expose a recoverable unavailable runtime', async () => {
     ipcMain.handlers.get('python-runtime-detect-boards')({}, {}),
     /not available for freebsd-riscv64/,
   );
+  await runtime.registration.dispose();
+});
+
+test('registers canmv-k230, linux-ssh, and linux-serial-shell without opening Linux transports', async () => {
+  let sshSessionCreates = 0;
+  let serialSessionCreates = 0;
+  const ipcMain = createIpcMain();
+  const createConnection = transport => {
+    const connection = new EventEmitter();
+    connection.connect = async () => ({
+      capabilities: {
+        platform: 'linux',
+        hostname: transport,
+        architecture: 'x64',
+        pythonVersion: '3.11',
+        homeDirectory: '/home/aily',
+        writableWorkspace: '/tmp/aily-runtime',
+        pty: true,
+        terminalResize: true,
+        processGroups: true,
+        files: 'none',
+        autostart: 'none',
+        preview: { available: false, transports: [] },
+      },
+    });
+    connection.request = async () => ({ ok: true });
+    connection.disconnect = async () => undefined;
+    return connection;
+  };
+  const runtime = createPythonRuntimeRegistration({
+    ipcMain,
+    override: 'C:/tools/canmv-backend.exe',
+    isPackaged: false,
+    moduleDir: 'C:/app/electron/python-runtime',
+    fileSystem: { existsSync: () => true, accessSync: () => undefined, constants: { X_OK: 1 } },
+    sshSessionFactory: () => {
+      sshSessionCreates += 1;
+      return createConnection('ssh');
+    },
+    serialSessionFactory: () => {
+      serialSessionCreates += 1;
+      return createConnection('serial-shell');
+    },
+  });
+
+  assert.deepEqual(runtime.broker.adapterIds(), [
+    'canmv-k230',
+    'linux-serial-shell',
+    'linux-ssh',
+  ]);
+  assert.equal(sshSessionCreates, 0);
+  assert.equal(serialSessionCreates, 0);
+
+  const sender = { id: 77, send() {}, isDestroyed: () => false, once() {} };
+  runtime.broker.attachOwner(sender);
+  await runtime.broker.connect(sender.id, {
+    adapterId: 'linux-ssh',
+    endpoint: { kind: 'ssh', host: 'pi.local', port: 22, username: 'pi' },
+  });
+  assert.equal(sshSessionCreates, 1);
+  assert.equal(serialSessionCreates, 0);
   await runtime.registration.dispose();
 });

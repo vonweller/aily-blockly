@@ -1,0 +1,9 @@
+import { CANMV_K230_RUNTIME_ADAPTER_PROVIDER } from './canmv-k230-runtime.adapter';
+import { LINUX_SERIAL_SHELL_RUNTIME_ADAPTER_PROVIDER } from './linux-serial-shell-runtime.adapter';
+import { LINUX_SSH_RUNTIME_ADAPTER_PROVIDER } from './linux-ssh-runtime.adapter';
+
+export const PYTHON_RUNTIME_ADAPTER_PROVIDERS = [
+  CANMV_K230_RUNTIME_ADAPTER_PROVIDER,
+  LINUX_SSH_RUNTIME_ADAPTER_PROVIDER,
+  LINUX_SERIAL_SHELL_RUNTIME_ADAPTER_PROVIDER,
+] as const;

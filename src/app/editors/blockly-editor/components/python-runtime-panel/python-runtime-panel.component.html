@@ -7,32 +7,102 @@
           <span class="status-dot"></span>{{ statusText(state) }}
         </div>
       </div>
-      <button type="button" class="icon-button" aria-label="Detect Python devices" (click)="detect()" [disabled]="busy || !state.runtimeAvailable || state.connectionState === 'connected'">
-        <span nz-icon nzType="search"></span>
-      </button>
+      @if (!isSshRuntime) {
+        <button type="button" class="icon-button" aria-label="Detect Python devices" (click)="detect()" [disabled]="busy || !state.runtimeAvailable || state.connectionState === 'connected'">
+          <span nz-icon nzType="search"></span>
+        </button>
+      }
     </header>
 
     <section class="connection-controls">
-      <nz-select class="port-select" nzSize="small" [(ngModel)]="selectedPort" nzPlaceHolder="Select a device" [nzDisabled]="busy || state.connectionState === 'connected' || !state.runtimeAvailable">
-        @for (board of state.boards; track board.port) {
-          <nz-option [nzValue]="board.port" [nzLabel]="board.port + ' / ' + board.name"></nz-option>
-        }
-      </nz-select>
+      @if (isSshRuntime) {
+        <div class="connection-form">
+          <label>
+            <span>Host</span>
+            <input data-testid="ssh-host" [(ngModel)]="sshHost" [disabled]="busy || state.connectionState === 'connected'" autocomplete="off" />
+          </label>
+          <label>
+            <span>Port</span>
+            <input data-testid="ssh-port" type="number" min="1" max="65535" [(ngModel)]="sshPort" [disabled]="busy || state.connectionState === 'connected'" />
+          </label>
+          <label>
+            <span>Username</span>
+            <input data-testid="ssh-username" [(ngModel)]="sshUsername" [disabled]="busy || state.connectionState === 'connected'" autocomplete="username" />
+          </label>
+          <label>
+            <span>Password</span>
+            <input data-testid="ssh-password" type="password" [(ngModel)]="sshPassword" [disabled]="busy || state.connectionState === 'connected'" autocomplete="new-password" />
+          </label>
+          <label class="wide-field">
+            <span>Private key path</span>
+            <input data-testid="ssh-private-key-path" [(ngModel)]="sshPrivateKeyPath" [disabled]="busy || state.connectionState === 'connected'" autocomplete="off" />
+          </label>
+          <label class="wide-field">
+            <span>Key passphrase</span>
+            <input data-testid="ssh-private-key-passphrase" type="password" [(ngModel)]="sshPrivateKeyPassphrase" [disabled]="busy || state.connectionState === 'connected'" autocomplete="new-password" />
+          </label>
+        </div>
+      } @else if (isSerialShellRuntime) {
+        <nz-select data-testid="serial-port" class="port-select" nzSize="small" [(ngModel)]="selectedPort" nzPlaceHolder="Select SERIAL-A port" [nzDisabled]="busy || state.connectionState === 'connected' || !state.runtimeAvailable">
+          @for (board of state.boards; track board.port) {
+            <nz-option [nzValue]="board.port" [nzLabel]="board.port + ' / ' + board.name"></nz-option>
+          }
+        </nz-select>
+        <label class="inline-field">
+          <span>Baud</span>
+          <input data-testid="serial-baud" type="number" min="1200" max="12000000" [(ngModel)]="serialBaudRate" [disabled]="busy || state.connectionState === 'connected'" />
+        </label>
+        <div data-testid="serial-a-hint" class="connection-hint">Use the WalnutPi SERIAL-A console port. Ports are enumerated but never opened automatically.</div>
+      } @else {
+        <nz-select data-testid="canmv-device" class="port-select" nzSize="small" [(ngModel)]="selectedPort" nzPlaceHolder="Select a device" [nzDisabled]="busy || state.connectionState === 'connected' || !state.runtimeAvailable">
+          @for (board of state.boards; track board.port) {
+            <nz-option [nzValue]="board.port" [nzLabel]="board.port + ' / ' + board.name"></nz-option>
+          }
+        </nz-select>
+      }
       <div class="action-grid">
         @if (state.connectionState === 'connected') {
           <button type="button" (click)="disconnect()" [disabled]="busy"><span nz-icon nzType="disconnect"></span>Disconnect</button>
         } @else {
-          <button type="button" (click)="connect()" [disabled]="busy || !selectedPort || !state.runtimeAvailable"><span nz-icon nzType="link"></span>Connect</button>
+          <button type="button" (click)="connect()" [disabled]="busy || !state.runtimeAvailable || (isSshRuntime ? !sshHost.trim() || !sshUsername.trim() : !selectedPort)"><span nz-icon nzType="link"></span>Connect</button>
         }
         @if (showStop(state)) {
           <button type="button" (click)="stop()" [disabled]="busy"><span nz-icon nzType="pause"></span>Stop</button>
         } @else {
           <button type="button" (click)="run()" [disabled]="!canRun(state)"><span nz-icon nzType="caret-right"></span>Run</button>
         }
-        <button type="button" (click)="togglePreview(state)" [disabled]="busy || state.connectionState !== 'connected'">
+        <button
+          data-testid="preview-action"
+          type="button"
+          (click)="togglePreview(state)"
+          [disabled]="busy || !previewEnabled(state)"
+          [title]="previewEnabled(state) ? '' : capabilityReason(state, 'preview')">
           <span nz-icon [nzType]="state.previewing ? 'eye-invisible' : 'eye'"></span>{{ state.previewing ? 'Stop preview' : 'Preview' }}
         </button>
       </div>
+      <div class="autostart-actions">
+        <button
+          data-testid="autostart-install"
+          type="button"
+          (click)="installAutostart()"
+          [disabled]="busy || !autostartEnabled(state) || !source"
+          [title]="autostartEnabled(state) ? '' : capabilityReason(state, 'autostart')">Install Autostart</button>
+        <button
+          data-testid="autostart-status"
+          type="button"
+          (click)="checkAutostartStatus()"
+          [disabled]="busy || !autostartEnabled(state)"
+          [title]="autostartEnabled(state) ? '' : capabilityReason(state, 'autostart')">Status</button>
+        <button
+          data-testid="autostart-remove"
+          type="button"
+          (click)="removeAutostart()"
+          [disabled]="busy || !autostartEnabled(state)"
+          [title]="autostartEnabled(state) ? '' : capabilityReason(state, 'autostart')">Remove</button>
+      </div>
+      @if (autostartMessage) {
+        <div class="connection-hint" role="status">{{ autostartMessage }}</div>
+      }
     </section>
 
     @if (frameUrl) {
@@ -40,20 +110,25 @@
     }
 
     <section class="panel-section terminal-section">
-      <app-python-terminal [runtime]="runtime"></app-python-terminal>
+      <app-python-terminal
+        [runtime]="runtime"
+        [inputEnabled]="terminalInputEnabled(state)"
+        [resizeEnabled]="terminalResizeEnabled(state)"
+        [resizeDisabledReason]="terminalResizeEnabled(state) ? '' : capabilityReason(state, 'terminalResize')"></app-python-terminal>
     </section>
     <section class="panel-section files-section">
       <app-remote-file-tree
         [runtime]="runtime"
-        [enabled]="state.connectionState === 'connected'"
+        [enabled]="filesEnabled(state)"
+        [disabledReason]="filesEnabled(state) ? '' : capabilityReason(state, 'files')"
         (fileOpen)="openRemoteFile($event)"></app-remote-file-tree>
       @if (openedFilePath) {
         <div class="remote-editor">
           <div class="remote-editor__header">
             <span>{{ openedFilePath }}</span>
-            <button type="button" (click)="saveRemoteFile()" [disabled]="busy || state.connectionState !== 'connected'">Save</button>
+            <button type="button" (click)="saveRemoteFile()" [disabled]="busy || !filesEnabled(state)">Save</button>
           </div>
-          <textarea [(ngModel)]="openedFileText" spellcheck="false" aria-label="Remote Python file" [disabled]="state.connectionState !== 'connected'"></textarea>
+          <textarea [(ngModel)]="openedFileText" spellcheck="false" aria-label="Remote Python file" [disabled]="!filesEnabled(state)"></textarea>
         </div>
       }
     </section>

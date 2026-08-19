@@ -207,6 +207,37 @@ function extractLeadingTimestampMs(line) {
   return Number.isNaN(parsed) ? null : parsed;
 }
 
+const pythonRuntimeOperationChannels = Object.freeze({
+  runScript: 'python-runtime-run-script',
+  stopScript: 'python-runtime-stop-script',
+  scriptRunning: 'python-runtime-script-running',
+  terminalInput: 'python-runtime-terminal-input',
+  terminalSetSize: 'python-runtime-terminal-resize',
+  startPreview: 'python-runtime-start-preview',
+  stopPreview: 'python-runtime-stop-preview',
+  'io.listDir': 'python-runtime-list-dir',
+  'io.queryFileStat': 'python-runtime-stat',
+  'io.readFile': 'python-runtime-read-file',
+  'io.writeFile': 'python-runtime-write-file',
+  'io.deleteFile': 'python-runtime-delete-file',
+  'io.renameFile': 'python-runtime-rename-file',
+  'io.mkdir': 'python-runtime-mkdir',
+  'io.rmdir': 'python-runtime-rmdir',
+  'io.fileExec': 'python-runtime-file-exec',
+  firmwareCommit: 'python-runtime-firmware-commit',
+  virtualTouchStatus: 'python-runtime-virtual-touch-status',
+  virtualTouchEvent: 'python-runtime-virtual-touch-event',
+  installAutostart: 'python-runtime-install-autostart',
+  autostartStatus: 'python-runtime-autostart-status',
+  removeAutostart: 'python-runtime-remove-autostart',
+});
+
+function requestPythonRuntime(context, operation, payload = {}) {
+  const channel = pythonRuntimeOperationChannels[operation];
+  if (!channel) throw new TypeError(`Unsupported Python runtime operation: ${operation}`);
+  return ipcRenderer.invoke(channel, { context, payload });
+}
+
 contextBridge.exposeInMainWorld("electronAPI", {
   ipcRenderer: {
     send: (channel, data) => ipcRenderer.send(channel, data),
@@ -1157,10 +1188,21 @@ contextBridge.exposeInMainWorld("electronAPI", {
     download: (options) => ipcRenderer.invoke("probe-rs-download", options),
   },
   pythonRuntime: {
-    status: () => ipcRenderer.invoke('python-runtime-status'),
-    detectBoards: () => ipcRenderer.invoke('python-runtime-detect-boards'),
-    connect: (options) => ipcRenderer.invoke('python-runtime-connect', options),
-    disconnect: () => ipcRenderer.invoke('python-runtime-disconnect'),
+    status: (context) => ipcRenderer.invoke('python-runtime-status', context ? { context } : undefined),
+    detectBoards: (context) => ipcRenderer.invoke('python-runtime-detect-boards', context ? { context } : undefined),
+    connect: (adapterId, endpoint, credentials) => (
+      typeof adapterId === 'string'
+        ? ipcRenderer.invoke('python-runtime-connect', {
+          context: { adapterId },
+          payload: { endpoint, credentials },
+        })
+        : ipcRenderer.invoke('python-runtime-connect', adapterId)
+    ),
+    request: (context, operation, payload = {}) => requestPythonRuntime(context, operation, payload),
+    disconnect: (context) => ipcRenderer.invoke(
+      'python-runtime-disconnect',
+      context ? { context } : undefined,
+    ),
     runScript: (script) => ipcRenderer.invoke('python-runtime-run-script', { script }),
     stopScript: () => ipcRenderer.invoke('python-runtime-stop-script'),
     scriptRunning: () => ipcRenderer.invoke('python-runtime-script-running'),
@@ -1182,6 +1224,15 @@ contextBridge.exposeInMainWorld("electronAPI", {
     firmwareCommit: () => ipcRenderer.invoke('python-runtime-firmware-commit'),
     virtualTouchStatus: () => ipcRenderer.invoke('python-runtime-virtual-touch-status'),
     virtualTouchEvent: (options) => ipcRenderer.invoke('python-runtime-virtual-touch-event', options),
+    installAutostart: (context, options) => requestPythonRuntime(context, 'installAutostart', options),
+    autostartStatus: (context, options) => requestPythonRuntime(context, 'autostartStatus', options),
+    removeAutostart: (context, options) => requestPythonRuntime(context, 'removeAutostart', options),
+    legacy: {
+      status: () => ipcRenderer.invoke('python-runtime-status'),
+      detectBoards: () => ipcRenderer.invoke('python-runtime-detect-boards'),
+      connect: (options) => ipcRenderer.invoke('python-runtime-connect', options),
+      disconnect: () => ipcRenderer.invoke('python-runtime-disconnect'),
+    },
     onEvent: (callback) => addIpcListener('python-runtime-event', callback),
     onFrame: (callback) => addIpcListener('python-runtime-frame', callback),
     onState: (callback) => addIpcListener('python-runtime-state', callback),

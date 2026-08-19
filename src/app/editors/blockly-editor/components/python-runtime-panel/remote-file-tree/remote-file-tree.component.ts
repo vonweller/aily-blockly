@@ -16,6 +16,7 @@ import { joinRemotePath, normalizeRemoteDirectory, RemoteDirectoryNode } from '.
 })
 export class RemoteFileTreeComponent implements OnInit, OnChanges {
   @Input() enabled = false;
+  @Input() disabledReason = '';
   @Input({ required: true }) runtime!: PythonRuntimeClient;
   @Output() fileOpen = new EventEmitter<RemoteDirectoryNode>();
 

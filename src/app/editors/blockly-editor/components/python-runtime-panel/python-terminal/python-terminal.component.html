@@ -3,5 +3,8 @@
     <span>Python terminal</span>
     <button type="button" class="icon-button" aria-label="Clear terminal" title="Clear" (click)="clear()">Clear</button>
   </header>
+  @if (!resizeEnabled && resizeDisabledReason) {
+    <div class="python-terminal__notice">{{ resizeDisabledReason }}</div>
+  }
   <div #terminal class="python-terminal__screen"></div>
 </section>

@@ -14,6 +14,9 @@ import { PythonRuntimeClient } from '../../../../../services/python-runtime/pyth
 export class PythonTerminalComponent implements AfterViewInit, OnDestroy {
   @ViewChild('terminal', { static: true }) terminalElement!: ElementRef<HTMLElement>;
   @Input({ required: true }) runtime!: PythonRuntimeClient;
+  @Input() inputEnabled = false;
+  @Input() resizeEnabled = false;
+  @Input() resizeDisabledReason = '';
 
   private terminal?: Terminal;
   private fitAddon?: FitAddon;
@@ -35,7 +38,7 @@ export class PythonTerminalComponent implements AfterViewInit, OnDestroy {
     this.fitAddon = new FitAddon();
     this.terminal.loadAddon(this.fitAddon);
     const inputDisposable = this.terminal.onData(input => {
-      if (this.runtime.snapshot.connectionState !== 'connected') return;
+      if (!this.inputEnabled) return;
       void this.runtime.sendTerminalInput(input).catch(error => this.terminal?.write(`\r\n[error] ${this.errorText(error)}\r\n`));
     });
     const outputSubscription = this.runtime.terminalOutput$.subscribe(text => this.terminal?.write(text));
@@ -71,7 +74,7 @@ export class PythonTerminalComponent implements AfterViewInit, OnDestroy {
       if (this.destroyed || !this.fitAddon) return;
       this.fitAddon.fit();
       const dimensions = this.fitAddon.proposeDimensions();
-      if (dimensions?.cols && dimensions.rows && this.runtime.snapshot.connectionState === 'connected') {
+      if (dimensions?.cols && dimensions.rows && this.resizeEnabled) {
         void this.runtime.resizeTerminal(dimensions.cols, dimensions.rows).catch(() => undefined);
       }
     }, 80);

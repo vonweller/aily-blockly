@@ -92,3 +92,40 @@ test('Published generated code is not normalized a second time', () => {
   assert.doesNotMatch(method, /normalizeArduinoGeneratedCode/);
   assert.match(method, /typeof code === 'string'/);
 });
+
+test('Electron exposes a context-bound Python runtime bridge while retaining legacy CanMV methods', () => {
+  const preload = read('electron/preload.js');
+  const types = read('src/app/types/electron.d.ts');
+
+  assert.match(preload, /connect:\s*\(adapterId,\s*endpoint,\s*credentials\)/);
+  assert.match(preload, /request:\s*\(context,\s*operation,\s*payload/);
+  assert.match(preload, /installAutostart/);
+  assert.match(preload, /autostartStatus/);
+  assert.match(preload, /removeAutostart/);
+  assert.match(preload, /legacy:/);
+  assert.match(types, /interface PythonRuntimeContext/);
+  assert.match(types, /adapterId:\s*string/);
+  assert.match(types, /sessionId:\s*string/);
+  assert.match(types, /request:\s*\(\s*context:\s*PythonRuntimeContext/);
+});
+
+test('Application configuration installs the shared Python runtime provider bundle', () => {
+  const appConfig = read('src/app/app.config.ts');
+  const providers = read('src/app/services/python-runtime/python-runtime-providers.ts');
+
+  assert.match(appConfig, /PYTHON_RUNTIME_ADAPTER_PROVIDERS/);
+  assert.match(appConfig, /\.\.\.PYTHON_RUNTIME_ADAPTER_PROVIDERS/);
+  assert.match(providers, /CANMV_K230_RUNTIME_ADAPTER_PROVIDER/);
+  assert.match(providers, /LINUX_SSH_RUNTIME_ADAPTER_PROVIDER/);
+  assert.match(providers, /LINUX_SERIAL_SHELL_RUNTIME_ADAPTER_PROVIDER/);
+});
+
+test('Package scripts expose focused Electron and Angular Python runtime suites', () => {
+  const packageJson = JSON.parse(read('package.json'));
+
+  assert.match(packageJson.scripts['test:python-runtime'], /electron\/test\/linux-\*\.test\.js/);
+  assert.match(packageJson.scripts['test:python-runtime:angular'], /--builder-mode=application/);
+  assert.match(packageJson.scripts['test:python-runtime:angular'], /python-runtime-client\.spec\.ts/);
+  assert.match(packageJson.scripts['test:python-runtime:angular'], /linux-runtime-adapters\.spec\.ts/);
+  assert.match(packageJson.scripts['test:python-runtime:angular'], /python-runtime-panel\.component\.spec\.ts/);
+});

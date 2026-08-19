@@ -1,6 +1,14 @@
 # CyberCAM Python Blockly 开发交接
 
-更新时间：2026-08-14（Asia/Shanghai）
+原始交付：2026-08-14（Asia/Shanghai）
+
+Linux runtime 更新：2026-08-18（Asia/Shanghai）
+
+```text
+Branch: codex/cybercam-main-integration
+Launch: npm run electron
+Final commit: <CONTROLLER_TO_REPLACE_AFTER_FINAL_COMMIT>
+```
 
 ## 交付范围
 
@@ -12,7 +20,9 @@
 - 设备 `scriptOutput` 终端输出、`scriptState` 运行状态回传，以及独立的本地 backend stderr 诊断通道；
 - CanMV 远程文件和摄像头预览接口；
 - 摄像头、屏幕、OpenCV、KPU、GPIO、PWM、UART、网络、文件、音频、IMU、系统等积木；
-- CyberCAM 的 `canmv-k230` 运行/部署 profile；另有兼容性文档记录核桃派和树莓派的建议模型，但对应 adapter 尚未实现。
+- CyberCAM 的 `canmv-k230` 运行/部署 profile；
+- Linux 的 `linux-ssh` 和 `linux-serial-shell` 运行后端、contextual IPC/UI、文件、自启动和预览能力；
+- fake-peer 集成和 Electron E2E 自动化；真实树莓派和独立核桃派仍属于硬件验收阶段。
 
 ## 三个仓库和交付分支
 
@@ -98,9 +108,11 @@ npm run smoke:cybercam-hardware -- --port COM9
 ```powershell
 node --test electron/test/canmv-backend.test.js electron/test/canmv-ipc.test.js electron/test/python-runtime-bootstrap.test.js
 node --test electron/test/canmv-packaged-resources.test.js
+node --test electron/test/linux-runtime-integration.test.js
 npm run test:create-cybercam-project
 npm run test:cybercam-hardware-smoke
 npm run test:e2e:fast -- --grep "CyberCAM"
+npx playwright test e2e/tests/linux-python-runtime.spec.ts
 npx tsc --noEmit -p tsconfig.spec.json
 npx tsc -p e2e/tsconfig.json --noEmit
 git diff --check
@@ -145,6 +157,38 @@ node .scripts_git_action/validate-library-compliance.js cybercam
 | CyberCAM 积木通用规范检查 | 命令成功；只有建议级提示 |
 
 Electron E2E 使用协议兼容的假 CanMV backend，明确断言自动扫描、连接、远程目录、运行输出、预览启停、远程文件读取、停止和断开。它不验证终端尺寸，也不证明应用退出后真实 backend PID 或物理 USB 句柄已经释放；顽固 backend 进程终止由独立 Electron Node 测试覆盖，真实设备基础能力由下一节的 COM9 安全冒烟单独记录。
+
+## 2026-08-18 Linux Python runtime 更新
+
+新增两个运行后端：
+
+- `linux-ssh`：服务树莓派和启用 SSH 的核桃派。支持 TOFU host-key、PTY、`python3 -u`、实时输出、PTY 输入/resize、token 与 `/proc/<pid>/stat` starttime 校验后的安全 PGID stop、SFTP 或受控 helper 文件操作、原子写、systemd 或 `/boot/start`、JPEG 预览。
+- `linux-serial-shell`：服务无法联网或要求通过 USB SERIAL-A 运行的独立核桃派。支持 shell nonce/prompt 验证、helper SHA bootstrap、noisy/fragmented framed protocol、`python3 -u`、输出/输入/resize、token/starttime stop、CRC/SHA/retry 文件传输、`/boot/start/aily-*.sh`、preview dropping 和 helper cleanup。
+
+自动化证据由三层组成：
+
+1. `electron/test/linux-runtime-integration.test.js` 直接使用真实 driver API。
+2. SSH fixture 的边界是 `real LinuxSshDriver clientFactory/SFTP seam; no network listener`；它不是网络 SSH server。
+3. serial fixture 通过真实 serial driver/protocol seam 注入带噪声和分片的数据；Playwright 场景使用 fake IPC 验证 UI 契约，不是物理 transport 证据。
+
+Linux Playwright 场景覆盖 SSH form、serial form、capability gating、live output、Stop → Run、远程 `main.py`、autostart controls、JPEG preview，以及保持不变的 CyberCAM form。
+
+最终 controller 在提交前应重新执行并记录精确结果：
+
+```powershell
+node --test electron/test/linux-runtime-integration.test.js
+npx tsc -p e2e/tsconfig.json --noEmit
+npx playwright test e2e/tests/linux-python-runtime.spec.ts
+git diff --check
+git diff --name-only
+git status --short
+```
+
+本文件不预填最终 commit SHA。controller 完成整合、验证和最终提交后，用真实值替换：
+
+```text
+Final commit: <CONTROLLER_TO_REPLACE_AFTER_FINAL_COMMIT>
+```
 
 ## 本轮并发和清理加固
 
@@ -196,11 +240,31 @@ AILY_CYBERCAM_SMOKE_9552CCF249C94E32B1BB303C8545C4A2
 ## 平台能力边界
 
 - CyberCAM K230：`canmv-k230` adapter 已实现并完成真实设备基础冒烟。
-- 核桃派 Linux：官方同样使用 `/boot/start/*.sh` 自启动，但串口/SSH shell adapter 尚未实现，也未进行实机验证。
-- 树莓派 Linux：应使用 SSH/SFTP、`python3 -u`、进程组停止和 systemd；adapter 尚未实现，也未进行实机验证。
+- 树莓派 Linux：`linux-ssh` 自动化实现已完成；真实设备状态为 **BLOCKED — hardware/credential unavailable**。
+- 核桃派 Linux SSH：复用 `linux-ssh` 并由 capability probe 选择文件、自启动和预览能力；2026-08-20 已在独立 WalnutPi-2b 上完成 SSH 主链路验收。Preview JPEG 因 `/dev/video0` V4L2 读帧超时仍为 UNAVAILABLE。
+- 独立核桃派 Linux SERIAL-A：`linux-serial-shell` 自动化实现已完成；真实设备状态为 **BLOCKED — hardware/credential unavailable**。
 - GPIO、摄像头、显示、音频、IMU、网络和 KPU 仍需按照 `docs/cybercam-hardware-smoke-test.md` 做非破坏性专项验收。
 
-详细运行模型见 `docs/python-board-runtime-compatibility.md`。
+详细运行模型见 `docs/python-board-runtime-compatibility.md`，真实 Linux 设备步骤和证据模板见 `docs/linux-python-runtime-hardware-acceptance.md`。
+
+## 剩余硬件限定动作
+
+以下动作不能由 fake peer、UI fake IPC 或现有 CyberCAM K230 代替：
+
+1. 使用一台真实 Raspberry Pi，通过用户明确提供的 SSH host/port/username/credential 完成一次运行、输出、PTY 输入、resize、安全停止、文件、自启动、预览和清理验收。
+2. 使用一台独立核桃派，只打开验收人员明确选择的 SERIAL-A，完成 helper bootstrap、运行、输出、输入、resize、文件传输、`/boot/start`、预览、停止、helper cleanup 和串口释放验收。
+3. 若该独立核桃派启用 SSH，再补做 `linux-ssh` 能力探测，记录其实际选择的是 SFTP/helper、systemd/`boot-start-sh` 以及摄像头 backend。
+4. 把时间戳、设备型号、hostname、OS、Python、VID/PID/serial、SSH host-key fingerprint、日志/截图和 cleanup 证据填写到硬件验收文档。
+
+安全限制：
+
+- 只枚举串口，不轮流打开未知 COM 口。
+- 不扫描 LAN，不探测子网，不批量扫描 SSH。
+- SSH 只连接用户明确提供的目标和 credential。
+- 自启动只清理 `/etc/systemd/system/aily-*.service` 和 `/boot/start/aily-*.sh` 中本次记录的 project ID。
+- SSH 会话临时控制文件只位于 `/tmp/aily-runtime/<session>/`；受管项目文件只位于 capability probe 返回的 workspace 下对应 project 目录。
+- serial helper 只位于 `/tmp/aily-serial-helper-<session>.py`，会话脚本只位于 `/tmp/aily-runtime/<session>/`；异常中断后也只清理已记录的 session。
+- 正常清理顺序是 Stop Preview、Stop、Remove Autostart、Disconnect；不得用无边界递归删除替代。
 
 ## 注意事项
 

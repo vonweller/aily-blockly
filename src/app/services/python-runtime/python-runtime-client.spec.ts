@@ -1,4 +1,7 @@
 import { PythonRuntimeClient } from './python-runtime-client';
+import { BoundPythonRuntimeBridge } from './bound-python-runtime-bridge';
+import type { LinuxRuntimeCapabilities } from './python-runtime-capabilities';
+import type { PythonRuntimeEndpoint } from './python-runtime-endpoint';
 
 describe('PythonRuntimeClient', () => {
   it('starts unavailable until backend status has been checked', () => {
@@ -460,6 +463,24 @@ describe('PythonRuntimeClient', () => {
     expect(output).toEqual(['NameError: missing_name\r\n']);
   });
 
+  it('surfaces asynchronous runtimeError events in state and terminal output', async () => {
+    const { api, listeners } = createApi();
+    const client = new PythonRuntimeClient(api);
+    const output: string[] = [];
+    client.terminalOutput$.subscribe(text => output.push(text));
+    await client.initialize();
+
+    listeners['event']({ event: 'scriptState', params: { state: 'started' } });
+    listeners['event']({
+      event: 'runtimeError',
+      params: { code: 'PROTOCOL_DESYNC', message: 'Serial protocol lost synchronization' },
+    });
+
+    expect(client.snapshot.running).toBeFalse();
+    expect(client.snapshot.error).toBe('Serial protocol lost synchronization');
+    expect(output).toEqual(['Serial protocol lost synchronization\r\n']);
+  });
+
   it('does not restore running when scriptState error arrives before runScript returns', async () => {
     const { api, listeners } = createApi();
     let resolveRun!: (result: { status: 'ok' }) => void;
@@ -499,6 +520,42 @@ describe('PythonRuntimeClient', () => {
     expect(client.snapshot.running).toBeFalse();
   });
 
+  it('clears running when the SSH backend emits scriptExited', async () => {
+    const { api, listeners } = createApi();
+    const client = new PythonRuntimeClient(api);
+    await client.initialize();
+
+    listeners['event']({ event: 'scriptState', params: { state: 'started' } });
+    expect(client.snapshot.running).toBeTrue();
+
+    listeners['event']({
+      event: 'scriptExited',
+      params: { runId: 'ssh-run', code: 0, signal: null },
+    });
+
+    expect(client.snapshot.running).toBeFalse();
+  });
+
+  it('does not restore running when scriptExited arrives before runScript returns', async () => {
+    const { api, listeners } = createApi();
+    let resolveRun!: (result: { status: 'ok' }) => void;
+    api.runScript = () => new Promise(resolve => {
+      resolveRun = resolve;
+    });
+    const client = new PythonRuntimeClient(api);
+    await client.initialize();
+
+    const run = client.runScript('print("fast ssh")');
+    listeners['event']({
+      event: 'scriptExited',
+      params: { runId: 'ssh-run', code: 0, signal: null },
+    });
+    resolveRun({ status: 'ok' });
+    await run;
+
+    expect(client.snapshot.running).toBeFalse();
+  });
+
   it('reads and writes UTF-8 remote text files', async () => {
     const { api } = createApi();
     let written = '';
@@ -515,5 +572,163 @@ describe('PythonRuntimeClient', () => {
     const binary = atob(written);
     const bytes = Uint8Array.from(binary, char => char.charCodeAt(0));
     expect(new TextDecoder().decode(bytes)).toBe('print("你好")');
+  });
+
+  it('tracks a discriminated endpoint, capabilities, and broker session state', async () => {
+    const capabilities: LinuxRuntimeCapabilities = {
+      platform: 'raspberry-pi',
+      hostname: 'pi-lab',
+      architecture: 'aarch64',
+      pythonVersion: '3.11.9',
+      homeDirectory: '/home/pi',
+      writableWorkspace: '/home/pi/.aily',
+      pty: true,
+      terminalResize: true,
+      processGroups: true,
+      files: 'sftp',
+      autostart: 'systemd',
+      preview: {
+        available: true,
+        backend: 'rpicam',
+        transports: ['ssh-binary'],
+      },
+    };
+    const endpoint: PythonRuntimeEndpoint = {
+      kind: 'ssh',
+      host: 'pi.local',
+      port: 22,
+      username: 'pi',
+      privateKeyPath: 'C:\\Users\\dev\\.ssh\\id_ed25519',
+    };
+    const { api } = createApi();
+    api.connect = jasmine.createSpy('connect').and.resolveTo({
+      adapterId: 'linux-ssh',
+      sessionId: 'session-1',
+      capabilities,
+      boardInfo: { hostname: 'pi-lab' },
+    });
+    const client = new PythonRuntimeClient(api);
+
+    await client.connect(endpoint, { password: 'secret', passphrase: 'key-secret' });
+
+    expect(api.connect).toHaveBeenCalledOnceWith(endpoint, {
+      password: 'secret',
+      passphrase: 'key-secret',
+    });
+    expect(client.snapshot).toEqual(jasmine.objectContaining({
+      adapterId: 'linux-ssh',
+      sessionId: 'session-1',
+      endpoint,
+      capabilities,
+      connectionState: 'connected',
+      port: null,
+    }));
+
+    await client.disconnect();
+    expect(client.snapshot).toEqual(jasmine.objectContaining({
+      adapterId: null,
+      sessionId: null,
+      endpoint: null,
+      capabilities: null,
+      connectionState: 'disconnected',
+    }));
+  });
+
+  it('keeps one adapter/session context for requests and drops stale events after reconnect', async () => {
+    const eventListeners: Array<(envelope: any) => void> = [];
+    const request = jasmine.createSpy('request').and.resolveTo({ status: 'ok' });
+    const disconnect = jasmine.createSpy('disconnect').and.resolveTo(undefined);
+    const nativeApi: any = {
+      status: async () => ({ state: 'ready', pid: null, available: true }),
+      detectBoards: async () => ({ boards: [] }),
+      connect: jasmine.createSpy('connect').and.returnValues(
+        Promise.resolve({
+          adapterId: 'linux-ssh',
+          sessionId: 'old-session',
+          capabilities: null,
+          boardInfo: null,
+        }),
+        Promise.resolve({
+          adapterId: 'linux-ssh',
+          sessionId: 'new-session',
+          capabilities: null,
+          boardInfo: null,
+        }),
+      ),
+      request,
+      disconnect,
+      onEvent: (callback: (envelope: any) => void) => {
+        eventListeners.push(callback);
+        return () => undefined;
+      },
+      onFrame: () => () => undefined,
+      onState: () => () => undefined,
+      onStderr: () => () => undefined,
+    };
+    const bridge = new BoundPythonRuntimeBridge(nativeApi, 'linux-ssh');
+    const outputs: string[] = [];
+    bridge.onEvent((event: any) => {
+      if (event?.type === 'output') outputs.push(event.data);
+    });
+    const endpoint: PythonRuntimeEndpoint = {
+      kind: 'ssh',
+      host: 'pi.local',
+      port: 22,
+      username: 'pi',
+    };
+
+    await bridge.connect(endpoint);
+    await bridge.runScript('print("old")');
+    expect(request).toHaveBeenCalledWith(
+      { adapterId: 'linux-ssh', sessionId: 'old-session' },
+      'runScript',
+      { script: 'print("old")' },
+    );
+
+    await bridge.disconnect();
+    eventListeners[0]({
+      adapterId: 'linux-ssh',
+      sessionId: 'old-session',
+      payload: { type: 'output', runId: 'old', data: 'stale-after-disconnect' },
+    });
+    await bridge.connect(endpoint);
+    eventListeners[0]({
+      adapterId: 'linux-ssh',
+      sessionId: 'old-session',
+      payload: { type: 'output', runId: 'old', data: 'stale-after-reconnect' },
+    });
+    eventListeners[0]({
+      adapterId: 'linux-serial-shell',
+      sessionId: 'new-session',
+      payload: { type: 'output', runId: 'wrong-adapter', data: 'wrong-adapter' },
+    });
+    eventListeners[0]({
+      adapterId: 'linux-ssh',
+      sessionId: 'new-session',
+      payload: { type: 'output', runId: 'new', data: 'fresh' },
+    });
+
+    expect(disconnect).toHaveBeenCalledOnceWith({
+      adapterId: 'linux-ssh',
+      sessionId: 'old-session',
+    });
+    expect(outputs).toEqual(['fresh']);
+  });
+
+  it('exposes install, status, and remove autostart independently from run', async () => {
+    const { api } = createApi();
+    api.runScript = jasmine.createSpy('runScript').and.resolveTo({ status: 'ok' });
+    api.installAutostart = jasmine.createSpy('installAutostart').and.resolveTo({ installed: true });
+    api.autostartStatus = jasmine.createSpy('autostartStatus').and.resolveTo({ installed: true });
+    api.removeAutostart = jasmine.createSpy('removeAutostart').and.resolveTo({ removed: true });
+    const client = new PythonRuntimeClient(api);
+
+    expect(await client.installAutostart({ projectId: 'demo', script: 'print(1)' }))
+      .toEqual({ installed: true });
+    expect(await client.getAutostartStatus({ projectId: 'demo' }))
+      .toEqual({ installed: true });
+    expect(await client.removeAutostart({ projectId: 'demo' }))
+      .toEqual({ removed: true });
+    expect(api.runScript).not.toHaveBeenCalled();
   });
 });

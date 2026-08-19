@@ -1,34 +1,44 @@
 # Python 板卡运行与部署兼容性
 
-不同 Linux/Python 板卡不能仅凭“能运行 Python”共用同一个连接适配器。项目通过板卡 `runtime.execution` 和 `runtime.deployment` 元数据明确描述协议边界，避免把串口误认为 REPL、把 SSH 误认为必然支持 SFTP，或把所有系统都当成 `/boot/start`。
+更新时间：2026-08-18（Asia/Shanghai）
 
-## Profile 字段
-
-`execution` 描述即时运行：
-
-- `transport`：`canmv-usbdbg`、`serial-shell` 或 `ssh`；
-- `output`：结构化 `event-stream` 或 PTY 合并输出；
-- `input`：设备 `repl` 或 shell `pty`；
-- `stop`：设备中断或远端进程组；
-- `files`：CanMV IO、明确实现的串口传输或 SFTP；
-- `temporaryRun`：是否支持不安装为系统服务的临时运行。
-
-`deployment.autostart` 描述开机运行：
-
-- `boot-start-sh`：系统执行指定目录中的 `.sh`；
-- `systemd`：安装和管理 systemd unit。
-
-元数据只描述能力，不会自动注册尚不存在的 adapter。
+不同 Linux/Python 板卡不能仅凭“能运行 Python”共用同一个连接适配器。项目通过板卡 `runtime.adapter` 和连接后的 capability probe 明确协议边界，避免把串口误认为 REPL、把 SSH 误认为必然支持 SFTP，或把所有 Linux 系统都当成 `/boot/start`。
 
 ## 当前兼容矩阵
 
-| 平台 | Adapter 状态 | 即时运行 | 输出与输入 | 停止 | 文件 | 自启动 |
-| --- | --- | --- | --- | --- | --- | --- |
-| CyberCAM K230 | `canmv-k230` 已实现 | CanMV USBDBG `runScript` | `scriptOutput`/`scriptState` 事件；REPL 输入 | 设备中断 | CanMV IO | `/boot/start/*.sh`，长任务末尾加 `&` |
-| 核桃派 Linux | serial/SSH shell 待实现 | 计划使用 `python3 -u` | PTY 合并输出；PTY 输入 | PID/进程组 | 必须由具体协议确认，或 SFTP | `/boot/start/*.sh`，长任务末尾加 `&` |
-| 树莓派 Linux | SSH adapter 待实现 | 计划使用 `python3 -u` | SSH PTY 合并输出；PTY 输入 | PID/进程组 | SCP/SFTP，需连接能力确认 | systemd |
+“已实现”只表示代码和自动化证据存在，不等于已在对应物理设备验收。
 
-## CyberCAM 已实现的数据流
+| 平台 / 连接方式 | Adapter | 已实现的自动化支持 | 自动化证据边界 | 真实设备验证 |
+| --- | --- | --- | --- | --- |
+| CyberCAM K230 / USBDBG | `canmv-k230` | 发现、连接、`runScript`、输出/状态、REPL 输入、停止、CanMV IO、预览、`/boot/start/*.sh` | Electron/Angular/E2E 回归和真实 COM9 冒烟脚本 | 2026-08-14 已完成基础真实设备冒烟；GPIO、摄像头、显示、音频、IMU、网络和 KPU 仍需专项验收 |
+| 树莓派 Linux / SSH | `linux-ssh` | SSH 表单、TOFU 主机密钥、PTY、`python3 -u`、输出/输入/resize、token+starttime 校验的进程组停止、SFTP/原子写、systemd、JPEG 预览 | 确定性 fake peer 运行在真实 `LinuxSshDriver` 的 `clientFactory`/SFTP seam；没有网络监听器；UI E2E 使用 fake IPC | **BLOCKED — hardware/credential unavailable** |
+| 核桃派 Linux / SSH | `linux-ssh` | 与树莓派共用 SSH 驱动；capability probe 可选择 `boot-start-sh`、systemd、SFTP 或 helper fallback | 当前 fake SSH 集成固定验证 Raspberry Pi 风格的 systemd/SFTP 能力，不证明核桃派镜像的 SSH 服务、权限或 `/boot/start` 行为 | **2026-08-20 PARTIAL PASS** — WalnutPi-2b `192.168.10.103` 已完成连接、PTY、SFTP、`/boot/start` 和停止；Preview 因 `/dev/video0` 读帧超时未拿到 JPEG |
+| 独立核桃派 Linux / SERIAL-A shell | `linux-serial-shell` | shell 验证、helper bootstrap、`python3 -u`、分帧输出/输入/resize、token+starttime 停止、带 CRC/SHA/retry 的原子文件传输、`/boot/start/aily-*.sh`、JPEG 预览与丢帧控制、helper 清理 | 确定性 noisy/fragmented fake serial peer 运行在真实 serial driver/protocol seam；UI E2E 使用 fake IPC | **BLOCKED — hardware/credential unavailable** |
+
+真实设备验收步骤和证据模板见 `docs/linux-python-runtime-hardware-acceptance.md`。
+
+## Linux 运行数据流
+
+```text
+Blockly → main.py → contextual runtime IPC → runtime broker
+                                           ├─ linux-ssh
+                                           │  ├─ SSH PTY → python3 -u
+                                           │  ├─ SFTP / atomic helper
+                                           │  ├─ safe PGID stop
+                                           │  ├─ systemd 或 /boot/start
+                                           │  └─ JPEG stream
+                                           └─ linux-serial-shell
+                                              ├─ shell verification/bootstrap
+                                              ├─ framed helper → python3 -u
+                                              ├─ CRC/SHA file protocol
+                                              ├─ token/starttime stop
+                                              ├─ /boot/start
+                                              └─ rate-limited JPEG frames
+```
+
+Linux adapter 的终端是 PTY 语义，stdout/stderr 通常合并回传。停止操作不会按裸 PID 或未经核验的 PGID 发信号：SSH 端读取控制文件并核对 token 与 `/proc/<pid>/stat` starttime；串口 helper 同样核对当前 run、token 和 starttime 后才停止进程组。
+
+## CyberCAM 数据流保持不变
 
 ```text
 Blockly → main.py → CanMV backend runScript
@@ -38,13 +48,14 @@ Blockly → main.py → CanMV backend runScript
                     └─ io.*         → 远程文件面板
 ```
 
-Python Device 面板激活时会初始化 backend 并自动执行设备扫描。检测到板卡后预选第一项；用户连接后才能运行、停止、输入、预览和访问远程文件。
+CyberCAM 仍使用原有板卡选择和连接表单。Linux runtime 使用带 adapter/session context 的 IPC，不把 SSH 或 serial-shell 状态混入 CyberCAM 会话。
 
-## 设计约束
+## 能力和部署约束
 
+- `linux-ssh` 只有在 capability probe 确认后才开放文件、自启动和预览；SSH 登录成功不代表 SFTP、无密码 `sudo -n`、systemd 或摄像头工具可用。
+- systemd 安装需要目标用户能够对受管 unit 执行 `sudo -n`；权限不足时必须返回明确错误，不能弹出或保存 sudo 密码。
+- `linux-serial-shell` 只应连接用户明确选择的 Linux shell 串口。枚举到串口不代表它是核桃派，也不授权打开其他端口。
+- serial helper 是会话级临时文件；正常断开会请求 helper 停止并删除自身。异常断电后的残留路径必须按硬件验收文档人工核对。
+- `/boot/start/aily-*.sh` 和 `/etc/systemd/system/aily-*.service` 是 Aily 受管命名空间；不得删除其他启动项或服务。
 - PTY 通常合并 stdout/stderr，不能承诺始终分离两条流。
-- SSH 连接成功不代表目标端启用了 SFTP/SCP。
-- 串口枚举成功不代表目标端提供可交互 Python REPL 或文件传输协议。
-- CanMV 的远程执行语义不能直接等同于 Linux 上可追踪 PID 的进程。
-- 树莓派不应使用 CyberCAM/核桃派的 `/boot/start` 约定。
-- 在对应 adapter、回归测试和真实设备证据完成前，不得宣称核桃派或树莓派已可用。
+- 自动化 fake-peer、fake IPC 和 TypeScript 编译都不是物理树莓派或独立核桃派的验收证据。

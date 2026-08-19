@@ -8,6 +8,8 @@ import { PythonTerminalComponent } from './python-terminal/python-terminal.compo
 import { RemoteFileTreeComponent } from './remote-file-tree/remote-file-tree.component';
 import type { PythonRuntimeMetadata } from '../../../../services/python-runtime/python-mode';
 import type { PythonRuntimeClient, PythonRuntimeSessionState } from '../../../../services/python-runtime/python-runtime-client';
+import type { PythonRuntimeCapabilities } from '../../../../services/python-runtime/python-runtime-capabilities';
+import type { PythonRuntimeEndpoint } from '../../../../services/python-runtime/python-runtime-endpoint';
 import { PythonRuntimeRegistry } from '../../../../services/python-runtime/python-runtime-registry';
 import type { RemoteDirectoryNode } from '../../../../services/python-runtime/remote-file-tree';
 
@@ -42,6 +44,14 @@ export class PythonRuntimePanelComponent implements OnChanges, OnDestroy {
   openedFilePath = '';
   openedFileText = '';
   hasScanned = false;
+  sshHost = '';
+  sshPort = 22;
+  sshUsername = '';
+  sshPassword = '';
+  sshPrivateKeyPath = '';
+  sshPrivateKeyPassphrase = '';
+  serialBaudRate = 115200;
+  autostartMessage = '';
   private frameSubscription: Subscription | null = null;
   private stateSubscription: Subscription | null = null;
   private activationId = 0;
@@ -133,7 +143,9 @@ export class PythonRuntimePanelComponent implements OnChanges, OnDestroy {
       await this.enqueueRuntimeLifecycle(runtime, async () => {
         await runtime.initialize();
         if (!this.isCurrentActivation(activationId, runtime)) return;
-        await this.scanForBoards(runtime, activationId);
+        if (this.isCanmvRuntime || this.isSerialShellRuntime) {
+          await this.scanForBoards(runtime, activationId);
+        }
       });
     }, activationId);
   }
@@ -150,8 +162,24 @@ export class PythonRuntimePanelComponent implements OnChanges, OnDestroy {
     return state.running;
   }
 
+  get isCanmvRuntime(): boolean {
+    return this.runtimeMetadata?.adapter === 'canmv-k230';
+  }
+
+  get isSshRuntime(): boolean {
+    return this.runtimeMetadata?.adapter === 'linux-ssh';
+  }
+
+  get isSerialShellRuntime(): boolean {
+    return this.runtimeMetadata?.adapter === 'linux-serial-shell';
+  }
+
   async detect(): Promise<void> {
-    if (!this.runtime || this.runtime.snapshot.connectionState === 'connected') return;
+    if (
+      !this.runtime
+      || this.isSshRuntime
+      || this.runtime.snapshot.connectionState === 'connected'
+    ) return;
     const runtime = this.runtime;
     const activationId = this.activationId;
     await this.perform(
@@ -161,16 +189,51 @@ export class PythonRuntimePanelComponent implements OnChanges, OnDestroy {
   }
 
   async connect(): Promise<void> {
-    if (!this.runtime || !this.selectedPort) {
+    if (!this.runtime) return;
+    const isSshConnection = this.isSshRuntime;
+    if (isSshConnection && (!this.sshHost.trim() || !this.sshUsername.trim())) {
+      this.error = 'Enter an SSH host and username first';
+      return;
+    }
+    if (!isSshConnection && !this.selectedPort) {
       this.error = 'Select a device port first';
       return;
     }
     const runtime = this.runtime;
     const activationId = this.activationId;
     this.clearDeviceRescan();
-    await this.perform(() => runtime.connect(this.selectedPort), activationId);
-    if (runtime.snapshot.connectionState !== 'connected') {
-      this.scheduleDeviceRescan(runtime, activationId);
+    try {
+      if (isSshConnection) {
+        const endpoint: PythonRuntimeEndpoint = {
+          kind: 'ssh',
+          host: this.sshHost.trim(),
+          port: this.sshPort,
+          username: this.sshUsername.trim(),
+          ...(this.sshPrivateKeyPath.trim()
+            ? { privateKeyPath: this.sshPrivateKeyPath.trim() }
+            : {}),
+        };
+        const credentials = {
+          ...(this.sshPassword ? { password: this.sshPassword } : {}),
+          ...(this.sshPrivateKeyPassphrase
+            ? { passphrase: this.sshPrivateKeyPassphrase }
+            : {}),
+        };
+        await this.perform(() => runtime.connect(endpoint, credentials), activationId);
+      } else if (this.isSerialShellRuntime) {
+        await this.perform(() => runtime.connect({
+          kind: 'serial-shell',
+          port: this.selectedPort,
+          baudRate: this.serialBaudRate,
+        }), activationId);
+      } else {
+        await this.perform(() => runtime.connect(this.selectedPort), activationId);
+      }
+      if (runtime.snapshot.connectionState !== 'connected') {
+        this.scheduleDeviceRescan(runtime, activationId);
+      }
+    } finally {
+      if (isSshConnection) this.clearSshSecrets();
     }
   }
 
@@ -200,7 +263,11 @@ export class PythonRuntimePanelComponent implements OnChanges, OnDestroy {
   }
 
   async togglePreview(state: PythonRuntimeSessionState): Promise<void> {
-    if (!this.runtime || this.runtime.snapshot.connectionState !== 'connected') return;
+    if (
+      !this.runtime
+      || this.runtime.snapshot.connectionState !== 'connected'
+      || !this.previewEnabled(state)
+    ) return;
     if (state.previewing) {
       await this.perform(() => this.runtime!.stopPreview());
       this.clearPreview();
@@ -213,6 +280,7 @@ export class PythonRuntimePanelComponent implements OnChanges, OnDestroy {
     if (
       !this.runtime
       || this.runtime.snapshot.connectionState !== 'connected'
+      || !this.filesEnabled(this.runtime.snapshot)
       || node.type !== 'file'
     ) return;
     const runtime = this.runtime;
@@ -232,9 +300,96 @@ export class PythonRuntimePanelComponent implements OnChanges, OnDestroy {
     if (
       !this.runtime
       || this.runtime.snapshot.connectionState !== 'connected'
+      || !this.filesEnabled(this.runtime.snapshot)
       || !this.openedFilePath
     ) return;
     await this.perform(() => this.runtime!.writeRemoteTextFile(this.openedFilePath, this.openedFileText));
+  }
+
+  async installAutostart(): Promise<void> {
+    if (!this.runtime || !this.autostartEnabled(this.runtime.snapshot)) return;
+    await this.perform(async () => {
+      const result = await this.runtime!.installAutostart({
+        projectId: this.autostartProjectId(),
+        script: this.source,
+      });
+      this.autostartMessage = this.describeAutostartResult(result, 'Autostart installed');
+    });
+  }
+
+  async checkAutostartStatus(): Promise<void> {
+    if (!this.runtime || !this.autostartEnabled(this.runtime.snapshot)) return;
+    await this.perform(async () => {
+      const result = await this.runtime!.getAutostartStatus({
+        projectId: this.autostartProjectId(),
+      });
+      this.autostartMessage = this.describeAutostartResult(result, 'Autostart status checked');
+    });
+  }
+
+  async removeAutostart(): Promise<void> {
+    if (!this.runtime || !this.autostartEnabled(this.runtime.snapshot)) return;
+    await this.perform(async () => {
+      const result = await this.runtime!.removeAutostart({
+        projectId: this.autostartProjectId(),
+      });
+      this.autostartMessage = this.describeAutostartResult(result, 'Autostart removed');
+    });
+  }
+
+  filesEnabled(state: PythonRuntimeSessionState): boolean {
+    return state.connectionState === 'connected'
+      && (
+        (state.capabilities != null && state.capabilities.files !== 'none')
+        || this.legacyCapabilityFallback(state)
+      );
+  }
+
+  autostartEnabled(state: PythonRuntimeSessionState): boolean {
+    return state.connectionState === 'connected'
+      && state.capabilities != null
+      && state.capabilities.autostart !== 'none';
+  }
+
+  previewEnabled(state: PythonRuntimeSessionState): boolean {
+    return state.connectionState === 'connected'
+      && (state.capabilities?.preview.available === true || this.legacyCapabilityFallback(state));
+  }
+
+  terminalInputEnabled(state: PythonRuntimeSessionState): boolean {
+    return state.connectionState === 'connected'
+      && (state.capabilities?.pty === true || this.legacyCapabilityFallback(state));
+  }
+
+  terminalResizeEnabled(state: PythonRuntimeSessionState): boolean {
+    return state.connectionState === 'connected'
+      && (
+        state.capabilities?.terminalResize === true
+        || this.legacyCapabilityFallback(state)
+      );
+  }
+
+  capabilityReason(
+    state: PythonRuntimeSessionState,
+    capability: keyof NonNullable<PythonRuntimeCapabilities['unavailableReasons']>,
+  ): string {
+    if (state.connectionState !== 'connected') {
+      return 'Connect the Python runtime first.';
+    }
+    const explicit = state.capabilities?.unavailableReasons?.[capability];
+    if (explicit) return explicit;
+    switch (capability) {
+      case 'files':
+        return 'Remote files are not supported by this runtime.';
+      case 'autostart':
+        return 'No supported autostart manager is available.';
+      case 'preview':
+        return 'No camera preview backend is available.';
+      case 'terminalResize':
+        return 'The runtime terminal cannot be resized.';
+      case 'pty':
+        return 'Interactive terminal input is not supported.';
+    }
   }
 
   statusText(state: PythonRuntimeSessionState): string {
@@ -286,6 +441,8 @@ export class PythonRuntimePanelComponent implements OnChanges, OnDestroy {
     this.state$ = null;
     this.selectedPort = '';
     this.hasScanned = false;
+    this.autostartMessage = '';
+    this.clearSshSecrets();
     this.previousBoardPorts.clear();
     return runtime;
   }
@@ -337,7 +494,8 @@ export class PythonRuntimePanelComponent implements OnChanges, OnDestroy {
     activationId: number,
   ): void {
     if (
-      this.deviceRescanTimer !== null
+      !this.isCanmvRuntime
+      || this.deviceRescanTimer !== null
       || !this.isCurrentActivation(activationId, runtime)
       || runtime.snapshot.connectionState === 'connected'
     ) return;
@@ -400,10 +558,43 @@ export class PythonRuntimePanelComponent implements OnChanges, OnDestroy {
     this.clearPreview();
     this.openedFilePath = '';
     this.openedFileText = '';
+    this.autostartMessage = '';
   }
 
   private clearPreview(): void {
     if (this.frameUrl) URL.revokeObjectURL(this.frameUrl);
     this.frameUrl = '';
+  }
+
+  private legacyCapabilityFallback(state: PythonRuntimeSessionState): boolean {
+    return this.isCanmvRuntime && state.capabilities == null;
+  }
+
+  private clearSshSecrets(): void {
+    this.sshPassword = '';
+    this.sshPrivateKeyPassphrase = '';
+  }
+
+  private autostartProjectId(): string {
+    const adapter = this.runtimeMetadata?.adapter || 'python';
+    const entry = this.runtimeMetadata?.entry || 'main.py';
+    return `${adapter}-${entry}`
+      .replace(/[^a-zA-Z0-9._-]+/g, '-')
+      .slice(0, 128);
+  }
+
+  private describeAutostartResult(result: unknown, fallback: string): string {
+    if (typeof result === 'string') return result;
+    if (result && typeof result === 'object') {
+      const candidate = result as Record<string, unknown>;
+      if (typeof candidate['message'] === 'string') return candidate['message'];
+      if (typeof candidate['installed'] === 'boolean') {
+        return candidate['installed'] ? 'Autostart is installed' : 'Autostart is not installed';
+      }
+      if (typeof candidate['removed'] === 'boolean' && candidate['removed']) {
+        return 'Autostart removed';
+      }
+    }
+    return fallback;
   }
 }

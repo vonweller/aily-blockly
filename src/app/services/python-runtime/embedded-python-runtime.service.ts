@@ -27,6 +27,9 @@ export function createUnavailablePythonRuntimeBridge(): PythonRuntimeBridge {
     firmwareCommit: unavailable,
     virtualTouchStatus: unavailable,
     virtualTouchEvent: unavailable,
+    installAutostart: unavailable,
+    autostartStatus: unavailable,
+    removeAutostart: unavailable,
     files: {
       listDir: unavailable,
       stat: unavailable,

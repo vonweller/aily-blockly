@@ -22,6 +22,9 @@ const PYTHON_RUNTIME_CHANNELS = Object.freeze({
   fileExec: 'python-runtime-file-exec',
   virtualTouchStatus: 'python-runtime-virtual-touch-status',
   virtualTouchEvent: 'python-runtime-virtual-touch-event',
+  installAutostart: 'python-runtime-install-autostart',
+  autostartStatus: 'python-runtime-autostart-status',
+  removeAutostart: 'python-runtime-remove-autostart',
 });
 
 const PYTHON_RUNTIME_EVENTS = Object.freeze({
@@ -31,85 +34,188 @@ const PYTHON_RUNTIME_EVENTS = Object.freeze({
   stderr: 'python-runtime-stderr',
 });
 
-function registerPythonRuntimeIpc({ ipcMain, backend }) {
-  const subscribers = new Map();
+function registerPythonRuntimeIpc({ ipcMain, backend, broker }) {
+  const legacySubscribers = new Map();
+  const owners = new Set();
   const registrations = [];
 
-  const rememberSender = event => {
+  const rememberSender = (event, legacy) => {
     const sender = event?.sender;
     if (!sender || typeof sender.send !== 'function') return;
-    if (!subscribers.has(sender.id)) {
-      subscribers.set(sender.id, sender);
-      sender.once?.('destroyed', () => subscribers.delete(sender.id));
+    if (!owners.has(sender.id)) {
+      broker?.attachOwner?.(sender);
+      owners.add(sender.id);
+      sender.once?.('destroyed', () => {
+        owners.delete(sender.id);
+        legacySubscribers.delete(sender.id);
+        void broker?.releaseOwner?.(sender.id);
+      });
     }
+    if (legacy) legacySubscribers.set(sender.id, sender);
+    else legacySubscribers.delete(sender.id);
   };
 
   const handle = (channel, callback) => {
     ipcMain.handle(channel, async (event, data) => {
-      rememberSender(event);
-      return callback(data || {});
+      rememberSender(event, !data?.context);
+      return callback(data || {}, event);
     });
     registrations.push(channel);
   };
 
-  handle(PYTHON_RUNTIME_CHANNELS.status, () => backend.status());
-  handle(PYTHON_RUNTIME_CHANNELS.detectBoards, () => backend.request('detectBoards', {}));
-  handle(PYTHON_RUNTIME_CHANNELS.connect, data => backend.request('connectBoard', {
-    port: requiredString(data.port, 'port', 512),
-    baudRate: optionalInteger(data.baudRate, 'baudRate', 1200, 12000000),
-  }));
-  handle(PYTHON_RUNTIME_CHANNELS.disconnect, () => backend.request('disconnectBoard', {}));
-  handle(PYTHON_RUNTIME_CHANNELS.runScript, data => backend.request('runScript', {
-    script: requiredString(data.script, 'script', 16 * 1024 * 1024, true),
-  }));
-  handle(PYTHON_RUNTIME_CHANNELS.stopScript, () => backend.request('stopScript', {}));
-  handle(PYTHON_RUNTIME_CHANNELS.scriptRunning, () => backend.request('scriptRunning', {}));
-  handle(PYTHON_RUNTIME_CHANNELS.terminalInput, data => backend.request('terminalInput', {
-    text: requiredString(data.text, 'terminal text', 1024 * 1024, true),
-  }));
-  handle(PYTHON_RUNTIME_CHANNELS.terminalResize, data => backend.request('terminalSetSize', {
-    columns: requiredInteger(data.columns, 'columns', 1, 1000),
-    rows: requiredInteger(data.rows, 'rows', 1, 1000),
-  }));
-  handle(PYTHON_RUNTIME_CHANNELS.startPreview, data => backend.request('startPreview', previewParams(data)));
-  handle(PYTHON_RUNTIME_CHANNELS.stopPreview, () => backend.request('stopPreview', {}));
-  handle(PYTHON_RUNTIME_CHANNELS.listDir, data => backend.request('io.listDir', {
-    path: boardPath(data.path),
-  }));
-  handle(PYTHON_RUNTIME_CHANNELS.stat, data => backend.request('io.queryFileStat', {
-    path: boardPath(data.path),
-  }));
-  handle(PYTHON_RUNTIME_CHANNELS.readFile, data => backend.request('io.readFile', {
-    path: boardPath(data.path),
-  }));
-  handle(PYTHON_RUNTIME_CHANNELS.writeFile, data => backend.request('io.writeFile', {
-    path: boardPath(data.path),
-    dataBase64: requiredBase64(data.dataBase64),
-  }));
-  handle(PYTHON_RUNTIME_CHANNELS.deleteFile, data => backend.request('io.deleteFile', {
-    path: boardPath(data.path),
-  }));
-  handle(PYTHON_RUNTIME_CHANNELS.renameFile, data => backend.request('io.renameFile', {
-    oldPath: boardPath(data.oldPath),
-    newPath: boardPath(data.newPath),
-  }));
-  handle(PYTHON_RUNTIME_CHANNELS.mkdir, data => backend.request('io.mkdir', {
-    path: boardPath(data.path),
-  }));
-  handle(PYTHON_RUNTIME_CHANNELS.rmdir, data => backend.request('io.rmdir', {
-    path: boardPath(data.path),
-  }));
-  handle(PYTHON_RUNTIME_CHANNELS.firmwareCommit, () => backend.request('getFirmwareCommit', {}));
-  handle(PYTHON_RUNTIME_CHANNELS.fileExec, data => backend.request('io.fileExec', {
-    path: boardPath(data.path),
-  }));
-  handle(PYTHON_RUNTIME_CHANNELS.virtualTouchStatus, () => backend.request('virtualTouch.status', {}));
-  handle(PYTHON_RUNTIME_CHANNELS.virtualTouchEvent, data => backend.request('virtualTouch.event', touchParams(data)));
+  const contextual = (event, data, operation, payload) => {
+    if (!data?.context || !broker) return null;
+    const context = runtimeContext(data.context);
+    return broker.request(event.sender.id, context, operation, payload);
+  };
+  const contextualDisconnect = (event, data) => {
+    if (!data?.context || !broker) return null;
+    return broker.disconnect(event.sender.id, runtimeContext(data.context));
+  };
+
+  handle(PYTHON_RUNTIME_CHANNELS.status, (data) => {
+    if (data?.context && broker) {
+      return broker.status(runtimeAdapterContext(data.context).adapterId);
+    }
+    return backend?.status?.() || broker?.status?.();
+  });
+  handle(PYTHON_RUNTIME_CHANNELS.detectBoards, (data, event) => {
+    if (data?.context && broker) {
+      return broker.detectBoards(
+        event.sender.id,
+        runtimeAdapterContext(data.context).adapterId,
+      );
+    }
+    return backend.request('detectBoards', {});
+  });
+  handle(PYTHON_RUNTIME_CHANNELS.connect, (data, event) => {
+    if (data?.context && broker) {
+      const context = runtimeAdapterContext(data.context);
+      return broker.connect(event.sender.id, {
+        adapterId: context.adapterId,
+        endpoint: data.payload?.endpoint,
+        credentials: data.payload?.credentials,
+      });
+    }
+    return backend.request('connectBoard', {
+      port: requiredString(data.port, 'port', 512),
+      baudRate: optionalInteger(data.baudRate, 'baudRate', 1200, 12000000),
+    });
+  });
+  handle(PYTHON_RUNTIME_CHANNELS.disconnect, (data, event) => (
+    contextualDisconnect(event, data) || backend.request('disconnectBoard', {})
+  ));
+  handle(PYTHON_RUNTIME_CHANNELS.runScript, (data, event) => (
+    contextual(event, data, 'runScript', {
+      script: requiredString(data.payload?.script ?? data.script, 'script', 16 * 1024 * 1024, true),
+    }) || backend.request('runScript', {
+      script: requiredString(data.script, 'script', 16 * 1024 * 1024, true),
+    })
+  ));
+  handle(PYTHON_RUNTIME_CHANNELS.stopScript, (data, event) => (
+    contextual(event, data, 'stopScript', {}) || backend.request('stopScript', {})
+  ));
+  handle(PYTHON_RUNTIME_CHANNELS.scriptRunning, (data, event) => (
+    contextual(event, data, 'scriptRunning', {}) || backend.request('scriptRunning', {})
+  ));
+  handle(PYTHON_RUNTIME_CHANNELS.terminalInput, (data, event) => (
+    contextual(event, data, 'terminalInput', {
+      text: requiredString(data.payload?.text ?? data.text, 'terminal text', 1024 * 1024, true),
+    }) || backend.request('terminalInput', {
+      text: requiredString(data.text, 'terminal text', 1024 * 1024, true),
+    })
+  ));
+  handle(PYTHON_RUNTIME_CHANNELS.terminalResize, (data, event) => (
+    contextual(event, data, 'terminalSetSize', {
+      columns: requiredInteger(data.payload?.columns ?? data.columns, 'columns', 1, 1000),
+      rows: requiredInteger(data.payload?.rows ?? data.rows, 'rows', 1, 1000),
+    }) || backend.request('terminalSetSize', {
+      columns: requiredInteger(data.columns, 'columns', 1, 1000),
+      rows: requiredInteger(data.rows, 'rows', 1, 1000),
+    })
+  ));
+  handle(PYTHON_RUNTIME_CHANNELS.startPreview, (data, event) => (
+    contextual(event, data, 'startPreview', previewParams(data.payload || data)) || backend.request('startPreview', previewParams(data))
+  ));
+  handle(PYTHON_RUNTIME_CHANNELS.stopPreview, (data, event) => (
+    contextual(event, data, 'stopPreview', {}) || backend.request('stopPreview', {})
+  ));
+  handle(PYTHON_RUNTIME_CHANNELS.listDir, (data, event) => (
+    contextual(event, data, 'io.listDir', { path: boardPath(data.payload?.path ?? data.path) }) || backend.request('io.listDir', {
+      path: boardPath(data.path),
+    })
+  ));
+  handle(PYTHON_RUNTIME_CHANNELS.stat, (data, event) => (
+    contextual(event, data, 'io.queryFileStat', { path: boardPath(data.payload?.path ?? data.path) }) || backend.request('io.queryFileStat', {
+      path: boardPath(data.path),
+    })
+  ));
+  handle(PYTHON_RUNTIME_CHANNELS.readFile, (data, event) => (
+    contextual(event, data, 'io.readFile', { path: boardPath(data.payload?.path ?? data.path) }) || backend.request('io.readFile', {
+      path: boardPath(data.path),
+    })
+  ));
+  handle(PYTHON_RUNTIME_CHANNELS.writeFile, (data, event) => (
+    contextual(event, data, 'io.writeFile', {
+      path: boardPath(data.payload?.path ?? data.path),
+      dataBase64: requiredBase64(data.payload?.dataBase64 ?? data.dataBase64),
+    }) || backend.request('io.writeFile', {
+      path: boardPath(data.path),
+      dataBase64: requiredBase64(data.dataBase64),
+    })
+  ));
+  handle(PYTHON_RUNTIME_CHANNELS.deleteFile, (data, event) => (
+    contextual(event, data, 'io.deleteFile', { path: boardPath(data.payload?.path ?? data.path) }) || backend.request('io.deleteFile', {
+      path: boardPath(data.path),
+    })
+  ));
+  handle(PYTHON_RUNTIME_CHANNELS.renameFile, (data, event) => (
+    contextual(event, data, 'io.renameFile', {
+      oldPath: boardPath(data.payload?.oldPath ?? data.oldPath),
+      newPath: boardPath(data.payload?.newPath ?? data.newPath),
+    }) || backend.request('io.renameFile', {
+      oldPath: boardPath(data.oldPath),
+      newPath: boardPath(data.newPath),
+    })
+  ));
+  handle(PYTHON_RUNTIME_CHANNELS.mkdir, (data, event) => (
+    contextual(event, data, 'io.mkdir', { path: boardPath(data.payload?.path ?? data.path) }) || backend.request('io.mkdir', {
+      path: boardPath(data.path),
+    })
+  ));
+  handle(PYTHON_RUNTIME_CHANNELS.rmdir, (data, event) => (
+    contextual(event, data, 'io.rmdir', { path: boardPath(data.payload?.path ?? data.path) }) || backend.request('io.rmdir', {
+      path: boardPath(data.path),
+    })
+  ));
+  handle(PYTHON_RUNTIME_CHANNELS.firmwareCommit, (data, event) => (
+    contextual(event, data, 'firmwareCommit', {}) || backend.request('getFirmwareCommit', {})
+  ));
+  handle(PYTHON_RUNTIME_CHANNELS.fileExec, (data, event) => (
+    contextual(event, data, 'io.fileExec', { path: boardPath(data.payload?.path ?? data.path) }) || backend.request('io.fileExec', {
+      path: boardPath(data.path),
+    })
+  ));
+  handle(PYTHON_RUNTIME_CHANNELS.virtualTouchStatus, (data, event) => (
+    contextual(event, data, 'virtualTouchStatus', {}) || backend.request('virtualTouch.status', {})
+  ));
+  handle(PYTHON_RUNTIME_CHANNELS.virtualTouchEvent, (data, event) => (
+    contextual(event, data, 'virtualTouchEvent', touchParams(data.payload || data)) || backend.request('virtualTouch.event', touchParams(data))
+  ));
+  handle(PYTHON_RUNTIME_CHANNELS.installAutostart, (data, event) => (
+    contextual(event, data, 'installAutostart', autostartParams(data.payload || data))
+  ));
+  handle(PYTHON_RUNTIME_CHANNELS.autostartStatus, (data, event) => (
+    contextual(event, data, 'autostartStatus', autostartParams(data.payload || data))
+  ));
+  handle(PYTHON_RUNTIME_CHANNELS.removeAutostart, (data, event) => (
+    contextual(event, data, 'removeAutostart', autostartParams(data.payload || data))
+  ));
 
   const send = (channel, payload) => {
-    for (const [id, sender] of subscribers) {
+    for (const [id, sender] of legacySubscribers) {
       if (sender.isDestroyed?.()) {
-        subscribers.delete(id);
+        legacySubscribers.delete(id);
         continue;
       }
       sender.send(channel, payload);
@@ -131,10 +237,27 @@ function registerPythonRuntimeIpc({ ipcMain, backend }) {
       for (const [eventName, listener] of Object.entries(listeners)) {
         backend.removeListener(eventName, listener);
       }
-      subscribers.clear();
-      await backend.stop();
+      legacySubscribers.clear();
+      owners.clear();
+      await broker?.stop?.();
+      await backend?.stop?.();
     },
   };
+}
+
+function runtimeContext(value) {
+  const context = runtimeAdapterContext(value);
+  if (typeof value.sessionId !== 'string' || !value.sessionId.trim()) {
+    throw new TypeError('sessionId is required');
+  }
+  return { ...context, sessionId: value.sessionId };
+}
+
+function runtimeAdapterContext(value) {
+  if (!value || typeof value.adapterId !== 'string' || !value.adapterId.trim()) {
+    throw new TypeError('adapterId is required');
+  }
+  return { adapterId: value.adapterId };
 }
 
 function requiredString(value, label, maxLength, allowEmpty = false) {
@@ -199,6 +322,19 @@ function touchParams(data) {
     ...(data.trackId === undefined ? {} : { trackId: requiredInteger(data.trackId, 'trackId', 0, 65535) }),
     ...(data.width === undefined ? {} : { width: requiredInteger(data.width, 'width', 1, 65535) }),
   };
+}
+
+function autostartParams(data) {
+  const result = {
+    projectId: requiredString(data.projectId, 'projectId', 128),
+  };
+  if (data.script !== undefined) {
+    result.script = requiredString(data.script, 'script', 16 * 1024 * 1024, true);
+  }
+  if (data.scriptPath !== undefined) {
+    result.scriptPath = boardPath(data.scriptPath);
+  }
+  return result;
 }
 
 module.exports = {

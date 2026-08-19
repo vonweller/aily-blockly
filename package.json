@@ -194,6 +194,8 @@
     "test:create-cybercam-project": "node --test scripts/create-local-cybercam-project.test.mjs",
     "smoke:cybercam-hardware": "node scripts/run-cybercam-hardware-smoke.mjs",
     "test:cybercam-hardware-smoke": "node --test scripts/run-cybercam-hardware-smoke.test.mjs",
+    "test:python-runtime": "node --test electron/test/python-runtime-*.test.js electron/test/canmv-*.test.js electron/test/linux-*.test.js",
+    "test:python-runtime:angular": "ng test --watch=false --browsers=ChromeHeadless --builder-mode=application --include src/app/services/python-runtime/python-runtime-client.spec.ts --include src/app/services/python-runtime/linux-runtime-adapters.spec.ts --include src/app/editors/blockly-editor/components/python-runtime-panel/python-runtime-panel.component.spec.ts",
     "setup:external-tools": "node scripts/install-external-tools.js",
     "setup:local-builder": "node scripts/use-local-builder.mjs"
   },

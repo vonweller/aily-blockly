@@ -34,7 +34,7 @@
     <div class="remote-files__error" role="alert">{{ error }}</div>
   }
   @if (!enabled) {
-    <div class="remote-files__empty">Connect a board to browse files.</div>
+    <div class="remote-files__empty">{{ disabledReason || 'Connect a board to browse files.' }}</div>
   } @else if (isLoading('/')) {
     <div class="remote-files__empty"><span nz-icon nzType="loading"></span> Loading device files...</div>
   } @else if (nodes.length === 0) {

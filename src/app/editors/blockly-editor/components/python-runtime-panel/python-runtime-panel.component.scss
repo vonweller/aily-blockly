@@ -8,9 +8,15 @@
 .connected .status-dot { background: var(--aily-color-success-alt); }
 .icon-button { width: 28px; height: 28px; color: var(--aily-icon-color); background: transparent; border: 0; cursor: pointer; }
 .connection-controls { display: flex; flex-direction: column; gap: 6px; }
+.connection-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.connection-form label, .inline-field { display: flex; flex-direction: column; gap: 3px; min-width: 0; color: var(--aily-text-secondary); font-size: 10px; }
+.connection-form .wide-field { grid-column: 1 / -1; }
+.connection-form input, .inline-field input { min-width: 0; height: 28px; padding: 4px 6px; color: var(--aily-text-primary); background: var(--aily-bg-input); border: 1px solid var(--aily-border-input); border-radius: 2px; font-size: 11px; }
+.connection-hint { color: var(--aily-text-secondary); font-size: 10px; line-height: 1.4; }
 .port-select { width: 100%; }
 .action-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
-.action-grid button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 28px; color: var(--aily-text-tertiary); background: var(--aily-bg-input); border: 1px solid var(--aily-border-input); border-radius: 2px; cursor: pointer; font-size: 11px; }
+.action-grid button, .autostart-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 28px; color: var(--aily-text-tertiary); background: var(--aily-bg-input); border: 1px solid var(--aily-border-input); border-radius: 2px; cursor: pointer; font-size: 11px; }
+.autostart-actions { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 5px; }
 button:disabled { opacity: .4; cursor: default; }
 .preview { display: block; width: 100%; max-height: 180px; object-fit: contain; background: #0b0d0f; }
 .panel-section { min-height: 0; border-top: 1px solid var(--aily-border-primary); padding-top: 8px; }

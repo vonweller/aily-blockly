@@ -1,5 +1,13 @@
 import { BehaviorSubject, Observable, Subject } from 'rxjs';
 import { decodeRemoteFileContent, encodeRemoteFileContent, RemoteFileReadResult } from './remote-file-codec';
+import {
+  LEGACY_CANMV_CAPABILITIES,
+  type PythonRuntimeCapabilities,
+} from './python-runtime-capabilities';
+import type {
+  PythonRuntimeCredentials,
+  PythonRuntimeEndpoint,
+} from './python-runtime-endpoint';
 
 export type PythonRuntimeBackendState = 'stopped' | 'starting' | 'ready';
 export type PythonRuntimeConnectionState = 'disconnected' | 'scanning' | 'connecting' | 'connected' | 'error';
@@ -14,12 +22,26 @@ export interface PythonRuntimeBoard {
   description?: string;
 }
 
+export interface PythonRuntimeContext {
+  adapterId: string;
+  sessionId: string;
+}
+
+export interface PythonRuntimeConnectResult extends PythonRuntimeContext {
+  capabilities: PythonRuntimeCapabilities | null;
+  boardInfo: Record<string, any> | null;
+}
+
 export interface PythonRuntimeSessionState {
   runtimeAvailable: boolean;
   unavailableReason: string | null;
   backendState: PythonRuntimeBackendState;
   connectionState: PythonRuntimeConnectionState;
   boards: PythonRuntimeBoard[];
+  adapterId: string | null;
+  sessionId: string | null;
+  endpoint: PythonRuntimeEndpoint | null;
+  capabilities: PythonRuntimeCapabilities | null;
   port: string | null;
   boardInfo: Record<string, any> | null;
   running: boolean;
@@ -35,7 +57,14 @@ export interface PythonRuntimeBridge {
     unavailableReason?: string | null;
   }>;
   detectBoards(): Promise<{ boards: PythonRuntimeBoard[] }>;
-  connect(options: { port: string; baudRate?: number }): Promise<Record<string, any>>;
+  connect(
+    options: { port: string; baudRate?: number },
+    credentials?: never,
+  ): Promise<Record<string, any>>;
+  connect(
+    endpoint: PythonRuntimeEndpoint,
+    credentials?: PythonRuntimeCredentials,
+  ): Promise<PythonRuntimeConnectResult | Record<string, any>>;
   disconnect(): Promise<void>;
   runScript(script: string): Promise<{ status: 'ok' | 'error'; output?: string; message?: string }>;
   stopScript(): Promise<void>;
@@ -47,6 +76,9 @@ export interface PythonRuntimeBridge {
   firmwareCommit(): Promise<any>;
   virtualTouchStatus(): Promise<any>;
   virtualTouchEvent(options: any): Promise<any>;
+  installAutostart?(options: Record<string, unknown>): Promise<any>;
+  autostartStatus?(options: Record<string, unknown>): Promise<any>;
+  removeAutostart?(options: Record<string, unknown>): Promise<any>;
   files: {
     listDir(path: string): Promise<any>;
     stat(path: string): Promise<any>;
@@ -70,6 +102,10 @@ const INITIAL_STATE: PythonRuntimeSessionState = {
   backendState: 'stopped',
   connectionState: 'disconnected',
   boards: [],
+  adapterId: null,
+  sessionId: null,
+  endpoint: null,
+  capabilities: null,
   port: null,
   boardInfo: null,
   running: false,
@@ -198,7 +234,30 @@ export class PythonRuntimeClient {
     }
   }
 
-  async connect(port: string, baudRate = 115200): Promise<Record<string, any>> {
+  connect(port: string, baudRate?: number): Promise<Record<string, any>>;
+  connect(
+    endpoint: PythonRuntimeEndpoint,
+    credentials?: PythonRuntimeCredentials,
+  ): Promise<Record<string, any>>;
+  async connect(
+    endpointOrPort: PythonRuntimeEndpoint | string,
+    credentialsOrBaudRate: PythonRuntimeCredentials | number = 115200,
+  ): Promise<Record<string, any>> {
+    const legacy = typeof endpointOrPort === 'string';
+    const legacyPort = legacy ? endpointOrPort : null;
+    const legacyBaudRate = typeof credentialsOrBaudRate === 'number'
+      ? credentialsOrBaudRate
+      : 115200;
+    const endpoint: PythonRuntimeEndpoint = legacy
+      ? {
+        kind: 'canmv',
+        port: legacyPort!,
+        baudRate: legacyBaudRate,
+      }
+      : endpointOrPort;
+    const credentials = legacy || typeof credentialsOrBaudRate === 'number'
+      ? undefined
+      : credentialsOrBaudRate;
     const generation = this.sessionGeneration;
     const operationGeneration = this.nextOperation('connection');
     if (this.isCurrentSession(generation)) {
@@ -207,12 +266,29 @@ export class PythonRuntimeClient {
     return this.enqueueOperation('connection', async () => {
       await this.initialize();
       try {
-        const boardInfo = await this.api.connect({ port, baudRate });
+        const result = legacy
+          ? await this.api.connect({
+            port: legacyPort!,
+            baudRate: legacyBaudRate,
+          })
+          : await this.api.connect(endpoint, credentials);
+        const contextual = this.isContextualConnectResult(result) ? result : null;
+        const boardInfo = contextual ? contextual.boardInfo : result;
         if (
           this.isCurrentOperation('connection', operationGeneration)
           && this.isCurrentSession(generation)
         ) {
-          this.patch({ connectionState: 'connected', port, boardInfo, error: null });
+          this.patch({
+            connectionState: 'connected',
+            adapterId: contextual?.adapterId || (legacy ? 'canmv-k230' : null),
+            sessionId: contextual?.sessionId || null,
+            endpoint,
+            capabilities: contextual?.capabilities
+              || (legacy ? LEGACY_CANMV_CAPABILITIES : null),
+            port: endpoint.kind === 'ssh' ? null : endpoint.port,
+            boardInfo,
+            error: null,
+          });
         }
         return boardInfo;
       } catch (error) {
@@ -240,6 +316,10 @@ export class PythonRuntimeClient {
       this.patch({
         connectionState: 'disconnected',
         boards: [],
+        adapterId: null,
+        sessionId: null,
+        endpoint: null,
+        capabilities: null,
         port: null,
         boardInfo: null,
         running: false,
@@ -350,6 +430,27 @@ export class PythonRuntimeClient {
     return this.invoke(() => this.api.virtualTouchEvent(options));
   }
 
+  installAutostart(options: Record<string, unknown>): Promise<any> {
+    return this.invoke(() => this.requireBridgeMethod(
+      this.api.installAutostart,
+      'Autostart installation',
+    ).call(this.api, options));
+  }
+
+  getAutostartStatus(options: Record<string, unknown>): Promise<any> {
+    return this.invoke(() => this.requireBridgeMethod(
+      this.api.autostartStatus,
+      'Autostart status',
+    ).call(this.api, options));
+  }
+
+  removeAutostart(options: Record<string, unknown>): Promise<any> {
+    return this.invoke(() => this.requireBridgeMethod(
+      this.api.removeAutostart,
+      'Autostart removal',
+    ).call(this.api, options));
+  }
+
   async readRemoteFile(path: string): Promise<Uint8Array> {
     return decodeRemoteFileContent(await this.invoke(() => this.api.files.readFile(path)));
   }
@@ -383,8 +484,46 @@ export class PythonRuntimeClient {
   }
 
   private handleEvent(event: any): void {
-    if (event?.event === 'scriptOutput' && typeof event.params?.text === 'string') {
-      this.terminalOutputSubject.next(event.params.text);
+    const scriptOutput = event?.params?.text ?? event?.data?.text;
+    if (event?.event === 'scriptOutput' && typeof scriptOutput === 'string') {
+      this.terminalOutputSubject.next(scriptOutput);
+      return;
+    }
+    if (event?.event === 'scriptExited') {
+      this.scriptStateVersion += 1;
+      this.patch({ running: false });
+      return;
+    }
+    if (event?.event === 'runtimeError') {
+      this.scriptStateVersion += 1;
+      const errorText = this.eventErrorText(event.params);
+      this.patch({ running: false, error: errorText });
+      this.terminalOutputSubject.next(
+        errorText.endsWith('\n') ? errorText : `${errorText}\r\n`,
+      );
+      return;
+    }
+    if (event?.type === 'output' && typeof event.data === 'string') {
+      this.terminalOutputSubject.next(event.data);
+      return;
+    }
+    if (event?.type === 'started') {
+      this.scriptStateVersion += 1;
+      this.patch({ running: true });
+      return;
+    }
+    if (event?.type === 'exited') {
+      this.scriptStateVersion += 1;
+      this.patch({ running: false });
+      return;
+    }
+    if (event?.type === 'error') {
+      this.scriptStateVersion += 1;
+      const errorText = this.eventErrorText(event);
+      this.patch({ running: false, error: errorText });
+      this.terminalOutputSubject.next(
+        errorText.endsWith('\n') ? errorText : `${errorText}\r\n`,
+      );
       return;
     }
     if (event?.event === 'scriptState') {
@@ -409,13 +548,17 @@ export class PythonRuntimeClient {
     }
   }
 
-  private handleBackendState(state: PythonRuntimeBackendState): void {
-    if (state === 'stopped') {
+  private handleBackendState(state: PythonRuntimeBackendState | string): void {
+    if (state === 'stopped' || state === 'disconnected') {
       this.invalidateSessionGeneration();
       this.patch({
-        backendState: state,
+        backendState: state === 'stopped' ? state : this.snapshot.backendState,
         connectionState: 'disconnected',
         boards: [],
+        adapterId: null,
+        sessionId: null,
+        endpoint: null,
+        capabilities: null,
         port: null,
         boardInfo: null,
         running: false,
@@ -423,7 +566,17 @@ export class PythonRuntimeClient {
       });
       return;
     }
-    this.patch({ backendState: state });
+    if (state === 'connecting') {
+      this.patch({ connectionState: 'connecting' });
+      return;
+    }
+    if (state === 'connected') {
+      this.patch({ connectionState: 'connected' });
+      return;
+    }
+    if (state === 'starting' || state === 'ready') {
+      this.patch({ backendState: state });
+    }
   }
 
   private eventErrorText(params: any): string {
@@ -484,6 +637,10 @@ export class PythonRuntimeClient {
     this.patch({
       connectionState: 'disconnected',
       boards: [],
+      adapterId: null,
+      sessionId: null,
+      endpoint: null,
+      capabilities: null,
       port: null,
       boardInfo: null,
       running: false,
@@ -503,6 +660,22 @@ export class PythonRuntimeClient {
 
   private isCurrentSession(generation: number): boolean {
     return generation === this.sessionGeneration;
+  }
+
+  private isContextualConnectResult(value: unknown): value is PythonRuntimeConnectResult {
+    const result = value as Partial<PythonRuntimeConnectResult> | null;
+    return typeof result?.adapterId === 'string'
+      && typeof result?.sessionId === 'string';
+  }
+
+  private requireBridgeMethod<T extends (...args: any[]) => Promise<any>>(
+    method: T | undefined,
+    operation: string,
+  ): T {
+    if (!method) {
+      throw new Error(`${operation} is not supported by this Python runtime`);
+    }
+    return method;
   }
 
   private nextOperation(kind: PythonRuntimeOperationKind): number {

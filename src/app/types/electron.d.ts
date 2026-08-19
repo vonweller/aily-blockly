@@ -7,17 +7,50 @@ interface PythonRuntimeBoard {
   description?: string;
 }
 
+interface PythonRuntimeContext {
+  adapterId: string;
+  sessionId: string;
+}
+
+interface PythonRuntimeConnectResult {
+  adapterId: string;
+  sessionId: string;
+  capabilities: Record<string, unknown> | null;
+  boardInfo: Record<string, unknown> | null;
+}
+
+interface PythonRuntimeEventEnvelope<T = unknown> {
+  adapterId: string;
+  sessionId: string;
+  payload: T;
+}
+
 interface PythonRuntimeApi {
-  status: () => Promise<{
+  status: (context?: Pick<PythonRuntimeContext, 'adapterId'>) => Promise<{
     state: 'stopped' | 'starting' | 'ready';
     pid: number | null;
     executable: string | null;
     available: boolean;
     unavailableReason: string | null;
   }>;
-  detectBoards: () => Promise<{ boards: PythonRuntimeBoard[] }>;
-  connect: (options: { port: string; baudRate?: number }) => Promise<any>;
-  disconnect: () => Promise<void>;
+  detectBoards: (context?: Pick<PythonRuntimeContext, 'adapterId'>) => Promise<{ boards: PythonRuntimeBoard[] }>;
+  connect: {
+    (
+      adapterId: string,
+      endpoint: Record<string, unknown>,
+      credentials?: Record<string, unknown>,
+    ): Promise<PythonRuntimeConnectResult>;
+    (options: { port: string; baudRate?: number }): Promise<any>;
+  };
+  request: (
+    context: PythonRuntimeContext,
+    operation: string,
+    payload?: Record<string, unknown>,
+  ) => Promise<any>;
+  disconnect: {
+    (context: PythonRuntimeContext): Promise<void>;
+    (): Promise<void>;
+  };
   runScript: (script: string) => Promise<{ status: 'ok' | 'error'; output?: string; message?: string }>;
   stopScript: () => Promise<void>;
   scriptRunning: () => Promise<{ running: boolean }>;
@@ -39,10 +72,19 @@ interface PythonRuntimeApi {
   firmwareCommit: () => Promise<{ commitId: string; fwVersion: string; archStr: string }>;
   virtualTouchStatus: () => Promise<any>;
   virtualTouchEvent: (options: any) => Promise<{ accepted: boolean }>;
-  onEvent: (callback: (event: any) => void) => () => void;
-  onFrame: (callback: (frame: { frameId: number; data: Uint8Array }) => void) => () => void;
-  onState: (callback: (state: string) => void) => () => void;
-  onStderr: (callback: (text: string) => void) => () => void;
+  installAutostart: (context: PythonRuntimeContext, options: Record<string, unknown>) => Promise<any>;
+  autostartStatus: (context: PythonRuntimeContext, options: Record<string, unknown>) => Promise<any>;
+  removeAutostart: (context: PythonRuntimeContext, options: Record<string, unknown>) => Promise<any>;
+  legacy: {
+    status: () => Promise<any>;
+    detectBoards: () => Promise<{ boards: PythonRuntimeBoard[] }>;
+    connect: (options: { port: string; baudRate?: number }) => Promise<any>;
+    disconnect: () => Promise<void>;
+  };
+  onEvent: (callback: (event: any | PythonRuntimeEventEnvelope) => void) => () => void;
+  onFrame: (callback: (frame: { frameId: number; data: Uint8Array } | PythonRuntimeEventEnvelope) => void) => () => void;
+  onState: (callback: (state: string | PythonRuntimeEventEnvelope) => void) => () => void;
+  onStderr: (callback: (text: string | PythonRuntimeEventEnvelope) => void) => () => void;
 }
 
 // 扩展 Window 接口以包含 electronAPI

@@ -2,7 +2,11 @@ const path = require('node:path');
 const fs = require('node:fs');
 
 const { CanmvBackend } = require('./backend');
+const { CanmvDriver } = require('./canmv-driver');
 const { registerPythonRuntimeIpc } = require('./ipc');
+const { LinuxSerialShellBackend } = require('./linux-serial-shell/backend');
+const { LinuxSshDriver } = require('./linux-ssh/driver');
+const { RuntimeBroker } = require('./runtime-broker');
 const { resolveCanmvBackendExecutable } = require('./runtime-path');
 
 function createPythonRuntimeRegistration(options) {
@@ -37,15 +41,51 @@ function createPythonRuntimeRegistration(options) {
     cwd: executable ? path.dirname(executable) : undefined,
     platform: options.platform || process.platform,
   });
+  const canmvDriver = new CanmvDriver(backend);
+  const sshDriver = createLazyDriverFactory(
+    'linux-ssh',
+    options.sshSessionFactory || (() => new LinuxSshDriver(options.sshOptions)),
+  );
+  const serialDriver = createLazyDriverFactory(
+    'linux-serial-shell',
+    options.serialSessionFactory || (() => new LinuxSerialShellBackend(options.serialOptions)),
+    async () => {
+      const { listPorts } = require('../serial');
+      const ports = await listPorts();
+      return {
+        boards: ports.map(port => ({
+          port: port.path,
+          name: port.friendlyName || port.manufacturer || port.path,
+          vid: port.vendorId || '',
+          pid: port.productId || '',
+          serialNumber: port.serialNumber,
+          description: port.friendlyName || port.manufacturer,
+        })),
+      };
+    },
+  );
+  const broker = new RuntimeBroker({
+    drivers: [canmvDriver, serialDriver, sshDriver],
+  });
   const registration = registerPythonRuntimeIpc({
     ipcMain: options.ipcMain,
     backend,
+    broker,
   });
   return {
     available: Boolean(executable),
     unavailableReason,
     backend,
+    broker,
     registration,
+  };
+}
+
+function createLazyDriverFactory(id, createSession, detectBoards) {
+  return {
+    id,
+    createSession,
+    detectBoards: detectBoards || (async () => ({ boards: [] })),
   };
 }
 

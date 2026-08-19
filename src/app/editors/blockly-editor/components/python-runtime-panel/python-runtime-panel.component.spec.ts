@@ -1,15 +1,53 @@
-import { fakeAsync, flushMicrotasks, tick } from '@angular/core/testing';
-import { BehaviorSubject, Subject } from 'rxjs';
+import { Component, EventEmitter, Input, Output } from '@angular/core';
+import { provideHttpClient } from '@angular/common/http';
+import { provideNoopAnimations } from '@angular/platform-browser/animations';
+import { fakeAsync, flushMicrotasks, TestBed, tick } from '@angular/core/testing';
+import { By } from '@angular/platform-browser';
+import { provideNzIconsTesting } from 'ng-zorro-antd/icon/testing';
+import { BehaviorSubject, Observable, Subject } from 'rxjs';
+import type { PythonRuntimeClient } from '../../../../services/python-runtime/python-runtime-client';
+import type { RemoteDirectoryNode } from '../../../../services/python-runtime/remote-file-tree';
+import { PythonRuntimeRegistry } from '../../../../services/python-runtime/python-runtime-registry';
 import { PythonRuntimePanelComponent } from './python-runtime-panel.component';
+import { PythonTerminalComponent } from './python-terminal/python-terminal.component';
+import { RemoteFileTreeComponent } from './remote-file-tree/remote-file-tree.component';
+
+@Component({
+  selector: 'app-python-terminal',
+  standalone: true,
+  template: '',
+})
+class StubPythonTerminalComponent {
+  @Input({ required: true }) runtime!: PythonRuntimeClient;
+  @Input() inputEnabled = false;
+  @Input() resizeEnabled = false;
+  @Input() resizeDisabledReason = '';
+}
+
+@Component({
+  selector: 'app-remote-file-tree',
+  standalone: true,
+  template: '',
+})
+class StubRemoteFileTreeComponent {
+  @Input() enabled = false;
+  @Input() disabledReason = '';
+  @Input({ required: true }) runtime!: PythonRuntimeClient;
+  @Output() fileOpen = new EventEmitter<RemoteDirectoryNode>();
+}
 
 describe('PythonRuntimePanelComponent', () => {
-  function createHarness() {
+  function createHarness(adapterId = 'canmv-k230') {
     const state = new BehaviorSubject<any>({
       runtimeAvailable: true,
       unavailableReason: null,
       backendState: 'ready',
       connectionState: 'disconnected',
       boards: [],
+      adapterId: null,
+      sessionId: null,
+      endpoint: null,
+      capabilities: null,
       port: null,
       boardInfo: null,
       running: false,
@@ -30,9 +68,12 @@ describe('PythonRuntimePanelComponent', () => {
       stopPreview: jasmine.createSpy('stopPreview').and.resolveTo(),
       readRemoteTextFile: jasmine.createSpy('readRemoteTextFile').and.resolveTo('print("old")'),
       writeRemoteTextFile: jasmine.createSpy('writeRemoteTextFile').and.resolveTo(),
+      installAutostart: jasmine.createSpy('installAutostart').and.resolveTo({ installed: true }),
+      getAutostartStatus: jasmine.createSpy('getAutostartStatus').and.resolveTo({ installed: true }),
+      removeAutostart: jasmine.createSpy('removeAutostart').and.resolveTo({ removed: true }),
       dispose: jasmine.createSpy('dispose'),
     };
-    const adapter = { id: 'canmv-k230', runtime, available: true, dispose: () => runtime.dispose() };
+    const adapter = { id: adapterId, runtime, available: true, dispose: () => runtime.dispose() };
     const registry = { resolve: jasmine.createSpy('resolve').and.returnValue(adapter) };
     const component = new PythonRuntimePanelComponent(registry as any);
     return { component, runtime, state, registry };
@@ -49,6 +90,50 @@ describe('PythonRuntimePanelComponent', () => {
     });
     return { promise, resolve, reject };
   }
+
+  async function renderPanel(
+    adapterId: 'canmv-k230' | 'linux-ssh' | 'linux-serial-shell',
+    stateOverride: Record<string, unknown> = {},
+  ) {
+    const harness = createHarness(adapterId);
+    harness.state.next({
+      ...harness.state.value,
+      ...stateOverride,
+    });
+    await TestBed.configureTestingModule({
+      imports: [PythonRuntimePanelComponent],
+      providers: [
+        { provide: PythonRuntimeRegistry, useValue: harness.registry },
+        provideHttpClient(),
+        provideNoopAnimations(),
+        provideNzIconsTesting(),
+      ],
+    })
+      .overrideComponent(PythonRuntimePanelComponent, {
+        remove: {
+          imports: [PythonTerminalComponent, RemoteFileTreeComponent],
+        },
+        add: {
+          imports: [StubPythonTerminalComponent, StubRemoteFileTreeComponent],
+        },
+      })
+      .compileComponents();
+    const fixture = TestBed.createComponent(PythonRuntimePanelComponent);
+    const component = fixture.componentInstance;
+    component.runtimeMetadata = {
+      kind: 'python',
+      adapter: adapterId,
+      entry: 'main.py',
+    };
+    component.runtime = harness.runtime;
+    component.state$ = harness.state.asObservable() as Observable<any>;
+    fixture.detectChanges();
+    return { ...harness, fixture, component };
+  }
+
+  afterEach(() => {
+    TestBed.resetTestingModule();
+  });
 
   it('stays hidden without Python metadata and initializes the selected adapter', async () => {
     const { component, runtime } = createHarness();
@@ -481,5 +566,156 @@ describe('PythonRuntimePanelComponent', () => {
     firstInitialize.reject(new Error('stale initialize failure'));
     await staleActivation;
     expect(component.error).toContain('Unsupported Python runtime adapter: missing');
+  });
+
+  it('renders SSH connection fields without serial or CanMV controls', async () => {
+    const { fixture } = await renderPanel('linux-ssh');
+    const root: HTMLElement = fixture.nativeElement;
+
+    expect(root.querySelector('[data-testid="ssh-host"]')).not.toBeNull();
+    expect(root.querySelector('[data-testid="ssh-port"]')).not.toBeNull();
+    expect(root.querySelector('[data-testid="ssh-username"]')).not.toBeNull();
+    expect(root.querySelector('[data-testid="ssh-password"]')).not.toBeNull();
+    expect(root.querySelector('[data-testid="ssh-private-key-path"]')).not.toBeNull();
+    expect(root.querySelector('[data-testid="serial-port"]')).toBeNull();
+    expect(root.querySelector('[data-testid="canmv-device"]')).toBeNull();
+  });
+
+  it('renders serial-shell port and baud controls with the SERIAL-A hint', async () => {
+    const { fixture } = await renderPanel('linux-serial-shell');
+    const root: HTMLElement = fixture.nativeElement;
+
+    expect(root.querySelector('[data-testid="serial-port"]')).not.toBeNull();
+    expect(root.querySelector('[data-testid="serial-baud"]')).not.toBeNull();
+    expect(root.querySelector('[data-testid="serial-a-hint"]')?.textContent).toContain('SERIAL-A');
+    expect(root.querySelector('[data-testid="ssh-host"]')).toBeNull();
+    expect(root.querySelector('[data-testid="canmv-device"]')).toBeNull();
+  });
+
+  it('keeps the CanMV device dropdown and automatic rescan behavior', async () => {
+    const { fixture } = await renderPanel('canmv-k230');
+    const root: HTMLElement = fixture.nativeElement;
+
+    expect(root.querySelector('[data-testid="canmv-device"]')).not.toBeNull();
+    expect(root.querySelector('[data-testid="ssh-host"]')).toBeNull();
+    expect(root.querySelector('[data-testid="serial-port"]')).toBeNull();
+  });
+
+  it('does not scan the LAN for SSH and enumerates serial ports only once', fakeAsync(() => {
+    const ssh = createHarness('linux-ssh');
+    ssh.component.runtimeMetadata = {
+      kind: 'python',
+      adapter: 'linux-ssh',
+      entry: 'main.py',
+    };
+    void ssh.component.activate();
+    flushMicrotasks();
+    tick(4_000);
+    flushMicrotasks();
+    expect(ssh.runtime.detectBoards).not.toHaveBeenCalled();
+    ssh.component.ngOnDestroy();
+
+    const serial = createHarness('linux-serial-shell');
+    serial.runtime.detectBoards.and.resolveTo([
+      { port: 'COM7', name: 'WalnutPi SERIAL-A', vid: '1a86', pid: '7523' },
+    ]);
+    serial.component.runtimeMetadata = {
+      kind: 'python',
+      adapter: 'linux-serial-shell',
+      entry: 'main.py',
+    };
+    void serial.component.activate();
+    flushMicrotasks();
+    tick(4_000);
+    flushMicrotasks();
+    expect(serial.runtime.detectBoards).toHaveBeenCalledTimes(1);
+    expect(serial.runtime.connect).not.toHaveBeenCalled();
+    serial.component.ngOnDestroy();
+  }));
+
+  it('clears SSH password and passphrase after connect returns while retaining non-secret fields', async () => {
+    const { component, runtime } = createHarness('linux-ssh');
+    component.runtimeMetadata = {
+      kind: 'python',
+      adapter: 'linux-ssh',
+      entry: 'main.py',
+    };
+    await component.activate();
+    component.sshHost = 'pi.local';
+    component.sshPort = 2222;
+    component.sshUsername = 'pi';
+    component.sshPassword = 'password-secret';
+    component.sshPrivateKeyPath = 'C:\\Users\\dev\\.ssh\\id_ed25519';
+    component.sshPrivateKeyPassphrase = 'key-secret';
+
+    await component.connect();
+
+    expect(runtime.connect).toHaveBeenCalledOnceWith(
+      {
+        kind: 'ssh',
+        host: 'pi.local',
+        port: 2222,
+        username: 'pi',
+        privateKeyPath: 'C:\\Users\\dev\\.ssh\\id_ed25519',
+      },
+      {
+        password: 'password-secret',
+        passphrase: 'key-secret',
+      },
+    );
+    expect(component.sshPassword).toBe('');
+    expect(component.sshPrivateKeyPassphrase).toBe('');
+    expect(component.sshHost).toBe('pi.local');
+    expect(component.sshPrivateKeyPath).toBe('C:\\Users\\dev\\.ssh\\id_ed25519');
+  });
+
+  it('gates files, autostart, preview, and resize while keeping PTY input active', async () => {
+    const { fixture } = await renderPanel('linux-ssh', {
+      connectionState: 'connected',
+      running: true,
+      adapterId: 'linux-ssh',
+      sessionId: 'session-1',
+      capabilities: {
+        platform: 'linux',
+        hostname: 'pi',
+        architecture: 'aarch64',
+        pythonVersion: '3.11',
+        homeDirectory: '/home/pi',
+        writableWorkspace: '/tmp/aily-runtime',
+        pty: true,
+        terminalResize: false,
+        processGroups: true,
+        files: 'none',
+        autostart: 'none',
+        preview: { available: false, transports: [] },
+        unavailableReasons: {
+          files: 'SFTP and the file helper are unavailable.',
+          autostart: 'No supported autostart manager was detected.',
+          preview: 'No camera backend was detected.',
+          terminalResize: 'The remote PTY cannot be resized.',
+        },
+      },
+    });
+    const root: HTMLElement = fixture.nativeElement;
+    const fileBrowser = fixture.debugElement.query(By.directive(StubRemoteFileTreeComponent))
+      .componentInstance as StubRemoteFileTreeComponent;
+    const terminal = fixture.debugElement.query(By.directive(StubPythonTerminalComponent))
+      .componentInstance as StubPythonTerminalComponent;
+    const preview = root.querySelector('[data-testid="preview-action"]') as HTMLButtonElement;
+    const install = root.querySelector('[data-testid="autostart-install"]') as HTMLButtonElement;
+    const status = root.querySelector('[data-testid="autostart-status"]') as HTMLButtonElement;
+    const remove = root.querySelector('[data-testid="autostart-remove"]') as HTMLButtonElement;
+
+    expect(fileBrowser.enabled).toBeFalse();
+    expect(fileBrowser.disabledReason).toContain('SFTP');
+    expect(preview.disabled).toBeTrue();
+    expect(preview.title).toContain('camera backend');
+    expect(install.disabled).toBeTrue();
+    expect(status.disabled).toBeTrue();
+    expect(remove.disabled).toBeTrue();
+    expect(install.title).toContain('autostart manager');
+    expect(terminal.inputEnabled).toBeTrue();
+    expect(terminal.resizeEnabled).toBeFalse();
+    expect(terminal.resizeDisabledReason).toContain('cannot be resized');
   });
 });
