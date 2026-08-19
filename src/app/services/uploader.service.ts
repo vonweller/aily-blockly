@@ -5,6 +5,9 @@ import { SerialService } from './serial.service';
 import { UiService } from './ui.service';
 import type { UploadRecoveryPolicy } from './upload-recovery-policy';
 import { SubappResourceLifecycleService } from './subapp-resource-lifecycle.service';
+import { ProjectService } from './project.service';
+import { _UploaderService as BlocklyUploaderService } from '../editors/blockly-editor/services/uploader.service';
+import { resolveUploadDispatchMode } from './upload-dispatch-policy';
 
 @Injectable({
   providedIn: 'root'
@@ -12,6 +15,7 @@ import { SubappResourceLifecycleService } from './subapp-resource-lifecycle.serv
 export class UploaderService {
 
   private uploadOperationSequence = 0;
+  private directUploaderActive = false;
 
   constructor(
     private actionService: ActionService,
@@ -19,6 +23,8 @@ export class UploaderService {
     private serialService: SerialService,
     private uiService: UiService,
     private subappResourceLifecycle: SubappResourceLifecycleService,
+    private projectService: ProjectService,
+    private blocklyUploaderService: BlocklyUploaderService,
   ) { }
 
   /** 未标记类型的历史端口按串口处理。 */
@@ -104,20 +110,42 @@ export class UploaderService {
         uploadPortType,
         { operationId },
       );
-      const timeout = uploadPortType === 'ble' ? 900000 : 300000;
-      const feedback = await this.actionService.dispatchWithFeedback('upload-begin', {}, timeout).toPromise();
+      const hasBlocklyUploader = this.actionService.hasListener('uploader-upload-begin');
+      const isAilyCodeProject = this.projectService.isAilyCodeProject();
+      const uploadDispatchMode = resolveUploadDispatchMode({ isAilyCodeProject, hasBlocklyUploader });
+      let uploadResult: any;
+      let uploadFeedbackError = '';
+      let uploadFeedbackSuccess = true;
 
-      const uploadResult = feedback?.data?.result;
+      if (uploadDispatchMode === 'coder-direct') {
+        // Coder 路由不挂载 BlocklyEditorComponent，因此没有 upload-begin 监听器。
+        // 直接进入共享上传器，避免等待五分钟超时；共享上传器只在构建入口和
+        // buildPath 上区分 Coder，串口、板卡命令、进度与恢复语义保持一致。
+        this.directUploaderActive = true;
+        try {
+          uploadResult = await this.blocklyUploaderService.upload();
+        } finally {
+          this.directUploaderActive = false;
+        }
+      } else if (uploadDispatchMode === 'blockly-action') {
+        const timeout = uploadPortType === 'ble' ? 900000 : 300000;
+        const feedback = await this.actionService.dispatchWithFeedback('upload-begin', {}, timeout).toPromise();
+        uploadResult = feedback?.data?.result;
+        uploadFeedbackError = feedback?.error || '';
+        uploadFeedbackSuccess = feedback?.success !== false && feedback?.data?.success !== false;
+      } else {
+        throw new Error('当前上传编辑器尚未就绪，请等待项目完成加载后重试。');
+      }
+
       resourceRecovery = uploadResult?.resourceRecovery;
-      const uploadSuccess = feedback?.success !== false
-        && feedback?.data?.success !== false
+      const uploadSuccess = uploadFeedbackSuccess
         && !!uploadResult
         && uploadResult?.state !== 'error';
 
       if (!uploadSuccess) {
-        const error: any = new Error(uploadResult?.text || feedback?.error || '上传失败');
+        const error: any = new Error(uploadResult?.text || uploadFeedbackError || '上传失败');
         error.state = uploadResult?.state || 'error';
-        error.text = uploadResult?.text || feedback?.error || '上传失败';
+        error.text = uploadResult?.text || uploadFeedbackError || '上传失败';
         error.result = uploadResult;
         throw error;
       }
@@ -150,6 +178,10 @@ export class UploaderService {
   * 取消当前编译过程
   */
   cancel() {
+    if (this.directUploaderActive) {
+      this.blocklyUploaderService.cancel();
+      return;
+    }
     this.actionService.dispatch('upload-cancel', {}, result => {
       if (result.success) {
       } else {
@@ -201,4 +233,3 @@ export class UploaderService {
     }
   }
 }
-

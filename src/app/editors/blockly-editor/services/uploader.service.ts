@@ -4,6 +4,7 @@ import { ProjectService } from "../../../services/project.service";
 import { SerialService } from "../../../services/serial.service";
 import { NzMessageService } from "ng-zorro-antd/message";
 import { _BuilderService } from "./builder.service";
+import { BuilderService as HostBuilderService } from "../../../services/builder.service";
 import { NoticeService } from "../../../services/notice.service";
 import { NzModalService } from "ng-zorro-antd/modal";
 import { CmdOutput, CmdService } from "../../../services/cmd.service";
@@ -65,7 +66,7 @@ function mapLogStateToLevel(state?: string): ProjectLogLevel {
   }
 }
 
-@Injectable()
+@Injectable({ providedIn: 'root' })
 export class _UploaderService {
   private translate = inject(TranslateService);
 
@@ -74,6 +75,7 @@ export class _UploaderService {
     private serialService: SerialService,
     private message: NzMessageService,
     private _builderService: _BuilderService,
+    private hostBuilderService: HostBuilderService,
     private noticeService: NoticeService,
     private modal: NzModalService,
     private cmdService: CmdService,
@@ -93,6 +95,7 @@ export class _UploaderService {
   private isErrored = false;
   private processExitCode: number | null = null; // 记录进程退出码
   cancelled = false;
+  private coderBuildActive = false;
   private uploadPromiseReject: any = null; // 保存 Promise 的 reject 函数
 
   private initialized = false; // 防止重复初始化
@@ -389,40 +392,25 @@ export class _UploaderService {
           }
         }
 
-        // 第一步：检查是否需要编译
+        // 第一步：检查是否需要编译。Coder 页面没有 Blockly workspace，
+        // 但仍复用后续同一套板卡上传脚本、进度、错误和资源恢复流程；
+        // 唯一差异是从 project.aci.entry 构建并使用 Coder 的实际产物目录。
         const projectPath = this.projectService.currentProjectPath;
-        const projectDocument = this.blocklyService.getProjectDocument();
-        const generated = await runWithPreparedActiveProjectGenerator(
-          this.blocklyService.workspace,
-          (generator) => ({
-            code: normalizeArduinoGeneratedCode(
-              generator.workspaceToCode(this.blocklyService.workspace),
-            ),
-            generator,
-          }),
-          projectDocument,
-        );
-        const { code, generator } = generated;
-        await writeArduinoGeneratedArtifacts(
-          projectPath,
-          generator,
-        );
-        const buildPath = await this.projectService.getBuildPath();
-        const needsBuild = !this._builderService.passed || 
-                          code !== this._builderService.lastCode || 
-                          this.projectService.currentProjectPath !== this._builderService.currentProjectPath || 
-                          window['fs'].existsSync(buildPath) === false;
+        const isAilyCodeProject = this.projectService.isAilyCodeProject(projectPath);
+        let buildPath: string;
 
-        // 如果需要编译，先执行编译
-        if (needsBuild) {
+        if (isAilyCodeProject) {
           try {
-            const buildResult = await this._builderService.build();
-            console.log("build result:", buildResult);
-            // 编译成功，继续上传流程
+            this.coderBuildActive = true;
+            const buildResult = await this.hostBuilderService.build(projectPath);
+            console.log('Coder build result:', buildResult);
+            buildPath = await this.projectService.getBuildPath();
+            if (!buildPath || !window['fs'].existsSync(buildPath)) {
+              throw new Error(`Coder build output directory does not exist: ${buildPath || '(empty)'}`);
+            }
           } catch (error) {
-            this.uploadInProgress = false; // 重置状态
-            // 检查编译是否被取消
-            if (this._builderService.cancelled || this.cancelled) {
+            this.uploadInProgress = false;
+            if (this.cancelled) {
               this.noticeService.update({
                 title: this.uploadT('BUILD_CANCELLED'),
                 text: this.uploadT('BUILD_CANCELLED'),
@@ -432,23 +420,75 @@ export class _UploaderService {
               });
               reject({ state: 'warn', text: this.uploadT('BUILD_CANCELLED') });
               return;
-            } else {
-              const buildErrorDetails = (error?.fullStdErr || error?.text || error?.message || error || '').toString();
+            }
+            const buildErrorDetails = (error?.fullStdErr || error?.text || error?.message || error || '').toString();
+            const message = this.uploadT('BUILD_FAILED_CHECK_CODE');
+            this.handleUploadError(message, this.uploadT('BUILD_FAILED_TITLE'), buildErrorDetails);
+            reject({ state: 'error', text: message });
+            return;
+          } finally {
+            this.coderBuildActive = false;
+          }
+        } else {
+          const projectDocument = this.blocklyService.getProjectDocument();
+          const generated = await runWithPreparedActiveProjectGenerator(
+            this.blocklyService.workspace,
+            (generator) => ({
+              code: normalizeArduinoGeneratedCode(
+                generator.workspaceToCode(this.blocklyService.workspace),
+              ),
+              generator,
+            }),
+            projectDocument,
+          );
+          const { code, generator } = generated;
+          await writeArduinoGeneratedArtifacts(
+            projectPath,
+            generator,
+          );
+          buildPath = await this.projectService.getBuildPath();
+          const needsBuild = !this._builderService.passed ||
+                            code !== this._builderService.lastCode ||
+                            this.projectService.currentProjectPath !== this._builderService.currentProjectPath ||
+                            window['fs'].existsSync(buildPath) === false;
+
+          // 如果需要编译，先执行编译
+          if (needsBuild) {
+            try {
+              const buildResult = await this._builderService.build();
+              console.log("build result:", buildResult);
+              // 编译成功，继续上传流程
+            } catch (error) {
+              this.uploadInProgress = false; // 重置状态
+              // 检查编译是否被取消
+              if (this._builderService.cancelled || this.cancelled) {
+                this.noticeService.update({
+                  title: this.uploadT('BUILD_CANCELLED'),
+                  text: this.uploadT('BUILD_CANCELLED'),
+                  state: 'warn',
+                  setTimeout: 55000,
+                  isCancellationNotice: true
+                });
+                reject({ state: 'warn', text: this.uploadT('BUILD_CANCELLED') });
+                return;
+              } else {
+                const buildErrorDetails = (error?.fullStdErr || error?.text || error?.message || error || '').toString();
+                const message = this.uploadT('BUILD_FAILED_CHECK_CODE');
+                this.handleUploadError(message, this.uploadT('BUILD_FAILED_TITLE'), buildErrorDetails);
+                reject({ state: 'error', text: message });
+                return;
+              }
+
+            }
+
+            // 检查编译是否成功
+            if (!this._builderService.passed) {
+              this.uploadInProgress = false; // 重置状态
               const message = this.uploadT('BUILD_FAILED_CHECK_CODE');
-              this.handleUploadError(message, this.uploadT('BUILD_FAILED_TITLE'), buildErrorDetails);
+              this.handleUploadError(message, this.uploadT('BUILD_FAILED_TITLE'), this.uploadT('BUILD_FAILED_NO_ARTIFACT'));
               reject({ state: 'error', text: message });
               return;
             }
-
-          }
-
-          // 检查编译是否成功
-          if (!this._builderService.passed) {
-            this.uploadInProgress = false; // 重置状态
-            const message = this.uploadT('BUILD_FAILED_CHECK_CODE');
-            this.handleUploadError(message, this.uploadT('BUILD_FAILED_TITLE'), this.uploadT('BUILD_FAILED_NO_ARTIFACT'));
-            reject({ state: 'error', text: message });
-            return;
           }
         }
         
@@ -1567,7 +1607,11 @@ export class _UploaderService {
     
     // 如果正在编译，取消编译
     if (this.workflowService.currentState === ProcessState.BUILDING) {
-      this._builderService.cancel();
+      if (this.coderBuildActive) {
+        this.hostBuilderService.cancel();
+      } else {
+        this._builderService.cancel();
+      }
     }
     
     // 立即杀死进程（无论streamId是否存在）

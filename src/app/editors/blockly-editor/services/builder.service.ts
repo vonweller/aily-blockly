@@ -47,7 +47,7 @@ const PREPROCESS_POST_CHAT_QUIET_MS = 1500;
 const PREPROCESS_SLOW_PHASE_MS = 32;
 const PREPROCESS_ERROR_OUTPUT_LIMIT = 64 * 1024;
 
-@Injectable()
+@Injectable({ providedIn: 'root' })
 export class _BuilderService {
 
   constructor(
