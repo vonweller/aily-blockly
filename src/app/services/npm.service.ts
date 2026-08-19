@@ -21,10 +21,19 @@ import {
 } from '../utils/platform-runtime.utils';
 import { AppDataResourceLockService } from './appdata-resource-lock.service';
 import { BlocklyLibraryPackageService } from './blockly-library-package.service';
+import {
+  clearGlobalDependencyResources,
+  clearGlobalDependencyResourceDirectories,
+  GlobalDependencyUsageState,
+  listGlobalDependencyResources,
+  reconcileGlobalDependencyUsage,
+} from '../utils/global-dependency-cleanup.utils';
 
-interface GlobalDependencyUsageFile {
-  version: 1;
-  dependencies: Record<string, number>;
+type GlobalDependencyUsageFile = GlobalDependencyUsageState;
+
+export interface GlobalDependencyRemovalResult {
+  packageNames: string[];
+  resourcePaths: string[];
 }
 
 const GLOBAL_DEPENDENCY_USAGE_FILE = 'dependency-usage.json';
@@ -427,6 +436,13 @@ export class NpmService {
         }
         // console.log("boardPackageJson: ", boardPackageJson);
         await this.installBoardDependencies(boardPackageJson, false);
+        try {
+          // A missing resource may have been installed above. Record again so
+          // that concrete on-disk version starts with a fresh timestamp.
+          await this.recordGlobalDependencyUsage(projectPackageJson, boardPackageJson);
+        } catch (error) {
+          console.warn('Failed to record installed global dependency resources:', error);
+        }
         if (installStateStarted && this.workflowService.currentState === ProcessState.INSTALLING) {
           this.workflowService.finishInstall(true);
         }
@@ -484,6 +500,16 @@ export class NpmService {
       version: manifest.version || platformRef.version || '',
       boardDependencies,
     }, false, options?.force === true);
+
+    try {
+      const [projectPackageJson, boardPackageJson] = await Promise.all([
+        this.prjService.getPackageJson(),
+        this.prjService.getBoardPackageJson(),
+      ]);
+      await this.recordGlobalDependencyUsage(projectPackageJson || {}, boardPackageJson || {});
+    } catch (error) {
+      console.warn('Failed to record installed platform dependency resources:', error);
+    }
   }
 
   /** 安装 platform npm 包到 AppData（与 boardDependencies 包相同 prefix） */
@@ -527,35 +553,69 @@ export class NpmService {
     );
   }
 
-  async removeGlobalDependencies(unusedDays: 30 | 90 | null): Promise<string[]> {
+  async removeGlobalDependencies(unusedDays: 30 | 90 | null): Promise<GlobalDependencyRemovalResult> {
     const appDataPath = window['path'].getAppDataPath();
+    const bases = await this.getPlatformPathBases();
+    const resourceBasePaths = [bases.sdkBase, bases.compilersBase, bases.toolsBase];
 
     return this.appDataResourceLock.runExclusive(`npm:remove-global-dependencies:${unusedDays ?? 'all'}`, async () => {
       const now = Date.now();
       const dependencyNames = this.getDeclaredGlobalDependencyNames(appDataPath);
-      const usage = this.syncGlobalDependencyUsage(appDataPath, dependencyNames, now);
+      const resources = await listGlobalDependencyResources({
+        appDataPath,
+        resourceBasePaths,
+        pathApi: window['path'],
+        fsApi: window['fsp'],
+      });
+      const usage = this.syncGlobalDependencyUsage(
+        appDataPath,
+        dependencyNames,
+        resources.map((resource) => resource.key),
+        now,
+      );
       this.writeGlobalDependencyUsage(appDataPath, usage);
 
       const cutoff = unusedDays === null ? Number.POSITIVE_INFINITY : now - unusedDays * 24 * 60 * 60 * 1000;
       const packagesToRemove = dependencyNames.filter((name) => usage.dependencies[name] <= cutoff);
-      if (packagesToRemove.length === 0) {
-        return [];
+      const resourceKeysToRemove = Object.keys(usage.resources)
+        .filter((key) => usage.resources[key] <= cutoff);
+      let resourcePaths: string[] = [];
+
+      if (packagesToRemove.length > 0) {
+        const invalidPackageName = packagesToRemove.find((name) => !this.isValidNpmPackageName(name));
+        if (invalidPackageName) {
+          throw new Error(`Invalid npm package name: ${invalidPackageName}`);
+        }
+
+        // Resource packages (SDKs, compilers and tools) extract files outside
+        // node_modules during installation. Run their declared cleanup scripts
+        // before npm removes the package directory that contains those scripts.
+        for (const packageName of packagesToRemove) {
+          await this.runDeclaredUninstallScript(appDataPath, packageName);
+        }
       }
 
-      const invalidPackageName = packagesToRemove.find((name) => !this.isValidNpmPackageName(name));
-      if (invalidPackageName) {
-        throw new Error(`Invalid npm package name: ${invalidPackageName}`);
+      if (unusedDays === null) {
+        resourcePaths = await clearGlobalDependencyResourceDirectories({
+          appDataPath,
+          resourceBasePaths,
+          pathApi: window['path'],
+          fsApi: window['fsp'],
+        });
+      } else if (resourceKeysToRemove.length > 0) {
+        resourcePaths = await clearGlobalDependencyResources({
+          appDataPath,
+          resourceBasePaths,
+          resourceKeys: resourceKeysToRemove,
+          pathApi: window['path'],
+          fsApi: window['fsp'],
+        });
       }
 
-      // Resource packages (SDKs, compilers and tools) extract files outside
-      // node_modules during installation. Run their declared cleanup scripts
-      // before npm removes the package directory that contains those scripts.
-      for (const packageName of packagesToRemove) {
-        await this.runDeclaredUninstallScript(appDataPath, packageName);
+      if (packagesToRemove.length > 0) {
+        const cmd = `npm uninstall ${packagesToRemove.join(' ')} --prefix "${appDataPath}"`;
+        await window['npm'].run({ cmd });
       }
-
-      const cmd = `npm uninstall ${packagesToRemove.join(' ')} --prefix "${appDataPath}"`;
-      await window['npm'].run({ cmd });
 
       const remainingNames = new Set(this.getDeclaredGlobalDependencyNames(appDataPath));
       for (const name of Object.keys(usage.dependencies)) {
@@ -563,31 +623,85 @@ export class NpmService {
           delete usage.dependencies[name];
         }
       }
+      const remainingResources = await listGlobalDependencyResources({
+        appDataPath,
+        resourceBasePaths,
+        pathApi: window['path'],
+        fsApi: window['fsp'],
+      });
+      const remainingResourceKeys = new Set(remainingResources.map((resource) => resource.key));
+      for (const key of Object.keys(usage.resources)) {
+        if (!remainingResourceKeys.has(key)) {
+          delete usage.resources[key];
+        }
+      }
       this.writeGlobalDependencyUsage(appDataPath, usage);
 
-      return packagesToRemove;
+      return { packageNames: packagesToRemove, resourcePaths };
     });
+  }
+
+  private getResourceKeysForBoardDependencies(
+    boardDependencies: Record<string, string>,
+    bases: { sdkBase: string; compilersBase: string; toolsBase: string },
+  ): Set<string> {
+    const keys = new Set<string>();
+    for (const entry of resolvePlatformPackageEntries(boardDependencies, bases)) {
+      if (!window['path'].isExists(entry.absolutePath)) {
+        continue;
+      }
+      const baseName = entry.kind === 'sdk' ? 'sdk' : 'tools';
+      keys.add(`${baseName}/${window['path'].basename(entry.absolutePath)}`);
+    }
+    return keys;
   }
 
   private async recordGlobalDependencyUsage(projectPackageJson: any, boardPackageJson: any): Promise<void> {
     const appDataPath = window['path'].getAppDataPath();
+    const bases = await this.getPlatformPathBases();
+    const resourceBasePaths = [bases.sdkBase, bases.compilersBase, bases.toolsBase];
+    const effectiveBoardDependencies = await this.prjService.getEffectiveBoardDependencies();
     const usedNames = new Set<string>([
       ...this.getDependencyNames(projectPackageJson),
-      ...Object.keys(boardPackageJson?.boardDependencies || {})
+      ...Object.keys(effectiveBoardDependencies || {})
     ]);
     if (typeof boardPackageJson?.name === 'string' && boardPackageJson.name) {
       usedNames.add(boardPackageJson.name);
     }
+    const platformRef = readPlatformRefFromProjectAci(this.prjService.currentProjectPath);
+    if (platformRef?.packageName) {
+      usedNames.add(platformRef.packageName);
+    }
+    const usedResourceKeys = this.getResourceKeysForBoardDependencies(
+      effectiveBoardDependencies || {},
+      bases,
+    );
 
-    await this.appDataResourceLock.runExclusive('npm:record-global-dependency-usage', () => {
+    await this.appDataResourceLock.runExclusive('npm:record-global-dependency-usage', async () => {
       const now = Date.now();
       const dependencyNames = this.getDeclaredGlobalDependencyNames(appDataPath);
       const declaredNames = new Set(dependencyNames);
-      const usage = this.syncGlobalDependencyUsage(appDataPath, dependencyNames, now);
+      const resources = await listGlobalDependencyResources({
+        appDataPath,
+        resourceBasePaths,
+        pathApi: window['path'],
+        fsApi: window['fsp'],
+      });
+      const usage = this.syncGlobalDependencyUsage(
+        appDataPath,
+        dependencyNames,
+        resources.map((resource) => resource.key),
+        now,
+      );
 
       for (const name of usedNames) {
         if (declaredNames.has(name)) {
           usage.dependencies[name] = now;
+        }
+      }
+      for (const key of usedResourceKeys) {
+        if (Object.prototype.hasOwnProperty.call(usage.resources, key)) {
+          usage.resources[key] = now;
         }
       }
 
@@ -620,37 +734,39 @@ export class NpmService {
   private syncGlobalDependencyUsage(
     appDataPath: string,
     dependencyNames: string[],
+    resourceKeys: string[],
     now: number
   ): GlobalDependencyUsageFile {
     const current = this.readGlobalDependencyUsage(appDataPath);
-    const dependencies: Record<string, number> = {};
-
-    for (const name of dependencyNames) {
-      dependencies[name] = current.dependencies[name] || now;
-    }
-
-    return { version: 1, dependencies };
+    return reconcileGlobalDependencyUsage(current, dependencyNames, resourceKeys, now);
   }
 
   private readGlobalDependencyUsage(appDataPath: string): GlobalDependencyUsageFile {
     const usagePath = window['path'].join(appDataPath, GLOBAL_DEPENDENCY_USAGE_FILE);
     try {
       if (!window['fs'].existsSync(usagePath)) {
-        return { version: 1, dependencies: {} };
+        return { version: 2, dependencies: {}, resources: {} };
       }
 
       const parsed = JSON.parse(window['fs'].readFileSync(usagePath, 'utf8'));
       const dependencies: Record<string, number> = {};
+      const resources: Record<string, number> = {};
       for (const [name, timestamp] of Object.entries(parsed?.dependencies || {})) {
         const value = Number(timestamp);
         if (Number.isFinite(value) && value > 0) {
           dependencies[name] = value;
         }
       }
-      return { version: 1, dependencies };
+      for (const [key, timestamp] of Object.entries(parsed?.resources || {})) {
+        const value = Number(timestamp);
+        if (Number.isFinite(value) && value > 0) {
+          resources[key] = value;
+        }
+      }
+      return { version: 2, dependencies, resources };
     } catch (error) {
       console.warn('Failed to read global dependency usage, resetting it:', error);
-      return { version: 1, dependencies: {} };
+      return { version: 2, dependencies: {}, resources: {} };
     }
   }
 
