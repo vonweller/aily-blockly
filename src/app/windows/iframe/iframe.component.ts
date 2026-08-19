@@ -35,6 +35,7 @@ export interface IframeIpcPayload<T = unknown> {
 export type ConnectionGraphIpcType =
   | 'generate-graph-data'
   | 'generate-graph-updated'
+  | 'generate-graph-applied'
   | 'get-graph-data'
   | 'set-graph-data'
   | 'save-graph-data'
@@ -90,6 +91,8 @@ export class IframeComponent implements OnInit, OnDestroy {
   isConnectionGraphWindow = false;
   /** connection-graph IPC 统一监听清理函数 */
   private connectionGraphIpcCleanup: (() => void) | null = null;
+  /** 串行应用连线图更新，避免旧 payload 在新 payload 之后完成 */
+  private connectionGraphUpdateQueue: Promise<void> = Promise.resolve();
   /** 连线图生成进度通知订阅 */
   private noticeSubscription: Subscription | null = null;
   /** 待响应的保存请求：messageId -> resolve */
@@ -407,16 +410,19 @@ export class IframeComponent implements OnInit, OnDestroy {
   /**
    * 推送数据给已连接的子页面（penpal 方式）
    */
-  private async pushDataToRemote(): Promise<void> {
-    if (!this.remoteApi) return;
+  private async pushDataToRemote(): Promise<boolean> {
+    if (!this.remoteApi || typeof this.remoteApi['receiveData'] !== 'function') {
+      return false;
+    }
+
     try {
-      if (typeof this.remoteApi['receiveData'] === 'function') {
-        await (
-          this.remoteApi['receiveData'] as (data: unknown) => Promise<void>
-        )(this.iframeData);
-      }
+      await (
+        this.remoteApi['receiveData'] as (data: unknown) => Promise<void>
+      )(this.iframeData);
+      return true;
     } catch (error) {
       console.warn('推送数据给子页面失败:', error);
+      return false;
     }
   }
 
@@ -452,9 +458,26 @@ export class IframeComponent implements OnInit, OnDestroy {
     const handler = (_event: unknown, payload: IframeIpcPayload) => {
       const { type, data } = payload ?? {};
       switch (type) {
-        case 'generate-graph-updated':
-          this.ngZone.run(() => this.handleConnectionGraphUpdate(data));
+        case 'generate-graph-updated': {
+          const update = data as { messageId?: string; payload?: unknown } | undefined;
+          const messageId = typeof update?.messageId === 'string' ? update.messageId : '';
+          const graphPayload = messageId ? update?.payload : data;
+
+          const applyUpdate = async (): Promise<void> => {
+            const applied = await this.ngZone.run(() =>
+              this.handleConnectionGraphUpdate(graphPayload)
+            );
+            if (messageId) {
+              this.sendToMain('generate-graph-applied', { messageId, applied });
+            }
+          };
+
+          this.connectionGraphUpdateQueue = this.connectionGraphUpdateQueue.then(
+            applyUpdate,
+            applyUpdate,
+          );
           break;
+        }
         case 'set-graph-data': {
           break;
         }
@@ -514,8 +537,9 @@ export class IframeComponent implements OnInit, OnDestroy {
   /**
    * 处理连线图全量更新
    */
-  private async handleConnectionGraphUpdate(data: any): Promise<void> {
-    if (!data) return;
+  private async handleConnectionGraphUpdate(data: any): Promise<boolean> {
+    if (!data) return false;
+
     try {
       // 使用 IPC 发送过来的完整 payload（包含最新的 componentConfigs）
       const currentPayload = this.iframeData as any;
@@ -534,7 +558,8 @@ export class IframeComponent implements OnInit, OnDestroy {
           : {}),
       };
       this.iframeData = newPayload;
-      await this.pushDataToRemote();
+      const applied = await this.pushDataToRemote();
+      if (!applied) return false;
 
       // 区分预览推送（空连线）和最终推送（有连线）
       const hasConnections = Array.isArray(data.connections) && data.connections.length > 0;
@@ -553,8 +578,10 @@ export class IframeComponent implements OnInit, OnDestroy {
           showProgress: false,
         });
       }
+      return true;
     } catch (error) {
       console.error('[IframeComponent] 处理连线图更新失败:', error);
+      return false;
     }
   }
 

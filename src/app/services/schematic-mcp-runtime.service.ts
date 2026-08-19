@@ -20,6 +20,8 @@ import { AilyHost } from '../tools/aily-chat/core/host';
 import { ThemeService } from './theme.service';
 import { TranslateService } from '@ngx-translate/core';
 
+const CIRCUIT_PAYLOAD_ACK_TIMEOUT_MS = 2_000;
+
 @Injectable({ providedIn: 'root' })
 export class SchematicMcpRuntimeService {
   constructor(
@@ -162,15 +164,15 @@ export class SchematicMcpRuntimeService {
       }
 
       await this.ensureCircuitWindowOpen(payload);
-      if (this.connectionGraphService.hasActiveIframe) {
-        await this.connectionGraphService.iframeApi.receiveData(payload);
+      const applied = await this.pushCircuitPayload(payload);
+      if (!applied) {
+        return {
+          ok: false,
+          opened: true,
+          error: '电路连接窗口未确认应用连线图',
+        };
       }
-      if (window['ipcRenderer']) {
-        window['ipcRenderer'].send('iframe-message-connection-graph', {
-          type: 'generate-graph-updated',
-          data: payload,
-        });
-      }
+
       return { ok: true, opened: true };
     } catch (error: any) {
       return { ok: false, error: error?.message || String(error) };
@@ -197,18 +199,8 @@ export class SchematicMcpRuntimeService {
       };
 
       const windowOpened = await this.ensureCircuitWindowOpen(payload);
-      let previewUpdated = false;
+      const previewUpdated = await this.pushCircuitPayload(payload);
 
-      if (this.connectionGraphService.hasActiveIframe) {
-        await this.connectionGraphService.iframeApi.receiveData(payload);
-        previewUpdated = true;
-      }
-      if (typeof window !== 'undefined' && window['ipcRenderer']) {
-        window['ipcRenderer'].send('iframe-message-connection-graph', {
-          type: 'generate-graph-updated',
-          data: payload,
-        });
-      }
       this.connectionGraphService.emitNotice?.({
         title: 'AI生成中',
         text: '硬件组件已就绪，正在生成连线方案...',
@@ -244,16 +236,7 @@ export class SchematicMcpRuntimeService {
           theme: 'dark',
         };
         await this.ensureCircuitWindowOpen(payload);
-        if (this.connectionGraphService.hasActiveIframe) {
-          await this.connectionGraphService.iframeApi.receiveData(payload);
-          windowUpdated = true;
-        }
-        if (this.electronService.isElectron && window['ipcRenderer']) {
-          window['ipcRenderer'].send('iframe-message-connection-graph', {
-            type: 'generate-graph-updated',
-            data: payload,
-          });
-        }
+        windowUpdated = await this.pushCircuitPayload(payload);
       }
       this.connectionGraphService.emitNotice?.({
         title: 'AI生成中',
@@ -287,6 +270,44 @@ export class SchematicMcpRuntimeService {
 
   private buildCircuitWindowPath(): string {
     return `iframe?url=${encodeURIComponent(this.buildCircuitWindowUrl())}`;
+  }
+
+  private async pushCircuitPayload(payload: unknown): Promise<boolean> {
+    if (this.connectionGraphService.hasActiveIframe) {
+      await this.connectionGraphService.iframeApi.receiveData(payload);
+      return true;
+    }
+
+    if (!this.electronService.isElectron || typeof window === 'undefined' || !window['ipcRenderer']) {
+      return false;
+    }
+
+    const ipcRenderer = window['ipcRenderer'];
+    const channel = 'iframe-message-connection-graph';
+    const messageId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+    return new Promise<boolean>((resolve) => {
+      const finish = (applied: boolean) => {
+        clearTimeout(timeoutId);
+        ipcRenderer.removeListener?.(channel, handler);
+        resolve(applied);
+      };
+      const handler = (_event: unknown, message: { type?: string; data?: unknown }) => {
+        if (message?.type !== 'generate-graph-applied') return;
+
+        const data = message.data as { messageId?: string; applied?: boolean } | undefined;
+        if (data?.messageId !== messageId) return;
+
+        finish(data.applied === true);
+      };
+      const timeoutId = setTimeout(() => finish(false), CIRCUIT_PAYLOAD_ACK_TIMEOUT_MS);
+
+      ipcRenderer.on(channel, handler);
+      ipcRenderer.send(channel, {
+        type: 'generate-graph-updated',
+        data: { messageId, payload },
+      });
+    });
   }
 
   private async ensureCircuitWindowOpen(initialData: unknown): Promise<boolean> {
