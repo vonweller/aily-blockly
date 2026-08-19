@@ -6,11 +6,11 @@
 
 ## 一句话结论
 
-两个 Linux 运行后端、Electron runtime broker、Angular UI、文件、自启动、PTY、停止和摄像头预览的主体代码已经写入本机工作区。P0 四个失败和 P1 两项 SSH 审查已在本轮修完并通过新鲜回归；代码仍未提交、未推送。独立核桃派 `linux-ssh` 主链路已于 2026-08-20 完成 PARTIAL PASS；Raspberry Pi SSH 和独立核桃派 SERIAL-A 仍为 BLOCKED。
+两个 Linux 运行后端、Electron runtime broker、Angular UI、文件、自启动、PTY、停止和摄像头预览的主体代码已经提交到 `a150d7e4`。P0 四个失败和 P1 两项 SSH 审查已修完并通过新鲜回归；未推送。独立核桃派 `linux-ssh` 主链路已于 2026-08-20 完成 PARTIAL PASS；Raspberry Pi SSH 和独立核桃派 SERIAL-A 仍为 BLOCKED。
 
 ## 最重要的交接提醒
 
-当前主要实现只存在于本机未提交工作区。另一个开发者如果现在只从 GitHub 拉取分支，将拿不到这些代码。
+主体实现已在本机提交 `a150d7e4`，但尚未推送。另一个开发者如果现在只从 GitHub 拉取分支，仍拿不到这些代码。
 
 - 不要执行 `git reset --hard`、`git clean -fd`、`git checkout -- .` 或其他会清除工作区的命令。
 - 若接手人使用同一台电脑，可直接在现有目录继续。
@@ -23,9 +23,9 @@
 Repository: D:\Do\Githubs\Aily\aily-blockly
 Remote: https://github.com/vonweller/aily-blockly.git
 Branch: codex/cybercam-main-integration
-Local HEAD: 9964c9f00588593f4f6048b3395f39901a59bc41
+Local HEAD: a150d7e41b6e693de401f1df27dc9a96448ef67d
 Remote branch HEAD: 37d5e4e2f9af54972dc899d6908592ca8ceb808c
-Branch status: ahead 2
+Branch status: ahead 3 before the docs handoff commit
 Node: v24.6.0
 npm: 11.5.1
 ```
@@ -37,7 +37,7 @@ npm: 11.5.1
 abdd3bee docs(python): design Linux runtime backends
 ```
 
-Linux 后端主体实现仍在 modified/untracked 工作区，未提交、未推送。
+Linux 后端主体实现已提交为 `a150d7e4`，尚未推送。
 
 ## 已有设计与计划，不要重复编写
 
@@ -254,10 +254,10 @@ npm run test:python-runtime
 
 ## 当前没有完成的交付动作
 
-- 未创建最终 `docs/python-linux-runtime-handoff-2026-08-18.md`。
-- 未提交 Linux runtime 主体实现。
+- 已创建最终 `docs/python-linux-runtime-handoff-2026-08-18.md`。
+- 已提交 Linux runtime 主体实现：`a150d7e4`。
 - 未推送当前分支更新。
-- 未启动最终 Windows Electron 交付窗口。
+- 未启动最终 Windows Electron 交付窗口做人工目视确认；bootstrap 测试已证明三个 runtime 注册且不自动连接。
 - 未完成真实 Raspberry Pi SSH 实机验收。
 - 独立核桃派 SSH 主链路已在 2026-08-20 完成；SERIAL-A 仍缺明确 COM 口；Preview JPEG 因 `/dev/video0` 读帧超时未拿到。
 

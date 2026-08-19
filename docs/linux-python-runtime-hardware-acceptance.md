@@ -86,7 +86,7 @@ Camera/backend: <TO_BE_RECORDED_OR_UNAVAILABLE>
 Acceptance timestamp: 2026-08-20T01:41:39+08:00
 Tester: local session using user-provided SSH target
 Git branch: codex/cybercam-main-integration
-Git commit: uncommitted working tree (ahead of 9964c9f0)
+Git commit: a150d7e41b6e693de401f1df27dc9a96448ef67d
 Adapter: linux-ssh
 Device role: Independent WalnutPi
 Manufacturer/model: walnutpi-2b
