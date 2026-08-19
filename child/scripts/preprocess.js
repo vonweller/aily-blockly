@@ -77,6 +77,10 @@ async function main() {
     const buildPath = path.join(currentProjectPath, '.build');
     const sketchPath = path.join(tempPath, 'sketch');
     const sketchFilePath = path.join(sketchPath, 'sketch.ino');
+    const isAilyCode = ailyCodeProject.isAilyCodeProjectRoot(currentProjectPath);
+    const compileSourcePath = isAilyCode
+        ? ailyCodeProject.resolveCompileSourcePath(currentProjectPath)
+        : sketchFilePath;
     const librariesPath = path.join(tempPath, 'libraries');
     
     const compilerPath = path.join(appDataPath, 'compiler');
@@ -108,7 +112,12 @@ async function main() {
         throw new Error(`未找到板子包文件: ${boardPackageJsonPath}`);
     }
     const boardPackageJson = JSON.parse(fs.readFileSync(boardPackageJsonPath, 'utf8'));
-    const boardDependencies = boardPackageJson.boardDependencies || {};
+    const platformRef = platformRuntime.readPlatformRefFromProjectAci(currentProjectPath);
+    const boardDependencies = platformRuntime.resolveEffectiveBoardDependencies(
+        boardPackageJson.boardDependencies,
+        appDataPath,
+        platformRef?.packageName,
+    );
 
     // 缓存文件路径
     const cacheFilePath = path.join(path.dirname(librariesPath), 'library-cache.json');
@@ -127,9 +136,12 @@ async function main() {
         mkdirp(sketchPath);
         mkdirp(librariesPath);
 
-        // 2. 生成sketch文件
-        fs.writeFileSync(sketchFilePath, code);
-        copyProjectSrcToSketch(currentProjectPath, sketchPath);
+        // 2. Coder 直接预处理 project.aci.entry；Blockly 仍物化 sketch 及 src 辅助文件。
+        mkdirp(path.dirname(compileSourcePath));
+        fs.writeFileSync(compileSourcePath, code);
+        if (!isAilyCode) {
+            copyProjectSrcToSketch(currentProjectPath, sketchPath);
+        }
 
         // 3. 处理库文件
         const libsPath = collectLibraryPackages(dependencies, currentProjectPath);
@@ -143,6 +155,12 @@ async function main() {
             developmentMode,
             libraryCache
         );
+        const componentLibraries = collectComponentLibraries(currentProjectPath);
+        const copiedComponents = await processComponentLibraries(
+            componentLibraries,
+            librariesPath
+        );
+        copiedLibraries.push(...copiedComponents);
         
         // 保存缓存
         try {
@@ -280,7 +298,7 @@ async function main() {
         const pre_args = [
             'preprocess',
             // `...parseArgs(compilerParam)`,
-            `"${sketchFilePath}"`,
+            `"${compileSourcePath}"`,
             '--board', `"${boardType}"`,
             '--libraries-path', `"${librariesPath}"`,
             '--sdk-path', `"${fullSdkPath}"`,
@@ -482,6 +500,54 @@ function collectLibraryPackages(projectDependencies, currentProjectPath) {
     }
 
     return libraries;
+}
+
+/**
+ * Aily Coder local libraries: each immediate directory under project-root
+ * components/ is one Arduino-compatible library root. Files and symlinks at
+ * the components root are deliberately ignored so discovery cannot escape the
+ * project-owned source tree.
+ */
+function collectComponentLibraries(currentProjectPath) {
+    const componentsPath = path.join(currentProjectPath, 'components');
+    if (!fs.existsSync(componentsPath) || !fs.statSync(componentsPath).isDirectory()) {
+        return [];
+    }
+
+    return fs.readdirSync(componentsPath, { withFileTypes: true })
+        .filter(entry => entry.isDirectory() && !entry.name.startsWith('.'))
+        .map(entry => ({
+            name: entry.name,
+            sourcePath: path.join(componentsPath, entry.name)
+        }))
+        .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+/**
+ * Materialize project-local component libraries after npm libraries so an
+ * editable project copy has the same precedence as a sketchbook Arduino
+ * library. Components are intentionally refreshed every build: their source
+ * is local, small, and must never be hidden behind the npm library cache.
+ */
+async function processComponentLibraries(componentLibraries, librariesPath) {
+    const copied = [];
+    for (const component of componentLibraries) {
+        const targetPath = resolveLibraryTargetPath(librariesPath, component.name);
+        if (!targetPath) {
+            logger.warn(`忽略不安全的组件库名称: ${String(component.name)}`);
+            continue;
+        }
+        try {
+            // Fingerprinting also rejects nested links that escape the library root.
+            createLibrarySourceFingerprint(component.sourcePath);
+            rm(targetPath);
+            linkItem(component.sourcePath, targetPath);
+            copied.push(component.name);
+        } catch (error) {
+            throw new Error(`组件库 ${component.name} 处理失败: ${error.message}`);
+        }
+    }
+    return copied;
 }
 
 async function processLibrariesParallel(libsPath, librariesPath, currentProjectPath, za7Path, devmode, libraryCache) {
@@ -780,9 +846,11 @@ if (require.main === module) {
 }
 
 module.exports = {
+    collectComponentLibraries,
     collectLibraryPackages,
     createLibrarySourceFingerprint,
     isCompilableLibraryPackage,
     normalizeExtractedSourceDirectory,
+    processComponentLibraries,
     processLibrariesParallel,
 };

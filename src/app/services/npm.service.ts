@@ -427,6 +427,9 @@ export class NpmService {
         }
         // console.log("boardPackageJson: ", boardPackageJson);
         await this.installBoardDependencies(boardPackageJson, false);
+        if (this.isAilyCodeProjectRoot(this.prjService.currentProjectPath)) {
+          await this.installPlatformPackageForAilyCodeProject();
+        }
         if (installStateStarted && this.workflowService.currentState === ProcessState.INSTALLING) {
           this.workflowService.finishInstall(true);
         }
@@ -1443,4 +1446,3 @@ export interface ResponseModel {
   messages: string;
   data: any;
 }
-

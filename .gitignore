@@ -85,6 +85,7 @@ child/aily-builder*
 !src/app/services/serial-port-selection.spec.ts
 !src/app/services/subapp-agent-presentation.spec.ts
 !src/app/services/aily-chat-tool-routing.spec.ts
+!src/app/services/required-subapp.service.spec.ts
 !src/app/services/auth-required-tool.spec.ts
 !src/app/services/default-aily-chat-bootstrap.spec.ts
 !src/app/services/child-tool-close-lifecycle.spec.ts

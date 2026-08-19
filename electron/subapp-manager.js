@@ -150,6 +150,7 @@ function validateIndex(rawIndex) {
           rawEntry.enabled,
           rawEntry.enable,
         ),
+        extension: app.extension === true,
       },
       i18n: {
         ...i18n,
@@ -600,6 +601,9 @@ function readInstalledState(rootDir, entry) {
     const runnable = resolveRunnablePackage(packagePath, entry.id, packageJson);
     const runnablePackagePath = runnable.packagePath;
     const runnablePackageJson = runnable.packageJson;
+    const packageApp = isObject(runnablePackageJson?.ailySubapp?.app)
+      ? runnablePackageJson.ailySubapp.app
+      : {};
     const mainEntry = runnable.mainEntry;
     const uiIndex = runnable.uiIndex;
     const rejectsDistLayout = isDistRelativePath(mainEntry) || isDistRelativePath(uiIndex);
@@ -658,6 +662,7 @@ function readInstalledState(rootDir, entry) {
         app: {
           ...entry.app,
           id: toolId,
+          extension: entry.app.extension === true || packageApp.extension === true,
           ...(DEFAULT_TOOLBAR_IDS.has(toolId) ? { defaultToolbar: true } : {}),
           ...(toolId === 'aily-chat-react' ? { more: 'v2' } : {}),
         },
@@ -751,6 +756,7 @@ function createCatalogState(rootDir, index, locale, meta = {}) {
           icon: entry.app.icon,
           ai: entry.app.ai === true,
           enabled: true,
+          extension: localizedConfig?.app?.extension === true || entry.app.extension === true,
           config: localizedConfig,
           ...(installedState.installError ? { installError: installedState.installError } : {}),
         };

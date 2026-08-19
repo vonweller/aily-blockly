@@ -469,6 +469,13 @@
         "HELP": "Как разрабатывать библиотеки",
         "LIB_IN_USE": "Эта библиотека в данный момент используется. Пожалуйста, сначала удалите связанные блоки из рабочей области, прежде чем удалять эту библиотеку"
     },
+    "CODER_COMPONENT_LIBRARY": {
+        "TITLE": "Component Libraries", "SEARCH": "Search platform libraries", "REFRESH": "Refresh",
+        "HINT": "Arduino libraries bundled with the active board platform. Add one to copy its complete source into the project components directory for local editing.",
+        "ADD": "Add to Project", "IN_PROJECT": "In Project", "ADDED": "{{name}} was added to components",
+        "ADD_FAILED": "Failed to add the component library", "LOAD_FAILED": "Failed to load platform libraries",
+        "LOADING": "Loading platform libraries...", "EMPTY": "No Arduino libraries were found in the active platform"
+    },
     "COMPATIBILITY_DIALOG": {
         "TITLE": "Уведомление о совместимости библиотеки",
         "WARNING_MESSAGE": "Эта библиотека может не работать на текущей плате. Продолжить установку?",

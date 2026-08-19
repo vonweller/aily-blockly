@@ -469,6 +469,13 @@
         "OTHERS": "Autres",
         "LIB_IN_USE": "Cette bibliothèque est actuellement utilisée. Veuillez supprimer les blocs associés de l'espace de travail avant de supprimer cette bibliothèque"
     },
+    "CODER_COMPONENT_LIBRARY": {
+        "TITLE": "Component Libraries", "SEARCH": "Search platform libraries", "REFRESH": "Refresh",
+        "HINT": "Arduino libraries bundled with the active board platform. Add one to copy its complete source into the project components directory for local editing.",
+        "ADD": "Add to Project", "IN_PROJECT": "In Project", "ADDED": "{{name}} was added to components",
+        "ADD_FAILED": "Failed to add the component library", "LOAD_FAILED": "Failed to load platform libraries",
+        "LOADING": "Loading platform libraries...", "EMPTY": "No Arduino libraries were found in the active platform"
+    },
     "COMPATIBILITY_DIALOG": {
         "TITLE": "Avis de Compatibilité de Bibliothèque",
         "WARNING_MESSAGE": "Cette bibliothèque peut ne pas fonctionner sur la carte actuelle. Voulez-vous continuer l'installation?",
