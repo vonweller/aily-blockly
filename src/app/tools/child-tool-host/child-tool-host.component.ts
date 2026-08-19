@@ -7,7 +7,7 @@ import { NzMessageService } from 'ng-zorro-antd/message';
 import { NzModalService } from 'ng-zorro-antd/modal';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { Connection, WindowMessenger, connect } from 'penpal';
-import { combineLatest, firstValueFrom, Subscription } from 'rxjs';
+import { combineLatest, firstValueFrom, merge, Subscription } from 'rxjs';
 import { SubWindowComponent } from '../../components/sub-window/sub-window.component';
 import { ToolContainerComponent } from '../../components/tool-container/tool-container.component';
 import { ChildToolConfig, getChildToolConfig } from '../../configs/tool.config';
@@ -43,6 +43,7 @@ import {
   type SubappActivity,
 } from '../../services/subapp-activity.service';
 import { ChatSubappDockComponent } from '../aily-chat/components/subapp-activity/chat-subapp-dock.component';
+import { buildChildAuthStateSnapshot } from './child-auth-state';
 
 type HostStatus = 'idle' | 'starting' | 'ready' | 'error' | 'closed';
 type HostMessageState = 'success' | 'info' | 'warning' | 'error' | 'loading';
@@ -195,8 +196,11 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
         this.clearAiOperationNotice();
       }
     });
-    this.authStateSubscription = this.authService.isLoggedIn$.subscribe((authenticated) => {
-      this.pushChildAuthState(authenticated);
+    this.authStateSubscription = merge(
+      this.authService.isLoggedIn$,
+      this.authService.authChanged$,
+    ).subscribe(() => {
+      this.pushChildAuthState();
     });
     this.lastKnownApiServer = this.normalizeApiServer(this.configService.getCurrentApiServer());
     this.configReloadSubscription = this.configService.configReloaded$.subscribe(() => {
@@ -1009,6 +1013,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
         this.remoteApi = remote;
         this.penpalState = 'connected';
         this.syncHostContext();
+        this.pushChildAuthState();
         this.pushChatSubappActivities();
       })
       .catch(error => {
@@ -1965,9 +1970,14 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     return { ok: true };
   }
 
-  private pushChildAuthState(authenticated: boolean): void {
+  private pushChildAuthState(authenticated = this.authService.isLoggedIn): void {
+    const snapshot = buildChildAuthStateSnapshot(
+      authenticated,
+      this.authService.currentUser,
+      this.authService.getAuthSnapshot(),
+    );
     if (typeof this.remoteApi?.refreshAuthState === 'function') {
-      void Promise.resolve(this.remoteApi.refreshAuthState({ authenticated })).catch(() => {
+      void Promise.resolve(this.remoteApi.refreshAuthState(snapshot)).catch(() => {
         this.postLegacyChildAuthState(authenticated);
       });
       return;
