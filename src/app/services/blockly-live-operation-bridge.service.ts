@@ -242,6 +242,8 @@ export class BlocklyLiveOperationBridgeService {
         return this.runBlockWritingOperation(() => this.executeAbsApply(payload.params || {}));
       case 'block_metadata_snapshot':
         return this.executeBlockMetadataSnapshot();
+      case 'project_abi_check':
+        return this.executeProjectAbiCheck();
       case 'project_build':
         return this.executeProjectBuild(payload.params || {});
       case 'serial_ports_list':
@@ -482,6 +484,16 @@ export class BlocklyLiveOperationBridgeService {
       project: this.projectService.currentProjectPath,
       blocks: snapshot.blocks,
       failures: snapshot.failures,
+    };
+  }
+
+  private async executeProjectAbiCheck(): Promise<Record<string, any>> {
+    const snapshot = await this.editorProjectService.getAbiRevisionSnapshot();
+    return {
+      ok: true,
+      operation: 'project_abi_check',
+      project: this.projectService.currentProjectPath,
+      ...snapshot,
     };
   }
 

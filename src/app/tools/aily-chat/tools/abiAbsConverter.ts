@@ -89,16 +89,21 @@ export function convertAbiToAbs(abiJson: any, options: AbiToAbsOptions = {}): st
       if (ay !== by) return ay - by;
       return (a.x ?? 0) - (b.x ?? 0);
     });
-    for (let i = 0; i < sortedBlocks.length; i++) {
-      const block = sortedBlocks[i];
-      const blockAbs = convertBlockToAbs(block, 0, context);
-      lines.push(...blockAbs);
-      
-      // 块之间空行
-      if (i < sortedBlocks.length - 1) {
+    let renderedBlockCount = 0;
+    for (const block of sortedBlocks) {
+      const disabled = isBlockDisabled(block);
+      if (disabled && !hasExportableBlockInChain(block.next?.block)) continue;
+
+      // 仅在实际导出的顶层块之间插入空行。
+      if (renderedBlockCount > 0) {
         lines.push('');
         context.lineOffset++;
       }
+      const blockAbs = disabled
+        ? convertBlockChainToAbs(block.next?.block, 0, context)
+        : convertBlockToAbs(block, 0, context);
+      lines.push(...blockAbs);
+      renderedBlockCount++;
     }
   }
   
@@ -159,14 +164,20 @@ export function convertAbiToAbsWithLineMap(
       if (ay !== by) return ay - by;
       return (a.x ?? 0) - (b.x ?? 0);
     });
-    for (let i = 0; i < sortedBlocks.length; i++) {
-      const block = sortedBlocks[i];
-      const blockAbs = convertBlockToAbs(block, 0, context);
-      lines.push(...blockAbs);
-      if (i < sortedBlocks.length - 1) {
+    let renderedBlockCount = 0;
+    for (const block of sortedBlocks) {
+      const disabled = isBlockDisabled(block);
+      if (disabled && !hasExportableBlockInChain(block.next?.block)) continue;
+
+      if (renderedBlockCount > 0) {
         lines.push('');
         context.lineOffset++;
       }
+      const blockAbs = disabled
+        ? convertBlockChainToAbs(block.next?.block, 0, context)
+        : convertBlockToAbs(block, 0, context);
+      lines.push(...blockAbs);
+      renderedBlockCount++;
     }
   }
   
@@ -235,7 +246,7 @@ class ConversionContext {
     if (block.inputs) {
       for (const inputValue of Object.values(block.inputs)) {
         const input = inputValue as any;
-        const childBlock = input?.block || input?.shadow;
+        const childBlock = getExportableInputBlock(input);
         if (childBlock) {
           this.recordValueBlockTree(childBlock, lineNumber);
         }
@@ -282,7 +293,7 @@ function convertBlockToAbs(block: any, indentLevel: number, context: ConversionC
     for (const [inputName, inputValue] of Object.entries(block.inputs)) {
       if (statementInputNames.has(inputName)) continue;
       const input = inputValue as any;
-      const childBlock = input?.block || input?.shadow;
+      const childBlock = getExportableInputBlock(input);
       if (childBlock) {
         context.recordValueBlockTree(childBlock, mainLineNum);
       }
@@ -352,15 +363,16 @@ function convertControlsIfToAbs(block: any, indentLevel: number, context: Conver
     for (const idx of ifIndices) {
       const ifInput = block.inputs[`IF${idx}`];
       const doInput = block.inputs[`DO${idx}`];
+      const conditionBlock = getExportableInputBlock(ifInput);
       
       // @IFn: 条件
-      if (ifInput?.block) {
-        const conditionAbs = formatBlockAsValue(ifInput.block, context);
+      if (conditionBlock) {
+        const conditionAbs = formatBlockAsValue(conditionBlock, context);
         lines.push(`${childIndent}@IF${idx}: ${conditionAbs}`);
         // 记录条件值块（如 logic_compare）及其子块的行号（当前行 = lineOffset + 1）
         const currentLineNum = context.lineOffset + 1;
         context.lineOffset++;
-        context.recordValueBlockTree(ifInput.block, currentLineNum);
+        context.recordValueBlockTree(conditionBlock, currentLineNum);
       }
       
       // @DOn: 执行体
@@ -415,12 +427,13 @@ function convertControlsSwitchToAbs(block: any, indentLevel: number, context: Co
   if (block.inputs) {
     // @SWITCH: 选择值
     const switchInput = block.inputs['SWITCH'];
-    if (switchInput?.block) {
-      const switchAbs = formatBlockAsValue(switchInput.block, context);
+    const switchBlock = getExportableInputBlock(switchInput);
+    if (switchBlock) {
+      const switchAbs = formatBlockAsValue(switchBlock, context);
       lines.push(`${childIndent}@SWITCH: ${switchAbs}`);
       const currentLineNum = context.lineOffset + 1;
       context.lineOffset++;
-      context.recordValueBlockTree(switchInput.block, currentLineNum);
+      context.recordValueBlockTree(switchBlock, currentLineNum);
     }
     
     // 收集所有 CASE/DO 对的索引（同时检查 CASE 和 DO，因为可能一个有内容另一个没有）
@@ -441,14 +454,15 @@ function convertControlsSwitchToAbs(block: any, indentLevel: number, context: Co
     for (const idx of caseIndices) {
       const caseInput = block.inputs[`CASE${idx}`];
       const doInput = block.inputs[`DO${idx}`];
+      const caseBlock = getExportableInputBlock(caseInput);
       
       // @CASEn: 条件值
-      if (caseInput?.block) {
-        const caseAbs = formatBlockAsValue(caseInput.block, context);
+      if (caseBlock) {
+        const caseAbs = formatBlockAsValue(caseBlock, context);
         lines.push(`${childIndent}@CASE${idx}: ${caseAbs}`);
         const currentLineNum = context.lineOffset + 1;
         context.lineOffset++;
-        context.recordValueBlockTree(caseInput.block, currentLineNum);
+        context.recordValueBlockTree(caseBlock, currentLineNum);
       }
       
       // @DOn: 执行体
@@ -481,9 +495,11 @@ function convertBlockChainToAbs(block: any, indentLevel: number, context: Conver
   let currentBlock: any = block;
   
   while (currentBlock) {
-    // 转换当前块（不包括 next）
-    const blockLines = convertBlockToAbs(currentBlock, indentLevel, context);
-    lines.push(...blockLines);
+    if (!isBlockDisabled(currentBlock)) {
+      // 转换当前块（不包括 next）
+      const blockLines = convertBlockToAbs(currentBlock, indentLevel, context);
+      lines.push(...blockLines);
+    }
     
     // 移动到下一个块
     currentBlock = currentBlock.next?.block;
@@ -679,11 +695,32 @@ function formatFieldValue(blockType: string, fieldName: string, value: any, cont
  * 格式化输入值
  */
 function formatInputValue(input: any, context: ConversionContext): string | null {
-  // 优先使用 block，其次 shadow
-  const sourceBlock = input.block || input.shadow;
+  // 优先使用启用的 block，其次启用的 shadow。
+  const sourceBlock = getExportableInputBlock(input);
   if (!sourceBlock) return null;
   
   return formatBlockAsValue(sourceBlock, context);
+}
+
+function isBlockDisabled(block: any): boolean {
+  if (!block) return false;
+  if (block.disabled === true || block.enabled === false) return true;
+  return Array.isArray(block.disabledReasons) && block.disabledReasons.length > 0;
+}
+
+function hasExportableBlockInChain(block: any): boolean {
+  let currentBlock = block;
+  while (currentBlock) {
+    if (!isBlockDisabled(currentBlock)) return true;
+    currentBlock = currentBlock.next?.block;
+  }
+  return false;
+}
+
+function getExportableInputBlock(input: any): any {
+  if (input?.block && !isBlockDisabled(input.block)) return input.block;
+  if (input?.shadow && !isBlockDisabled(input.shadow)) return input.shadow;
+  return undefined;
 }
 
 /**
