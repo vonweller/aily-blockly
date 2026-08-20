@@ -787,12 +787,12 @@ export class SettingsComponent implements OnDestroy {
     try {
       const unusedDays = option === 'all' ? null : option === 'unused-30' ? 30 : 90;
       const removed = await this.npmService.removeGlobalDependencies(unusedDays);
-      if (removed.length === 0) {
+      if (removed.packageNames.length === 0 && removed.resourcePaths.length === 0) {
         this.message.info(this.translateService.instant('SETTINGS.FIELDS.DEPENDENCY_NONE_REMOVED'));
         return;
       }
 
-      const removedNames = new Set(removed);
+      const removedNames = new Set(removed.packageNames);
       for (const dependency of this.boardList) {
         if (removedNames.has(dependency.name)) {
           dependency.installed = false;
