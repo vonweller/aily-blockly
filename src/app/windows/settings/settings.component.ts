@@ -354,6 +354,7 @@ export class SettingsComponent implements OnDestroy {
     percent: 0,
   };
   private readonly coderDependencySubscription: Subscription;
+  private readonly configReloadSubscription: Subscription;
 
   async onDevelopmentModePreferenceChange(value: string) {
     if (value !== 'coder') {
@@ -404,6 +405,9 @@ export class SettingsComponent implements OnDestroy {
         this.coderDependencyState = state;
         this.cdr.markForCheck();
       });
+    this.configReloadSubscription = this.configService.configReloaded$.subscribe(() => {
+      this.cdr.markForCheck();
+    });
   }
 
   ngOnDestroy() {
@@ -416,6 +420,7 @@ export class SettingsComponent implements OnDestroy {
     this.clearAilyLinterStatusTimer();
     this._clearCacheSubscription?.unsubscribe();
     this.coderDependencySubscription.unsubscribe();
+    this.configReloadSubscription.unsubscribe();
     if (this._clearCacheLoadingRef) {
       this.message.remove(this._clearCacheLoadingRef);
       this._clearCacheLoadingRef = null;

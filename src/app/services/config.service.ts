@@ -10,6 +10,13 @@ import { normalizeLanguageCode } from '../utils/language-code';
 export const DEVELOPMENT_MODE_PREFERENCES = ['coder', 'blockly'] as const;
 export type DevelopmentModePreference = typeof DEVELOPMENT_MODE_PREFERENCES[number];
 export type DevelopmentModePreferenceSource = 'onboarding' | 'settings' | 'migration';
+export const DEVELOPMENT_MODE_SETTING_CHANGED_ACTION = 'development-mode-changed';
+
+interface DevelopmentModeSettingChangedPayload {
+  preference: DevelopmentModePreference;
+  source: DevelopmentModePreferenceSource;
+  updatedAt: number;
+}
 
 export interface ConfigServiceNotice {
   key: string;
@@ -37,6 +44,7 @@ export class ConfigService {
   // 数据加载状态标识
   private _isDataReady = false;
   private activeResourceSourceKey: string | null = null;
+  private developmentModeSyncListenerRegistered = false;
   
   // 测试用：模拟慢速加载（毫秒），设为0禁用
   private readonly SIMULATE_SLOW_LOADING = 0; // 改为2000可以看到loading效果
@@ -159,6 +167,11 @@ export class ConfigService {
 
     if (options.save !== false) {
       await this.save();
+      this.broadcastDevelopmentModePreference({
+        preference: normalized,
+        source,
+        updatedAt: this.data.developmentModePreferenceUpdatedAt,
+      });
     }
 
     return normalized;
@@ -191,7 +204,59 @@ export class ConfigService {
     }
     //console.log('[ConfigService] 开始初始化...');
     await this.load();
+    this.registerDevelopmentModePreferenceSync();
     //console.log('[ConfigService] 初始化完成, isDataReady=', this.isDataReady);
+  }
+
+  private registerDevelopmentModePreferenceSync(): void {
+    const ipcRenderer = window['ipcRenderer'];
+    if (this.developmentModeSyncListenerRegistered || !ipcRenderer?.on) {
+      return;
+    }
+
+    ipcRenderer.on('setting-changed', (_event: unknown, message: any) => {
+      if (message?.action !== DEVELOPMENT_MODE_SETTING_CHANGED_ACTION) {
+        return;
+      }
+
+      const payload = message.data as Partial<DevelopmentModeSettingChangedPayload> | undefined;
+      const incomingUpdatedAt = Number(payload?.updatedAt);
+      const currentUpdatedAt = Number(this.data?.developmentModePreferenceUpdatedAt);
+      if (Number.isFinite(incomingUpdatedAt)
+        && Number.isFinite(currentUpdatedAt)
+        && currentUpdatedAt > incomingUpdatedAt) {
+        return;
+      }
+
+      const preference = this.isCoderEnabled()
+        ? this.normalizeDevelopmentModePreference(payload?.preference)
+        : 'blockly';
+      const source = (['onboarding', 'settings', 'migration'] as const).includes(
+        payload?.source as DevelopmentModePreferenceSource,
+      )
+        ? payload!.source as DevelopmentModePreferenceSource
+        : 'settings';
+      const updatedAt = Number.isFinite(incomingUpdatedAt) ? incomingUpdatedAt : Date.now();
+
+      if (this.data?.developmentModePreference === preference
+        && this.data?.developmentModePreferenceSource === source
+        && this.data?.developmentModePreferenceUpdatedAt === updatedAt) {
+        return;
+      }
+
+      this.data.developmentModePreference = preference;
+      this.data.developmentModePreferenceSource = source;
+      this.data.developmentModePreferenceUpdatedAt = updatedAt;
+      this.configReloaded$.next();
+    });
+    this.developmentModeSyncListenerRegistered = true;
+  }
+
+  private broadcastDevelopmentModePreference(payload: DevelopmentModeSettingChangedPayload): void {
+    window['ipcRenderer']?.send?.('setting-changed', {
+      action: DEVELOPMENT_MODE_SETTING_CHANGED_ACTION,
+      data: payload,
+    });
   }
 
   async load() {

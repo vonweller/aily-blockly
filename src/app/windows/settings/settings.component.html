@@ -37,6 +37,7 @@
                 <div>{{ 'SETTINGS.FIELDS.DEVELOPMENT_MODE_PREFERENCE' | translate }}:</div>
                 <div class="development-mode-buttons" [class.has-coder]="coderEnabled">
                   <button
+                    class="development-mode-button blockly-mode-button"
                     nz-button
                     nzSize="small"
                     [nzType]="developmentModePreference === 'blockly' ? 'primary' : 'default'"
@@ -48,7 +49,7 @@
                     [nzTooltipTitle]="coderDependencyState.installed
                       ? null
                       : ('SETTINGS.FIELDS.CODER_EXTENSION_HINT' | translate)">
-                    <button nz-button nzSize="small"
+                    <button class="development-mode-button coder-mode-button" nz-button nzSize="small"
                       [disabled]="coderDependencyState.installing"
                       [nzType]="developmentModePreference === 'coder' ? 'primary' : 'default'"
                       (click)="onDevelopmentModePreferenceChange('coder')">

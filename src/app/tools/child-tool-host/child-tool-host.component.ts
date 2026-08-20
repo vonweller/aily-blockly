@@ -11,6 +11,7 @@ import { combineLatest, firstValueFrom, merge, Subscription } from 'rxjs';
 import { SubWindowComponent } from '../../components/sub-window/sub-window.component';
 import { ToolContainerComponent } from '../../components/tool-container/tool-container.component';
 import { ChildToolConfig, getChildToolConfig } from '../../configs/tool.config';
+import { AILY_CODER_SUBAPP_ID } from '../../configs/required-subapp.config';
 import {
   ChildToolHostInfo,
   ChildToolProcessService,
@@ -28,12 +29,14 @@ import {
 } from '../../services/child-app-host-registry.service';
 import { AuthService } from '../../services/auth.service';
 import { ConfigService } from '../../services/config.service';
+import { resolveDevelopmentModeContext } from '../../services/development-mode-context';
 import { BlocklyService } from '../../editors/blockly-editor/services/blockly.service';
 import { ElectronService } from '../../services/electron.service';
 import { LogService } from '../../services/log.service';
 import { MainUiAutomationService } from '../../services/main-ui-automation.service';
 import { NoticeService } from '../../services/notice.service';
 import { ProjectService } from '../../services/project.service';
+import { RequiredSubappService } from '../../services/required-subapp.service';
 import { ThemeService } from '../../services/theme.service';
 import { ToolI18nService } from '../../services/tool-i18n.service';
 import { UiService } from '../../services/ui.service';
@@ -172,6 +175,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     private subappManager: SubappManagerService,
     private noticeService: NoticeService,
     private subappActivityService: SubappActivityService,
+    private requiredSubapps: RequiredSubappService,
   ) {
     this.langSubscription = this.translate.onLangChange.subscribe(() => this.syncHostContext());
     this.themeSubscription = this.themeService.themeChanged$.subscribe(() => this.syncHostContext());
@@ -943,6 +947,9 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       messenger,
       methods: {
         getHostContext: () => this.createHostContext(),
+        setDevelopmentMode: (payload: { mode?: string } = {}) => {
+          return this.ngZone.run(() => this.setChatDevelopmentMode(payload));
+        },
         childReady: (payload: any) => {
           this.ngZone.run(() => {
             this.log('child ready', payload || {});
@@ -1466,6 +1473,12 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   private createHostContext(): Record<string, unknown> {
     const isAilyChat = this.isAilyChatTool();
     const launch = this.resolveLaunchContext();
+    const workspace = this.resolveHostWorkspace();
+    const developmentModeContext = resolveDevelopmentModeContext({
+      preference: this.configService.getDevelopmentModePreference(),
+      projectPath: workspace,
+      isCoderProject: workspace ? this.projectService.isAilyCodeProject(workspace) : false,
+    });
     return {
       toolId: this.resolvedToolId,
       contextId: this.hostContextId,
@@ -1474,10 +1487,10 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       theme: this.normalizeTheme(this.themeService.theme()),
       platform: (window as any).electronAPI?.platform?.type || 'browser',
       embedded: !this.isStandalone,
-      developmentMode: this.configService.getDevelopmentModePreference(),
+      ...developmentModeContext,
       surface: launch.surface,
       surfaceParams: launch.params,
-      workspace: this.resolveHostWorkspace(),
+      workspace,
       activeChatSessionId: isAilyChat ? (this.ailyChatSessionId || null) : null,
       blockResources: isAilyChat && this.active ? this.createSelectedBlockResources() : [],
       capabilities: {
@@ -1501,9 +1514,50 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
         childSurfaceWindow: true,
         aiOperationState: isAilyChat,
         subappDock: isAilyChat,
-        runtimeRecovery: isAilyChat
+        runtimeRecovery: isAilyChat,
+        developmentModeControl: isAilyChat && this.configService.isCoderEnabled()
       }
     };
+  }
+
+  private async setChatDevelopmentMode(payload: { mode?: string } = {}): Promise<Record<string, unknown>> {
+    const mode = payload.mode === 'coder' ? 'coder' : payload.mode === 'blockly' ? 'blockly' : null;
+    if (!mode) {
+      return { ok: false, code: 'INVALID_DEVELOPMENT_MODE', message: 'Development mode must be blockly or coder.' };
+    }
+    if (!this.configService.isCoderEnabled()) {
+      return {
+        ok: false,
+        code: 'DEVELOPMENT_MODE_UNAVAILABLE',
+        message: 'Coder mode is not enabled in this application build.',
+        context: this.createHostContext(),
+      };
+    }
+
+    const workspace = this.resolveHostWorkspace();
+    if (workspace) {
+      return {
+        ok: false,
+        code: 'PROJECT_MODE_LOCKED',
+        message: 'Development mode follows the currently open project.',
+        context: this.createHostContext(),
+      };
+    }
+
+    try {
+      if (mode === 'coder') {
+        await this.requiredSubapps.ensureInstalled(AILY_CODER_SUBAPP_ID);
+      }
+      await this.configService.setDevelopmentModePreference(mode, 'settings');
+      return { ok: true, context: this.createHostContext() };
+    } catch (error) {
+      return {
+        ok: false,
+        code: 'DEVELOPMENT_MODE_UPDATE_FAILED',
+        message: error instanceof Error ? error.message : String(error || 'Failed to update development mode.'),
+        context: this.createHostContext(),
+      };
+    }
   }
 
   private resolveLaunchContext(): { surface: string; params: Record<string, string> } {
