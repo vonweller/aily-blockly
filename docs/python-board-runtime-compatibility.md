@@ -84,13 +84,11 @@ CyberCAM 模板继续只依赖 `board-cybercam` + `lib-cybercam`，避免拆坏�
 
 ```text
 <repo>/aily-blockly/electron
-<repo>/aily-blockly-linux-boards/{raspberrypi,walnutpi,walnutpi_serial}
-<repo>/aily-blockly-linux-libraries/{python-core,linux-python}
-<repo>/aily-blockly-boards/cybercam
-<repo>/aily-blockly-libraries/cybercam
+<repo>/aily-blockly-linux-boards/{cybercam,raspberrypi,walnutpi,walnutpi_serial}
+<repo>/aily-blockly-linux-libraries/{cybercam,python-core,linux-python}
 ```
 
-Linux 板卡和积木优先读专用仓库 [aily-blockly-linux-boards](https://github.com/ailyProject/aily-blockly-linux-boards) 与 [aily-blockly-linux-libraries](https://github.com/ailyProject/aily-blockly-linux-libraries)。原来的 `aily-blockly-boards` / `aily-blockly-libraries` 仍可作为回退，并继续提供 CyberCAM。
+Python 板卡和积木优先读专用仓库 [aily-blockly-linux-boards](https://github.com/ailyProject/aily-blockly-linux-boards) 与 [aily-blockly-linux-libraries](https://github.com/ailyProject/aily-blockly-linux-libraries)。原来的 `aily-blockly-boards` / `aily-blockly-libraries` 仍可作为回退。
 
 `localSource` 只留在内存，不写回 `boards.json` 缓存。本地板卡图走应用 `public/imgs/boards/`，品牌 logo 走 `public/brands/`，不会去远程 CDN 找还没上传的 `raspberrypi.webp`。
 
