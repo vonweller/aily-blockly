@@ -166,11 +166,14 @@ export class ContextBudgetService {
       : undefined;
     const modelName = typeof model === 'string' ? model : model?.model ?? null;
 
+    // 模型恢复/切换是编码器加载的唯一主动入口。底层按 encoding 去重，
+    // 连续配置事件不会重复 fetch；加载期间本地预算继续使用 fallback。
+    void this.tiktokenService.switchEncoderForModel(modelName).catch(error => {
+      console.warn('[TikToken] Unexpected model switch failure:', error);
+    });
+
     if (resolvedContextTokens && resolvedContextTokens > 0) {
       this._maxContextTokens = resolvedContextTokens;
-      if (modelName) {
-        this.tiktokenService.switchEncoderForModel(modelName);
-      }
       this.syncSnapshotLimits();
       return;
     }
@@ -180,9 +183,6 @@ export class ContextBudgetService {
       this.syncSnapshotLimits();
       return;
     }
-
-    // P11: 同步切换编码器（根据模型选择 cl100k_base/o200k_base）
-    this.tiktokenService.switchEncoderForModel(modelName);
 
     // 尝试精确匹配
     const lowerName = modelName.toLowerCase();

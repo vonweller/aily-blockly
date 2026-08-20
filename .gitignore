@@ -112,6 +112,8 @@ child/aily-builder*
 !src/app/tools/aily-chat/helpers/host-session-provider-restore.spec.ts
 !src/app/tools/aily-chat/helpers/session-lifecycle-provider-snapshot.spec.ts
 !src/app/tools/aily-chat/services/chat-engine-permission-preset.spec.ts
+!src/app/tools/aily-chat/services/tiktoken.service.spec.ts
+!src/app/tools/aily-chat/workers/tiktoken-worker-protocol.spec.ts
 !/e2e/tests/**/*.spec.ts
 **/__tests__/**/*
 .tmp

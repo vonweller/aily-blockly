@@ -1,124 +1,145 @@
 /**
  * Tiktoken Web Worker
  *
- * 将 CPU 密集的 BPE token 编码卸载到后台线程，
- * 避免大文本（如长工具返回结果）阻塞 UI 主线程。
- *
- * 协议（Worker ↔ 主线程）：
- *   请求: { id, type, payload }
- *   响应: { id, type, result?, error? }
- *
- * 参考 Copilot: TokenizerProvider 在 Worker 中运行 BPETokenizer，
- * 通过 postMessage 传递计数请求/结果。
+ * 一个 Worker 缓存多个编码器。每个请求显式携带 encoding，避免模型切换与
+ * Worker 消息乱序时使用错误的编码器。
  */
 
 /// <reference lib="webworker" />
 
-// ===== 类型定义 =====
-
-interface TiktokenBPE {
-  pat_str: string;
-  special_tokens: Record<string, number>;
-  bpe_ranks: string;
-}
+import type {
+  TiktokenEncoding,
+  TiktokenWorkerErrorCode,
+  TiktokenWorkerRequest,
+  TiktokenWorkerResponse,
+} from './tiktoken-worker-protocol';
 
 interface TiktokenInstance {
   encode(text: string): number[];
 }
 
-interface TiktokenWorkerRequest {
-  id: number;
-  type: 'init' | 'countTokens' | 'countBatch';
-  payload: any;
-}
-
-interface TiktokenWorkerResponse {
-  id: number;
-  type: string;
-  result?: any;
-  error?: string;
-}
-
-// ===== 启发式 fallback =====
-
-function estimateTokensFallback(text: string): number {
-  if (!text) return 0;
-  let count = 0;
-  for (let i = 0; i < text.length; i++) {
-    const code = text.charCodeAt(i);
-    if (code > 0x4E00 && code < 0x9FFF) {
-      count += 0.67;
-    } else if (code > 0x7F) {
-      count += 0.5;
-    } else {
-      count += 0.25;
-    }
+class WorkerRequestError extends Error {
+  constructor(
+    readonly code: TiktokenWorkerErrorCode,
+    message: string,
+  ) {
+    super(message);
   }
-  return Math.ceil(count);
 }
 
-// ===== Worker 状态 =====
-
-let encoder: TiktokenInstance | null = null;
-
-/** 分段编码避免单次 encode 过大 */
+const encoders = new Map<TiktokenEncoding, TiktokenInstance>();
 const CHUNK_SIZE = 20000;
+const CHUNK_THRESHOLD = 50000;
 
-function encodeCount(text: string): number {
-  if (!encoder) return estimateTokensFallback(text);
-  if (text.length <= 50000) {
+function encodeCount(encoder: TiktokenInstance, text: string): number {
+  if (text.length <= CHUNK_THRESHOLD) {
     return encoder.encode(text).length;
   }
+
   let total = 0;
-  for (let i = 0; i < text.length; i += CHUNK_SIZE) {
-    total += encoder.encode(text.substring(i, i + CHUNK_SIZE)).length;
+  for (let index = 0; index < text.length; index += CHUNK_SIZE) {
+    total += encoder.encode(text.substring(index, index + CHUNK_SIZE)).length;
   }
   return total;
 }
 
-// ===== 消息处理 =====
+function postResponse(response: TiktokenWorkerResponse): void {
+  postMessage(response);
+}
+
+function postFailure(
+  request: TiktokenWorkerRequest,
+  code: TiktokenWorkerErrorCode,
+  message: string,
+): void {
+  postResponse({
+    id: request.id,
+    epoch: request.epoch,
+    type: request.type,
+    encoding: request.encoding,
+    ok: false,
+    error: { code, message },
+  });
+}
+
+async function registerEncoding(
+  request: Extract<TiktokenWorkerRequest, { type: 'registerEncoding' }>,
+): Promise<void> {
+  if (!encoders.has(request.encoding)) {
+    const { Tiktoken } = await import('js-tiktoken/lite');
+    if (!encoders.has(request.encoding)) {
+      encoders.set(request.encoding, new Tiktoken(request.rankData));
+    }
+  }
+
+  postResponse({
+    id: request.id,
+    epoch: request.epoch,
+    type: request.type,
+    encoding: request.encoding,
+    ok: true,
+    result: true,
+  });
+}
+
+function getEncoder(encoding: TiktokenEncoding): TiktokenInstance {
+  const encoder = encoders.get(encoding);
+  if (!encoder) {
+    throw new WorkerRequestError(
+      'ENCODING_NOT_REGISTERED',
+      `Encoding not registered: ${encoding}`,
+    );
+  }
+  return encoder;
+}
 
 addEventListener('message', async (event: MessageEvent<TiktokenWorkerRequest>) => {
-  const { id, type, payload } = event.data;
-  const respond = (result?: any, error?: string) => {
-    (postMessage as any)({ id, type, result, error });
-  };
+  const request = event.data;
 
   try {
-    switch (type) {
-      case 'init': {
-        // payload: { rankData: TiktokenBPE }
-        const { Tiktoken } = await import('js-tiktoken/lite');
-        encoder = new Tiktoken(payload.rankData);
-        respond(true);
-        break;
-      }
+    switch (request.type) {
+      case 'registerEncoding':
+        await registerEncoding(request);
+        return;
 
       case 'countTokens': {
-        // payload: { text: string }
-        const count = encoder
-          ? encodeCount(payload.text)
-          : estimateTokensFallback(payload.text);
-        respond(count);
-        break;
+        const encoder = getEncoder(request.encoding);
+        postResponse({
+          id: request.id,
+          epoch: request.epoch,
+          type: request.type,
+          encoding: request.encoding,
+          ok: true,
+          result: encodeCount(encoder, request.text),
+        });
+        return;
       }
 
       case 'countBatch': {
-        // payload: { items: Array<{ id: string, text: string }> }
+        const encoder = getEncoder(request.encoding);
         const results: Record<string, number> = {};
-        for (const item of payload.items) {
-          results[item.id] = encoder
-            ? encodeCount(item.text)
-            : estimateTokensFallback(item.text);
+        for (const item of request.items) {
+          // 重复 id 保持既有“后项覆盖前项”语义。
+          results[item.id] = encodeCount(encoder, item.text);
         }
-        respond(results);
-        break;
+        postResponse({
+          id: request.id,
+          epoch: request.epoch,
+          type: request.type,
+          encoding: request.encoding,
+          ok: true,
+          result: results,
+        });
+        return;
       }
-
-      default:
-        respond(undefined, `Unknown message type: ${type}`);
     }
-  } catch (err: any) {
-    respond(undefined, err?.message || String(err));
+  } catch (error) {
+    const workerError = error instanceof WorkerRequestError
+      ? error
+      : new WorkerRequestError(
+        request.type === 'registerEncoding' ? 'ENCODER_INIT_FAILED' : 'ENCODE_FAILED',
+        error instanceof Error ? error.message : String(error),
+      );
+    postFailure(request, workerError.code, workerError.message);
   }
 });

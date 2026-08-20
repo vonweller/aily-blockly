@@ -168,9 +168,14 @@ export class BlocklyLiveOperationBridgeService {
     }
     if (payload.operation === 'subapp_agent_call') {
       const params = payload.params || {};
+      const agentContext = params['context'] && typeof params['context'] === 'object'
+        ? params['context'] as Record<string, unknown>
+        : {};
       return this.subappAgentBridgeService.execute(params, undefined, {
         sessionId: String(params['sessionId'] || '').trim(),
         toolCallId: String(params['requestId'] || '').trim(),
+        workspaceRoot: String(agentContext['workspaceRoot'] || '').trim(),
+        developmentMode: agentContext['developmentMode'] === 'coder' ? 'coder' : 'blockly',
       });
     }
     if (payload.operation === 'project_hardware_intent_snapshot') {

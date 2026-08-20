@@ -1,69 +1,83 @@
-import { Injectable } from '@angular/core';
-
-/**
- * TikToken 精确分词服务
- *
- * 使用 js-tiktoken (纯 JS，无 WASM) 提供精确的 token 计数。
- *
- * 双编码器支持（参考 Copilot 的编码器选择策略）：
- *   - o200k_base：GPT-4o / Claude / DeepSeek / Qwen 等现代模型（默认）
- *   - cl100k_base：GPT-3.5 / GPT-4 / GPT-4-turbo 等 OpenAI 旧模型
- *
- * 加载策略（混合模式）：
- * 1. 优先从本地 assets/tiktoken/ 加载 BPE rank 数据（Electron 离线可用）
- * 2. 失败则回退到 CDN (tiktoken.pages.dev)
- * 3. 加载期间使用启发式估算作为 fallback
- */
-
-// ===== 类型定义 =====
-
-interface TiktokenBPE {
-  pat_str: string;
-  special_tokens: Record<string, number>;
-  bpe_ranks: string;
-}
+import { Injectable, OnDestroy } from '@angular/core';
+import {
+  hasValidTiktokenWorkerResult,
+  isTiktokenWorkerResponse,
+  type TiktokenBPE,
+  type TiktokenEncoding,
+  type TiktokenWorkerOperation,
+  type TiktokenWorkerRequest,
+  type TiktokenWorkerRequestBody,
+  type TiktokenWorkerResponse,
+} from '../workers/tiktoken-worker-protocol';
 
 interface TiktokenInstance {
-  encode(text: string, allowedSpecial?: Array<string> | 'all', disallowedSpecial?: Array<string> | 'all'): number[];
+  encode(
+    text: string,
+    allowedSpecial?: Array<string> | 'all',
+    disallowedSpecial?: Array<string> | 'all',
+  ): number[];
   decode(tokens: number[]): string;
 }
 
-// ===== 编码器名称类型 =====
+interface LoadedEncodingArtifact {
+  encoding: TiktokenEncoding;
+  encoder: TiktokenInstance;
+  rankData: TiktokenBPE;
+  source: 'local' | 'cdn';
+}
 
-type TiktokenEncoding = 'o200k_base' | 'cl100k_base';
+interface EncodingLoadEntry {
+  promise: Promise<TiktokenInstance | null>;
+  abortController: AbortController;
+  timeoutId: ReturnType<typeof setTimeout>;
+}
 
-// ===== 启发式估算 fallback（tiktoken 未就绪时使用） =====
+interface EncodingFailure {
+  failedAt: number;
+}
+
+interface PendingWorkerRequest {
+  id: number;
+  worker: Worker;
+  epoch: number;
+  type: TiktokenWorkerOperation;
+  encoding: TiktokenEncoding;
+  timeoutId: ReturnType<typeof setTimeout>;
+  resolve: (value: unknown) => void;
+  reject: (error: Error) => void;
+}
+
+interface WorkerRegistration {
+  worker: Worker;
+  epoch: number;
+  promise: Promise<void>;
+}
 
 function estimateTokensFallback(text: string): number {
   if (!text) return 0;
+
   let count = 0;
-  for (let i = 0; i < text.length; i++) {
-    const code = text.charCodeAt(i);
+  for (let index = 0; index < text.length; index++) {
+    const code = text.charCodeAt(index);
     if (code > 0x4E00 && code < 0x9FFF) {
-      count += 0.67; // CJK
+      count += 0.67;
     } else if (code > 0x7F) {
-      count += 0.5;  // 其他非 ASCII
+      count += 0.5;
     } else {
-      count += 0.25; // ASCII
+      count += 0.25;
     }
   }
   return Math.ceil(count);
 }
 
-// ===== LRU 缓存 =====
-
 class TokenCountCache {
-  private cache = new Map<string, number>();
-  private readonly maxSize: number;
+  private readonly cache = new Map<string, number>();
 
-  constructor(maxSize = 2000) {
-    this.maxSize = maxSize;
-  }
+  constructor(private readonly maxSize = 2000) {}
 
   get(key: string): number | undefined {
     const value = this.cache.get(key);
     if (value !== undefined) {
-      // LRU: 移到末尾
       this.cache.delete(key);
       this.cache.set(key, value);
     }
@@ -74,9 +88,10 @@ class TokenCountCache {
     if (this.cache.has(key)) {
       this.cache.delete(key);
     } else if (this.cache.size >= this.maxSize) {
-      // 淘汰最旧的
-      const firstKey = this.cache.keys().next().value;
-      if (firstKey !== undefined) this.cache.delete(firstKey);
+      const oldestKey = this.cache.keys().next().value;
+      if (oldestKey !== undefined) {
+        this.cache.delete(oldestKey);
+      }
     }
     this.cache.set(key, value);
   }
@@ -86,469 +101,713 @@ class TokenCountCache {
   }
 }
 
-// ===== 主服务 =====
-
-@Injectable({
-  providedIn: 'root'
-})
-export class TiktokenService {
-
-  /** 默认编码名称 */
+/**
+ * 使用 js-tiktoken 提供客户端 token 计数。
+ *
+ * 加载与激活严格分离：同一 encoding 共享加载任务，只有仍匹配最新模型
+ * revision 的结果才会成为活动编码器。加载中或失败时使用启发式 fallback。
+ */
+@Injectable({ providedIn: 'root' })
+export class TiktokenService implements OnDestroy {
   private static readonly DEFAULT_ENCODING: TiktokenEncoding = 'o200k_base';
+  private static readonly CHUNK_THRESHOLD = 50000;
+  private static readonly CHUNK_SIZE = 20000;
+  private static readonly CACHE_KEY_MAX_LENGTH = 500;
+  private static readonly WORKER_OFFLOAD_THRESHOLD = 10000;
+  private static readonly LOAD_RETRY_COOLDOWN_MS = 30000;
+  private static readonly LOAD_TIMEOUT_MS = 60000;
+  private static readonly WORKER_REQUEST_TIMEOUT_MS = 30000;
 
-  /**
-   * 模型 → 编码器映射（参考 Copilot 双编码器选择策略）
-   *
-   * Copilot 在 dist/ 中携带了 cl100k_base.tiktoken 和 o200k_base.tiktoken 两份数据，
-   * 根据模型名称选择对应编码器。
-   *
-   * cl100k_base: GPT-3.5, GPT-4, GPT-4-turbo, text-embedding-ada-002
-   * o200k_base:  GPT-4o, GPT-4o-mini, Claude, DeepSeek, Qwen, GLM (默认)
-   */
-  private static readonly MODEL_ENCODING_MAP: Array<{ pattern: string; encoding: TiktokenEncoding }> = [
+  private static readonly MODEL_ENCODING_MAP: Array<{
+    pattern: string;
+    encoding: TiktokenEncoding;
+  }> = [
     { pattern: 'gpt-3.5', encoding: 'cl100k_base' },
     { pattern: 'gpt-4-turbo', encoding: 'cl100k_base' },
-    { pattern: 'gpt-4-0', encoding: 'cl100k_base' },       // gpt-4-0314, gpt-4-0613 etc.
-    { pattern: 'gpt-4-1', encoding: 'cl100k_base' },       // gpt-4-1106 etc.
+    { pattern: 'gpt-4-0', encoding: 'cl100k_base' },
+    { pattern: 'gpt-4-1', encoding: 'cl100k_base' },
     { pattern: 'text-embedding', encoding: 'cl100k_base' },
-    // 其他所有模型默认使用 o200k_base（GPT-4o, Claude, DeepSeek, Qwen, GLM...）
   ];
 
-  /** 编码器资源配置 */
-  /** 编码器资源配置（localPath 与 angular.json assets output 对应） */
-  private static readonly ENCODING_CONFIGS: Record<TiktokenEncoding, { localPath: string; cdnUrl: string }> = {
-    'o200k_base': {
+  private static readonly ENCODING_CONFIGS: Record<
+    TiktokenEncoding,
+    { localPath: string; cdnUrl: string }
+  > = {
+    o200k_base: {
       localPath: 'aily-chat/tiktoken/o200k_base.json',
       cdnUrl: 'https://tiktoken.pages.dev/js/o200k_base.json',
     },
-    'cl100k_base': {
+    cl100k_base: {
       localPath: 'aily-chat/tiktoken/cl100k_base.json',
       cdnUrl: 'https://tiktoken.pages.dev/js/cl100k_base.json',
     },
   };
 
-  /** 长文本分段阈值（超过此长度时分段编码，避免阻塞主线程） */
-  private static readonly CHUNK_THRESHOLD = 50000;
+  private desiredEncoding: TiktokenEncoding = TiktokenService.DEFAULT_ENCODING;
+  private activeEncoding: TiktokenEncoding | null = null;
+  private activeEncoder: TiktokenInstance | null = null;
+  private switchRevision = 0;
+  private modelSelectionInitialized = false;
+  private destroyed = false;
 
-  /** 分段大小 */
-  private static readonly CHUNK_SIZE = 20000;
+  private readonly encoderCache = new Map<TiktokenEncoding, TiktokenInstance>();
+  private readonly loadingByEncoding = new Map<TiktokenEncoding, EncodingLoadEntry>();
+  private readonly failureByEncoding = new Map<TiktokenEncoding, EncodingFailure>();
+  private readonly exactCountCaches = new Map<TiktokenEncoding, TokenCountCache>();
 
-  /** 缓存 key 截断长度（避免超长文本作为 key） */
-  private static readonly CACHE_KEY_MAX_LENGTH = 500;
-
-  /** 长文本阈值：超过此长度优先使用 Worker 异步计数（避免阻塞主线程） */
-  private static readonly WORKER_OFFLOAD_THRESHOLD = 10000;
-
-  /** tiktoken 实例（懒加载） */
-  private encoder: TiktokenInstance | null = null;
-
-  /** 当前编码器名称 */
-  private currentEncoding: TiktokenEncoding = TiktokenService.DEFAULT_ENCODING;
-
-  /** 加载状态 */
-  private loadingPromise: Promise<void> | null = null;
-  private loadFailed = false;
-
-  /** 已加载的编码器缓存（避免切换模型时重复加载） */
-  private encoderCache = new Map<TiktokenEncoding, TiktokenInstance>();
-
-  /** token 计数缓存（参考 Copilot BPETokenizer 的 5000 项 LRU 缓存） */
-  private cache = new TokenCountCache(5000);
-
-  // ==================== Web Worker 异步计数（参考 Copilot TokenizerProvider） ====================
-
-  /** Worker 实例 */
   private worker: Worker | null = null;
-  /** Worker 是否就绪 */
-  private workerReady = false;
-  /** Worker 请求 ID 计数器 */
+  private workerEpoch = 0;
   private workerRequestId = 0;
-  /** Worker 待处理的 Promise 回调 */
-  private pendingRequests = new Map<number, { resolve: (v: any) => void; reject: (e: any) => void }>();
+  private readonly workerRegisteredEncodings = new Set<TiktokenEncoding>();
+  private readonly workerRegistrationByEncoding = new Map<TiktokenEncoding, WorkerRegistration>();
+  private readonly pendingWorkerRequests = new Map<number, PendingWorkerRequest>();
 
-  /** 统计信息 */
-  private stats = {
+  private readonly stats = {
     exactCount: 0,
     fallbackCount: 0,
     cacheHits: 0,
+    loadDedupHits: 0,
+    staleActivationsSkipped: 0,
+    workerInstancesCreated: 0,
+    workerFallbackCount: 0,
+    loadsStarted: {
+      o200k_base: 0,
+      cl100k_base: 0,
+    },
+    activations: {
+      o200k_base: 0,
+      cl100k_base: 0,
+    },
   };
 
-  constructor() {
-    // 立即触发后台加载
-    this.ensureLoaded();
-  }
-
-  // ==================== 公共接口 ====================
-
-  /**
-   * 计算文本的 token 数
-   *
-   * - tiktoken 已加载时返回精确值
-   * - 未加载时使用启发式估算（误差约 ±15%）
-   * - 短文本走 LRU 缓存
-   */
   countTokens(text: string): number {
     if (!text) return 0;
 
-    // 缓存查找（仅对短文本缓存，长文本直接计算）
+    const encoding = this.activeEncoding;
+    const encoder = this.getUsableActiveEncoder();
+    if (!encoding || !encoder) {
+      this.stats.fallbackCount++;
+      return estimateTokensFallback(text);
+    }
+
+    const cache = this.getExactCountCache(encoding);
     if (text.length <= TiktokenService.CACHE_KEY_MAX_LENGTH) {
-      const cached = this.cache.get(text);
+      const cached = cache.get(text);
       if (cached !== undefined) {
         this.stats.cacheHits++;
         return cached;
       }
     }
 
-    let count: number;
-    if (this.encoder) {
-      count = this.encodeCount(text);
-      this.stats.exactCount++;
-    } else {
-      count = estimateTokensFallback(text);
-      this.stats.fallbackCount++;
-    }
-
-    // 缓存结果
+    const count = this.encodeCount(encoder, text);
+    this.stats.exactCount++;
     if (text.length <= TiktokenService.CACHE_KEY_MAX_LENGTH) {
-      this.cache.set(text, count);
+      cache.set(text, count);
     }
-
     return count;
   }
 
-  /**
-   * 编码文本为 token 数组
-   * 仅在 tiktoken 已加载时有效，否则返回空数组
-   */
   encode(text: string): number[] {
-    if (!text || !this.encoder) return [];
-    return this.encoder.encode(text);
+    const encoder = this.getUsableActiveEncoder();
+    return text && encoder ? encoder.encode(text) : [];
   }
 
-  /**
-   * 解码 token 数组为文本
-   */
   decode(tokens: number[]): string {
-    if (!tokens || !this.encoder) return '';
-    return this.encoder.decode(tokens);
+    const encoder = this.getUsableActiveEncoder();
+    return tokens?.length && encoder ? encoder.decode(tokens) : '';
   }
 
-  /**
-   * tiktoken 是否已就绪（精确模式）
-   */
   get isReady(): boolean {
-    return this.encoder !== null;
+    return this.getUsableActiveEncoder() !== null;
   }
 
-  /**
-   * 是否正在加载
-   */
   get isLoading(): boolean {
-    return this.loadingPromise !== null && !this.encoder && !this.loadFailed;
+    return this.loadingByEncoding.has(this.desiredEncoding);
   }
 
-  /**
-   * 获取统计信息
-   */
+  get isWorkerReady(): boolean {
+    return !!this.worker
+      && !!this.activeEncoding
+      && this.workerRegisteredEncodings.has(this.activeEncoding);
+  }
+
+  get encodingName(): TiktokenEncoding {
+    return this.desiredEncoding;
+  }
+
+  get activeEncodingName(): TiktokenEncoding | null {
+    return this.activeEncoding;
+  }
+
   getStats() {
-    return { ...this.stats };
+    return {
+      ...this.stats,
+      loadsStarted: { ...this.stats.loadsStarted },
+      activations: { ...this.stats.activations },
+    };
   }
 
-  /**
-   * 等待 tiktoken 加载完成
-   * 可用于需要精确 token 计数的场景
-   */
   async waitForReady(): Promise<boolean> {
-    await this.ensureLoaded();
-    return this.encoder !== null;
-  }
-
-  /**
-   * P11: 根据模型名称切换编码器
-   *
-   * 参考 Copilot 双编码器策略：
-   *   - GPT-3.5/4 → cl100k_base
-   *   - GPT-4o/Claude/DeepSeek/Qwen → o200k_base
-   *
-   * 切换时优先使用缓存的编码器实例（热切换），
-   * 未缓存时异步加载新编码器。
-   *
-   * @param modelName 模型名称（如 'gpt-4o', 'claude-3-sonnet' 等）
-   */
-  async switchEncoderForModel(modelName: string | null): Promise<void> {
-    const targetEncoding = this.resolveEncoding(modelName);
-    if (targetEncoding === this.currentEncoding && this.encoder) {
-      return; // 已经是正确的编码器
+    if (!this.modelSelectionInitialized || this.destroyed) {
+      return false;
     }
 
-    // 优先从缓存中获取
-    const cached = this.encoderCache.get(targetEncoding);
-    if (cached) {
-      this.encoder = cached;
-      this.currentEncoding = targetEncoding;
-      this.cache.clear(); // 编码器切换后缓存失效
-      console.log(`[TikToken] 编码器热切换: ${this.currentEncoding} → ${targetEncoding}（缓存命中）`);
+    while (!this.destroyed) {
+      const target = this.desiredEncoding;
+      const revision = this.switchRevision;
+      const encoder = await this.ensureEncodingLoaded(target);
+
+      if (target !== this.desiredEncoding || revision !== this.switchRevision) {
+        continue;
+      }
+      return this.activateIfCurrent(target, revision, encoder);
+    }
+    return false;
+  }
+
+  async switchEncoderForModel(modelName: string | null): Promise<void> {
+    if (this.destroyed) return;
+
+    const target = this.resolveEncoding(modelName);
+    this.modelSelectionInitialized = true;
+
+    if (
+      this.desiredEncoding === target
+      && this.activeEncoding === target
+      && this.activeEncoder
+    ) {
       return;
     }
 
-    // 缓存未命中，加载新编码器
-    const previousEncoding = this.currentEncoding;
-    this.currentEncoding = targetEncoding;
-    this.loadFailed = false;
-    this.loadingPromise = null;
-    await this.ensureLoaded();
+    const previousEncoding = this.activeEncoding;
+    const revision = ++this.switchRevision;
+    this.desiredEncoding = target;
 
-    if (this.encoder) {
-      console.log(`[TikToken] 编码器切换: ${previousEncoding} → ${targetEncoding}`);
+    if (this.activeEncoding !== target) {
+      this.activeEncoding = null;
+      this.activeEncoder = null;
+    }
+
+    const encoder = await this.ensureEncodingLoaded(target);
+    if (this.activateIfCurrent(target, revision, encoder)) {
+      console.log(
+        `[TikToken] 编码器${previousEncoding === target ? '恢复' : '切换'}: `
+        + `${previousEncoding ?? 'none'} → ${target}`,
+      );
     }
   }
 
-  /**
-   * 获取当前使用的编码器名称
-   */
-  get encodingName(): TiktokenEncoding {
-    return this.currentEncoding;
-  }
-
-  /**
-   * 根据模型名称解析应使用的编码器
-   */
-  private resolveEncoding(modelName: string | null): TiktokenEncoding {
-    if (!modelName) return TiktokenService.DEFAULT_ENCODING;
-    const lower = modelName.toLowerCase();
-    for (const { pattern, encoding } of TiktokenService.MODEL_ENCODING_MAP) {
-      if (lower.includes(pattern)) return encoding;
-    }
-    return TiktokenService.DEFAULT_ENCODING;
-  }
-
-  // ==================== 异步计数接口（Worker 卸载） ====================
-
-  /**
-   * 异步计算文本的 token 数
-   *
-   * 参考 Copilot TokenizerProvider 的 Worker 异步架构：
-   *   - 短文本（< WORKER_OFFLOAD_THRESHOLD）：同步计算（走缓存 + 主线程编码）
-   *   - 长文本：Worker 可用时卸载到后台线程，否则回退同步
-   *
-   * @param text 要计数的文本
-   * @returns token 数
-   */
   async countTokensAsync(text: string): Promise<number> {
     if (!text) return 0;
-
-    // 短文本直接同步计算（缓存 + 主线程，不值得 Worker 通信开销）
     if (text.length < TiktokenService.WORKER_OFFLOAD_THRESHOLD) {
       return this.countTokens(text);
     }
 
-    // 长文本优先使用 Worker
-    if (this.workerReady && this.worker) {
-      return this.sendWorkerRequest('countTokens', { text });
+    const encoding = this.activeEncoding;
+    const revision = this.switchRevision;
+    const worker = this.worker;
+    if (
+      !encoding
+      || !worker
+      || !this.getUsableActiveEncoder()
+      || !this.workerRegisteredEncodings.has(encoding)
+    ) {
+      return this.countTokens(text);
     }
 
-    // Worker 不可用，回退同步
-    return this.countTokens(text);
+    try {
+      const result = await this.sendWorkerRequest(
+        worker,
+        this.workerEpoch,
+        { type: 'countTokens', encoding, text },
+      );
+      if (revision !== this.switchRevision || encoding !== this.activeEncoding) {
+        return this.countTokens(text);
+      }
+      return result as number;
+    } catch {
+      this.stats.workerFallbackCount++;
+      return this.countTokens(text);
+    }
   }
 
-  /**
-   * 批量异步计算多条文本的 token 数
-   *
-   * 参考 Copilot: 在渲染提示词时会一次性计算所有组件的 token 数，
-   * 批量发送到 Worker 减少通信开销。
-   *
-   * @param items 要计数的项，每项包含 id 和 text
-   * @returns id → token 数 的映射
-   */
-  async countBatchAsync(items: Array<{ id: string; text: string }>): Promise<Map<string, number>> {
-    if (!items || items.length === 0) return new Map();
+  async countBatchAsync(
+    items: Array<{ id: string; text: string }>,
+  ): Promise<Map<string, number>> {
+    if (!items?.length) return new Map();
 
-    // Worker 可用时批量处理
-    if (this.workerReady && this.worker) {
-      const results: Record<string, number> = await this.sendWorkerRequest('countBatch', { items });
-      return new Map(Object.entries(results));
+    const encoding = this.activeEncoding;
+    const revision = this.switchRevision;
+    const worker = this.worker;
+    if (
+      !encoding
+      || !worker
+      || !this.getUsableActiveEncoder()
+      || !this.workerRegisteredEncodings.has(encoding)
+    ) {
+      return this.countBatchOnMainThread(items);
     }
 
-    // Worker 不可用，回退同步计算
-    const map = new Map<string, number>();
+    try {
+      const result = await this.sendWorkerRequest(
+        worker,
+        this.workerEpoch,
+        { type: 'countBatch', encoding, items },
+      );
+      if (revision !== this.switchRevision || encoding !== this.activeEncoding) {
+        return this.countBatchOnMainThread(items);
+      }
+      return new Map(Object.entries(result as Record<string, number>));
+    } catch {
+      this.stats.workerFallbackCount++;
+      return this.countBatchOnMainThread(items);
+    }
+  }
+
+  ngOnDestroy(): void {
+    if (this.destroyed) return;
+    this.destroyed = true;
+
+    for (const entry of this.loadingByEncoding.values()) {
+      clearTimeout(entry.timeoutId);
+      entry.abortController.abort('destroy');
+    }
+    this.loadingByEncoding.clear();
+
+    const worker = this.worker;
+    if (worker) {
+      this.resetWorker(worker, this.workerEpoch, new Error('Tiktoken service destroyed'));
+    } else {
+      for (const id of [...this.pendingWorkerRequests.keys()]) {
+        this.settleWorkerRequest(id, undefined, new Error('Tiktoken service destroyed'));
+      }
+    }
+
+    this.workerRegistrationByEncoding.clear();
+    this.workerRegisteredEncodings.clear();
+    this.encoderCache.clear();
+    for (const cache of this.exactCountCaches.values()) {
+      cache.clear();
+    }
+    this.exactCountCaches.clear();
+    this.activeEncoder = null;
+    this.activeEncoding = null;
+  }
+
+  private getUsableActiveEncoder(): TiktokenInstance | null {
+    if (
+      !this.activeEncoder
+      || !this.activeEncoding
+      || this.activeEncoding !== this.desiredEncoding
+    ) {
+      return null;
+    }
+    return this.activeEncoder;
+  }
+
+  private getExactCountCache(encoding: TiktokenEncoding): TokenCountCache {
+    let cache = this.exactCountCaches.get(encoding);
+    if (!cache) {
+      cache = new TokenCountCache(5000);
+      this.exactCountCaches.set(encoding, cache);
+    }
+    return cache;
+  }
+
+  private countBatchOnMainThread(
+    items: Array<{ id: string; text: string }>,
+  ): Map<string, number> {
+    const result = new Map<string, number>();
     for (const item of items) {
-      map.set(item.id, this.countTokens(item.text));
+      result.set(item.id, this.countTokens(item.text));
     }
-    return map;
+    return result;
   }
 
-  /**
-   * Worker 是否就绪
-   */
-  get isWorkerReady(): boolean {
-    return this.workerReady;
-  }
-
-  // ==================== 内部方法 ====================
-
-  /**
-   * 使用 tiktoken 编码并计算 token 数
-   * 长文本分段编码，避免阻塞
-   */
-  private encodeCount(text: string): number {
-    if (!this.encoder) return estimateTokensFallback(text);
-
-    // 短文本直接编码
+  private encodeCount(encoder: TiktokenInstance, text: string): number {
     if (text.length <= TiktokenService.CHUNK_THRESHOLD) {
-      return this.encoder.encode(text).length;
+      return encoder.encode(text).length;
     }
 
-    // 长文本分段编码
     let total = 0;
-    for (let i = 0; i < text.length; i += TiktokenService.CHUNK_SIZE) {
-      const chunk = text.substring(i, i + TiktokenService.CHUNK_SIZE);
-      total += this.encoder.encode(chunk).length;
+    for (let index = 0; index < text.length; index += TiktokenService.CHUNK_SIZE) {
+      total += encoder.encode(text.substring(index, index + TiktokenService.CHUNK_SIZE)).length;
     }
     return total;
   }
 
-  /**
-   * 确保 tiktoken 编码器已加载（幂等）
-   */
-  private ensureLoaded(): Promise<void> {
-    if (this.encoder) return Promise.resolve();
-    if (this.loadFailed) return Promise.resolve();
-    if (this.loadingPromise) return this.loadingPromise;
+  private resolveEncoding(modelName: string | null): TiktokenEncoding {
+    if (!modelName) return TiktokenService.DEFAULT_ENCODING;
 
-    this.loadingPromise = this.loadEncoder();
-    return this.loadingPromise;
+    const normalizedModelName = modelName.toLowerCase();
+    for (const mapping of TiktokenService.MODEL_ENCODING_MAP) {
+      if (normalizedModelName.includes(mapping.pattern)) {
+        return mapping.encoding;
+      }
+    }
+    return TiktokenService.DEFAULT_ENCODING;
   }
 
-  /**
-   * 加载 tiktoken 编码器
-   * 混合模式：本地 assets 优先，CDN 回退
-   */
-  private async loadEncoder(): Promise<void> {
-    try {
-      // 动态 import js-tiktoken/lite（tree-shaking 友好）
-      const { Tiktoken } = await import('js-tiktoken/lite');
-
-      let rankData: TiktokenBPE | null = null;
-      const config = TiktokenService.ENCODING_CONFIGS[this.currentEncoding];
-
-      // 1. 尝试从本地 assets 加载
-      try {
-        rankData = await this.fetchRankData(config.localPath);
-        console.log(`[TikToken] ${this.currentEncoding} BPE rank 数据已从本地加载`);
-      } catch {
-        console.log(`[TikToken] 本地加载 ${this.currentEncoding} 失败，回退到 CDN...`);
+  private activateIfCurrent(
+    encoding: TiktokenEncoding,
+    revision: number,
+    encoder: TiktokenInstance | null,
+  ): boolean {
+    if (
+      !encoder
+      || this.destroyed
+      || encoding !== this.desiredEncoding
+      || revision !== this.switchRevision
+    ) {
+      if (encoder && !this.destroyed) {
+        this.stats.staleActivationsSkipped++;
       }
+      return false;
+    }
 
-      // 2. 回退到 CDN
-      if (!rankData) {
-        try {
-          rankData = await this.fetchRankData(config.cdnUrl);
-          console.log(`[TikToken] ${this.currentEncoding} BPE rank 数据已从 CDN 加载`);
-        } catch (err) {
-          console.warn(`[TikToken] ${this.currentEncoding} CDN 加载也失败:`, err);
+    this.activeEncoding = encoding;
+    this.activeEncoder = encoder;
+    this.stats.activations[encoding]++;
+    return true;
+  }
+
+  private ensureEncodingLoaded(
+    encoding: TiktokenEncoding,
+  ): Promise<TiktokenInstance | null> {
+    if (this.destroyed) return Promise.resolve(null);
+
+    const cached = this.encoderCache.get(encoding);
+    if (cached) return Promise.resolve(cached);
+
+    const pending = this.loadingByEncoding.get(encoding);
+    if (pending) {
+      this.stats.loadDedupHits++;
+      return pending.promise;
+    }
+
+    const previousFailure = this.failureByEncoding.get(encoding);
+    if (
+      previousFailure
+      && Date.now() - previousFailure.failedAt < TiktokenService.LOAD_RETRY_COOLDOWN_MS
+    ) {
+      return Promise.resolve(null);
+    }
+    this.failureByEncoding.delete(encoding);
+
+    const abortController = new AbortController();
+    const timeoutId = setTimeout(
+      () => abortController.abort('timeout'),
+      TiktokenService.LOAD_TIMEOUT_MS,
+    );
+
+    let entry!: EncodingLoadEntry;
+    const loadPromise = this.loadEncodingArtifact(encoding, abortController.signal);
+    const promise = this.raceWithAbortSignal(loadPromise, abortController.signal)
+      .then(artifact => {
+        if (this.destroyed) return null;
+        if (artifact.encoding !== encoding) {
+          throw new Error(
+            `Loaded encoding mismatch: expected=${encoding}, actual=${artifact.encoding}`,
+          );
         }
-      }
 
-      if (!rankData) {
-        console.warn(`[TikToken] 无法加载 ${this.currentEncoding} BPE rank 数据，将持续使用启发式估算`);
-        this.loadFailed = true;
-        return;
-      }
+        this.encoderCache.set(encoding, artifact.encoder);
+        this.failureByEncoding.delete(encoding);
+        console.log(
+          `[TikToken] ${encoding} BPE rank 数据已从`
+          + `${artifact.source === 'local' ? '本地' : 'CDN'}加载`,
+        );
 
-      // 3. 创建编码器实例并缓存
-      const encoder = new Tiktoken(rankData);
-      this.encoder = encoder;
-      this.encoderCache.set(this.currentEncoding, encoder);
-      this.loadFailed = false;
-      this.cache.clear(); // 编码器变更后清空 token 缓存
+        void Promise.resolve()
+          .then(() => this.registerWorkerEncoding(encoding, artifact.rankData))
+          .catch(error => this.handleWorkerRegistrationFailure(encoding, error));
+        return artifact.encoder;
+      })
+      .catch(error => {
+        if (this.destroyed || abortController.signal.reason === 'destroy') {
+          return null;
+        }
+        this.failureByEncoding.set(encoding, { failedAt: Date.now() });
+        console.warn(`[TikToken] ${encoding} 编码器加载失败，将使用启发式估算:`, error);
+        return null;
+      })
+      .finally(() => {
+        clearTimeout(timeoutId);
+        if (this.loadingByEncoding.get(encoding) === entry) {
+          this.loadingByEncoding.delete(encoding);
+        }
+      });
 
-      console.log(`[TikToken] ${this.currentEncoding} 编码器已就绪（精确模式）`);
+    entry = { promise, abortController, timeoutId };
+    this.loadingByEncoding.set(encoding, entry);
+    this.stats.loadsStarted[encoding]++;
+    return promise;
+  }
 
-      // 4. 初始化 Web Worker（非阻塞，失败不影响主流程）
-      this.initWorker(rankData);
-    } catch (err) {
-      console.warn('[TikToken] 编码器加载失败:', err);
-      this.loadFailed = true;
-    } finally {
-      this.loadingPromise = null;
+  private async loadEncodingArtifact(
+    encoding: TiktokenEncoding,
+    signal: AbortSignal,
+  ): Promise<LoadedEncodingArtifact> {
+    const { Tiktoken } = await import('js-tiktoken/lite');
+    const config = TiktokenService.ENCODING_CONFIGS[encoding];
+
+    let localError: unknown;
+    try {
+      const rankData = await this.fetchRankData(config.localPath, signal);
+      return {
+        encoding,
+        encoder: new Tiktoken(rankData),
+        rankData,
+        source: 'local',
+      };
+    } catch (error) {
+      if (signal.aborted) throw error;
+      localError = error;
+    }
+
+    try {
+      const rankData = await this.fetchRankData(config.cdnUrl, signal);
+      return {
+        encoding,
+        encoder: new Tiktoken(rankData),
+        rankData,
+        source: 'cdn',
+      };
+    } catch (cdnError) {
+      throw new AggregateError(
+        [localError, cdnError],
+        `Unable to load ${encoding} rank data from local assets or CDN`,
+      );
     }
   }
 
-  /**
-   * 获取 BPE rank 数据
-   */
-  private async fetchRankData(url: string): Promise<TiktokenBPE> {
-    const response = await fetch(url);
-    if (!response.ok) {
+  private async fetchRankData(url: string, signal: AbortSignal): Promise<TiktokenBPE> {
+    const response = await fetch(url, { signal });
+    if (response.ok === false) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
     return response.json();
   }
 
-  // ==================== Web Worker 管理 ====================
+  private raceWithAbortSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+    if (signal.aborted) {
+      return Promise.reject(this.createAbortError(signal.reason));
+    }
 
-  /**
-   * 初始化 Web Worker
-   * 将 BPE rank 数据发送给 Worker，让它也创建自己的 Tiktoken 实例
-   */
-  private initWorker(rankData: TiktokenBPE): void {
-    try {
-      this.worker = new Worker(
-        new URL('../workers/tiktoken.worker.ts', import.meta.url),
-        { type: 'module' }
-      );
+    return new Promise<T>((resolve, reject) => {
+      const onAbort = () => reject(this.createAbortError(signal.reason));
+      signal.addEventListener('abort', onAbort, { once: true });
+      promise.then(resolve, reject).finally(() => {
+        signal.removeEventListener('abort', onAbort);
+      });
+    });
+  }
 
-      this.worker.addEventListener('message', (event: MessageEvent) => {
-        const { id, result, error } = event.data;
-        const pending = this.pendingRequests.get(id);
-        if (pending) {
-          this.pendingRequests.delete(id);
-          if (error) {
-            pending.reject(new Error(error));
-          } else {
-            pending.resolve(result);
+  private createAbortError(reason: unknown): Error {
+    return new Error(
+      reason === 'timeout' ? 'Tiktoken encoding load timed out' : 'Tiktoken encoding load aborted',
+    );
+  }
+
+  private registerWorkerEncoding(
+    encoding: TiktokenEncoding,
+    rankData: TiktokenBPE,
+  ): Promise<void> {
+    return Promise.resolve().then(() => {
+      if (this.destroyed) return;
+
+      const { worker, epoch } = this.ensureWorker();
+      if (this.workerRegisteredEncodings.has(encoding)) return;
+
+      const pending = this.workerRegistrationByEncoding.get(encoding);
+      if (pending?.worker === worker && pending.epoch === epoch) {
+        return pending.promise;
+      }
+
+      let registration!: WorkerRegistration;
+      const promise = this.sendWorkerRequest(
+        worker,
+        epoch,
+        { type: 'registerEncoding', encoding, rankData },
+      )
+        .then(() => {
+          if (this.worker === worker && this.workerEpoch === epoch) {
+            this.workerRegisteredEncodings.add(encoding);
           }
-        }
-      });
+        })
+        .finally(() => {
+          if (this.workerRegistrationByEncoding.get(encoding) === registration) {
+            this.workerRegistrationByEncoding.delete(encoding);
+          }
+        });
 
-      this.worker.addEventListener('error', (error) => {
-        console.warn('[TikToken Worker] 错误:', error.message);
-        this.workerReady = false;
-        // 拒绝所有待处理请求
-        for (const [id, pending] of this.pendingRequests) {
-          pending.reject(new Error('Worker error'));
-          this.pendingRequests.delete(id);
-        }
-      });
+      registration = { worker, epoch, promise };
+      this.workerRegistrationByEncoding.set(encoding, registration);
+      return promise;
+    });
+  }
 
-      // 发送初始化消息
-      this.sendWorkerRequest('init', { rankData }).then(
-        () => {
-          this.workerReady = true;
-          console.log('[TikToken Worker] 已就绪（异步模式）');
-        },
-        (err) => {
-          console.warn('[TikToken Worker] 初始化失败:', err);
-          this.workerReady = false;
+  private ensureWorker(): { worker: Worker; epoch: number } {
+    if (this.destroyed) {
+      throw new Error('Tiktoken service destroyed');
+    }
+    if (this.worker) {
+      return { worker: this.worker, epoch: this.workerEpoch };
+    }
+
+    const worker = new Worker(
+      new URL('../workers/tiktoken.worker.ts', import.meta.url),
+      { type: 'module' },
+    );
+    const epoch = ++this.workerEpoch;
+    this.worker = worker;
+    this.workerRegisteredEncodings.clear();
+    this.stats.workerInstancesCreated++;
+
+    worker.addEventListener('message', event => {
+      this.handleWorkerMessage(worker, epoch, event.data);
+    });
+    worker.addEventListener('messageerror', () => {
+      this.resetWorker(worker, epoch, new Error('Tiktoken Worker messageerror'));
+    });
+    worker.addEventListener('error', error => {
+      this.resetWorker(worker, epoch, new Error(error.message || 'Tiktoken Worker error'));
+    });
+
+    return { worker, epoch };
+  }
+
+  private sendWorkerRequest(
+    worker: Worker,
+    epoch: number,
+    body: TiktokenWorkerRequestBody,
+  ): Promise<unknown> {
+    return new Promise((resolve, reject) => {
+      if (this.destroyed || this.worker !== worker || this.workerEpoch !== epoch) {
+        reject(new Error('Tiktoken Worker is not active'));
+        return;
+      }
+
+      const id = ++this.workerRequestId;
+      const timeoutId = setTimeout(() => {
+        if (this.pendingWorkerRequests.has(id)) {
+          this.resetWorker(
+            worker,
+            epoch,
+            new Error(`Tiktoken Worker request timed out: ${body.type}`),
+          );
         }
+      }, TiktokenService.WORKER_REQUEST_TIMEOUT_MS);
+
+      const pending: PendingWorkerRequest = {
+        id,
+        worker,
+        epoch,
+        type: body.type,
+        encoding: body.encoding,
+        timeoutId,
+        resolve,
+        reject,
+      };
+      this.pendingWorkerRequests.set(id, pending);
+
+      try {
+        const request = { id, epoch, ...body } as TiktokenWorkerRequest;
+        worker.postMessage(request);
+      } catch (error) {
+        this.settleWorkerRequest(
+          id,
+          undefined,
+          error instanceof Error ? error : new Error(String(error)),
+        );
+      }
+    });
+  }
+
+  private handleWorkerMessage(
+    worker: Worker,
+    epoch: number,
+    value: unknown,
+  ): void {
+    if (this.worker !== worker || this.workerEpoch !== epoch) return;
+
+    if (!isTiktokenWorkerResponse(value)) {
+      this.resetWorker(worker, epoch, new Error('Invalid Tiktoken Worker response'));
+      return;
+    }
+
+    const response: TiktokenWorkerResponse = value;
+    const pending = this.pendingWorkerRequests.get(response.id);
+    if (!pending) {
+      console.warn('[TikToken Worker] 忽略未知或迟到的响应:', response.id);
+      return;
+    }
+
+    if (
+      pending.worker !== worker
+      || pending.epoch !== response.epoch
+      || pending.type !== response.type
+      || pending.encoding !== response.encoding
+      || !hasValidTiktokenWorkerResult(response)
+    ) {
+      this.resetWorker(worker, epoch, new Error('Mismatched Tiktoken Worker response'));
+      return;
+    }
+
+    if (response.ok === false) {
+      this.settleWorkerRequest(
+        response.id,
+        undefined,
+        new Error(`[${response.error.code}] ${response.error.message}`),
       );
-    } catch (err) {
-      console.warn('[TikToken Worker] 创建失败（不影响同步计数）:', err);
+      return;
+    }
+
+    this.settleWorkerRequest(response.id, response.result);
+  }
+
+  private settleWorkerRequest(
+    id: number,
+    value?: unknown,
+    error?: Error,
+  ): void {
+    const pending = this.pendingWorkerRequests.get(id);
+    if (!pending) return;
+
+    this.pendingWorkerRequests.delete(id);
+    clearTimeout(pending.timeoutId);
+    if (error) {
+      pending.reject(error);
+    } else {
+      pending.resolve(value);
     }
   }
 
-  /**
-   * 发送请求到 Worker 并等待响应
-   */
-  private sendWorkerRequest(type: string, payload: any): Promise<any> {
-    return new Promise((resolve, reject) => {
-      if (!this.worker) {
-        reject(new Error('Worker not available'));
-        return;
+  private resetWorker(worker: Worker, epoch: number, error: Error): void {
+    if (this.worker !== worker || this.workerEpoch !== epoch) return;
+
+    this.worker = null;
+    this.workerRegisteredEncodings.clear();
+    for (const [encoding, registration] of this.workerRegistrationByEncoding) {
+      if (registration.worker === worker && registration.epoch === epoch) {
+        this.workerRegistrationByEncoding.delete(encoding);
       }
-      const id = ++this.workerRequestId;
-      this.pendingRequests.set(id, { resolve, reject });
-      this.worker.postMessage({ id, type, payload });
-    });
+    }
+    for (const [id, pending] of this.pendingWorkerRequests) {
+      if (pending.worker === worker && pending.epoch === epoch) {
+        this.settleWorkerRequest(id, undefined, error);
+      }
+    }
+    worker.terminate();
+  }
+
+  private handleWorkerRegistrationFailure(
+    encoding: TiktokenEncoding,
+    error: unknown,
+  ): void {
+    console.warn(
+      `[TikToken Worker] ${encoding} 注册失败，继续使用主线程计数:`,
+      error,
+    );
   }
 }

@@ -54,6 +54,8 @@ interface SubappAgentExecutionContext {
   sessionId?: string;
   turnId?: string;
   toolCallId?: string;
+  workspaceRoot?: string;
+  developmentMode?: 'blockly' | 'coder';
 }
 
 class SubappRpcError extends Error {
@@ -155,6 +157,7 @@ export class SubappAgentBridgeService implements OnDestroy {
         resolved.definition.supportsCancellation === true,
         signal,
         ownerSessionId,
+        context,
       );
       const response = this.enforceResponseBudget({
         ok: true,
@@ -233,6 +236,7 @@ export class SubappAgentBridgeService implements OnDestroy {
             false,
             undefined,
             '',
+            {},
             false,
           );
         } catch (error) {
@@ -373,6 +377,7 @@ export class SubappAgentBridgeService implements OnDestroy {
     supportsCancellation: boolean,
     signal?: AbortSignal,
     ownerSessionId = '',
+    executionContext: SubappAgentExecutionContext = {},
     trackLease = true,
   ): Promise<unknown> {
     if (signal?.aborted) {
@@ -426,6 +431,16 @@ export class SubappAgentBridgeService implements OnDestroy {
         context: {
           actor: 'agent',
           actorId: 'subapp-agent-host',
+          ...(ownerSessionId ? { sessionId: ownerSessionId } : {}),
+          ...(String(executionContext.toolCallId || '').trim()
+            ? { toolCallId: String(executionContext.toolCallId).trim() }
+            : {}),
+          ...(String(executionContext.workspaceRoot || '').trim()
+            ? { workspaceRoot: String(executionContext.workspaceRoot).trim() }
+            : {}),
+          ...(executionContext.developmentMode === 'coder' || executionContext.developmentMode === 'blockly'
+            ? { developmentMode: executionContext.developmentMode }
+            : {}),
         },
       }));
     } catch (error) {
