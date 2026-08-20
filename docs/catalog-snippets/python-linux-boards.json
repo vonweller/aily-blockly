@@ -1,0 +1,62 @@
+[
+  {
+    "name": "@aily-project/board-cybercam",
+    "nickname": "CyberCAM",
+    "version": "1.1.0",
+    "description": "01Studio CyberCAM is a Python-programmable K230 AI camera with a 6 TOPS KPU, a 2.4-inch flip touchscreen, dual-band Wi-Fi 6, Bluetooth 5.0, a camera, microphones, speaker, IMU, GPIO, and onboard peripherals.",
+    "author": "01Studio",
+    "brand": "01Studio",
+    "url": "https://github.com/01studio-lab/01studio_wiki/tree/main/docs/cybercam",
+    "compatibility": "",
+    "img": "cybercam.webp",
+    "disabled": false,
+    "type": "python:k230:cybercam",
+    "mode": ["python"],
+    "keywords": ["aily", "blockly", "board", "CyberCAM", "01Studio", "K230", "Python", "AI", "camera"]
+  },
+  {
+    "name": "@aily-project/board-raspberrypi",
+    "nickname": "Raspberry Pi",
+    "version": "1.0.0",
+    "description": "Raspberry Pi Linux board for Python Blockly over SSH. Uses CPython on Raspberry Pi OS, not the RP2040 Pico Arduino core.",
+    "author": "RaspberryPi",
+    "brand": "RaspberryPi",
+    "url": "https://www.raspberrypi.com/documentation/",
+    "compatibility": "",
+    "img": "raspberrypi.webp",
+    "disabled": false,
+    "type": "linux:python:raspberrypi",
+    "mode": ["python"],
+    "keywords": ["aily", "blockly", "board", "RaspberryPi", "Linux", "Python", "SSH"]
+  },
+  {
+    "name": "@aily-project/board-walnutpi",
+    "nickname": "WalnutPi",
+    "version": "1.0.0",
+    "description": "Independent WalnutPi Linux board for Python Blockly over SSH. Uses CPython on Debian, not the CyberCAM K230 CanMV USBDBG path.",
+    "author": "WalnutPi",
+    "brand": "WalnutPi",
+    "url": "https://github.com/walnutpi",
+    "compatibility": "",
+    "img": "walnutpi.webp",
+    "disabled": false,
+    "type": "linux:python:walnutpi",
+    "mode": ["python"],
+    "keywords": ["aily", "blockly", "board", "WalnutPi", "Linux", "Python", "SSH"]
+  },
+  {
+    "name": "@aily-project/board-walnutpi_serial",
+    "nickname": "WalnutPi Serial",
+    "version": "1.0.0",
+    "description": "Independent WalnutPi Linux board for Python Blockly over a user-selected SERIAL-A shell. Uses CPython on Debian, not the CyberCAM K230 CanMV USBDBG path.",
+    "author": "WalnutPi",
+    "brand": "WalnutPi",
+    "url": "https://github.com/walnutpi",
+    "compatibility": "",
+    "img": "walnutpi_serial.webp",
+    "disabled": false,
+    "type": "linux:python:walnutpi-serial",
+    "mode": ["python"],
+    "keywords": ["aily", "blockly", "board", "WalnutPi", "Linux", "Python", "serial"]
+  }
+]

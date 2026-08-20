@@ -3,6 +3,7 @@ import { CommonModule } from '@angular/common';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { ConfigService } from '../../../../services/config.service';
 import { ChatService } from '../../services/chat.service';
+import { resolveBoardCatalogImageUrl } from '../../../../services/local-python-catalog';
 
 
 export interface AilyBoardData {
@@ -39,6 +40,10 @@ export class AilyBoardViewerComponent implements OnInit, OnDestroy {
 
   get resourceUrl() {
     return this.configService.getCurrentResourceUrl();
+  }
+
+  boardImageUrl(board: { img?: unknown; localImg?: unknown } | null | undefined): string {
+    return resolveBoardCatalogImageUrl(board, this.resourceUrl);
   }
 
   constructor(

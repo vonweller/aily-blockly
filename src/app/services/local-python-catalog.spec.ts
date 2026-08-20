@@ -1,9 +1,13 @@
 import {
   isSafeLocalSourcePath,
+  libraryFoldersForLocalBoard,
   mergeLocalCatalogEntries,
   planLocalLinuxProjectSeed,
+  pickLibrariesRootForBoard,
   readLocalPythonBoardCatalog,
   readLocalPythonLibraryCatalog,
+  resolveBoardCatalogImageUrl,
+  resolveExistingSiblingWorkspaceRoots,
   resolveSiblingWorkspaceRoot,
   seedLocalLinuxPythonProject,
   type LocalPathApi,
@@ -81,6 +85,28 @@ describe('local Python catalog', () => {
       .toBe('D:\\repo\\aily-blockly-libraries');
     expect(resolveSiblingWorkspaceRoot('/repo/electron', '../escape', posixPath())).toBeNull();
     expect(resolveSiblingWorkspaceRoot('electron', 'aily-blockly-boards', posixPath())).toBeNull();
+    expect(resolveExistingSiblingWorkspaceRoots(
+      '/repo/aily-blockly/electron',
+      ['aily-blockly-boards', 'aily-blockly-linux-boards'],
+      posixPath(),
+      (filePath) => filePath === '/repo/aily-blockly-linux-boards',
+    )).toEqual(['/repo/aily-blockly-linux-boards']);
+    expect(pickLibrariesRootForBoard(
+      '/repo/aily-blockly-linux-boards/raspberrypi',
+      ['/repo/aily-blockly-libraries', '/repo/aily-blockly-linux-libraries'],
+      posixPath(),
+      (filePath) => filePath === '/repo/aily-blockly-linux-libraries/python-core'
+        || filePath === '/repo/aily-blockly-linux-libraries/linux-python'
+        || filePath === '/repo/aily-blockly-libraries/cybercam',
+    )).toBe('/repo/aily-blockly-linux-libraries');
+    expect(pickLibrariesRootForBoard(
+      '/repo/aily-blockly-boards/cybercam',
+      ['/repo/aily-blockly-libraries', '/repo/aily-blockly-linux-libraries'],
+      posixPath(),
+      (filePath) => filePath === '/repo/aily-blockly-linux-libraries/python-core'
+        || filePath === '/repo/aily-blockly-linux-libraries/linux-python'
+        || filePath === '/repo/aily-blockly-libraries/cybercam',
+    )).toBe('/repo/aily-blockly-libraries');
   });
 
   it('rejects relative, escaped and UNC local sources', () => {
@@ -153,6 +179,7 @@ describe('local Python catalog', () => {
         type: 'linux:python:raspberrypi',
         mode: ['python'],
         img: 'raspberrypi.webp',
+        localImg: '/imgs/boards/raspberrypi.webp',
         localSource: '/repo/aily-blockly-boards/raspberrypi',
         description_zh_cn: '树莓派',
       }),
@@ -189,6 +216,23 @@ describe('local Python catalog', () => {
     }));
   });
 
+  it('resolves local board images from the app public folder and remote images from the resource CDN', () => {
+    expect(resolveBoardCatalogImageUrl(
+      { img: 'raspberrypi.webp', localImg: '/imgs/boards/raspberrypi.webp' },
+      'https://cdn.example/resource',
+    )).toBe('/imgs/boards/raspberrypi.webp');
+    expect(resolveBoardCatalogImageUrl(
+      { img: 'uno.webp' },
+      'https://cdn.example/resource/',
+    )).toBe('https://cdn.example/resource/imgs/boards/uno.webp');
+    expect(resolveBoardCatalogImageUrl(
+      { img: 'uno.webp' },
+      'https://cdn.example/resource/imgs/boards',
+    )).toBe('https://cdn.example/resource/imgs/boards/uno.webp');
+    expect(libraryFoldersForLocalBoard('/repo/aily-blockly-boards/cybercam', posixPath())).toEqual(['cybercam']);
+    expect(libraryFoldersForLocalBoard('/repo/aily-blockly-boards/walnutpi', posixPath())).toEqual(['python-core', 'linux-python']);
+  });
+
   it('seeds local Linux board and library files into app data and the project', () => {
     const copies: Array<[string, string]> = [];
     const removals: string[] = [];
@@ -216,8 +260,6 @@ describe('local Python catalog', () => {
       boardsRoot: '/boards',
       librariesRoot: '/libs',
       boardSource: '/boards/raspberrypi',
-      pythonCoreSource: '/libs/python-core',
-      linuxLibrarySource: '/libs/linux-python',
       appDataPath: '/app',
       projectPath: '/projects/Pi_Starter',
       boardPackageName: '@aily-project/board-raspberrypi',
@@ -228,6 +270,7 @@ describe('local Python catalog', () => {
       appDataPath: '/app',
       projectPath: '/projects/Pi_Starter',
       boardPackageName: '@aily-project/board-raspberrypi',
+      libraryFolders: ['python-core', 'linux-python'],
     }));
     expect(removals).toEqual(['/app/node_modules/@aily-project/board-raspberrypi']);
     expect(copies).toEqual([
@@ -236,6 +279,45 @@ describe('local Python catalog', () => {
       ['/boards/raspberrypi/package.json', '/projects/Pi_Starter/node_modules/@aily-project/board-raspberrypi/package.json'],
       ['/libs/python-core/package.json', '/projects/Pi_Starter/node_modules/@aily-project/lib-python-core/package.json'],
       ['/libs/linux-python/package.json', '/projects/Pi_Starter/node_modules/@aily-project/lib-linux-python/package.json'],
+    ]);
+  });
+
+  it('seeds CyberCAM with lib-cybercam instead of Linux Python libraries', () => {
+    const copies: Array<[string, string]> = [];
+    const files = new Set([
+      '/boards/cybercam',
+      '/boards/cybercam/package.json',
+      '/boards/cybercam/template',
+      '/libs/cybercam',
+      '/libs/cybercam/package.json',
+    ]);
+    const io = {
+      exists: (filePath: string) => files.has(filePath),
+      readFile: () => '',
+      mkdirSync: () => undefined,
+      copySync: (source: string, destination: string) => copies.push([source, destination]),
+      rmSync: () => undefined,
+      path: posixPath(),
+    };
+
+    const plan = seedLocalLinuxPythonProject({
+      io,
+      boardsRoot: '/boards',
+      librariesRoot: '/libs',
+      boardSource: '/boards/cybercam',
+      appDataPath: '/app',
+      projectPath: '/projects/CyberCAM_Starter',
+      boardPackageName: '@aily-project/board-cybercam',
+    });
+
+    expect(plan.libraryDests).toEqual({
+      cybercam: '/projects/CyberCAM_Starter/node_modules/@aily-project/lib-cybercam',
+    });
+    expect(copies).toEqual([
+      ['/boards/cybercam/package.json', '/app/node_modules/@aily-project/board-cybercam/package.json'],
+      ['/boards/cybercam/template', '/app/node_modules/@aily-project/board-cybercam/template'],
+      ['/boards/cybercam/package.json', '/projects/CyberCAM_Starter/node_modules/@aily-project/board-cybercam/package.json'],
+      ['/libs/cybercam/package.json', '/projects/CyberCAM_Starter/node_modules/@aily-project/lib-cybercam/package.json'],
     ]);
   });
 
@@ -252,8 +334,6 @@ describe('local Python catalog', () => {
       boardsRoot: '/boards',
       librariesRoot: '/libs',
       boardSource: '/tmp/evil-board',
-      pythonCoreSource: '/libs/python-core',
-      linuxLibrarySource: '/libs/linux-python',
       appDataPath: '/app',
       projectPath: '/projects/Pi_Starter',
       boardPackageName: '@aily-project/board-raspberrypi',

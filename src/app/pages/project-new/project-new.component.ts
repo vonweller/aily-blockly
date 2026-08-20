@@ -39,6 +39,7 @@ import {
   getProjectModeTranslationKey,
   type PublicProjectMode,
 } from '../../services/python-runtime/python-mode';
+import { resolveBoardCatalogImageUrl } from '../../services/local-python-catalog';
 
 @Component({
   selector: 'app-project-new',
@@ -129,6 +130,10 @@ export class ProjectNewComponent implements OnDestroy {
 
   get resourceUrl() {
     return this.configService.getCurrentResourceUrl();
+  }
+
+  boardImageUrl(board: { img?: unknown; localImg?: unknown } | null | undefined): string {
+    return resolveBoardCatalogImageUrl(board, this.resourceUrl);
   }
 
   // 获取已定义的品牌列表（排除'all'和'other'）

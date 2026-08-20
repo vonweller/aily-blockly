@@ -2,6 +2,7 @@ import { Component, Input, OnInit, OnDestroy, OnChanges, SimpleChanges, ChangeDe
 import { CommonModule } from '@angular/common';
 import { ChatService } from '../../../services/chat.service';
 import { ConfigService } from '../../../../../services/config.service';
+import { resolveBoardCatalogImageUrl } from '../../../../../services/local-python-catalog';
 
 @Component({
   selector: 'x-aily-board-viewer',
@@ -21,6 +22,10 @@ export class XAilyBoardViewerComponent implements OnInit, OnDestroy, OnChanges {
 
   get resourceUrl() {
     return this.configService.getCurrentResourceUrl();
+  }
+
+  boardImageUrl(board: { img?: unknown; localImg?: unknown } | null | undefined): string {
+    return resolveBoardCatalogImageUrl(board, this.resourceUrl);
   }
   private retryCount = 0;
   private readonly MAX_RETRY = 3;

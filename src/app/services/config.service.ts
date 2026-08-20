@@ -8,9 +8,11 @@ import { mapCoderBoardIndexToBoardList, type CoderBoardIndexEntry } from '../uti
 import { normalizeLanguageCode } from '../utils/language-code';
 import {
   mergeLocalCatalogEntries,
-  readLocalPythonBoardCatalog as loadLocalPythonBoardCatalog,
-  readLocalPythonLibraryCatalog as loadLocalPythonLibraryCatalog,
-  resolveSiblingWorkspaceRoot,
+  LOCAL_PYTHON_BOARD_WORKSPACES,
+  LOCAL_PYTHON_LIBRARY_WORKSPACES,
+  readLocalPythonBoardCatalogs as loadLocalPythonBoardCatalogs,
+  readLocalPythonLibraryCatalogs as loadLocalPythonLibraryCatalogs,
+  resolveExistingSiblingWorkspaceRoots,
   type LocalCatalogIo,
 } from './local-python-catalog';
 
@@ -354,19 +356,31 @@ export class ConfigService {
   private readLocalPythonBoardCatalog() {
     const io = this.createLocalCatalogIo();
     const electronPath = window['path']?.getElectronPath?.();
-    const boardsRoot = io && electronPath
-      ? resolveSiblingWorkspaceRoot(electronPath, 'aily-blockly-boards', io.path)
-      : null;
-    return io && boardsRoot ? loadLocalPythonBoardCatalog(io, boardsRoot) : [];
+    if (!io || !electronPath) {
+      return [];
+    }
+    const boardsRoots = resolveExistingSiblingWorkspaceRoots(
+      electronPath,
+      LOCAL_PYTHON_BOARD_WORKSPACES,
+      io.path,
+      (filePath) => io.exists(filePath),
+    );
+    return loadLocalPythonBoardCatalogs(io, boardsRoots);
   }
 
   private readLocalPythonLibraryCatalog() {
     const io = this.createLocalCatalogIo();
     const electronPath = window['path']?.getElectronPath?.();
-    const librariesRoot = io && electronPath
-      ? resolveSiblingWorkspaceRoot(electronPath, 'aily-blockly-libraries', io.path)
-      : null;
-    return io && librariesRoot ? loadLocalPythonLibraryCatalog(io, librariesRoot) : [];
+    if (!io || !electronPath) {
+      return [];
+    }
+    const librariesRoots = resolveExistingSiblingWorkspaceRoots(
+      electronPath,
+      LOCAL_PYTHON_LIBRARY_WORKSPACES,
+      io.path,
+      (filePath) => io.exists(filePath),
+    );
+    return loadLocalPythonLibraryCatalogs(io, librariesRoots);
   }
 
   async save() {

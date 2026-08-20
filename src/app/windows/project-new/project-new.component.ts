@@ -33,6 +33,7 @@ import {
   getProjectModeTranslationKey,
   type PublicProjectMode,
 } from '../../services/python-runtime/python-mode';
+import { resolveBoardCatalogImageUrl } from '../../services/local-python-catalog';
 
 export type ProjectCreationCategory = 'blockly' | 'coder';
 
@@ -134,7 +135,11 @@ export class ProjectNewComponent implements OnDestroy {
   creatingMode: 'blockly' | 'aily' | null = null;
 
   get resourceUrl() {
-    return this.configService.getCurrentResourceUrl() + '/imgs/boards/';
+    return this.configService.getCurrentResourceUrl();
+  }
+
+  boardImageUrl(board: { img?: unknown; localImg?: unknown } | null | undefined): string {
+    return resolveBoardCatalogImageUrl(board, this.resourceUrl);
   }
 
   get searchShortcutHint(): string {

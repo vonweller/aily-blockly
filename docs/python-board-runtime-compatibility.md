@@ -80,15 +80,35 @@ CyberCAM 模板继续只依赖 `board-cybercam` + `lib-cybercam`，避免拆坏�
 
 ## 本地开发覆盖
 
-未发布的 Linux 板卡包不会出现在远程 `boards.json` 里。开发版会从 Electron 目录解析兄弟仓库：
+正式产品列表仍然以远程 `boards.json` 为准。开发版之所以现在能看到 Raspberry Pi Linux、WalnutPi、WalnutPi Serial 和 CyberCAM，是因为应用从 Electron 目录解析兄弟仓库，把未发布包叠进内存中的板卡列表：
 
 ```text
 <repo>/aily-blockly/electron
-<repo>/aily-blockly-boards/{raspberrypi,walnutpi,walnutpi_serial}
-<repo>/aily-blockly-libraries/{python-core,linux-python}
+<repo>/aily-blockly-linux-boards/{raspberrypi,walnutpi,walnutpi_serial}
+<repo>/aily-blockly-linux-libraries/{python-core,linux-python}
+<repo>/aily-blockly-boards/cybercam
+<repo>/aily-blockly-libraries/cybercam
 ```
 
-发现到的板卡会合并进新建项目列表；`localSource` 只留在内存，不写回 `boards.json` 缓存。从这些板卡创建项目时，应用会复制本地板卡模板和两个 Python 库到项目 `node_modules`，不会对未发布包执行 `npm install` / `npm view`。路径必须是兄弟仓库内的绝对路径。
+Linux 板卡和积木优先读专用仓库 [aily-blockly-linux-boards](https://github.com/ailyProject/aily-blockly-linux-boards) 与 [aily-blockly-linux-libraries](https://github.com/ailyProject/aily-blockly-linux-libraries)。原来的 `aily-blockly-boards` / `aily-blockly-libraries` 仍可作为回退，并继续提供 CyberCAM。
+
+`localSource` 只留在内存，不写回 `boards.json` 缓存。本地板卡图走应用 `public/imgs/boards/`，品牌 logo 走 `public/brands/`，不会去远程 CDN 找还没上传的 `raspberrypi.webp`。
+
+从这些板卡创建项目时：
+
+- Linux 板复制本地板卡模板 + `lib-python-core` + `lib-linux-python`
+- CyberCAM 复制本地板卡模板 + `lib-cybercam`
+- 不会对未发布包执行 `npm install` / `npm view`
+
+路径必须是兄弟仓库内的绝对路径。
+
+要让正式安装包也能选这些板，还需要三件事一起发布：
+
+1. npm 包：`@aily-project/board-*` 和对应积木库
+2. 远程资源站 `boards.json` 增加目录条目
+3. 远程 `imgs/boards/` 放同名 `webp`
+
+待发布目录条目在 `docs/catalog-snippets/python-linux-boards.json`。
 
 离线脚本仍可用：
 

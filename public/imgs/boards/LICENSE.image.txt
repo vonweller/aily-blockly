@@ -1,0 +1,12 @@
+Local unpublished Python board photographs served from this app's public folder.
+
+cybercam.webp
+Copied from @aily-project/board-cybercam board.webp. See that package LICENSE.image.txt.
+
+raspberrypi.webp
+Cropped from the Raspberry Pi 5 product brief board photograph.
+https://datasheets.raspberrypi.com/rpi5/raspberry-pi-5-product-brief.pdf
+
+walnutpi.webp / walnutpi_serial.webp
+Cropped from the official WalnutPi 2B product photograph.
+https://wiki.walnutpi.com/assets/images/2b-2c2063f9f0b0c85cb81f80df6cd147bc.png

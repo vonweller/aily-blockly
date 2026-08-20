@@ -15,7 +15,7 @@
   } @else {
   <div class="board-card" [class.has-actions]="boardInfo?.url">
     <div class="img-box ccenter">
-      <img [src]="resourceUrl+'/imgs/boards/'+boardInfo?.img" />
+      <img [src]="boardImageUrl(boardInfo)" />
     </div>
     <div class="text-box">
       <div class="title">{{boardInfo?.nickname}}</div>

@@ -1,0 +1,9 @@
+Brand marks used by the unpublished Python board selector.
+
+01studio.webp / 01studio-light.webp
+Source: official 01Studio wordmark from https://en.01studio.cc/_static/01studio-white.png
+Dark-theme mark uses the original white wordmark. Light-theme mark is an inverted copy of the same asset.
+
+walnutpi.webp / walnutpi-light.webp
+Source: official WalnutPi navbar mascot from https://wiki.walnutpi.com/img/logo.svg
+Composed with the wordmark "WalnutPi" for the 500x140 brand tile used by this app.

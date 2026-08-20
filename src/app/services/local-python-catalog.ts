@@ -1,5 +1,20 @@
-export const LOCAL_PYTHON_BOARD_FOLDERS = ['raspberrypi', 'walnutpi', 'walnutpi_serial'] as const;
-export const LOCAL_PYTHON_LIBRARY_FOLDERS = ['python-core', 'linux-python'] as const;
+export const LOCAL_PYTHON_BOARD_FOLDERS = ['cybercam', 'raspberrypi', 'walnutpi', 'walnutpi_serial'] as const;
+export const LOCAL_PYTHON_LIBRARY_FOLDERS = ['cybercam', 'python-core', 'linux-python'] as const;
+export const LOCAL_PYTHON_BOARD_WORKSPACES = ['aily-blockly-boards', 'aily-blockly-linux-boards'] as const;
+export const LOCAL_PYTHON_LIBRARY_WORKSPACES = ['aily-blockly-libraries', 'aily-blockly-linux-libraries'] as const;
+
+export const LOCAL_PYTHON_BOARD_LIBRARY_FOLDERS: Record<string, readonly string[]> = {
+  cybercam: ['cybercam'],
+  raspberrypi: ['python-core', 'linux-python'],
+  walnutpi: ['python-core', 'linux-python'],
+  walnutpi_serial: ['python-core', 'linux-python'],
+};
+
+export const LOCAL_PYTHON_LIBRARY_PACKAGE_NAMES: Record<string, string> = {
+  cybercam: '@aily-project/lib-cybercam',
+  'python-core': '@aily-project/lib-python-core',
+  'linux-python': '@aily-project/lib-linux-python',
+};
 
 export const LOCAL_PYTHON_BOARD_RUNTIME_FILES = [
   'package.json',
@@ -57,6 +72,7 @@ export interface LocalPythonCatalogEntry {
   url: string;
   compatibility: unknown;
   img?: string;
+  localImg?: string;
   disabled: boolean;
   type?: string;
   mode?: string[];
@@ -91,6 +107,22 @@ export function resolveSiblingWorkspaceRoot(
     return null;
   }
   return pathApi.resolve(pathApi.join(electronPath, '..', '..', workspaceName));
+}
+
+export function resolveExistingSiblingWorkspaceRoots(
+  electronPath: string,
+  workspaceNames: readonly string[],
+  pathApi: LocalPathApi,
+  exists?: (path: string) => boolean,
+): string[] {
+  const roots: string[] = [];
+  for (const workspaceName of workspaceNames) {
+    const root = resolveSiblingWorkspaceRoot(electronPath, workspaceName, pathApi);
+    if (root && (!exists || exists(root))) {
+      roots.push(root);
+    }
+  }
+  return roots;
 }
 
 export function isSafeLocalSourcePath(
@@ -193,6 +225,7 @@ export function readLocalPythonBoardCatalog(
       url: stringField(recordField(pkg, 'url')),
       compatibility: '',
       img: `${folder}.webp`,
+      localImg: `/imgs/boards/${folder}.webp`,
       disabled: false,
       type: stringField(recordField(board, 'type')),
       mode: Array.isArray(boardMode) ? boardMode.filter((mode) => typeof mode === 'string') : ['python'],
@@ -203,6 +236,13 @@ export function readLocalPythonBoardCatalog(
     entries.push(entry);
   }
   return entries;
+}
+
+export function readLocalPythonBoardCatalogs(
+  io: LocalCatalogIo,
+  boardsRoots: readonly string[],
+): LocalPythonCatalogEntry[] {
+  return boardsRoots.flatMap((root) => readLocalPythonBoardCatalog(io, root));
 }
 
 export function readLocalPythonLibraryCatalog(
@@ -256,6 +296,57 @@ export function readLocalPythonLibraryCatalog(
   return entries;
 }
 
+export function readLocalPythonLibraryCatalogs(
+  io: LocalCatalogIo,
+  librariesRoots: readonly string[],
+): LocalPythonCatalogEntry[] {
+  return librariesRoots.flatMap((root) => readLocalPythonLibraryCatalog(io, root));
+}
+
+export function resolveBoardCatalogImageUrl(
+  board: { img?: unknown; localImg?: unknown; localSource?: unknown } | null | undefined,
+  resourceUrl: string,
+): string {
+  const localImg = typeof board?.localImg === 'string' ? board.localImg.trim() : '';
+  if (localImg.startsWith('/imgs/')) {
+    return localImg;
+  }
+  const img = typeof board?.img === 'string' ? board.img.trim() : '';
+  const base = String(resourceUrl || '').replace(/\/+$/, '');
+  if (!img) {
+    return base;
+  }
+  if (/^https?:\/\//i.test(img) || img.startsWith('/') || img.startsWith('file:')) {
+    return img;
+  }
+  if (base.endsWith('/imgs/boards')) {
+    return `${base}/${img}`;
+  }
+  return `${base}/imgs/boards/${img}`;
+}
+
+export function libraryFoldersForLocalBoard(boardSource: string, pathApi: LocalPathApi): readonly string[] {
+  const normalized = boardSource.replace(/[\\/]+$/, '');
+  const folder = normalized.split(/[\\/]/).pop() || '';
+  return LOCAL_PYTHON_BOARD_LIBRARY_FOLDERS[folder] || LOCAL_PYTHON_BOARD_LIBRARY_FOLDERS['raspberrypi'];
+}
+
+export function pickLibrariesRootForBoard(
+  boardSource: string,
+  librariesRoots: readonly string[],
+  pathApi: LocalPathApi,
+  exists: (path: string) => boolean,
+): string | null {
+  const folders = libraryFoldersForLocalBoard(boardSource, pathApi);
+  for (let index = librariesRoots.length - 1; index >= 0; index -= 1) {
+    const root = librariesRoots[index];
+    if (folders.every((folder) => exists(pathApi.join(root, folder)))) {
+      return root;
+    }
+  }
+  return librariesRoots[librariesRoots.length - 1] || null;
+}
+
 export function mergeLocalCatalogEntries<T extends { name?: string }>(
   remote: T[] | null | undefined,
   local: T[] | null | undefined,
@@ -298,8 +389,7 @@ export function replaceCopiedDirectory(
 export interface LocalLinuxProjectSeedPlan {
   appDataBoardDest: string;
   projectBoardDest: string;
-  pythonCoreDest: string;
-  linuxLibraryDest: string;
+  libraryDests: Record<string, string>;
 }
 
 export function planLocalLinuxProjectSeed(input: {
@@ -307,12 +397,19 @@ export function planLocalLinuxProjectSeed(input: {
   appDataPath: string;
   projectPath: string;
   boardPackageName: string;
+  libraryFolders?: readonly string[];
 }): LocalLinuxProjectSeedPlan {
+  const libraryDests: Record<string, string> = {};
+  for (const folder of input.libraryFolders || []) {
+    const packageName = LOCAL_PYTHON_LIBRARY_PACKAGE_NAMES[folder];
+    if (packageName) {
+      libraryDests[folder] = input.path.join(input.projectPath, 'node_modules', packageName);
+    }
+  }
   return {
     appDataBoardDest: input.path.join(input.appDataPath, 'node_modules', input.boardPackageName),
     projectBoardDest: input.path.join(input.projectPath, 'node_modules', input.boardPackageName),
-    pythonCoreDest: input.path.join(input.projectPath, 'node_modules', '@aily-project/lib-python-core'),
-    linuxLibraryDest: input.path.join(input.projectPath, 'node_modules', '@aily-project/lib-linux-python'),
+    libraryDests,
   };
 }
 
@@ -321,8 +418,6 @@ export function seedLocalLinuxPythonProject(input: {
   boardsRoot: string;
   librariesRoot: string;
   boardSource: string;
-  pythonCoreSource: string;
-  linuxLibrarySource: string;
   appDataPath: string;
   projectPath: string;
   boardPackageName: string;
@@ -332,23 +427,28 @@ export function seedLocalLinuxPythonProject(input: {
   if (!isSafeLocalSourcePath(input.boardSource, allowedBoardRoots, input.io.path)) {
     throw new Error(`Unsafe local board source: ${input.boardSource}`);
   }
-  if (!isSafeLocalSourcePath(input.pythonCoreSource, allowedLibraryRoots, input.io.path)) {
-    throw new Error(`Unsafe local Python core source: ${input.pythonCoreSource}`);
-  }
-  if (!isSafeLocalSourcePath(input.linuxLibrarySource, allowedLibraryRoots, input.io.path)) {
-    throw new Error(`Unsafe local Linux library source: ${input.linuxLibrarySource}`);
-  }
 
+  const libraryFolders = libraryFoldersForLocalBoard(input.boardSource, input.io.path);
   const plan = planLocalLinuxProjectSeed({
     path: input.io.path,
     appDataPath: input.appDataPath,
     projectPath: input.projectPath,
     boardPackageName: input.boardPackageName,
+    libraryFolders,
   });
 
   replaceCopiedDirectory(input.boardSource, plan.appDataBoardDest, LOCAL_PYTHON_BOARD_APP_DATA_FILES, input.io);
   replaceCopiedDirectory(input.boardSource, plan.projectBoardDest, LOCAL_PYTHON_BOARD_RUNTIME_FILES, input.io);
-  replaceCopiedDirectory(input.pythonCoreSource, plan.pythonCoreDest, LOCAL_PYTHON_LIBRARY_RUNTIME_FILES, input.io);
-  replaceCopiedDirectory(input.linuxLibrarySource, plan.linuxLibraryDest, LOCAL_PYTHON_LIBRARY_RUNTIME_FILES, input.io);
+  for (const folder of libraryFolders) {
+    const librarySource = input.io.path.join(input.librariesRoot, folder);
+    const libraryDest = plan.libraryDests[folder];
+    if (!libraryDest) {
+      continue;
+    }
+    if (!isSafeLocalSourcePath(librarySource, allowedLibraryRoots, input.io.path)) {
+      throw new Error(`Unsafe local library source: ${librarySource}`);
+    }
+    replaceCopiedDirectory(librarySource, libraryDest, LOCAL_PYTHON_LIBRARY_RUNTIME_FILES, input.io);
+  }
   return plan;
 }

@@ -40,12 +40,14 @@ export const BRAND_LIST = [
     {
         name: 'WalnutPi',
         value: 'walnutpi',
-        img: '',
+        img: 'brands\\walnutpi.webp',
+        imgLight: 'brands\\walnutpi-light.webp',
     },
     {
         name: '01Studio',
         value: '01studio',
-        img: '',
+        img: 'brands\\01studio.webp',
+        imgLight: 'brands\\01studio-light.webp',
     },
     {
         name: 'STMicroelectronics',
@@ -154,12 +156,14 @@ export const CORE_LIST = [
     {
         name: 'Linux Python',
         value: 'linux',
-        img: '',
+        img: 'brands\\raspberrypi.webp',
+        imgLight: 'brands\\raspberrypi-light.webp',
     },
     {
         name: 'K230',
         value: 'k230',
-        img: '',
+        img: 'brands\\01studio.webp',
+        imgLight: 'brands\\01studio-light.webp',
     },
     {
         name: 'stm32',

@@ -13,6 +13,7 @@ import {
   getCoderFrameworkOptions,
   resolveDefaultCoderFramework,
 } from '../../../utils/coder-board.mapper';
+import { resolveBoardCatalogImageUrl } from '../../../services/local-python-catalog';
 
 @Component({
   selector: 'app-board-selector-dialog',
@@ -58,7 +59,11 @@ export class BoardSelectorDialogComponent implements OnInit {
   }
 
   get resourceUrl() {
-    return this.configService.getCurrentResourceUrl() + '/imgs/boards/';
+    return this.configService.getCurrentResourceUrl();
+  }
+
+  boardImageUrl(board: { img?: unknown; localImg?: unknown } | null | undefined): string {
+    return resolveBoardCatalogImageUrl(board, this.resourceUrl);
   }
 
   constructor(

@@ -13,8 +13,18 @@ import { fileURLToPath } from 'node:url';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const REPO_ROOT = path.resolve(path.dirname(SCRIPT_PATH), '..');
-const BOARDS_ROOT = path.resolve(REPO_ROOT, '..', 'aily-blockly-boards');
-const LIBRARIES_ROOT = path.resolve(REPO_ROOT, '..', 'aily-blockly-libraries');
+function firstExisting(...candidates) {
+  return candidates.find((candidate) => existsSync(candidate)) || candidates[candidates.length - 1];
+}
+
+const BOARDS_ROOT = firstExisting(
+  path.resolve(REPO_ROOT, '..', 'aily-blockly-linux-boards'),
+  path.resolve(REPO_ROOT, '..', 'aily-blockly-boards'),
+);
+const LIBRARIES_ROOT = firstExisting(
+  path.resolve(REPO_ROOT, '..', 'aily-blockly-linux-libraries'),
+  path.resolve(REPO_ROOT, '..', 'aily-blockly-libraries'),
+);
 const TEMPLATE_RUNTIME_FILES = ['package.json', 'project.abi'];
 const BOARD_RUNTIME_FILES = [
   'package.json',

@@ -3,6 +3,8 @@
 # Compiled output
 /dist
 /tmp
+/.tmp-brand-assets
+/.dsh-vision-router
 /out-tsc
 /bazel-out
 /out

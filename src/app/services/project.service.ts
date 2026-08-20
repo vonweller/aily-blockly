@@ -38,7 +38,10 @@ import {
 import { materializeGenericProjectDataValues } from './project-data/project-data-generic-values';
 import {
   isSafeLocalSourcePath,
-  resolveSiblingWorkspaceRoot,
+  LOCAL_PYTHON_BOARD_WORKSPACES,
+  LOCAL_PYTHON_LIBRARY_WORKSPACES,
+  pickLibrariesRootForBoard,
+  resolveExistingSiblingWorkspaceRoots,
   seedLocalLinuxPythonProject,
   type LocalCopyIo,
 } from './local-python-catalog';
@@ -463,14 +466,30 @@ export class ProjectService {
   ): void {
     const io = this.createLocalCopyIo();
     const electronPath = String(window['path'].getElectronPath?.() || '');
-    const boardsRoot = resolveSiblingWorkspaceRoot(electronPath, 'aily-blockly-boards', io.path);
-    const librariesRoot = resolveSiblingWorkspaceRoot(electronPath, 'aily-blockly-libraries', io.path);
+    const boardsRoots = resolveExistingSiblingWorkspaceRoots(
+      electronPath,
+      LOCAL_PYTHON_BOARD_WORKSPACES,
+      io.path,
+      (filePath) => io.exists(filePath),
+    );
+    const librariesRoots = resolveExistingSiblingWorkspaceRoots(
+      electronPath,
+      LOCAL_PYTHON_LIBRARY_WORKSPACES,
+      io.path,
+      (filePath) => io.exists(filePath),
+    );
+    const boardsRoot = boardsRoots.find((root) => isSafeLocalSourcePath(boardSource, [root], io.path))
+      || boardsRoots[boardsRoots.length - 1];
+    const librariesRoot = pickLibrariesRootForBoard(
+      boardSource,
+      librariesRoots,
+      io.path,
+      (filePath) => io.exists(filePath),
+    );
     if (!boardsRoot || !librariesRoot) {
       throw new Error('Local Linux board packages are only available from sibling workspace checkouts');
     }
-    const pythonCoreSource = io.path.join(librariesRoot, 'python-core');
-    const linuxLibrarySource = io.path.join(librariesRoot, 'linux-python');
-    if (!isSafeLocalSourcePath(boardSource, [boardsRoot], io.path)) {
+    if (!isSafeLocalSourcePath(boardSource, boardsRoots, io.path)) {
       throw new Error(`Unsafe local board source: ${boardSource}`);
     }
     seedLocalLinuxPythonProject({
@@ -478,8 +497,6 @@ export class ProjectService {
       boardsRoot,
       librariesRoot,
       boardSource,
-      pythonCoreSource,
-      linuxLibrarySource,
       appDataPath,
       projectPath,
       boardPackageName,
