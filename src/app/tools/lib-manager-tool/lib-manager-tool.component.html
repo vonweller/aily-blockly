@@ -1,9 +1,3 @@
-<app-tool-container
-  [title]="(uiService.libraryManagerView === 'components' ? 'CODER_COMPONENT_LIBRARY.TITLE' : 'LIB_MANAGER.TITLE') | translate"
-  (closeEvent)="close()">
-  @if (uiService.libraryManagerView === 'components') {
-  <app-coder-component-library></app-coder-component-library>
-  } @else {
+<app-tool-container [title]="'LIB_MANAGER.TITLE' | translate" (closeEvent)="close()">
   <app-lib-manager [embedInPanel]="true" (close)="close()"></app-lib-manager>
-  }
 </app-tool-container>

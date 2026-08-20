@@ -48,9 +48,6 @@ export class UiService {
 
   openWindowPathList: string[] = [];
 
-  /** 右侧库管理工具当前视图；Coder 组件库复用同一工具容器。 */
-  libraryManagerView: 'packages' | 'components' = 'packages';
-
   // 用来获取当前最上层的工具
   get topTool() {
     return this.openToolList[this.openToolList.length - 1] || null;
@@ -268,17 +265,8 @@ export class UiService {
     if (this.topTool == opt.data) {
       this.closeTool(opt.data);
     } else {
-      if (opt.data === 'lib-manager') {
-        this.libraryManagerView = 'packages';
-      }
       this.openTool(opt.data);
     }
-  }
-
-  /** 从 Coder Aily View 打开指定库视图。 */
-  openLibraryManager(view: 'packages' | 'components' = 'packages'): void {
-    this.libraryManagerView = view;
-    this.openTool('lib-manager');
   }
 
   // 如果其它组件/程序要打开工具，调用这个方法

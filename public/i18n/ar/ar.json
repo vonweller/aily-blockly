@@ -469,13 +469,6 @@
         "OTHERS": "أخرى",
         "LIB_IN_USE": "هذه المكتبة قيد الاستخدام حاليًا. يرجى إزالة الكتل ذات الصلة من مساحة العمل أولاً قبل إزالة هذه المكتبة"
     },
-    "CODER_COMPONENT_LIBRARY": {
-        "TITLE": "Component Libraries", "SEARCH": "Search platform libraries", "REFRESH": "Refresh",
-        "HINT": "Arduino libraries bundled with the active board platform. Add one to copy its complete source into the project components directory for local editing.",
-        "ADD": "Add to Project", "IN_PROJECT": "In Project", "ADDED": "{{name}} was added to components",
-        "ADD_FAILED": "Failed to add the component library", "LOAD_FAILED": "Failed to load platform libraries",
-        "LOADING": "Loading platform libraries...", "EMPTY": "No Arduino libraries were found in the active platform"
-    },
     "COMPATIBILITY_DIALOG": {
         "TITLE": "إشعار توافق المكتبة",
         "WARNING_MESSAGE": "قد لا تعمل هذه المكتبة على اللوحة الحالية. هل تريد الاستمرار في التثبيت؟",
