@@ -6,6 +6,13 @@ import { API, setServerUrl, setRegistryUrl, setToolWebUrl } from '../configs/api
 import { calculateSimilarity, extractKeywords } from '../utils/fuzzy-search.utils';
 import { mapCoderBoardIndexToBoardList, type CoderBoardIndexEntry } from '../utils/coder-board.mapper';
 import { normalizeLanguageCode } from '../utils/language-code';
+import {
+  mergeLocalCatalogEntries,
+  readLocalPythonBoardCatalog as loadLocalPythonBoardCatalog,
+  readLocalPythonLibraryCatalog as loadLocalPythonLibraryCatalog,
+  resolveSiblingWorkspaceRoot,
+  type LocalCatalogIo,
+} from './local-python-catalog';
 
 export const DEVELOPMENT_MODE_PREFERENCES = ['coder', 'blockly'] as const;
 export type DevelopmentModePreference = typeof DEVELOPMENT_MODE_PREFERENCES[number];
@@ -287,6 +294,7 @@ export class ConfigService {
       await this.reloadBoardListFromRemote(localPath, error);
     }
 
+    this.boardList = mergeLocalCatalogEntries(this.boardList, this.readLocalPythonBoardCatalog());
     this.boardDict = {};
     // 创建一个boardDict，方便通过name快速查找board信息
     this.boardList.forEach(board => {
@@ -317,12 +325,48 @@ export class ConfigService {
       await this.reloadLibraryListFromRemote(localPath, error);
     }
 
+    this.libraryList = mergeLocalCatalogEntries(this.libraryList, this.readLocalPythonLibraryCatalog());
     this.libraryDict = {};
     // 创建一个libraryDict，方便通过name快速查找library信息
     this.libraryList.forEach(library => {
       this.libraryDict[library.name] = library;
     });
     // console.log(`[ConfigService] libraryDict创建完成，共 ${Object.keys(this.libraryDict).length} 个库`);
+  }
+
+  private createLocalCatalogIo(): LocalCatalogIo | null {
+    const pathApi = window['path'];
+    if (!pathApi || !window['fs'] || typeof pathApi.getElectronPath !== 'function') {
+      return null;
+    }
+    return {
+      exists: (filePath: string) => this.electronService.exists(filePath),
+      readFile: (filePath: string) => this.electronService.readFile(filePath),
+      path: {
+        join: (...parts: string[]) => pathApi.join(...parts),
+        resolve: (...parts: string[]) => pathApi.resolve(pathApi.join(...parts)),
+        relative: (from: string, to: string) => pathApi.relative(from, to),
+        isAbsolute: (value: string) => pathApi.isAbsolute(value),
+      },
+    };
+  }
+
+  private readLocalPythonBoardCatalog() {
+    const io = this.createLocalCatalogIo();
+    const electronPath = window['path']?.getElectronPath?.();
+    const boardsRoot = io && electronPath
+      ? resolveSiblingWorkspaceRoot(electronPath, 'aily-blockly-boards', io.path)
+      : null;
+    return io && boardsRoot ? loadLocalPythonBoardCatalog(io, boardsRoot) : [];
+  }
+
+  private readLocalPythonLibraryCatalog() {
+    const io = this.createLocalCatalogIo();
+    const electronPath = window['path']?.getElectronPath?.();
+    const librariesRoot = io && electronPath
+      ? resolveSiblingWorkspaceRoot(electronPath, 'aily-blockly-libraries', io.path)
+      : null;
+    return io && librariesRoot ? loadLocalPythonLibraryCatalog(io, librariesRoot) : [];
   }
 
   async save() {

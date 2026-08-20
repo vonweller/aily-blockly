@@ -49,4 +49,45 @@ describe('LibManagerService.filterByBoardType', () => {
 
     expect(service.filterByBoardType([wio], '')).toEqual([]);
   });
+
+  it('keeps portable Python core on Python boards and hides Linux hardware from CyberCAM', () => {
+    const pythonCore = library({
+      name: '@aily-project/lib-python-core',
+      spec: true,
+      compatibility: {
+        core: [
+          'python:k230:cybercam',
+          'linux:python:raspberrypi',
+          'linux:python:walnutpi',
+          'linux:python:walnutpi-serial',
+        ],
+        mode: ['python'],
+      },
+    });
+    const linuxHardware = library({
+      name: '@aily-project/lib-linux-python',
+      spec: true,
+      compatibility: {
+        core: [
+          'linux:python:raspberrypi',
+          'linux:python:walnutpi',
+          'linux:python:walnutpi-serial',
+        ],
+      },
+    });
+    const cybercam = library({
+      name: '@aily-project/lib-cybercam',
+      spec: true,
+      compatibility: { core: ['python:k230:cybercam'] },
+    });
+
+    expect(service.filterByBoardType([pythonCore, linuxHardware, cybercam], 'linux:python:raspberrypi'))
+      .toEqual([pythonCore, linuxHardware]);
+    expect(service.filterByBoardType([pythonCore, linuxHardware, cybercam], 'linux:python:walnutpi'))
+      .toEqual([pythonCore, linuxHardware]);
+    expect(service.filterByBoardType([pythonCore, linuxHardware, cybercam], 'python:k230:cybercam'))
+      .toEqual([pythonCore, cybercam]);
+    expect(service.filterByBoardType([pythonCore, linuxHardware, cybercam], 'esp32:esp32:esp32'))
+      .toEqual([]);
+  });
 });

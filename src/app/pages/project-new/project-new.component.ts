@@ -379,6 +379,9 @@ export class ProjectNewComponent implements OnDestroy {
     this.newProjectData.board.name = boardInfo.name;
     this.newProjectData.board.nickname = boardInfo._nickname || boardInfo.nickname;
     this.newProjectData.board.version = boardInfo.version;
+    this.newProjectData.board.localSource = typeof boardInfo.localSource === 'string'
+      ? boardInfo.localSource
+      : undefined;
     if (this.selectedProjectCategory === 'coder') {
       this.syncCoderPlatformSelection(boardInfo);
     } else {
@@ -450,6 +453,9 @@ export class ProjectNewComponent implements OnDestroy {
   async nextStep() {
     this.boardVersionList = [this.newProjectData.board.version];
     this.currentStep = this.currentStep + 1;
+    if (this.newProjectData.board.localSource) {
+      return;
+    }
     this.boardVersionList = (await this.npmService.getPackageVersionList(this.newProjectData.board.name)).reverse();
   }
 
@@ -880,7 +886,8 @@ export interface BoardInfo {
   "url": string,
   "brand": string,
   "type"?: string, // 开发板类型/核心架构 (如 esp32:esp32, arduino:avr, etc)
-  "mode"?: string[]
+  "mode"?: string[],
+  "localSource"?: string
 }
 
 interface CloudProjectTemplate {

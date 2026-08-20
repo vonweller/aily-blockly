@@ -1,6 +1,6 @@
 # Python 板卡运行与部署兼容性
 
-更新时间：2026-08-18（Asia/Shanghai）
+更新时间：2026-08-20（Asia/Shanghai）
 
 不同 Linux/Python 板卡不能仅凭“能运行 Python”共用同一个连接适配器。项目通过板卡 `runtime.adapter` 和连接后的 capability probe 明确协议边界，避免把串口误认为 REPL、把 SSH 误认为必然支持 SFTP，或把所有 Linux 系统都当成 `/boot/start`。
 
@@ -59,3 +59,41 @@ CyberCAM 仍使用原有板卡选择和连接表单。Linux runtime 使用带 ad
 - `/boot/start/aily-*.sh` 和 `/etc/systemd/system/aily-*.service` 是 Aily 受管命名空间；不得删除其他启动项或服务。
 - PTY 通常合并 stdout/stderr，不能承诺始终分离两条流。
 - 自动化 fake-peer、fake IPC 和 TypeScript 编译都不是物理树莓派或独立核桃派的验收证据。
+
+## 板卡包与积木库边界
+
+“能跑 Python”不等于共用同一套硬件积木。板卡包决定 runtime adapter；积木库按真实 Python API 拆分。
+
+| 包 | 用途 | 过滤 |
+| --- | --- | --- |
+| `@aily-project/board-cybercam` | CyberCAM K230，`canmv-k230` | `type: python:k230:cybercam` |
+| `@aily-project/board-raspberrypi` | 树莓派 Linux，`linux-ssh` | `type: linux:python:raspberrypi` |
+| `@aily-project/board-walnutpi` | 独立核桃派 Linux SSH，`linux-ssh` | `type: linux:python:walnutpi` |
+| `@aily-project/board-walnutpi_serial` | 独立核桃派 SERIAL-A，`linux-serial-shell` | `type: linux:python:walnutpi-serial` |
+| `@aily-project/lib-python-core` | 可移植 CPython：语言、OpenCV、码识别、网络、文件 | `spec: true`，四个 Python 板 `type` |
+| `@aily-project/lib-linux-python` | gpiozero / pyserial / `cv2.VideoCapture` / ALSA | `spec: true`，仅三个 Linux `type` |
+| `@aily-project/lib-cybercam` | CanMV/`walnutpi`/`kpu`/`digitalio` 硬件，并自包含可移植积木 | `spec: true`，仅 CyberCAM |
+
+CyberCAM 模板继续只依赖 `board-cybercam` + `lib-cybercam`，避免拆坏现有项目。Linux 模板依赖 `lib-python-core` + `lib-linux-python`，禁止依赖 `lib-cybercam`。
+
+`raspberrypi_pico` 仍是 RP2040 Arduino 板，不是这套 Linux Python 运行时。
+
+## 本地开发覆盖
+
+未发布的 Linux 板卡包不会出现在远程 `boards.json` 里。开发版会从 Electron 目录解析兄弟仓库：
+
+```text
+<repo>/aily-blockly/electron
+<repo>/aily-blockly-boards/{raspberrypi,walnutpi,walnutpi_serial}
+<repo>/aily-blockly-libraries/{python-core,linux-python}
+```
+
+发现到的板卡会合并进新建项目列表；`localSource` 只留在内存，不写回 `boards.json` 缓存。从这些板卡创建项目时，应用会复制本地板卡模板和两个 Python 库到项目 `node_modules`，不会对未发布包执行 `npm install` / `npm view`。路径必须是兄弟仓库内的绝对路径。
+
+离线脚本仍可用：
+
+```powershell
+npm run create:linux-project -- --board raspberrypi --name "Raspberry Pi Starter"
+npm run create:linux-project -- --board walnutpi --name "WalnutPi Starter"
+npm run create:linux-project -- --board walnutpi_serial --name "WalnutPi Serial Starter"
+```

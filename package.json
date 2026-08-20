@@ -192,6 +192,8 @@
     "validate:e2e:simulator-debug": "node ./scripts/validate-simulator-debug-e2e-report.mjs",
     "create:cybercam-project": "node scripts/create-local-cybercam-project.mjs",
     "test:create-cybercam-project": "node --test scripts/create-local-cybercam-project.test.mjs",
+    "create:linux-project": "node scripts/create-local-linux-project.mjs",
+    "test:create-linux-project": "node --test scripts/create-local-linux-project.test.mjs",
     "smoke:cybercam-hardware": "node scripts/run-cybercam-hardware-smoke.mjs",
     "test:cybercam-hardware-smoke": "node --test scripts/run-cybercam-hardware-smoke.test.mjs",
     "test:python-runtime": "node --test electron/test/python-runtime-*.test.js electron/test/canmv-*.test.js electron/test/linux-*.test.js",

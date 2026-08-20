@@ -5,6 +5,7 @@ export interface NewProjectData {
     name: string;
     nickname: string;
     version: string;
+    localSource?: string;
   };
   devmode?: string;
 }

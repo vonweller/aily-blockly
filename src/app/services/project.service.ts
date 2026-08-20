@@ -36,6 +36,12 @@ import {
   ExternalProjectDataImportResult,
 } from './project-data/project-data-legacy-import';
 import { materializeGenericProjectDataValues } from './project-data/project-data-generic-values';
+import {
+  isSafeLocalSourcePath,
+  resolveSiblingWorkspaceRoot,
+  seedLocalLinuxPythonProject,
+  type LocalCopyIo,
+} from './local-python-catalog';
 
 interface ProjectPackageData {
   name: string;
@@ -431,6 +437,55 @@ export class ProjectService {
       : undefined;
   }
 
+  private createLocalCopyIo(): LocalCopyIo {
+    const pathApi = window['path'];
+    const fsApi = window['fs'];
+    return {
+      exists: (filePath: string) => fsApi.existsSync(filePath),
+      readFile: (filePath: string) => fsApi.readFileSync(filePath, 'utf8'),
+      mkdirSync: (filePath: string) => fsApi.mkdirSync(filePath),
+      copySync: (source: string, destination: string) => fsApi.copySync(source, destination),
+      rmSync: (filePath: string, options?: { recursive?: boolean; force?: boolean }) => fsApi.rmSync(filePath, options),
+      path: {
+        join: (...parts: string[]) => pathApi.join(...parts),
+        resolve: (...parts: string[]) => pathApi.resolve(pathApi.join(...parts)),
+        relative: (from: string, to: string) => pathApi.relative(from, to),
+        isAbsolute: (value: string) => pathApi.isAbsolute(value),
+      },
+    };
+  }
+
+  private seedLocalLinuxPythonPackages(
+    boardSource: string,
+    appDataPath: string,
+    projectPath: string,
+    boardPackageName: string,
+  ): void {
+    const io = this.createLocalCopyIo();
+    const electronPath = String(window['path'].getElectronPath?.() || '');
+    const boardsRoot = resolveSiblingWorkspaceRoot(electronPath, 'aily-blockly-boards', io.path);
+    const librariesRoot = resolveSiblingWorkspaceRoot(electronPath, 'aily-blockly-libraries', io.path);
+    if (!boardsRoot || !librariesRoot) {
+      throw new Error('Local Linux board packages are only available from sibling workspace checkouts');
+    }
+    const pythonCoreSource = io.path.join(librariesRoot, 'python-core');
+    const linuxLibrarySource = io.path.join(librariesRoot, 'linux-python');
+    if (!isSafeLocalSourcePath(boardSource, [boardsRoot], io.path)) {
+      throw new Error(`Unsafe local board source: ${boardSource}`);
+    }
+    seedLocalLinuxPythonProject({
+      io,
+      boardsRoot,
+      librariesRoot,
+      boardSource,
+      pythonCoreSource,
+      linuxLibrarySource,
+      appDataPath,
+      projectPath,
+      boardPackageName,
+    });
+  }
+
   private updateNewProjectPackageJson(
     projectPath: string,
     newProjectData: NewProjectData,
@@ -476,23 +531,28 @@ export class ProjectService {
       const appDataPath = window['path'].getAppDataPath();
       const projectPath = this.buildProjectPath(newProjectData);
       const boardPackageName = this.normalizeAilyBoardPackageName(newProjectData.board.name);
-      const boardPackage = this.buildNpmPackageSpec(boardPackageName, newProjectData.board.version);
-      const installCommand = await this.buildNpmInstallCommand(boardPackage, appDataPath);
-
+      const localBoardSource = String(newProjectData.board.localSource || '').trim();
       this.uiService.updateFooterState({ state: 'doing', text: this.translate.instant('PROJECT.CREATING_PROJECT') });
-      const npmInstallResult = await this.appDataResourceLock.runExclusive(`project:new:install-board:${boardPackage}`, () =>
-        this.cmdService.runAsync(installCommand)
-      );
-      if (npmInstallResult.code !== 0) {
-        throw new Error(npmInstallResult.stderr || npmInstallResult.stdout || `npm install failed with exit code ${npmInstallResult.code}`);
+      if (!localBoardSource) {
+        const boardPackage = this.buildNpmPackageSpec(boardPackageName, newProjectData.board.version);
+        const installCommand = await this.buildNpmInstallCommand(boardPackage, appDataPath);
+        const npmInstallResult = await this.appDataResourceLock.runExclusive(`project:new:install-board:${boardPackage}`, () =>
+          this.cmdService.runAsync(installCommand)
+        );
+        if (npmInstallResult.code !== 0) {
+          throw new Error(npmInstallResult.stderr || npmInstallResult.stdout || `npm install failed with exit code ${npmInstallResult.code}`);
+        }
+      }
+      // 创建项目目录
+      await this.crossPlatformCmdService.createDirectory(projectPath, true);
+      if (localBoardSource) {
+        this.seedLocalLinuxPythonPackages(localBoardSource, appDataPath, projectPath, boardPackageName);
       }
       // const templatePath = `${appDataPath}${separator}node_modules${separator}${newProjectData.board.name}${separator}template`;
       const templatePath = window['path'].join(appDataPath, 'node_modules', boardPackageName, 'template');
       if (!window['fs'].existsSync(templatePath)) {
         throw new Error(`板卡模板目录不存在，可能是板卡包安装失败或模板缺失: ${templatePath}`);
       }
-      // 创建项目目录
-      await this.crossPlatformCmdService.createDirectory(projectPath, true);
       // 复制模板文件到项目目录
       await this.crossPlatformCmdService.copyItem(`${templatePath}${separator}*`, projectPath, true, true);
 

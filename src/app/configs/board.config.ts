@@ -38,6 +38,16 @@ export const BRAND_LIST = [
         imgLight: 'brands\\raspberrypi-light.webp',
     },
     {
+        name: 'WalnutPi',
+        value: 'walnutpi',
+        img: '',
+    },
+    {
+        name: '01Studio',
+        value: '01studio',
+        img: '',
+    },
+    {
         name: 'STMicroelectronics',
         value: 'stmicroelectronics',
         img: 'brands\\stmicroelectronics.webp',
@@ -140,6 +150,16 @@ export const CORE_LIST = [
         value: 'rp2040',
         img: 'brands\\raspberrypi.webp',
         imgLight: 'brands\\raspberrypi-light.webp',
+    },
+    {
+        name: 'Linux Python',
+        value: 'linux',
+        img: '',
+    },
+    {
+        name: 'K230',
+        value: 'k230',
+        img: '',
     },
     {
         name: 'stm32',
