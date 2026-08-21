@@ -39,12 +39,12 @@ export class TranslationService {
 
     // 加载并设置当前选择的语言
     const currentLang = this.getSelectedLanguage();
-    await this.setLanguage(currentLang);
+    await this.setLanguage(currentLang, { persist: false });
 
     if (!this.electronService.isElectron) return;
     window['ipcRenderer'].on('setting-changed', (event, data) => {
       if (data.action == 'language-changed') {
-        this.setLanguage(data.data);
+        this.setLanguage(data.data, { persist: false });
       }
     });
   }
@@ -79,7 +79,7 @@ export class TranslationService {
     return normalizeLanguageCode(language);
   }
 
-  async setLanguage(lang: string) {
+  async setLanguage(lang: string, options: { persist?: boolean } = {}) {
     const normalizedLang = normalizeLanguageCode(lang);
 
     // 检查该语言是否已加载
@@ -93,7 +93,9 @@ export class TranslationService {
     // 使用该语言
     await lastValueFrom(this.translate.use(normalizedLang));
     this.configService.data['selectedLanguage'] = normalizedLang;
-    this.configService.save();
+    if (options.persist !== false) {
+      await this.configService.save();
+    }
     return normalizedLang;
   }
 

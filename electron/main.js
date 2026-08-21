@@ -24,6 +24,7 @@ const {
   markInstalledForAppVersion,
   shouldInstallForAppVersion,
 } = require("./aily-tools-install-state");
+const { mergeConfigChanges } = require("./config-persistence");
 const ORIGINAL_PROCESS_PATH = process.env.PATH || process.env.Path || "";
 
 // 设置应用名称，用于 Windows 系统通知显示
@@ -3247,6 +3248,29 @@ ipcMain.handle("env-set", (event, data) => {
 ipcMain.handle("env-get", (event, key) => {
   return process.env[key];
 })
+
+let configSaveQueue = Promise.resolve();
+process.env.AILY_CONFIG_MERGED_SAVE = '1';
+
+ipcMain.handle("config-save-merged", (_event, payload = {}) => {
+  const operation = configSaveQueue.then(() => {
+    if (!process.env.AILY_APPDATA_PATH) {
+      throw new Error('AILY_APPDATA_PATH is not initialized');
+    }
+
+    const configPath = path.join(process.env.AILY_APPDATA_PATH, 'config.json');
+    const latest = fs.existsSync(configPath)
+      ? JSON.parse(fs.readFileSync(configPath, 'utf8'))
+      : {};
+    const merged = mergeConfigChanges(payload.base || {}, payload.next || {}, latest);
+    fs.writeFileSync(configPath, JSON.stringify(merged, null, 2));
+    userConf = merged;
+    return { success: true };
+  });
+
+  configSaveQueue = operation.catch(() => undefined);
+  return operation;
+});
 
 // 移动文件到回收站
 ipcMain.handle("move-to-trash", async (event, filePath) => {

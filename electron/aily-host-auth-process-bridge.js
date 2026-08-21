@@ -51,11 +51,13 @@ function normalizeAilyHostAuthResult(value) {
     const generation = Number(value.generation);
     if (value.ok === true) {
         const accessToken = typeof value.accessToken === 'string' ? value.accessToken.trim() : '';
+        const apiServer = normalizeApiServer(value.apiServer);
         return {
             ok: true,
             authenticated: value.authenticated === true,
             ...(Number.isInteger(generation) && generation >= 0 ? { generation } : {}),
             ...(accessToken ? { accessToken } : {}),
+            ...(apiServer ? { apiServer } : {}),
         };
     }
 
@@ -69,6 +71,20 @@ function normalizeAilyHostAuthResult(value) {
             : 'The host authentication request failed',
         ...(Number.isInteger(generation) && generation >= 0 ? { generation } : {}),
     };
+}
+
+function normalizeApiServer(value) {
+    if (typeof value !== 'string' || !value.trim()) return '';
+    try {
+        const url = new URL(value.trim());
+        if (url.protocol !== 'https:' && url.protocol !== 'http:') return '';
+        url.pathname = url.pathname.replace(/\/+$/u, '');
+        url.search = '';
+        url.hash = '';
+        return url.toString().replace(/\/+$/u, '');
+    } catch {
+        return '';
+    }
 }
 
 module.exports = {

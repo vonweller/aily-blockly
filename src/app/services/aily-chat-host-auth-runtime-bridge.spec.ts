@@ -27,15 +27,32 @@ describe('Aily Chat host auth Runtime bridge', () => {
 
   it('returns the current host access token with its credential generation', async () => {
     const initializeAuth = jasmine.createSpy('initializeAuth').and.resolveTo();
-    const handle = createAilyHostAuthRequestHandler(createAuthService({ initializeAuth }));
+    const handle = createAilyHostAuthRequestHandler(
+      createAuthService({ initializeAuth }),
+      () => 'https://selected.example///',
+    );
 
     expect(await handle({ operation: 'access-token' })).toEqual({
       ok: true,
       authenticated: true,
       accessToken: 'host-access-token',
+      apiServer: 'https://selected.example',
       generation: 4,
     });
     expect(initializeAuth).not.toHaveBeenCalled();
+  });
+
+  it('does not issue a credential lease without the API server that issued it', async () => {
+    const handle = createAilyHostAuthRequestHandler(
+      createAuthService(),
+      () => 'file:///tmp/not-an-api',
+    );
+
+    const result = await handle({ operation: 'access-token' });
+
+    expect(result.ok).toBeFalse();
+    expect(result.errorCode).toBe('HOST_API_SERVER_UNAVAILABLE');
+    expect(result.accessToken).toBeUndefined();
   });
 
   it('returns the newer host token without refreshing a stale rejected generation', async () => {

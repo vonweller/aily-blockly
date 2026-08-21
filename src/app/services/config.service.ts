@@ -45,6 +45,9 @@ export class ConfigService {
   private _isDataReady = false;
   private activeResourceSourceKey: string | null = null;
   private developmentModeSyncListenerRegistered = false;
+  private persistedDataSnapshot: AppConfig | any | null = null;
+  private configSaveQueue: Promise<void> = Promise.resolve();
+  private mergedConfigIpcAvailable: boolean | null = null;
   
   // 测试用：模拟慢速加载（毫秒），设为0禁用
   private readonly SIMULATE_SLOW_LOADING = 0; // 改为2000可以看到loading效果
@@ -315,6 +318,7 @@ export class ConfigService {
     // 添加当前系统类型到data中
     this.data["platform"] = window['platform'].type;
     this.data["lang"] = normalizeLanguageCode(window['platform'].lang);
+    this.persistedDataSnapshot = this.cloneConfigData(this.data);
     this.configReloaded$.next();
 
     // 并行加载缓存的boards.json、libraries.json和tags.json（旧格式，用于基础功能）
@@ -390,10 +394,126 @@ export class ConfigService {
     // console.log(`[ConfigService] libraryDict创建完成，共 ${Object.keys(this.libraryDict).length} 个库`);
   }
 
-  async save() {
+  async save(): Promise<void> {
     if (!this.electronService.isElectron) return;
-    let configFilePath = window['path'].getAppDataPath();
-    window['fs'].writeFileSync(`${configFilePath}/config.json`, JSON.stringify(this.data, null, 2));
+
+    const operation = this.configSaveQueue.then(() => this.persistCurrentData());
+    this.configSaveQueue = operation.catch(() => undefined);
+    return operation;
+  }
+
+  private async persistCurrentData(): Promise<void> {
+    const next = this.cloneConfigData(this.data);
+    const base = this.persistedDataSnapshot || {};
+    if (JSON.stringify(base) === JSON.stringify(next)) {
+      return;
+    }
+
+    const configFilePath = window['path'].getAppDataPath();
+    const ipcRenderer = window['ipcRenderer'];
+    if (ipcRenderer?.invoke && await this.supportsMergedConfigIpc(ipcRenderer)) {
+      try {
+        const result = await ipcRenderer.invoke('config-save-merged', { base, next });
+        if (result?.success !== true) {
+          throw new Error('Failed to save merged application config');
+        }
+      } catch (error) {
+        if (!this.isMissingMergedConfigHandlerError(error)) {
+          throw error;
+        }
+        this.persistCurrentDataLocally(configFilePath, base, next);
+      }
+    } else {
+      this.persistCurrentDataLocally(configFilePath, base, next);
+    }
+    this.persistedDataSnapshot = next;
+  }
+
+  private async supportsMergedConfigIpc(ipcRenderer: any): Promise<boolean> {
+    if (this.mergedConfigIpcAvailable !== null) {
+      return this.mergedConfigIpcAvailable;
+    }
+
+    try {
+      this.mergedConfigIpcAvailable = await ipcRenderer.invoke(
+        'env-get',
+        'AILY_CONFIG_MERGED_SAVE',
+      ) === '1';
+    } catch {
+      this.mergedConfigIpcAvailable = false;
+    }
+    return this.mergedConfigIpcAvailable;
+  }
+
+  private persistCurrentDataLocally(configFilePath: string, base: any, next: any): void {
+    const configPath = `${configFilePath}/config.json`;
+    const latest = this.electronService.exists(configPath)
+      ? JSON.parse(this.electronService.readFile(configPath))
+      : {};
+    const merged = this.mergeConfigChanges(base, next, latest);
+    window['fs'].writeFileSync(configPath, JSON.stringify(merged, null, 2));
+  }
+
+  private mergeConfigChanges(base: any, next: any, latest: any): any {
+    const result: Record<string, any> = {};
+    const keys = new Set([
+      ...Object.keys(base || {}),
+      ...Object.keys(next || {}),
+      ...Object.keys(latest || {}),
+    ]);
+
+    for (const key of keys) {
+      const baseHasKey = Object.prototype.hasOwnProperty.call(base, key);
+      const nextHasKey = Object.prototype.hasOwnProperty.call(next, key);
+      const latestHasKey = Object.prototype.hasOwnProperty.call(latest, key);
+
+      if (!nextHasKey) {
+        if (!baseHasKey && latestHasKey) {
+          result[key] = this.cloneConfigData(latest[key]);
+        }
+        continue;
+      }
+
+      if (!baseHasKey) {
+        result[key] = this.cloneConfigData(next[key]);
+        continue;
+      }
+
+      const baseValue = base[key];
+      const nextValue = next[key];
+      if (JSON.stringify(baseValue) === JSON.stringify(nextValue)) {
+        if (latestHasKey) {
+          result[key] = this.cloneConfigData(latest[key]);
+        }
+        continue;
+      }
+
+      if (this.isConfigRecord(baseValue) && this.isConfigRecord(nextValue)) {
+        result[key] = this.mergeConfigChanges(
+          baseValue,
+          nextValue,
+          latestHasKey && this.isConfigRecord(latest[key]) ? latest[key] : {},
+        );
+        continue;
+      }
+
+      result[key] = this.cloneConfigData(nextValue);
+    }
+
+    return result;
+  }
+
+  private isConfigRecord(value: unknown): value is Record<string, any> {
+    return !!value && typeof value === 'object' && !Array.isArray(value);
+  }
+
+  private isMissingMergedConfigHandlerError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error || '');
+    return message.includes("No handler registered for 'config-save-merged'");
+  }
+
+  private cloneConfigData<T>(value: T): T {
+    return JSON.parse(JSON.stringify(value));
   }
 
   /**

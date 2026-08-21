@@ -64,12 +64,14 @@ test('normalizes host responses and strips unrelated fields', () => {
         ok: true,
         authenticated: true,
         accessToken: '  host-token  ',
+        apiServer: 'https://selected.example///?credential=must-not-cross#fragment',
         generation: 9,
         refreshToken: 'must-not-cross-the-process-bridge',
     }), {
         ok: true,
         authenticated: true,
         accessToken: 'host-token',
+        apiServer: 'https://selected.example',
         generation: 9,
     });
 });

@@ -1,4 +1,5 @@
 import type { AuthService } from './auth.service';
+import { getServerUrl } from '../configs/api.config';
 
 export const AILY_HOST_AUTH_REQUEST_CHANNEL = 'child-tool-host-auth-request';
 export const AILY_HOST_AUTH_RESPONSE_CHANNEL = 'child-tool-host-auth-response';
@@ -15,6 +16,7 @@ export interface AilyHostAuthRuntimeResult {
   ok: boolean;
   authenticated?: boolean;
   accessToken?: string;
+  apiServer?: string;
   generation: number;
   errorCode?: string;
   message?: string;
@@ -38,6 +40,7 @@ interface IpcRendererLike {
 
 export function createAilyHostAuthRequestHandler(
   authService: AilyHostAuthRuntimeAuthService,
+  resolveApiServer: () => string = getServerUrl,
 ): (request: AilyHostAuthRuntimeRequest) => Promise<AilyHostAuthRuntimeResult> {
   let refreshPromise: Promise<boolean> | null = null;
 
@@ -50,11 +53,16 @@ export function createAilyHostAuthRequestHandler(
     if (!accessToken) {
       return failure(authService, 'AUTH_CREDENTIAL_UNAVAILABLE', 'The host access token is unavailable');
     }
+    const apiServer = normalizeApiServer(resolveApiServer());
+    if (!apiServer) {
+      return failure(authService, 'HOST_API_SERVER_UNAVAILABLE', 'The host API server is unavailable');
+    }
 
     return {
       ok: true,
       authenticated: true,
       accessToken,
+      apiServer,
       generation: authService.getAuthCredentialGeneration(),
     };
   };
@@ -164,6 +172,20 @@ function normalizeOperation(value: unknown): AilyHostAuthOperation | undefined {
 function normalizeGeneration(value: unknown): number | undefined {
   const generation = Number(value);
   return Number.isInteger(generation) && generation >= 0 ? generation : undefined;
+}
+
+function normalizeApiServer(value: unknown): string | undefined {
+  if (typeof value !== 'string' || !value.trim()) return undefined;
+  try {
+    const url = new URL(value.trim());
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return undefined;
+    url.pathname = url.pathname.replace(/\/+$/u, '');
+    url.search = '';
+    url.hash = '';
+    return url.toString().replace(/\/+$/u, '');
+  } catch {
+    return undefined;
+  }
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
