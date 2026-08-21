@@ -1,4 +1,5 @@
 import { Injectable } from '@angular/core';
+import { TranslateService } from '@ngx-translate/core';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { Subscription } from 'rxjs';
 import { CmdOutput, CmdService } from './cmd.service';
@@ -11,10 +12,37 @@ import { PlatformService } from './platform.service';
 import { ConfigService } from './config.service';
 import { ActionState } from './ui.service';
 import { CompileValidationService } from './compile-validation.service';
+import { LogService } from './log.service';
+import {
+  AilyBuilderOutputLine,
+  AilyBuilderOutputLineBuffer,
+  AilyBuilderProgressEvent,
+  isAilyBuilderProgressLine,
+  parseAilyBuilderProgressLine,
+  parseLegacyAilyBuilderProgressLine,
+} from '../utils/aily-builder-progress.utils';
+import {
+  appendProjectLog,
+  ProjectLogLevel,
+} from '../utils/project-log.utils';
 
 interface DiskCompileOptions {
   projectPath?: string;
   code?: string;
+}
+
+interface DiskCompileProgressState {
+  percent: number;
+  text: string;
+  hasStructuredProgress: boolean;
+}
+
+interface OneShotCommandResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  combined: string;
+  signal: string | null;
 }
 
 @Injectable({ providedIn: 'root' })
@@ -22,6 +50,7 @@ export class CompileService {
   private cancelled = false;
   private activeSub: Subscription | null = null;
   private activeStreamId: string | null = null;
+  private activeCommandCancel: (() => void) | null = null;
 
   constructor(
     private projectService: ProjectService,
@@ -34,18 +63,22 @@ export class CompileService {
     private configService: ConfigService,
     private message: NzMessageService,
     private compileValidationService: CompileValidationService,
+    private logService: LogService,
+    private translate: TranslateService,
   ) { }
 
   cancel(): void {
     this.cancelled = true;
-    if (this.activeStreamId) {
-      void this.cmdService.kill(this.activeStreamId);
+    const streamId = this.activeStreamId;
+    if (streamId) {
+      void this.cmdService.kill(streamId).catch((error) => {
+        console.warn('Failed to stop the active build process:', error);
+      });
       this.activeStreamId = null;
     }
-    if (this.activeSub) {
-      this.activeSub.unsubscribe();
-      this.activeSub = null;
-    }
+    // Resolve the current command immediately as cancelled. Merely
+    // unsubscribing leaves runCompileFromDisk awaiting a Promise forever.
+    this.activeCommandCancel?.();
   }
 
   async runCompileFromDisk(options: DiskCompileOptions = {}): Promise<{ success: boolean; result: ActionState & { fullStdErr?: string } }> {
@@ -63,6 +96,7 @@ export class CompileService {
 
     const source = this.readCompileSource(root, packagePath, isAilyCodeProject, options.code);
     if (source.success === false) {
+      this.handleFailNotice(root, this.t('FAILED_TITLE'), source.error, source.error);
       return { success: false, result: { state: 'error', text: source.error } };
     }
 
@@ -87,7 +121,9 @@ export class CompileService {
       const boardModule = await this.resolveBoardModule(root);
       if (!boardModule) {
         this.workflowService.finishBuild(false, 'Missing board module');
-        return { success: false, result: { state: 'error', text: 'Cannot resolve board module from the active project.' } };
+        const text = 'Cannot resolve board module from the active project.';
+        this.handleFailNotice(root, this.t('FAILED_TITLE'), text, text);
+        return { success: false, result: { state: 'error', text } };
       }
 
       const boardName = boardModule.replace('@aily-project/board-', '').replace('@aily-project/coder-', '');
@@ -100,17 +136,22 @@ export class CompileService {
 
       if (!ailyBuilderPath || !ailyChildPath) {
         this.workflowService.finishBuild(false, 'Missing builder paths');
-        return { success: false, result: { state: 'error', text: 'aily-builder path is unavailable.' } };
+        const text = 'aily-builder path is unavailable.';
+        this.handleFailNotice(root, this.t('FAILED_TITLE'), text, text);
+        return { success: false, result: { state: 'error', text } };
       }
 
+      const buildTitle = this.buildNoticeTitle(boardName);
+      const preparingText = this.t('DEPENDENCY_ANALYSIS_RUNNING');
       this.noticeService.update({
-        title: `Building ${boardName}`,
-        text: isAilyCodeProject ? 'Aily Code build' : 'Blockly build',
+        title: this.t('PREPARING_TITLE'),
+        text: preparingText,
         state: 'doing',
         progress: 0,
         setTimeout: 0,
         stop: () => this.cancel(),
       });
+      this.publishBuildLog(root, preparingText, 'stdout', 'doing', buildTitle);
 
       const buildConfig = {
         currentProjectPath: root,
@@ -133,56 +174,98 @@ export class CompileService {
       // 每次构建都进入预处理：该阶段会校验本地库内容指纹，内容未变时再安全复用库缓存。
       const preprocessScriptPath = this.electronService.pathJoin(ailyChildPath, 'scripts', 'preprocess.js');
       const preprocessCmd = `node "${preprocessScriptPath}" "${configFilePath}"`;
-      const pre = await this.runOneShotCommand(preprocessCmd);
+      const pre = await this.runOneShotCommand(preprocessCmd, (line) => {
+        this.publishBuildLog(root, line.line, line.type);
+      });
       if (this.cancelled) {
         this.workflowService.finishBuild(false, 'Cancelled');
         const sec = ((Date.now() - started) / 1000).toFixed(2);
-        return { success: false, result: { state: 'warn', text: `Build cancelled (${sec}s)` } };
+        const text = this.t('CANCELLED_WITH_TIME', { seconds: sec });
+        this.publishBuildLog(root, text, 'stdout', 'warn', this.t('CANCELLED_TITLE'));
+        this.updateCancelledNotice(text);
+        return { success: false, result: { state: 'warn', text } };
       }
       if (pre.exitCode !== 0) {
-        const detail = pre.stderr + pre.stdout;
+        const detail = pre.combined || pre.stderr + pre.stdout;
         this.workflowService.finishBuild(false, 'Preprocess failed');
-        this.handleFailNotice(detail);
+        this.handleFailNotice(
+          root,
+          this.t('PRECOMPILE_FAILED_TITLE'),
+          this.t('PRECOMPILE_FAILED_DETAIL'),
+          detail,
+        );
         return {
           success: false,
-          result: { state: 'error', text: `Preprocess failed (${((Date.now() - started) / 1000).toFixed(2)}s)`, fullStdErr: detail },
+          result: {
+            state: 'error',
+            text: this.t('MESSAGE_WITH_DURATION', {
+              message: this.t('PRECOMPILE_FAILED_TITLE'),
+              seconds: ((Date.now() - started) / 1000).toFixed(2),
+            }),
+            fullStdErr: detail,
+          },
         };
       }
 
       const compileScriptPath = this.electronService.pathJoin(ailyChildPath, 'scripts', 'compile.js');
       const compileCmd = `node "${compileScriptPath}" "${configFilePath}"`;
-      const cmp = await this.runOneShotCommand(compileCmd);
+      const progressState: DiskCompileProgressState = {
+        percent: 0,
+        text: this.t('FAST_BUILD_HINT'),
+        hasStructuredProgress: false,
+      };
+      this.noticeService.update({
+        title: buildTitle,
+        text: progressState.text,
+        state: 'doing',
+        progress: 0,
+        setTimeout: 0,
+        stop: () => this.cancel(),
+      });
+      const cmp = await this.runOneShotCommand(compileCmd, (line) => {
+        if (this.consumeBuildProgressLine(line.line, boardName, progressState)) {
+          return;
+        }
+        this.publishBuildLog(root, line.line, line.type);
+      });
       const buildDuration = ((Date.now() - started) / 1000).toFixed(2);
 
       if (this.cancelled) {
         this.workflowService.finishBuild(false, 'Cancelled');
-        return { success: false, result: { state: 'warn', text: `Build cancelled (${buildDuration}s)` } };
+        const text = this.t('CANCELLED_WITH_TIME', { seconds: buildDuration });
+        this.publishBuildLog(root, text, 'stdout', 'warn', this.t('CANCELLED_TITLE'));
+        this.updateCancelledNotice(text);
+        return { success: false, result: { state: 'warn', text } };
       }
 
       if (cmp.exitCode !== 0) {
-        const detail = cmp.stderr + cmp.stdout;
+        const detail = cmp.combined || cmp.stderr + cmp.stdout;
         this.workflowService.finishBuild(false, 'Compile failed');
-        this.handleFailNotice(detail);
+        const text = this.t('FAILED_WITH_TIME', { seconds: buildDuration });
+        this.handleFailNotice(root, this.t('FAILED_TITLE'), text, detail);
         return {
           success: false,
-          result: { state: 'error', text: `Build failed (${buildDuration}s)`, fullStdErr: detail },
+          result: { state: 'error', text, fullStdErr: detail },
         };
       }
 
       this.compileValidationService.triggerAfterSuccessfulCompile();
       this.workflowService.finishBuild(true);
+      const completeText = this.t('COMPLETE_WITH_TIME', { seconds: buildDuration });
       this.noticeService.update({
-        title: 'Build completed',
-        text: `Build completed (${buildDuration}s)`,
+        title: this.t('COMPLETE_TITLE'),
+        text: completeText,
         state: 'done',
         setTimeout: 600000,
       });
+      this.publishBuildLog(root, completeText, 'stdout', 'done', this.t('COMPLETE_TITLE'));
 
-      return { success: true, result: { state: 'done', text: `Build completed (${buildDuration}s)` } };
+      return { success: true, result: { state: 'done', text: completeText } };
     } catch (e: any) {
       const msg = e?.message || String(e);
       this.workflowService.finishBuild(false, msg);
       this.message.error(msg);
+      this.handleFailNotice(root, this.t('FAILED_TITLE'), msg, msg);
       return { success: false, result: { state: 'error', text: msg, fullStdErr: msg } };
     }
   }
@@ -260,11 +343,124 @@ export class CompileService {
       : null;
   }
 
-  private handleFailNotice(detail: string): void {
-    const clean = (detail || '').replace(/\[\d+(;\d+)*m/g, '').trim().slice(0, 8000);
+  private t(key: string, params?: Record<string, unknown>): string {
+    return this.translate.instant(`BLOCKLY_EDITOR.BUILD.${key}`, params);
+  }
+
+  private buildNoticeTitle(boardName: string): string {
+    return this.t('RUNNING_TITLE', { board: boardName });
+  }
+
+  private buildProgressText(progress: AilyBuilderProgressEvent): string {
+    const translationKey = `BLOCKLY_EDITOR.BUILD.PROGRESS_${progress.stage.toUpperCase()}`;
+    const translated = this.translate.instant(translationKey);
+    return translated === translationKey ? progress.message : translated;
+  }
+
+  /**
+   * Consume the same aily-builder progress contract used by Blockly builds.
+   * Structured protocol lines are UI events and must not leak into the log.
+   */
+  private consumeBuildProgressLine(
+    line: string,
+    boardName: string,
+    state: DiskCompileProgressState,
+  ): boolean {
+    const trimmedLine = line.trim();
+    if (!trimmedLine) {
+      return true;
+    }
+
+    if (isAilyBuilderProgressLine(trimmedLine)) {
+      const progress = parseAilyBuilderProgressLine(trimmedLine);
+      if (!progress) {
+        return false;
+      }
+      state.hasStructuredProgress = true;
+      state.percent = Math.max(state.percent, progress.percent);
+      state.text = this.buildProgressText(progress);
+      this.updateBuildProgress(boardName, state);
+      return true;
+    }
+
+    if (trimmedLine.startsWith('BuildText:')) {
+      state.text = trimmedLine.slice('BuildText:'.length).trim() || state.text;
+    }
+
+    // Compatibility with aily-builder <= 1.2.10. Once a structured event is
+    // observed, raw Ninja counters are stage-local and no longer drive global
+    // progress.
+    if (!state.hasStructuredProgress) {
+      const legacyPercent = parseLegacyAilyBuilderProgressLine(trimmedLine);
+      if (legacyPercent !== null && legacyPercent > state.percent) {
+        state.percent = legacyPercent;
+        this.updateBuildProgress(boardName, state);
+      }
+    }
+
+    return false;
+  }
+
+  private updateBuildProgress(
+    boardName: string,
+    state: DiskCompileProgressState,
+  ): void {
+    if (this.cancelled) {
+      return;
+    }
     this.noticeService.update({
-      title: 'Build failed',
-      text: 'See logs for details.',
+      title: this.buildNoticeTitle(boardName),
+      text: state.text,
+      state: 'doing',
+      progress: state.percent,
+      setTimeout: 0,
+      stop: () => this.cancel(),
+    });
+  }
+
+  private publishBuildLog(
+    projectPath: string,
+    line: string,
+    outputType: 'stdout' | 'stderr',
+    state = 'doing',
+    title?: string,
+  ): void {
+    const detail = String(line || '').trim();
+    if (!detail) {
+      return;
+    }
+    const isError = outputType === 'stderr' && /(?:\[ERROR\]|\berror:|\bfatal:)/i.test(detail);
+    const logState = isError ? 'error' : state;
+    this.logService.update({ title, detail, state: logState });
+    const level: ProjectLogLevel = isError
+      ? 'ERROR'
+      : logState === 'done' || logState === 'warn'
+        ? 'INFO'
+        : 'DEBUG';
+    appendProjectLog(projectPath, 'compile', level, detail);
+  }
+
+  private updateCancelledNotice(text: string): void {
+    this.noticeService.update({
+      title: this.t('CANCELLED_TITLE'),
+      text,
+      state: 'warn',
+      setTimeout: 55000,
+      isCancellationNotice: true,
+    });
+  }
+
+  private handleFailNotice(
+    projectPath: string,
+    title: string,
+    text: string,
+    detail: string,
+  ): void {
+    const clean = (detail || '').replace(/\[\d+(;\d+)*m/g, '').trim().slice(0, 8000);
+    appendProjectLog(projectPath, 'compile', 'ERROR', text || clean || '(no logs)');
+    this.noticeService.update({
+      title,
+      text,
       state: 'error',
       detail: clean || '(no logs)',
       setTimeout: 600000,
@@ -272,14 +468,53 @@ export class CompileService {
     });
   }
 
-  private runOneShotCommand(command: string): Promise<{ exitCode: number; stdout: string; stderr: string; signal: string | null }> {
+  private runOneShotCommand(
+    command: string,
+    onLine?: (line: AilyBuilderOutputLine) => void,
+  ): Promise<OneShotCommandResult> {
     return new Promise((resolve, reject) => {
       let stdout = '';
       let stderr = '';
+      let combined = '';
       let exitCode = 0;
       let signal: string | null = null;
+      let settled = false;
+      let sub: Subscription | null = null;
+      const lineBuffer = new AilyBuilderOutputLineBuffer();
 
-      const sub = this.cmdService.run(command, null, false).subscribe({
+      const emitLines = (lines: AilyBuilderOutputLine[]) => {
+        lines.forEach(line => onLine?.(line));
+      };
+
+      const cleanup = (cancelCommand: () => void) => {
+        if (this.activeSub === sub) {
+          this.activeSub = null;
+        }
+        if (this.activeCommandCancel === cancelCommand) {
+          this.activeCommandCancel = null;
+        }
+        this.activeStreamId = null;
+      };
+
+      const settle = (cancelCommand: () => void) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        emitLines(lineBuffer.flush());
+        sub?.unsubscribe();
+        cleanup(cancelCommand);
+        resolve({ exitCode, stdout, stderr, combined, signal });
+      };
+
+      const cancelCommand = () => {
+        exitCode = 1;
+        signal = 'cancelled';
+        settle(cancelCommand);
+      };
+
+      this.activeCommandCancel = cancelCommand;
+      sub = this.cmdService.run(command, null, false).subscribe({
         next: (o: CmdOutput) => {
           if (!this.activeStreamId && o.streamId) {
             this.activeStreamId = o.streamId;
@@ -289,22 +524,37 @@ export class CompileService {
             signal = o.signal || null;
           }
           if (o.type === 'error') {
-            stderr += String(o.error || '');
+            const errorText = String(o.error || '');
+            exitCode = 1;
+            stderr += errorText;
+            combined += errorText;
+            if (errorText) {
+              emitLines(lineBuffer.append('stderr', `${errorText}\n`));
+            }
           }
           if (o.data) {
             if (o.type === 'stderr') {
               stderr += o.data;
+              combined += o.data;
+              emitLines(lineBuffer.append('stderr', o.data));
             } else {
               stdout += o.data;
+              combined += o.data;
+              emitLines(lineBuffer.append('stdout', o.data));
             }
           }
         },
-        error: (err) => reject(err),
+        error: (err) => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          emitLines(lineBuffer.flush());
+          cleanup(cancelCommand);
+          reject(err);
+        },
         complete: () => {
-          this.activeStreamId = null;
-          sub.unsubscribe();
-          this.activeSub = null;
-          resolve({ exitCode, stdout, stderr, signal });
+          settle(cancelCommand);
         },
       });
       this.activeSub = sub;

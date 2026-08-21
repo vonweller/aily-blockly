@@ -1,7 +1,8 @@
 import {
   AILY_BUILDER_PROGRESS_PREFIX,
   AilyBuilderOutputLineBuffer,
-  parseAilyBuilderProgressLine
+  parseAilyBuilderProgressLine,
+  parseLegacyAilyBuilderProgressLine
 } from './aily-builder-progress.utils';
 
 describe('AilyBuilderOutputLineBuffer', () => {
@@ -39,5 +40,17 @@ describe('AilyBuilderOutputLineBuffer', () => {
       { line: 'last stderr line', type: 'stderr' }
     ]);
     expect(buffer.flush()).toEqual([]);
+  });
+});
+
+describe('parseLegacyAilyBuilderProgressLine', () => {
+  it('parses percentage bars and fractional counters', () => {
+    expect(parseLegacyAilyBuilderProgressLine('[=======   ] 70%')).toBe(70);
+    expect(parseLegacyAilyBuilderProgressLine('[3/4] compiling')).toBe(75);
+  });
+
+  it('rejects non-progress output and invalid totals', () => {
+    expect(parseLegacyAilyBuilderProgressLine('compiler output')).toBeNull();
+    expect(parseLegacyAilyBuilderProgressLine('[1/0] compiling')).toBeNull();
   });
 });

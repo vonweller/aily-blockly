@@ -31,7 +31,8 @@ import {
   AilyBuilderOutputLineBuffer,
   AilyBuilderProgressEvent,
   isAilyBuilderProgressLine,
-  parseAilyBuilderProgressLine
+  parseAilyBuilderProgressLine,
+  parseLegacyAilyBuilderProgressLine
 } from '../../../utils/aily-builder-progress.utils';
 import { ChatPerformanceTracer } from '../../../tools/aily-chat/services/chat-perf-tracer';
 import { appendProjectLog, type ProjectLogLevel } from '../../../utils/project-log.utils';
@@ -1634,26 +1635,7 @@ export class _BuilderService {
                     // Legacy parser retained for aily-builder <= 1.2.10.
                     // Newer builders also emit raw Ninja counters, but those counters are
                     // local to a stage and must not be treated as global progress.
-                    const progressInfo = trimmedLine.trim();
-                    let progressValue = 0;
-                    const barProgressMatch = progressInfo.match(/\[.*?\]\s*(\d+)%/);
-                    const fractionProgressMatch = progressInfo.match(/\[(\d+)\/(\d+)\]/);
-
-                    if (barProgressMatch) {
-                      try {
-                        progressValue = parseInt(barProgressMatch[1], 10);
-                      } catch (error) {
-                        progressValue = 0;
-                      }
-                    } else if (fractionProgressMatch) {
-                      try {
-                        const current = parseInt(fractionProgressMatch[1], 10);
-                        const total = parseInt(fractionProgressMatch[2], 10);
-                        progressValue = Math.floor((current / total) * 100);
-                      } catch (error) {
-                        progressValue = 0;
-                      }
-                    }
+                    const progressValue = parseLegacyAilyBuilderProgressLine(trimmedLine) ?? 0;
 
                     if (!hasStructuredBuilderProgress && progressValue > lastProgress) {
                       lastProgress = progressValue;
