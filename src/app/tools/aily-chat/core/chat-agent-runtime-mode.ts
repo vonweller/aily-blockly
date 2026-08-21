@@ -233,7 +233,7 @@ export function resolveChatAgentRuntimeModeForProject(
 
   if (projectPath) {
     const hasAbsProject = hostPathExists(projectPath, 'project.abs');
-    const hasCoderEntry = hostPathExists(projectPath, 'src', 'main.cpp');
+    const hasCoderEntry = hostPathExists(projectPath, 'project.aci');
 
     if (hasAbsProject && hasCoderEntry) {
       const metadataHintMode = restoredMode && restoredMode !== 'unbound'
@@ -278,8 +278,8 @@ export function resolveChatAgentRuntimeModeForProject(
         mode: 'coder',
         source: 'project_inferred',
         reason: userPreferenceMode && userPreferenceMode !== 'coder'
-          ? `src/main.cpp detected; user preference ignored: ${userPreferenceMode}`
-          : 'src/main.cpp detected',
+          ? `project.aci detected; user preference ignored: ${userPreferenceMode}`
+          : 'project.aci detected',
         projectPath,
         hasAbsProject,
         hasCoderEntry,
@@ -387,6 +387,8 @@ function readRuntimeModeHintFromMetadata(
   ]);
   const coderScore = scoreRuntimeHint(hintText, [
     'coder',
+    'project.aci',
+    'sketch/src/main.cpp',
     'src/main.cpp',
     'main.cpp',
     'runtime:coder',

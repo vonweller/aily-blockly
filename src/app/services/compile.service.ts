@@ -94,7 +94,9 @@ export class CompileService {
       const ailyBuilderPath = window['path'].getAilyBuilderPath();
       const appDataPath = window['path'].getAppDataPath();
       const ailyChildPath = window['path'].getAilyChildPath();
-      const tempPath = this.electronService.pathJoin(root, '.temp');
+      const tempPath = isAilyCodeProject
+        ? this.electronService.pathJoin(root, 'sketch')
+        : this.electronService.pathJoin(root, '.temp');
 
       if (!ailyBuilderPath || !ailyChildPath) {
         this.workflowService.finishBuild(false, 'Missing builder paths');
@@ -118,7 +120,9 @@ export class CompileService {
         za7Path: this.platformService.za7,
         ailyBuilderPath,
         devmode: this.configService.data.devmode || false,
-        partitionFilePath: this.electronService.pathJoin(root, 'partitions.csv'),
+        partitionFilePath: isAilyCodeProject
+          ? this.electronService.pathJoin(root, 'sketch', 'src', 'partitions.csv')
+          : this.electronService.pathJoin(root, 'partitions.csv'),
       };
       const configFilePath = this.electronService.pathJoin(tempPath, 'build-config.json');
       if (!window['path'].isExists(tempPath)) {
@@ -200,7 +204,14 @@ export class CompileService {
           ? aci.entry.replace(/\\/g, '/')
           : 'src/main.cpp';
         const segments = entryRel.split('/').filter(Boolean);
-        const sourcePath = this.electronService.pathJoin(projectPath, ...segments);
+        if (
+          entryRel.startsWith('/')
+          || /^[A-Za-z]:\//.test(entryRel)
+          || segments.some(segment => segment === '..')
+        ) {
+          return { success: false, error: `Invalid Coder entry outside sketch workspace: ${entryRel}` };
+        }
+        const sourcePath = this.electronService.pathJoin(projectPath, 'sketch', ...segments);
         if (!window['path'].isExists(sourcePath)) {
           return { success: false, error: `Entry file does not exist: ${entryRel}` };
         }

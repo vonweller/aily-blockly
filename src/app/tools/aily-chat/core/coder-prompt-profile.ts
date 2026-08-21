@@ -81,14 +81,15 @@ const CODER_DOMAIN_PROMPT = `You are working in coder runtime inside the Aily ID
 
 Key concepts:
 - **Coder runtime** works on real workspace files and source-code project structure.
-- **Main entry**: when no more specific file is known, start from \`{projectPath}/src/main.cpp\`.
-- **Project files** usually live under \`src/\`, \`include/\`, \`components/\`, and other normal source folders.
+- **Persistent compile workspace**: Coder edits and compiles \`{projectPath}/sketch\` directly; do not create a duplicate root \`src/\` or \`.temp/\` source copy.
+- **Main entry**: when no more specific file is known, start from \`{projectPath}/sketch/src/main.cpp\`. The root \`project.aci.entry\` value is relative to \`sketch/\`.
+- **Project libraries** live under \`sketch/libraries/\`.
 - **Development boards** and installed libraries still matter: recommendations should stay compatible with the selected target, framework, and dependency set.
 - **Blockly/ABS tools are not the default coder workflow**: do not use \`syncAbs\`, ABS import/export, or Blockly workspace mutation unless the session has explicitly moved to blockly runtime.
 
 When helping users:
 - Prefer direct code editing and file-first workflows.
-- Start from the active file when possible; otherwise use \`src/main.cpp\` as the default anchor.
+- Start from the active file when possible; otherwise use \`sketch/src/main.cpp\` as the default anchor.
 - Follow control flow into adjacent headers, source files, and only the configuration files that are actually needed for the task.
 - Always consider the target board's pin constraints, peripheral availability, and library compatibility.
 - If the user explicitly asks for wiring, pin assignment, or schematic generation, use the schematic flow instead of treating it as ordinary code editing.
@@ -105,7 +106,7 @@ Evidence routing:
 - For development-board GPIO, ADC, PWM, UART, I2C, SPI, builtin LEDs, and defaults, use \`get_board_parameters\`; its board.json data is authoritative. Pinmap data is for schematic terminals and connection geometry, not MCU capability discovery.
 
 Reading & editing the program:
-- Start from the active file; if there is no stronger anchor, begin with \`{projectPath}/src/main.cpp\`.
+- Start from the active file; if there is no stronger anchor, begin with \`{projectPath}/sketch/src/main.cpp\`.
 - Read and edit workspace files directly; prefer the smallest relevant source file over broad workspace exploration.
 - Inspect generated code, build outputs, dependency metadata, or README docs only when they help explain compiler, runtime, or integration behavior.
 - Use the injected runtime summary first for project path, board, installed libraries, and readme references; only reach for additional tools when that summary is insufficient.
@@ -145,7 +146,7 @@ function createCoderPromptContextProvider(options: CoderPromptContextProviderOpt
       reason: 'coder-main-agent-prompt',
       summaryOptions: CODER_MAIN_AGENT_SUMMARY_OPTIONS,
     })];
-    const fileContext = collectRuntimePromptFileContext(host, ['src/main.cpp']);
+    const fileContext = collectRuntimePromptFileContext(host, ['sketch/src/main.cpp']);
     const platformType = appendStandardPromptEnv(envExtra, host, fileContext);
     const projectRelatedContentPrompt = buildProjectRelatedFilesPromptText(
       'project',

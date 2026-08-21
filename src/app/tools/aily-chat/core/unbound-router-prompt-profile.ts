@@ -85,9 +85,9 @@ function pushProjectMarker(envExtra: string[], projectPath: string): void {
   }
 
   try {
-    const mainCppPath = host.path.join(projectPath, 'src', 'main.cpp');
-    envExtra.push(`src/main.cpp: ${host.fs.existsSync(mainCppPath) ? 'present' : 'missing'}`);
+    const mainCppPath = host.path.join(projectPath, 'sketch', 'src', 'main.cpp');
+    envExtra.push(`sketch/src/main.cpp: ${host.fs.existsSync(mainCppPath) ? 'present' : 'missing'}`);
   } catch {
-    envExtra.push('src/main.cpp: unknown');
+    envExtra.push('sketch/src/main.cpp: unknown');
   }
 }

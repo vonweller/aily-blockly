@@ -3,16 +3,11 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { NzModalRef, NZ_MODAL_DATA } from 'ng-zorro-antd/modal';
 import { NzInputModule } from 'ng-zorro-antd/input';
-import { NzSelectModule } from 'ng-zorro-antd/select';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { ConfigService } from '../../../services/config.service';
 import { ProjectService } from '../../../services/project.service';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { BaseDialogComponent, DialogButton } from '../../../components/base-dialog/base-dialog.component';
-import {
-  getCoderFrameworkOptions,
-  resolveDefaultCoderFramework,
-} from '../../../utils/coder-board.mapper';
 
 @Component({
   selector: 'app-board-selector-dialog',
@@ -20,7 +15,6 @@ import {
     CommonModule,
     FormsModule,
     NzInputModule,
-    NzSelectModule,
     TranslateModule,
     BaseDialogComponent
   ],
@@ -38,24 +32,8 @@ export class BoardSelectorDialogComponent implements OnInit {
   filteredBoardList: any[] = [];
   searchKeyword: string = '';
   selectedBoard: any = null;
-  /** Aily Code：所选开发板对应的硬件平台（framework） */
-  selectedCoderPlatform = '';
   isLoading: boolean = false;
   loadingText: string = '';
-
-  get showPlatformSelector(): boolean {
-    return !!this.data.isAilyCode && !!this.selectedBoard && this.coderPlatformOptions.length > 0;
-  }
-
-  get coderPlatformOptions(): { value: string; label: string }[] {
-    if (!this.data.isAilyCode || !this.selectedBoard) {
-      return [];
-    }
-    return getCoderFrameworkOptions(this.selectedBoard).map((option) => ({
-      value: option.value,
-      label: this.getCoderFrameworkLabel(option.value),
-    }));
-  }
 
   get resourceUrl() {
     return this.configService.getCurrentResourceUrl() + '/imgs/boards/';
@@ -78,29 +56,8 @@ export class BoardSelectorDialogComponent implements OnInit {
     }
   }
 
-  private readCurrentAilyCodeFramework(): string {
-    const root = this.projectService.currentProjectPath;
-    if (!root) {
-      return '';
-    }
-    const aciPath = `${root}/project.aci`;
-    if (!window['fs']?.existsSync?.(aciPath)) {
-      return '';
-    }
-    try {
-      const aci = JSON.parse(window['fs'].readFileSync(aciPath, 'utf8'));
-      return String(aci?.target?.framework ?? aci?.devmode ?? '').trim();
-    } catch {
-      return '';
-    }
-  }
-
-  /** 预选当前工程开发板与硬件平台 */
+  /** 预选当前工程开发板。 */
   private async initAilyCodeSelection(): Promise<void> {
-    const framework = this.readCurrentAilyCodeFramework();
-    if (framework) {
-      this.selectedCoderPlatform = framework;
-    }
     try {
       const currentModule = await this.projectService.getBoardModule();
       if (!currentModule) {
@@ -109,26 +66,11 @@ export class BoardSelectorDialogComponent implements OnInit {
       const current = this.boardList.find((board) => board.name === currentModule);
       if (current) {
         this.selectedBoard = current;
-        this.syncCoderPlatformSelection(current);
       }
     } catch {
       /* 工程尚未安装主板包时忽略 */
     } finally {
       this.cd.detectChanges();
-    }
-  }
-
-  getCoderFrameworkLabel(framework: string): string {
-    const key = `PROJECT_NEW.FORM.PLATFORM_${framework.toUpperCase().replace(/-/g, '_')}`;
-    const translated = this.translate.instant(key);
-    return translated !== key ? translated : framework;
-  }
-
-  private syncCoderPlatformSelection(boardInfo: any): void {
-    const defaultFramework = resolveDefaultCoderFramework(boardInfo);
-    const options = getCoderFrameworkOptions(boardInfo);
-    if (!options.some((option) => option.value === this.selectedCoderPlatform)) {
-      this.selectedCoderPlatform = defaultFramework;
     }
   }
 
@@ -150,16 +92,10 @@ export class BoardSelectorDialogComponent implements OnInit {
   // 选择开发板
   selectBoard(board: any): void {
     this.selectedBoard = board;
-    if (this.data.isAilyCode) {
-      this.syncCoderPlatformSelection(board);
-    }
   }
 
   get canConfirm(): boolean {
     if (!this.selectedBoard) {
-      return false;
-    }
-    if (this.showPlatformSelector && !this.selectedCoderPlatform) {
       return false;
     }
     return true;
@@ -203,10 +139,7 @@ export class BoardSelectorDialogComponent implements OnInit {
       this.isLoading = true;
       this.cd.detectChanges();
       try {
-        const boardPayload = this.data.isAilyCode && this.selectedCoderPlatform
-          ? { ...this.selectedBoard, selectedFramework: this.selectedCoderPlatform }
-          : this.selectedBoard;
-        await this.projectService.changeBoard(boardPayload);
+        await this.projectService.changeBoard(this.selectedBoard);
         // 切换完成后关闭对话框
         this.modal.close();
       } catch (error) {

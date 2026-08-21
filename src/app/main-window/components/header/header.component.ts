@@ -1493,9 +1493,12 @@ export class HeaderComponent implements OnInit, OnDestroy {
       return null;
     }
     const pathApi = window['path'];
+    const sourceRoot = this.projectService.isAilyCodeProject(projectRoot)
+      ? pathApi.join(projectRoot, 'sketch', 'src')
+      : pathApi.join(projectRoot, 'src');
     return {
-      srcDir: pathApi.join(projectRoot, 'src'),
-      requiredFilePath: pathApi.join(projectRoot, 'src', 'partitions.csv'),
+      srcDir: sourceRoot,
+      requiredFilePath: pathApi.join(sourceRoot, 'partitions.csv'),
       legacyFilePath: pathApi.join(projectRoot, 'partitions.csv'),
     };
   }

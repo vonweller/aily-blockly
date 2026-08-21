@@ -17,10 +17,7 @@ import type { ProjectSceneProposalInvocationInput } from '../tools/aily-chat/cor
 import { SerialService, type PortItem } from './serial.service';
 import { UploaderService } from './uploader.service';
 import { selectSerialPort } from './serial-port-selection';
-import { AilyCodeProjectService } from './aily-code-project.service';
-import { resolveCoderFrameworkOption, resolveDefaultCoderFramework } from '../utils/coder-board.mapper';
 import { executeCoderProjectCreateOperation } from './coder-project-create-operation';
-import { buildCoderBoardSearchCatalog } from './coder-board-resolution';
 import { AbsAutoSyncService } from '../tools/aily-chat/services/abs-auto-sync.service';
 import {
   connectBlocksSimpleTool,
@@ -69,7 +66,6 @@ export class BlocklyLiveOperationBridgeService {
     private readonly projectSceneProposalProvider: ProjectSceneProposalProviderService,
     private readonly serialService: SerialService,
     private readonly uploaderService: UploaderService,
-    private readonly ailyCodeProjectService: AilyCodeProjectService,
     private readonly ngZone: NgZone,
   ) {}
 
@@ -619,17 +615,20 @@ export class BlocklyLiveOperationBridgeService {
   private async executeCoderProjectCreate(params: Record<string, any>): Promise<Record<string, any>> {
     return executeCoderProjectCreateOperation(params, {
       normalizeBoardName: (value) => this.normalizeAilyBoardPackageName(value),
-      getCoderBoards: () => this.configService.getCoderBoardListForSelector(),
-      loadCoderBoards: () => this.configService.loadCoderBoardList(),
-      resolveDefaultFramework: (board) => resolveDefaultCoderFramework(board),
-      resolveFrameworkOption: (board, framework) => resolveCoderFrameworkOption(board, framework),
-      defaultParentPath: () => window['path'].join(
-        window['path'].getUserDocuments(),
-        'aily-code-project',
-      ),
+      getBoards: () => this.configService.getBoardListForSelector(),
+      loadBoards: () => this.configService.loadBoardList(),
+      defaultParentPath: () => this.projectService.getDefaultProjectParentPath(),
       generateUniqueName: (parentPath, prefix) =>
-        this.ailyCodeProjectService.generateUniqueProjectName(parentPath, prefix),
-      createProject: (data) => this.ailyCodeProjectService.projectNew(data),
+        this.projectService.generateUniqueProjectName(parentPath, prefix),
+      createProject: async (data) => {
+        const projectPath = window['path'].join(data.path, data.name.replace(/\s/g, '_'));
+        const ok = await this.projectService.projectNew(data, {
+          deferActivation: true,
+          templateDirectory: 'template-coder',
+          activationReason: 'chat-tool-create',
+        });
+        return { ok, projectPath: ok ? projectPath : undefined };
+      },
       openProject: (projectPath) => this.projectService.projectOpen(projectPath, {
         reason: 'chat-tool-create',
       }),
@@ -957,25 +956,6 @@ export class BlocklyLiveOperationBridgeService {
 
   private async executeSearchBoardsLibraries(params: Record<string, any>): Promise<Record<string, any>> {
     await this.configService.loadHardwareIndexForAI?.();
-    let searchConfig = this.configService;
-    const searchType = params['type'] || 'both';
-    if (
-      this.configService.getDevelopmentModePreference() === 'coder'
-      && searchType !== 'libraries'
-    ) {
-      let coderBoards = this.configService.getCoderBoardListForSelector();
-      if (coderBoards.length === 0) {
-        coderBoards = await this.configService.loadCoderBoardList();
-      }
-      const coderCatalog = buildCoderBoardSearchCatalog(
-        coderBoards,
-        this.configService.boardIndex || [],
-        this.configService.boardList || [],
-      );
-      searchConfig = Object.create(this.configService) as ConfigService;
-      searchConfig.boardIndex = coderCatalog.boardIndex;
-      searchConfig.boardList = coderCatalog.boardList;
-    }
     const toolResult = await searchBoardsLibrariesTool.handler(
       {
         query: params['query'],
@@ -983,7 +963,7 @@ export class BlocklyLiveOperationBridgeService {
         filters: params['filters'],
         maxResults: params['maxResults'],
       },
-      searchConfig,
+      this.configService,
     );
     const metadata = (toolResult as { metadata?: unknown }).metadata;
     return {

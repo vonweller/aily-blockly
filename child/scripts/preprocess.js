@@ -73,15 +73,19 @@ async function main() {
     const developmentMode = devmode === true || devmode?.enabled === true;
 
     // 1. 路径准备
-    const tempPath = path.join(currentProjectPath, '.temp');
-    const buildPath = path.join(currentProjectPath, '.build');
-    const sketchPath = path.join(tempPath, 'sketch');
-    const sketchFilePath = path.join(sketchPath, 'sketch.ino');
     const isAilyCode = ailyCodeProject.isAilyCodeProjectRoot(currentProjectPath);
+    const tempPath = isAilyCode
+        ? ailyCodeProject.resolveCompileWorkspacePath(currentProjectPath)
+        : path.join(currentProjectPath, '.temp');
+    const buildPath = path.join(currentProjectPath, '.build');
+    const sketchPath = isAilyCode ? tempPath : path.join(tempPath, 'sketch');
+    const sketchFilePath = path.join(sketchPath, 'sketch.ino');
     const compileSourcePath = isAilyCode
         ? ailyCodeProject.resolveCompileSourcePath(currentProjectPath)
         : sketchFilePath;
-    const librariesPath = path.join(tempPath, 'libraries');
+    const librariesPath = isAilyCode
+        ? ailyCodeProject.resolveLibrariesPath(currentProjectPath)
+        : path.join(tempPath, 'libraries');
     
     const compilerPath = path.join(appDataPath, 'compiler');
     const sdkPath = path.join(appDataPath, 'sdk');
@@ -145,6 +149,9 @@ async function main() {
 
         // 3. 处理库文件
         const libsPath = collectLibraryPackages(dependencies, currentProjectPath);
+        const componentLibraries = isAilyCode
+            ? collectWorkspaceLibraries(librariesPath)
+            : collectComponentLibraries(currentProjectPath);
 
         logger.log(`开始处理 ${libsPath.length} 个库文件`);
         const copiedLibraries = await processLibrariesParallel(
@@ -155,11 +162,9 @@ async function main() {
             developmentMode,
             libraryCache
         );
-        const componentLibraries = collectComponentLibraries(currentProjectPath);
-        const copiedComponents = await processComponentLibraries(
-            componentLibraries,
-            librariesPath
-        );
+        const copiedComponents = isAilyCode
+            ? componentLibraries.map(component => component.name)
+            : await processComponentLibraries(componentLibraries, librariesPath);
         copiedLibraries.push(...copiedComponents);
         
         // 保存缓存
@@ -259,7 +264,9 @@ async function main() {
                     copyCustomPartitionFile({
                         currentProjectPath,
                         sketchPath,
-                        customPartitionFilePath
+                        customPartitionFilePath,
+                        compileSourcePath,
+                        isAilyCode
                     });
                 }
             }
@@ -291,7 +298,9 @@ async function main() {
         await syncCompilerToolsToToolsPath(fullCompilerPath, toolsPath);
 
         // 10. 执行预编译
-        const preprocessCachePath = path.join(tempPath, 'preprocess.json');
+        const preprocessCachePath = isAilyCode
+            ? ailyCodeProject.resolvePreprocessResultPath(currentProjectPath)
+            : path.join(tempPath, 'preprocess.json');
         
         logger.log('开始预编译...');
         const builderCommand = 'aily-builder';
@@ -400,8 +409,16 @@ function copyProjectSrcToSketch(currentProjectPath, sketchPath) {
     copyDirectoryContents(projectSrcPath, sketchPath);
 }
 
-function copyCustomPartitionFile({ currentProjectPath, sketchPath, customPartitionFilePath }) {
-    const sourcePartitionFile = path.join(currentProjectPath, 'src', 'partitions.csv');
+function copyCustomPartitionFile({
+    currentProjectPath,
+    sketchPath,
+    customPartitionFilePath,
+    compileSourcePath,
+    isAilyCode
+}) {
+    const sourcePartitionFile = isAilyCode
+        ? path.join(path.dirname(compileSourcePath), 'partitions.csv')
+        : path.join(currentProjectPath, 'src', 'partitions.csv');
     const legacyPartitionFile = path.join(currentProjectPath, 'partitions.csv');
     const candidates = [
         { filePath: sourcePartitionFile, kind: 'source' },
@@ -418,7 +435,12 @@ function copyCustomPartitionFile({ currentProjectPath, sketchPath, customPartiti
         logger.warn(`检测到旧位置分区文件，建议迁移到 ${sourcePartitionFile}`);
     }
 
-    const destPartitionFilePath = path.join(sketchPath, 'partitions.csv');
+    const destPartitionFilePath = isAilyCode
+        ? sourcePartitionFile
+        : path.join(sketchPath, 'partitions.csv');
+    if (path.resolve(selected.filePath) === path.resolve(destPartitionFilePath)) {
+        return;
+    }
     try {
         fs.copyFileSync(selected.filePath, destPartitionFilePath);
     } catch (error) {
@@ -519,6 +541,21 @@ function collectComponentLibraries(currentProjectPath) {
         .map(entry => ({
             name: entry.name,
             sourcePath: path.join(componentsPath, entry.name)
+        }))
+        .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+/** Coder uses sketch/libraries directly; these directories are already build inputs. */
+function collectWorkspaceLibraries(librariesPath) {
+    if (!fs.existsSync(librariesPath) || !fs.statSync(librariesPath).isDirectory()) {
+        return [];
+    }
+
+    return fs.readdirSync(librariesPath, { withFileTypes: true })
+        .filter(entry => entry.isDirectory() && !entry.name.startsWith('.'))
+        .map(entry => ({
+            name: entry.name,
+            sourcePath: path.join(librariesPath, entry.name)
         }))
         .sort((left, right) => left.name.localeCompare(right.name));
 }
@@ -847,6 +884,7 @@ if (require.main === module) {
 
 module.exports = {
     collectComponentLibraries,
+    collectWorkspaceLibraries,
     collectLibraryPackages,
     createLibrarySourceFingerprint,
     isCompilableLibraryPackage,

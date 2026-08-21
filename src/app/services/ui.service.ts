@@ -747,16 +747,12 @@ export class UiService {
   async openBoardSelector(): Promise<void> {
     const { ProjectService } = await import('./project.service');
     const projectService = this.injector.get(ProjectService);
-    const useCoderBoardList = projectService.isAilyCodeProject();
+    const isAilyCode = projectService.isAilyCodeProject();
 
-    // Aily Code 使用 coder_board_index；Blockly 使用 boards.json
-    let boardList = useCoderBoardList
-      ? this.configService.getCoderBoardListForSelector()
-      : this.configService.getBoardListForSelector();
+    // Blockly / Coder 共用 boards.json；工程类型只决定板卡包内使用的模板目录。
+    let boardList = this.configService.getBoardListForSelector();
     if (!boardList.length) {
-      boardList = useCoderBoardList
-        ? await this.configService.loadCoderBoardList()
-        : await this.configService.loadBoardList();
+      boardList = await this.configService.loadBoardList();
     }
 
     this.modal.create({
@@ -770,7 +766,7 @@ export class UiService {
       nzContent: BoardSelectorDialogComponent,
       nzData: {
         boardList,
-        isAilyCode: useCoderBoardList,
+        isAilyCode,
       },
     });
   }

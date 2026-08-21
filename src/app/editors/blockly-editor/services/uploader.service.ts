@@ -580,7 +580,9 @@ export class _UploaderService {
 
         // 准备上传配置
         const currentProjectPath = this.projectService.currentProjectPath;
-        const tempPath = window['path'].join(currentProjectPath, '.temp');
+        const tempPath = this.projectService.isAilyCodeProject(currentProjectPath)
+          ? window['path'].join(currentProjectPath, 'sketch')
+          : window['path'].join(currentProjectPath, '.temp');
         if (!window['fs'].existsSync(tempPath)) {
           window['fs'].mkdirSync(tempPath, { recursive: true });
         }
@@ -1152,7 +1154,9 @@ export class _UploaderService {
     this.logNetworkOtaUpload(this.networkT('LOG_FIRMWARE_SIZE', { size: this.formatBytes(firmwareSize) }));
 
     const currentProjectPath = this.projectService.currentProjectPath;
-    const tempPath = window['path'].join(currentProjectPath, '.temp');
+    const tempPath = this.projectService.isAilyCodeProject(currentProjectPath)
+      ? window['path'].join(currentProjectPath, 'sketch')
+      : window['path'].join(currentProjectPath, '.temp');
     if (!window['fs'].existsSync(tempPath)) {
       window['fs'].mkdirSync(tempPath, { recursive: true });
     }
@@ -1672,7 +1676,9 @@ export class _UploaderService {
       const currentProjectPath = this.projectService.currentProjectPath;
 
       // 创建一个临时的 buildPath，用于存放 softdevice hex 文件
-      const tempBuildPath = window['path'].join(currentProjectPath, '.temp', 'softdevice');
+      const tempBuildPath = this.projectService.isAilyCodeProject(currentProjectPath)
+        ? window['path'].join(currentProjectPath, '.build', 'softdevice')
+        : window['path'].join(currentProjectPath, '.temp', 'softdevice');
       if (!window['fs'].existsSync(tempBuildPath)) {
         window['fs'].mkdirSync(tempBuildPath, { recursive: true });
       }
@@ -1694,7 +1700,9 @@ export class _UploaderService {
       };
 
       // 写入配置文件
-      const tempPath = window['path'].join(currentProjectPath, '.temp');
+      const tempPath = this.projectService.isAilyCodeProject(currentProjectPath)
+        ? window['path'].join(currentProjectPath, 'sketch')
+        : window['path'].join(currentProjectPath, '.temp');
       if (!window['fs'].existsSync(tempPath)) {
         window['fs'].mkdirSync(tempPath, { recursive: true });
       }

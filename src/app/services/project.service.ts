@@ -23,10 +23,6 @@ import {
   readPlatformRefFromProjectAci,
   resolveEffectiveBoardDependencies,
 } from '../utils/platform-runtime.utils';
-import {
-  resolveCoderFrameworkOption,
-  resolveDefaultCoderFramework,
-} from '../utils/coder-board.mapper';
 import { applyCdcSerialPortOverrides } from '../editors/blockly-editor/components/blockly/abf';
 import { projectDataRuntime } from './project-data/project-data-runtime';
 import { assertNoOversizedInlineValues } from './project-data/project-data-policy';
@@ -75,6 +71,8 @@ interface ProjectCreationOptions {
   activationReason?: ProjectActivationReason;
   sessionResource?: string | null;
   deferActivation?: boolean;
+  /** Board package template directory. Blockly uses `template`; Coder uses `template-coder`. */
+  templateDirectory?: 'template' | 'template-coder';
 }
 
 export interface BlocklyProjectLoadStatus {
@@ -194,7 +192,7 @@ export class ProjectService {
     return window['path'].isExists(window['path'].join(projectPath, 'project.aci'));
   }
 
-  /** 与 AilyCodeProjectService.normalizeNpmDepRange 一致 */
+  /** 将主板版本规范化为 package.json 可用的依赖范围。 */
   private normalizeAilyCodeBoardDepRange(versionSpec: string): string {
     const v = String(versionSpec ?? '').trim();
     if (!v) {
@@ -225,10 +223,7 @@ export class ProjectService {
     );
   }
 
-  /**
-   * Aily Code 切换开发板：dependencies / boardDependencies 仅声明主板 npm 包（+ 用户自装非 core 库），
-   * 不合并 Blockly 模板里的 lib-core-*，避免偶发多装基础库。
-   */
+  /** Aily Code 切换开发板：保留 template-coder 的板卡/库依赖，再合并用户自装库。 */
   private applyAilyCodeBoardToPackageManifest(
     packageJson: Record<string, unknown>,
     boardInfo: { name: string; version: string },
@@ -238,10 +233,12 @@ export class ProjectService {
     const preserved = this.filterAilyCodeUserPreservedDeps(currentPackageJson?.dependencies);
 
     packageJson['dependencies'] = {
+      ...((packageJson['dependencies'] as Record<string, string> | undefined) || {}),
       ...preserved,
       [boardInfo.name]: boardRange,
     };
     packageJson['boardDependencies'] = {
+      ...((packageJson['boardDependencies'] as Record<string, string> | undefined) || {}),
       [boardInfo.name]: boardRange,
     };
   }
@@ -504,7 +501,7 @@ export class ProjectService {
   private updateNewProjectPackageJson(
     projectPath: string,
     newProjectData: NewProjectData,
-    options?: { removeCloudId?: boolean }
+    options?: { removeCloudId?: boolean; coderTemplate?: boolean }
   ) {
     const inputName = String(newProjectData.name ?? '').trim();
     const packageJson = JSON.parse(window['fs'].readFileSync(`${projectPath}/package.json`));
@@ -518,10 +515,97 @@ export class ProjectService {
         packageJson.name = inputName;
         packageJson.nickname = packageJson.name;
       }
-      // 设置开发框架
-      packageJson.devmode = newProjectData.devmode;
+      // Coder 的 framework/target 由 template-coder 决定，表单不再覆盖它。
+      if (!options?.coderTemplate && newProjectData.devmode) {
+        packageJson.devmode = newProjectData.devmode;
+      }
+
+      if (options?.coderTemplate) {
+        const boardPackageName = this.normalizeAilyBoardPackageName(newProjectData.board.name);
+        const boardRange = this.normalizeAilyCodeBoardDepRange(newProjectData.board.version);
+        packageJson.dependencies = {
+          ...(packageJson.dependencies || {}),
+          [boardPackageName]: boardRange,
+        };
+        packageJson.boardDependencies = {
+          ...(packageJson.boardDependencies || {}),
+          [boardPackageName]: boardRange,
+        };
+      }
 
       window['fs'].writeFileSync(`${projectPath}/package.json`, JSON.stringify(packageJson, null, 2));
+
+      if (options?.coderTemplate) {
+        this.updateNewCoderProjectAci(projectPath, packageJson, newProjectData);
+      }
+  }
+
+  /**
+   * Finalize the copied `template-coder` without synthesizing board/framework data that belongs
+   * to the board package. `project.aci.entry` is relative to the persistent `sketch/` workspace.
+   */
+  private updateNewCoderProjectAci(
+    projectPath: string,
+    packageJson: Record<string, any>,
+    newProjectData: NewProjectData,
+  ): void {
+    const pathApi = window['path'];
+    const fs = window['fs'];
+    const aciPath = pathApi.join(projectPath, 'project.aci');
+    if (!pathApi.isExists(aciPath)) {
+      throw new Error(`Coder 模板缺少 project.aci: ${aciPath}`);
+    }
+
+    const aci = JSON.parse(fs.readFileSync(aciPath, 'utf8')) as Record<string, any>;
+    const boardPackageName = this.normalizeAilyBoardPackageName(newProjectData.board.name);
+    const boardVersion = String(newProjectData.board.version || 'latest').trim() || 'latest';
+    aci['name'] = packageJson['name'];
+    aci['nickname'] = packageJson['nickname'];
+    aci['version'] = packageJson['version'] || aci['version'] || '0.0.1';
+    aci['private'] = packageJson['private'] !== false;
+    aci['description'] = packageJson['description'] || aci['description'] || packageJson['nickname'] || '';
+    if (packageJson['devmode']) {
+      aci['devmode'] = packageJson['devmode'];
+    }
+    aci['dependencies'] = { ...(packageJson['dependencies'] || {}) };
+    aci['boardDependencies'] = { ...(packageJson['boardDependencies'] || {}) };
+    aci['target'] = {
+      ...(aci['target'] && typeof aci['target'] === 'object' ? aci['target'] : {}),
+      boardPackage: boardPackageName,
+      boardPackageVersion: boardVersion,
+    };
+    aci['entry'] = typeof aci['entry'] === 'string' && aci['entry'].trim()
+      ? aci['entry'].replace(/\\/g, '/')
+      : 'src/main.cpp';
+    const entrySegments = aci['entry'].split('/').filter(Boolean);
+    if (
+      aci['entry'].startsWith('/')
+      || /^[A-Za-z]:\//.test(aci['entry'])
+      || entrySegments.some(segment => segment === '..')
+    ) {
+      throw new Error(`Coder 模板 project.aci.entry 非法: ${aci['entry']}`);
+    }
+
+    fs.writeFileSync(aciPath, JSON.stringify(aci, null, 2));
+
+    const sketchRoot = pathApi.join(projectPath, 'sketch');
+    const sourcePath = pathApi.join(sketchRoot, ...entrySegments);
+    fs.mkdirSync(pathApi.dirname(sourcePath), { recursive: true });
+    fs.mkdirSync(pathApi.join(sketchRoot, 'libraries'), { recursive: true });
+    if (!pathApi.isExists(sourcePath)) {
+      fs.writeFileSync(sourcePath, [
+        '#include <Arduino.h>',
+        '',
+        'void setup() {',
+        '  ',
+        '}',
+        '',
+        'void loop() {',
+        '  ',
+        '}',
+        '',
+      ].join('\n'));
+    }
   }
 
   private async finishProjectCreation(projectPath: string, options: ProjectCreationOptions = {}): Promise<boolean> {
@@ -556,18 +640,35 @@ export class ProjectService {
       if (npmInstallResult.code !== 0) {
         throw new Error(npmInstallResult.stderr || npmInstallResult.stdout || `npm install failed with exit code ${npmInstallResult.code}`);
       }
-      // const templatePath = `${appDataPath}${separator}node_modules${separator}${newProjectData.board.name}${separator}template`;
-      const templatePath = window['path'].join(appDataPath, 'node_modules', boardPackageName, 'template');
+      const templateDirectory = options.templateDirectory || 'template';
+      const templatePath = window['path'].join(
+        appDataPath,
+        'node_modules',
+        boardPackageName,
+        templateDirectory,
+      );
       if (!window['fs'].existsSync(templatePath)) {
         throw new Error(`板卡模板目录不存在，可能是板卡包安装失败或模板缺失: ${templatePath}`);
+      }
+      if (templateDirectory === 'template-coder') {
+        for (const requiredFile of ['package.json', 'project.aci']) {
+          const requiredPath = window['path'].join(templatePath, requiredFile);
+          if (!window['path'].isExists(requiredPath)) {
+            throw new Error(`Coder 板卡模板缺少 ${requiredFile}: ${requiredPath}`);
+          }
+        }
       }
       // 创建项目目录
       await this.crossPlatformCmdService.createDirectory(projectPath, true);
       // 复制模板文件到项目目录
       await this.crossPlatformCmdService.copyItem(`${templatePath}${separator}*`, projectPath, true, true);
 
-      await this.initializeProjectDataSchema(projectPath);
-      this.updateNewProjectPackageJson(projectPath, newProjectData);
+      if (templateDirectory === 'template') {
+        await this.initializeProjectDataSchema(projectPath);
+      }
+      this.updateNewProjectPackageJson(projectPath, newProjectData, {
+        coderTemplate: templateDirectory === 'template-coder',
+      });
       if (options.deferActivation) {
         this.uiService.updateFooterState({ state: 'done', text: this.translate.instant('PROJECT.PROJECT_CREATED') });
         return true;
@@ -1286,6 +1387,9 @@ export class ProjectService {
    * node_modules 由 npm 维护；这里不能按顶层声明清理，否则会误删提升到根目录的间接依赖。
    */
   async syncPackageJsonWithTemp(projectPath: string): Promise<void> {
+    if (this.isAilyCodeProject(projectPath)) {
+      return;
+    }
     const mainPackagePath = window['path'].join(projectPath, 'package.json');
     const tempDir = window['path'].join(projectPath, '.temp');
     const tempPackagePath = window['path'].join(tempDir, 'package.json');
@@ -1304,10 +1408,11 @@ export class ProjectService {
     }
   }
 
-  /**
-   * 项目保存时复制主项目 package.json 到 temp 下（Blockly / Aily Code 共用）
-   */
+  /** 项目保存时同步 Blockly 的 package.json 快照；Coder 不创建 .temp。 */
   async copyPackageJsonToTemp(projectPath: string): Promise<boolean> {
+    if (this.isAilyCodeProject(projectPath)) {
+      return true;
+    }
     const mainPackagePath = window['path'].join(projectPath, 'package.json');
     const tempDir = window['path'].join(projectPath, '.temp');
     const tempPackagePath = window['path'].join(tempDir, 'package.json');
@@ -1353,15 +1458,17 @@ export class ProjectService {
       throw error;
     }
 
-    const tempPackageJsonPath = window['path'].join(this.currentProjectPath, '.temp', 'package.json');
-    try {
-      const tempDir = window['path'].dirname(tempPackageJsonPath);
-      if (!window['fs'].existsSync(tempDir)) {
-        window['fs'].mkdirSync(tempDir, { recursive: true });
+    if (!this.isAilyCodeProject(this.currentProjectPath)) {
+      const tempPackageJsonPath = window['path'].join(this.currentProjectPath, '.temp', 'package.json');
+      try {
+        const tempDir = window['path'].dirname(tempPackageJsonPath);
+        if (!window['fs'].existsSync(tempDir)) {
+          window['fs'].mkdirSync(tempDir, { recursive: true });
+        }
+        this.writePackageJsonFile(tempPackageJsonPath, data);
+      } catch (error) {
+        console.warn('同步 package.json 到 temp 失败:', error);
       }
-      this.writePackageJsonFile(tempPackageJsonPath, data);
-    } catch (error) {
-      console.warn('同步 package.json 到 temp 失败:', error);
     }
 
     // 更新当前packageData
@@ -2420,16 +2527,21 @@ export class ProjectService {
       // 读取当前package.json保留项目基本信息
       const currentPackageJson = await this.getPackageJson();
 
-      // 获取新开发板的模板package.json（从 appDataPath 读取）
-      const templatePath = window['path'].join(appDataPath, 'node_modules', normalizedBoardInfo.name, 'template');
+      const isAilyCode = this.isAilyCodeProject();
+      // 两种工程共用主板源，仅模板目录不同。
+      const templatePath = window['path'].join(
+        appDataPath,
+        'node_modules',
+        normalizedBoardInfo.name,
+        isAilyCode ? 'template-coder' : 'template',
+      );
       const templatePackageJsonPath = `${templatePath}${separator}package.json`;
+      const templateAciPath = `${templatePath}${separator}project.aci`;
 
-      if (window['fs'].existsSync(templatePackageJsonPath)) {
+      if (window['fs'].existsSync(templatePackageJsonPath)
+        && (!isAilyCode || window['fs'].existsSync(templateAciPath))) {
         // 读取模板package.json
         const templatePackageJson = JSON.parse(window['fs'].readFileSync(templatePackageJsonPath, 'utf8'));
-
-        const selectedFramework = String((boardInfo as { selectedFramework?: string }).selectedFramework ?? '').trim();
-        const isAilyCode = this.isAilyCodeProject();
 
         // 合并配置：保留当前项目的基本信息，使用新开发板的依赖和配置
         const newPackageJson: Record<string, unknown> = {
@@ -2444,11 +2556,8 @@ export class ProjectService {
         };
 
         if (isAilyCode) {
-          // 与新建 Coder 工程一致：不合并模板 dependencies 中的 lib-core-*，仅主板 + 用户自装库
+          // template-coder 决定 target/framework/基础库；用户自装库继续保留。
           this.applyAilyCodeBoardToPackageManifest(newPackageJson, normalizedBoardInfo, currentPackageJson);
-          if (selectedFramework) {
-            newPackageJson['devmode'] = selectedFramework;
-          }
         } else {
           newPackageJson['dependencies'] = {
             // 从模板获取新的开发板依赖和基础库
@@ -2467,15 +2576,21 @@ export class ProjectService {
         window['fs'].writeFileSync(`${this.currentProjectPath}/package.json`, JSON.stringify(newPackageJson, null, 2));
         console.log('package.json 更新完成');
 
-        if (this.isAilyCodeProject()) {
-          this.syncAilyCodeProjectAciAfterBoardSwitch(newPackageJson, normalizedBoardInfo);
+        if (isAilyCode) {
+          this.syncAilyCodeProjectAciAfterBoardSwitch(
+            newPackageJson,
+            normalizedBoardInfo,
+            templateAciPath,
+          );
         }
 
         if (!shouldUsePackageJsonWatcher) {
           await this.finishBoardSwitchWithoutPackageWatcher(currentBoardModule, normalizedBoardInfo.name);
         }
       } else {
-        throw new Error('未找到新开发板的模板package.json，无法更新项目配置');
+        throw new Error(isAilyCode
+          ? '未找到新开发板的 template-coder/package.json 或 project.aci，无法更新 Coder 项目配置'
+          : '未找到新开发板的 template/package.json，无法更新项目配置');
       }
 
       if (reloadPromise) {
@@ -2532,7 +2647,7 @@ export class ProjectService {
   }
 
   /**
-   * Aily Code 切换开发板后，将 package.json 与 coder_board_index 选中项同步到 project.aci。
+   * Aily Code 切换开发板后，以新主板的 template-coder/project.aci 同步 target/framework。
    */
   private syncAilyCodeProjectAciAfterBoardSwitch(
     packageJson: Record<string, unknown>,
@@ -2545,8 +2660,8 @@ export class ProjectService {
       defaultPlatform?: string;
       frameworkPlatforms?: unknown[];
       mode?: string[];
-      selectedFramework?: string;
     },
+    templateAciPath: string,
   ): void {
     const aciPath = `${this.currentProjectPath}/project.aci`;
     if (!window['fs'].existsSync(aciPath)) {
@@ -2554,41 +2669,35 @@ export class ProjectService {
     }
     try {
       const aci = JSON.parse(this.electronService.readFile(aciPath));
-      const framework = String(boardInfo.selectedFramework ?? '').trim()
-        || resolveDefaultCoderFramework(boardInfo);
-      const platformOption = resolveCoderFrameworkOption(boardInfo, framework);
-      const targetBoardId = platformOption?.boardId || boardInfo.boardId || boardInfo.name;
+      const templateAci = JSON.parse(this.electronService.readFile(templateAciPath));
 
       aci.name = packageJson['name'] ?? aci.name;
       aci.nickname = packageJson['nickname'] ?? aci.nickname;
       aci.version = packageJson['version'] ?? aci.version;
       aci.description = packageJson['description'] ?? aci.description;
-      if (packageJson['devmode'] != null && packageJson['devmode'] !== '') {
-        aci.devmode = packageJson['devmode'];
+      const templateDevmode = templateAci.devmode ?? templateAci?.target?.framework;
+      if (templateDevmode != null && templateDevmode !== '') {
+        aci.devmode = templateDevmode;
       }
       aci.dependencies = packageJson['dependencies'] ?? aci.dependencies;
       aci.boardDependencies = packageJson['boardDependencies'] ?? aci.boardDependencies;
 
       aci.target = {
-        ...(aci.target || {}),
-        board: targetBoardId,
+        ...(templateAci.target || {}),
         boardPackage: boardInfo.name,
         boardPackageVersion: boardInfo.version,
-        framework,
-        ...(platformOption?.platform || boardInfo.defaultPlatform
-          ? { platform: platformOption?.platform || boardInfo.defaultPlatform }
-          : {}),
       };
 
       window['fs'].writeFileSync(aciPath, JSON.stringify(aci, null, 2));
       console.log('[changeBoard] project.aci 已同步');
     } catch (e) {
       console.warn('[changeBoard] 同步 project.aci 失败:', e);
+      throw e;
     }
   }
 
   /**
-   * Aily Code：切换开发板/硬件平台后重装工程与平台依赖（与打开新 Coder 工程一致）。
+   * Aily Code：切换开发板后重装工程与模板声明的依赖（与打开新 Coder 工程一致）。
    */
   private async reinstallAilyCodeDepsAfterBoardSwitch(): Promise<void> {
     const projectPath = this.currentProjectPath;

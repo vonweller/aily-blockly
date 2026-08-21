@@ -6,6 +6,7 @@ const test = require('node:test');
 
 const {
     collectComponentLibraries,
+    collectWorkspaceLibraries,
     collectLibraryPackages,
     normalizeExtractedSourceDirectory,
     processComponentLibraries,
@@ -183,6 +184,20 @@ test('materializes Arduino-layout components as compiler libraries', async t => 
         fs.existsSync(path.join(librariesPath, 'BlinkPattern', 'src', 'BlinkPattern.cpp')),
         true
     );
+});
+
+test('uses Coder sketch/libraries directories directly as compiler inputs', t => {
+    const projectPath = fs.mkdtempSync(path.join(os.tmpdir(), 'aily-coder-sketch-libraries-'));
+    t.after(() => fs.rmSync(projectPath, { recursive: true, force: true }));
+
+    const librariesPath = path.join(projectPath, 'sketch', 'libraries');
+    fs.mkdirSync(path.join(librariesPath, 'Servo', 'src'), { recursive: true });
+    fs.mkdirSync(path.join(librariesPath, '.cache'), { recursive: true });
+    fs.writeFileSync(path.join(librariesPath, 'README.md'), 'not a library root\n');
+
+    const result = collectWorkspaceLibraries(librariesPath);
+    assert.deepEqual(result.map(item => item.name), ['Servo']);
+    assert.equal(result[0].sourcePath, path.join(librariesPath, 'Servo'));
 });
 
 test('resolves Coder compiler and SDK dependencies from the platform manifest', t => {

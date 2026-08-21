@@ -11,6 +11,7 @@ import { ConfigService } from '../../services/config.service';
 import { NzSelectModule } from 'ng-zorro-antd/select';
 import { NpmService } from '../../services/npm.service';
 import { NzTagModule } from 'ng-zorro-antd/tag';
+import { NzRadioModule } from 'ng-zorro-antd/radio';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { UiService } from '../../services/ui.service';
 import { PlatformService } from '../../services/platform.service';
@@ -19,14 +20,6 @@ import { firstValueFrom, Subject } from 'rxjs';
 import { takeUntil } from 'rxjs/operators';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import type { NewProjectData } from '../../types/project-new';
-import { AilyCodeProjectService } from '../../services/aily-code-project.service';
-import type { AilyCodeNewProjectData } from '../../services/aily-code-project.service';
-import type { CoderFramework } from '../../pages/project-new/project-new.component';
-import {
-  getCoderFrameworkOptions,
-  resolveCoderFrameworkOption,
-  resolveDefaultCoderFramework,
-} from '../../utils/coder-board.mapper';
 
 export type ProjectCreationCategory = 'blockly' | 'coder';
 
@@ -57,6 +50,7 @@ export function resolveInitialProjectCategory(
     NzStepsModule,
     NzSelectModule,
     NzTagModule,
+    NzRadioModule,
     TranslateModule
   ],
   templateUrl: './project-new.component.html',
@@ -90,28 +84,13 @@ export class ProjectNewComponent implements OnDestroy {
   keyword = '';
   tagList = ['Arduino', 'ESP32', 'WiFiduino', 'XIAO', 'Seeed', 'OpenJumper', 'seekfree', 'keyesrobot', 'emakefun', 'Raspberry Pi'];
   _boardList: any[] = [];
-  /** Blockly 模式开发板源（boards.json） */
+  /** Blockly / Coder 共用开发板源（boards.json） */
   private _blocklyBoardList: any[] = [];
-  /** Coder 模式开发板源（coder_board_index.json） */
-  private _coderBoardList: any[] = [];
   boardList: any[] = [];
   tagListRandom;
 
   /** 基本设定页：Blockly 图形化 / Coder 代码编辑 */
   selectedProjectCategory: ProjectCreationCategory = 'blockly';
-
-  /** Coder 新建：当前开发板可选的 framework（来自 frameworkPlatforms） */
-  selectedCoderPlatform: CoderFramework = '';
-
-  get coderPlatformOptions(): { value: string; label: string }[] {
-    if (this.selectedProjectCategory !== 'coder' || !this.currentBoard) {
-      return [];
-    }
-    return getCoderFrameworkOptions(this.currentBoard).map((option) => ({
-      value: option.value,
-      label: this.getCoderFrameworkLabel(option.value),
-    }));
-  }
 
   /** 用户是否手动修改过项目名；未修改时随类别切换自动推荐名称 */
   private isProjectNameManuallyEdited = false;
@@ -151,7 +130,6 @@ export class ProjectNewComponent implements OnDestroy {
     private cloudService: CloudService,
     private cd: ChangeDetectorRef,
     private message: NzMessageService,
-    private ailyCodeProject: AilyCodeProjectService,
     private translate: TranslateService
   ) {
     // 语言切换后重新应用开发板 nickname/description 本地化字段
@@ -182,9 +160,6 @@ export class ProjectNewComponent implements OnDestroy {
     // await this.configService.init();
     this._blocklyBoardList = this.configService.sortBoardsByUsage(
       this.process(this.configService.boardList)
-    );
-    this._coderBoardList = this.configService.sortBoardsByUsage(
-      this.process(this.configService.getCoderBoardList())
     );
     this.selectedProjectCategory = resolveInitialProjectCategory(
       undefined,
@@ -222,33 +197,24 @@ export class ProjectNewComponent implements OnDestroy {
     this.checkPathIsExist();
   }
 
-  /** 根据当前项目类别切换开发板数据源 */
+  /** 两种项目类型共用同一份 Blockly 主板源。 */
   private syncActiveBoardList(): void {
-    this._boardList = this.selectedProjectCategory === 'coder'
-      ? this._coderBoardList
-      : this._blocklyBoardList;
+    this._boardList = this._blocklyBoardList;
   }
 
-  /** Coder 模式下隐藏尚未支持的开发板（state=todo） */
   private filterBoardsForCategory(list: any[]): any[] {
-    if (this.selectedProjectCategory !== 'coder') {
-      return list;
-    }
-    return list.filter(board => board.state !== 'todo');
+    return list;
   }
 
-  getCoderFrameworkLabel(framework: string): string {
-    const key = `PROJECT_NEW.FORM.PLATFORM_${framework.toUpperCase().replace(/-/g, '_')}`;
-    const translated = this.translate.instant(key);
-    return translated !== key ? translated : framework;
-  }
-
-  private syncCoderPlatformSelection(boardInfo: any): void {
-    const defaultFramework = resolveDefaultCoderFramework(boardInfo);
-    const options = getCoderFrameworkOptions(boardInfo);
-    if (!options.some((option) => option.value === this.selectedCoderPlatform)) {
-      this.selectedCoderPlatform = defaultFramework;
+  onProjectCategoryChange(): void {
+    this.applyRecommendedProjectName();
+    if (this.selectedProjectCategory === 'blockly' && this.currentBoard) {
+      this.loadMyTemplates(this.currentBoard.name);
+      return;
     }
+    this.myTemplateList = [];
+    this.selectedTemplateName = '';
+    this.isLoadingTemplates = false;
   }
 
   private refreshBoardListForCurrentFilters(): void {
@@ -334,9 +300,8 @@ export class ProjectNewComponent implements OnDestroy {
     this.newProjectData.board.name = boardInfo.name;
     this.newProjectData.board.nickname = boardInfo._nickname || boardInfo.nickname;
     this.newProjectData.board.version = boardInfo.version;
-    if (this.selectedProjectCategory === 'coder') {
-      this.syncCoderPlatformSelection(boardInfo);
-    }
+    const boardModes = (boardInfo as BoardInfo & { mode?: string[] }).mode;
+    this.newProjectData.devmode = boardModes?.[0] || 'arduino';
     if (this.selectedProjectCategory === 'blockly') {
       this.loadMyTemplates(boardInfo.name);
     } else {
@@ -476,24 +441,8 @@ export class ProjectNewComponent implements OnDestroy {
     this.creatingMode = null;
   }
 
-  /** 向导里收集的开发板信息写入 Aily Code 的 project.aci.target */
-  private buildAilyWizardTarget(): NonNullable<AilyCodeNewProjectData['wizardTarget']> {
-    const framework = this.selectedCoderPlatform
-      || this.currentBoard?.defaultFramework
-      || 'arduino';
-    const platformOption = resolveCoderFrameworkOption(this.currentBoard, framework);
-    return {
-      boardPkgName: this.newProjectData.board.name,
-      targetBoardId: platformOption?.boardId || this.currentBoard?.boardId || '',
-      boardNickname: this.newProjectData.board.nickname,
-      boardPkgVersion: this.newProjectData.board.version,
-      framework,
-      platform: platformOption?.platform || this.currentBoard?.defaultPlatform || '',
-    };
-  }
-
   /**
-   * 子窗口里创建 Aily Code 骨架并通过 IPC 让主窗口打开工程（与 Blockly 完成创建的路径一致）。
+   * 子窗口使用同一主板包下的 template-coder 创建并打开工程。
    */
   async createAilyCodeProject(): Promise<void> {
     if (await this.checkPathIsExist()) {
@@ -507,20 +456,11 @@ export class ProjectNewComponent implements OnDestroy {
     this.creatingMode = 'aily';
     this.currentStep = 2;
 
-    const resultRef = await this.ailyCodeProject.projectNew({
-      name: String(this.newProjectData.name ?? '').trim(),
-      path: String(this.newProjectData.path ?? '').trim(),
-      wizardTarget: this.buildAilyWizardTarget()
+    const created = await this.projectService.projectNew(this.newProjectData, {
+      templateDirectory: 'template-coder',
     });
 
-    if (!resultRef.ok) {
-      const map: Record<string, string> = {
-        NAME_EMPTY: 'AILYCODE_NEW_DIALOG.WARN_NAME_EMPTY',
-        PATH_EMPTY: 'AILYCODE_NEW_DIALOG.WARN_PATH_EMPTY',
-        PATH_EXISTS: 'AILYCODE_NEW_DIALOG.ERR_PATH_EXISTS'
-      };
-      const key = map[resultRef.error ?? ''] || 'AILYCODE_NEW_DIALOG.ERR_CREATE_FAILED';
-      this.message.error(this.translate.instant(key));
+    if (!created) {
       this.currentStep = 1;
       this.creatingMode = null;
       return;
@@ -528,19 +468,6 @@ export class ProjectNewComponent implements OnDestroy {
 
     this.message.success(this.translate.instant('AILYCODE_NEW_DIALOG.SUCCESS'));
 
-    const projectPath = resultRef.projectPath;
-    if (!projectPath) {
-      this.currentStep = 1;
-      this.creatingMode = null;
-      return;
-    }
-
-    this.uiService.updateFooterState({
-      state: 'done',
-      text: this.translate.instant('PROJECT.PROJECT_CREATED'),
-    });
-
-    await window['iWindow'].send({ to: 'main', data: { action: 'open-project', path: projectPath } });
     this.uiService.closeWindow();
   }
 

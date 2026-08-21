@@ -1,9 +1,4 @@
-import { coderBoardPackageName, resolveCoderBoard } from './coder-board-resolution';
-
-export interface CoderFrameworkOptionLike {
-  boardId?: string;
-  platform?: string;
-}
+import { resolveCoderBoard } from './coder-board-resolution';
 
 export interface CoderProjectCreateResult {
   ok: boolean;
@@ -13,28 +8,21 @@ export interface CoderProjectCreateResult {
 
 export interface CoderProjectCreateDependencies {
   normalizeBoardName(value: string): string;
-  getCoderBoards(): readonly any[];
-  loadCoderBoards(): Promise<readonly any[]>;
-  resolveDefaultFramework(board: any): string;
-  resolveFrameworkOption(board: any, framework: string): CoderFrameworkOptionLike | undefined;
-  defaultParentPath(): string;
+  getBoards(): readonly any[];
+  loadBoards(): Promise<readonly any[]>;
+  defaultParentPath(): Promise<string> | string;
   generateUniqueName(parentPath: string, prefix: string): string;
   createProject(data: {
     name: string;
     path: string;
-    wizardTarget: {
-      boardPkgName: string;
-      targetBoardId: string;
-      boardNickname: string;
-      boardPkgVersion: string;
-      framework: string;
-      platform: string;
-    };
+    board: { name: string; nickname: string; version: string };
+    devmode?: string;
   }): Promise<CoderProjectCreateResult>;
   openProject(projectPath: string): Promise<boolean>;
   recordBoardUsage(boardName: string): void;
 }
 
+/** Create a Coder project from Blockly's board catalog and its template-coder directory. */
 export async function executeCoderProjectCreateOperation(
   params: Record<string, any>,
   dependencies: CoderProjectCreateDependencies,
@@ -47,17 +35,15 @@ export async function executeCoderProjectCreateOperation(
       operation: 'project_create',
       developmentMode: 'coder',
       reason: 'coder_board_required',
-      message: '缺少 Coder 开发板包名 boardName',
+      message: '缺少开发板包名 boardName',
     };
   }
 
-  let coderBoards = dependencies.getCoderBoards();
-  let boardInfo = resolveCoderBoard(coderBoards, boardName)
-    || resolveCoderBoard(coderBoards, rawBoardName);
+  let boards = dependencies.getBoards();
+  let boardInfo = resolveCoderBoard(boards, boardName) || resolveCoderBoard(boards, rawBoardName);
   if (!boardInfo) {
-    coderBoards = await dependencies.loadCoderBoards();
-    boardInfo = resolveCoderBoard(coderBoards, boardName)
-      || resolveCoderBoard(coderBoards, rawBoardName);
+    boards = await dependencies.loadBoards();
+    boardInfo = resolveCoderBoard(boards, boardName) || resolveCoderBoard(boards, rawBoardName);
   }
   if (!boardInfo) {
     return {
@@ -65,65 +51,30 @@ export async function executeCoderProjectCreateOperation(
       operation: 'project_create',
       developmentMode: 'coder',
       reason: 'coder_board_not_found',
-      message: `Coder 开发板索引中不存在或尚未支持: ${boardName}`,
+      message: `开发板索引中不存在: ${boardName}`,
       board: { name: boardName, requestedName: rawBoardName },
     };
   }
 
-  const resolvedBoardName = coderBoardPackageName(boardInfo);
-  if (!resolvedBoardName) {
-    return {
-      ok: false,
-      operation: 'project_create',
-      developmentMode: 'coder',
-      reason: 'coder_board_package_missing',
-      message: `Coder 开发板索引缺少包名: ${boardName}`,
-      board: { name: boardName, requestedName: rawBoardName },
-    };
-  }
-
-  const requestedFramework = String(params['devmode'] || '').trim();
-  const framework = requestedFramework || dependencies.resolveDefaultFramework(boardInfo);
-  const platformOption = dependencies.resolveFrameworkOption(boardInfo, framework);
-  if (!framework || !platformOption) {
-    return {
-      ok: false,
-      operation: 'project_create',
-      developmentMode: 'coder',
-      reason: 'coder_framework_not_found',
-      message: requestedFramework
-        ? `开发板 ${resolvedBoardName} 不支持 Coder framework: ${requestedFramework}`
-        : `开发板 ${resolvedBoardName} 缺少可用的 Coder framework`,
-      board: { name: resolvedBoardName, requestedName: rawBoardName },
-    };
-  }
-
+  const resolvedBoardName = dependencies.normalizeBoardName(String(boardInfo.name || boardName));
   const requestedParentPath = String(params['path'] || '').trim();
-  const parentPath = requestedParentPath || dependencies.defaultParentPath();
+  const parentPath = requestedParentPath || await dependencies.defaultParentPath();
   const requestedName = String(params['name'] || '').trim();
-  const prefix = String(params['prefix'] || '').trim() || 'aily_code_';
+  const prefix = String(params['prefix'] || '').trim() || 'project_coder_';
   const projectName = requestedName || dependencies.generateUniqueName(parentPath, prefix);
-  const requestedVersion = String(params['boardVersion'] || '').trim();
+  const requestedVersion = String(params['boardVersion'] || params['version'] || '').trim();
   const boardVersion = !requestedVersion || requestedVersion === 'latest'
     ? String(boardInfo.version || 'latest').trim() || 'latest'
     : requestedVersion;
   const boardNickname = String(
-    params['boardNickname'] || boardInfo.nickname || boardInfo.name || resolvedBoardName,
+    params['boardNickname'] || params['nickname'] || boardInfo.nickname || boardInfo.name || resolvedBoardName,
   ).trim() || resolvedBoardName;
-  const platform = platformOption.platform || boardInfo.defaultPlatform || '';
-  const targetBoardId = platformOption.boardId || boardInfo.boardId || resolvedBoardName;
 
   const result = await dependencies.createProject({
     name: projectName,
     path: parentPath,
-    wizardTarget: {
-      boardPkgName: resolvedBoardName,
-      targetBoardId,
-      boardNickname,
-      boardPkgVersion: boardVersion,
-      framework,
-      platform,
-    },
+    board: { name: resolvedBoardName, nickname: boardNickname, version: boardVersion },
+    devmode: typeof params['devmode'] === 'string' ? params['devmode'] : undefined,
   });
   if (!result.ok || !result.projectPath) {
     return {
@@ -140,8 +91,6 @@ export async function executeCoderProjectCreateOperation(
         nickname: boardNickname,
         version: boardVersion,
         requestedName: rawBoardName,
-        framework,
-        platform,
       },
     };
   }
@@ -187,22 +136,17 @@ export async function executeCoderProjectCreateOperation(
       nickname: boardNickname,
       version: boardVersion,
       requestedName: rawBoardName,
-      framework,
-      platform,
-      targetBoardId,
+      template: 'template-coder',
     },
   };
 }
 
 function normalizeCoderProjectCreateError(error: string | undefined): string {
   switch (error) {
-    case 'NAME_EMPTY':
-      return 'coder_project_name_empty';
-    case 'PATH_EMPTY':
-      return 'coder_project_path_empty';
-    case 'PATH_EXISTS':
-      return 'project_directory_exists';
-    default:
-      return 'coder_project_create_failed';
+    case 'NAME_EMPTY': return 'coder_project_name_empty';
+    case 'PATH_EMPTY': return 'coder_project_path_empty';
+    case 'PATH_EXISTS': return 'project_directory_exists';
+    case 'TEMPLATE_MISSING': return 'coder_template_missing';
+    default: return 'coder_project_create_failed';
   }
 }

@@ -234,13 +234,18 @@ export class BuilderService {
    */
   async clearBuildCache(projectPath: string): Promise<void> {
     const buildPath = this.electronService.pathJoin(projectPath, '.build');
+    const isAilyCode = this.projectService.isAilyCodeProject(projectPath);
     const librariesPath = this.electronService.pathJoin(projectPath, '.temp', 'libraries');
-    const libraryCachePath = this.electronService.pathJoin(projectPath, '.temp', 'library-cache.json');
+    const libraryCachePath = this.electronService.pathJoin(
+      projectPath,
+      isAilyCode ? 'sketch' : '.temp',
+      'library-cache.json',
+    );
 
     console.log('清除编译产物:', buildPath);
     await this.crossPlatformCmdService.removeItem(buildPath, true, true);
 
-    if (window['fs'].existsSync(librariesPath)) {
+    if (!isAilyCode && window['fs'].existsSync(librariesPath)) {
       console.log('清除本地库物化缓存:', librariesPath);
       await this.crossPlatformCmdService.removeItem(librariesPath, true, true);
     }
@@ -261,7 +266,24 @@ export class BuilderService {
       console.log('编译缓存路径:', buildPath);
       await this.crossPlatformCmdService.removeItem(buildPath, true, true);
 
-      // 删除项目下的.temp文件夹，如果存在的话
+      if (this.projectService.isAilyCodeProject(projectPath)) {
+        // sketch/src 与 sketch/libraries 是 Coder 的持久化工程内容，只移除可重建配置。
+        for (const fileName of [
+          'preprocess.json',
+          'library-cache.json',
+          'build-config.json',
+          'upload-config.json',
+        ]) {
+          const generatedPath = this.electronService.pathJoin(projectPath, 'sketch', fileName);
+          if (window['fs'].existsSync(generatedPath)) {
+            await this.crossPlatformCmdService.removeItem(generatedPath, false, true);
+          }
+        }
+        console.log('Coder 编译缓存已清除，sketch/src 与 sketch/libraries 已保留');
+        return;
+      }
+
+      // 删除 Blockly 项目下的 .temp 文件夹。
       if (window['fs'].existsSync(tempPath)) {
         console.log('删除项目下的.temp文件夹:', tempPath);
         await this.crossPlatformCmdService.removeItem(tempPath, true, true);

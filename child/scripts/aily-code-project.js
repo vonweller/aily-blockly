@@ -11,6 +11,10 @@ function isAilyCodeProjectRoot(projectRoot) {
     return fs.existsSync(path.join(projectRoot, 'project.aci'));
 }
 
+function resolveCompileWorkspacePath(projectRoot) {
+    return path.join(projectRoot, 'sketch');
+}
+
 /**
  * 从 project.aci 读取 entry，默认为 src/main.cpp，返回绝对路径。
  * 仅在 isAilyCodeProjectRoot 为 true 时调用。
@@ -27,7 +31,18 @@ function resolveCompileSourcePath(projectRoot) {
         // entry 缺失或 JSON 损坏时使用默认入口
     }
     const segments = entry.split('/').filter(Boolean);
-    return path.normalize(path.join(projectRoot, ...segments));
+    if (entry.startsWith('/') || /^[A-Za-z]:\//.test(entry) || segments.includes('..')) {
+        throw new Error(`project.aci.entry escapes the sketch workspace: ${entry}`);
+    }
+    return path.normalize(path.join(resolveCompileWorkspacePath(projectRoot), ...segments));
+}
+
+function resolveLibrariesPath(projectRoot) {
+    return path.join(resolveCompileWorkspacePath(projectRoot), 'libraries');
+}
+
+function resolvePreprocessResultPath(projectRoot) {
+    return path.join(resolveCompileWorkspacePath(projectRoot), 'preprocess.json');
 }
 
 /**
@@ -50,6 +65,9 @@ function resolveFrameworkBuildDir(projectRoot) {
 
 module.exports = {
     isAilyCodeProjectRoot,
+    resolveCompileWorkspacePath,
     resolveCompileSourcePath,
+    resolveLibrariesPath,
+    resolvePreprocessResultPath,
     resolveFrameworkBuildDir
 };

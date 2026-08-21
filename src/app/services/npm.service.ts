@@ -309,7 +309,7 @@ export class NpmService {
   }
 
   /**
-   * Aily Code 切换开发板或硬件平台后：与打开新 Coder 工程一致，
+   * Aily Code 切换开发板后：与打开新 Coder 工程一致，
    * 执行工程目录 npm install，并安装主板 boardDependencies + platform runtimeDependencies。
    */
   async reinstallDepsForAilyCodeBoardSwitch(projectPath: string): Promise<boolean> {
