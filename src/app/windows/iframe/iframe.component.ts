@@ -36,6 +36,8 @@ export type ConnectionGraphIpcType =
   | 'generate-graph-data'
   | 'generate-graph-updated'
   | 'generate-graph-applied'
+  | 'connection-graph-ready-request'
+  | 'connection-graph-ready'
   | 'get-graph-data'
   | 'set-graph-data'
   | 'save-graph-data'
@@ -44,6 +46,7 @@ export type ConnectionGraphIpcType =
   | 'generate-graph-code';
 
 const IFRAME_CHANNEL_CONNECTION_GRAPH = 'iframe-message-connection-graph';
+const CONNECTION_GRAPH_PENPAL_TIMEOUT_MS = 20_000;
 
 export interface IframeModalData {
   /** 要加载的 iframe URL */
@@ -67,6 +70,7 @@ export class IframeComponent implements OnInit, OnDestroy {
 
   iframeSrc: SafeResourceUrl = '';
   private iframeData: unknown;
+  private currentIframeUrl = '';
   private allowedOrigins: string[] = ['*'];
 
   // Penpal 连接
@@ -158,6 +162,7 @@ export class IframeComponent implements OnInit, OnDestroy {
    * 统一应用 URL：设置 iframeSrc、allowedOrigins、isConnectionGraphWindow
    */
   private applyUrl(url: string): void {
+    this.currentIframeUrl = url;
     this.iframeSrc = this.sanitizer.bypassSecurityTrustResourceUrl(url);
     try {
       this.allowedOrigins = [new URL(url).origin];
@@ -229,6 +234,9 @@ export class IframeComponent implements OnInit, OnDestroy {
       // 父窗口暴露给子页面的方法
       this.penpalConnection = connect({
         messenger,
+        ...(this.isConnectionGraphWindow
+          ? { timeout: CONNECTION_GRAPH_PENPAL_TIMEOUT_MS }
+          : {}),
         methods: {
           initedComponentViewer: () => {
             this.pushDataToRemote();
@@ -346,6 +354,13 @@ export class IframeComponent implements OnInit, OnDestroy {
 
       const remote = await this.penpalConnection.promise;
       this.remoteApi = remote;
+
+      if (this.isConnectionGraphWindow) {
+        this.sendToMain('connection-graph-ready', {
+          url: this.currentIframeUrl,
+          ready: true,
+        });
+      }
 
       // 将 remote API 注册到 ConnectionGraphService，供 Agent 工具推送数据
       this.connectionGraphService.setIframeApi(remote);
@@ -476,6 +491,19 @@ export class IframeComponent implements OnInit, OnDestroy {
             applyUpdate,
             applyUpdate,
           );
+          break;
+        }
+        case 'connection-graph-ready-request': {
+          const request = data as { requestId?: string; url?: string } | undefined;
+          if (!request?.url || request.url === this.currentIframeUrl) {
+            this.sendToMain('connection-graph-ready', {
+              requestId: request?.requestId,
+              url: this.currentIframeUrl,
+              ready:
+                !!this.remoteApi
+                && typeof this.remoteApi['receiveData'] === 'function',
+            });
+          }
           break;
         }
         case 'set-graph-data': {
