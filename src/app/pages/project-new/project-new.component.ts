@@ -27,6 +27,10 @@ import { NzMessageService } from 'ng-zorro-antd/message';
 import type { NewProjectData } from '../../types/project-new';
 import { NzModalService } from 'ng-zorro-antd/modal';
 import { UnsaveDialogComponent } from '../../main-window/components/unsave-dialog/unsave-dialog.component';
+import {
+  resolveInitialProjectCategory,
+  type ProjectCreationCategory,
+} from '../../utils/project-creation-category';
 
 @Component({
   selector: 'app-project-new',
@@ -86,7 +90,7 @@ export class ProjectNewComponent implements OnDestroy {
   private searchIndex: AnyOrama | null = null;
 
   /** 基本设定页：Blockly 图形化 / Coder 代码编辑 */
-  selectedProjectCategory: 'blockly' | 'coder' = 'blockly';
+  selectedProjectCategory: ProjectCreationCategory = 'blockly';
 
   /** 用户是否手动修改过项目名；未修改时随类别切换自动推荐名称 */
   private isProjectNameManuallyEdited = false;
@@ -100,6 +104,11 @@ export class ProjectNewComponent implements OnDestroy {
 
   get resourceUrl() {
     return this.configService.getCurrentResourceUrl();
+  }
+
+  /** 只有显式配置 coder.enabled=true 时显示项目类型选择。 */
+  get coderEnabled(): boolean {
+    return this.configService.isCoderEnabled();
   }
 
   // 获取已定义的品牌列表（排除'all'和'other'）
@@ -152,7 +161,11 @@ export class ProjectNewComponent implements OnDestroy {
     this._blocklyBoardListInConfigOrder = this.process(this.configService.boardList);
     this._blocklyBoardList = this.configService.sortBoardsByUsage(this._blocklyBoardListInConfigOrder);
 
-    this.selectedProjectCategory = this.configService.getPreferredChatAgentRuntimeMode();
+    this.selectedProjectCategory = resolveInitialProjectCategory(
+      this.coderEnabled,
+      undefined,
+      this.configService.getPreferredChatAgentRuntimeMode(),
+    );
     this.syncActiveBoardList();
     this.applyRecommendedProjectName();
     this.refreshBoardListForCurrentFilters();
@@ -191,6 +204,10 @@ export class ProjectNewComponent implements OnDestroy {
 
   /** 表单切换项目类型：仅切换模板，不切换主板数据源。 */
   onProjectCategoryChange(): void {
+    this.selectedProjectCategory = resolveInitialProjectCategory(
+      this.coderEnabled,
+      this.selectedProjectCategory,
+    );
     this.applyRecommendedProjectName();
     if (this.selectedProjectCategory === 'blockly' && this.currentBoard) {
       this.checkHasExamples(this.currentBoard.name);
@@ -243,7 +260,7 @@ export class ProjectNewComponent implements OnDestroy {
 
   /** 根据顶部所选类别创建对应类型项目 */
   async onCreateProject(): Promise<void> {
-    if (this.selectedProjectCategory === 'coder') {
+    if (this.coderEnabled && this.selectedProjectCategory === 'coder') {
       await this.createAilyCodeProject();
       return;
     }

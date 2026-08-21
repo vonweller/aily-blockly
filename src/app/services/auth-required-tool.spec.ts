@@ -4,13 +4,44 @@ import {
   ProtectedToolCloseError,
 } from './auth-required-tool-close';
 import { runAuthSessionInvalidation } from './auth-session-invalidation';
+import {
+  normalizeChildAuthStateSnapshot,
+  resolveChildAuthStateSnapshot,
+} from '../tools/child-tool-host/child-auth-state';
+import { withSharedAccessToken } from './shared-auth-record';
+
+describe('shared auth record', () => {
+  it('keeps the access token readable by non-Electron child runtimes', () => {
+    const original = {
+      refresh_token: 'refresh-token',
+      access_token: 'electron-safe-storage-ciphertext',
+    };
+
+    const result = withSharedAccessToken(
+      original,
+      'header.payload.signature',
+      '2030-08-21T00:00:00.000Z',
+    );
+
+    expect(result).toEqual({
+      refresh_token: 'refresh-token',
+      access_token: 'header.payload.signature',
+      updated_at: '2030-08-21T00:00:00.000Z',
+    });
+    expect(original.access_token).toBe('electron-safe-storage-ciphertext');
+  });
+
+  it('rejects an empty shared access token', () => {
+    expect(() => withSharedAccessToken({}, '   ', '2030-08-21T00:00:00.000Z'))
+      .toThrowError('Shared access token cannot be empty');
+  });
+});
 
 describe('isAuthRequiredTool', () => {
-  it('protects account, cloud, and both Aily Chat implementations', () => {
+  it('protects account, cloud, and Aily Chat', () => {
     expect(isAuthRequiredTool('user-center')).toBeTrue();
     expect(isAuthRequiredTool('cloud-space')).toBeTrue();
     expect(isAuthRequiredTool('aily-chat')).toBeTrue();
-    expect(isAuthRequiredTool('aily-chat-react')).toBeTrue();
   });
 
   it('does not block local development tools or the app store', () => {
@@ -22,14 +53,14 @@ describe('isAuthRequiredTool', () => {
   it('collects embedded and detached protected tools without duplicates', () => {
     expect(collectOpenAuthRequiredToolIds(
       ['user-center', 'cloud-space', 'serial-monitor'],
-      ['/child-tool/aily-chat-react', '/aily-chat', '/cloud-space', '/child-tool/aily-chat-react'],
-    )).toEqual(['user-center', 'cloud-space', 'aily-chat-react', 'aily-chat']);
+      ['/child-tool/aily-chat', '/aily-chat', '/cloud-space', '/child-tool/aily-chat'],
+    )).toEqual(['user-center', 'cloud-space', 'aily-chat']);
   });
 
   it('resolves hash routes reported by detached windows', () => {
     expect(collectOpenAuthRequiredToolIds([], [
-      'http://localhost:4200/#/child-tool/aily-chat-react?standalone=true',
-    ])).toEqual(['aily-chat-react']);
+      'http://localhost:4200/#/child-tool/aily-chat?standalone=true',
+    ])).toEqual(['aily-chat']);
   });
 });
 
@@ -37,15 +68,15 @@ describe('closeAuthRequiredTools', () => {
   it('uses the child lifecycle close path before the force-close fallback', async () => {
     const calls: string[] = [];
 
-    await closeAuthRequiredTools(['aily-chat-react', 'cloud-space'], {
-      isChildTool: (toolId) => toolId === 'aily-chat-react',
+    await closeAuthRequiredTools(['aily-chat', 'cloud-space'], {
+      isChildTool: (toolId) => toolId === 'aily-chat',
       prepareChildApp: async (toolId) => {
         calls.push(`prepare:${toolId}`);
         return { ok: true };
       },
       controlChildApp: async (toolId) => {
         calls.push(`lifecycle:${toolId}`);
-        return { ok: toolId !== 'aily-chat-react' };
+        return { ok: toolId !== 'aily-chat' };
       },
       forceCloseToolEverywhere: async (toolId) => {
         calls.push(`force:${toolId}`);
@@ -54,9 +85,9 @@ describe('closeAuthRequiredTools', () => {
     });
 
     expect(calls).toEqual([
-      'prepare:aily-chat-react',
-      'lifecycle:aily-chat-react',
-      'force:aily-chat-react',
+      'prepare:aily-chat',
+      'lifecycle:aily-chat',
+      'force:aily-chat',
       'force:cloud-space',
     ]);
   });
@@ -74,7 +105,7 @@ describe('closeAuthRequiredTools', () => {
     const controlChildApp = jasmine.createSpy('controlChildApp');
     const forceCloseToolEverywhere = jasmine.createSpy('forceCloseToolEverywhere');
 
-    await expectAsync(closeAuthRequiredTools(['aily-chat-react'], {
+    await expectAsync(closeAuthRequiredTools(['aily-chat'], {
       isChildTool: () => true,
       prepareChildApp: async () => ({ ok: false, message: 'active turn did not settle' }),
       controlChildApp,
@@ -166,5 +197,52 @@ describe('runAuthSessionInvalidation', () => {
 
     expect(calls.slice(-3)).toEqual(['complete', 'notice', 'request-login']);
     expect(result.failures).toEqual(['stop-runtime', 'clear-local-auth']);
+  });
+});
+
+describe('detached Aily Chat auth state', () => {
+  it('does not replace host auth with the detached renderer default before IPC hydration', () => {
+    expect(resolveChildAuthStateSnapshot({
+      detached: true,
+      detachedSnapshot: null,
+      authenticated: false,
+      user: null,
+      authSnapshot: null,
+    })).toBeNull();
+  });
+
+  it('uses the token-free main-window snapshot for a detached renderer', () => {
+    const snapshot = normalizeChildAuthStateSnapshot({
+      authenticated: true,
+      version: 4,
+      user: {
+        id: 'user-1',
+        email: 'user@example.com',
+        nickname: 'not-forwarded',
+        access_token: 'not-forwarded',
+      },
+      quotaSnapshot: {
+        quotaSnapshots: {
+          chat_monthly: { entitlement: 30, remaining: 12, resetAt: '2030-08-21T00:00:00+08:00' },
+        },
+      },
+    });
+
+    expect(snapshot).toEqual({
+      authenticated: true,
+      user: { id: 'user-1', email: 'user@example.com' },
+      quotaSnapshot: {
+        quotaSnapshots: {
+          chat_monthly: { entitlement: 30, remaining: 12, resetAt: '2030-08-21T00:00:00+08:00' },
+        },
+      },
+    });
+    expect(resolveChildAuthStateSnapshot({
+      detached: true,
+      detachedSnapshot: snapshot,
+      authenticated: false,
+      user: null,
+      authSnapshot: null,
+    })).toBe(snapshot);
   });
 });

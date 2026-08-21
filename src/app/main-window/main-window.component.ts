@@ -21,7 +21,7 @@ import { UpdateService } from '../services/update.service';
 import { NzModalModule, NzModalService } from 'ng-zorro-antd/modal';
 import { NpmService } from '../services/npm.service';
 import { NavigationEnd, Router, RouterModule } from '@angular/router';
-import { distinctUntilChanged, filter, Subscription, take } from 'rxjs';
+import { distinctUntilChanged, filter, merge, Subscription, take } from 'rxjs';
 import { ConfigService } from '../services/config.service';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { CloudSpaceComponent } from '../tools/cloud-space/cloud-space.component';
@@ -53,6 +53,8 @@ import {
   DEFAULT_AILY_CHAT_SUBAPP_TOOL_ID,
 } from '../services/default-aily-chat-bootstrap';
 import { runAuthSessionInvalidation } from '../services/auth-session-invalidation';
+import { buildChildAuthStateSnapshot } from '../tools/child-tool-host/child-auth-state';
+import { registerAilyChatHostAuthRuntimeBridge } from '../services/aily-chat-host-auth-runtime-bridge';
 
 const RIGHT_SIDER_WIDTH_STORAGE_KEY = 'aily-main-window.right-sider-width';
 const RIGHT_SIDER_DEFAULT_WIDTH = 450;
@@ -132,10 +134,12 @@ export class MainWindowComponent implements OnDestroy {
   private developmentModePreferencePromptOpen = false;
   private loginDialogSubscription: Subscription | null = null;
   private authSessionInvalidationSubscription: Subscription | null = null;
+  private authStateBroadcastSubscription: Subscription | null = null;
   private authSessionInvalidationPromise: Promise<void> | null = null;
   private unregisterApplicationUpdatePreparation: (() => void) | null = null;
   private cancelAilyChatPrewarm: (() => void) | null = null;
   private ailyChatPrewarmAuthSubscription: Subscription | null = null;
+  private unregisterAilyChatHostAuthRuntimeBridge: (() => void) | null = null;
 
   loginDialogState: LoginDialogRequestState | null = null;
 
@@ -165,6 +169,10 @@ export class MainWindowComponent implements OnDestroy {
   ) { }
 
   async ngOnInit(): Promise<void> {
+    this.unregisterAilyChatHostAuthRuntimeBridge = registerAilyChatHostAuthRuntimeBridge(
+      this.authService,
+      window['ipcRenderer'],
+    );
     this.unregisterApplicationUpdatePreparation = this.updateService.registerInstallPreparationHook(
       'host-aily-chat-session',
       () => this.ailyChatChildProtocol.prepareForHostInterruption(),
@@ -174,6 +182,10 @@ export class MainWindowComponent implements OnDestroy {
     });
     this.authSessionInvalidationSubscription = this.authService.authSessionInvalidationRequest$
       .subscribe((request) => this.handleAuthSessionInvalidation(request));
+    this.authStateBroadcastSubscription = merge(
+      this.authService.isLoggedIn$,
+      this.authService.authChanged$,
+    ).subscribe(() => this.broadcastHostAuthState());
     void this.chatRuntimeHostResourceOperationHandler.start().catch(error => {
         console.error('[AilyChat][RuntimeHostResourceOperationHandler] Failed to start:', error);
     });
@@ -246,6 +258,19 @@ export class MainWindowComponent implements OnDestroy {
     } catch (error) {
       console.warn('[Auth] Background authentication initialization failed:', error);
     }
+  }
+
+  private broadcastHostAuthState(): void {
+    if (!this.electronService.isElectron) return;
+
+    window['ipcRenderer']?.send?.(
+      'host-auth-state-changed',
+      buildChildAuthStateSnapshot(
+        this.authService.isLoggedIn,
+        this.authService.currentUser,
+        this.authService.getAuthSnapshot(),
+      ),
+    );
   }
 
   private async ensureDefaultAilyChatSubapp(): Promise<void> {
@@ -414,6 +439,8 @@ export class MainWindowComponent implements OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.unregisterAilyChatHostAuthRuntimeBridge?.();
+    this.unregisterAilyChatHostAuthRuntimeBridge = null;
     this.cancelAilyChatPrewarm?.();
     this.cancelAilyChatPrewarm = null;
     this.ailyChatPrewarmAuthSubscription?.unsubscribe();
@@ -424,6 +451,8 @@ export class MainWindowComponent implements OnDestroy {
     this.loginDialogSubscription = null;
     this.authSessionInvalidationSubscription?.unsubscribe();
     this.authSessionInvalidationSubscription = null;
+    this.authStateBroadcastSubscription?.unsubscribe();
+    this.authStateBroadcastSubscription = null;
     this.configNoticeSubscription?.unsubscribe();
     this.configNoticeSubscription = null;
     this.projectContextSubscription?.unsubscribe();

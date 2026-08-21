@@ -2,7 +2,6 @@
  */
 import { Injectable, Injector } from '@angular/core';
 import { filter, Observable, Subject } from 'rxjs';
-import { ChatService } from '../tools/aily-chat/services/chat.service';
 import { ElectronService } from './electron.service';
 import { TerminalService } from '../tools/terminal/terminal.service';
 import { Router } from '@angular/router';
@@ -16,9 +15,6 @@ import { ConfigService } from './config.service';
 import { BoardSelectorDialogComponent } from '../main-window/components/board-selector-dialog/board-selector-dialog.component';
 import {
   findPreferredAilyChatTool,
-  LEGACY_AILY_CHAT_MOUNT_DELAY_MS,
-  resolveAilyChatExternalInputOptions,
-  resolveAilyChatMountDelay,
   resolvePreferredAilyChatTool,
 } from './aily-chat-tool-routing';
 import { collectOpenAuthRequiredToolIds, isAuthRequiredTool } from './auth-required-tool';
@@ -61,9 +57,6 @@ export class UiService {
   isMainWindow = false;
 
   private modalService: NzModalService | null = null;
-  private legacyAilyChatReadyAt = 0;
-
-
   constructor(
     private electronService: ElectronService,
     private terminalService: TerminalService,
@@ -72,7 +65,6 @@ export class UiService {
     private logService: LogService,
     private configService: ConfigService,
     private injector: Injector,
-    private chatService: ChatService,
     private childHostRegistry: ChildAppHostRegistryService,
     private childAppSafety: ChildAppSafetyService,
   ) { }
@@ -150,6 +142,18 @@ export class UiService {
           } catch (error) {
             console.error('登出失败:', error);
             data = { success: false, error: error.message };
+          }
+        } else if (message.data?.action === 'refresh-auth-token') {
+          try {
+            const refreshed = await this.authService.refreshAuthToken();
+            data = { success: true, refreshed };
+          } catch (error) {
+            console.error('刷新登录凭证失败:', error);
+            data = {
+              success: false,
+              refreshed: false,
+              error: error instanceof Error ? error.message : String(error),
+            };
           }
         } else if (message.data?.action === 'switch-service-region') {
           try {
@@ -437,12 +441,12 @@ export class UiService {
     const { MainUiAutomationService } = await import('./main-ui-automation.service');
     const mainUiAutomation = this.injector.get(MainUiAutomationService);
     const shouldPrepareHostWork = toolIds.some(
-      toolId => toolId === 'aily-chat' || toolId === 'aily-chat-react',
+      toolId => toolId === 'aily-chat',
     );
     if (shouldPrepareHostWork) {
       try {
-        // This also covers the host-owned legacy Aily Chat session. React child
-        // apps are prepared individually below through their strict lifecycle.
+        // This covers host-owned Aily Chat work before the child runtime is
+        // prepared through its strict lifecycle below.
         await this.childAppSafety.prepareRegisteredWork();
       } catch {
         throw new ProtectedToolCloseError('aily-chat');
@@ -520,58 +524,33 @@ export class UiService {
   openAndSendToChat(text: string, options?: Record<string, any>): void {
     const targetToolId = this.openPreferredAilyChat();
     const deliver = () => {
-      const deliveryOptions = resolveAilyChatExternalInputOptions(
-        targetToolId,
-        options,
-        this.chatService.currentSessionId,
-      );
       console.info('[AilyChat][ExternalInputDelivery]', {
         phase: 'deliver',
         target: targetToolId,
         textLength: typeof text === 'string' ? text.length : 0,
-        autoSend: deliveryOptions?.['autoSend'] === true,
+        autoSend: options?.['autoSend'] === true,
       });
-      if (targetToolId === 'aily-chat') {
-        this.chatService.sendTextToChat(text, deliveryOptions);
-        return;
-      }
-
       this.sendToolSignal(`${targetToolId}:external-input`, {
         targetToolId,
         text,
-        options: deliveryOptions || {},
+        options: options || {},
       });
     };
-
-    const mountDelay = resolveAilyChatMountDelay(
-      targetToolId,
-      this.legacyAilyChatReadyAt,
-      Date.now(),
-    );
-    if (mountDelay > 0) {
-      setTimeout(deliver, mountDelay);
-      return;
-    }
-
     deliver();
   }
 
   /**
    * Open the Aily Chat surface that is currently highest in the embedded tool
-   * stack. When neither chat is open, use the installed React child as the
-   * default; the Angular implementation remains hidden as a compatibility
-   * reference only.
+   * stack. The installed React child is the only runtime registered under the
+   * canonical `aily-chat` tool id.
    */
   openPreferredAilyChat(): string {
     const targetToolId = resolvePreferredAilyChatTool(this.openToolList);
-    if (targetToolId === 'aily-chat' && !this.openToolList.includes(targetToolId)) {
-      this.legacyAilyChatReadyAt = Date.now() + LEGACY_AILY_CHAT_MOUNT_DELAY_MS;
-    }
     this.openTool(targetToolId);
     return targetToolId;
   }
 
-  /** The highest currently open Aily Chat, or null when neither chat is open. */
+  /** The currently open Aily Chat, or null when it is closed. */
   getActiveAilyChatToolId(): string | null {
     return findPreferredAilyChatTool(this.openToolList);
   }

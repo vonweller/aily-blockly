@@ -1,6 +1,5 @@
 const AUTH_REQUIRED_TOOL_IDS = new Set([
   'aily-chat',
-  'aily-chat-react',
   'cloud-space',
   'user-center',
 ]);

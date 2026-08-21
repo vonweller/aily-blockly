@@ -46,7 +46,11 @@ import {
   type SubappActivity,
 } from '../../services/subapp-activity.service';
 import { ChatSubappDockComponent } from '../aily-chat/components/subapp-activity/chat-subapp-dock.component';
-import { buildChildAuthStateSnapshot } from './child-auth-state';
+import {
+  type ChildAuthStateSnapshot,
+  normalizeChildAuthStateSnapshot,
+  resolveChildAuthStateSnapshot,
+} from './child-auth-state';
 
 type HostStatus = 'idle' | 'starting' | 'ready' | 'error' | 'closed';
 type HostMessageState = 'success' | 'info' | 'warning' | 'error' | 'loading';
@@ -55,6 +59,13 @@ type ChildLifecycleReason = 'close' | 'restart' | 'update';
 interface HostProjectContext {
   workspace?: string | null;
   version?: number;
+}
+
+interface HostAuthContext {
+  authenticated?: boolean;
+  version?: number;
+  user?: unknown;
+  quotaSnapshot?: unknown;
 }
 
 interface NormalizedHostMessage {
@@ -145,6 +156,10 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   private standaloneWorkspaceVersion = -1;
   private projectContextListenerRegistered = false;
   private projectContextListenerCleanup: (() => void) | null = null;
+  private standaloneAuthSnapshot: ChildAuthStateSnapshot | null = null;
+  private standaloneAuthVersion = -1;
+  private authContextListenerRegistered = false;
+  private authContextListenerCleanup: (() => void) | null = null;
   private unregisterHostController: (() => void) | null = null;
   private ailyChatOperationActive = false;
   private ailyChatOperationSessionId = '';
@@ -204,6 +219,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       this.authService.isLoggedIn$,
       this.authService.authChanged$,
     ).subscribe(() => {
+      if (this.initialized && this.isStandalone) return;
       this.pushChildAuthState();
     });
     this.lastKnownApiServer = this.normalizeApiServer(this.configService.getCurrentApiServer());
@@ -367,6 +383,9 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     this.projectContextListenerCleanup?.();
     this.projectContextListenerCleanup = null;
     this.projectContextListenerRegistered = false;
+    this.authContextListenerCleanup?.();
+    this.authContextListenerCleanup = null;
+    this.authContextListenerRegistered = false;
     this.unregisterHostController?.();
     this.unregisterHostController = null;
     const releaseToolId = this.acquired ? this.resolvedToolId : '';
@@ -627,7 +646,10 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     this.currentUrl = this.router.url;
     this.registerHostController();
 
-    await this.initializeStandaloneProjectContext();
+    await Promise.all([
+      this.initializeStandaloneProjectContext(),
+      this.initializeStandaloneAuthContext(),
+    ]);
 
     this.log('config loaded', {
       id: config.id,
@@ -1495,10 +1517,9 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       blockResources: isAilyChat && this.active ? this.createSelectedBlockResources() : [],
       capabilities: {
         snapshotRefresh: true,
-        // A detached surface runs in a separate Angular renderer and therefore
-        // cannot continuously mirror the main window's AuthService subject.
-        // Keep the child's focus/visibility refresh fallback enabled there.
-        authStateRefresh: isAilyChat && !this.isStandalone,
+        // Detached renderers receive the same token-free, host-owned auth
+        // snapshot through Electron IPC. Older hosts retain the child fallback.
+        authStateRefresh: isAilyChat && (!this.isStandalone || this.standaloneAuthSnapshot !== null),
         userInteractionNotifications: true,
         hostGithubLogin: isAilyChat,
         hostLoginDialog: isAilyChat,
@@ -1779,7 +1800,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   private isAilyChatTool(): boolean {
-    return this.resolvedToolId === 'aily-chat' || this.resolvedToolId === 'aily-chat-react';
+    return this.resolvedToolId === 'aily-chat';
   }
 
   private async writeClipboardText(payload: { text?: string }): Promise<Record<string, unknown>> {
@@ -1978,7 +1999,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
 
     const reason = typeof payload.reason === 'string' && payload.reason.trim()
       ? payload.reason.trim().slice(0, 80)
-      : 'aily-chat-react';
+      : 'aily-chat';
 
     if (this.isStandalone) {
       const sendToMain = window['iWindow']?.send;
@@ -1994,17 +2015,11 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
         return { ok: false, message: 'The main-window login request timed out' };
       }
 
-      const initializationState = String(response?.initializationState || '');
-      if (response?.authenticated === true) {
-        this.pushChildAuthState(true);
-      } else if (response?.authenticated === false && initializationState === 'signed_out') {
-        this.pushChildAuthState(false);
-      }
       return { ok: true, authenticated: response?.authenticated === true };
     }
 
     this.ngZone.run(() => this.authService.requestLogin(reason));
-    this.pushChildAuthState(this.authService.isLoggedIn);
+    this.pushChildAuthState();
     return { ok: true, authenticated: this.authService.isLoggedIn };
   }
 
@@ -2026,19 +2041,23 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     return { ok: true };
   }
 
-  private pushChildAuthState(authenticated = this.authService.isLoggedIn): void {
-    const snapshot = buildChildAuthStateSnapshot(
-      authenticated,
-      this.authService.currentUser,
-      this.authService.getAuthSnapshot(),
-    );
+  private pushChildAuthState(): void {
+    const snapshot = resolveChildAuthStateSnapshot({
+      detached: this.isStandalone,
+      detachedSnapshot: this.standaloneAuthSnapshot,
+      authenticated: this.authService.isLoggedIn,
+      user: this.authService.currentUser,
+      authSnapshot: this.authService.getAuthSnapshot(),
+    });
+    if (!snapshot) return;
+
     if (typeof this.remoteApi?.refreshAuthState === 'function') {
       void Promise.resolve(this.remoteApi.refreshAuthState(snapshot)).catch(() => {
-        this.postLegacyChildAuthState(authenticated);
+        this.postLegacyChildAuthState(snapshot.authenticated);
       });
       return;
     }
-    this.postLegacyChildAuthState(authenticated);
+    this.postLegacyChildAuthState(snapshot.authenticated);
   }
 
   private postLegacyChildAuthState(authenticated: boolean): void {
@@ -2086,6 +2105,53 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     } catch {
       // Older hosts do not expose project context; keep the local service fallback.
     }
+  }
+
+  private async initializeStandaloneAuthContext(): Promise<void> {
+    if (!this.isStandalone) {
+      this.standaloneAuthSnapshot = null;
+      this.standaloneAuthVersion = -1;
+      this.authContextListenerCleanup?.();
+      this.authContextListenerCleanup = null;
+      this.authContextListenerRegistered = false;
+      return;
+    }
+
+    const ipcRenderer = window['ipcRenderer'] || (window as any).electronAPI?.ipcRenderer;
+    if (!ipcRenderer?.invoke) return;
+
+    if (!this.authContextListenerRegistered && ipcRenderer.on) {
+      const cleanup = ipcRenderer.on(
+        'host-auth-state-changed',
+        (_event: unknown, context: HostAuthContext) => {
+          this.ngZone.run(() => this.applyStandaloneAuthContext(context, true));
+        },
+      );
+      if (typeof cleanup === 'function') {
+        this.authContextListenerCleanup = cleanup;
+      }
+      this.authContextListenerRegistered = true;
+    }
+
+    try {
+      const context = await ipcRenderer.invoke('host-auth-state-get');
+      this.applyStandaloneAuthContext(context, false);
+    } catch {
+      // Older hosts do not expose auth context; retain the child fallback.
+    }
+  }
+
+  private applyStandaloneAuthContext(context: HostAuthContext, refreshChild: boolean): void {
+    const version = Number(context?.version);
+    if (Number.isFinite(version) && version < this.standaloneAuthVersion) return;
+
+    const snapshot = normalizeChildAuthStateSnapshot(context);
+    if (!snapshot) return;
+
+    this.standaloneAuthSnapshot = snapshot;
+    this.authService.applyHostAuthStateSnapshot(snapshot);
+    if (Number.isFinite(version)) this.standaloneAuthVersion = version;
+    if (refreshChild) this.pushChildAuthState();
   }
 
   private applyStandaloneProjectContext(context: HostProjectContext, refreshSnapshot: boolean): void {

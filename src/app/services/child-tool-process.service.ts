@@ -1228,7 +1228,7 @@ export class ChildToolProcessService implements OnDestroy {
   private requiresSelectedApiServer(config: ChildToolConfig): boolean {
     return config.runtime?.apiServer === 'required'
       || config.id === 'aily-chat'
-      || config.id === 'aily-chat-react';
+      || config.id === 'aily-chat';
   }
 
   private normalizeApiServer(value: unknown): string {

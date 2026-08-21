@@ -12,7 +12,7 @@ describe('bootstrapDefaultAilyChatSubapp', () => {
   } = {}) {
     let catalog: DefaultAilyChatCatalogItem[] = [{
       id: 'aily-chat',
-      toolId: 'aily-chat-react',
+      toolId: 'aily-chat',
       installed: options.installed === true,
     }];
     let pinned = options.pinned === true;

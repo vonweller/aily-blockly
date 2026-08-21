@@ -1,10 +1,10 @@
 # Coder 项目创建与 sketch 工作区契约
 
-> 当前实现基线：2026-08-20。
+> 当前实现基线：2026-08-21。
 
 ## 1. 新建项目
 
-Blockly 与 Coder 共用 `boards.json`、主板搜索、版本选择和使用次数排序。新建表单只选择项目类型，不再选择 Coder 专用硬件平台。
+Blockly 与 Coder 共用 `boards.json`、主板搜索、版本选择和使用次数排序。只有当配置显式包含 `"coder": { "enabled": true }` 时，新建表单才显示 Blockly / Coder 项目类型选择；`coder` 配置缺失、`enabled` 缺失或值不为 `true` 时隐藏该选择并默认创建 Blockly 项目。两种类型都不再选择 Coder 专用硬件平台。
 
 - Blockly：复制所选 `@aily-project/board-*` 包的 `template/`。
 - Coder：复制同一主板包的 `template-coder/`。

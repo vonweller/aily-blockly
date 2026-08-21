@@ -34,18 +34,18 @@ describe('ChildAppSafetyService', () => {
   }
 
   it('collects embedded and standalone child apps without duplicates', () => {
-    const { service } = createService({ registrations: [{ toolId: 'aily-chat-react' }] });
+    const { service } = createService({ registrations: [{ toolId: 'aily-chat' }] });
 
     expect(service.collectActiveChildAppIds([
-      '/child-tool/aily-chat-react',
+      '/child-tool/aily-chat',
       '/child-tool/network-debugger?standalone=true',
-    ])).toEqual(['aily-chat-react', 'network-debugger']);
+    ])).toEqual(['aily-chat', 'network-debugger']);
   });
 
   it('uses the shared warning style and Aily Chat display name for logout', async () => {
     const { service, modal } = createService();
 
-    const result = await service.confirmInterruption('logout', ['aily-chat-react']);
+    const result = await service.confirmInterruption('logout', ['aily-chat']);
 
     expect(result).toBeTrue();
     expect(modal.confirm).toHaveBeenCalledWith(jasmine.objectContaining({
@@ -63,7 +63,7 @@ describe('ChildAppSafetyService', () => {
 
     const result = await service.confirmInterruption(
       'region-switch',
-      ['aily-chat-react', 'unknown-tool'],
+      ['aily-chat', 'unknown-tool'],
     );
 
     expect(result).toBeFalse();

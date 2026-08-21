@@ -147,7 +147,7 @@ export class ChildAppSafetyService {
   }
 
   private getDisplayName(toolId: string): string {
-    if (toolId === 'aily-chat' || toolId === 'aily-chat-react') {
+    if (toolId === 'aily-chat') {
       return 'Aily Chat';
     }
 

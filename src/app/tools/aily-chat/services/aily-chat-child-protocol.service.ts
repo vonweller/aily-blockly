@@ -220,7 +220,7 @@ export class AilyChatChildProtocolService {
     ])
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe(([blockIds]) => {
-        const activeBlockIds = this.uiService.isActiveAilyChatTool('aily-chat-react')
+        const activeBlockIds = this.uiService.isActiveAilyChatTool('aily-chat')
           ? (blockIds || [])
           : [];
         this.engine.resourceManager.updateBlockContexts(

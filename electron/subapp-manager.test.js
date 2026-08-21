@@ -784,7 +784,7 @@ test('installs indexed package into the user app project and exposes its absolut
   assert.deepEqual(installCall.slice(0, 3), ['install', '--prefix', rootDir]);
   assert.ok(installCall.includes('@aily-project/subapp-aily-chat@0.1.0'));
   assert.equal(after.apps[0].installed, true);
-  assert.equal(after.apps[0].toolId, 'aily-chat-react');
+  assert.equal(after.apps[0].toolId, 'aily-chat');
   assert.equal(after.apps[0].config.app.name, 'Aily Chat');
   assert.equal(after.apps[0].config.app.description, 'AI 编程助手');
   assert.equal(
@@ -1033,7 +1033,7 @@ test('windows busy rename with forceClose kills holders and finishes uninstall',
         forceStoppedCatalogId = catalogId;
       },
       listBusyHolders: async () => [{ pid: 4242, name: 'node.exe' }],
-      listChildToolHolders: async () => [{ pid: 4242, name: 'aily-chat-react', toolId: 'aily-chat-react' }],
+      listChildToolHolders: async () => [{ pid: 4242, name: 'aily-chat', toolId: 'aily-chat' }],
       killProcessTree: async (pid) => {
         killedPids.push(pid);
         return true;

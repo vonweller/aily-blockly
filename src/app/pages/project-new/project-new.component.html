@@ -126,6 +126,7 @@
       <!-- 基本设定页面 -->
         <div class="right-inner">
         <div class="right-content">
+          @if (coderEnabled) {
           <div class="item project-category-row">
             <div>{{ 'PROJECT_NEW.PROJECT_CATEGORY.TITLE' | translate }}:</div>
             <nz-radio-group
@@ -139,6 +140,7 @@
               </label>
             </nz-radio-group>
           </div>
+          }
           <!-- <div class="item">
             <div>{{ 'PROJECT_NEW.FORM.DEVMODE' | translate }}:</div>
             <nz-radio-group [(ngModel)]="newProjectData.devmode">

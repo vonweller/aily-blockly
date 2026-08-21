@@ -20,24 +20,10 @@ import { firstValueFrom, Subject } from 'rxjs';
 import { takeUntil } from 'rxjs/operators';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import type { NewProjectData } from '../../types/project-new';
-
-export type ProjectCreationCategory = 'blockly' | 'coder';
-
-export function resolveInitialProjectCategory(
-  explicitCategory?: ProjectCreationCategory | null,
-  preferredRuntimeMode?: string | null,
-  fallbackCategory: ProjectCreationCategory = 'blockly',
-): ProjectCreationCategory {
-  if (explicitCategory === 'blockly' || explicitCategory === 'coder') {
-    return explicitCategory;
-  }
-
-  if (preferredRuntimeMode === 'blockly' || preferredRuntimeMode === 'coder') {
-    return preferredRuntimeMode;
-  }
-
-  return fallbackCategory;
-}
+import {
+  resolveInitialProjectCategory,
+  type ProjectCreationCategory,
+} from '../../utils/project-creation-category';
 
 @Component({
   selector: 'app-project-new',
@@ -108,6 +94,11 @@ export class ProjectNewComponent implements OnDestroy {
     return this.platformService.isMac() ? '⌘K' : 'Ctrl+K';
   }
 
+  /** 只有显式配置 coder.enabled=true 时显示项目类型选择。 */
+  get coderEnabled(): boolean {
+    return this.configService.isCoderEnabled();
+  }
+
   @HostListener('document:keydown', ['$event'])
   onGlobalKeydown(event: KeyboardEvent): void {
     if (this.currentStep !== 0) {
@@ -162,6 +153,7 @@ export class ProjectNewComponent implements OnDestroy {
       this.process(this.configService.boardList)
     );
     this.selectedProjectCategory = resolveInitialProjectCategory(
+      this.coderEnabled,
       undefined,
       this.configService.getPreferredChatAgentRuntimeMode(),
     );
@@ -207,6 +199,10 @@ export class ProjectNewComponent implements OnDestroy {
   }
 
   onProjectCategoryChange(): void {
+    this.selectedProjectCategory = resolveInitialProjectCategory(
+      this.coderEnabled,
+      this.selectedProjectCategory,
+    );
     this.applyRecommendedProjectName();
     if (this.selectedProjectCategory === 'blockly' && this.currentBoard) {
       this.loadMyTemplates(this.currentBoard.name);
@@ -257,7 +253,7 @@ export class ProjectNewComponent implements OnDestroy {
 
   /** 根据顶部所选类别创建对应类型项目 */
   async onCreateProject(): Promise<void> {
-    if (this.selectedProjectCategory === 'coder') {
+    if (this.coderEnabled && this.selectedProjectCategory === 'coder') {
       await this.createAilyCodeProject();
       return;
     }

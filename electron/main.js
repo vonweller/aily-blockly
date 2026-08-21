@@ -692,6 +692,10 @@ let projectContextState = {
   workspace: null,
   version: 0,
 };
+let hostAuthState = {
+  authenticated: false,
+  version: 0,
+};
 
 function registerProcessHealthDiagnostics() {
   if (processHealthDiagnosticsRegistered) return;
@@ -3374,6 +3378,32 @@ ipcMain.on("host-project-context-changed", (event, data = {}) => {
 });
 
 ipcMain.handle("host-project-context-get", () => ({ ...projectContextState }));
+
+ipcMain.on("host-auth-state-changed", (event, data = {}) => {
+  const senderWindow = BrowserWindow.fromWebContents(event.sender);
+  if (!mainWindow || senderWindow !== mainWindow || typeof data.authenticated !== "boolean") {
+    return;
+  }
+
+  hostAuthState = {
+    authenticated: data.authenticated,
+    ...(data.authenticated && data.user ? { user: data.user } : {}),
+    ...(data.authenticated && data.quotaSnapshot ? { quotaSnapshot: data.quotaSnapshot } : {}),
+    version: hostAuthState.version + 1,
+  };
+
+  BrowserWindow.getAllWindows().forEach((win) => {
+    try {
+      if (win && !win.isDestroyed() && win.webContents && !win.webContents.isDestroyed()) {
+        win.webContents.send("host-auth-state-changed", hostAuthState);
+      }
+    } catch (error) {
+      console.error("host-auth-state-changed broadcast failed:", error.message);
+    }
+  });
+});
+
+ipcMain.handle("host-auth-state-get", () => ({ ...hostAuthState }));
 
 // OAuth状态管理的IPC处理器
 ipcMain.handle("oauth-register-state", (event, state) => {

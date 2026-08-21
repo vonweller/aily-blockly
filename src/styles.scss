@@ -193,8 +193,10 @@ nz-modal-container {
   z-index: 100200 !important;
 }
 
-// 登录中打开的协议必须高于全局登录遮罩，否则 modal 会被其覆盖。
-.cdk-overlay-container:has(.login-agreement-modal) {
+// 登录流程中的协议、账号绑定/合并确认必须高于全局登录遮罩，
+// 否则 modal 会被父级 overlay 容器的堆叠上下文限制。
+.cdk-overlay-container:has(.login-agreement-modal),
+.cdk-overlay-container:has(.merge-confirm-modal) {
   z-index: 100200 !important;
 }
 

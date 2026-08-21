@@ -11,6 +11,8 @@ import type {
   AuthSnapshot,
   AuthUserInfo,
 } from '../tools/aily-chat/core/auth-snapshot';
+import { withSharedAccessToken } from './shared-auth-record';
+import { isDetachedAilyChatRenderer } from './detached-aily-chat-auth';
 
 export interface CommonResponse {
   status: number;
@@ -198,6 +200,10 @@ export class AuthService {
     return this.authSessionInvalidating;
   }
 
+  getAuthCredentialGeneration(): number {
+    return this.authCredentialGeneration;
+  }
+
   requestSessionInvalidation(
     errorCode: 'AUTH_TOKEN_INVALID',
     source: AuthSessionInvalidationRequest['source'] = 'http-401',
@@ -229,6 +235,13 @@ export class AuthService {
    * 初始化认证状态 - 需要在ElectronService初始化后调用
    */
   initializeAuth(): Promise<void> {
+    if (isDetachedAilyChatRenderer()) {
+      if (this.authInitializationStateSubject.value === 'idle') {
+        this.authInitializationStateSubject.next('unavailable');
+      }
+      return Promise.resolve();
+    }
+
     if (this.authInitializationPromise) {
       return this.authInitializationPromise;
     }
@@ -246,6 +259,23 @@ export class AuthService {
 
   getAuthInitializationState(): AuthInitializationState {
     return this.authInitializationStateSubject.value;
+  }
+
+  /** Apply the main renderer's token-free state inside a detached Aily Chat shell. */
+  applyHostAuthStateSnapshot(snapshot: {
+    authenticated: boolean;
+    user?: unknown;
+  }): void {
+    if (!isDetachedAilyChatRenderer()) return;
+
+    const user = snapshot.user && typeof snapshot.user === 'object' && !Array.isArray(snapshot.user)
+      ? { ...snapshot.user } as AuthUserInfo
+      : null;
+    this.isLoggedInSubject.next(snapshot.authenticated);
+    this.setCurrentUserInfo(snapshot.authenticated ? user : null);
+    this.authInitializationStateSubject.next(
+      snapshot.authenticated ? 'authenticated' : 'signed_out',
+    );
   }
 
   private async performAuthInitialization(): Promise<void> {
@@ -367,6 +397,11 @@ export class AuthService {
    * 用户登出
    */
   async logout(): Promise<void> {
+    if (isDetachedAilyChatRenderer()) {
+      await this.requestMainWindowAuthOperation('logout');
+      return;
+    }
+
     try {
       const token = await this.getToken2();
       if (token) {
@@ -698,28 +733,28 @@ export class AuthService {
             authData = {};
           }
         }
+        const previousAccessToken = typeof authData.access_token === 'string'
+          ? authData.access_token
+          : '';
 
-        // 加密token（如果支持safeStorage）
-        let encryptedToken = token;
-        if ((window as any).electronAPI?.safeStorage) {
-          try {
-            const encrypted = (window as any).electronAPI.safeStorage.encryptString(token);
-            encryptedToken = encrypted.toString('base64');
-          } catch (error) {
-            // console.warn('token加密失败，使用明文存储:', error);
-          }
-        }
-
-        // 更新token
-        authData.access_token = encryptedToken;
-        authData.updated_at = new Date().toISOString();
+        // `.aily` remains the host credential store. Managed child runtimes
+        // obtain the access token through the host process bridge instead of
+        // reading or mutating this file directly.
+        authData = withSharedAccessToken(authData, token, new Date().toISOString());
 
         // 写入文件
         (window as any).electronAPI.fs.writeFileSync(authFilePath, JSON.stringify(authData, null, 2));
+        if (previousAccessToken !== token) {
+          this.authCredentialGeneration += 1;
+        }
         // console.log('Token已保存到:', authFilePath);
       } else {
         // 降级到localStorage（开发环境或不支持electron）
+        const previousAccessToken = localStorage.getItem('aily_auth_token') || '';
         localStorage.setItem('aily_auth_token', token);
+        if (previousAccessToken !== token) {
+          this.authCredentialGeneration += 1;
+        }
         // console.log('Token已保存到localStorage（降级方案）');
       }
     } catch (error) {
@@ -757,6 +792,8 @@ export class AuthService {
   }
 
   private async getRefreshToken(): Promise<string | null> {
+    if (isDetachedAilyChatRenderer()) return null;
+
     try {
       if (this.electronService.isElectron && (window as any).electronAPI?.path && (window as any).electronAPI?.fs) {
         const appDataPath = (window as any).electronAPI.path.getAppDataPath();
@@ -779,6 +816,8 @@ export class AuthService {
   }
 
   async getToken2(): Promise<string | null> {
+    if (isDetachedAilyChatRenderer()) return null;
+
     try {
       if (this.electronService.isElectron && (window as any).electronAPI?.path && (window as any).electronAPI?.fs) {
         // 获取AppData路径
@@ -833,6 +872,8 @@ export class AuthService {
    */
 
   async clearAuthDataFile(throwOnError = false): Promise<void> {
+    if (isDetachedAilyChatRenderer()) return;
+
     try {
       if (this.electronService.isElectron && (window as any).electronAPI?.path && (window as any).electronAPI?.fs) {
         const appDataPath = (window as any).electronAPI.path.getAppDataPath();
@@ -907,6 +948,7 @@ export class AuthService {
    * 清除所有认证数据
    */
   private async clearAuthData(requireCredentialRemoval = false): Promise<void> {
+    this.authCredentialGeneration += 1;
     localStorage.removeItem(this.TOKEN_KEY);
     localStorage.removeItem(this.REFRESH_TOKEN_KEY);
     localStorage.removeItem(this.USER_INFO_KEY);
@@ -941,6 +983,11 @@ export class AuthService {
   }
 
   async refreshAuthToken(): Promise<boolean> {
+    if (isDetachedAilyChatRenderer()) {
+      const response = await this.requestMainWindowAuthOperation('refresh-auth-token');
+      return response?.['success'] === true && response?.['refreshed'] === true;
+    }
+
     if (this.authSessionInvalidating) {
       return false;
     }
@@ -1225,6 +1272,22 @@ export class AuthService {
     this.userInfoSubject.next(userInfo);
     this.authSnapshotSubject.next(this.buildAuthSnapshot(userInfo, this.authQuotaInfoSnapshotOverride));
     this.authChangedSubject.next();
+  }
+
+  private async requestMainWindowAuthOperation(
+    action: 'refresh-auth-token' | 'logout',
+  ): Promise<Record<string, any> | null> {
+    const sendToMain = window['iWindow']?.send;
+    if (typeof sendToMain !== 'function') return null;
+
+    const response = await sendToMain({
+      to: 'main',
+      data: { action },
+      timeout: 30000,
+    });
+    return response && response !== 'timeout' && typeof response === 'object'
+      ? response as Record<string, any>
+      : null;
   }
 
   private buildAuthSnapshot(

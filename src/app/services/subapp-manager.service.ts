@@ -158,7 +158,7 @@ export class SubappManagerService implements OnDestroy {
         ai: item.ai === true || item.app?.ai === true,
         extension: item.extension === true || item.app?.extension === true,
         enabled: true,
-        ...(item.toolId === 'aily-chat-react' ? { more: 'AI' } : {}),
+        ...(item.toolId === 'aily-chat' ? { more: 'AI' } : {}),
         subapp: {
           catalogId: item.id,
           packageName: item.packageName,

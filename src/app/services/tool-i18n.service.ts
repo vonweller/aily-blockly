@@ -6,7 +6,6 @@ import { ChildToolConfig, getChildToolConfig, getChildToolConfigs } from '../con
 
 export const TOOL_I18N_NAMESPACES = {
   'aily-chat': ['AILY_CHAT'],
-  'aily-chat-react': ['AILY_CHAT'],
   'app-store': ['APP_STORE'],
   'ble-debugger': ['BLE_DEBUGGER'],
   'industrial-bus-debugger': ['INDUSTRIAL_BUS_DEBUGGER'],

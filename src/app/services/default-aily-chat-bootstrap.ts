@@ -1,5 +1,5 @@
-export const DEFAULT_AILY_CHAT_SUBAPP_TOOL_ID = 'aily-chat-react';
-export const DEFAULT_AILY_CHAT_SUBAPP_BOOTSTRAP_KEY = 'defaultAilyChatSubappInstalledAt';
+export const DEFAULT_AILY_CHAT_SUBAPP_TOOL_ID = 'aily-chat';
+export const DEFAULT_AILY_CHAT_SUBAPP_BOOTSTRAP_KEY = 'defaultAilyChatCanonicalIdInstalledAt';
 
 export interface DefaultAilyChatCatalogItem {
   id: string;

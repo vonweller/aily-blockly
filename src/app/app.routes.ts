@@ -104,14 +104,14 @@ export const routes: Routes = [
         pathMatch: "full"
     },
     {
-        path: "child-tool/aily-chat-react",
+        path: "child-tool/aily-chat",
         providers: [
             ...AILY_CHAT_VIEW_PROVIDERS,
             provideEnvironmentInitializer(() => {
                 inject(AilyChatChildProtocolService);
             })
         ],
-        data: { childToolId: 'aily-chat-react' },
+        data: { childToolId: 'aily-chat' },
         loadComponent: () => import('./tools/child-tool-host/child-tool-host.component').then(m => m.ChildToolHostComponent)
     },
     {

@@ -119,7 +119,7 @@ describe('UpdateService safe installation', () => {
 
   it('warns before preparing active child apps', async () => {
     const { service, childAppSafety, order } = createService({
-      activeChildAppIds: ['aily-chat-react'],
+      activeChildAppIds: ['aily-chat'],
     });
 
     const result = await service.prepareAndInstall();
@@ -127,7 +127,7 @@ describe('UpdateService safe installation', () => {
     expect(result).toBeTrue();
     expect(childAppSafety.confirmInterruption).toHaveBeenCalledWith(
       'application-update',
-      ['aily-chat-react'],
+      ['aily-chat'],
     );
     expect(order.slice(0, 2)).toEqual(['confirm-interruption', 'prepare-child-apps']);
   });
@@ -154,7 +154,7 @@ describe('UpdateService safe installation', () => {
 
   it('does not prepare, save, or install when the child app warning is cancelled', async () => {
     const { service, project, config, childRegistry } = createService({
-      activeChildAppIds: ['aily-chat-react'],
+      activeChildAppIds: ['aily-chat'],
       confirmInterruption: false,
     });
     service.updateStatus.next('downloaded');

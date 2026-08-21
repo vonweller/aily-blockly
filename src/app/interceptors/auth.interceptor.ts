@@ -3,6 +3,7 @@ import { HttpInterceptorFn, HttpRequest, HttpHandlerFn, HttpEvent, HttpErrorResp
 import { Observable, throwError, catchError, from, switchMap, shareReplay, finalize } from 'rxjs';
 import { AuthService } from '../services/auth.service';
 import { API } from '../configs/api.config';
+import { isDetachedAilyChatRenderer } from '../services/detached-aily-chat-auth';
 
 let refreshAuthToken$: Observable<boolean> | null = null;
 
@@ -22,6 +23,14 @@ export const authInterceptor: HttpInterceptorFn = (req: HttpRequest<any>, next: 
     return next(req);
   }
 
+  // The detached Angular renderer is a token-free host shell. Its managed
+  // Node runtime obtains credentials from the main-window bridge, so a shell
+  // request must never attach `.aily` credentials, refresh them, or invalidate
+  // the main session after a local 401.
+  if (isDetachedAilyChatRenderer()) {
+    return next(req);
+  }
+
   if (authService.isSessionInvalidating) {
     return throwError(() => new Error('Authentication session invalidation is in progress'));
   }
@@ -32,6 +41,7 @@ export const authInterceptor: HttpInterceptorFn = (req: HttpRequest<any>, next: 
       if (error instanceof HttpErrorResponse) {
         const disposition = classifyAuth401(req, error);
         if (disposition === 'terminal-token-invalid') {
+          reportTerminalTokenInvalid(req, error);
           notifyMainWindowOfInvalidToken(authService);
           return throwError(() => error);
         }
@@ -116,6 +126,28 @@ export function classifyAuth401(req: HttpRequest<any>, error: HttpErrorResponse)
 export function shouldLogoutFor401(req: HttpRequest<any>, error: HttpErrorResponse): boolean {
   const disposition = classifyAuth401(req, error);
   return disposition === 'refreshable' || disposition === 'terminal-token-invalid';
+}
+
+function reportTerminalTokenInvalid(req: HttpRequest<any>, error: HttpErrorResponse): void {
+  const logger = (window as any).electronAPI?.log;
+  if (typeof logger?.warn !== 'function') return;
+
+  let requestUrl = req.url;
+  try {
+    const parsed = new URL(req.url, window.location.origin);
+    requestUrl = `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    requestUrl = req.url.split(/[?#]/u, 1)[0];
+  }
+
+  const rendererRoute = `${window.location.pathname}${window.location.hash.split('?', 1)[0]}`;
+  logger.warn(`[Auth] Terminal token invalid ${JSON.stringify({
+    method: req.method,
+    requestUrl,
+    rendererRoute,
+    status: error.status,
+    errorCode: 'AUTH_TOKEN_INVALID',
+  })}`);
 }
 
 function collectAuthErrorCodes(value: unknown): string[] {
