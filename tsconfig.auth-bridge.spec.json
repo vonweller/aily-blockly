@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.spec.json",
+  "files": [
+    "src/test.ts"
+  ],
+  "include": [
+    "src/test.ts",
+    "src/app/services/aily-chat-tool-routing.spec.ts",
+    "src/app/services/aily-chat-host-auth-runtime-bridge.spec.ts",
+    "src/app/services/auth-required-tool.spec.ts",
+    "src/app/services/child-app-safety.service.spec.ts",
+    "src/app/services/default-aily-chat-bootstrap.spec.ts",
+    "src/app/services/detached-aily-chat-auth.spec.ts",
+    "src/**/*.d.ts"
+  ],
+  "exclude": []
+}

@@ -65,7 +65,7 @@ async function main() {
     }
 
     try {
-        // 1. 路径准备（Aily Code 编译入口见 project.aci.entry，产物输出到 .aily/build/<framework>）
+        // 1. 路径准备（Coder 编译入口见 package.json.entry，产物输出到 .aily/build/<framework>）
         const isAilyCode = ailyCodeProject.isAilyCodeProjectRoot(currentProjectPath);
         const tempPath = isAilyCode
             ? ailyCodeProject.resolveCompileWorkspacePath(currentProjectPath)

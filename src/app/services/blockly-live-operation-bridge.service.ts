@@ -243,7 +243,7 @@ export class BlocklyLiveOperationBridgeService {
           loadStatus,
           guidance: isBlocklyProject
             ? '请先关闭项目，在离线状态修复 project.abs/project.abi 或依赖，再重新打开；只有 loadStatus.ready=true 后才能继续。'
-            : '请等待 Coder 工程完成加载；若持续失败，请重新打开工程并检查 project.aci 与依赖。',
+            : '请等待 Coder 工程完成加载；若持续失败，请重新打开工程并检查 package.json 与源码入口。',
         };
       }
     }
@@ -624,7 +624,7 @@ export class BlocklyLiveOperationBridgeService {
         const projectPath = window['path'].join(data.path, data.name.replace(/\s/g, '_'));
         const ok = await this.projectService.projectNew(data, {
           deferActivation: true,
-          templateDirectory: 'template-coder',
+          templateDirectory: 'template_arduino',
           activationReason: 'chat-tool-create',
         });
         return { ok, projectPath: ok ? projectPath : undefined };

@@ -22,7 +22,7 @@ export interface CoderProjectCreateDependencies {
   recordBoardUsage(boardName: string): void;
 }
 
-/** Create a Coder project from Blockly's board catalog and its template-coder directory. */
+/** Create a Coder project from Blockly's board catalog and its template_arduino directory. */
 export async function executeCoderProjectCreateOperation(
   params: Record<string, any>,
   dependencies: CoderProjectCreateDependencies,
@@ -136,7 +136,7 @@ export async function executeCoderProjectCreateOperation(
       nickname: boardNickname,
       version: boardVersion,
       requestedName: rawBoardName,
-      template: 'template-coder',
+      template: 'template_arduino',
     },
   };
 }

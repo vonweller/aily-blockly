@@ -13,7 +13,7 @@ const board = {
   boardId: 'uno'
 }
 
-test('project_create uses the shared board package and template-coder contract', async () => {
+test('project_create uses the shared board package and template_arduino contract', async () => {
   const calls = []
   const projectPath = '/Users/test/Documents/aily-project/project_coder_20260820a'
   const result = await executeCoderProjectCreateOperation(
@@ -40,7 +40,7 @@ test('project_create uses the shared board package and template-coder contract',
   ])
   assert.equal(result.ok, true)
   assert.equal(result.board.name, '@aily-project/board-arduino_uno')
-  assert.equal(result.board.template, 'template-coder')
+  assert.equal(result.board.template, 'template_arduino')
   assert.equal(result.board.platform, undefined)
 })
 

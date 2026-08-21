@@ -110,7 +110,7 @@ export class BuilderService {
   ) {
     try {
       // Pro / code-editor-pro 路由下 Blockly 未挂载，compile-begin 无监听者会一直等反馈；
-      // 含 project.aci 时改为直接走磁盘源码 + 同一套 preprocess/compile 脚本。
+      // Coder 工程改为直接走磁盘源码 + 同一套 preprocess/compile 脚本。
       let feedback: any;
       if (!this.actionService.hasListener('builder-compile-begin')) {
         const r = await this.compileService.runCompileFromDisk();

@@ -7,26 +7,25 @@
 Blockly 与 Coder 共用 `boards.json`、主板搜索、版本选择和使用次数排序。只有当配置显式包含 `"coder": { "enabled": true }` 时，新建表单才显示 Blockly / Coder 项目类型选择；`coder` 配置缺失、`enabled` 缺失或值不为 `true` 时隐藏该选择并默认创建 Blockly 项目。两种类型都不再选择 Coder 专用硬件平台。
 
 - Blockly：复制所选 `@aily-project/board-*` 包的 `template/`。
-- Coder：复制同一主板包的 `template-coder/`。
+- Coder：复制同一主板包 `template_arduino/` 下的 `package.json`，并将源码模板 `project.aci` 复制为 `sketch/src/main.cpp`。
 
 主板包必须提供：
 
 ```text
 @aily-project/board-xxx/
 ├── template/
-└── template-coder/
+└── template_arduino/
     ├── package.json
-    └── project.aci
+    └── project.aci          # Arduino 源码模板，不是 JSON 配置
 ```
 
-`template-coder/package.json` 与 `project.aci` 是框架、平台和基础依赖的真相源。模板可以直接带 `sketch/` 内容；若未带入口文件或 `libraries/`，宿主按 `project.aci.entry` 补齐最小目录。宿主只更新项目名称、所选主板包及版本，不再根据独立 Coder 索引合成 `coder-*` 包或硬件平台。缺少 `template-coder/package.json` 或 `project.aci` 时创建失败并提示模板缺失。
+`template_arduino/package.json` 是 Coder 工程配置模板，工程类型、入口、框架、主板及依赖信息都保存在复制后的根 `package.json`。`template_arduino/project.aci` 只作为 Arduino 源码模板，保持原始内容并复制为 `sketch/src/main.cpp`，不会生成根 `.aci` 文件。缺少二者任一文件时创建失败并提示模板缺失。为兼容已发布的旧主板包，宿主仍可识别历史误拼写目录 `template_arrduino/`，新包统一使用 `template_arduino/`。
 
 ## 2. 创建后的目录
 
 ```text
 project-root/
 ├── package.json
-├── project.aci
 ├── sketch/                  # 持久化编译工作区
 │   ├── src/                 # 直接编辑的源码
 │   │   └── main.cpp
@@ -39,7 +38,7 @@ project-root/
 └── .build/                  # 编译产物
 ```
 
-`project.aci.entry` 相对 `sketch/`，默认值仍为 `src/main.cpp`；磁盘文件因此是 `sketch/src/main.cpp`。
+`package.json.entry` 相对 `sketch/`，默认值为 `src/main.cpp`；磁盘文件因此是 `sketch/src/main.cpp`。
 
 ## 3. 编译与清理边界
 
@@ -53,7 +52,7 @@ Blockly 的 `.temp/sketch`、`.temp/libraries` 和 package 快照保持原行为
 
 1. 将根 `src/` 移到 `sketch/src/`。
 2. 将根 `components/` 移到 `sketch/libraries/`。
-3. 保持 `project.aci.entry` 为相对 `sketch/` 的值，例如 `src/main.cpp`。
+3. 将旧 `project.aci` 的工程配置迁入 `package.json`，并保持 `package.json.entry` 为相对 `sketch/` 的值，例如 `src/main.cpp`。
 4. 删除旧 Coder `.temp/` 后重新构建。
 
 宿主不会自动删除或覆盖旧目录，避免在无法判断用户自有文件时做破坏性迁移。

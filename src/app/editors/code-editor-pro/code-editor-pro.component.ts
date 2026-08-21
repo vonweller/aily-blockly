@@ -765,7 +765,7 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
 
   /**
    * Blockly 主板「一板多类型」：来自主板 npm 包 package.json 的 mode[]，
-   * 当前选中项对齐工程 package.json devmode 或 project.aci target.framework。
+   * 当前选中项对齐工程 package.json devmode/framework。
    */
   private async buildBoardProfileForEmbed(projectRoot: string): Promise<
     | {
@@ -795,17 +795,6 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
       }
       const pkgAny = pkg as { devmode?: string; framework?: string } | undefined;
       let currentFramework = String(pkgAny?.devmode ?? pkgAny?.framework ?? '').trim();
-      const aciPath = window['path'].join(projectRoot, 'project.aci');
-      if (window['path'].isExists(aciPath)) {
-        try {
-          const aci = JSON.parse(window['fs'].readFileSync(aciPath, 'utf8'));
-          currentFramework = String(
-            aci?.target?.framework ?? aci?.devmode ?? currentFramework,
-          ).trim();
-        } catch {
-          /* 解析失败则沿用 package.json */
-        }
-      }
       if (!currentFramework && modeList.length > 0) {
         currentFramework = modeList[0];
       }

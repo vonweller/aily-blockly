@@ -233,7 +233,7 @@ export function resolveChatAgentRuntimeModeForProject(
 
   if (projectPath) {
     const hasAbsProject = hostPathExists(projectPath, 'project.abs');
-    const hasCoderEntry = hostPathExists(projectPath, 'project.aci');
+    const hasCoderEntry = hostHasCoderProjectPackage(projectPath);
 
     if (hasAbsProject && hasCoderEntry) {
       const metadataHintMode = restoredMode && restoredMode !== 'unbound'
@@ -278,8 +278,8 @@ export function resolveChatAgentRuntimeModeForProject(
         mode: 'coder',
         source: 'project_inferred',
         reason: userPreferenceMode && userPreferenceMode !== 'coder'
-          ? `project.aci detected; user preference ignored: ${userPreferenceMode}`
-          : 'project.aci detected',
+          ? `package.json type=coder detected; user preference ignored: ${userPreferenceMode}`
+          : 'package.json type=coder detected',
         projectPath,
         hasAbsProject,
         hasCoderEntry,
@@ -387,7 +387,7 @@ function readRuntimeModeHintFromMetadata(
   ]);
   const coderScore = scoreRuntimeHint(hintText, [
     'coder',
-    'project.aci',
+    'package.json type coder',
     'sketch/src/main.cpp',
     'src/main.cpp',
     'main.cpp',
@@ -440,6 +440,20 @@ function hostPathExists(projectPath: string, ...segments: string[]): boolean {
     const host = AilyHost.get();
     const fullPath = host.path.join(projectPath, ...segments);
     return host.fs.existsSync(fullPath);
+  } catch {
+    return false;
+  }
+}
+
+function hostHasCoderProjectPackage(projectPath: string): boolean {
+  try {
+    const host = AilyHost.get();
+    const packagePath = host.path.join(projectPath, 'package.json');
+    if (!host.fs.existsSync(packagePath)) {
+      return false;
+    }
+    const manifest = JSON.parse(host.fs.readFileSync(packagePath, 'utf8'));
+    return manifest?.type === 'coder';
   } catch {
     return false;
   }

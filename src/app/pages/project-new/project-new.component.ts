@@ -157,7 +157,7 @@ export class ProjectNewComponent implements OnDestroy {
     // this.electronService.setTitle('PROJECT_NEW.TITLE');
     // await this.configService.init();
 
-    // Blockly / Coder 统一使用 boards.json；具体骨架由板卡包 template/template-coder 决定。
+    // Blockly / Coder 统一使用 boards.json；具体骨架由板卡包 template/template_arduino 决定。
     this._blocklyBoardListInConfigOrder = this.process(this.configService.boardList);
     this._blocklyBoardList = this.configService.sortBoardsByUsage(this._blocklyBoardListInConfigOrder);
 
@@ -500,7 +500,7 @@ export class ProjectNewComponent implements OnDestroy {
     }
   }
 
-  /** 使用所选 Blockly 主板包的 template-coder 创建工程，再进入 Coder。 */
+  /** 使用所选 Blockly 主板包的 template_arduino 创建工程，再进入 Coder。 */
   async createAilyCodeProject(): Promise<void> {
     if (await this.checkPathIsExist()) {
       return;
@@ -516,7 +516,7 @@ export class ProjectNewComponent implements OnDestroy {
 
     const created = await this.projectService.projectNew(this.newProjectData, {
       deferActivation: true,
-      templateDirectory: 'template-coder',
+      templateDirectory: 'template_arduino',
     });
 
     if (!created) {

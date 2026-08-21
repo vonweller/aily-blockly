@@ -438,7 +438,7 @@ export class ProjectNewComponent implements OnDestroy {
   }
 
   /**
-   * 子窗口使用同一主板包下的 template-coder 创建并打开工程。
+   * 子窗口使用同一主板包下的 template_arduino 创建并打开工程。
    */
   async createAilyCodeProject(): Promise<void> {
     if (await this.checkPathIsExist()) {
@@ -453,7 +453,7 @@ export class ProjectNewComponent implements OnDestroy {
     this.currentStep = 2;
 
     const created = await this.projectService.projectNew(this.newProjectData, {
-      templateDirectory: 'template-coder',
+      templateDirectory: 'template_arduino',
     });
 
     if (!created) {

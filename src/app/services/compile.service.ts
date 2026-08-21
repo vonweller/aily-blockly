@@ -50,8 +50,8 @@ export class CompileService {
 
   async runCompileFromDisk(options: DiskCompileOptions = {}): Promise<{ success: boolean; result: ActionState & { fullStdErr?: string } }> {
     const root = (options.projectPath || this.projectService.currentProjectPath || '').trim();
-    const aciPath = this.electronService.pathJoin(root, 'project.aci');
-    const isAilyCodeProject = !!root && window['path'].isExists(aciPath);
+    const packagePath = this.electronService.pathJoin(root, 'package.json');
+    const isAilyCodeProject = !!root && this.projectService.isAilyCodeProject(root);
 
     if (!root) {
       this.message.warning('No project is currently open.');
@@ -61,7 +61,7 @@ export class CompileService {
       };
     }
 
-    const source = this.readCompileSource(root, aciPath, isAilyCodeProject, options.code);
+    const source = this.readCompileSource(root, packagePath, isAilyCodeProject, options.code);
     if (source.success === false) {
       return { success: false, result: { state: 'error', text: source.error } };
     }
@@ -84,7 +84,7 @@ export class CompileService {
     const started = Date.now();
 
     try {
-      const boardModule = await this.resolveBoardModule(root, isAilyCodeProject ? aciPath : undefined);
+      const boardModule = await this.resolveBoardModule(root);
       if (!boardModule) {
         this.workflowService.finishBuild(false, 'Missing board module');
         return { success: false, result: { state: 'error', text: 'Cannot resolve board module from the active project.' } };
@@ -189,7 +189,7 @@ export class CompileService {
 
   private readCompileSource(
     projectPath: string,
-    aciPath: string,
+    packagePath: string,
     isAilyCodeProject: boolean,
     explicitCode?: string,
   ): { success: true; code: string } | { success: false; error: string } {
@@ -199,9 +199,9 @@ export class CompileService {
 
     try {
       if (isAilyCodeProject) {
-        const aci = JSON.parse(window['fs'].readFileSync(aciPath, 'utf8'));
-        const entryRel = typeof aci.entry === 'string' && aci.entry.trim()
-          ? aci.entry.replace(/\\/g, '/')
+        const manifest = JSON.parse(window['fs'].readFileSync(packagePath, 'utf8'));
+        const entryRel = typeof manifest.entry === 'string' && manifest.entry.trim()
+          ? manifest.entry.replace(/\\/g, '/')
           : 'src/main.cpp';
         const segments = entryRel.split('/').filter(Boolean);
         if (
@@ -231,7 +231,7 @@ export class CompileService {
     }
   }
 
-  private async resolveBoardModule(projectPath: string, aciPath?: string): Promise<string | null> {
+  private async resolveBoardModule(projectPath: string): Promise<string | null> {
     if (!projectPath) {
       return null;
     }
@@ -253,22 +253,6 @@ export class CompileService {
       }
     } catch {
       /* fall through to Aily Code project metadata/current project service */
-    }
-
-    if (aciPath && window['path'].isExists(aciPath)) {
-      try {
-        const aci = JSON.parse(window['fs'].readFileSync(aciPath, 'utf8'));
-        const boardPackage = String(aci?.target?.boardPackage ?? '').trim();
-        if (boardPackage) {
-          return boardPackage;
-        }
-        const board = String(aci?.target?.board ?? '').trim();
-        if (board.startsWith('@aily-project/')) {
-          return board;
-        }
-      } catch {
-        /* ignore */
-      }
     }
 
     return projectPath === this.projectService.currentProjectPath

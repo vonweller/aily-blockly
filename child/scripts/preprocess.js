@@ -116,7 +116,7 @@ async function main() {
         throw new Error(`未找到板子包文件: ${boardPackageJsonPath}`);
     }
     const boardPackageJson = JSON.parse(fs.readFileSync(boardPackageJsonPath, 'utf8'));
-    const platformRef = platformRuntime.readPlatformRefFromProjectAci(currentProjectPath);
+    const platformRef = platformRuntime.readPlatformRefFromProjectPackage(currentProjectPath);
     const boardDependencies = platformRuntime.resolveEffectiveBoardDependencies(
         boardPackageJson.boardDependencies,
         appDataPath,
@@ -140,7 +140,7 @@ async function main() {
         mkdirp(sketchPath);
         mkdirp(librariesPath);
 
-        // 2. Coder 直接预处理 project.aci.entry；Blockly 仍物化 sketch 及 src 辅助文件。
+        // 2. Coder 直接预处理 package.json.entry；Blockly 仍物化 sketch 及 src 辅助文件。
         mkdirp(path.dirname(compileSourcePath));
         fs.writeFileSync(compileSourcePath, code);
         if (!isAilyCode) {

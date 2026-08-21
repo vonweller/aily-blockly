@@ -14,7 +14,8 @@ const {
 test('resolves every Coder compile input under the persistent sketch workspace', t => {
     const projectPath = fs.mkdtempSync(path.join(os.tmpdir(), 'aily-coder-workspace-'));
     t.after(() => fs.rmSync(projectPath, { recursive: true, force: true }));
-    fs.writeFileSync(path.join(projectPath, 'project.aci'), JSON.stringify({
+    fs.writeFileSync(path.join(projectPath, 'package.json'), JSON.stringify({
+        type: 'coder',
         entry: 'src/firmware.cpp',
     }));
 
@@ -24,10 +25,11 @@ test('resolves every Coder compile input under the persistent sketch workspace',
     assert.equal(resolvePreprocessResultPath(projectPath), path.join(projectPath, 'sketch', 'preprocess.json'));
 });
 
-test('rejects a project.aci entry that escapes the sketch workspace', t => {
+test('rejects a package.json entry that escapes the sketch workspace', t => {
     const projectPath = fs.mkdtempSync(path.join(os.tmpdir(), 'aily-coder-workspace-'));
     t.after(() => fs.rmSync(projectPath, { recursive: true, force: true }));
-    fs.writeFileSync(path.join(projectPath, 'project.aci'), JSON.stringify({
+    fs.writeFileSync(path.join(projectPath, 'package.json'), JSON.stringify({
+        type: 'coder',
         entry: '../outside.cpp',
     }));
 

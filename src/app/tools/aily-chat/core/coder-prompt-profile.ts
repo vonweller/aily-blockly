@@ -82,7 +82,8 @@ const CODER_DOMAIN_PROMPT = `You are working in coder runtime inside the Aily ID
 Key concepts:
 - **Coder runtime** works on real workspace files and source-code project structure.
 - **Persistent compile workspace**: Coder edits and compiles \`{projectPath}/sketch\` directly; do not create a duplicate root \`src/\` or \`.temp/\` source copy.
-- **Main entry**: when no more specific file is known, start from \`{projectPath}/sketch/src/main.cpp\`. The root \`project.aci.entry\` value is relative to \`sketch/\`.
+- **Project configuration**: Coder type, entry, framework, board, and dependency metadata live in the root \`package.json\`.
+- **Main entry**: when no more specific file is known, start from \`{projectPath}/sketch/src/main.cpp\`. The root \`package.json.entry\` value is relative to \`sketch/\`.
 - **Project libraries** live under \`sketch/libraries/\`.
 - **Development boards** and installed libraries still matter: recommendations should stay compatible with the selected target, framework, and dependency set.
 - **Blockly/ABS tools are not the default coder workflow**: do not use \`syncAbs\`, ABS import/export, or Blockly workspace mutation unless the session has explicitly moved to blockly runtime.

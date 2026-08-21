@@ -1494,7 +1494,7 @@ export class _BuilderService {
           const configFilePath = this.electronService.pathJoin(tempPath, 'build-config.json');
           await this.waitForAilyBuilderReady();
 
-          // 更新配置文件中的 code（compile.js：Blockly 写入 sketch.ino；Aily Code 写入 project.aci.entry）
+          // 更新配置文件中的 code（compile.js：Blockly 写入 sketch.ino；Coder 写入 package.json.entry）
           let buildConfig: any = {};
           if (window['path'].isExists(configFilePath)) {
             buildConfig = JSON.parse(window['fs'].readFileSync(configFilePath, 'utf8'));

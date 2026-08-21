@@ -394,7 +394,7 @@ export class _UploaderService {
 
         // 第一步：检查是否需要编译。Coder 页面没有 Blockly workspace，
         // 但仍复用后续同一套板卡上传脚本、进度、错误和资源恢复流程；
-        // 唯一差异是从 project.aci.entry 构建并使用 Coder 的实际产物目录。
+        // 唯一差异是从 package.json.entry 构建并使用 Coder 的实际产物目录。
         const projectPath = this.projectService.currentProjectPath;
         const isAilyCodeProject = this.projectService.isAilyCodeProject(projectPath);
         let buildPath: string;

@@ -13,7 +13,7 @@ const {
     processLibrariesParallel,
 } = require('../scripts/preprocess');
 const {
-    readPlatformRefFromProjectAci,
+    readPlatformRefFromProjectPackage,
     resolveEffectiveBoardDependencies,
 } = require('../scripts/platform-runtime');
 
@@ -207,8 +207,9 @@ test('resolves Coder compiler and SDK dependencies from the platform manifest', 
     t.after(() => fs.rmSync(appDataPath, { recursive: true, force: true }));
 
     const platformName = '@aily-project/platform-avr-arduino';
-    fs.writeFileSync(path.join(projectPath, 'project.aci'), JSON.stringify({
-        target: { platform: platformName },
+    fs.writeFileSync(path.join(projectPath, 'package.json'), JSON.stringify({
+        type: 'coder',
+        platform: platformName,
     }));
     const platformPath = path.join(appDataPath, 'node_modules', platformName);
     fs.mkdirSync(platformPath, { recursive: true });
@@ -219,7 +220,7 @@ test('resolves Coder compiler and SDK dependencies from the platform manifest', 
         ],
     }));
 
-    const platformRef = readPlatformRefFromProjectAci(projectPath);
+    const platformRef = readPlatformRefFromProjectPackage(projectPath);
     const result = resolveEffectiveBoardDependencies(
         { '@aily-project/tool-avrdude': '6.3.0' },
         appDataPath,
@@ -231,4 +232,17 @@ test('resolves Coder compiler and SDK dependencies from the platform manifest', 
         '@aily-project/compiler-avr-gcc': '7.3.0',
         '@aily-project/sdk-arduino-avr': '1.8.6',
     });
+});
+
+test('does not apply Coder platform configuration to Blockly projects', t => {
+    const projectPath = fs.mkdtempSync(path.join(os.tmpdir(), 'aily-blockly-platform-'));
+    t.after(() => fs.rmSync(projectPath, { recursive: true, force: true }));
+
+    fs.writeFileSync(path.join(projectPath, 'package.json'), JSON.stringify({
+        name: 'blockly-project',
+        devmode: 'arduino',
+        platform: '@aily-project/platform-avr-arduino',
+    }));
+
+    assert.equal(readPlatformRefFromProjectPackage(projectPath), null);
 });

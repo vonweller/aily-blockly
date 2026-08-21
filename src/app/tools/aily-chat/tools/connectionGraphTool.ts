@@ -117,21 +117,6 @@ async function resolveBoardPackagePath(projectService: ProjectService): Promise<
         }
     }
 
-    const aciPath = joinHostPath(projectPath, 'project.aci');
-    try {
-        if (host.fs.existsSync(aciPath)) {
-            const aci = JSON.parse(host.fs.readFileSync(aciPath, 'utf8'));
-            const boardPackage = String(aci?.target?.boardPackage ?? '').trim();
-            const board = String(aci?.target?.board ?? '').trim();
-            const boardModule = boardPackage || (board.startsWith('@aily-project/') ? board : '');
-            if (boardModule) {
-                return joinHostPath(projectPath, 'node_modules', boardModule);
-            }
-        }
-    } catch {
-        // Ignore and fall through.
-    }
-
     try {
         const legacyPath = await projectService.getBoardPackagePath();
         return typeof legacyPath === 'string' && legacyPath.trim().length > 0 ? legacyPath.trim() : null;

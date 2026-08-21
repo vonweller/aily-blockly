@@ -16,7 +16,7 @@ import {
 import {
   PlatformPackageRef,
   readPlatformManifestFromAppData,
-  readPlatformRefFromProjectAci,
+  readPlatformRefFromProjectPackage,
   runtimeDependenciesToBoardDependencies,
 } from '../utils/platform-runtime.utils';
 import { AppDataResourceLockService } from './appdata-resource-lock.service';
@@ -268,7 +268,7 @@ export class NpmService {
   }
 
   /**
-   * 若主板包仅在 project.aci 中声明、工程 node_modules 未安装，则补写 package.json 并 npm install 主板包。
+   * 若 Coder 工程 node_modules 尚未安装，则按 package.json 声明安装主板包。
    */
   private async ensureAilyCodeBoardPackageInProjectNodeModules(projectPath: string): Promise<void> {
     if (!this.isAilyCodeProjectRoot(projectPath)) {
@@ -287,19 +287,7 @@ export class NpmService {
     const pkg = JSON.parse(window['fs'].readFileSync(packageJsonPath, 'utf8'));
     let boardRange = String(pkg.dependencies?.[boardModule] ?? pkg.boardDependencies?.[boardModule] ?? '').trim();
     if (!boardRange) {
-      try {
-        const aci = JSON.parse(window['fs'].readFileSync(window['path'].join(projectPath, 'project.aci'), 'utf8'));
-        const ver = String(aci?.target?.boardPackageVersion ?? '').trim();
-        if (!ver) {
-          boardRange = '*';
-        } else if (/^[\^~]|^>=|^<=|^>|^</.test(ver) || ver === '*' || ver === 'latest') {
-          boardRange = ver;
-        } else {
-          boardRange = `^${ver}`;
-        }
-      } catch {
-        boardRange = '*';
-      }
+      boardRange = '*';
       pkg.dependencies = { ...(pkg.dependencies || {}), [boardModule]: boardRange };
       pkg.boardDependencies = { ...(pkg.boardDependencies || {}), [boardModule]: boardRange };
       window['fs'].writeFileSync(packageJsonPath, JSON.stringify(pkg, null, 2));
@@ -466,7 +454,7 @@ export class NpmService {
   }
 
   private isAilyCodeProjectRoot(projectPath: string): boolean {
-    return window['path'].isExists(window['path'].join(projectPath, 'project.aci'));
+    return this.prjService.isAilyCodeProject(projectPath);
   }
 
   /**
@@ -479,7 +467,7 @@ export class NpmService {
       return;
     }
 
-    const platformRef = readPlatformRefFromProjectAci(projectPath);
+    const platformRef = readPlatformRefFromProjectPackage(projectPath);
     if (!platformRef?.packageName) {
       console.log('[installPlatformPackageForAilyCodeProject] 未配置 platform，跳过');
       return;
@@ -671,7 +659,7 @@ export class NpmService {
     if (typeof boardPackageJson?.name === 'string' && boardPackageJson.name) {
       usedNames.add(boardPackageJson.name);
     }
-    const platformRef = readPlatformRefFromProjectAci(this.prjService.currentProjectPath);
+    const platformRef = readPlatformRefFromProjectPackage(this.prjService.currentProjectPath);
     if (platformRef?.packageName) {
       usedNames.add(platformRef.packageName);
     }

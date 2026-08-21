@@ -555,7 +555,6 @@ export class ChatRuntimeHostResourceOperationHandlerService implements OnDestroy
         return await this.runProjectDeclaredMutationOperation(request, 'switchBoard', [
           'package.json',
           '.temp/package.json',
-          'project.aci',
         ], () => switchBoardTool(this.projectService, { board_name: board }));
       }
       case 'setBoardConfig': {
