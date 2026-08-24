@@ -24,6 +24,7 @@ import { ToolI18nService } from '../../services/tool-i18n.service';
 import {
   SimulatorIframeBridgeService,
 } from '../../services/simulator-iframe-bridge.service';
+import { BackgroundAgentService } from '../../services/background-agent.service';
 
 /** iframe IPC 统一载荷（规范：docs/iframe-ipc-spec.md） */
 export interface IframeIpcPayload<T = unknown> {
@@ -114,6 +115,7 @@ export class IframeComponent implements OnInit, OnDestroy {
     private translate: TranslateService,
     private toolI18n: ToolI18nService,
     private simulatorIframeBridge: SimulatorIframeBridgeService,
+    private backgroundAgent: BackgroundAgentService,
   ) {
     if (this.data) {
       if (this.data.url) {
@@ -251,10 +253,7 @@ export class IframeComponent implements OnInit, OnDestroy {
               state: 'doing',
               showProgress: false,
             });
-            // this.backgroundAgent.generateSchematic();
-            // this.uiService.openAndSendToChat('@SchematicAgent 生成项目连线图', { autoSend: true });
-            this.sendToChat('@SchematicAgent 生成项目连线图');
-            // this.sendToMain('generate-graph-data');
+            this.generateSchematic('@SchematicAgent 生成项目连线图');
           },
           regenerateGraphData: () => {
             this.onRegenerate();
@@ -631,6 +630,17 @@ export class IframeComponent implements OnInit, OnDestroy {
   }
 
   /**
+   * 直接请求主应用后台创建 aily-chat session 并执行 SchematicAgent。
+   */
+  private generateSchematic(prompt: string): void {
+    if (this.embedded) {
+      void this.backgroundAgent.generateSchematic(prompt);
+    } else {
+      this.sendToMain('generate-graph-data', { prompt });
+    }
+  }
+
+  /**
    * 操作按钮: 重新生成
    */
   onRegenerate(): void {
@@ -640,7 +650,7 @@ export class IframeComponent implements OnInit, OnDestroy {
       state: 'doing',
       showProgress: false,
     });
-    this.sendToChat('@SchematicAgent 请根据当前项目的引脚配置和组件信息，重新生成连线图方案。');
+    this.generateSchematic('@SchematicAgent 请根据当前项目的引脚配置和组件信息，重新生成连线图方案。');
   }
 
   /**
