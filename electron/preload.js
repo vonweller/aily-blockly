@@ -327,31 +327,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
       };
     },
   },
-  chatRuntimeHost: {
-    registerRuntimeOwner: (runtimeOwnerId) => ipcRenderer.invoke("aily-chat-runtime-owner-register", { runtimeOwnerId }),
-    unregisterRuntimeOwner: (runtimeOwnerId) => ipcRenderer.invoke("aily-chat-runtime-owner-unregister", { runtimeOwnerId }),
-    registerResourceOperationHandler: (handlerId) => ipcRenderer.invoke("aily-chat-runtime-resource-handler-register", { handlerId }),
-    unregisterResourceOperationHandler: (handlerId) => ipcRenderer.invoke("aily-chat-runtime-resource-handler-unregister", { handlerId }),
-    call: (method, args) => ipcRenderer.invoke("aily-chat-runtime-host-command", { method, args }),
-    onRuntimeOwnerCommand: (callback) => {
-      const listener = (_event, payload) => callback(payload);
-      ipcRenderer.on("aily-chat-runtime-owner-command", listener);
-      return () => ipcRenderer.removeListener("aily-chat-runtime-owner-command", listener);
-    },
-    onResourceOperationCommand: (callback) => {
-      const listener = (_event, payload) => callback(payload);
-      ipcRenderer.on("aily-chat-runtime-resource-handler-command", listener);
-      return () => ipcRenderer.removeListener("aily-chat-runtime-resource-handler-command", listener);
-    },
-    sendRuntimeOwnerResponse: (payload) => ipcRenderer.send("aily-chat-runtime-owner-response", payload),
-    sendResourceOperationResponse: (payload) => ipcRenderer.send("aily-chat-runtime-resource-handler-response", payload),
-    emitRuntimeOwnerEvent: (payload) => ipcRenderer.send("aily-chat-runtime-owner-event", payload),
-    onEvent: (callback) => {
-      const listener = (_event, payload) => callback(payload);
-      ipcRenderer.on("aily-chat-runtime-host-event", listener);
-      return () => ipcRenderer.removeListener("aily-chat-runtime-host-event", listener);
-    },
-  },
   webviewBridge: {
     fetchPage: (data) => ipcRenderer.invoke("webview-bridge-fetch", data),
     searchWeb: (data) => ipcRenderer.invoke("webview-bridge-search", data),
@@ -576,28 +551,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
         listener,
       );
     },
-    onProjectRebuildRequested: (callback) => {
-      const listener = (_event, payload) => callback(
-        payload?.request,
-        {
-          requestId: payload?.requestId,
-          rendererGeneration: payload?.rendererGeneration,
-        },
-      );
-      ipcRenderer.on("simulator-project-rebuild-request", listener);
-      return () => ipcRenderer.removeListener(
-        "simulator-project-rebuild-request",
-        listener,
-      );
-    },
-    respondProjectRebuild: (transport, result) => ipcRenderer.send(
-      "simulator-project-rebuild-response",
-      {
-        requestId: transport?.requestId,
-        rendererGeneration: transport?.rendererGeneration,
-        result,
-      },
-    ),
   },
   linter: {
     status: () => ipcRenderer.invoke("aily-linter-status"),

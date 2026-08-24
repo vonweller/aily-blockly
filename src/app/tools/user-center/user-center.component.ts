@@ -15,9 +15,9 @@ import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { resolveTranslatedApiErrorMessage } from '../../utils/api-error.utils';
 import { ToolI18nService } from '../../services/tool-i18n.service';
 import {
-  AuthQuotaStateService,
+  projectAuthQuotaInfo,
   type AuthQuotaInfo,
-} from '../aily-chat/services/auth-quota-state.service';
+} from '../../services/auth-quota-info';
 import { ProtectedToolCloseError } from '../../services/auth-required-tool-close';
 import { ChildAppSafetyService } from '../../services/child-app-safety.service';
 
@@ -45,7 +45,6 @@ export class UserCenterComponent {
   private destroy$ = new Subject<void>();
   private message = inject(NzMessageService);
   private authService = inject(AuthService);
-  private authQuotaStateService = inject(AuthQuotaStateService);
   private electronService = inject(ElectronService);
   private translate = inject(TranslateService);
   private childAppSafety = inject(ChildAppSafetyService);
@@ -84,7 +83,6 @@ export class UserCenterComponent {
 
     // 首先检查并同步登录状态
     await this.checkAndSyncAuthStatus();
-    this.authQuotaStateService.syncAuthSnapshotFromHost();
 
     let previousLoginState = this.authService.isLoggedIn;
 
@@ -102,13 +100,7 @@ export class UserCenterComponent {
     this.authService.authSnapshot$
       .pipe(takeUntil(this.destroy$))
       .subscribe((authSnapshot) => {
-        this.authQuotaStateService.acceptAuthSnapshot(authSnapshot);
-      });
-
-    this.authQuotaStateService.quotaInfo$
-      .pipe(takeUntil(this.destroy$))
-      .subscribe((quotaInfo) => {
-        this.authQuotaInfo = quotaInfo;
+        this.authQuotaInfo = projectAuthQuotaInfo(authSnapshot);
       });
 
     // 监听用户信息

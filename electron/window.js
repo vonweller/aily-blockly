@@ -27,9 +27,6 @@ const {
     stopChildToolSessionProcess: stopChildToolSessionProcessWithDependencies,
 } = require('./child-tool-session-process');
 const {
-    registerChatRuntimeHostIpc,
-} = require('./chat-runtime-host');
-const {
     AILY_HOST_AUTH_CHANNEL,
     normalizeAilyHostAuthResult,
     parseAilyHostAuthRequest,
@@ -795,8 +792,6 @@ function registerWindowHandlers(mainWindow, options = {}) {
     const resolveRendererUrl = typeof options.resolveRendererUrl === 'function'
         ? options.resolveRendererUrl
         : null;
-    registerChatRuntimeHostIpc(mainWindow);
-
     ipcMain.on('child-tool-host-auth-response', (event, payload = {}) => {
         if (event.sender !== mainWindow.webContents) return;
         const relayId = typeof payload.relayId === 'string' ? payload.relayId.trim() : '';

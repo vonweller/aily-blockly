@@ -1,7 +1,6 @@
 import { Injectable, OnDestroy } from '@angular/core';
 import { Subject } from 'rxjs';
-import { AilyHost } from '../tools/aily-chat/core/host';
-import type { EditsSummary, EditFileSummary } from '../tools/aily-chat/services/edit-checkpoint.service';
+import type { EditsSummary, EditFileSummary } from './ai-edit-summary.types';
 import {
   AILY_CODER_AI_EDIT_DIFF_CHANNEL,
   AILY_CODER_AI_EDIT_DIFF_RESULT_CHANNEL,
@@ -9,6 +8,7 @@ import {
   type AiEditDiffResultPayload,
 } from './ai-coder-diff-channels';
 import { AiCoderDiffPreviewStoreService } from './ai-coder-diff-preview-store.service';
+import { ProjectService } from './project.service';
 
 @Injectable({ providedIn: 'root' })
 export class AiCoderDiffBridgeService implements OnDestroy {
@@ -20,7 +20,10 @@ export class AiCoderDiffBridgeService implements OnDestroy {
 
   private readonly onEmbedMessage = (ev: MessageEvent) => this.handleEmbedMessage(ev);
 
-  constructor(private readonly previewStore: AiCoderDiffPreviewStoreService) {
+  constructor(
+    private readonly previewStore: AiCoderDiffPreviewStoreService,
+    private readonly projectService: ProjectService,
+  ) {
     window.addEventListener('message', this.onEmbedMessage);
   }
 
@@ -156,12 +159,9 @@ export class AiCoderDiffBridgeService implements OnDestroy {
     if (this.workspaceRoot) {
       return this.workspaceRoot;
     }
-    try {
-      const project = AilyHost.get().project;
-      return project.currentProjectPath || project.projectRootPath || null;
-    } catch {
-      return null;
-    }
+    return this.projectService.currentProjectPath
+      || this.projectService.projectRootPath
+      || null;
   }
 
   private openPreview(payload: AiEditDiffOpenPayload): void {
@@ -222,7 +222,7 @@ export class AiCoderDiffBridgeService implements OnDestroy {
 
   private readCurrentFileContent(filePath: string): string {
     try {
-      const fs = AilyHost.get().fs;
+      const fs = window['fs'];
       if (fs.existsSync(filePath)) {
         return fs.readFileSync(filePath, 'utf-8');
       }

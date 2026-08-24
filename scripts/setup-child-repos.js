@@ -7,7 +7,6 @@ const childDir = path.join(rootDir, 'child');
 
 // 子应用不再由本脚本拉取和编译。它们由主软件读取远端
 // subapp-index.json，并安装到用户级 npm-global/app 目录。
-// aily-lex 已改为 npm 包依赖（package.json → aily-lex），不再走本地 child 仓库。
 const REPOS = [
   {
     name: 'aily-coder',
@@ -61,7 +60,6 @@ function main() {
   }
 
   console.log('\n[done] core child repos ready. Subapps are installed at runtime from the remote catalog.');
-  console.log('[note] aily-lex is provided by the npm package dependency, not a local child repo.');
 }
 
 main();

@@ -37,6 +37,7 @@ import { MainUiAutomationService } from '../../services/main-ui-automation.servi
 import { NoticeService } from '../../services/notice.service';
 import { ProjectService } from '../../services/project.service';
 import { RequiredSubappService } from '../../services/required-subapp.service';
+import { AiOperationRegistryService } from '../../services/ai-operation-registry.service';
 import { ThemeService } from '../../services/theme.service';
 import { ToolI18nService } from '../../services/tool-i18n.service';
 import { UiService } from '../../services/ui.service';
@@ -191,6 +192,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     private noticeService: NoticeService,
     private subappActivityService: SubappActivityService,
     private requiredSubapps: RequiredSubappService,
+    private aiOperationRegistry: AiOperationRegistryService,
   ) {
     this.langSubscription = this.translate.onLangChange.subscribe(() => this.syncHostContext());
     this.themeSubscription = this.themeService.themeChanged$.subscribe(() => this.syncHostContext());
@@ -1753,6 +1755,14 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
 
     this.ailyChatOperationActive = active;
     this.ailyChatOperationSessionId = active ? sessionId : '';
+    this.aiOperationRegistry.setActive(
+      `child-tool:${this.hostContextId}`,
+      active,
+      {
+        projectPath: this.projectService.currentProjectPath,
+        sessionId: this.ailyChatOperationSessionId,
+      },
+    );
     // 会话执行态用于预编译等宿主协调；视觉遮罩由 live Blockly 写入态精确驱动。
     this.blocklyService.setAiExecutionActive(`child-tool:${this.hostContextId}`, active);
 

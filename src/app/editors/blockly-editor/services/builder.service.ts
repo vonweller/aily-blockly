@@ -34,7 +34,7 @@ import {
   parseAilyBuilderProgressLine,
   parseLegacyAilyBuilderProgressLine
 } from '../../../utils/aily-builder-progress.utils';
-import { ChatPerformanceTracer } from '../../../tools/aily-chat/services/chat-perf-tracer';
+import { ChatPerformanceTracer } from '../../../services/performance-tracer';
 import { appendProjectLog, type ProjectLogLevel } from '../../../utils/project-log.utils';
 import { ProjectDebugConfigurationService } from '../../../services/project-debug-configuration.service';
 

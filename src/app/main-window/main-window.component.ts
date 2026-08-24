@@ -44,7 +44,6 @@ import { LibManagerToolComponent } from '../tools/lib-manager-tool/lib-manager-t
 import { ModeWelcomeComponent } from '../components/mode-welcome/mode-welcome.component';
 import { SimulatorSubappHostComponent } from '../tools/simulator/simulator-subapp-host.component';
 import type { DevelopmentModePreference } from '../services/config.service';
-import { ChatRuntimeHostResourceOperationHandlerService } from '../tools/aily-chat/services/chat-runtime-host-resource-operation-handler.service';
 import {
   bootstrapDefaultAilyChatSubapp,
   DEFAULT_AILY_CHAT_SUBAPP_BOOTSTRAP_KEY,
@@ -163,7 +162,6 @@ export class MainWindowComponent implements OnDestroy {
     private subappManager: SubappManagerService,
     private childToolProcessService: ChildToolProcessService,
     private toolI18n: ToolI18nService,
-    private readonly chatRuntimeHostResourceOperationHandler: ChatRuntimeHostResourceOperationHandlerService,
   ) { }
 
   async ngOnInit(): Promise<void> {
@@ -180,9 +178,6 @@ export class MainWindowComponent implements OnDestroy {
       this.authService.isLoggedIn$,
       this.authService.authChanged$,
     ).subscribe(() => this.broadcastHostAuthState());
-    void this.chatRuntimeHostResourceOperationHandler.start().catch(error => {
-        console.error('[AilyChat][RuntimeHostResourceOperationHandler] Failed to start:', error);
-    });
     this.watchConfigNotices();
     await Promise.all([
       this.toolI18n.loadChildTools(),

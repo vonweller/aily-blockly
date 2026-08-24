@@ -8,14 +8,8 @@ import { provideAnimations } from '@angular/platform-browser/animations';
 import { NzModalModule } from 'ng-zorro-antd/modal';
 import { authInterceptor } from './interceptors/auth.interceptor';
 import { retryInterceptor } from './interceptors/retry.interceptor';
-import {
-  AILY_CHAT_RUNTIME_OWNER_PROVIDERS,
-  AILY_CHAT_SHARED_PROVIDERS,
-} from './tools/aily-chat/aily-chat.providers';
-import { AilyChatHostInitializerService } from './tools/aily-chat/services/aily-chat-host-initializer.service';
 import { BlocklyLiveOperationBridgeService } from './services/blockly-live-operation-bridge.service';
 import { McpBridgeService } from './services/mcp-bridge.service';
-import { ChatRuntimeHostBootstrapService } from './tools/aily-chat/services/chat-runtime-host-bootstrap.service';
 
 export const appConfig: ApplicationConfig = {
   providers: [
@@ -34,14 +28,8 @@ export const appConfig: ApplicationConfig = {
     provideAnimations(),
     importProvidersFrom(NzModalModule),
     provideAppInitializer(() => {
-      inject(AilyChatHostInitializerService).ensureInitialized();
       inject(BlocklyLiveOperationBridgeService).ensureInitialized();
       inject(McpBridgeService).ensureInitialized();
-      void inject(ChatRuntimeHostBootstrapService).startHostRuntimeOwner().catch((error) => {
-        console.error('[AilyChat][RuntimeOwnerHost] Failed to start app-scoped runtime owner:', error);
-      });
     }),
-    ...AILY_CHAT_SHARED_PROVIDERS,
-    ...AILY_CHAT_RUNTIME_OWNER_PROVIDERS,
   ]
 };

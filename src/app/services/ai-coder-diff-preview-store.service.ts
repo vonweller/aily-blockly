@@ -1,5 +1,4 @@
 import { Injectable } from '@angular/core';
-import { AilyHost } from '../tools/aily-chat/core/host';
 import type { AiEditDiffFilePayload, AiEditDiffFileType, AiEditDiffOpenPayload } from './ai-coder-diff-channels';
 
 const STORE_FILENAME = 'coder-ai-diff-preview.json';
@@ -52,7 +51,7 @@ export class AiCoderDiffPreviewStoreService {
     }
 
     try {
-      const fs = AilyHost.get().fs;
+      const fs = window['fs'];
       const path = this.storePath(workspaceRoot);
       if (!fs.existsSync(path)) {
         return null;
@@ -73,7 +72,7 @@ export class AiCoderDiffPreviewStoreService {
       return;
     }
     try {
-      const fs = AilyHost.get().fs;
+      const fs = window['fs'];
       const path = this.storePath(workspaceRoot);
       if (fs.existsSync(path)) {
         fs.unlinkSync(path);
@@ -137,7 +136,7 @@ export class AiCoderDiffPreviewStoreService {
 
   private write(workspaceRoot: string, record: AiCoderDiffPreviewStoreV1): void {
     try {
-      const fs = AilyHost.get().fs;
+      const fs = window['fs'];
       const dir = window['path'].join(workspaceRoot, '.aily');
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
@@ -150,7 +149,7 @@ export class AiCoderDiffPreviewStoreService {
 
   private readCurrentFileContent(filePath: string): string {
     try {
-      const fs = AilyHost.get().fs;
+      const fs = window['fs'];
       if (fs.existsSync(filePath)) {
         return fs.readFileSync(filePath, 'utf-8');
       }

@@ -16,6 +16,7 @@ const routes = read('src/app/app.routes.ts');
 const mainWindowSource = read('src/app/main-window/main-window.component.ts');
 const mainWindowTemplate = read('src/app/main-window/main-window.component.html');
 const childHostTemplate = read('src/app/tools/child-tool-host/child-tool-host.component.html');
+const packageJson = JSON.parse(read('package.json'));
 
 if (!/path:\s*["']aily-chat["'][\s\S]*?redirectTo:\s*["']child-tool\/aily-chat["']/u.test(routes)) {
   fail('the legacy /aily-chat route must redirect to /child-tool/aily-chat');
@@ -35,12 +36,24 @@ if (!childHostTemplate.includes('<app-subapp-activity-dock')) {
   fail('the installed Aily Chat surface must be hosted by the generic child-tool shell');
 }
 
-for (const retiredFile of [
-  'src/app/tools/aily-chat/aily-chat.component.ts',
-  'src/app/tools/aily-chat/services/aily-chat-child-protocol.service.ts',
+const retiredDirectory = 'src/app/tools/aily-chat';
+if (fs.existsSync(path.join(workspaceRoot, retiredDirectory))) {
+  fail(`retired Angular implementation still exists: ${retiredDirectory}`);
+}
+
+for (const dependency of ['aily-lex', 'js-tiktoken']) {
+  if (packageJson.dependencies?.[dependency] || packageJson.devDependencies?.[dependency]) {
+    fail(`retired dependency still exists: ${dependency}`);
+  }
+}
+
+for (const retiredRuntime of [
+  'electron/chat-runtime-host.js',
+  'electron/chat-runtime-lex-execution-runtime.mjs',
+  'electron/chat-runtime-lex-execution-runtime.bundle.mjs',
 ]) {
-  if (fs.existsSync(path.join(workspaceRoot, retiredFile))) {
-    fail(`retired Angular entry still exists: ${retiredFile}`);
+  if (fs.existsSync(path.join(workspaceRoot, retiredRuntime))) {
+    fail(`retired Electron runtime still exists: ${retiredRuntime}`);
   }
 }
 

@@ -14,11 +14,12 @@ import {
   getSensorPinmapCatalogTool,
   savePinmapTool,
   validateConnectionGraphTool,
-} from '../tools/aily-chat/tools/connectionGraphTool';
-import type { ToolUseResult } from '../tools/aily-chat/core/tool-types';
-import { AilyHost } from '../tools/aily-chat/core/host';
+  type ConnectionGraphInvocationContext,
+} from '../integrations/schematic/connection-graph-operations';
 import { ThemeService } from './theme.service';
 import { TranslateService } from '@ngx-translate/core';
+import { BlocklyService } from '../editors/blockly-editor/services/blockly.service';
+import { AuthService } from './auth.service';
 
 const CIRCUIT_PAYLOAD_ACK_TIMEOUT_MS = 2_000;
 const CIRCUIT_WINDOW_READY_TIMEOUT_MS = 20_000;
@@ -34,6 +35,8 @@ export class SchematicMcpRuntimeService {
     private readonly themeService: ThemeService,
     private readonly translate: TranslateService,
     private readonly modal: NzModalService,
+    private readonly blocklyService: BlocklyService,
+    private readonly authService: AuthService,
   ) {}
 
   async invoke(method: string, args: Record<string, unknown>): Promise<unknown> {
@@ -49,21 +52,21 @@ export class SchematicMcpRuntimeService {
       case 'notify_schematic_saved':
         return this.notifySchematicSaved(args);
       case 'generate_schematic':
-        return generateConnectionGraphTool(this.connectionGraphService, this.projectService, args as any);
+        return generateConnectionGraphTool(this.connectionGraphService, this.projectService, args as any, this.invocationContext());
       case 'get_pinmap_summary':
-        return getPinmapSummaryTool(this.connectionGraphService, this.projectService, args as any);
+        return getPinmapSummaryTool(this.connectionGraphService, this.projectService, args as any, this.invocationContext());
       case 'get_component_catalog':
         return getSensorPinmapCatalogTool(this.connectionGraphService, this.projectService, args as any);
       case 'get_project_context':
-        return getProjectContextTool(this.connectionGraphService, this.projectService, args as any);
+        return getProjectContextTool(this.connectionGraphService, this.projectService, args as any, this.invocationContext());
       case 'validate_schematic':
-        return validateConnectionGraphTool(this.connectionGraphService, this.projectService, args as any);
+        return validateConnectionGraphTool(this.connectionGraphService, this.projectService, args as any, this.invocationContext());
       case 'get_current_schematic':
         return getCurrentSchematicTool(this.connectionGraphService, this.projectService, args as any);
       case 'generate_pinmap':
         return generatePinmapTool(this.connectionGraphService, this.projectService, args as any);
       case 'save_pinmap':
-        return savePinmapTool(this.connectionGraphService, this.projectService, args as any);
+        return savePinmapTool(this.connectionGraphService, this.projectService, args as any, this.invocationContext());
       default:
         return {
           is_error: true,
@@ -74,11 +77,18 @@ export class SchematicMcpRuntimeService {
 
   private async getGeneratedCppCode(): Promise<{ ok: boolean; cppCode?: string; error?: string }> {
     try {
-      const cppCode = AilyHost.get().editor?.getGeneratedCode?.() || '';
+      const cppCode = this.blocklyService.getReusableGeneratedCode() || '';
       return { ok: true, cppCode };
     } catch (error: any) {
       return { ok: false, error: error?.message || String(error) };
     }
+  }
+
+  private invocationContext(): ConnectionGraphInvocationContext {
+    return {
+      getAuthToken: () => this.authService.getToken(),
+      getGeneratedCode: () => this.blocklyService.getReusableGeneratedCode() || '',
+    };
   }
 
   private async showArch(args: Record<string, unknown>): Promise<{ ok: boolean; opened?: boolean; error?: string }> {

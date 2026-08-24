@@ -12,7 +12,10 @@ import {
   CodeLineRange,
   normalizeArduinoGeneratedCode,
 } from '../components/blockly/generators/arduino/arduino';
-import { convertBlockTreeToAbs, convertAbiToAbsWithLineMap } from '../../../tools/aily-chat/public-api';
+import {
+  convertBlockTreeToAbs,
+  convertAbiToAbsWithLineMap,
+} from '../../../integrations/blockly/abs/abi-abs-converter';
 import { BlockSearcher } from '../components/blockly/plugins/toolbox-search/src/block_searcher';
 import {
   dragSelectionWeakMap,

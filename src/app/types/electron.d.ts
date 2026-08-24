@@ -30,19 +30,6 @@ declare global {
         cancel: (streamId: string) => Promise<any>;
         onEvent: (streamId: string, callback: (payload: any) => void) => () => void;
       };
-      chatRuntimeHost?: {
-        registerRuntimeOwner: (runtimeOwnerId: string) => Promise<{ ok?: boolean; runtimeOwnerId?: string }>;
-        unregisterRuntimeOwner: (runtimeOwnerId: string) => Promise<{ ok?: boolean }>;
-        registerResourceOperationHandler: (handlerId: string) => Promise<{ ok?: boolean; handlerId?: string }>;
-        unregisterResourceOperationHandler: (handlerId: string) => Promise<{ ok?: boolean }>;
-        call: (method: string, args: readonly unknown[]) => Promise<unknown>;
-        onRuntimeOwnerCommand: (callback: (payload: unknown) => void) => () => void;
-        onResourceOperationCommand: (callback: (payload: unknown) => void) => () => void;
-        sendRuntimeOwnerResponse: (payload: unknown) => void;
-        sendResourceOperationResponse: (payload: unknown) => void;
-        emitRuntimeOwnerEvent: (payload: unknown) => void;
-        onEvent: (callback: (payload: any) => void) => () => void;
-      };
       subapps?: {
         list: (options?: { refresh?: boolean; locale?: string }) => Promise<any>;
         install: (options: { id: string; locale?: string; forceClose?: boolean }) => Promise<any>;
@@ -281,22 +268,6 @@ declare global {
             requirement?: Record<string, unknown>;
           }) => void,
         ) => () => void;
-        onProjectRebuildRequested: (
-          callback: (
-            request: Record<string, unknown>,
-            transport: {
-              requestId: string;
-              rendererGeneration: number;
-            },
-          ) => void,
-        ) => () => void;
-        respondProjectRebuild: (
-          transport: {
-            requestId: string;
-            rendererGeneration: number;
-          },
-          result: Record<string, unknown>,
-        ) => void;
       };
       linter: any;
       uploader: any;

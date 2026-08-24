@@ -18,7 +18,7 @@ import { TranslateService } from '@ngx-translate/core';
 import { NoticeService } from './notice.service';
 import { NzModalRef, NzModalService } from 'ng-zorro-antd/modal';
 import { AppDataResourceLockService } from './appdata-resource-lock.service';
-import { ChatRuntimeHostInventoryService } from '../tools/aily-chat/services/chat-runtime-host-inventory.service';
+import { AiOperationRegistryService } from './ai-operation-registry.service';
 import {
   readPlatformRefFromProjectPackage,
   resolveEffectiveBoardDependencies,
@@ -286,7 +286,7 @@ export class ProjectService {
     private translate: TranslateService,
     private noticeService: NoticeService,
     private appDataResourceLock: AppDataResourceLockService,
-    private chatRuntimeHostInventory: ChatRuntimeHostInventoryService,
+    private aiOperationRegistry: AiOperationRegistryService,
     private injector: Injector,
   ) {
     this.translate.onLangChange.subscribe((event) => {
@@ -294,25 +294,15 @@ export class ProjectService {
     });
   }
 
-  private hasBlockingChatRequest(): boolean {
-    const projectPath = this.normalizeProjectPath(this.currentProjectPath);
-    return this.chatRuntimeHostInventory.readSnapshot().sessions.some(session => {
-      if (session.requestInProgress !== true) {
-        return false;
-      }
-
-      const sessionProjectPath = this.normalizeProjectPath(session.projectPath);
-      return projectPath
-        ? sessionProjectPath === projectPath
-        : sessionProjectPath.length === 0;
-    });
+  private hasBlockingAiOperation(): boolean {
+    return this.aiOperationRegistry.hasActive(this.currentProjectPath);
   }
 
-  private shouldBlockForChatRequest(reason?: ProjectActivationReason): boolean {
-    return !reason?.startsWith('chat-tool-') && this.hasBlockingChatRequest();
+  private shouldBlockForAiOperation(reason?: ProjectActivationReason): boolean {
+    return !reason?.startsWith('chat-tool-') && this.hasBlockingAiOperation();
   }
 
-  private warnBlockingChatRequest(): void {
+  private warnBlockingAiOperation(): void {
     this.message.warning('AI 对话正在处理中，请先停止当前请求后再切换或关闭项目。');
   }
 
@@ -939,8 +929,8 @@ export class ProjectService {
     const previousProjectPath = this.currentProjectPath;
     const activationReason = options.reason || (this.isSameProjectPath(previousProjectPath, projectPath) ? 'reload' : 'open');
 
-    if (this.shouldBlockForChatRequest(activationReason)) {
-      this.warnBlockingChatRequest();
+    if (this.shouldBlockForAiOperation(activationReason)) {
+      this.warnBlockingAiOperation();
       return false;
     }
 
@@ -1181,8 +1171,8 @@ export class ProjectService {
   }
 
   async close(options: { allowDuringChatTool?: boolean } = {}) {
-    if (!options.allowDuringChatTool && this.shouldBlockForChatRequest()) {
-      this.warnBlockingChatRequest();
+    if (!options.allowDuringChatTool && this.shouldBlockForAiOperation()) {
+      this.warnBlockingAiOperation();
       return false;
     }
 
