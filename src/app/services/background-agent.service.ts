@@ -13,6 +13,8 @@ import { ElectronService } from './electron.service';
 import { ProjectService } from './project.service';
 import { ConnectionGraphService } from './connection-graph.service';
 import { ChildToolProcessService } from './child-tool-process.service';
+import { UiService } from './ui.service';
+import { DEFAULT_AILY_CHAT_SUBAPP_TOOL_ID } from './default-aily-chat-bootstrap';
 
 // ===== 类型定义 =====
 
@@ -34,7 +36,11 @@ export interface ProgressEvent {
 
 export type BackgroundAgentStatus = 'idle' | 'running' | 'completed' | 'error';
 
-const AILY_CHAT_TOOL_ID = 'aily-chat-react';
+interface SchematicGenerationOptions {
+  revealSession?: boolean;
+}
+
+const AILY_CHAT_TOOL_ID = DEFAULT_AILY_CHAT_SUBAPP_TOOL_ID;
 const AILY_CHAT_HOST_SERVICE_CHANNEL = 'aily-chat-host-service-v1';
 const SCHEMATIC_GENERATION_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_SCHEMATIC_PROMPT = '@SchematicAgent 生成项目连线图';
@@ -52,6 +58,16 @@ interface SchematicGenerationResponse {
   };
 }
 
+interface SchematicGenerationEvent {
+  channel: typeof AILY_CHAT_HOST_SERVICE_CHANNEL;
+  type: 'event';
+  requestId: string;
+  event?: {
+    type?: 'session-created';
+    sessionId?: string;
+  };
+}
+
 @Injectable({
   providedIn: 'root'
 })
@@ -65,6 +81,7 @@ export class BackgroundAgentService implements OnDestroy {
     private connectionGraphService: ConnectionGraphService,
     private electronService: ElectronService,
     private childToolProcess: ChildToolProcessService,
+    private uiService: UiService,
   ) {
     this.setupIpcListeners();
     console.log('[BackgroundAgent] 服务初始化');
@@ -126,7 +143,10 @@ ${sceneSnapshot}
    * 启动连线图生成任务
    * 完整流程：启动/复用 aily-chat 后台 → 请求创建 session → 执行提示词 → 完成
    */
-  async generateSchematic(prompt = DEFAULT_SCHEMATIC_PROMPT): Promise<void> {
+  async generateSchematic(
+    prompt = DEFAULT_SCHEMATIC_PROMPT,
+    options: SchematicGenerationOptions = {},
+  ): Promise<void> {
     if (this.isRunning) {
       console.warn('[BackgroundAgent] 任务已在运行中');
       return;
@@ -142,12 +162,14 @@ ${sceneSnapshot}
     this.status = 'running';
     this.emitProgress('thinking', '正在分析项目...');
     let runtimeAcquired = false;
+    const revealSession = options.revealSession === true
+      && !this.connectionGraphService.hasConnectionGraph(cwd);
 
     try {
       await this.childToolProcess.acquire(AILY_CHAT_TOOL_ID);
       runtimeAcquired = true;
 
-      const result = await this.requestSchematicGeneration(cwd, prompt);
+      const result = await this.requestSchematicGeneration(cwd, prompt, revealSession);
       if (result.accepted === false && result.reason === 'schematic-agent-running') {
         this.status = 'completed';
         this.emitProgress('complete', '已有连线图 Agent 正在执行');
@@ -180,10 +202,11 @@ ${sceneSnapshot}
 
     window['ipcRenderer'].on('iframe-message-connection-graph', (_event: any, payload: { type: string; data?: unknown }) => {
       if (payload?.type === 'generate-graph-data') {
-        const prompt = typeof (payload.data as { prompt?: unknown } | undefined)?.prompt === 'string'
-          ? (payload.data as { prompt: string }).prompt
+        const request = (payload.data || {}) as { prompt?: unknown; revealSession?: unknown };
+        const prompt = typeof request.prompt === 'string'
+          ? request.prompt
           : DEFAULT_SCHEMATIC_PROMPT;
-        void this.generateSchematic(prompt);
+        void this.generateSchematic(prompt, { revealSession: request.revealSession === true });
         return;
       }
       if (payload?.type === 'send-to-chat') {
@@ -237,6 +260,7 @@ ${(connectionData.connections || []).length} 条连线
   private requestSchematicGeneration(
     cwd: string,
     prompt: string,
+    revealSession: boolean,
   ): Promise<NonNullable<SchematicGenerationResponse['result']>> {
     const requestId = crypto.randomUUID();
 
@@ -244,12 +268,28 @@ ${(connectionData.connections || []).length} 条连线
       const removeListener = this.childToolProcess.onMessage(
         AILY_CHAT_TOOL_ID,
         (message) => {
-          const response = message as unknown as SchematicGenerationResponse;
+          const response = message as unknown as SchematicGenerationResponse | SchematicGenerationEvent;
           if (
             response.channel !== AILY_CHAT_HOST_SERVICE_CHANNEL ||
-            response.type !== 'response' ||
             response.requestId !== requestId
           ) {
+            return;
+          }
+
+          if (response.type === 'event') {
+            const sessionId = response.event?.type === 'session-created'
+              ? String(response.event.sessionId || '').trim()
+              : '';
+            if (sessionId && revealSession) {
+              void this.uiService.openAilyChatSession(sessionId).then(
+                opened => {
+                  if (!opened) {
+                    console.warn('[BackgroundAgent] Aily Chat session 导航超时:', sessionId);
+                  }
+                },
+                error => console.warn('[BackgroundAgent] Aily Chat session 导航失败:', error),
+              );
+            }
             return;
           }
 
@@ -272,6 +312,7 @@ ${(connectionData.connections || []).length} 条连线
           action: 'schematic.generate',
           cwd,
           prompt,
+          revealSession,
         })
         .catch((error) => {
           clearTimeout(timeout);

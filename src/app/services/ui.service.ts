@@ -550,6 +550,36 @@ export class UiService {
     return targetToolId;
   }
 
+  /** 打开或聚焦 Aily Chat，并在子应用宿主就绪后切换到指定后台 session。 */
+  async openAilyChatSession(sessionId: string): Promise<boolean> {
+    const targetSessionId = String(sessionId || '').trim();
+    if (!targetSessionId) {
+      return false;
+    }
+
+    const targetToolId = DEFAULT_AILY_CHAT_SUBAPP_TOOL_ID;
+    this.openTool(targetToolId);
+    const deadline = Date.now() + 10_000;
+
+    while (Date.now() < deadline) {
+      const status = this.childHostRegistry.getStatus(targetToolId);
+      if (status?.['penpalState'] === 'connected' && status?.['frameLoaded'] === true) {
+        this.sendToolSignal(`${targetToolId}:session-select`, {
+          targetToolId,
+          sessionId: targetSessionId,
+        });
+        return true;
+      }
+      if (status?.['status'] === 'error') {
+        return false;
+      }
+
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+
+    return false;
+  }
+
   /** The currently open Aily Chat, or null when it is closed. */
   getActiveAilyChatToolId(): string | null {
     return findPreferredAilyChatTool(this.openToolList);
