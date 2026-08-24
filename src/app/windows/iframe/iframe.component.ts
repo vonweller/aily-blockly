@@ -249,7 +249,7 @@ export class IframeComponent implements OnInit, OnDestroy {
               state: 'doing',
               showProgress: false,
             });
-            this.generateSchematic('@SchematicAgent 生成项目连线图');
+            this.generateSchematic('@SchematicAgent 生成项目连线图', true);
           },
           regenerateGraphData: () => {
             this.onRegenerate();
@@ -628,11 +628,11 @@ export class IframeComponent implements OnInit, OnDestroy {
   /**
    * 直接请求主应用后台创建 aily-chat session 并执行 SchematicAgent。
    */
-  private generateSchematic(prompt: string): void {
+  private generateSchematic(prompt: string, revealSession = false): void {
     if (this.embedded) {
-      void this.backgroundAgent.generateSchematic(prompt);
+      void this.backgroundAgent.generateSchematic(prompt, { revealSession });
     } else {
-      this.sendToMain('generate-graph-data', { prompt });
+      this.sendToMain('generate-graph-data', { prompt, revealSession });
     }
   }
 
