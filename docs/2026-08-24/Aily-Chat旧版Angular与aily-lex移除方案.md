@@ -1,7 +1,7 @@
 # Aily Chat 旧版 Angular 与 `aily-lex` 移除方案
 
-日期：2026-08-24  
-状态：阶段 A 已实施，阶段 B～D 待执行  
+日期：2026-08-24
+状态：阶段 A 与非 E2E 单测清理已实施，阶段 B～D 待执行
 范围：`aily--blockly` 主软件、`aily-lex-pro/packages/aily-chat` 新版子应用
 
 ## 1. 结论
@@ -17,6 +17,7 @@
 - 删除 160 个旧 Angular 展示层文件，包括旧消息 Viewer、设置页、会话列表、调试页、动态渲染指令等；
 - 将仍被新版宿主使用的 Subapp Activity Dock、认证快照类型和 Mermaid 弹窗迁出 `tools/aily-chat`；
 - 新增主链守卫，禁止旧组件或旧协议重新接回应用 Shell。
+- 按当前仓库策略删除根 `e2e/` 外的单元测试、Karma/Jasmine 配置与依赖，只保留 Playwright E2E。
 
 但是，`aily-lex` 还不能在同一个提交中直接从依赖中删除。当前仍存在一条独立于旧 UI 的兼容执行链：
 
@@ -92,7 +93,7 @@ MainWindow <app-aily-chat>
 
 ### 3.3 旧目录中仍存活的内容
 
-阶段 A 后，`src/app/tools/aily-chat` 仍约 11 MiB、412 个文件。它已不再等同于“旧 Aily Chat UI”，而是混合了以下四类内容：
+当前 `src/app/tools/aily-chat` 仍约 11 MiB、404 个文件，并有 112 个生产文件、161 处导入直接依赖 `aily-lex` 或其子路径。它已不再等同于“旧 Aily Chat UI”，而是混合了以下四类内容：
 
 | 类别 | 示例 | 处理方式 |
 | --- | --- | --- |
@@ -116,7 +117,7 @@ MainWindow <app-aily-chat>
 | `/aily-chat` 旧路由 | 保留地址兼容，但目标改为新版子应用 | 已重定向 |
 | `/aily-chat-process-detail/...` | 旧 Angular 进程详情窗口，新 UI 已有自己的详情展示 | 已删除 |
 | 旧 Viewer、会话、设置、调试、动态渲染组件 | 旧入口删除后不再进入生产编译图 | 已删除 |
-| 旧 UI 专用 `test:aily-chat-mainline` | 主链定义错误且引用不存在的旧 spec | 已改为新版安装/认证/路由守卫测试 |
+| 根 `e2e/` 外的单元测试与专项 spec 配置 | 当前策略仅保留可重建的 Playwright E2E | 已删除，Karma/Jasmine 依赖与非 E2E test scripts 同步移除 |
 
 ### 4.2 已解耦并迁出旧目录
 
@@ -152,6 +153,28 @@ MainWindow <app-aily-chat>
 | Project Scene Proposal / Scene Code Reconciliation Provider | 仍通过 `createElectronChatRuntimeHostTransport()` 发起 scoped Agent |
 | `ProjectService -> ChatRuntimeHostInventoryService` | 仍用旧运行态判断项目是否有活跃会话 |
 
+### 4.5 `aily-lex` 必须迁移的生产能力
+
+以下是物理删除 `aily-lex` 前必须完成的工作包。并非旧目录中的 404 个文件都要搬迁：产品能力迁到通用集成层，运行时能力改接新版 Agent，纯兼容投影和重复实现直接删除。
+
+| 工作包 | 当前生产链/文件 | 目标 | 完成标志 |
+| --- | --- | --- | --- |
+| M1 新版 scoped Agent RPC | `ProjectSceneProposalProviderService`、`SceneCodeReconciliationProviderService` 调用 `createElectronChatRuntimeHostTransport()` | 在 `packages/aily-chat` Agent Channel 增加 host-only `scoped.run` / `scoped.cancel`，内部使用 `@aily-project/aily-agent#createAilyHarness()` 和临时 Session | request ID、取消、超时、单结果提交语义保持一致 |
+| M2 Project Scene Proposal | `core/project-scene-proposal-*`、`core/blockly-project-scene-tools.ts` | 调用 M1；DTO 迁到 `src/app/integrations/agent/project-scene` | 创建项目、生成场景提案、取消均不经过旧 runtime host |
+| M3 Scene Code Reconciliation / Simulator | `core/scene-code-reconciliation-*`、Simulator reconciliation service/product port | 调用 M1；DTO 迁到 `src/app/integrations/simulator/scene-code` | 真实 Simulator 生成、候选校验、取消、构建通过 |
+| M4 Blockly 宿主工具 | `tools/atomicBlockTools.ts`、`searchBoardsLibrariesTool.ts`、`buildProjectTool.ts`、`syncAbsFileTool.ts`、`editBlockTool.ts`、`connectionGraphTool.ts` | 工具实现迁到 `src/app/integrations/blockly/tools`；新版 Agent 继续通过 CLI Bridge、MCP、Penpal 或 `SubappAgentBridgeService` 调用 | `BlocklyLiveOperationBridgeService` 和 Schematic 不再 import `tools/aily-chat` |
+| M5 ABS/ABI 与自动同步 | `public-api.ts`、`AbsAutoSyncService`、ABI/ABS converter | 迁到 `src/app/integrations/blockly/abs` | Blockly 打开、转换、同步、编译不依赖 Chat 目录 |
+| M6 通用宿主端口 | `core/host.ts`、`host-api.ts`、`AilyHost`、编辑摘要和 performance tracer | 拆到通用 host capability、diff、performance 服务 | Coder diff、Builder、Schematic 外部 import 清零 |
+| M7 会话/消息/流式模型 | `ChatEngineService`、`ChatHistoryService`、`TurnResponse*`、`RenderEvent*`、`helpers/lex-*`、runtime owner/store/projection | 不迁 Angular 会话模型；由新版 Aily Chat Server/Agent session snapshot、JSONL、事件流完全接管 | Angular 不再拥有 Chat session、turn、stream、interaction 状态 |
+| M8 旧会话数据 | host session index/record/debug export、checkpoint、旧 snapshot restore | 制定一次性只读导入或明确归档策略，写入新版 Agent session 格式时保留原文件备份 | 旧用户会话可读取/迁移，且未静默丢失 |
+| M9 生命周期与阻塞判断 | `ChatRuntimeHostInventoryService`、`ProjectService.hasBlockingChatRequest()`、升级/关闭处理 | 改读 `ChildToolProcessService`、ChildAppHostRegistry 和新版 Agent active-session 状态 | 项目关闭、软件升级、窗口关闭不再读取旧 inventory |
+| M10 宿主资源操作 | `ChatRuntimeHostResourceOperationHandlerService`、旧 `subapp-agent`/文件/编辑/构建 operation | 将仍需要的操作收敛到通用 host RPC；删除已经由 CLI Bridge/MCP/SubappAgentBridge 覆盖的分支 | MainWindow 不再启动旧 resource handler |
+| M11 认证、模型、额度与配置 | `AilyChatConfigService`、request quota、permission policy、model routing | 新版子应用继续消费 token-free host state；真实凭证由 Node/host auth IPC 持有；通用账号状态迁出 Chat 目录 | 无凭证进入 React，User Center 不依赖旧 Chat 服务 |
+| M12 图片、编辑与交互 | image attachment/media store、external edit capture、approval/question/plan 兼容事件 | 使用新版 Agent attachment、tool event、permission/interaction 协议；本地文件操作保留 host allowlist | 图片、多模态、diff、审批、问题、计划真实流程通过 |
+| M13 Prompt/工具/Agent 定义 | `blockly-*provider`、prompt profiles、slash command、subagent extension、tool catalog | 与 `packages/aily-agent/src/blockly` 做逐项去重；缺失能力补到新版 Agent，重复代码直接删除 | 新版 Agent 工具/技能/Prompt 清单覆盖产品需求，Angular 无 `aily-lex` 类型导入 |
+| M14 Electron runtime host | `electron/chat-runtime-*`、execution host worker/controller、preload IPC、`window.js` 注册 | M1～M13 完成后整组删除，不再维护第二套 Agent 进程 | Electron 主进程无 `aily-chat-runtime-host-*` channel |
+| M15 构建、依赖与资产 | `aily-lex` npm/lock、worker bundle、build metadata、clean/setup/run scripts、旧 Tiktoken/i18n | 删除依赖和兼容构建链；新版包自行携带运行时资源 | 源码、asar、dependency tree 均无 `aily-lex` |
+
 ## 5. 后续实施阶段
 
 ### 阶段 B：迁出产品能力，清空外部反向依赖
@@ -181,7 +204,8 @@ rg -n "tools/aily-chat" src/app -g '!tools/aily-chat/**'
 
 推荐方案：
 
-- 优先复用已存在的 `SubappAgentBridgeService` / Node IPC，让安装后的新版 Aily Chat 包执行 scoped Agent；
+- 在新版 Aily Chat Agent Channel 增加 host-only `scoped.run` / `scoped.cancel` 命令，复用 `@aily-project/aily-agent` 的 `createAilyHarness()`、`AilySessionHandle.prompt()` 和内存 Session；
+- 由主软件新增窄接口桥接该命令；复用现有子应用进程认证/发现机制，不把 token 或 Server URL 暴露给 React；
 - 若某能力必须在主软件进程内运行，抽取一个不含 Chat UI/Session View 的 `@aily-project/aily-agent` host adapter；
 - Project Scene Proposal 和 Scene Code Reconciliation 保留现有 request ID、取消、deadline、单次 candidate 提交约束，只替换 runner；
 - 项目关闭/升级前的运行态判断改为子应用进程与 Agent RPC 的权威状态；
@@ -205,7 +229,7 @@ rg -n "chat-runtime-host|chat-runtime-lex|aily-lex" src electron scripts package
 4. `electron/chat-runtime-lex-*`、`chat-runtime-host-*`、execution host worker/controller；
 5. preload/type declaration中的旧 runtime IPC；
 6. `app.config.ts` 中旧 shared/runtime owner provider；
-7. Angular 的旧 Tiktoken asset 配置、旧测试脚本、旧 i18n/主题资源；
+7. Angular 的旧 Tiktoken asset 配置、旧 i18n/主题资源（非 E2E 测试脚本已提前删除）；
 8. 最终剩余的 `src/app/tools/aily-chat` 目录。
 
 最后重新安装依赖并验证发布包中不存在 `aily-lex`、旧 runtime bundle 或旧 Angular Chat 符号。
@@ -217,10 +241,10 @@ rg -n "chat-runtime-host|chat-runtime-lex|aily-lex" src electron scripts package
 ```bash
 npm run guard:aily-chat-mainline
 npx tsc -p tsconfig.app.json --noEmit
-npm run test:aily-chat-mainline
+npx ng build --base-href ./
 ```
 
-本次实际结果：主链守卫通过，Angular 应用 TypeScript 检查通过，Angular production build 通过，专项 Karma 测试 `17/17` 通过。专项测试使用 `tsconfig.aily-chat-mainline.spec.json` 隔离主链契约，不依赖仓库其他未完成模块的 spec 编译状态。
+仓库当前不保留根 `e2e/` 之外的单元测试，因此阶段门禁由静态守卫、TypeScript、production build 和真实 Playwright E2E 组成。删除单测不等于功能已验收；M1～M15 的完成必须以真实 Electron/E2E 证据为准。
 
 新版子应用：
 
@@ -266,6 +290,7 @@ pnpm --filter aily-chat build:ui
 | 删除目录时误删 Blockly/Simulator 能力 | 先迁出外部 import，再删除旧目录 |
 | `aily-lex` 提前删除导致场景 Agent 失效 | 以阶段 C 真实 Simulator 验收作为删除门槛 |
 | 旧代码被重新接回 | `guard:aily-chat-mainline` 在 CI/本地测试中失败 |
+| 非 E2E 单测删除后回归发现变晚 | 每个迁移工作包必须补充或更新根 `e2e/` 场景，并保留构建与运行态证据 |
 
 回滚应按阶段回滚提交，不再把旧 Angular UI 作为运行时 fallback。若新版子应用安装失败，应修复 Catalog、安装或 ChildToolHost 链路，而不是恢复双主链。
 

@@ -1238,7 +1238,7 @@ src/app/tools/aily-chat/workers/tiktoken-worker-protocol.spec.ts
 ```bash
 cd /Users/downey/Projects/OutSource/aily--blockly
 
-npm run test:tiktoken
+# 专项 Karma 单测已按仓库清理策略移除；当前使用 production build 与根 e2e 验证。
 
 npx tsc -p tsconfig.app.json --noEmit
 ```
