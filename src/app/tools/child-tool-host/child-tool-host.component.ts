@@ -1705,6 +1705,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       invocationCount: activity.invocationCount,
       activeInvocationCount: activity.activeInvocationCount,
       lastUsedAt: activity.lastUsedAt,
+      extension: getChildToolConfig(activity.toolId)?.app?.extension === true,
       ...(activity.summary ? { summary: { ...activity.summary } } : {}),
     };
   }

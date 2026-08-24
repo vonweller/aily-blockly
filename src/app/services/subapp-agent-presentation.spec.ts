@@ -1,11 +1,5 @@
-import {
-  getChildToolConfigs,
-  replaceChildToolConfigs,
-  type ChildToolAgentDefinition,
-  type ChildToolConfig,
-} from '../configs/tool.config';
+import type { ChildToolAgentDefinition } from '../configs/tool.config';
 import { classifyRecordedChildToolRuntimeEntry } from './child-tool-runtime-entry';
-import { SubappActivityService } from './subapp-activity.service';
 import { resolveSubappAgentPresentation } from './subapp-agent-presentation';
 import { acquireSubappRuntimePresentationLease } from './subapp-runtime-presentation-lease';
 
@@ -133,40 +127,6 @@ describe('resolveSubappAgentPresentation', () => {
   });
 });
 
-describe('conversation Dock activity visibility', () => {
-  let previousConfigs: ChildToolConfig[];
-
-  beforeEach(() => {
-    previousConfigs = Object.values(getChildToolConfigs());
-    replaceChildToolConfigs([
-      childToolConfig('aily-coder', true),
-      childToolConfig('serial-debugger', false),
-    ]);
-  });
-
-  afterEach(() => {
-    replaceChildToolConfigs(previousConfigs);
-  });
-
-  it('excludes extension services while retaining ordinary subapps', () => {
-    const service = new SubappActivityService();
-    recordInvocation(service, 'aily-coder');
-    recordInvocation(service, 'serial-debugger');
-
-    expect(service.getActivity('session-coder', 'aily-coder')).not.toBeNull();
-    expect(service.getSessionActivities('session-coder').map(activity => activity.toolId)).toEqual([
-      'serial-debugger',
-    ]);
-
-    let projectedToolIds: string[] = [];
-    const subscription = service.activitiesForSession$('session-coder').subscribe(activities => {
-      projectedToolIds = activities.map(activity => activity.toolId);
-    });
-    expect(projectedToolIds).toEqual(['serial-debugger']);
-    subscription.unsubscribe();
-  });
-});
-
 describe('independent-window Runtime attachment', () => {
   const expectedEntry = {
     expectedEntry: 'index.js',
@@ -253,22 +213,4 @@ function definition(
     presentation,
     inputSchema: { type: 'object', properties: {} },
   };
-}
-
-function childToolConfig(id: string, extension: boolean): ChildToolConfig {
-  return {
-    id,
-    titleKey: id,
-    namespace: id.toUpperCase(),
-    app: { extension },
-  };
-}
-
-function recordInvocation(service: SubappActivityService, toolId: string): void {
-  service.recordInvocationStarted({
-    sessionId: 'session-coder',
-    toolId,
-    toolName: `${toolId}_status`,
-    now: toolId === 'aily-coder' ? 1 : 2,
-  });
 }
