@@ -1,6 +1,8 @@
 import { Injectable } from '@angular/core';
 import { BehaviorSubject, Observable, distinctUntilChanged, map } from 'rxjs';
 
+import { getChildToolConfig } from '../configs/tool.config';
+
 export type SubappInvocationState =
   | 'idle'
   | 'running'
@@ -97,14 +99,18 @@ export class SubappActivityService {
   activitiesForSession$(sessionId: string): Observable<readonly SubappActivity[]> {
     const normalizedSessionId = this.normalizeId(sessionId);
     return this.activities$.pipe(
-      map(activities => activities.filter(activity => activity.sessionId === normalizedSessionId)),
+      map(activities => activities.filter(activity =>
+        activity.sessionId === normalizedSessionId && this.isDockVisible(activity)
+      )),
       distinctUntilChanged(this.sameActivityList),
     );
   }
 
   getSessionActivities(sessionId: string): readonly SubappActivity[] {
     const normalizedSessionId = this.normalizeId(sessionId);
-    return this.snapshot().filter(activity => activity.sessionId === normalizedSessionId);
+    return this.snapshot().filter(activity =>
+      activity.sessionId === normalizedSessionId && this.isDockVisible(activity)
+    );
   }
 
   getActivity(sessionId: string, toolId: string): SubappActivity | null {
@@ -362,6 +368,12 @@ export class SubappActivityService {
   private normalizeTimestamp(value: unknown): number {
     const timestamp = Number(value);
     return Number.isFinite(timestamp) && timestamp > 0 ? Math.round(timestamp) : Date.now();
+  }
+
+  private isDockVisible(activity: SubappActivity): boolean {
+    // Extension subapps are background services owned by the host. Their Agent
+    // calls remain tracked internally, but they never become conversation Dock items.
+    return getChildToolConfig(activity.toolId)?.app?.extension !== true;
   }
 
   private readonly sameActivityList = (
