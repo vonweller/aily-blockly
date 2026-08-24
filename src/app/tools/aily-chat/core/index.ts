@@ -30,5 +30,5 @@ export type {
   IEditorProvider, IConnectionGraphProvider,
   IMcpProvider, IMcpToolDef,
 } from './host-api';
-export type { AuthQuotaSummary, AuthSnapshot } from './auth-snapshot';
+export type { AuthQuotaSummary, AuthSnapshot } from '../../../services/auth-snapshot';
 export { AILY_HOST_TOKEN } from './host-api-token';

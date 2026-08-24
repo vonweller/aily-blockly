@@ -2,7 +2,7 @@ import type {
   AuthQuotaInfoSnapshotItem,
   AuthSnapshot,
   AuthUserInfo,
-} from '../aily-chat/core/auth-snapshot';
+} from '../../services/auth-snapshot';
 
 export interface ChildAuthUserIdentity {
   readonly id?: string;

@@ -1,6 +1,5 @@
 import type { Provider } from '@angular/core';
 
-import { ChatEngineService } from './services/chat-engine.service';
 import { ChatRuntimeHostBootstrapService } from './services/chat-runtime-host-bootstrap.service';
 import { ChatRuntimeOwnerContextService } from './services/chat-runtime-owner-context.service';
 import { ChatRuntimeOwnerEndpointService } from './services/chat-runtime-owner-endpoint.service';
@@ -66,7 +65,6 @@ import { EditCheckpointService } from './services/edit-checkpoint.service';
 import { MenuManagerService } from './services/menu-manager.service';
 import { ResourceManagerService } from './services/resource-manager.service';
 import { ScrollManagerService } from './services/scroll-manager.service';
-import { AilyChatChildProtocolService } from './services/aily-chat-child-protocol.service';
 
 function createRuntimeOwnerContextBudgetPort(
   service: ContextBudgetService,
@@ -106,12 +104,6 @@ export const AILY_CHAT_SHARED_PROVIDERS: Provider[] = [
   ChatViewService,
   EditCheckpointService,
   ChatRuntimeInteractionHostService,
-];
-
-// Visible Chat is a view/controller adapter and is route-scoped, not a root runtime owner.
-export const AILY_CHAT_VIEW_PROVIDERS: Provider[] = [
-  ChatEngineService,
-  AilyChatChildProtocolService,
 ];
 
 // Runtime owner providers are execution-host scoped. They must not be installed

@@ -105,7 +105,7 @@ export class SchematicMcpRuntimeService {
 
       const [{ default: mermaid }, { MermaidComponent }] = await Promise.all([
         import('mermaid'),
-        import('../tools/aily-chat/components/aily-mermaid-viewer/mermaid/mermaid.component')
+        import('../components/mermaid/mermaid.component')
       ]);
       mermaid.initialize({ theme: this.themeService.getMermaidTheme() as any, startOnLoad: false });
       const diagramId = `mermaid-arch-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;

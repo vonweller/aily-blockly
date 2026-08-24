@@ -2,7 +2,7 @@ import { Injectable } from '@angular/core';
 import { BehaviorSubject, Subject } from 'rxjs';
 
 import { AilyHost } from '../core/host';
-import type { AuthSnapshot } from '../core/auth-snapshot';
+import type { AuthSnapshot } from '../../../services/auth-snapshot';
 import {
   createAuthQuotaApproachingInputNotice,
   createAuthQuotaExhaustedInputNoticeFromState,

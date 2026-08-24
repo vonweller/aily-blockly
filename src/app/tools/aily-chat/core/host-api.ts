@@ -12,7 +12,7 @@
 
 import type { Observable } from 'rxjs';
 
-import type { AuthSnapshot, AuthUserInfo } from './auth-snapshot';
+import type { AuthSnapshot, AuthUserInfo } from '../../../services/auth-snapshot';
 
 // ============================================================
 // 顶层宿主接口

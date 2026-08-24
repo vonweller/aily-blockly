@@ -14,7 +14,7 @@ import { BackgroundAgentService } from '../../services/background-agent.service'
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { AuthService } from '../../services/auth.service';
 import { ImageViewerComponent } from '../image-viewer/image-viewer.component';
-import { MermaidComponent } from '../../tools/aily-chat/components/aily-mermaid-viewer/mermaid/mermaid.component';
+import { MermaidComponent } from '../mermaid/mermaid.component';
 import mermaid from 'mermaid';
 import { ThemeService } from '../../services/theme.service';
 @Component({

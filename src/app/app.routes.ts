@@ -1,9 +1,4 @@
 import { Routes } from '@angular/router';
-import {
-    AILY_CHAT_VIEW_PROVIDERS,
-} from './tools/aily-chat/aily-chat.providers';
-import { inject, provideEnvironmentInitializer } from '@angular/core';
-import { AilyChatChildProtocolService } from './tools/aily-chat/services/aily-chat-child-protocol.service';
 
 export const routes: Routes = [
     {
@@ -13,9 +8,6 @@ export const routes: Routes = [
     },
     {
         path: 'main',
-        providers: [
-            ...AILY_CHAT_VIEW_PROVIDERS,
-        ],
         loadComponent: () => import('./main-window/main-window.component').then(m => m.MainWindowComponent),
         children: [
             {
@@ -105,12 +97,6 @@ export const routes: Routes = [
     },
     {
         path: "child-tool/aily-chat",
-        providers: [
-            ...AILY_CHAT_VIEW_PROVIDERS,
-            provideEnvironmentInitializer(() => {
-                inject(AilyChatChildProtocolService);
-            })
-        ],
         data: { childToolId: 'aily-chat' },
         loadComponent: () => import('./tools/child-tool-host/child-tool-host.component').then(m => m.ChildToolHostComponent)
     },
@@ -130,14 +116,8 @@ export const routes: Routes = [
     },
     {
         path: "aily-chat",
-        providers: [
-            ...AILY_CHAT_VIEW_PROVIDERS,
-        ],
-        loadComponent: () => import('./tools/aily-chat/aily-chat.component').then(m => m.AilyChatComponent)
-    },
-    {
-        path: "aily-chat-process-detail/:sessionId/:processId",
-        loadComponent: () => import('./tools/aily-chat/components/process-detail-window/chat-process-detail-window.component').then(m => m.ChatProcessDetailWindowComponent)
+        redirectTo: "child-tool/aily-chat",
+        pathMatch: "full"
     },
     {
         path: "code-viewer",

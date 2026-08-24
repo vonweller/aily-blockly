@@ -409,7 +409,7 @@ export class DevToolComponent implements OnInit, AfterViewInit, OnDestroy {
 
       const [{ default: mermaid }, { MermaidComponent }] = await Promise.all([
         import('mermaid'),
-        import('../../../../tools/aily-chat/components/aily-mermaid-viewer/mermaid/mermaid.component')
+        import('../../../../components/mermaid/mermaid.component')
       ]);
 
       mermaid.initialize({ theme: this.themeService.getMermaidTheme() as any, startOnLoad: false });

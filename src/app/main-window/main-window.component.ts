@@ -5,7 +5,6 @@ import { CommonModule } from '@angular/common';
 import { NzLayoutModule } from 'ng-zorro-antd/layout';
 import { NzResizableModule, NzResizeEvent } from 'ng-zorro-antd/resizable';
 import { NzTabsModule } from 'ng-zorro-antd/tabs';
-import { AilyChatComponent } from '../tools/aily-chat/aily-chat.component';
 import { TerminalComponent } from '../tools/terminal/terminal.component';
 import { LogComponent } from '../tools/log/log.component';
 import { UiService } from '../services/ui.service';
@@ -46,7 +45,6 @@ import { ModeWelcomeComponent } from '../components/mode-welcome/mode-welcome.co
 import { SimulatorSubappHostComponent } from '../tools/simulator/simulator-subapp-host.component';
 import type { DevelopmentModePreference } from '../services/config.service';
 import { ChatRuntimeHostResourceOperationHandlerService } from '../tools/aily-chat/services/chat-runtime-host-resource-operation-handler.service';
-import { AilyChatChildProtocolService } from '../tools/aily-chat/services/aily-chat-child-protocol.service';
 import {
   bootstrapDefaultAilyChatSubapp,
   DEFAULT_AILY_CHAT_SUBAPP_BOOTSTRAP_KEY,
@@ -70,7 +68,6 @@ const RIGHT_SIDER_MAX_WIDTH = 800;
     NzLayoutModule,
     NzResizableModule,
     NzTabsModule,
-    AilyChatComponent,
     TerminalComponent,
     LogComponent,
     SerialMonitorComponent,
@@ -114,7 +111,10 @@ export class MainWindowComponent implements OnDestroy {
   isChildTool(toolId: string): boolean {
     // Simulator is installed as a Subapp package, but its UI is owned by the
     // dedicated exact-origin host instead of the generic Penpal child host.
-    return toolId !== 'simulator' && isChildTool(toolId);
+    // Aily Chat no longer has an Angular fallback. Keep the canonical id on
+    // the child-host path while the default package is being installed so a
+    // stale toolbar entry can never remount the retired implementation.
+    return toolId !== 'simulator' && (toolId === DEFAULT_AILY_CHAT_SUBAPP_TOOL_ID || isChildTool(toolId));
   }
 
   options = {
@@ -136,7 +136,6 @@ export class MainWindowComponent implements OnDestroy {
   private authSessionInvalidationSubscription: Subscription | null = null;
   private authStateBroadcastSubscription: Subscription | null = null;
   private authSessionInvalidationPromise: Promise<void> | null = null;
-  private unregisterApplicationUpdatePreparation: (() => void) | null = null;
   private cancelAilyChatPrewarm: (() => void) | null = null;
   private ailyChatPrewarmAuthSubscription: Subscription | null = null;
   private unregisterAilyChatHostAuthRuntimeBridge: (() => void) | null = null;
@@ -165,17 +164,12 @@ export class MainWindowComponent implements OnDestroy {
     private childToolProcessService: ChildToolProcessService,
     private toolI18n: ToolI18nService,
     private readonly chatRuntimeHostResourceOperationHandler: ChatRuntimeHostResourceOperationHandlerService,
-    private readonly ailyChatChildProtocol: AilyChatChildProtocolService
   ) { }
 
   async ngOnInit(): Promise<void> {
     this.unregisterAilyChatHostAuthRuntimeBridge = registerAilyChatHostAuthRuntimeBridge(
       this.authService,
       window['ipcRenderer'],
-    );
-    this.unregisterApplicationUpdatePreparation = this.updateService.registerInstallPreparationHook(
-      'host-aily-chat-session',
-      () => this.ailyChatChildProtocol.prepareForHostInterruption(),
     );
     this.loginDialogSubscription = this.authService.loginDialogRequest$.subscribe((state) => {
       this.loginDialogState = state;
@@ -445,8 +439,6 @@ export class MainWindowComponent implements OnDestroy {
     this.cancelAilyChatPrewarm = null;
     this.ailyChatPrewarmAuthSubscription?.unsubscribe();
     this.ailyChatPrewarmAuthSubscription = null;
-    this.unregisterApplicationUpdatePreparation?.();
-    this.unregisterApplicationUpdatePreparation = null;
     this.loginDialogSubscription?.unsubscribe();
     this.loginDialogSubscription = null;
     this.authSessionInvalidationSubscription?.unsubscribe();

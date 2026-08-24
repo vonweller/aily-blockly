@@ -10,7 +10,7 @@ import type {
   AuthQuotaInfoSnapshotItem,
   AuthSnapshot,
   AuthUserInfo,
-} from '../tools/aily-chat/core/auth-snapshot';
+} from './auth-snapshot';
 import { withSharedAccessToken } from './shared-auth-record';
 import { isDetachedAilyChatRenderer } from './detached-aily-chat-auth';
 

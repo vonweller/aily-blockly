@@ -45,7 +45,7 @@ import {
   SubappActivityService,
   type SubappActivity,
 } from '../../services/subapp-activity.service';
-import { ChatSubappDockComponent } from '../aily-chat/components/subapp-activity/chat-subapp-dock.component';
+import { SubappActivityDockComponent } from '../../components/subapp-activity-dock/subapp-activity-dock.component';
 import {
   type ChildAuthStateSnapshot,
   normalizeChildAuthStateSnapshot,
@@ -96,7 +96,7 @@ interface ChildSurfaceWindowRequest {
     NzToolTipModule,
     SubWindowComponent,
     ToolContainerComponent,
-    ChatSubappDockComponent,
+    SubappActivityDockComponent,
   ],
   templateUrl: './child-tool-host.component.html',
   styleUrl: './child-tool-host.component.scss'
