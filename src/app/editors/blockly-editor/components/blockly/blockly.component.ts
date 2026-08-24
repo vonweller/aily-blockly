@@ -43,6 +43,7 @@ const BLOCKLY_LOCALES: Record<SupportedLanguageCode, any> = {
 // } from './plugins/continuous-toolbox/src/index.js';
 import './plugins/toolbox-search/src/index';
 import './plugins/block-plus-minus/src/index.js';
+import './plugins/stable-comment-icon';
 import {
   normalizeArduinoGeneratedCode,
   type BlockCodeMapping,

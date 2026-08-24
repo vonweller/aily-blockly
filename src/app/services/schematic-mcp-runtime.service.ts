@@ -21,6 +21,8 @@ import { ThemeService } from './theme.service';
 import { TranslateService } from '@ngx-translate/core';
 
 const CIRCUIT_PAYLOAD_ACK_TIMEOUT_MS = 2_000;
+const CIRCUIT_WINDOW_READY_TIMEOUT_MS = 20_000;
+const CIRCUIT_WINDOW_READY_PROBE_INTERVAL_MS = 250;
 
 @Injectable({ providedIn: 'root' })
 export class SchematicMcpRuntimeService {
@@ -163,7 +165,14 @@ export class SchematicMcpRuntimeService {
         return { ok: false, error: '当前项目没有已保存的电路连接' };
       }
 
-      await this.ensureCircuitWindowOpen(payload);
+      const circuitWindow = await this.ensureCircuitWindowOpen(payload);
+      if (!circuitWindow.ready) {
+        return {
+          ok: false,
+          opened: circuitWindow.opened,
+          error: '等待电路连接窗口加载完成超时',
+        };
+      }
       const applied = await this.pushCircuitPayload(payload);
       if (!applied) {
         return {
@@ -198,7 +207,17 @@ export class SchematicMcpRuntimeService {
           : {}),
       };
 
-      const windowOpened = await this.ensureCircuitWindowOpen(payload);
+      const circuitWindow = await this.ensureCircuitWindowOpen(payload);
+      if (!circuitWindow.ready) {
+        return {
+          ok: false,
+          windowOpened: circuitWindow.opened,
+          previewUpdated: false,
+          error: '等待电路连接窗口加载完成超时',
+        };
+      }
+
+      const windowOpened = circuitWindow.opened;
       const previewUpdated = await this.pushCircuitPayload(payload);
 
       this.connectionGraphService.emitNotice?.({
@@ -235,7 +254,15 @@ export class SchematicMcpRuntimeService {
           connections: jsonData.connections || [],
           theme: 'dark',
         };
-        await this.ensureCircuitWindowOpen(payload);
+        const circuitWindow = await this.ensureCircuitWindowOpen(payload);
+        if (!circuitWindow.ready) {
+          return {
+            ok: false,
+            saved: true,
+            windowUpdated: false,
+            error: '等待电路连接窗口加载完成超时',
+          };
+        }
         windowUpdated = await this.pushCircuitPayload(payload);
       }
       this.connectionGraphService.emitNotice?.({
@@ -268,8 +295,8 @@ export class SchematicMcpRuntimeService {
     return `https://tool.aily.pro/connection-graph?type=json&theme=${this.themeService.theme()}&lang=${this.translate.currentLang}`;
   }
 
-  private buildCircuitWindowPath(): string {
-    return `iframe?url=${encodeURIComponent(this.buildCircuitWindowUrl())}`;
+  private buildCircuitWindowPath(windowUrl = this.buildCircuitWindowUrl()): string {
+    return `iframe?url=${encodeURIComponent(windowUrl)}`;
   }
 
   private async pushCircuitPayload(payload: unknown): Promise<boolean> {
@@ -310,19 +337,84 @@ export class SchematicMcpRuntimeService {
     });
   }
 
-  private async ensureCircuitWindowOpen(initialData: unknown): Promise<boolean> {
-    const windowPath = this.buildCircuitWindowPath();
-    const focused = await Promise.resolve(window['subWindow']?.focus?.(windowPath) ?? false).catch(() => false);
-    if (focused) {
-      return true;
+  private async ensureCircuitWindowOpen(
+    initialData: unknown,
+  ): Promise<{ opened: boolean; ready: boolean }> {
+    if (this.connectionGraphService.hasActiveIframe) {
+      return { opened: true, ready: true };
     }
-    this.uiService.openWindow({
-      title: this.translate.instant('FLOAT_SIDER.CIRCUIT') || '电路连接',
-      path: windowPath,
-      data: initialData ?? null,
-      width: 900,
-      height: 700,
+
+    const windowUrl = this.buildCircuitWindowUrl();
+    const windowPath = this.buildCircuitWindowPath(windowUrl);
+    const readyPromise = this.waitForCircuitWindowReady(windowUrl);
+    const focused = await Promise.resolve(window['subWindow']?.focus?.(windowPath) ?? false).catch(() => false);
+    if (!focused) {
+      this.uiService.openWindow({
+        title: this.translate.instant('FLOAT_SIDER.CIRCUIT') || '电路连接',
+        path: windowPath,
+        data: initialData ?? null,
+        width: 900,
+        height: 700,
+      });
+    }
+
+    return {
+      opened: true,
+      ready: await readyPromise,
+    };
+  }
+
+  private waitForCircuitWindowReady(windowUrl: string): Promise<boolean> {
+    if (!this.electronService.isElectron || typeof window === 'undefined' || !window['ipcRenderer']) {
+      return Promise.resolve(false);
+    }
+
+    const ipcRenderer = window['ipcRenderer'];
+    const channel = 'iframe-message-connection-graph';
+    const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+    return new Promise<boolean>((resolve) => {
+      let settled = false;
+      let probeIntervalId: ReturnType<typeof setInterval> | null = null;
+
+      const finish = (ready: boolean) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutId);
+        if (probeIntervalId !== null) clearInterval(probeIntervalId);
+        ipcRenderer.removeListener?.(channel, handler);
+        resolve(ready);
+      };
+      const handler = (_event: unknown, message: { type?: string; data?: unknown }) => {
+        if (message?.type !== 'connection-graph-ready') return;
+
+        const data = message.data as {
+          requestId?: string;
+          url?: string;
+          ready?: boolean;
+        } | undefined;
+        if (data?.url !== windowUrl || data.ready !== true) return;
+        if (data.requestId && data.requestId !== requestId) return;
+
+        finish(true);
+      };
+      const probe = () => {
+        ipcRenderer.send(channel, {
+          type: 'connection-graph-ready-request',
+          data: { requestId, url: windowUrl },
+        });
+      };
+      const timeoutId = setTimeout(
+        () => finish(false),
+        CIRCUIT_WINDOW_READY_TIMEOUT_MS,
+      );
+
+      ipcRenderer.on(channel, handler);
+      probe();
+      probeIntervalId = setInterval(
+        probe,
+        CIRCUIT_WINDOW_READY_PROBE_INTERVAL_MS,
+      );
     });
-    return true;
   }
 }
