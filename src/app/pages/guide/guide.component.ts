@@ -1,17 +1,15 @@
 import { Component, OnDestroy, OnInit } from '@angular/core';
 import { GUIDE_MENU } from '../../configs/menu.config';
-import { UiService } from '../../services/ui.service';
-import { ProjectService } from '../../services/project.service';
-import { ConfigService } from '../../services/config.service';
+import { UiService, OnboardingService } from '@core/app-shell/public-api';
+import { ProjectService } from '@domain/project/public-api';
+import { ConfigService, ThemeService } from '@core/preferences/public-api';
 import packageJson from '../../../../package.json';
 import { TranslateModule } from '@ngx-translate/core';
 import { Router } from '@angular/router';
-import { ElectronService } from '../../services/electron.service';
+import { ElectronService } from '@core/platform/public-api';
 import { HttpClient } from '@angular/common/http';
 import { CommonModule } from '@angular/common';
-import { OnboardingService } from '../../services/onboarding.service';
 import { GUIDE_ONBOARDING_CONFIG } from '../../configs/onboarding.config';
-import { ThemeService } from '../../services/theme.service';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 
 @Component({

@@ -4,8 +4,8 @@ import { FormsModule } from '@angular/forms';
 import { NzModalRef, NZ_MODAL_DATA } from 'ng-zorro-antd/modal';
 import { NzInputModule } from 'ng-zorro-antd/input';
 import { NzMessageService } from 'ng-zorro-antd/message';
-import { ConfigService } from '../../../services/config.service';
-import { ProjectService } from '../../../services/project.service';
+import { ConfigService } from '@core/preferences/public-api';
+import { ProjectService } from '@domain/project/public-api';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { BaseDialogComponent, DialogButton } from '../../../components/base-dialog/base-dialog.component';
 

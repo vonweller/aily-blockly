@@ -5,30 +5,27 @@ import { NzButtonModule } from 'ng-zorro-antd/button';
 import { NzInputModule } from 'ng-zorro-antd/input';
 import { FormsModule } from '@angular/forms';
 import { CommonModule } from '@angular/common';
-import { UiService } from '../../services/ui.service';
+import { UiService } from '@core/app-shell/public-api';
 import { NzRadioModule } from 'ng-zorro-antd/radio';
-import { SettingsService } from '../../services/settings.service';
-import { TranslationService } from '../../services/translation.service';
-import { ConfigService } from '../../services/config.service';
+import {
+  SettingsService,
+  TranslationService,
+  ConfigService,
+  ThemeService,
+  ThemeMode,
+} from '@core/preferences/public-api';
 import { SimplebarAngularComponent, SimplebarAngularModule } from 'simplebar-angular';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { NzSwitchModule } from 'ng-zorro-antd/switch';
 import { NzSelectModule } from 'ng-zorro-antd/select';
-import { AuthService } from '../../services/auth.service';
+import { AuthService, switchServiceRegionAndRequestLogin } from '@core/auth/public-api';
 import { NzModalService } from 'ng-zorro-antd/modal';
 import { NzMessageService } from 'ng-zorro-antd/message';
-import { ThemeService, ThemeMode } from '../../services/theme.service';
-import { CmdService } from '../../services/cmd.service';
-import { ElectronService } from '../../services/electron.service';
+import { CmdService, ElectronService } from '@core/platform/public-api';
 import { NzToolTipModule } from "ng-zorro-antd/tooltip";
-import { NpmService } from '../../services/npm.service';
+import { NpmService } from '@domain/dependencies/public-api';
 import { AILY_CODER_SUBAPP_ID } from '../../configs/required-subapp.config';
-import {
-  RequiredSubappService,
-  RequiredSubappState,
-} from '../../services/required-subapp.service';
-import { switchServiceRegionAndRequestLogin } from '../../services/service-region-switch';
-import { ChildAppSafetyService } from '../../services/child-app-safety.service';
+import { RequiredSubappService, RequiredSubappState, ChildAppSafetyService } from '@integration/subapps/public-api';
 
 type CacheClearOption = 'all' | 'unused-7' | 'unused-30';
 type DependencyRemovalOption = 'all' | 'unused-30' | 'unused-90';

@@ -1,4 +1,4 @@
-import { BuilderService } from '../../services/builder.service';
+import { BuilderService } from '@domain/build/public-api';
 import type { HostToolResult } from './host-tool-result';
 
 export async function runProjectBuild(

@@ -1,5 +1,5 @@
 import type { HostToolResult } from '../blockly/host-tool-result';
-import { ProjectService } from '../../services/project.service';
+import { ProjectService } from '@domain/project/public-api';
 import {
   ConnectionGraphService,
   PinSummary,
@@ -8,7 +8,7 @@ import {
   ComponentConfig,
   PinmapProtocol,
   type ConnectionGraphTextFileWriteEvent,
-} from '../../services/connection-graph.service';
+} from '@domain/schematic/public-api';
 import { API, getServerUrl } from '../../configs/api.config';
 
 interface WorkspaceMutationReceipt {
@@ -608,7 +608,7 @@ ${failedPinmapIds.map(f => `- ${f.pinmapId}: ${f.reason}`).join('\n')}
     }
 
     // === 生成 AWS 格式的引脚摘要 ===
-    const { generatePinmapSummary } = await import('../../services/connection-aws');
+    const { generatePinmapSummary } = await import('@domain/schematic/public-api');
     
     // 构建 AWS 格式的组件摘要数组
     const awsSummaryParts: string[] = [];
@@ -1501,7 +1501,7 @@ export async function validateConnectionGraphTool(
       return { is_error: true, content: '当前项目没有配置开发板，请先选择开发板。' };
     }
 
-    const { parseAWS, hasErrors, formatErrors, AWS_SYNTAX_REFERENCE, CONNECTION_COLORS, resolvePin, inferDataFlow } = await import('../../services/connection-aws');
+    const { parseAWS, hasErrors, formatErrors, AWS_SYNTAX_REFERENCE, CONNECTION_COLORS, resolvePin, inferDataFlow } = await import('@domain/schematic/public-api');
 
     const awsFilePath = connectionGraphService.getAWSFilePath(currentProjectPath);
     const jsonFilePath = connectionGraphService.getJSONFilePath(currentProjectPath);
@@ -2109,7 +2109,7 @@ export async function applySchematicTool(
     }
 
     // 导入 AWS 模块
-    const { parseAWS, hasErrors, formatErrors, AWS_SYNTAX_REFERENCE, CONNECTION_COLORS, generateAWS } = await import('../../services/connection-aws');
+    const { parseAWS, hasErrors, formatErrors, AWS_SYNTAX_REFERENCE, CONNECTION_COLORS, generateAWS } = await import('@domain/schematic/public-api');
 
     let awsContent: string;
     const awsFilePath = connectionGraphService.getAWSFilePath(currentProjectPath);
@@ -2220,7 +2220,7 @@ export async function applySchematicTool(
     }
 
     // 5. 解析引脚并构建连线
-    const { resolvePin, inferDataFlow: inferDataFlow2 } = await import('../../services/connection-aws');
+    const { resolvePin, inferDataFlow: inferDataFlow2 } = await import('@domain/schematic/public-api');
     const connections: any[] = [];
     const resolveErrors: Array<{ message: string; line: number; source: string }> = [];
 

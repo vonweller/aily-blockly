@@ -15,8 +15,8 @@ import {
 import {
   getChildToolDefaultToolbarAppIds
 } from '../../configs/tool.config';
-import { ConfigService } from '../../services/config.service';
-import { SubappManagerService } from '../../services/subapp-manager.service';
+import { ConfigService } from '@core/preferences/public-api';
+import { SubappManagerService } from '@integration/subapps/public-api';
 
 export interface AppVisibilityContext {
   routeUrl?: string;

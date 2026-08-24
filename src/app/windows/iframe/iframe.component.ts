@@ -10,21 +10,17 @@ import {
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { NZ_MODAL_DATA } from 'ng-zorro-antd/modal';
 import { ActivatedRoute } from '@angular/router';
-import { ElectronService } from '../../services/electron.service';
-import { ConnectionGraphService } from '../../services/connection-graph.service';
-import { NoticeService } from '../../services/notice.service';
+import { ElectronService } from '@core/platform/public-api';
+import { ConnectionGraphService } from '@domain/schematic/public-api';
+import { NoticeService, UiService } from '@core/app-shell/public-api';
 import { SubWindowComponent } from '../../components/sub-window/sub-window.component';
 import { NotificationComponent } from '../../components/notification/notification.component';
 import { CommonModule } from '@angular/common';
 import { WindowMessenger, connect, Connection } from 'penpal';
-import { UiService } from '../../services/ui.service';
 import { TranslateService } from '@ngx-translate/core';
 import { Subscription } from 'rxjs';
-import { ToolI18nService } from '../../services/tool-i18n.service';
-import {
-  SimulatorIframeBridgeService,
-} from '../../services/simulator-iframe-bridge.service';
-import { BackgroundAgentService } from '../../services/background-agent.service';
+import { ToolI18nService } from '@core/preferences/public-api';
+import { SimulatorIframeBridgeService, BackgroundAgentService } from '@integration/simulator/public-api';
 
 /** iframe IPC 统一载荷（规范：docs/iframe-ipc-spec.md） */
 export interface IframeIpcPayload<T = unknown> {

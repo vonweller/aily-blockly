@@ -2,7 +2,7 @@ import type {
   AuthQuotaInfoSnapshotItem,
   AuthSnapshot,
   AuthUserInfo,
-} from '../../services/auth-snapshot';
+} from '@core/auth/public-api';
 
 export interface ChildAuthUserIdentity {
   readonly id?: string;

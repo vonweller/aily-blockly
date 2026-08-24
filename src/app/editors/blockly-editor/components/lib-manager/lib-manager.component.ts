@@ -10,22 +10,15 @@ import { NzTagModule } from 'ng-zorro-antd/tag';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { Subject } from 'rxjs';
 import { debounceTime, takeUntil } from 'rxjs/operators';
-import { NpmService } from '../../../../services/npm.service';
-import { ConfigService } from '../../../../services/config.service';
-import { ProjectService } from '../../../../services/project.service';
+import { NpmService, AILY_LOCAL_LIBRARY_SOURCES_KEY, LocalLibrarySyncService } from '@domain/dependencies/public-api';
+import { ConfigService } from '@core/preferences/public-api';
+import { ProjectService } from '@domain/project/public-api';
 import { NzModalService } from 'ng-zorro-antd/modal';
 import { CompatibleDialogComponent } from '../compatible-dialog/compatible-dialog.component';
-import { CmdOutput, CmdService } from '../../../../services/cmd.service';
-import { ElectronService } from '../../../../services/electron.service';
+import { CmdOutput, CmdService, ElectronService, CrossPlatformCmdService } from '@core/platform/public-api';
 import { BlocklyService } from '../../services/blockly.service';
-import { WorkflowService } from '../../../../services/workflow.service';
-import { CrossPlatformCmdService } from '../../../../services/cross-platform-cmd.service';
-import {
-  AILY_LOCAL_LIBRARY_SOURCES_KEY,
-  LocalLibrarySyncService,
-} from '../../../../services/local-library-sync.service';
-import { LibManagerService } from './lib-manager.service';
-import type { PackageInfo } from './lib-manager.service';
+import { WorkflowService } from '@core/app-shell/public-api';
+import { LibManagerService, type PackageInfo } from './lib-manager.service';
 
 @Component({
   selector: 'app-lib-manager',

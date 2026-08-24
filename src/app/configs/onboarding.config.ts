@@ -1,4 +1,4 @@
-import { OnboardingConfig } from '../services/onboarding.service';
+import { OnboardingConfig } from '@core/app-shell/public-api';
 
 /**
  * Guide 页面的新手引导配置

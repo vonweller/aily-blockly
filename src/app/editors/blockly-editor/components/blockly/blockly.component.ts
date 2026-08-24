@@ -4,8 +4,8 @@ import { Subject, combineLatest } from 'rxjs';
 
 import { debounceTime, takeUntil, map, distinctUntilChanged, pairwise, startWith } from 'rxjs/operators';
 import { TranslateService } from '@ngx-translate/core';
-import { UiService } from '../../../../services/ui.service';
-import { AuthService } from '../../../../services/auth.service';
+import { UiService, NoticeService } from '@core/app-shell/public-api';
+import { AuthService } from '@core/auth/public-api';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { normalizeLanguageCode, type SupportedLanguageCode } from '../../../../utils/language-code';
 
@@ -53,8 +53,16 @@ import {
   BlocklyGeneratorRuntimeService,
   runWithPreparedActiveProjectGenerator,
 } from '../../services/blockly-generator-runtime.service';
-import { BitmapUploadResponse, GlobalServiceManager } from '../../services/bitmap-upload.service';
-import { projectDataRuntime } from '../../../../services/project-data/project-data-runtime';
+import { BitmapUploadResponse, GlobalServiceManager, BitmapUploadService } from '../../services/bitmap-upload.service';
+import {
+  projectDataRuntime,
+  ProjectService,
+  createEmptyProjectDebugConfigurationState,
+  getProjectBreakpointMarkerState,
+  ProjectBlockBreakpointIntent,
+  ProjectDebugConfigurationService,
+  ProjectDebugConfigurationState,
+} from '@domain/project/public-api';
 
 import './renderer/aily-icon';
 import './renderer/aily-thrasos/thrasos';
@@ -85,15 +93,10 @@ import { NzModalModule, NzModalService } from 'ng-zorro-antd/modal';
 import { NzResizableModule, NzResizeEvent } from 'ng-zorro-antd/resizable';
 import * as BlockDynamicConnection from '@blockly/block-dynamic-connection';
 import { CommonModule } from '@angular/common';
-import { BitmapUploadService } from '../../services/bitmap-upload.service';
 import { ImageUploadDialogComponent } from './components/image-upload-dialog/image-upload-dialog.component';
 import { HttpErrorResponse } from '@angular/common/http';
-import { ConfigService } from '../../../../services/config.service';
-import { NoticeService } from '../../../../services/notice.service';
-import { CmdService } from '../../../../services/cmd.service';
-import { ProjectService } from '../../../../services/project.service';
-import { ElectronService } from '../../../../services/electron.service';
-import { CrossPlatformCmdService } from '../../../../services/cross-platform-cmd.service';
+import { ConfigService, type ThemeMode, ThemeService } from '@core/preferences/public-api';
+import { CmdService, ElectronService, CrossPlatformCmdService, PlatformService } from '@core/platform/public-api';
 import { PasteInstallDialogComponent, MissingLibInfo } from '../paste-install-dialog/paste-install-dialog.component';
 import { Minimap } from '@blockly/workspace-minimap';
 import {
@@ -102,22 +105,12 @@ import {
   LightTheme,
   blocklyGridColourForUiTheme,
 } from './theme.config';
-import type { ThemeMode } from '../../../../services/theme.service';
-import { ThemeService } from '../../../../services/theme.service';
-import { PlatformService } from '../../../../services/platform.service';
 import { applyWindowsBlocklyScrollbarThickness } from '../../utils/apply-windows-blockly-scrollbar-thickness';
 import { BlocklyToolboxPaneComponent } from './components/blockly-toolbox-pane/blockly-toolbox-pane.component';
 import { BlocklyWorkspacePagesComponent } from './components/blockly-workspace-pages/blockly-workspace-pages.component';
 import { BlocklyConfirmDialogComponent } from './components/confirm-dialog/confirm-dialog.component';
 import { CodeViewerIpcService } from '../../services/code-viewer-ipc.service';
 import { writeArduinoGeneratedArtifacts } from '../../services/generated-code-artifacts';
-import {
-  createEmptyProjectDebugConfigurationState,
-  getProjectBreakpointMarkerState,
-  ProjectBlockBreakpointIntent,
-  ProjectDebugConfigurationService,
-  ProjectDebugConfigurationState,
-} from '../../../../services/project-debug-configuration.service';
 
 type BlocklyWorkspaceEvent = { type?: string } | null | undefined;
 

@@ -13,9 +13,9 @@
 import { Injectable } from '@angular/core';
 import { convertAbsToAbi, convertAbiToAbsWithLineMap } from './abi-abs-converter';
 import { loadProjectBlockDefinitions } from './abs-parser';
-import { createProjectDataMarker } from '../../../services/project-data/project-data.types';
+import { createProjectDataMarker } from '@domain/project/public-api';
 import { BlocklyService } from '../../../editors/blockly-editor/services/blockly.service';
-import { ElectronService } from '../../../services/electron.service';
+import { ElectronService } from '@core/platform/public-api';
 
 // =============================================================================
 // 类型定义

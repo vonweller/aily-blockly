@@ -1,14 +1,19 @@
 import { Injectable, NgZone } from '@angular/core';
 import { TranslateService } from '@ngx-translate/core';
-import { CmdOutput, CmdService } from '../../../services/cmd.service';
-import { CrossPlatformCmdService } from '../../../services/cross-platform-cmd.service';
+import {
+  CmdOutput,
+  CmdService,
+  CrossPlatformCmdService,
+  LogService,
+  PlatformService,
+  ElectronService,
+  AppDataResourceLockService,
+  ChatPerformanceTracer,
+} from '@core/platform/public-api';
 import { NzMessageService } from 'ng-zorro-antd/message';
-import { NoticeService } from '../../../services/notice.service';
-import { ProjectService } from '../../../services/project.service';
-import { LogService } from '../../../services/log.service';
-import { ConfigService } from '../../../services/config.service';
-import { ActionState } from '../../../services/ui.service';
-import { ActionService } from '../../../services/action.service';
+import { NoticeService, ActionState, ActionService, WorkflowService, ProcessState } from '@core/app-shell/public-api';
+import { ProjectService, ProjectDebugConfigurationService } from '@domain/project/public-api';
+import { ConfigService } from '@core/preferences/public-api';
 import {
   normalizeArduinoGeneratedCode,
   type BlockCodeMapping,
@@ -17,15 +22,11 @@ import {
   runWithPreparedActiveProjectGenerator,
 } from './blockly-generator-runtime.service';
 
-import { BlocklyService as BlocklyService } from './blockly.service';
+import { BlocklyService } from './blockly.service';
 
-import { PlatformService } from "../../../services/platform.service";
-import { ElectronService } from '../../../services/electron.service';
 import { writeArduinoGeneratedArtifacts } from './generated-code-artifacts';
-import { WorkflowService, ProcessState } from '../../../services/workflow.service';
-import { CompileValidationService } from '../../../services/compile-validation.service';
-import { AppDataResourceLockService } from '../../../services/appdata-resource-lock.service';
-import { NpmService } from '../../../services/npm.service';
+import { CompileValidationService } from '@domain/build/public-api';
+import { NpmService } from '@domain/dependencies/public-api';
 import { debounceTime } from 'rxjs/operators';
 import {
   AilyBuilderOutputLineBuffer,
@@ -34,9 +35,7 @@ import {
   parseAilyBuilderProgressLine,
   parseLegacyAilyBuilderProgressLine
 } from '../../../utils/aily-builder-progress.utils';
-import { ChatPerformanceTracer } from '../../../services/performance-tracer';
 import { appendProjectLog, type ProjectLogLevel } from '../../../utils/project-log.utils';
-import { ProjectDebugConfigurationService } from '../../../services/project-debug-configuration.service';
 
 const AILY_CHAT_LEX_COMPLETION_PENDING_COUNT_KEY = '__AILY_CHAT_LEX_COMPLETION_PENDING_COUNT__';
 const AILY_CHAT_AGENT_LOOP_PENDING_COUNT_KEY = '__AILY_CHAT_AGENT_LOOP_PENDING_COUNT__';

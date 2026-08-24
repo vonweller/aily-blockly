@@ -1,22 +1,22 @@
 import { Component, Input, OnInit, OnDestroy, ViewChild } from '@angular/core';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { CommonModule } from '@angular/common';
-import { ProjectService } from '../../services/project.service';
+import { ProjectService } from '@domain/project/public-api';
 import { Router, NavigationEnd } from '@angular/router';
 import { Subscription } from 'rxjs';
 import { filter } from 'rxjs/operators';
-import { ElectronService } from '../../services/electron.service';
+import { ElectronService } from '@core/platform/public-api';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { NzModalService } from 'ng-zorro-antd/modal';
-import { UiService } from '../../services/ui.service';
-import { ConnectionGraphService } from '../../services/connection-graph.service';
-import { BackgroundAgentService } from '../../services/background-agent.service';
+import { UiService } from '@core/app-shell/public-api';
+import { ConnectionGraphService } from '@domain/schematic/public-api';
+import { BackgroundAgentService } from '@integration/simulator/public-api';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
-import { AuthService } from '../../services/auth.service';
+import { AuthService } from '@core/auth/public-api';
 import { ImageViewerComponent } from '../image-viewer/image-viewer.component';
 import { MermaidComponent } from '../mermaid/mermaid.component';
 import mermaid from 'mermaid';
-import { ThemeService } from '../../services/theme.service';
+import { ThemeService } from '@core/preferences/public-api';
 @Component({
   selector: 'app-float-sider',
   imports: [

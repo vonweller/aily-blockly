@@ -31,11 +31,11 @@
 | M4 | Blockly 创建、删除、连接、字段修改等宿主操作 | `src/app/integrations/blockly/blockly-host-operations.ts` | 主软件实现 |
 | M4 | 板卡/库搜索、项目构建 | `src/app/integrations/blockly/board-library-search.ts`、`project-build-operation.ts` | 主软件实现 |
 | M5 | ABI/ABS 转换、解析、定义与自动同步 | `src/app/integrations/blockly/abs/` | 主软件实现 |
-| M6 | 编辑事件、工具结果、AI Diff 摘要 | `src/app/integrations/blockly/`、`src/app/services/ai-edit-summary.types.ts` | 主软件通用类型 |
-| M6 | 性能追踪 | `src/app/services/performance-tracer.ts` | Builder 直接使用 |
-| M9 | 活跃 AI/子应用操作登记 | `src/app/services/ai-operation-registry.service.ts` | 不再读取旧 Chat runtime inventory |
+| M6 | 编辑事件、工具结果、AI Diff 摘要 | `src/app/integrations/blockly/`、`src/app/services/integrations/automation/coder-diff/ai-edit-summary.types.ts` | 主软件通用类型 |
+| M6 | 性能追踪 | `src/app/services/core/platform/observability/performance-tracer.ts` | Builder 直接使用 |
+| M9 | 活跃 AI/子应用操作登记 | `src/app/services/integrations/automation/ai-operation-registry.service.ts` | 不再读取旧 Chat runtime inventory |
 | M10 | 连接图/Schematic 宿主操作 | `src/app/integrations/schematic/connection-graph-operations.ts` | 主软件实现 |
-| M11-H | 账号与额度的 token-free 信息 | `src/app/services/auth-quota-info.ts` 及现有 AuthService | 真实凭证仍由宿主持有 |
+| M11-H | 账号与额度的 token-free 信息 | `src/app/services/core/auth/models/auth-quota-info.ts` 及现有 AuthService | 真实凭证仍由宿主持有 |
 
 这些实现不依赖新版 Aily Chat，也不允许反向 import `src/app/tools/aily-chat`。
 

@@ -1,18 +1,22 @@
 import { Injectable, inject } from "@angular/core";
 import { TranslateService } from '@ngx-translate/core';
-import { ProjectService } from "../../../services/project.service";
-import { SerialService } from "../../../services/serial.service";
+import { ProjectService } from "@domain/project/public-api";
+import {
+  SerialService,
+  BleOtaProgress,
+  UploaderBleService,
+  resolveUploadRecoveryPolicy,
+  type UploadRecoveryPolicy,
+  getLinkUploadParam,
+} from '@domain/device/public-api';
 import { NzMessageService } from "ng-zorro-antd/message";
 import { _BuilderService } from "./builder.service";
-import { BuilderService as HostBuilderService } from "../../../services/builder.service";
-import { NoticeService } from "../../../services/notice.service";
+import { BuilderService as HostBuilderService } from "@domain/build/public-api";
+import { NoticeService, ActionState, ActionService, WorkflowService, ProcessState } from '@core/app-shell/public-api';
 import { NzModalService } from "ng-zorro-antd/modal";
-import { CmdOutput, CmdService } from "../../../services/cmd.service";
-import { LogService } from "../../../services/log.service";
-import { NpmService } from "../../../services/npm.service";
+import { CmdOutput, CmdService, LogService, AppDataResourceLockService } from '@core/platform/public-api';
+import { NpmService } from "@domain/dependencies/public-api";
 import { SerialMonitorService } from "../../../tools/serial-monitor/serial-monitor.service";
-import { ActionState } from "../../../services/ui.service";
-import { ActionService } from "../../../services/action.service";
 import {
   normalizeArduinoGeneratedCode,
 } from "../components/blockly/generators/arduino/arduino";
@@ -20,16 +24,8 @@ import {
   runWithPreparedActiveProjectGenerator,
 } from './blockly-generator-runtime.service';
 import { BlocklyService } from "./blockly.service";
-import { WorkflowService, ProcessState } from '../../../services/workflow.service';
-import { BleOtaProgress, UploaderBleService } from '../../../services/uploader-ble.service';
-import { AppDataResourceLockService } from '../../../services/appdata-resource-lock.service';
 import { writeArduinoGeneratedArtifacts } from './generated-code-artifacts';
 import { appendProjectLog, type ProjectLogLevel } from '../../../utils/project-log.utils';
-import {
-  resolveUploadRecoveryPolicy,
-  type UploadRecoveryPolicy,
-} from '../../../services/upload-recovery-policy';
-import { getLinkUploadParam } from '../../../services/debugger-upload-policy';
 
 interface NetworkOtaUploadTarget {
   id?: string;

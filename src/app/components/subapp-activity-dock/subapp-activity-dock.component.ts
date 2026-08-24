@@ -15,11 +15,11 @@ import { TranslateModule } from '@ngx-translate/core';
 import { NzResizableModule, type NzResizeEvent } from 'ng-zorro-antd/resizable';
 import { BehaviorSubject, switchMap } from 'rxjs';
 
-import { MainUiAutomationService } from '../../services/main-ui-automation.service';
+import { MainUiAutomationService } from '@integration/automation/public-api';
 import {
   SubappActivityService,
   type SubappActivity,
-} from '../../services/subapp-activity.service';
+} from '@integration/subapps/public-api';
 import { ChildToolSurfaceHostComponent } from '../../tools/child-tool-surface-host/child-tool-surface-host.component';
 
 @Component({

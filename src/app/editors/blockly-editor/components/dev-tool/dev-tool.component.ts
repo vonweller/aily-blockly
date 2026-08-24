@@ -4,18 +4,15 @@ import { NzMessageService } from 'ng-zorro-antd/message';
 import { NzModalService } from 'ng-zorro-antd/modal';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
-import { ActionService } from '../../../../services/action.service';
-import { AuthService } from '../../../../services/auth.service';
-import { BuilderService } from '../../../../services/builder.service';
-import { ConnectionGraphService } from '../../../../services/connection-graph.service';
-import { ConfigService } from '../../../../services/config.service';
-import { ElectronService } from '../../../../services/electron.service';
-import { ProjectService } from '../../../../services/project.service';
-import { ThemeService } from '../../../../services/theme.service';
-import { UiService } from '../../../../services/ui.service';
-import { WorkflowService, ProcessState } from '../../../../services/workflow.service';
+import { ActionService, UiService, WorkflowService, ProcessState } from '@core/app-shell/public-api';
+import { AuthService } from '@core/auth/public-api';
+import { BuilderService } from '@domain/build/public-api';
+import { ConnectionGraphService } from '@domain/schematic/public-api';
+import { ConfigService, ThemeService } from '@core/preferences/public-api';
+import { ElectronService } from '@core/platform/public-api';
+import { ProjectService } from '@domain/project/public-api';
 import { ImageViewerComponent } from '../../../../components/image-viewer/image-viewer.component';
-import { BackgroundAgentService } from '../../../../services/background-agent.service';
+import { BackgroundAgentService } from '@integration/simulator/public-api';
 import { DevToolDragController, DragBounds, DragPoint } from './dev-tool-drag-controller';
 
 @Component({

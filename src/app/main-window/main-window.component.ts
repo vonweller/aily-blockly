@@ -7,51 +7,47 @@ import { NzResizableModule, NzResizeEvent } from 'ng-zorro-antd/resizable';
 import { NzTabsModule } from 'ng-zorro-antd/tabs';
 import { TerminalComponent } from '../tools/terminal/terminal.component';
 import { LogComponent } from '../tools/log/log.component';
-import { UiService } from '../services/ui.service';
+import { UiService, UpdateService, OnboardingService } from '@core/app-shell/public-api';
 import { SerialMonitorComponent } from '../tools/serial-monitor/serial-monitor.component';
 import { ChildToolHostComponent } from '../tools/child-tool-host/child-tool-host.component';
 import { CodeViewerComponent } from '../editors/blockly-editor/tools/code-viewer/code-viewer.component';
-import { ProjectService } from '../services/project.service';
+import { ProjectService } from '@domain/project/public-api';
 import { SimplebarAngularModule } from 'simplebar-angular';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { AppStoreComponent } from '../tools/app-store/app-store.component';
 import { AppStoreService } from '../tools/app-store/app-store.service';
-import { UpdateService } from '../services/update.service';
 import { NzModalModule, NzModalService } from 'ng-zorro-antd/modal';
-import { NpmService } from '../services/npm.service';
+import { NpmService } from '@domain/dependencies/public-api';
 import { NavigationEnd, Router, RouterModule } from '@angular/router';
 import { distinctUntilChanged, filter, merge, Subscription, take } from 'rxjs';
-import { ConfigService } from '../services/config.service';
+import { ConfigService, ToolI18nService, type DevelopmentModePreference } from '@core/preferences/public-api';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { CloudSpaceComponent } from '../tools/cloud-space/cloud-space.component';
 import { UserCenterComponent } from '../tools/user-center/user-center.component';
 import { OnboardingComponent } from '../components/onboarding/onboarding.component';
-import { OnboardingService } from '../services/onboarding.service';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { isChildTool } from '../configs/tool.config';
 import {
   AuthService,
   type AuthSessionInvalidationRequest,
   type LoginDialogRequestState,
-} from '../services/auth.service';
-import { ElectronService } from '../services/electron.service';
-import { SubappManagerService } from '../services/subapp-manager.service';
-import { ChildToolProcessService } from '../services/child-tool-process.service';
-import { LoginComponent } from '../components/login/login.component';
-import { resolveTranslatedApiErrorMessage } from '../utils/api-error.utils';
-import { ToolI18nService } from '../services/tool-i18n.service';
-import { LibManagerToolComponent } from '../tools/lib-manager-tool/lib-manager-tool.component';
-import { ModeWelcomeComponent } from '../components/mode-welcome/mode-welcome.component';
-import { SimulatorSubappHostComponent } from '../tools/simulator/simulator-subapp-host.component';
-import type { DevelopmentModePreference } from '../services/config.service';
+  runAuthSessionInvalidation,
+  registerAilyChatHostAuthRuntimeBridge,
+} from '@core/auth/public-api';
+import { ElectronService } from '@core/platform/public-api';
 import {
+  SubappManagerService,
+  ChildToolProcessService,
   bootstrapDefaultAilyChatSubapp,
   DEFAULT_AILY_CHAT_SUBAPP_BOOTSTRAP_KEY,
   DEFAULT_AILY_CHAT_SUBAPP_TOOL_ID,
-} from '../services/default-aily-chat-bootstrap';
-import { runAuthSessionInvalidation } from '../services/auth-session-invalidation';
+} from '@integration/subapps/public-api';
+import { LoginComponent } from '../components/login/login.component';
+import { resolveTranslatedApiErrorMessage } from '../utils/api-error.utils';
+import { LibManagerToolComponent } from '../tools/lib-manager-tool/lib-manager-tool.component';
+import { ModeWelcomeComponent } from '../components/mode-welcome/mode-welcome.component';
+import { SimulatorSubappHostComponent } from '../tools/simulator/simulator-subapp-host.component';
 import { buildChildAuthStateSnapshot } from '../tools/child-tool-host/child-auth-state';
-import { registerAilyChatHostAuthRuntimeBridge } from '../services/aily-chat-host-auth-runtime-bridge';
 
 const RIGHT_SIDER_WIDTH_STORAGE_KEY = 'aily-main-window.right-sider-width';
 const RIGHT_SIDER_DEFAULT_WIDTH = 450;

@@ -16,36 +16,29 @@ import {
   ChildToolHostInfo,
   ChildToolProcessService,
   type ChildToolRuntimeSnapshot,
-} from '../../services/child-tool-process.service';
-import {
   type SubappCatalogItem,
   type SubappInstallProgress,
   SubappManagerService,
-} from '../../services/subapp-manager.service';
-import {
   ChildAppHostRegistryService,
   type ChildAppLifecycleOptions,
   type ChildAppWindowPlacement,
-} from '../../services/child-app-host-registry.service';
-import { AuthService } from '../../services/auth.service';
-import { ConfigService } from '../../services/config.service';
-import { resolveDevelopmentModeContext } from '../../services/development-mode-context';
-import { BlocklyService } from '../../editors/blockly-editor/services/blockly.service';
-import { ElectronService } from '../../services/electron.service';
-import { LogService } from '../../services/log.service';
-import { MainUiAutomationService } from '../../services/main-ui-automation.service';
-import { NoticeService } from '../../services/notice.service';
-import { ProjectService } from '../../services/project.service';
-import { RequiredSubappService } from '../../services/required-subapp.service';
-import { AiOperationRegistryService } from '../../services/ai-operation-registry.service';
-import { ThemeService } from '../../services/theme.service';
-import { ToolI18nService } from '../../services/tool-i18n.service';
-import { UiService } from '../../services/ui.service';
-import { toHostResourceLifecycleRequest } from '../../services/subapp-resource-lifecycle-adapter';
-import {
+  RequiredSubappService,
+  toHostResourceLifecycleRequest,
   SubappActivityService,
   type SubappActivity,
-} from '../../services/subapp-activity.service';
+} from '@integration/subapps/public-api';
+import { AuthService } from '@core/auth/public-api';
+import {
+  ConfigService,
+  resolveDevelopmentModeContext,
+  ThemeService,
+  ToolI18nService,
+} from '@core/preferences/public-api';
+import { BlocklyService } from '../../editors/blockly-editor/services/blockly.service';
+import { ElectronService, LogService } from '@core/platform/public-api';
+import { MainUiAutomationService, AiOperationRegistryService } from '@integration/automation/public-api';
+import { NoticeService, UiService } from '@core/app-shell/public-api';
+import { ProjectService } from '@domain/project/public-api';
 import { SubappActivityDockComponent } from '../../components/subapp-activity-dock/subapp-activity-dock.component';
 import {
   type ChildAuthStateSnapshot,

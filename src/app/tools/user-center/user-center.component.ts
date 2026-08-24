@@ -2,24 +2,26 @@ import { Component, ElementRef, inject, ViewChild } from '@angular/core';
 import { ToolContainerComponent } from '../../components/tool-container/tool-container.component';
 import { FormsModule } from '@angular/forms';
 import { CommonModule } from '@angular/common';
-import { AuthService, LoginRequest, RegisterRequest } from '../../services/auth.service';
+import {
+  AuthService,
+  LoginRequest,
+  RegisterRequest,
+  projectAuthQuotaInfo,
+  type AuthQuotaInfo,
+  ProtectedToolCloseError,
+} from '@core/auth/public-api';
 import { Subject, takeUntil } from 'rxjs';
-import { ElectronService } from '../../services/electron.service';
+import { ElectronService } from '@core/platform/public-api';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { NzButtonModule } from 'ng-zorro-antd/button';
 import { NzProgressModule } from 'ng-zorro-antd/progress';
 import { NzInputModule } from 'ng-zorro-antd/input';
-import { UiService } from '../../services/ui.service';
+import { UiService } from '@core/app-shell/public-api';
 import { NzToolTipModule } from "ng-zorro-antd/tooltip";
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { resolveTranslatedApiErrorMessage } from '../../utils/api-error.utils';
-import { ToolI18nService } from '../../services/tool-i18n.service';
-import {
-  projectAuthQuotaInfo,
-  type AuthQuotaInfo,
-} from '../../services/auth-quota-info';
-import { ProtectedToolCloseError } from '../../services/auth-required-tool-close';
-import { ChildAppSafetyService } from '../../services/child-app-safety.service';
+import { ToolI18nService } from '@core/preferences/public-api';
+import { ChildAppSafetyService } from '@integration/subapps/public-api';
 
 @Component({
   selector: 'app-user-center',

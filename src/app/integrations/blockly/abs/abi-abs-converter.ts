@@ -11,8 +11,8 @@ import {
   createProjectDataMarker,
   hasAilyProjectDataAbsHeader,
   isAilyProjectDataMarker,
-} from '../../../services/project-data/project-data.types';
-import { assertNoOversizedInlineValues } from '../../../services/project-data/project-data-policy';
+  assertNoOversizedInlineValues,
+} from '@domain/project/public-api';
 
 declare const Blockly: any;
 

@@ -1,6 +1,6 @@
 import { Injectable } from '@angular/core';
 import { AILY_BLOCKLY_USED_LIBRARIES_FIELD, BlocklyProjectDocument, BlocklyService } from './blockly.service';
-import { ActionService } from '../../../services/action.service';
+import { ActionService } from '@core/app-shell/public-api';
 import {
   normalizeArduinoGeneratedCode,
 } from '../components/blockly/generators/arduino/arduino';
@@ -8,13 +8,13 @@ import {
   getActiveProjectGenerator,
   runWithPreparedActiveProjectGenerator,
 } from './blockly-generator-runtime.service';
-import { ElectronService } from '../../../services/electron.service';
-import { projectDataRuntime } from '../../../services/project-data/project-data-runtime';
-import { assertNoOversizedInlineValues } from '../../../services/project-data/project-data-policy';
+import { ElectronService } from '@core/platform/public-api';
 import {
+  projectDataRuntime,
+  assertNoOversizedInlineValues,
   externalizeGenericProjectDataValues,
   materializePreparedGenericProjectDataValues,
-} from '../../../services/project-data/project-data-generic-values';
+} from '@domain/project/public-api';
 import { sha256Hex } from '../../../utils/crypto.utils';
 import { writeArduinoGeneratedArtifacts } from './generated-code-artifacts';
 

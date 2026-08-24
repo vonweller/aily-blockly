@@ -9,7 +9,7 @@
  */
 
 import { Injectable } from '@angular/core';
-import { ProjectService } from '../../../services/project.service';
+import { ProjectService } from '@domain/project/public-api';
 
 // =============================================================================
 // 类型定义

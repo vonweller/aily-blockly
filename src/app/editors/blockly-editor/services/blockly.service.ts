@@ -3,10 +3,9 @@ import { BehaviorSubject, Subject, debounceTime, filter, firstValueFrom, map, sw
 import * as Blockly from 'blockly';
 import { processI18n, processJsonVar, processStaticFilePath, processToolboxI18n, resolveSerialPortValueAfterCdcDisabled } from '../components/blockly/abf';
 import { TranslateService } from '@ngx-translate/core';
-import { ElectronService } from '../../../services/electron.service';
-import { LogService } from '../../../services/log.service';
-import { NoticeService } from '../../../services/notice.service';
-import { BlocklyLibraryDiagnostics, BlocklyLibraryPackageService, BlocklyLibraryPackageSnapshot } from '../../../services/blockly-library-package.service';
+import { ElectronService, LogService } from '@core/platform/public-api';
+import { NoticeService } from '@core/app-shell/public-api';
+import { BlocklyLibraryDiagnostics, BlocklyLibraryPackageService, BlocklyLibraryPackageSnapshot } from '@domain/dependencies/public-api';
 import {
   BlockCodeMapping,
   CodeLineRange,
@@ -22,11 +21,12 @@ import {
   registerFieldInputIncrementPolicy,
 } from '../components/blockly/plugins/workspace-multiselect/index.js';
 import { exportWorkspaceToSvg } from './workspace-svg-exporter';
-import { createProjectDataMarker, isAilyProjectDataMarker } from '../../../services/project-data/project-data.types';
 import {
+  createProjectDataMarker,
+  isAilyProjectDataMarker,
   decorateLibraryBlockDefinitionForProjectData,
   unregisterProjectDataFieldSlots,
-} from '../../../services/project-data/blockly-project-data-adapter';
+} from '@domain/project/public-api';
 import { BlocklyGeneratorRuntimeService } from './blockly-generator-runtime.service';
 import {
   changedRuntimeBlockTypes,

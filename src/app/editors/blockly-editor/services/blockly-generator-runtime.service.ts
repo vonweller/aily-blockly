@@ -11,7 +11,7 @@ import {
 import {
   prepareBlocklyProjectDataForCodeGeneration,
   wrapProjectDataGeneratorFunctions,
-} from '../../../services/project-data/blockly-project-data-adapter';
+} from '@domain/project/public-api';
 
 export type BlocklyGeneratorMode = 'arduino' | 'micropython';
 export type ProjectGenerator = ArduinoGenerator | MicroPythonGenerator;

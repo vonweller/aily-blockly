@@ -1,7 +1,7 @@
 import { Component, Input, OnInit } from '@angular/core';
 import { ActivatedRoute } from '@angular/router';
 import { IframeComponent } from '../../windows/iframe/iframe.component';
-import { ThemeService } from '../../services/theme.service';
+import { ThemeService } from '@core/preferences/public-api';
 
 @Component({
   selector: 'app-graph-editor',

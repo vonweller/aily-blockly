@@ -1,9 +1,8 @@
 import { inject } from '@angular/core';
 import { HttpInterceptorFn, HttpRequest, HttpHandlerFn, HttpEvent, HttpErrorResponse } from '@angular/common/http';
 import { Observable, throwError, catchError, from, switchMap, shareReplay, finalize } from 'rxjs';
-import { AuthService } from '../services/auth.service';
+import { AuthService, isDetachedAilyChatRenderer } from '@core/auth/public-api';
 import { API } from '../configs/api.config';
-import { isDetachedAilyChatRenderer } from '../services/detached-aily-chat-auth';
 
 let refreshAuthToken$: Observable<boolean> | null = null;
 

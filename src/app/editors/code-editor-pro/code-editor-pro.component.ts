@@ -6,28 +6,23 @@ import { ActivatedRoute } from '@angular/router';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { TranslateService } from '@ngx-translate/core';
 import { Subscription } from 'rxjs';
-import { ProjectService } from '../../services/project.service';
+import { ProjectService } from '@domain/project/public-api';
 import { NotificationComponent } from '../../components/notification/notification.component';
 import { BuilderService } from '../code-editor/services/builder.service';
-import { BuilderService as TopBuilderService } from '../../services/builder.service';
-import { UploaderService } from '../../services/uploader.service';
-import { ElectronService } from '../../services/electron.service';
-import { ThemeService } from '../../services/theme.service';
+import { BuilderService as TopBuilderService } from '@domain/build/public-api';
+import { UploaderService } from '@domain/device/public-api';
+import { ElectronService, CmdService, type CmdOutput } from '@core/platform/public-api';
+import { ThemeService } from '@core/preferences/public-api';
 import {
   CodeEditorProProjectService,
   type CodeEditorProPersistenceBridge,
 } from './services/code-editor-pro-project.service';
-import { NpmService } from '../../services/npm.service';
+import { NpmService } from '@domain/dependencies/public-api';
 import { resolveActualBuildOutputs, type BuildArtifactV1 } from '../../utils/builder.utils';
 import { resolvePlatformPackagesForCurrentProject } from '../../utils/platform-packages.utils';
-import { UiService } from '../../services/ui.service';
-import { AiCoderDiffBridgeService } from '../../services/ai-coder-diff-bridge.service';
-import { CmdService, type CmdOutput } from '../../services/cmd.service';
-import {
-  ChildToolHostInfo,
-  ChildToolProcessService,
-} from '../../services/child-tool-process.service';
-import { RequiredSubappService } from '../../services/required-subapp.service';
+import { UiService } from '@core/app-shell/public-api';
+import { AiCoderDiffBridgeService } from '@integration/automation/public-api';
+import { ChildToolHostInfo, ChildToolProcessService, RequiredSubappService } from '@integration/subapps/public-api';
 import { AILY_CODER_SUBAPP_ID } from '../../configs/required-subapp.config';
 import {
   CoderLoadingComponent,

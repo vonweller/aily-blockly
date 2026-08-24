@@ -9,7 +9,7 @@ import {
 } from '@angular/core';
 import { Subscription } from 'rxjs';
 
-import { ProjectService } from '../../services/project.service';
+import { ProjectService } from '@domain/project/public-api';
 import { BlocklyService } from '../../editors/blockly-editor/services/blockly.service';
 import {
   SimulatorSubappFrameAdapter,

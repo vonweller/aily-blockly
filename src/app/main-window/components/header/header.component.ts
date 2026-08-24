@@ -1,50 +1,46 @@
 import { CommonModule } from '@angular/common';
 import { ChangeDetectorRef, Component, ElementRef, isDevMode, NgZone, OnDestroy, OnInit, ViewChild, viewChild } from '@angular/core';
-import { HEADER_BTNS, HEADER_MENU } from '../../../configs/menu.config';
+import { HEADER_BTNS, HEADER_MENU, IMenuItem } from '../../../configs/menu.config';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { FormsModule } from '@angular/forms';
-import { ProjectService } from '../../../services/project.service';
-import { UiService } from '../../../services/ui.service';
-import { BuilderService } from '../../../services/builder.service';
-import { UploaderService } from '../../../services/uploader.service';
+import { ProjectService } from '@domain/project/public-api';
+import { UiService, UpdateService } from '@core/app-shell/public-api';
+import { BuilderService, ProbeRsService } from '@domain/build/public-api';
+import {
+  UploaderService,
+  PortItem,
+  SerialService,
+  BleOtaDeviceItem,
+  UploaderBleService,
+  hasLinkUploadParam,
+  selectSerialPort,
+} from '@domain/device/public-api';
 import { MenuComponent } from '../../../components/menu/menu.component';
-import { PortItem, SerialService } from '../../../services/serial.service';
 import { ActBtnComponent } from '../act-btn/act-btn.component';
-import { IMenuItem } from '../../../configs/menu.config';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { NzModalService } from 'ng-zorro-antd/modal';
 import { UnsaveDialogComponent } from '../unsave-dialog/unsave-dialog.component';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
-import { UpdateService } from '../../../services/update.service';
 import { Router } from '@angular/router';
-import { ElectronService } from '../../../services/electron.service';
-import { ConfigService } from '../../../services/config.service';
-import { AuthService } from '../../../services/auth.service';
-import { PlatformService } from '../../../services/platform.service';
-import { ProbeRsService } from '../../../services/probe-rs.service';
+import { ElectronService, PlatformService, CmdOutput, CmdService } from '@core/platform/public-api';
+import { ConfigService, ToolI18nService } from '@core/preferences/public-api';
+import { AuthService } from '@core/auth/public-api';
 import { AppItem } from '../../../configs/tool.config';
 import { AppStoreService } from '../../../tools/app-store/app-store.service';
 import { Subscription } from 'rxjs';
-import { BleOtaDeviceItem, UploaderBleService } from '../../../services/uploader-ble.service';
-import { ToolI18nService } from '../../../services/tool-i18n.service';
-import { CmdOutput, CmdService } from '../../../services/cmd.service';
 import { BlocklyService } from '../../../editors/blockly-editor/services/blockly.service';
 import {
   UiAutomationRegistryService,
   type UiAutomationCommandResult,
   type UiAutomationMenuItem,
   type UiAutomationMenuListOptions,
-} from '../../../services/ui-automation-registry.service';
-import {
   HOST_EXIT_REQUIRES_USER_REASON,
   mainMenuAutomationRejection,
-} from '../../../services/main-menu-automation-policy';
+} from '@integration/automation/public-api';
 import {
   persistBoardConfigSelection,
   shouldRunBoardConfigSelectionEffects,
 } from './board-config-selection';
-import { hasLinkUploadParam } from '../../../services/debugger-upload-policy';
-import { selectSerialPort } from '../../../services/serial-port-selection';
 
 interface NetworkOtaTarget {
   id: string;
