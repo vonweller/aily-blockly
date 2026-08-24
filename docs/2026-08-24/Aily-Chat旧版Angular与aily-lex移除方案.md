@@ -152,7 +152,6 @@ node --check electron/window.js
 node --check electron/preload.js
 node --check electron/main.js
 node --check scripts/build-electron.js
-node --check scripts/setup-child-repos.js
 node --check scripts/guard-aily-chat-mainline.js
 git diff --check
 ```

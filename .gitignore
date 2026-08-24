@@ -64,10 +64,7 @@ child/aily-builder*
 /child/rg
 /child/rg.exe
 /child/probe-rs
-/child/aily-coder
 /child/tools/*/node_modules/*
-/child/aily-lex
-/child/aily-subapp
 /child/xpm
 
 # Playwright E2E
@@ -79,6 +76,7 @@ child/aily-builder*
 /e2e/.artifacts
 
 **/*.spec.ts
+!/src/**/*.spec.ts
 !/e2e/tests/**/*.spec.ts
 **/__tests__/**/*
 .tmp
