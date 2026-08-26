@@ -2,6 +2,7 @@ import {
   AilyChatDemandSessionService,
   type AilyChatDemandSessionResult,
 } from './aily-chat-demand-session.service';
+import { BehaviorSubject } from 'rxjs';
 
 describe('AilyChatDemandSessionService', () => {
   const channel = 'aily-chat-demand-session-v1';
@@ -10,6 +11,12 @@ describe('AilyChatDemandSessionService', () => {
     const processMessageListeners = new Set<(message: Record<string, unknown>) => void>();
     const sentMessages: Record<string, unknown>[] = [];
     const openedSessions: string[] = [];
+    const projectPath = new BehaviorSubject('/tmp/project');
+    const projectService = {
+      currentProjectPath: projectPath.value,
+      currentProjectPath$: projectPath.asObservable(),
+    };
+    projectPath.subscribe(path => projectService.currentProjectPath = path);
     const childToolProcess = {
       acquire: async () => undefined,
       release: async () => undefined,
@@ -46,7 +53,7 @@ describe('AilyChatDemandSessionService', () => {
       },
     };
     const service = new AilyChatDemandSessionService(
-      { currentProjectPath: '/tmp/project' } as never,
+      projectService as never,
       { getConnectionGraph: () => null } as never,
       { isElectron: false } as never,
       childToolProcess as never,
@@ -59,6 +66,7 @@ describe('AilyChatDemandSessionService', () => {
     );
     return {
       service,
+      projectPath,
       sentMessages,
       openedSessions,
       emitProcessMessage: (message: Record<string, unknown>) => {
@@ -193,6 +201,53 @@ describe('AilyChatDemandSessionService', () => {
     });
     await first;
     expect(harness.service.isDiagramGenerating('architecture')).toBeFalse();
+  });
+
+  it('coalesces a duplicate schematic request without reporting an error', async () => {
+    const harness = createHarness({ autoRespond: false });
+    const request = {
+      kind: 'schematic' as const,
+      title: '生成项目连线图',
+      prompt: '[AGENT: SchematicAgent] 生成项目连线图',
+      mode: 'agent' as const,
+    };
+    const first = harness.service.runDemandSession(request);
+
+    await expectAsync(harness.service.runDemandSession(request)).toBeResolvedTo({
+      accepted: false,
+      reason: 'schematic-agent-running',
+    });
+    expect(harness.sentMessages).toHaveSize(1);
+
+    await Promise.resolve();
+    const requestId = String(harness.sentMessages[0]['requestId']);
+    harness.emitProcessMessage({
+      channel,
+      type: 'response',
+      requestId,
+      result: { accepted: true, sessionId: 'schematic-session', state: 'settled' },
+    });
+    await first;
+  });
+
+  it('clears a stale diagram gate when the active project changes', async () => {
+    const harness = createHarness({ autoRespond: false });
+    const pending = harness.service.generateSchematic('生成项目连线图');
+    expect(harness.service.isDiagramGenerating('schematic')).toBeTrue();
+
+    harness.projectPath.next('/tmp/other-project');
+
+    expect(harness.service.isDiagramGenerating('schematic')).toBeFalse();
+
+    await Promise.resolve();
+    const requestId = String(harness.sentMessages[0]['requestId']);
+    harness.emitProcessMessage({
+      channel,
+      type: 'response',
+      requestId,
+      result: { accepted: true, sessionId: 'schematic-session', state: 'settled' },
+    });
+    await pending;
   });
 
   it('keeps architecture and schematic generation states independent', async () => {

@@ -125,6 +125,9 @@ export class AilyChatDemandSessionService {
     private uiService: UiService,
   ) {
     this.setupConnectionGraphIpc();
+    this.projectService.currentProjectPath$.subscribe(projectPath => {
+      this.clearDiagramGenerationOutsideProject(projectPath);
+    });
   }
 
   async createArchitectureSession(prompt: string, title = prompt): Promise<AilyChatDemandSessionResult> {
@@ -199,6 +202,9 @@ export class AilyChatDemandSessionService {
     const diagramKind = this.toDiagramGenerationKind(request.kind);
     if (diagramKind) {
       if (this.isDiagramGenerating(diagramKind)) {
+        if (diagramKind === 'schematic') {
+          return { accepted: false, reason: 'schematic-agent-running' };
+        }
         const label = diagramKind === 'architecture' ? '框架图' : '连线图';
         throw new Error(`${label}正在生成，请等待当前任务结束`);
       }
@@ -356,7 +362,36 @@ ${(connectionData.connections || []).length} 条连线
   }
 
   isDiagramGenerating(kind: DiagramGenerationKind): boolean {
-    return this.diagramGenerationStateSubject.value[kind] !== null;
+    const activity = this.diagramGenerationStateSubject.value[kind];
+    return !!activity && this.isSameProjectPath(
+      activity.projectPath,
+      this.projectService.currentProjectPath,
+    );
+  }
+
+  private clearDiagramGenerationOutsideProject(projectPath: string): void {
+    const current = this.diagramGenerationStateSubject.value;
+    const next: DiagramGenerationState = {
+      architecture: current.architecture
+        && this.isSameProjectPath(current.architecture.projectPath, projectPath)
+        ? current.architecture
+        : null,
+      schematic: current.schematic
+        && this.isSameProjectPath(current.schematic.projectPath, projectPath)
+        ? current.schematic
+        : null,
+    };
+    if (next.architecture !== current.architecture || next.schematic !== current.schematic) {
+      this.diagramGenerationStateSubject.next(next);
+    }
+  }
+
+  private isSameProjectPath(left: string, right: string): boolean {
+    const normalize = (value: string) => String(value || '')
+      .replace(/\\/g, '/')
+      .replace(/\/+$/u, '')
+      .toLowerCase();
+    return normalize(left) === normalize(right);
   }
 
   private toDiagramGenerationKind(

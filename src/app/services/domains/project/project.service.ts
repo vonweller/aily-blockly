@@ -40,6 +40,11 @@ import {
   resolveCoderProjectCreationTemplate,
   resolveCoderTemplatePath,
 } from './coder/coder-project-template';
+import {
+  RecentProject,
+  addRecentProject,
+  removeRecentProject,
+} from './recent-projects';
 
 interface ProjectPackageData {
   name: string;
@@ -304,6 +309,10 @@ export class ProjectService {
 
   private warnBlockingAiOperation(): void {
     this.message.warning('AI 对话正在处理中，请先停止当前请求后再切换或关闭项目。');
+  }
+
+  private warnConnectionGraphWindowCloseFailure(): void {
+    this.message.warning('连线图窗口未能关闭，请手动关闭窗口后重试。');
   }
 
   private get message(): NzMessageService {
@@ -877,6 +886,8 @@ export class ProjectService {
   private async projectOpenInternal(projectPath = this.currentProjectPath, options: ProjectOpenOptions = {}): Promise<boolean> {
     const previousProjectPath = this.currentProjectPath;
     const activationReason = options.reason || (this.isSameProjectPath(previousProjectPath, projectPath) ? 'reload' : 'open');
+    const isSwitchingProject = !!previousProjectPath
+      && !this.isSameProjectPath(previousProjectPath, projectPath);
 
     if (this.shouldBlockForAiOperation(activationReason)) {
       this.warnBlockingAiOperation();
@@ -914,6 +925,19 @@ export class ProjectService {
         this.stateSubject.next('default');
         return false;
       }
+    }
+
+    if (isSwitchingProject && !(await this.application.closeConnectionGraphWindows())) {
+      if (this.electronService.isElectron && window['projectLock']) {
+        try {
+          await window['projectLock'].release(projectPath);
+        } catch (e) {
+          console.warn('project-lock release after window close failure:', e);
+        }
+      }
+      this.warnConnectionGraphWindowCloseFailure();
+      this.stateSubject.next('default');
+      return false;
     }
 
     if (this.electronService.isElectron
@@ -1125,6 +1149,11 @@ export class ProjectService {
       return false;
     }
 
+    if (this.currentProjectPath && !(await this.application.closeConnectionGraphWindows())) {
+      this.warnConnectionGraphWindowCloseFailure();
+      return false;
+    }
+
     if (this.electronService.isElectron && this.currentProjectPath && window['projectLock']) {
       try {
         await window['projectLock'].release(this.currentProjectPath);
@@ -1201,33 +1230,21 @@ export class ProjectService {
   }
 
   // 通过ConfigService存储最近打开的项目
-  get recentlyProjects(): any[] {
+  get recentlyProjects(): RecentProject[] {
     return this.configService.data?.recentlyProjects || [];
   }
 
-  set recentlyProjects(data) {
+  set recentlyProjects(data: RecentProject[]) {
     this.configService.data.recentlyProjects = data;
     this.configService.save();
   }
 
-  addRecentlyProject(data: { name: string, path: string, nickname?: string }) {
-    let temp: any[] = this.recentlyProjects
-    temp.unshift(data);
-    temp = temp.filter((item, index) => {
-      return temp.findIndex((item2) => item2.path === item.path) === index;
-    });
-    if (temp.length > 6) {
-      temp.pop();
-    }
-    this.recentlyProjects = temp;
+  addRecentlyProject(data: RecentProject) {
+    this.recentlyProjects = addRecentProject(this.recentlyProjects, data);
   }
 
   removeRecentlyProject(data: { path: string }) {
-    let temp: any[] = this.recentlyProjects
-    temp = temp.filter((item) => {
-      return item.path !== data.path;
-    });
-    this.recentlyProjects = temp;
+    this.recentlyProjects = removeRecentProject(this.recentlyProjects, data.path);
   }
 
   // 检查项目是否未保存

@@ -33,6 +33,10 @@ export class ProjectApplicationAdapter implements ProjectApplicationPort {
     this.uiService.closeTerminal();
   }
 
+  closeConnectionGraphWindows(): Promise<boolean> {
+    return this.uiService.closeConnectionGraphWindows();
+  }
+
   hasActiveAiOperation(projectPath: string): boolean {
     return this.aiOperationRegistry.hasActive(projectPath);
   }

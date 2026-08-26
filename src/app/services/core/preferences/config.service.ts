@@ -1838,7 +1838,7 @@ interface AppConfig {
   quickSendList?: Array<{ name: string, type: "signal" | "text" | "hex", data: string }>;
 
   /** 最近打开的项目列表 */
-  recentlyProjects?: Array<{ name: string, path: string }>;
+  recentlyProjects?: Array<{ name: string, path: string, nickname?: string }>;
 
   /** 当前选择的语言 */
   selectedLanguage?: string;

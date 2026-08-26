@@ -1,7 +1,7 @@
 import { Component, OnDestroy, OnInit } from '@angular/core';
 import { GUIDE_MENU } from '../../configs/menu.config';
 import { UiService, OnboardingService } from '@core/app-shell/public-api';
-import { ProjectService } from '@domain/project/public-api';
+import { getGuideRecentProjects, ProjectService } from '@domain/project/public-api';
 import { ConfigService, ThemeService } from '@core/preferences/public-api';
 import packageJson from '../../../../package.json';
 import { TranslateModule } from '@ngx-translate/core';
@@ -92,7 +92,7 @@ export class GuideComponent implements OnInit, OnDestroy {
   }
 
   get recentlyProjects() {
-    return this.projectService.recentlyProjects
+    return getGuideRecentProjects(this.projectService.recentlyProjects);
   }
 
   constructor(

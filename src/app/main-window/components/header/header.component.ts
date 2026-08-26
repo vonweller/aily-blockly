@@ -3,7 +3,7 @@ import { ChangeDetectorRef, Component, ElementRef, isDevMode, NgZone, OnDestroy,
 import { HEADER_BTNS, HEADER_MENU, IMenuItem } from '../../../configs/menu.config';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { FormsModule } from '@angular/forms';
-import { ProjectService } from '@domain/project/public-api';
+import { ProjectService, RECENT_PROJECTS_STORAGE_LIMIT } from '@domain/project/public-api';
 import { UiService, UpdateService } from '@core/app-shell/public-api';
 import { BuilderService, ProbeRsService } from '@domain/build/public-api';
 import {
@@ -327,7 +327,8 @@ export class HeaderComponent implements OnInit, OnDestroy {
     if (!entry) {
       return;
     }
-    const recent = this.projectService.recentlyProjects || [];
+    const recent = (this.projectService.recentlyProjects || [])
+      .slice(0, RECENT_PROJECTS_STORAGE_LIMIT);
     entry.children =
       recent.length > 0
         ? recent.map((p: { name?: string; nickname?: string; path: string }) => ({
@@ -861,7 +862,7 @@ export class HeaderComponent implements OnInit, OnDestroy {
           const canContinue = await this.checkUnsavedChanges('close');
           if (!canContinue) return;
         }
-        this.projectService.close();
+        await this.projectService.close();
         break;
       case 'project-open-by-explorer':
         window['other'].openByExplorer(this.projectService.currentProjectPath);

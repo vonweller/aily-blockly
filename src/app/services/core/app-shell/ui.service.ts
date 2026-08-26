@@ -26,6 +26,7 @@ import {
   closeToolThroughLifecycle,
   DEFAULT_AILY_CHAT_SUBAPP_TOOL_ID,
 } from '@integration/subapps/public-api';
+import { closeConnectionGraphSubWindows } from './project-window-lifecycle';
 
 @Injectable({
   providedIn: 'root',
@@ -498,6 +499,17 @@ export class UiService {
   async closeToolAll(): Promise<void> {
     for (const name of [...this.openToolList].reverse()) {
       await this.closeToolAndWait(name);
+    }
+  }
+
+  async closeConnectionGraphWindows(): Promise<boolean> {
+    if (!this.electronService.isElectron) return true;
+
+    try {
+      return await closeConnectionGraphSubWindows(window['subWindow']);
+    } catch (error) {
+      console.warn('关闭项目连线图独立窗口失败:', error);
+      return false;
     }
   }
 
