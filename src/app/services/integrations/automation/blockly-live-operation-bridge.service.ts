@@ -280,7 +280,7 @@ export class BlocklyLiveOperationBridgeService {
   }
 
   /**
-   * 与旧版 Angular `aiWriting = true`（BLOCK_TOOLS 执行中）对齐：
+   * 新版 Agent 的 Blockly 写入工具执行期间置 `aiWriting = true`：
    * 仅在实际改积木的 live 操作期间点亮遮罩。带终止按钮的
    * 「AI正在操作」通知由发起本次会话的 Aily Chat surface 负责。
    */

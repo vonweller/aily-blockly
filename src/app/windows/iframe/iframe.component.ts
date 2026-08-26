@@ -12,7 +12,7 @@ import { NZ_MODAL_DATA } from 'ng-zorro-antd/modal';
 import { ActivatedRoute } from '@angular/router';
 import { ElectronService } from '@core/platform/public-api';
 import { ConnectionGraphService } from '@domain/schematic/public-api';
-import { NoticeService, UiService } from '@core/app-shell/public-api';
+import { NoticeService } from '@core/app-shell/public-api';
 import { SubWindowComponent } from '../../components/sub-window/sub-window.component';
 import { NotificationComponent } from '../../components/notification/notification.component';
 import { CommonModule } from '@angular/common';
@@ -20,7 +20,7 @@ import { WindowMessenger, connect, Connection } from 'penpal';
 import { TranslateService } from '@ngx-translate/core';
 import { Subscription } from 'rxjs';
 import { ToolI18nService } from '@core/preferences/public-api';
-import { SimulatorIframeBridgeService, BackgroundAgentService } from '@integration/simulator/public-api';
+import { AilyChatDemandSessionService, SimulatorIframeBridgeService } from '@integration/simulator/public-api';
 
 /** iframe IPC 统一载荷（规范：docs/iframe-ipc-spec.md） */
 export interface IframeIpcPayload<T = unknown> {
@@ -39,7 +39,6 @@ export type ConnectionGraphIpcType =
   | 'set-graph-data'
   | 'save-graph-data'
   | 'save-graph-data-result'
-  | 'send-to-chat'
   | 'generate-graph-code';
 
 const IFRAME_CHANNEL_CONNECTION_GRAPH = 'iframe-message-connection-graph';
@@ -107,11 +106,10 @@ export class IframeComponent implements OnInit, OnDestroy {
     private connectionGraphService: ConnectionGraphService,
     private noticeService: NoticeService,
     private ngZone: NgZone,
-    private uiService: UiService,
     private translate: TranslateService,
     private toolI18n: ToolI18nService,
     private simulatorIframeBridge: SimulatorIframeBridgeService,
-    private backgroundAgent: BackgroundAgentService,
+    private ailyChatDemandSession: AilyChatDemandSessionService,
   ) {
     if (this.data) {
       if (this.data.url) {
@@ -249,7 +247,7 @@ export class IframeComponent implements OnInit, OnDestroy {
               state: 'doing',
               showProgress: false,
             });
-            this.generateSchematic('@SchematicAgent 生成项目连线图', true);
+            this.generateSchematic('生成项目连线图', true);
           },
           regenerateGraphData: () => {
             this.onRegenerate();
@@ -613,24 +611,11 @@ export class IframeComponent implements OnInit, OnDestroy {
   // =====================================================
 
   /**
-   * 向 aily-chat 发送消息。
-   * 嵌入模式（主窗口内）直接调用 ChatService；
-   * 独立窗口通过 IPC 转发到主窗口由 BackgroundAgentService 处理。
-   */
-  private sendToChat(text: string): void {
-    if (this.embedded) {
-      this.uiService.openAndSendToChat(text, { autoSend: true });
-    } else {
-      this.sendToMain('send-to-chat', { text, autoSend: true });
-    }
-  }
-
-  /**
-   * 直接请求主应用后台创建 aily-chat session 并执行 SchematicAgent。
+   * 直接请求新版 Runtime 创建需求 session 并执行 SchematicAgent。
    */
   private generateSchematic(prompt: string, revealSession = false): void {
     if (this.embedded) {
-      void this.backgroundAgent.generateSchematic(prompt, { revealSession });
+      void this.ailyChatDemandSession.generateSchematic(prompt, { revealSession });
     } else {
       this.sendToMain('generate-graph-data', { prompt, revealSession });
     }
@@ -646,7 +631,7 @@ export class IframeComponent implements OnInit, OnDestroy {
       state: 'doing',
       showProgress: false,
     });
-    this.generateSchematic('@SchematicAgent 请根据当前项目的引脚配置和组件信息，重新生成连线图方案。');
+    this.generateSchematic('请根据当前项目的引脚配置和组件信息，重新生成连线图方案。');
   }
 
   /**
@@ -659,6 +644,12 @@ export class IframeComponent implements OnInit, OnDestroy {
       state: 'doing',
       showProgress: false,
     });
-    this.sendToChat('请根据当前连线图方案，将硬件连线配置同步到项目代码中。');
+    if (this.embedded) {
+      void this.ailyChatDemandSession
+        .syncSchematicToCode('请根据当前连线图方案，将硬件连线配置同步到项目代码中。')
+        .catch(error => console.error('[IframeComponent] 同步到代码失败:', error));
+    } else {
+      this.sendToMain('generate-graph-code');
+    }
   }
 }

@@ -1,7 +1,6 @@
 // 扩展 Window 接口以包含 electronAPI
 declare global {
   interface Window {
-    openAndSendToAilyChat: (text: string, options?: Record<string, any>) => void;
     electronAPI: {
       SerialPort: {
         list: () => Promise<any[]>;

@@ -4,7 +4,7 @@ import { Subject, combineLatest } from 'rxjs';
 
 import { debounceTime, takeUntil, map, distinctUntilChanged, pairwise, startWith } from 'rxjs/operators';
 import { TranslateService } from '@ngx-translate/core';
-import { UiService, NoticeService } from '@core/app-shell/public-api';
+import { NoticeService } from '@core/app-shell/public-api';
 import { AuthService } from '@core/auth/public-api';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { normalizeLanguageCode, type SupportedLanguageCode } from '../../../../utils/language-code';
@@ -111,6 +111,7 @@ import { BlocklyWorkspacePagesComponent } from './components/blockly-workspace-p
 import { BlocklyConfirmDialogComponent } from './components/confirm-dialog/confirm-dialog.component';
 import { CodeViewerIpcService } from '../../services/code-viewer-ipc.service';
 import { writeArduinoGeneratedArtifacts } from '../../services/generated-code-artifacts';
+import { AilyChatDemandSessionService } from '@integration/simulator/public-api';
 
 type BlocklyWorkspaceEvent = { type?: string } | null | undefined;
 
@@ -480,7 +481,7 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
     private themeService: ThemeService,
     private platformService: PlatformService,
     private codeViewerIpcService: CodeViewerIpcService,
-    private uiService: UiService,
+    private ailyChatDemandSession: AilyChatDemandSessionService,
     private authService: AuthService,
     private message: NzMessageService,
     private generatorRuntime: BlocklyGeneratorRuntimeService,
@@ -712,7 +713,7 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   private initAiWritingSubscription(): void {
-    // 与旧版 Angular 一致：遮罩只在 aiWriting（积木工具执行）或短暂 aiWaitWriting 时显示，
+    // 遮罩只在 aiWriting（新版 Agent 积木写入）或短暂 aiWaitWriting 时显示，
     // 不随整轮 request/aiWaiting 常亮。
     combineLatest([
       this.blocklyService.aiWriting$,
@@ -2072,17 +2073,18 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
     );
 
     const prompt = this.translateService.instant('BLOCKLY_EDITOR.EXPLAIN_BLOCK_PROMPT');
-    this.uiService.openAndSendToChat(prompt, {
-      sender: 'BlocklyComponent',
-      type: 'block-explain',
-      autoSend: true,
-      resources: this.blocklyService.getSelectedBlockContextLabels().map(item => ({
-        type: 'block',
-        name: item.label,
-        blockId: item.blockId,
-        blockContext: item.formatted,
-      })),
-    });
+    const resources = this.blocklyService.getSelectedBlockContextLabels().map(item => ({
+      type: 'block',
+      name: item.label,
+      blockId: item.blockId,
+      blockContext: item.formatted,
+    } as const));
+    void this.ailyChatDemandSession
+      .explainBlocks(prompt, resources)
+      .catch(error => {
+        const message = error instanceof Error ? error.message : String(error);
+        this.message.error(message);
+      });
   }
 
   updateBlocklyLocale(lang: string) {

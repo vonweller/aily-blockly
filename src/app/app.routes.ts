@@ -115,11 +115,6 @@ export const routes: Routes = [
         pathMatch: "full"
     },
     {
-        path: "aily-chat",
-        redirectTo: "child-tool/aily-chat",
-        pathMatch: "full"
-    },
-    {
         path: "code-viewer",
         loadComponent: () => import('./editors/blockly-editor/tools/code-viewer/code-viewer.component').then(m => m.CodeViewerComponent)
     },

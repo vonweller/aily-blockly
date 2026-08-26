@@ -25,8 +25,6 @@ import {
   ChildToolProcessService,
   closeToolThroughLifecycle,
   DEFAULT_AILY_CHAT_SUBAPP_TOOL_ID,
-  findPreferredAilyChatTool,
-  resolvePreferredAilyChatTool,
 } from '@integration/subapps/public-api';
 
 @Injectable({
@@ -79,10 +77,6 @@ export class UiService {
 
   // 初始化UI服务，这个init函数仅供main-window使用
   init(): void {
-    // 注册 window 全局方法，供非 Angular 环境调用
-    (window as any).openAndSendToAilyChat = (text: string, options?: Record<string, any>) => {
-      this.openAndSendToChat(text, options);
-    };
     if (this.electronService.isElectron) {
       this.isMainWindow = true;
       window['ipcRenderer'].on('window-go-main', (event, toolName) => {
@@ -514,16 +508,21 @@ export class UiService {
 
   /**
    * 打开 aily-chat 面板并发送消息。
-   * 标准接口：任何需要「代为向大模型发送消息」的场景，统一调用此方法。
-   * 输入通过 ChatService 的单一路径缓冲，聊天面板挂载后由
-   * ChatExternalInputCoordinator 进入统一提交管线。
+   * 仅供普通“带入输入框/自动发送”场景使用。需要独立执行的宿主任务应调用
+   * AilyChatDemandSessionService，直接由新版 Runtime 创建需求会话。
    *
    * @param text 要发送的文本内容
    * @param options 发送选项，如 { autoSend: true, cover: true }
    */
   openAndSendToChat(text: string, options?: Record<string, any>): void {
     const targetToolId = this.openPreferredAilyChat();
-    const deliver = () => {
+    void this.waitForChildToolReady(targetToolId).then(ready => {
+      if (!ready) {
+        console.warn('[AilyChat][ExternalInputDelivery] child tool did not become ready', {
+          target: targetToolId,
+        });
+        return;
+      }
       console.info('[AilyChat][ExternalInputDelivery]', {
         phase: 'deliver',
         target: targetToolId,
@@ -535,8 +534,7 @@ export class UiService {
         text,
         options: options || {},
       });
-    };
-    deliver();
+    });
   }
 
   /**
@@ -545,7 +543,7 @@ export class UiService {
    * canonical `aily-chat` tool id.
    */
   openPreferredAilyChat(): string {
-    const targetToolId = resolvePreferredAilyChatTool(this.openToolList);
+    const targetToolId = DEFAULT_AILY_CHAT_SUBAPP_TOOL_ID;
     this.openTool(targetToolId);
     return targetToolId;
   }
@@ -559,34 +557,25 @@ export class UiService {
 
     const targetToolId = DEFAULT_AILY_CHAT_SUBAPP_TOOL_ID;
     this.openTool(targetToolId);
-    const deadline = Date.now() + 10_000;
+    if (!await this.waitForChildToolReady(targetToolId)) return false;
+    this.sendToolSignal(`${targetToolId}:session-select`, {
+      targetToolId,
+      sessionId: targetSessionId,
+    });
+    return true;
+  }
 
+  private async waitForChildToolReady(toolId: string, timeoutMs = 10_000): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
-      const status = this.childHostRegistry.getStatus(targetToolId);
+      const status = this.childHostRegistry.getStatus(toolId);
       if (status?.['penpalState'] === 'connected' && status?.['frameLoaded'] === true) {
-        this.sendToolSignal(`${targetToolId}:session-select`, {
-          targetToolId,
-          sessionId: targetSessionId,
-        });
         return true;
       }
-      if (status?.['status'] === 'error') {
-        return false;
-      }
-
+      if (status?.['status'] === 'error') return false;
       await new Promise(resolve => setTimeout(resolve, 50));
     }
-
     return false;
-  }
-
-  /** The currently open Aily Chat, or null when it is closed. */
-  getActiveAilyChatToolId(): string | null {
-    return findPreferredAilyChatTool(this.openToolList);
-  }
-
-  isActiveAilyChatTool(toolId: string): boolean {
-    return this.getActiveAilyChatToolId() === toolId;
   }
 
   openCodeEditorFile(

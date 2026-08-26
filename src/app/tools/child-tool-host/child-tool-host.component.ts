@@ -158,6 +158,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   private ailyChatOperationActive = false;
   private ailyChatOperationSessionId = '';
   private aiOperationNoticeShown = false;
+  private readonly pendingExternalInputSignals: Array<Record<string, unknown>> = [];
   ailyChatSessionId = '';
 
   constructor(
@@ -383,6 +384,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     this.authContextListenerRegistered = false;
     this.unregisterHostController?.();
     this.unregisterHostController = null;
+    this.pendingExternalInputSignals.length = 0;
     const releaseToolId = this.acquired ? this.resolvedToolId : '';
     this.acquired = false;
     this.destroyPenpalConnection();
@@ -1037,6 +1039,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
         this.log('penpal connected');
         this.remoteApi = remote;
         this.penpalState = 'connected';
+        this.flushPendingExternalInputSignals();
         this.syncHostContext();
         this.pushChildAuthState();
         this.pushChatSubappActivities();
@@ -1415,19 +1418,42 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     // Resource handoff is delivered directly to every compatible running
     // Runtime by SubappResourceLifecycleService. Keeping it out of the iframe
     // path makes the handoff independent of full/compact UI lifecycle.
-    if (resourceRequest || typeof this.remoteApi?.handleToolSignal !== 'function') return;
-    const task = Promise.resolve(this.remoteApi.handleToolSignal({
+    if (resourceRequest) return;
+    const forwardedSignal = {
       action: action.action,
       type: action.type,
       data: action.data,
       payload
-    })).then(() => undefined).catch(() => undefined);
+    };
+    if (typeof this.remoteApi?.handleToolSignal !== 'function') {
+      if (String(action.data || '') === `${this.resolvedToolId}:external-input`) {
+        if (this.pendingExternalInputSignals.length >= 8) {
+          this.pendingExternalInputSignals.shift();
+        }
+        this.pendingExternalInputSignals.push(forwardedSignal);
+      }
+      return;
+    }
+    const task = Promise.resolve(this.remoteApi.handleToolSignal(forwardedSignal))
+      .then(() => undefined)
+      .catch(() => undefined);
 
     if (Array.isArray(action?.payload?.waitFor)) {
       action.payload.waitFor.push(task);
     } else {
       void task.catch(() => undefined);
     }
+  }
+
+  private flushPendingExternalInputSignals(): void {
+    if (typeof this.remoteApi?.handleToolSignal !== 'function') return;
+    const pending = this.pendingExternalInputSignals.splice(0);
+    void pending.reduce(
+      (previous, signal) => previous.then(() =>
+        Promise.resolve(this.remoteApi?.handleToolSignal(signal)).then(() => undefined),
+      ),
+      Promise.resolve(),
+    ).catch(() => undefined);
   }
 
   private async sendToolSignalFromChild(signal: string, payload: any = {}): Promise<{ ok: boolean; waitFor: number }> {

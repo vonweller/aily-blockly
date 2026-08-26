@@ -12,7 +12,7 @@ import { ConfigService, ThemeService } from '@core/preferences/public-api';
 import { ElectronService } from '@core/platform/public-api';
 import { ProjectService } from '@domain/project/public-api';
 import { ImageViewerComponent } from '../../../../components/image-viewer/image-viewer.component';
-import { BackgroundAgentService } from '@integration/simulator/public-api';
+import { AilyChatDemandSessionService } from '@integration/simulator/public-api';
 import { DevToolDragController, DragBounds, DragPoint } from './dev-tool-drag-controller';
 
 @Component({
@@ -71,12 +71,12 @@ export class DevToolComponent implements OnInit, AfterViewInit, OnDestroy {
     private translate: TranslateService,
     private authService: AuthService,
     private themeService: ThemeService,
-    private backgroundAgent: BackgroundAgentService,
+    private ailyChatDemandSession: AilyChatDemandSessionService,
     private ngZone: NgZone
   ) { }
 
   ngOnInit() {
-    void this.backgroundAgent;
+    void this.ailyChatDemandSession;
     const devmode = this.ensureDevModeConfig();
     this._autoSave = devmode.autoSave ?? true;
     this.loadBoardInfo();
@@ -384,15 +384,12 @@ export class DevToolComponent implements OnInit, AfterViewInit, OnDestroy {
 
     if (!this.electronService.exists(archPath)) {
       const prompt = this.translate.instant('FLOAT_SIDER.GENERATE_ARCH_PROMPT');
-//       const prompt = `${this.translate.instant('FLOAT_SIDER.GENERATE_ARCH_PROMPT')}
-
-// Generate a Mermaid project architecture diagram and save it to arch.md. If the architecture save tool is deferred, use tool_search for blockly-architecture or save_arch, then call save_arch with raw Mermaid DSL in code. Do not only print Mermaid source.`;
-      this.uiService.openAndSendToChat(prompt, {
-        sender: 'FloatSider',
-        type: 'arch',
-        autoSend: true,
-        newChatFirst: true,
-      });
+      void this.ailyChatDemandSession
+        .createArchitectureSession(prompt)
+        .catch(error => {
+          const message = error instanceof Error ? error.message : String(error);
+          this.messageService.error(message);
+        });
       return;
     }
 
