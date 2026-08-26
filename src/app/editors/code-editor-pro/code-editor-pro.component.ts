@@ -17,6 +17,7 @@ import {
   CodeEditorProProjectService,
   type CodeEditorProPersistenceBridge,
 } from './services/code-editor-pro-project.service';
+import { CodeCompletionHostBridgeService } from './services/code-completion-host-bridge.service';
 import { NpmService } from '@domain/dependencies/public-api';
 import { resolveActualBuildOutputs, type BuildArtifactV1 } from '../../utils/builder.utils';
 import { resolvePlatformPackagesForCurrentProject } from '../../utils/platform-packages.utils';
@@ -86,6 +87,7 @@ type CoderGitHistoryRefs = {
 @Component({
   selector: 'app-code-editor-pro',
   imports: [CommonModule, NotificationComponent, CoderLoadingComponent],
+  providers: [CodeCompletionHostBridgeService],
   templateUrl: './code-editor-pro.component.html',
   styleUrl: './code-editor-pro.component.scss',
 })
@@ -169,6 +171,7 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
     private readonly requiredSubapps: RequiredSubappService,
     private readonly translate: TranslateService,
     private readonly elementRef: ElementRef<HTMLElement>,
+    private readonly codeCompletionHostBridge: CodeCompletionHostBridgeService,
   ) {
     toObservable(this.themeService.theme)
       .pipe(takeUntilDestroyed())
@@ -325,6 +328,7 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
     this.buildFinishedSub = undefined;
     this.stopAllCoderEmbedFsWatchers();
     this.stopBuildOutputsWatch();
+    this.codeCompletionHostBridge.dispose();
     this.aiCoderDiffBridge.registerEmbed(null);
     this.aiCoderDiffBridge.setWorkspaceRoot(null);
     this.coderEmbedWorkspaceRoot = null;
@@ -549,6 +553,7 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
       this.aiCoderDiffBridge.setWorkspaceRoot(root);
     }
     this.aiCoderDiffBridge.registerEmbed(frame?.contentWindow ?? null);
+    this.codeCompletionHostBridge.registerFrame(frame?.contentWindow ?? null);
     if (root) {
       void this.pushAilyCoderHostContext(root);
     }
@@ -572,6 +577,7 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
 
   private beginCoderEmbedLoading(): void {
     this.clearCoderEmbedLoadingTimers();
+    this.codeCompletionHostBridge.registerFrame(null);
     this.coderEmbedLoading = true;
     this.coderEmbedLoaderVisible = false;
     this.coderEmbedFrameReady = false;
@@ -1436,6 +1442,9 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
   }
 
   private async onCoderNativeFsMessage(ev: MessageEvent): Promise<void> {
+    if (this.codeCompletionHostBridge.handleMessage(ev)) {
+      return;
+    }
     const msg = ev.data as {
       channel?: string;
       version?: number;
