@@ -13,6 +13,7 @@ import { ElectronService } from '@core/platform/public-api';
 import { ProjectService } from '@domain/project/public-api';
 import { ImageViewerComponent } from '../../../../components/image-viewer/image-viewer.component';
 import { AilyChatDemandSessionService } from '@integration/simulator/public-api';
+import { Subscription } from 'rxjs';
 import { DevToolDragController, DragBounds, DragPoint } from './dev-tool-drag-controller';
 
 @Component({
@@ -33,6 +34,8 @@ export class DevToolComponent implements OnInit, AfterViewInit, OnDestroy {
 
   boardPackagePath = '';
   isReloading = false;
+  isArchitectureGenerating = false;
+  isSchematicGenerating = false;
   dragTooltipVisible?: boolean;
 
   private _autoSave = true;
@@ -42,6 +45,7 @@ export class DevToolComponent implements OnInit, AfterViewInit, OnDestroy {
   private resizeAnimationFrame: number | null = null;
   private initAnimationFrame: number | null = null;
   private containerResizeObserver: ResizeObserver | null = null;
+  private diagramGenerationSubscription: Subscription | null = null;
 
   get autoSave(): boolean {
     return this._autoSave;
@@ -76,7 +80,14 @@ export class DevToolComponent implements OnInit, AfterViewInit, OnDestroy {
   ) { }
 
   ngOnInit() {
-    void this.ailyChatDemandSession;
+    this.diagramGenerationSubscription = this.ailyChatDemandSession.diagramGenerationState$.subscribe(
+      state => {
+        this.ngZone.run(() => {
+          this.isArchitectureGenerating = state.architecture !== null;
+          this.isSchematicGenerating = state.schematic !== null;
+        });
+      },
+    );
     const devmode = this.ensureDevModeConfig();
     this._autoSave = devmode.autoSave ?? true;
     this.loadBoardInfo();
@@ -109,6 +120,8 @@ export class DevToolComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   ngOnDestroy() {
+    this.diagramGenerationSubscription?.unsubscribe();
+    this.diagramGenerationSubscription = null;
     const handle = this.dragHandle?.nativeElement;
     handle?.removeEventListener('pointerleave', this.onDragHandleLeave);
     this.dragController?.disconnect();
@@ -366,6 +379,7 @@ export class DevToolComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   async showArch(): Promise<void> {
+    if (this.isArchitectureGenerating) return;
     if (!this.requireLogin()) return;
     if (!this.electronService.isElectron) {
       this.messageService.warning(this.translate.instant('FLOAT_SIDER.ARCH_ELECTRON_ONLY'));
@@ -448,6 +462,7 @@ export class DevToolComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   async showCircuit() {
+    if (this.isSchematicGenerating) return;
     if (!this.requireLogin()) return;
     if (!this.requireFeaturePreviewAccess()) return;
 

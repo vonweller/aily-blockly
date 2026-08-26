@@ -6,8 +6,8 @@ import {
 describe('AilyChatDemandSessionService', () => {
   const channel = 'aily-chat-demand-session-v1';
 
-  function createHarness() {
-    let processMessageListener: ((message: Record<string, unknown>) => void) | null = null;
+  function createHarness(options: { autoRespond?: boolean } = {}) {
+    const processMessageListeners = new Set<(message: Record<string, unknown>) => void>();
     const sentMessages: Record<string, unknown>[] = [];
     const openedSessions: string[] = [];
     const childToolProcess = {
@@ -17,16 +17,15 @@ describe('AilyChatDemandSessionService', () => {
         _toolId: string,
         listener: (message: Record<string, unknown>) => void,
       ) => {
-        processMessageListener = listener;
-        return () => {
-          processMessageListener = null;
-        };
+        processMessageListeners.add(listener);
+        return () => processMessageListeners.delete(listener);
       },
       sendMessage: async (_toolId: string, message: Record<string, unknown>) => {
         sentMessages.push(message);
+        if (options.autoRespond === false) return;
         const requestId = String(message['requestId']);
         queueMicrotask(() => {
-          processMessageListener?.({
+          for (const listener of processMessageListeners) listener({
             channel,
             type: 'event',
             requestId,
@@ -37,7 +36,7 @@ describe('AilyChatDemandSessionService', () => {
             sessionId: 'session-1',
             state: 'settled',
           };
-          processMessageListener?.({
+          for (const listener of processMessageListeners) listener({
             channel,
             type: 'response',
             requestId,
@@ -58,7 +57,14 @@ describe('AilyChatDemandSessionService', () => {
         },
       } as never,
     );
-    return { service, sentMessages, openedSessions };
+    return {
+      service,
+      sentMessages,
+      openedSessions,
+      emitProcessMessage: (message: Record<string, unknown>) => {
+        for (const listener of processMessageListeners) listener(message);
+      },
+    };
   }
 
   it('creates an ArchitectureAgent demand session without composer injection', async () => {
@@ -109,5 +115,118 @@ describe('AilyChatDemandSessionService', () => {
       mode: 'agent',
       prompt: '[AGENT: SchematicAgent] 生成项目连线图',
     }));
+  });
+
+  it('publishes architecture generation state until the matching request settles', async () => {
+    const harness = createHarness({ autoRespond: false });
+    const states: Array<{ architecture: { requestId: string; sessionId?: string } | null }> = [];
+    const subscription = harness.service.diagramGenerationState$.subscribe(state => states.push(state));
+
+    const pending = harness.service.createArchitectureSession('生成项目架构图');
+    expect(harness.service.isDiagramGenerating('architecture')).toBeTrue();
+
+    await Promise.resolve();
+    const requestId = String(harness.sentMessages[0]['requestId']);
+    harness.emitProcessMessage({
+      channel,
+      type: 'event',
+      requestId,
+      event: { type: 'session-created', sessionId: 'architecture-session' },
+    });
+    expect(states.at(-1)?.architecture).toEqual(jasmine.objectContaining({
+      requestId,
+      sessionId: 'architecture-session',
+    }));
+
+    harness.emitProcessMessage({
+      channel,
+      type: 'response',
+      requestId,
+      result: { accepted: true, sessionId: 'architecture-session', state: 'settled' },
+    });
+    await pending;
+
+    expect(harness.service.isDiagramGenerating('architecture')).toBeFalse();
+    expect(states.at(-1)?.architecture).toBeNull();
+    subscription.unsubscribe();
+  });
+
+  it('clears generation state when the runtime reports an aborted operation', async () => {
+    const harness = createHarness({ autoRespond: false });
+    const pending = harness.service.createArchitectureSession('生成项目架构图');
+
+    await Promise.resolve();
+    const requestId = String(harness.sentMessages[0]['requestId']);
+    harness.emitProcessMessage({
+      channel,
+      type: 'response',
+      requestId,
+      result: {
+        accepted: true,
+        sessionId: 'architecture-session',
+        state: 'failed',
+        error: 'Operation aborted by user',
+      },
+    });
+
+    await expectAsync(pending).toBeRejectedWithError('Operation aborted by user');
+    expect(harness.service.isDiagramGenerating('architecture')).toBeFalse();
+  });
+
+  it('rejects a duplicate diagram request without clearing the active request state', async () => {
+    const harness = createHarness({ autoRespond: false });
+    const first = harness.service.createArchitectureSession('生成项目架构图');
+
+    await expectAsync(
+      harness.service.createArchitectureSession('再次生成项目架构图'),
+    ).toBeRejectedWithError('框架图正在生成，请等待当前任务结束');
+    expect(harness.service.isDiagramGenerating('architecture')).toBeTrue();
+
+    await Promise.resolve();
+    expect(harness.sentMessages).toHaveSize(1);
+    const requestId = String(harness.sentMessages[0]['requestId']);
+    harness.emitProcessMessage({
+      channel,
+      type: 'response',
+      requestId,
+      result: { accepted: true, sessionId: 'architecture-session', state: 'settled' },
+    });
+    await first;
+    expect(harness.service.isDiagramGenerating('architecture')).toBeFalse();
+  });
+
+  it('keeps architecture and schematic generation states independent', async () => {
+    const harness = createHarness({ autoRespond: false });
+    const architecture = harness.service.createArchitectureSession('生成项目架构图');
+    const schematic = harness.service.generateSchematic('生成项目连线图');
+
+    expect(harness.service.isDiagramGenerating('architecture')).toBeTrue();
+    expect(harness.service.isDiagramGenerating('schematic')).toBeTrue();
+
+    await Promise.resolve();
+    const architectureRequestId = String(
+      harness.sentMessages.find(message => message['kind'] === 'architecture')?.['requestId'],
+    );
+    const schematicRequestId = String(
+      harness.sentMessages.find(message => message['kind'] === 'schematic')?.['requestId'],
+    );
+    harness.emitProcessMessage({
+      channel,
+      type: 'response',
+      requestId: architectureRequestId,
+      result: { accepted: true, sessionId: 'architecture-session', state: 'settled' },
+    });
+    await architecture;
+    expect(harness.service.isDiagramGenerating('architecture')).toBeFalse();
+    expect(harness.service.isDiagramGenerating('schematic')).toBeTrue();
+
+    harness.emitProcessMessage({
+      channel,
+      type: 'response',
+      requestId: schematicRequestId,
+      result: { accepted: true, sessionId: 'schematic-session', state: 'settled' },
+    });
+    await schematic;
+    expect(harness.service.isDiagramGenerating('schematic')).toBeFalse();
   });
 });

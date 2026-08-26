@@ -8,6 +8,7 @@ import { UiService } from '@core/app-shell/public-api';
 import { ElectronService } from '@core/platform/public-api';
 import { ProjectService } from '@domain/project/public-api';
 import { ConnectionGraphService } from '@domain/schematic/public-api';
+import { BehaviorSubject } from 'rxjs';
 import {
   ChildToolProcessService,
   DEFAULT_AILY_CHAT_SUBAPP_TOOL_ID,
@@ -18,6 +19,24 @@ export type AilyChatDemandSessionKind =
   | 'schematic'
   | 'block-explain'
   | 'code-sync';
+
+export type DiagramGenerationKind = Extract<
+  AilyChatDemandSessionKind,
+  'architecture' | 'schematic'
+>;
+
+export interface DiagramGenerationActivity {
+  kind: DiagramGenerationKind;
+  requestId: string;
+  projectPath: string;
+  startedAt: number;
+  sessionId?: string;
+}
+
+export interface DiagramGenerationState {
+  architecture: DiagramGenerationActivity | null;
+  schematic: DiagramGenerationActivity | null;
+}
 
 export interface AilyChatDemandResource {
   type: 'file' | 'folder' | 'url' | 'block';
@@ -67,6 +86,10 @@ const DEMAND_SESSION_TIMEOUT_MS = 30 * 60 * 1000;
 const ARCHITECTURE_AGENT_PREFIX = '[AGENT: ArchitectureAgent]';
 const SCHEMATIC_AGENT_PREFIX = '[AGENT: SchematicAgent]';
 const DEFAULT_SCHEMATIC_PROMPT = '生成项目连线图';
+const EMPTY_DIAGRAM_GENERATION_STATE: DiagramGenerationState = {
+  architecture: null,
+  schematic: null,
+};
 
 interface DemandSessionResponse {
   channel: typeof AILY_CHAT_DEMAND_SESSION_CHANNEL;
@@ -89,6 +112,11 @@ interface DemandSessionEvent {
   providedIn: 'root'
 })
 export class AilyChatDemandSessionService {
+  private readonly diagramGenerationStateSubject =
+    new BehaviorSubject<DiagramGenerationState>(EMPTY_DIAGRAM_GENERATION_STATE);
+
+  readonly diagramGenerationState$ = this.diagramGenerationStateSubject.asObservable();
+
   constructor(
     private projectService: ProjectService,
     private connectionGraphService: ConnectionGraphService,
@@ -167,11 +195,21 @@ export class AilyChatDemandSessionService {
       throw new Error('请先打开项目');
     }
 
+    const requestId = crypto.randomUUID();
+    const diagramKind = this.toDiagramGenerationKind(request.kind);
+    if (diagramKind) {
+      if (this.isDiagramGenerating(diagramKind)) {
+        const label = diagramKind === 'architecture' ? '框架图' : '连线图';
+        throw new Error(`${label}正在生成，请等待当前任务结束`);
+      }
+      this.beginDiagramGeneration(diagramKind, requestId, cwd);
+    }
+
     let runtimeAcquired = false;
     try {
       await this.childToolProcess.acquire(AILY_CHAT_TOOL_ID);
       runtimeAcquired = true;
-      const result = await this.requestDemandSession(cwd, request);
+      const result = await this.requestDemandSession(cwd, request, requestId, diagramKind);
       if (result.accepted === false && result.reason === 'schematic-agent-running') {
         return result;
       }
@@ -180,6 +218,9 @@ export class AilyChatDemandSessionService {
       }
       return result;
     } finally {
+      if (diagramKind) {
+        this.endDiagramGeneration(diagramKind, requestId);
+      }
       if (runtimeAcquired) {
         await this.childToolProcess.release(AILY_CHAT_TOOL_ID);
       }
@@ -244,8 +285,9 @@ ${(connectionData.connections || []).length} 条连线
   private requestDemandSession(
     cwd: string,
     request: AilyChatDemandSessionRequest,
+    requestId: string,
+    diagramKind: DiagramGenerationKind | null,
   ): Promise<AilyChatDemandSessionResult> {
-    const requestId = crypto.randomUUID();
     const revealSession = request.revealSession === true;
 
     return new Promise((resolve, reject) => {
@@ -264,6 +306,9 @@ ${(connectionData.connections || []).length} 条连线
             const sessionId = response.event?.type === 'session-created'
               ? String(response.event.sessionId || '').trim()
               : '';
+            if (sessionId && diagramKind) {
+              this.attachDiagramSession(diagramKind, requestId, sessionId);
+            }
             if (sessionId && revealSession) {
               void this.uiService.openAilyChatSession(sessionId).then(
                 opened => {
@@ -307,6 +352,56 @@ ${(connectionData.connections || []).length} 条连线
           removeListener();
           reject(error);
         });
+    });
+  }
+
+  isDiagramGenerating(kind: DiagramGenerationKind): boolean {
+    return this.diagramGenerationStateSubject.value[kind] !== null;
+  }
+
+  private toDiagramGenerationKind(
+    kind: AilyChatDemandSessionKind,
+  ): DiagramGenerationKind | null {
+    return kind === 'architecture' || kind === 'schematic' ? kind : null;
+  }
+
+  private beginDiagramGeneration(
+    kind: DiagramGenerationKind,
+    requestId: string,
+    projectPath: string,
+  ): void {
+    this.diagramGenerationStateSubject.next({
+      ...this.diagramGenerationStateSubject.value,
+      [kind]: {
+        kind,
+        requestId,
+        projectPath,
+        startedAt: Date.now(),
+      },
+    });
+  }
+
+  private attachDiagramSession(
+    kind: DiagramGenerationKind,
+    requestId: string,
+    sessionId: string,
+  ): void {
+    const current = this.diagramGenerationStateSubject.value[kind];
+    if (!current || current.requestId !== requestId) return;
+
+    this.diagramGenerationStateSubject.next({
+      ...this.diagramGenerationStateSubject.value,
+      [kind]: { ...current, sessionId },
+    });
+  }
+
+  private endDiagramGeneration(kind: DiagramGenerationKind, requestId: string): void {
+    const current = this.diagramGenerationStateSubject.value[kind];
+    if (!current || current.requestId !== requestId) return;
+
+    this.diagramGenerationStateSubject.next({
+      ...this.diagramGenerationStateSubject.value,
+      [kind]: null,
     });
   }
 
