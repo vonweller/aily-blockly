@@ -57,12 +57,31 @@ const CODER_READY_TIMEOUT_MS = 30000;
 const CODER_REVEAL_DURATION_MS = 480;
 const AILY_CODER_HOST_LIFECYCLE_REQUEST_CHANNEL = 'aily-coder-host-lifecycle-request';
 const AILY_CODER_HOST_LIFECYCLE_RESPONSE_CHANNEL = 'aily-coder-host-lifecycle-response';
-/** Coder 内部目录不进入默认 Git 状态与提交。 */
-const CODER_GIT_SYSTEM_DIRECTORIES = ['.aily', '.log', '.workspace-history'] as const;
+/** Coder 生成或依赖目录不进入默认搜索、Git 状态与提交。 */
+const CODER_GIT_SYSTEM_DIRECTORIES = [
+  '.aily',
+  '.build',
+  '.log',
+  '.workspace-history',
+  'node_modules',
+] as const;
 const CODER_GIT_PATHSPECS = [
   '.',
   ...CODER_GIT_SYSTEM_DIRECTORIES.map((name) => `:(glob,exclude)**/${name}/**`),
 ] as const;
+
+type CoderGitHistoryRef = {
+  id: string;
+  name: string;
+  revision: string;
+  category: 'head' | 'local' | 'remote' | 'tag';
+};
+
+type CoderGitHistoryRefs = {
+  current?: CoderGitHistoryRef;
+  remote?: CoderGitHistoryRef;
+  refs: CoderGitHistoryRef[];
+};
 
 @Component({
   selector: 'app-code-editor-pro',
@@ -1047,6 +1066,13 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
       || message.includes('不是内部或外部命令');
   }
 
+  private isNotGitRepository(error: unknown): boolean {
+    const message = (error instanceof Error ? error.message : String(error ?? '')).toLowerCase();
+    return message.includes('not a git repository')
+      || message.includes('不是一个 git 仓库')
+      || message.includes('不是 git 仓库');
+  }
+
   private coderGitExecutableCandidates(): string[] {
     const pathApi = window['path'] as {
       join?: (...parts: string[]) => string;
@@ -1112,6 +1138,87 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
       throw new Error('无效的 Git 工作区相对路径');
     }
     return normalized;
+  }
+
+  private assertCoderGitRevision(value: unknown): string {
+    const revision = String(value ?? '').trim();
+    if (!/^[0-9a-f]{40,64}$/i.test(revision)) {
+      throw new Error('无效的 Git 提交版本');
+    }
+    return revision;
+  }
+
+  private async readCoderGitHistoryRefs(cwd: string): Promise<CoderGitHistoryRefs> {
+    try {
+      await this.runCoderGitCommand(['rev-parse', '--show-toplevel'], cwd);
+    } catch (error) {
+      if (this.isNotGitRepository(error)) return { refs: [] };
+      throw error;
+    }
+
+    let headRevision: string;
+    try {
+      headRevision = (
+        await this.runCoderGitCommand(['rev-parse', '--verify', 'HEAD'], cwd)
+      ).trim();
+    } catch {
+      return { refs: [] };
+    }
+
+    const rawRefs = await this.runCoderGitCommand(
+      [
+        'for-each-ref',
+        '--format=%(objectname)%00%(*objectname)%00%(refname)%00%(refname:short)',
+        'refs/heads',
+        'refs/remotes',
+        'refs/tags',
+      ],
+      cwd,
+    );
+    const refs: CoderGitHistoryRef[] = rawRefs.split(/\r?\n/).flatMap((line) => {
+      if (!line) return [];
+      const [objectName = '', peeledName = '', id = '', name = ''] = line.split('\0');
+      const revision = peeledName || objectName;
+      if (!id || !name || !/^[0-9a-f]{40,64}$/i.test(revision)) return [];
+      const category = id.startsWith('refs/heads/')
+        ? 'local' as const
+        : id.startsWith('refs/remotes/')
+          ? 'remote' as const
+          : 'tag' as const;
+      return [{ id, name, revision, category }];
+    });
+
+    const branchName = (
+      await this.runCoderGitCommand(['branch', '--show-current'], cwd)
+    ).trim();
+    const branchRef = refs.find(
+      (ref) => ref.id === `refs/heads/${branchName}` && ref.category === 'local',
+    );
+    const current: CoderGitHistoryRef = branchRef ?? {
+      id: 'HEAD',
+      name: branchName || 'HEAD',
+      revision: headRevision,
+      category: branchName ? 'local' as const : 'head' as const,
+    };
+    if (!branchRef) refs.unshift(current);
+
+    let upstreamName = '';
+    try {
+      upstreamName = (
+        await this.runCoderGitCommand(
+          ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'],
+          cwd,
+        )
+      ).trim();
+    } catch {
+      /* 当前分支没有 upstream。 */
+    }
+    const remote = refs.find((ref) => ref.id === `refs/remotes/${upstreamName}`);
+    return {
+      current,
+      ...(remote?.category === 'remote' ? { remote } : {}),
+      refs,
+    };
   }
 
   /**
@@ -1555,9 +1662,20 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
         }
         case 'nativeGitStatus': {
           const workspaceRoot = this.assertPathInsideCoderEmbedRoot(String(payload['workspaceRoot']));
-          const repositoryRoot = (
-            await this.runCoderGitCommand(['rev-parse', '--show-toplevel'], workspaceRoot)
-          ).trim();
+          let repositoryRoot: string;
+          try {
+            repositoryRoot = (
+              await this.runCoderGitCommand(['rev-parse', '--show-toplevel'], workspaceRoot)
+            ).trim();
+          } catch (error) {
+            if (!this.isNotGitRepository(error)) throw error;
+            this.replyCoderNativeFs(ev.source as Window, msg.id!, {
+              initialized: false,
+              repositoryRoot: workspaceRoot,
+              status: '',
+            });
+            break;
+          }
           const status = await this.runCoderGitCommand(
             [
               '-c',
@@ -1574,7 +1692,131 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
             ],
             workspaceRoot,
           );
-          this.replyCoderNativeFs(ev.source as Window, msg.id!, { repositoryRoot, status });
+          this.replyCoderNativeFs(ev.source as Window, msg.id!, {
+            initialized: true,
+            repositoryRoot,
+            status,
+          });
+          break;
+        }
+        case 'nativeGitInit': {
+          const workspaceRoot = this.assertPathInsideCoderEmbedRoot(String(payload['workspaceRoot']));
+          const summary = await this.runCoderGitCommand(['init'], workspaceRoot);
+          this.replyCoderNativeFs(ev.source as Window, msg.id!, { summary: summary.trim() });
+          break;
+        }
+        case 'nativeGitHistoryRefs': {
+          const workspaceRoot = this.assertPathInsideCoderEmbedRoot(String(payload['workspaceRoot']));
+          const result = await this.readCoderGitHistoryRefs(workspaceRoot);
+          this.replyCoderNativeFs(ev.source as Window, msg.id!, result);
+          break;
+        }
+        case 'nativeGitHistoryItems': {
+          const workspaceRoot = this.assertPathInsideCoderEmbedRoot(String(payload['workspaceRoot']));
+          const inputRevisions = Array.isArray(payload['revisions']) ? payload['revisions'] : [];
+          const revisions = [...new Set(inputRevisions.map((value) => this.assertCoderGitRevision(value)))];
+          if (revisions.length > 32) {
+            replyErr(new Error('Git Graph 一次最多查询 32 个引用'));
+            return;
+          }
+          if (revisions.length === 0) {
+            try {
+              revisions.push((await this.runCoderGitCommand(['rev-parse', '--verify', 'HEAD'], workspaceRoot)).trim());
+            } catch {
+              this.replyCoderNativeFs(ev.source as Window, msg.id!, { history: '' });
+              break;
+            }
+          }
+          const skip = Math.max(0, Math.min(1000000, Math.trunc(Number(payload['skip']) || 0)));
+          const limit = Math.max(1, Math.min(1000, Math.trunc(Number(payload['limit']) || 50)));
+          const filterText = String(payload['filterText'] ?? '').trim();
+          if (filterText.length > 500 || filterText.includes('\0')) {
+            replyErr(new Error('Git Graph 过滤文本无效'));
+            return;
+          }
+          const history = await this.runCoderGitCommand(
+            [
+              'log',
+              '--topo-order',
+              '--date-order',
+              `--skip=${skip}`,
+              `--max-count=${limit}`,
+              ...(filterText
+                ? ['--regexp-ignore-case', '--fixed-strings', `--grep=${filterText}`]
+                : []),
+              '--format=%H%x00%P%x00%an%x00%ae%x00%at%x00%s%x00%B%x00',
+              ...revisions,
+            ],
+            workspaceRoot,
+          );
+          this.replyCoderNativeFs(ev.source as Window, msg.id!, { history });
+          break;
+        }
+        case 'nativeGitHistoryItemChanges': {
+          const workspaceRoot = this.assertPathInsideCoderEmbedRoot(String(payload['workspaceRoot']));
+          const historyItemId = this.assertCoderGitRevision(payload['historyItemId']);
+          const historyItemParentId = payload['historyItemParentId'] == null
+            ? undefined
+            : this.assertCoderGitRevision(payload['historyItemParentId']);
+          const args = historyItemParentId
+            ? [
+                'diff',
+                '--name-status',
+                '-z',
+                '--find-renames',
+                historyItemParentId,
+                historyItemId,
+                '--',
+                ...CODER_GIT_PATHSPECS,
+              ]
+            : [
+                'diff-tree',
+                '--root',
+                '--no-commit-id',
+                '--name-status',
+                '-r',
+                '-z',
+                '--find-renames',
+                historyItemId,
+                '--',
+                ...CODER_GIT_PATHSPECS,
+              ];
+          const changes = await this.runCoderGitCommand(args, workspaceRoot);
+          this.replyCoderNativeFs(ev.source as Window, msg.id!, { changes });
+          break;
+        }
+        case 'nativeGitHistoryMergeBase': {
+          const workspaceRoot = this.assertPathInsideCoderEmbedRoot(String(payload['workspaceRoot']));
+          const revisions = Array.isArray(payload['revisions'])
+            ? payload['revisions'].map((value) => this.assertCoderGitRevision(value))
+            : [];
+          if (revisions.length < 2 || revisions.length > 32) {
+            replyErr(new Error('Git Graph 共同祖先参数无效'));
+            return;
+          }
+          let revision: string | undefined;
+          try {
+            revision = (
+              await this.runCoderGitCommand(['merge-base', '--octopus', ...revisions], workspaceRoot)
+            ).trim() || undefined;
+          } catch {
+            revision = undefined;
+          }
+          this.replyCoderNativeFs(ev.source as Window, msg.id!, { revision });
+          break;
+        }
+        case 'nativeGitShowRevisionFile': {
+          const workspaceRoot = this.assertPathInsideCoderEmbedRoot(String(payload['workspaceRoot']));
+          const revision = this.assertCoderGitRevision(payload['revision']);
+          const relativePath = this.assertCoderGitRelativePath(payload['relativePath']);
+          const prefix = (
+            await this.runCoderGitCommand(['rev-parse', '--show-prefix'], workspaceRoot)
+          ).trim().replace(/\\/g, '/');
+          const content = await this.runCoderGitCommand(
+            ['show', `${revision}:${prefix}${relativePath}`],
+            workspaceRoot,
+          );
+          this.replyCoderNativeFs(ev.source as Window, msg.id!, { content });
           break;
         }
         case 'nativeGitShowHead': {
@@ -1597,7 +1839,12 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
             replyErr(new Error('提交消息为空或过长'));
             return;
           }
-          await this.runCoderGitCommand(['rev-parse', '--show-toplevel'], workspaceRoot);
+          try {
+            await this.runCoderGitCommand(['rev-parse', '--show-toplevel'], workspaceRoot);
+          } catch (error) {
+            if (!this.isNotGitRepository(error)) throw error;
+            await this.runCoderGitCommand(['init'], workspaceRoot);
+          }
           await this.runCoderGitCommand(
             ['add', '-A', '--', ...CODER_GIT_PATHSPECS],
             workspaceRoot,
