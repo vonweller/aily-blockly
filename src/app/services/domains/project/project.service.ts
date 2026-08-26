@@ -37,6 +37,7 @@ import {
   applyCoderProjectPackageConfig,
   copyCoderArduinoTemplate,
   isCoderProjectPackage,
+  resolveCoderProjectCreationTemplate,
   resolveCoderTemplatePath,
 } from './coder/coder-project-template';
 
@@ -572,16 +573,20 @@ export class ProjectService {
         boardPackageName,
       );
       const isCoderTemplate = templateDirectory === CODER_TEMPLATE_DIRECTORY;
-      const templatePath = isCoderTemplate
-        ? resolveCoderTemplatePath(boardPackagePath, window['path'])
-        : window['path'].join(boardPackagePath, templateDirectory);
+      const coderTemplate = isCoderTemplate
+        ? resolveCoderProjectCreationTemplate(boardPackagePath, window['path'])
+        : null;
+      const templatePath = coderTemplate?.templatePath
+        ?? window['path'].join(boardPackagePath, templateDirectory);
       if (!window['fs'].existsSync(templatePath)) {
         throw new Error(`板卡模板目录不存在，可能是板卡包安装失败或模板缺失: ${templatePath}`);
       }
       // 创建项目目录
       await this.crossPlatformCmdService.createDirectory(projectPath, true);
       if (isCoderTemplate) {
-        copyCoderArduinoTemplate(templatePath, projectPath, window['path'], window['fs']);
+        copyCoderArduinoTemplate(templatePath, projectPath, window['path'], window['fs'], {
+          useDefaultSource: coderTemplate?.useDefaultSource === true,
+        });
       } else {
         // 复制 Blockly 模板文件到项目目录
         await this.crossPlatformCmdService.copyItem(`${templatePath}${separator}*`, projectPath, true, true);

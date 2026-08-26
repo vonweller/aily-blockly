@@ -517,6 +517,10 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
 
   ngOnInit(): void {
     this.initAiWritingSubscription();
+    // Establish the host-owned locale before the generator runtime snapshots
+    // Blockly.Msg. Otherwise the initial checkpoint contains Blockly's default
+    // English messages and an AI-triggered library rebuild restores them.
+    this.initLanguage();
     this.initDevMode();
     this.initBlocklyDialogs();
     this.initCodeGenerationDebounce();
@@ -809,10 +813,6 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
           }
         };
       })(console.error);
-
-      // 根据当前语言设置 Blockly locale
-      const currentLang = this.translateService.currentLang || 'zh_cn';
-      this.updateBlocklyLocale(currentLang);
 
       // 在工作区创建前设置 block registry 拦截
       this.setupBlockRegistryInterception();
@@ -2106,6 +2106,7 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
     setTftEsPiAnimationFieldTranslator((key, params) => this.translateService.instant(key, params));
     setTftEsPiImageFieldTranslator((key, params) => this.translateService.instant(key, params));
     setAudioFieldTranslator((key, params) => this.translateService.instant(key, params));
+    this.generatorRuntime.refreshBlocklyMessageSnapshot();
     this.queueProjectBreakpointMarkerSync();
 
     // 如果工作区已存在，刷新工具箱以应用新语言

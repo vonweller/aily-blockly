@@ -194,6 +194,36 @@ export class BlocklyGeneratorRuntimeService {
     return !!this.session?.active;
   }
 
+  /**
+   * Refreshes the host-owned Blockly message values in the active runtime
+   * checkpoint without adopting project-library message keys.
+   *
+   * Blockly locale changes happen outside the project generator iframe. The
+   * checkpoint must follow those host changes so a later runtime rebuild does
+   * not restore an older locale. Only keys that already belong to the host
+   * checkpoint are updated; generator-owned additions are still removed when
+   * the runtime is destroyed.
+   */
+  refreshBlocklyMessageSnapshot(): void {
+    const session = this.session;
+    if (!session?.active) {
+      return;
+    }
+
+    const messageSurface = session.registrySnapshot.propertySurfaces
+      .find((surface) => surface.target === Blockly.Msg);
+    if (!messageSurface) {
+      return;
+    }
+
+    for (const key of Object.keys(messageSurface.descriptors)) {
+      const descriptor = Object.getOwnPropertyDescriptor(Blockly.Msg, key);
+      if (descriptor) {
+        messageSurface.descriptors[key] = descriptor;
+      }
+    }
+  }
+
   updateContext(context: Partial<Omit<GeneratorRuntimeContext, 'mode' | 'getWorkspace'>>): void {
     const session = this.requireActiveSession();
     session.context = { ...session.context, ...context };
