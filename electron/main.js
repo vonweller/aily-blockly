@@ -2089,16 +2089,24 @@ function loadEnv() {
   const appNpmrcPath = path.join(process.env.AILY_APPDATA_PATH, ".npmrc");
   try {
     const linuxRegistryLine = "@aily-project-linux:registry=${AILY_NPM_REGISTRY_LINUX}";
+    const saveExactLine = "save-exact=true";
     if (!fs.existsSync(appNpmrcPath)) {
       fs.writeFileSync(
         appNpmrcPath,
-        `@aily-project:registry=\${AILY_NPM_REGISTRY}\n${linuxRegistryLine}\naudit=false\nfund=false\n`,
+        `@aily-project:registry=\${AILY_NPM_REGISTRY}\n${linuxRegistryLine}\naudit=false\nfund=false\n${saveExactLine}\n`,
       );
     } else {
       const existingNpmrc = fs.readFileSync(appNpmrcPath, "utf8");
+      const missingLines = [];
       if (!/^@aily-project-linux:registry=/m.test(existingNpmrc)) {
+        missingLines.push(linuxRegistryLine);
+      }
+      if (!/^\s*save-exact\s*=/m.test(existingNpmrc)) {
+        missingLines.push(saveExactLine);
+      }
+      if (missingLines.length > 0) {
         const separator = existingNpmrc.endsWith("\n") ? "" : "\n";
-        fs.appendFileSync(appNpmrcPath, `${separator}${linuxRegistryLine}\n`);
+        fs.appendFileSync(appNpmrcPath, `${separator}${missingLines.join("\n")}\n`);
       }
     }
   } catch (error) {
