@@ -6,7 +6,7 @@ import { NZ_MODAL_DATA, NzModalRef } from 'ng-zorro-antd/modal';
 import { LinuxBoardConnectorService } from '@integration/device/public-api';
 import { ConnectorSettingDialogComponent } from './connector-setting-dialog.component';
 
-describe('ConnectorSettingDialogComponent i18n', () => {
+describe('ConnectorSettingDialogComponent', () => {
   const connector = {
     getSshSettings: () => ({
       host: '',
@@ -21,6 +21,7 @@ describe('ConnectorSettingDialogComponent i18n', () => {
   };
 
   beforeEach(async () => {
+    connector.connectSsh.calls.reset();
     await TestBed.configureTestingModule({
       imports: [
         ConnectorSettingDialogComponent,
@@ -69,6 +70,24 @@ describe('ConnectorSettingDialogComponent i18n', () => {
     expect(text).toContain('Translated remember option');
     expect(text).toContain('Translated cancel');
     expect(text).toContain('Translated connect');
+  });
+
+  it('initializes the username and password returned by the connector service', () => {
+    spyOn(connector, 'getSshSettings').and.returnValue({
+      host: 'board.local',
+      port: 22,
+      username: 'root',
+      password: 'secret',
+      privateKeyPath: '',
+      autoTrustHostKey: true,
+      rememberCredentials: true,
+    });
+
+    const fixture = TestBed.createComponent(ConnectorSettingDialogComponent);
+
+    expect(fixture.componentInstance.settings.username).toBe('root');
+    expect(fixture.componentInstance.settings.password).toBe('secret');
+    expect(fixture.componentInstance.settings.rememberCredentials).toBeTrue();
   });
 
   it('uses the translated title for the native private-key picker', async () => {

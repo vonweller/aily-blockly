@@ -39,8 +39,10 @@ interface StoredSshCredentials {
 
 interface SafeStorageApi {
   isEncryptionAvailable(): boolean;
-  encryptString(plainText: string): Uint8Array;
-  decryptString(encrypted: Uint8Array): string;
+  encryptStringToBase64?(plainText: string): string;
+  decryptStringFromBase64?(encryptedBase64: string): string;
+  encryptString?(plainText: string): Uint8Array;
+  decryptString?(encrypted: Uint8Array): string;
 }
 
 export interface LinuxBoardConnectorState {
@@ -80,6 +82,7 @@ export class LinuxBoardConnectorService implements OnDestroy {
   private readonly stateSubject = new BehaviorSubject<LinuxBoardConnectorState>(INITIAL_STATE);
   private readonly connectorEventSubscription: Subscription;
   private sshSettings: LinuxBoardSshSettings = { ...DEFAULT_SSH_SETTINGS };
+  private sshCredentialCache: StoredSshCredentials | null = null;
   private serialPort = '';
   private session: AilyConnectorSession | null = null;
   private sessionTargetKey = '';
@@ -148,8 +151,12 @@ export class LinuxBoardConnectorService implements OnDestroy {
     const settings = { ...this.sshSettings, password: '' };
     if (!settings.rememberCredentials) return settings;
 
+    const projectPath = normalizeLocalProjectPath(this.projectService.currentProjectPath);
     const credentials = this.readStoredSshCredentials(
-      normalizeLocalProjectPath(this.projectService.currentProjectPath),
+      projectPath,
+      settings,
+    ) || this.readCachedSshCredentials(
+      projectPath,
       settings,
     );
     return credentials
@@ -601,6 +608,7 @@ export class LinuxBoardConnectorService implements OnDestroy {
 
   private clearSelectedTarget(): void {
     this.sshSettings = { ...DEFAULT_SSH_SETTINGS };
+    this.sshCredentialCache = null;
     this.serialPort = '';
     this.patchState({
       selectedTransport: null,
@@ -735,12 +743,24 @@ export class LinuxBoardConnectorService implements OnDestroy {
   }
 
   private persistSshCredentials(projectPath: string, settings: LinuxBoardSshSettings): void {
-    if (!projectPath) return;
-    const storageKey = sshCredentialStorageKey(projectPath);
     if (!settings.rememberCredentials) {
-      localStorage.removeItem(storageKey);
+      this.sshCredentialCache = null;
+      if (projectPath) localStorage.removeItem(sshCredentialStorageKey(projectPath));
       return;
     }
+    if (!projectPath) return;
+
+    const storageKey = sshCredentialStorageKey(projectPath);
+    const credentials: StoredSshCredentials = {
+      projectPath,
+      host: settings.host,
+      port: settings.port,
+      username: settings.username,
+      password: settings.password,
+    };
+    // Keep the just-validated credentials available when this dialog is reopened in the
+    // current app session, even if the OS credential store is temporarily unavailable.
+    this.sshCredentialCache = { ...credentials };
 
     const safeStorage = (window as any).electronAPI?.safeStorage as SafeStorageApi | undefined;
     if (!safeStorage) {
@@ -755,15 +775,11 @@ export class LinuxBoardConnectorService implements OnDestroy {
         this.writeLog(this.t('SECURE_STORAGE_UNAVAILABLE'), 'warn');
         return;
       }
-      const credentials: StoredSshCredentials = {
-        projectPath,
-        host: settings.host,
-        port: settings.port,
-        username: settings.username,
-        password: settings.password,
-      };
-      const encrypted = safeStorage.encryptString(JSON.stringify(credentials));
-      localStorage.setItem(storageKey, Buffer.from(encrypted).toString('base64'));
+      const encryptedBase64 = encryptSafeStorageValue(
+        safeStorage,
+        JSON.stringify(credentials),
+      );
+      localStorage.setItem(storageKey, encryptedBase64);
     } catch (error) {
       localStorage.removeItem(storageKey);
       this.writeError(this.t('CREDENTIAL_SAVE_FAILED'), error);
@@ -783,22 +799,24 @@ export class LinuxBoardConnectorService implements OnDestroy {
     if (!safeStorage) return null;
     try {
       if (!safeStorage.isEncryptionAvailable()) return null;
-      const decrypted = safeStorage.decryptString(Buffer.from(encrypted, 'base64'));
+      const decrypted = decryptSafeStorageValue(safeStorage, encrypted);
       const credentials = JSON.parse(decrypted) as Partial<StoredSshCredentials>;
-      if (
-        credentials.projectPath !== projectPath
-        || String(credentials.host || '').trim().toLowerCase() !== settings.host.toLowerCase()
-        || Number(credentials.port) !== settings.port
-        || typeof credentials.username !== 'string'
-        || typeof credentials.password !== 'string'
-      ) {
-        return null;
-      }
-      return credentials as StoredSshCredentials;
+      if (!sshCredentialsMatch(credentials, projectPath, settings)) return null;
+      this.sshCredentialCache = { ...(credentials as StoredSshCredentials) };
+      return { ...this.sshCredentialCache };
     } catch {
       localStorage.removeItem(storageKey);
       return null;
     }
+  }
+
+  private readCachedSshCredentials(
+    projectPath: string,
+    settings: LinuxBoardSshSettings,
+  ): StoredSshCredentials | null {
+    return sshCredentialsMatch(this.sshCredentialCache, projectPath, settings)
+      ? { ...this.sshCredentialCache as StoredSshCredentials }
+      : null;
   }
 
   private normalizeSshSettings(
@@ -901,6 +919,41 @@ function normalizeLocalProjectPath(projectPath: string): string {
 
 function sshCredentialStorageKey(projectPath: string): string {
   return `${SSH_CREDENTIAL_STORAGE_PREFIX}${stablePathHash(projectPath)}`;
+}
+
+function sshCredentialsMatch(
+  credentials: Partial<StoredSshCredentials> | null,
+  projectPath: string,
+  settings: LinuxBoardSshSettings,
+): credentials is StoredSshCredentials {
+  return Boolean(
+    credentials
+    && credentials.projectPath === projectPath
+    && String(credentials.host || '').trim().toLowerCase() === settings.host.toLowerCase()
+    && Number(credentials.port) === settings.port
+    && typeof credentials.username === 'string'
+    && typeof credentials.password === 'string',
+  );
+}
+
+function encryptSafeStorageValue(safeStorage: SafeStorageApi, plainText: string): string {
+  if (safeStorage.encryptStringToBase64) {
+    return safeStorage.encryptStringToBase64(plainText);
+  }
+  if (safeStorage.encryptString) {
+    return Buffer.from(safeStorage.encryptString(plainText)).toString('base64');
+  }
+  throw new Error('Safe storage encryption API is unavailable');
+}
+
+function decryptSafeStorageValue(safeStorage: SafeStorageApi, encryptedBase64: string): string {
+  if (safeStorage.decryptStringFromBase64) {
+    return safeStorage.decryptStringFromBase64(encryptedBase64);
+  }
+  if (safeStorage.decryptString) {
+    return safeStorage.decryptString(Buffer.from(encryptedBase64, 'base64'));
+  }
+  throw new Error('Safe storage decryption API is unavailable');
 }
 
 function stablePathHash(value: string): string {
