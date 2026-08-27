@@ -26,6 +26,10 @@ import { NzToolTipModule } from "ng-zorro-antd/tooltip";
 import { NpmService } from '@domain/dependencies/public-api';
 import { AILY_CODER_SUBAPP_ID } from '../../configs/required-subapp.config';
 import { RequiredSubappService, RequiredSubappState, ChildAppSafetyService } from '@integration/subapps/public-api';
+import {
+  PROJECT_ROOT_PATH_SETTING_CHANGED_ACTION,
+  resolveConfiguredProjectRootPath,
+} from '@domain/project/public-api';
 
 type CacheClearOption = 'all' | 'unused-7' | 'unused-30';
 type DependencyRemovalOption = 'all' | 'unused-30' | 'unused-90';
@@ -651,6 +655,24 @@ export class SettingsComponent implements OnDestroy {
     window['ipcRenderer'].send('setting-changed', { action: 'language-changed', data: lang.code });
   }
 
+  async selectProjectFolder(): Promise<void> {
+    const pathApi = window['path'];
+    const currentPath = resolveConfiguredProjectRootPath(this.configData.project_path, {
+      userDocuments: pathApi.getUserDocuments(),
+      userHome: pathApi.getUserHome(),
+      separator: window['platform'].type === 'win32' ? '\\' : '/',
+    });
+    const result = await window['ipcRenderer'].invoke('dialog-select-files', {
+      title: this.translateService.instant('SETTINGS.FIELDS.PROJECT_FOLDER'),
+      defaultPath: currentPath,
+      properties: ['openDirectory'],
+    });
+    if (result?.canceled || !result?.filePaths?.[0]) {
+      return;
+    }
+    this.configData.project_path = result.filePaths[0];
+  }
+
   // 使用锚点滚动到指定部分
   scrollToSection(item) {
     this.activeSection = item.name;
@@ -728,6 +750,14 @@ export class SettingsComponent implements OnDestroy {
       await this.configService.applyResourceSourceRuntimeSelection();
       // 保存到config.json，如有需要立即加载的，再加载
       await this.configService.save();
+      await window['env']?.set?.({
+        key: 'AILY_PROJECT_PATH',
+        value: this.configData.project_path,
+      });
+      window['ipcRenderer'].send('setting-changed', {
+        action: PROJECT_ROOT_PATH_SETTING_CHANGED_ACTION,
+        data: { path: this.configData.project_path },
+      });
       window['ipcRenderer'].send('setting-changed', { action: 'devmode-changed', data: this.configData.devmode });
       // 保存完毕后关闭窗口
       this.uiService.closeWindow();

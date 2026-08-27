@@ -13,6 +13,7 @@ export * from './project-data/project-data-runtime';
 export * from './project-data/project-data-store';
 export * from './project-data/project-data.types';
 export * from './project-debug-configuration.service';
+export * from './project-root-path';
 export * from './project.service';
 export * from './recent-projects';
 export * from './ports/project-application.port';

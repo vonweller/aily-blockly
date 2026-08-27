@@ -45,6 +45,10 @@ import {
   addRecentProject,
   removeRecentProject,
 } from './recent-projects';
+import {
+  PROJECT_ROOT_PATH_SETTING_CHANGED_ACTION,
+  resolveConfiguredProjectRootPath,
+} from './project-root-path';
 
 interface ProjectPackageData {
   name: string;
@@ -129,6 +133,7 @@ export class ProjectService {
 
   projectRootPath: string;
   private projectRootPathInitPromise: Promise<void> | null = null;
+  private projectRootPathSettingListenerRegistered = false;
 
   // 当前项目路径的 getter 和 setter
   get currentProjectPath(): string {
@@ -339,6 +344,7 @@ export class ProjectService {
   // 初始化UI服务，这个init函数仅供main-window使用
   async init() {
     if (this.electronService.isElectron) {
+      this.registerProjectRootPathSettingListener();
       window['ipcRenderer'].on('window-receive', async (event, message) => {
         // console.log('window-receive', message);
         if (message.data.action == 'open-project') {
@@ -400,7 +406,33 @@ export class ProjectService {
     }
 
     const rawAilyProjectPath = await window['env'].get("AILY_PROJECT_PATH");
-    this.projectRootPath = rawAilyProjectPath.replace('%HOMEPATH%\\Documents\\', window['path'].getUserDocuments() + this.platformService.getPlatformSeparator());
+    this.setProjectRootPath(rawAilyProjectPath);
+  }
+
+  setProjectRootPath(rawPath: unknown): void {
+    const pathApi = window['path'];
+    const separator = this.platformService.getPlatformSeparator();
+    const projectRootPath = resolveConfiguredProjectRootPath(rawPath, {
+      userDocuments: pathApi?.getUserDocuments?.() || '',
+      userHome: pathApi?.getUserHome?.() || '',
+      separator,
+    });
+    this.projectRootPath = projectRootPath
+      || (pathApi?.getUserDocuments?.() ? pathApi.join(pathApi.getUserDocuments(), 'aily-project') : `.${separator}`);
+  }
+
+  private registerProjectRootPathSettingListener(): void {
+    if (this.projectRootPathSettingListenerRegistered || !window['ipcRenderer']?.on) {
+      return;
+    }
+
+    window['ipcRenderer'].on('setting-changed', (_event, message) => {
+      if (message?.action !== PROJECT_ROOT_PATH_SETTING_CHANGED_ACTION) {
+        return;
+      }
+      this.setProjectRootPath(message.data?.path ?? message.data);
+    });
+    this.projectRootPathSettingListenerRegistered = true;
   }
 
   async getDefaultProjectParentPath(): Promise<string> {

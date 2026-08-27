@@ -3122,6 +3122,9 @@ ipcMain.handle("config-save-merged", (_event, payload = {}) => {
     const merged = mergeConfigChanges(payload.base || {}, payload.next || {}, latest);
     fs.writeFileSync(configPath, JSON.stringify(merged, null, 2));
     userConf = merged;
+    if (typeof merged.project_path === 'string' && merged.project_path.trim()) {
+      process.env.AILY_PROJECT_PATH = merged.project_path.trim();
+    }
     return { success: true };
   });
 

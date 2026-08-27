@@ -20,7 +20,16 @@
             <div class="right-inner">
               <div class="item">
                 <div>{{ 'SETTINGS.FIELDS.PROJECT_FOLDER' | translate }}:</div>
-                <input nz-input [(ngModel)]="configData.project_path" [disabled]="true" />
+                <nz-input-group [nzAddOnAfter]="projectFolderButton">
+                  <input nz-input [(ngModel)]="configData.project_path" [disabled]="true" />
+                </nz-input-group>
+                <ng-template #projectFolderButton>
+                  <div class="btn ccenter ffull" (click)="selectProjectFolder()"
+                    [attr.aria-label]="'SETTINGS.FIELDS.PROJECT_FOLDER' | translate"
+                    [attr.title]="'SETTINGS.FIELDS.PROJECT_FOLDER' | translate">
+                    <i class="fa-light fa-folder"></i>
+                  </div>
+                </ng-template>
               </div>
               <div class="item lang-item">
                 <div>{{ 'SETTINGS.FIELDS.LANGUAGE' | translate }}:</div>
