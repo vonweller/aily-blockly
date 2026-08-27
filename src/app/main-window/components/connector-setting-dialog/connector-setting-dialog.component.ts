@@ -4,6 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { NzCheckboxModule } from 'ng-zorro-antd/checkbox';
 import { NzInputModule } from 'ng-zorro-antd/input';
 import { NZ_MODAL_DATA, NzModalRef } from 'ng-zorro-antd/modal';
+import { TranslateModule, TranslateService } from '@ngx-translate/core';
 
 import {
   BaseDialogComponent,
@@ -21,13 +22,21 @@ export interface ConnectorSettingDialogData {
 @Component({
   selector: 'app-connector-setting-dialog',
   standalone: true,
-  imports: [CommonModule, FormsModule, NzCheckboxModule, NzInputModule, BaseDialogComponent],
+  imports: [
+    CommonModule,
+    FormsModule,
+    NzCheckboxModule,
+    NzInputModule,
+    TranslateModule,
+    BaseDialogComponent,
+  ],
   templateUrl: './connector-setting-dialog.component.html',
   styleUrl: './connector-setting-dialog.component.scss',
 })
 export class ConnectorSettingDialogComponent {
   private readonly modal = inject(NzModalRef);
   private readonly connector = inject(LinuxBoardConnectorService);
+  private readonly translate = inject(TranslateService);
   private readonly data = inject<ConnectorSettingDialogData | null>(NZ_MODAL_DATA, { optional: true });
 
   settings: LinuxBoardSshSettings = {
@@ -50,12 +59,14 @@ export class ConnectorSettingDialogComponent {
   get buttons(): DialogButton[] {
     return [
       {
-        text: '取消',
+        text: 'SSH_CONNECTION_DIALOG.CANCEL',
         action: 'cancel',
         disabled: this.connecting,
       },
       {
-        text: this.connecting ? '连接验证中' : '连接',
+        text: this.connecting
+          ? 'SSH_CONNECTION_DIALOG.CONNECTING'
+          : 'SSH_CONNECTION_DIALOG.CONNECT',
         type: 'primary',
         action: 'connect',
         disabled: !this.canConnect || this.connecting,
@@ -80,7 +91,7 @@ export class ConnectorSettingDialogComponent {
 
   async selectPrivateKey(): Promise<void> {
     const path = await window['ipcRenderer']?.invoke?.('select-file', {
-      title: '选择 SSH 私钥',
+      title: this.translate.instant('SSH_CONNECTION_DIALOG.SELECT_PRIVATE_KEY'),
       path: this.settings.privateKeyPath || undefined,
     });
     if (path) this.settings.privateKeyPath = String(path);

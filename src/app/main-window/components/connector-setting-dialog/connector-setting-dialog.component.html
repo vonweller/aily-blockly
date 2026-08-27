@@ -1,5 +1,5 @@
 <app-base-dialog
-  title="SSH连接设置"
+  [title]="'SSH_CONNECTION_DIALOG.TITLE' | translate"
   [buttons]="buttons"
   [showCloseButton]="!connecting"
   (closeDialog)="close()"
@@ -7,17 +7,17 @@
   <form class="connector-form" (submit)="$event.preventDefault()">
     <div class="row host-port-row">
       <label>
-        <span>SSH 地址</span>
+        <span>{{ 'SSH_CONNECTION_DIALOG.HOST' | translate }}</span>
         <input
           nz-input
           name="sshHost"
           [(ngModel)]="settings.host"
           autocomplete="off"
           [disabled]="connecting"
-          placeholder="例如：192.168.1.100" />
+          [placeholder]="'SSH_CONNECTION_DIALOG.HOST_PLACEHOLDER' | translate" />
       </label>
       <label>
-        <span>端口</span>
+        <span>{{ 'SSH_CONNECTION_DIALOG.PORT' | translate }}</span>
         <input
           nz-input
           type="number"
@@ -31,7 +31,7 @@
 
     <div class="row credentials-row">
       <label>
-        <span>用户名</span>
+        <span>{{ 'SSH_CONNECTION_DIALOG.USERNAME' | translate }}</span>
         <input
           nz-input
           name="sshUsername"
@@ -40,7 +40,7 @@
           [disabled]="connecting" />
       </label>
       <label>
-        <span>密码</span>
+        <span>{{ 'SSH_CONNECTION_DIALOG.PASSWORD' | translate }}</span>
         <input
           nz-input
           class="password-input"
@@ -53,7 +53,7 @@
     </div>
 
     <label class="wide">
-      <span>私钥文件</span>
+      <span>{{ 'SSH_CONNECTION_DIALOG.PRIVATE_KEY_FILE' | translate }}</span>
       <div class="path-input">
         <input
           nz-input
@@ -61,8 +61,10 @@
           [(ngModel)]="settings.privateKeyPath"
           autocomplete="off"
           [disabled]="connecting"
-          placeholder="可选" />
-        <button type="button" (click)="selectPrivateKey()" [disabled]="connecting">浏览</button>
+          [placeholder]="'SSH_CONNECTION_DIALOG.OPTIONAL' | translate" />
+        <button type="button" (click)="selectPrivateKey()" [disabled]="connecting">
+          {{ 'SSH_CONNECTION_DIALOG.BROWSE' | translate }}
+        </button>
       </div>
     </label>
 
@@ -71,7 +73,7 @@
       name="sshAutoTrustHostKey"
       [(ngModel)]="settings.autoTrustHostKey"
       [disabled]="connecting">
-      自动信任 SSH 主机密钥
+      {{ 'SSH_CONNECTION_DIALOG.AUTO_TRUST_HOST_KEY' | translate }}
     </label>
 
     <label
@@ -79,7 +81,7 @@
       name="sshRememberCredentials"
       [(ngModel)]="settings.rememberCredentials"
       [disabled]="connecting">
-      记住用户名和密码
+      {{ 'SSH_CONNECTION_DIALOG.REMEMBER_CREDENTIALS' | translate }}
     </label>
   </form>
 </app-base-dialog>

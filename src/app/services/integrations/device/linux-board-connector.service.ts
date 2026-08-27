@@ -1,4 +1,5 @@
 import { Injectable, OnDestroy } from '@angular/core';
+import { TranslateService } from '@ngx-translate/core';
 import { Buffer } from 'buffer';
 import { BehaviorSubject, Subscription } from 'rxjs';
 
@@ -103,6 +104,7 @@ export class LinuxBoardConnectorService implements OnDestroy {
     private readonly noticeService: NoticeService,
     private readonly projectService: ProjectService,
     private readonly configService: ConfigService,
+    private readonly translate: TranslateService,
   ) {
     this.connectorEventSubscription = this.connector.events$.subscribe(event => {
       this.handleConnectorEvent(event);
@@ -115,7 +117,7 @@ export class LinuxBoardConnectorService implements OnDestroy {
       if (previousPath === nextPath) return;
       this.projectContextRevision += 1;
       this.projectContextResetTask = this.resetForProjectContextChange(
-        '项目已切换，正在断开原开发板会话',
+        this.t('PROJECT_CHANGED_DISCONNECTING'),
       );
     });
     this.projectStateSubscription = this.projectService.stateSubject.subscribe(state => {
@@ -127,7 +129,7 @@ export class LinuxBoardConnectorService implements OnDestroy {
       this.projectContextRevision += 1;
       const revision = this.projectContextRevision;
       this.projectContextResetTask = this.resetForProjectContextChange(
-        '开发板已切换，正在断开原开发板会话',
+        this.t('BOARD_CHANGED_DISCONNECTING'),
       );
       void this.restoreProjectSshSettings(revision);
     });
@@ -156,11 +158,11 @@ export class LinuxBoardConnectorService implements OnDestroy {
   }
 
   async connectSsh(settings: LinuxBoardSshSettings): Promise<AilyConnectorSession> {
-    const normalized = normalizeSshSettings(settings);
+    const normalized = this.normalizeSshSettings(settings);
     const projectPath = normalizeLocalProjectPath(this.projectService.currentProjectPath);
     this.assertTargetCanChange();
     if (this.snapshot.running) {
-      throw new Error('请先停止正在运行的 Python 程序，再切换连接');
+      throw new Error(this.t('STOP_PYTHON_BEFORE_SWITCH_CONNECTION'));
     }
 
     await this.disconnectIfTargetChanged('ssh', sshTargetKey(normalized));
@@ -183,7 +185,7 @@ export class LinuxBoardConnectorService implements OnDestroy {
             normalized,
           );
         } catch (error) {
-          this.writeError('SSH 连接设置保存失败', error);
+          this.writeError(this.t('SSH_SETTINGS_SAVE_FAILED'), error);
         }
       }
       return session;
@@ -194,10 +196,10 @@ export class LinuxBoardConnectorService implements OnDestroy {
 
   async selectSerialPort(port: string): Promise<void> {
     const normalizedPort = String(port || '').trim();
-    if (!normalizedPort) throw new Error('请选择串口');
+    if (!normalizedPort) throw new Error(this.t('SELECT_SERIAL_PORT'));
     this.assertTargetCanChange();
     if (this.snapshot.running) {
-      throw new Error('请先停止正在运行的 Python 程序，再切换串口');
+      throw new Error(this.t('STOP_PYTHON_BEFORE_SWITCH_SERIAL'));
     }
 
     await this.disconnectIfTargetChanged('serial', serialTargetKey(normalizedPort));
@@ -206,7 +208,10 @@ export class LinuxBoardConnectorService implements OnDestroy {
       selectedTransport: 'serial',
       endpointLabel: `${normalizedPort} · ${LINUX_BOARD_SERIAL_BAUD_RATE}`,
     });
-    this.writeLog(`已选择串口 ${normalizedPort}，波特率 ${LINUX_BOARD_SERIAL_BAUD_RATE}`, 'info');
+    this.writeLog(this.t('SERIAL_SELECTED', {
+      port: normalizedPort,
+      baudRate: LINUX_BOARD_SERIAL_BAUD_RATE,
+    }), 'info');
   }
 
   async syncAndRunSource(
@@ -217,7 +222,7 @@ export class LinuxBoardConnectorService implements OnDestroy {
   ): Promise<Record<string, unknown>> {
     return this.runExclusive(async () => {
       if (this.snapshot.running) {
-        throw new Error('请先停止正在运行的 Python 程序');
+        throw new Error(this.t('STOP_PYTHON_BEFORE_RUN'));
       }
 
       const { session, remoteRoot, normalizedEntry } = await this.syncSourceInternal(
@@ -228,7 +233,7 @@ export class LinuxBoardConnectorService implements OnDestroy {
       );
       const remotePath = `${remoteRoot.replace(/\/$/, '')}/${normalizedEntry}`;
       this.stopRequested = false;
-      this.writeLog(`正在运行 ${remotePath}`, 'doing');
+      this.writeLog(this.t('RUNNING_FILE', { path: remotePath }), 'doing');
       try {
         const run = await this.connector.request<Record<string, unknown>>(
           session.sessionId,
@@ -238,7 +243,7 @@ export class LinuxBoardConnectorService implements OnDestroy {
         );
         return {
           state: 'done',
-          text: `${normalizedEntry} 已同步并启动`,
+          text: this.t('SYNCED_AND_STARTED', { entry: normalizedEntry }),
           remotePath,
           run,
         };
@@ -251,10 +256,10 @@ export class LinuxBoardConnectorService implements OnDestroy {
 
   async stop(): Promise<Record<string, unknown>> {
     if (!this.session || !this.snapshot.connected || !this.snapshot.running) {
-      return { state: 'warn', text: '当前没有正在运行的 Python 程序' };
+      return { state: 'warn', text: this.t('NO_RUNNING_PYTHON') };
     }
     if (this.snapshot.busy) {
-      throw new Error('Linux 开发板正在执行其他操作');
+      throw new Error(this.t('LINUX_BOARD_BUSY'));
     }
 
     this.patchState({ busy: true });
@@ -262,11 +267,11 @@ export class LinuxBoardConnectorService implements OnDestroy {
     try {
       await this.connector.stopPython(this.session.sessionId);
       this.patchState({ running: false });
-      this.writeLog('Python 程序已停止', 'done');
-      return { state: 'done', text: 'Python 程序已停止' };
+      this.writeLog(this.t('PYTHON_STOPPED'), 'done');
+      return { state: 'done', text: this.t('PYTHON_STOPPED') };
     } catch (error) {
       this.stopRequested = false;
-      this.writeError('停止 Python 程序失败', error);
+      this.writeError(this.t('STOP_PYTHON_FAILED'), error);
       throw error;
     } finally {
       this.patchState({ busy: false });
@@ -304,34 +309,40 @@ export class LinuxBoardConnectorService implements OnDestroy {
     remoteRoot: string;
     normalizedEntry: string;
   }> {
-    if (typeof source !== 'string') throw new Error('Python 源代码无效');
-    if (!projectPath) throw new Error('当前项目路径无效');
+    if (typeof source !== 'string') throw new Error(this.t('INVALID_PYTHON_SOURCE'));
+    if (!projectPath) throw new Error(this.t('INVALID_PROJECT_PATH'));
     if (entry !== PYTHON_PROJECT_ENTRY) {
-      throw new Error(`Python 入口文件必须为 ${PYTHON_PROJECT_ENTRY}`);
+      throw new Error(this.t('PYTHON_ENTRY_REQUIRED', { entry: PYTHON_PROJECT_ENTRY }));
     }
     const normalizedEntry = PYTHON_PROJECT_ENTRY;
 
     const session = await this.ensureConnected(expectedTransport);
     const remoteRoot = this.defaultRemoteRoot(session, projectPath);
-    this.writeLog(`正在同步 ${normalizedEntry} 到 ${remoteRoot}`, 'doing');
+    this.writeLog(this.t('SYNCING_FILE', {
+      entry: normalizedEntry,
+      remoteRoot,
+    }), 'doing');
     await this.connector.syncProject(
       session.sessionId,
       remoteRoot,
       [{ path: normalizedEntry, dataBase64: encodeUtf8Base64(source) }],
     );
-    this.writeLog(`${normalizedEntry} 已同步到 ${remoteRoot}`, 'done');
+    this.writeLog(this.t('FILE_SYNCED', {
+      entry: normalizedEntry,
+      remoteRoot,
+    }), 'done');
     return { session, remoteRoot, normalizedEntry };
   }
 
   private async runExclusive<T>(operation: () => Promise<T>): Promise<T> {
     if (this.snapshot.busy) {
-      throw new Error('Linux 开发板正在执行其他操作');
+      throw new Error(this.t('LINUX_BOARD_BUSY'));
     }
     this.patchState({ busy: true });
     try {
       return await operation();
     } catch (error) {
-      this.writeError('Linux 开发板操作失败', error);
+      this.writeError(this.t('LINUX_BOARD_OPERATION_FAILED'), error);
       throw error;
     } finally {
       this.patchState({ busy: false });
@@ -346,7 +357,10 @@ export class LinuxBoardConnectorService implements OnDestroy {
     const target = this.resolveSelectedTarget(sshOverride);
     if (expectedTransport && target.transport !== expectedTransport) {
       throw new Error(
-        `board.json requires the ${expectedTransport} connector, but ${target.transport} is selected`,
+        this.t('CONNECTOR_MISMATCH', {
+          expected: expectedTransport,
+          selected: target.transport,
+        }),
       );
     }
     if (
@@ -361,13 +375,13 @@ export class LinuxBoardConnectorService implements OnDestroy {
     }
     if (this.connectTask) {
       if (this.connectTaskTargetKey !== target.key) {
-        throw new Error('连接目标正在切换，请稍后重试');
+        throw new Error(this.t('TARGET_CHANGING'));
       }
       return this.connectTask;
     }
 
     this.patchState({ connecting: true });
-    this.writeLog(`正在连接 ${target.label}`, 'doing');
+    this.writeLog(this.t('CONNECTING_TARGET', { target: target.label }), 'doing');
     const task = (async () => {
       await this.connector.waitForReady();
       const session = target.transport === 'ssh'
@@ -386,11 +400,11 @@ export class LinuxBoardConnectorService implements OnDestroy {
         sessionId: session.sessionId,
         endpointLabel: target.label,
       });
-      this.writeLog(`已连接 ${target.label}`, 'done');
+      this.writeLog(this.t('CONNECTED_TARGET', { target: target.label }), 'done');
       return session;
     })().catch(error => {
       this.clearSessionState();
-      this.writeError(`连接 ${target.label} 失败`, error);
+      this.writeError(this.t('CONNECT_TARGET_FAILED', { target: target.label }), error);
       throw error;
     }).finally(() => {
       if (this.connectTask === task) {
@@ -423,9 +437,9 @@ export class LinuxBoardConnectorService implements OnDestroy {
       if (this.session?.sessionId === session.sessionId) {
         this.clearSessionState(preserveBusy);
       }
-      this.writeLog('连接已断开', 'info');
+      this.writeLog(this.t('CONNECTION_DISCONNECTED'), 'info');
     } catch (error) {
-      this.writeError('断开 Linux 开发板失败', error);
+      this.writeError(this.t('DISCONNECT_FAILED'), error);
       throw error;
     }
   }
@@ -434,7 +448,7 @@ export class LinuxBoardConnectorService implements OnDestroy {
     | { transport: 'ssh'; key: string; label: string; options: AilySshConnectOptions }
     | { transport: 'serial'; key: string; label: string; port: string } {
     if (this.snapshot.selectedTransport === 'ssh') {
-      const settings = normalizeSshSettings(sshOverride || this.sshSettings);
+      const settings = this.normalizeSshSettings(sshOverride || this.sshSettings);
       return {
         transport: 'ssh',
         key: sshTargetKey(settings),
@@ -453,7 +467,7 @@ export class LinuxBoardConnectorService implements OnDestroy {
     const selectedPort = String(this.serialService.currentPort || this.serialPort || '').trim();
     const selectedPortType = this.serialService.currentPortInfo?.type || 'serial';
     if (!selectedPort || selectedPortType !== 'serial') {
-      throw new Error('请从 Header 端口菜单选择 Linux 开发板串口，或打开 SSH 连接设置');
+      throw new Error(this.t('SELECT_CONNECTION'));
     }
     this.serialPort = selectedPort;
     const label = `${selectedPort} · ${LINUX_BOARD_SERIAL_BAUD_RATE}`;
@@ -477,24 +491,27 @@ export class LinuxBoardConnectorService implements OnDestroy {
 
   private assertTargetCanChange(): void {
     if (this.snapshot.busy) {
-      throw new Error('Linux 开发板正在执行其他操作，请稍后再切换连接');
+      throw new Error(this.t('SWITCH_BUSY'));
     }
     if (this.snapshot.connecting || this.connectTask) {
-      throw new Error('Linux 开发板正在连接，请稍后再切换连接');
+      throw new Error(this.t('SWITCH_CONNECTING'));
     }
     if (this.disconnectTask) {
-      throw new Error('Linux 开发板正在断开连接，请稍后再切换连接');
+      throw new Error(this.t('SWITCH_DISCONNECTING'));
     }
   }
 
   private handleConnectorEvent(message: AilyConnectorSessionEvent): void {
     if (message.type === 'connector.stderr') {
-      this.writeError('Aily Connector 输出错误', message.error?.message || '未知错误');
+      this.writeError(this.t('OUTPUT_ERROR'), message.error?.message || this.t('UNKNOWN_ERROR'));
       return;
     }
     if (message.type === 'connector.crashed') {
       if (this.session) {
-        this.writeError('Aily Connector 已停止', message.error?.message || '连接进程异常退出');
+        this.writeError(
+          this.t('CONNECTOR_STOPPED'),
+          message.error || this.t('PROCESS_EXITED'),
+        );
       }
       this.clearSessionState();
       return;
@@ -504,16 +521,16 @@ export class LinuxBoardConnectorService implements OnDestroy {
     const event = message.event;
     if (!event) return;
     if (event.type === 'run.output' && typeof event.text === 'string' && event.text) {
-      this.logService.update({ title: 'Python 输出', detail: event.text });
+      this.logService.update({ title: this.t('PYTHON_OUTPUT'), detail: event.text });
       return;
     }
     if (event.type === 'diagnostic.stderr' && typeof event.text === 'string' && event.text) {
-      this.writeError('Aily Connector 输出错误', event.text);
+      this.writeError(this.t('OUTPUT_ERROR'), event.text);
       return;
     }
     if (event.type === 'run.started' || event.type === 'run.start') {
       this.patchState({ running: true });
-      this.writeLog('Python 程序已启动', 'doing');
+      this.writeLog(this.t('PYTHON_STARTED'), 'doing');
       return;
     }
     if (
@@ -532,30 +549,39 @@ export class LinuxBoardConnectorService implements OnDestroy {
       if (wasStopRequested) return;
       if (isError) {
         const errorMessage = this.connectorEventErrorMessage(event);
-        if (errorMessage) this.writeError('Python 程序异常结束', errorMessage);
-        else this.writeLog('Python 程序异常结束', 'error');
+        if (errorMessage) this.writeError(this.t('PYTHON_ENDED_ABNORMALLY'), errorMessage);
+        else this.writeLog(this.t('PYTHON_ENDED_ABNORMALLY'), 'error');
       } else {
-        this.writeLog('Python 程序已结束', 'done');
+        this.writeLog(this.t('PYTHON_ENDED'), 'done');
       }
       return;
     }
     if (event.type === 'connector.outputDropped') {
-      this.writeLog('程序输出过快，部分日志已丢弃', 'warn');
+      this.writeLog(this.t('OUTPUT_DROPPED'), 'warn');
       return;
     }
     if (event.type === 'device.error') {
-      this.writeError('Linux 开发板连接错误', event['message'] || '未知错误');
+      this.writeError(
+        this.t('CONNECTION_ERROR'),
+        {
+          code: event['code'],
+          message: event['message'] || this.t('UNKNOWN_ERROR'),
+        },
+      );
       return;
     }
     if (event.type === 'driver.protocolDesync' || event.type.endsWith('.error')) {
       this.writeError(
-        'Aily Connector 运行错误',
-        this.connectorEventErrorMessage(event) || event.type,
+        this.t('RUNTIME_ERROR'),
+        {
+          code: event['code'] || (event.type === 'driver.protocolDesync' ? 'PROTOCOL_DESYNC' : ''),
+          message: this.connectorEventErrorMessage(event) || event.type,
+        },
       );
       return;
     }
     if (event.type === 'device.disconnected') {
-      this.writeLog('Linux 开发板已断开', 'warn');
+      this.writeLog(this.t('BOARD_DISCONNECTED'), 'warn');
       this.clearSessionState();
     }
   }
@@ -626,7 +652,7 @@ export class LinuxBoardConnectorService implements OnDestroy {
     );
     if (!saved) return;
 
-    const normalized = normalizeSshSettings({ ...saved, password: '' }, false);
+    const normalized = this.normalizeSshSettings({ ...saved, password: '' }, false);
     const credentials = normalized.rememberCredentials
       ? this.readStoredSshCredentials(projectPath, normalized)
       : null;
@@ -662,21 +688,21 @@ export class LinuxBoardConnectorService implements OnDestroy {
       return;
     }
     this.logService.update({
-      title: 'Linux 开发板',
+      title: this.t('TITLE'),
       detail: `[Connector] ${detail}`,
       state,
     });
   }
 
   private writeError(title: string, error: unknown): void {
-    const message = error instanceof Error ? error.message : String(error || '未知错误');
+    const message = this.localizedErrorMessage(error);
     const text = `${title}: ${message}`;
     this.publishError(text, `[Connector] ${text}`);
   }
 
   private publishError(text: string, detail: string): void {
     this.noticeService.update({
-      title: 'Linux 开发板',
+      title: this.t('TITLE'),
       text,
       detail,
       state: 'error',
@@ -705,7 +731,7 @@ export class LinuxBoardConnectorService implements OnDestroy {
       }
     }
     const exitCode = event['code'] ?? event['exitCode'];
-    return exitCode === undefined ? '' : `退出码 ${String(exitCode)}`;
+    return exitCode === undefined ? '' : this.t('EXIT_CODE', { code: String(exitCode) });
   }
 
   private persistSshCredentials(projectPath: string, settings: LinuxBoardSshSettings): void {
@@ -719,14 +745,14 @@ export class LinuxBoardConnectorService implements OnDestroy {
     const safeStorage = (window as any).electronAPI?.safeStorage as SafeStorageApi | undefined;
     if (!safeStorage) {
       localStorage.removeItem(storageKey);
-      this.writeLog('系统安全存储不可用，用户名和密码未保存', 'warn');
+      this.writeLog(this.t('SECURE_STORAGE_UNAVAILABLE'), 'warn');
       return;
     }
 
     try {
       if (!safeStorage.isEncryptionAvailable()) {
         localStorage.removeItem(storageKey);
-        this.writeLog('系统安全存储不可用，用户名和密码未保存', 'warn');
+        this.writeLog(this.t('SECURE_STORAGE_UNAVAILABLE'), 'warn');
         return;
       }
       const credentials: StoredSshCredentials = {
@@ -740,7 +766,7 @@ export class LinuxBoardConnectorService implements OnDestroy {
       localStorage.setItem(storageKey, Buffer.from(encrypted).toString('base64'));
     } catch (error) {
       localStorage.removeItem(storageKey);
-      this.writeError('用户名和密码保存失败', error);
+      this.writeError(this.t('CREDENTIAL_SAVE_FAILED'), error);
     }
   }
 
@@ -774,29 +800,86 @@ export class LinuxBoardConnectorService implements OnDestroy {
       return null;
     }
   }
-}
 
-function normalizeSshSettings(
-  settings: LinuxBoardSshSettings,
-  requireUsername = true,
-): LinuxBoardSshSettings {
-  const host = String(settings?.host || '').trim();
-  const username = String(settings?.username || '').trim();
-  const port = Number(settings?.port || 22);
-  if (!host) throw new Error('请输入 SSH 地址');
-  if (requireUsername && !username) throw new Error('请输入 SSH 用户名');
-  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
-    throw new Error('SSH 端口必须是 1 到 65535 之间的整数');
+  private normalizeSshSettings(
+    settings: LinuxBoardSshSettings,
+    requireUsername = true,
+  ): LinuxBoardSshSettings {
+    const host = String(settings?.host || '').trim();
+    const username = String(settings?.username || '').trim();
+    const port = Number(settings?.port || 22);
+    if (!host) throw new Error(this.t('SSH_HOST_REQUIRED'));
+    if (requireUsername && !username) throw new Error(this.t('SSH_USERNAME_REQUIRED'));
+    if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+      throw new Error(this.t('SSH_PORT_INVALID'));
+    }
+    return {
+      host,
+      port,
+      username,
+      password: String(settings?.password || ''),
+      privateKeyPath: String(settings?.privateKeyPath || '').trim(),
+      autoTrustHostKey: settings?.autoTrustHostKey !== false,
+      rememberCredentials: settings?.rememberCredentials !== false,
+    };
   }
-  return {
-    host,
-    port,
-    username,
-    password: String(settings?.password || ''),
-    privateKeyPath: String(settings?.privateKeyPath || '').trim(),
-    autoTrustHostKey: settings?.autoTrustHostKey !== false,
-    rememberCredentials: settings?.rememberCredentials !== false,
-  };
+
+  private localizedErrorMessage(error: unknown): string {
+    const code = typeof error === 'object' && error
+      ? String((error as { code?: unknown }).code || '')
+      : '';
+    const errorCodeKeys: Record<string, string> = {
+      OPERATION_TIMEOUT: 'REQUEST_TIMEOUT',
+      CONNECT_TIMEOUT: 'CONNECT_TIMEOUT',
+      SESSION_CLOSED: 'SESSION_CLOSED',
+      RUNTIME_UNAVAILABLE: 'RUNTIME_UNAVAILABLE',
+      INVALID_ENDPOINT: 'INVALID_ENDPOINT',
+      AUTH_FAILED: 'AUTH_FAILED',
+      HOST_KEY_UNKNOWN: 'HOST_KEY_UNKNOWN',
+      HOST_KEY_CHANGED: 'HOST_KEY_CHANGED',
+      KNOWN_HOST_STORE_CORRUPT: 'KNOWN_HOST_STORE_CORRUPT',
+      SHELL_NOT_DETECTED: 'SHELL_NOT_DETECTED',
+      PYTHON3_NOT_FOUND: 'PYTHON3_NOT_FOUND',
+      CAPABILITY_UNAVAILABLE: 'CAPABILITY_UNAVAILABLE',
+      RUN_ALREADY_ACTIVE: 'RUN_ALREADY_ACTIVE',
+      RUN_START_FAILED: 'RUN_START_FAILED',
+      RUN_STOP_FAILED: 'RUN_STOP_FAILED',
+      FILE_TRANSFER_FAILED: 'FILE_TRANSFER_FAILED',
+      DIRECTORY_TOO_LARGE: 'DIRECTORY_TOO_LARGE',
+      AUTOSTART_PERMISSION_DENIED: 'AUTOSTART_PERMISSION_DENIED',
+      PREVIEW_UNAVAILABLE: 'PREVIEW_UNAVAILABLE',
+      PROTOCOL_DESYNC: 'PROTOCOL_DESYNC',
+    };
+    const errorCodeKey = errorCodeKeys[code];
+    if (errorCodeKey) return this.t(errorCodeKey);
+
+    const message = error instanceof Error
+      ? error.message
+      : (typeof error === 'object' && error && 'message' in error
+        ? String((error as { message?: unknown }).message || '')
+        : String(error || ''));
+    const knownMessages: Record<string, string> = {
+      'aily-connector package entry was not found': 'PACKAGE_NOT_FOUND',
+      'aily-connector does not provide the required Linux board capabilities': 'CAPABILITIES_MISSING',
+      'aily-connector daemon readiness timed out': 'READY_TIMEOUT',
+      'aily-connector daemon is not connected': 'DAEMON_NOT_CONNECTED',
+      'aily-connector daemon sent an incompatible protocol message': 'PROTOCOL_INCOMPATIBLE',
+      'aily-connector daemon protocol is incompatible': 'PROTOCOL_INCOMPATIBLE',
+      'aily-connector is unavailable': 'CONNECTOR_UNAVAILABLE',
+      'Invalid aily-connector IPC response': 'INVALID_IPC_RESPONSE',
+      'Aily Connector request failed': 'REQUEST_FAILED',
+      'Aily Connector stopped unexpectedly': 'PROCESS_EXITED',
+    };
+    const key = knownMessages[message];
+    if (key) return this.t(key);
+    if (/^aily-connector request timed out:/i.test(message)) return this.t('REQUEST_TIMEOUT');
+    if (/^aily-connector daemon exited/i.test(message)) return this.t('PROCESS_EXITED');
+    return message || this.t('UNKNOWN_ERROR');
+  }
+
+  private t(key: string, params?: Record<string, unknown>): string {
+    return this.translate.instant(`AILY_CONNECTOR.${key}`, params);
+  }
 }
 
 function formatSshLabel(settings: LinuxBoardSshSettings): string {

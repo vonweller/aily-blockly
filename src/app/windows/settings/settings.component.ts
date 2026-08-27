@@ -549,6 +549,17 @@ export class SettingsComponent implements OnDestroy {
 
   private getAilyToolErrorText(error: unknown) {
     const text = String(error || '').trim();
+    const ailyConnectorErrorKeys: Record<string, string> = {
+      'aily-connector package entry was not found': 'PACKAGE_NOT_FOUND',
+      'aily-connector does not provide the required Linux board capabilities': 'CAPABILITIES_MISSING',
+      'aily-connector installation is incomplete': 'INSTALLATION_INCOMPLETE',
+      'aily-connector is unavailable': 'CONNECTOR_UNAVAILABLE',
+    };
+    const connectorErrorKey = ailyConnectorErrorKeys[text];
+    if (connectorErrorKey) {
+      return this.translateService.instant(`AILY_CONNECTOR.${connectorErrorKey}`);
+    }
+
     const statusMatch = text.match(/(?:^|\r?\n)\s*npm (?:error|ERR!)\s+(\d{3})\b/im);
     if (statusMatch) {
       return `npm error ${statusMatch[1]}`;

@@ -1,4 +1,5 @@
 import { Inject, Injectable } from '@angular/core';
+import { TranslateService } from '@ngx-translate/core';
 import { ElectronService } from '@core/platform/public-api';
 import { BuilderService } from '@domain/build/public-api';
 import { SerialService } from './serial.service';
@@ -32,6 +33,7 @@ export class UploaderService {
     private serialService: SerialService,
     private projectService: ProjectService,
     private builderService: BuilderService,
+    private translate: TranslateService,
   ) { }
 
   requiresLocalPort(): boolean {
@@ -65,7 +67,7 @@ export class UploaderService {
 
   private async uploadPythonProject(route: LinuxBoardExecutionRoute): Promise<any> {
     const transport = this.currentLinuxBoardTransport(route);
-    if (!transport) throw new Error('Select an SSH or serial connection before running');
+    if (!transport) throw new Error(this.t('SELECT_CONNECTION'));
     const prepared = await this.preparePythonProject(route);
     return this.application.syncAndRunLinuxBoardSource(
       prepared.source,
@@ -85,7 +87,7 @@ export class UploaderService {
     entry: string;
   }> {
     const projectPath = this.projectService.currentProjectPath;
-    if (!projectPath) throw new Error('当前项目路径无效');
+    if (!projectPath) throw new Error(this.t('INVALID_PROJECT_PATH'));
     await this.builderService.build();
     const currentRoute = this.currentLinuxBoardRoute();
     if (
@@ -93,7 +95,7 @@ export class UploaderService {
       || currentRoute?.entry !== route.entry
       || currentRoute?.connectors.join(',') !== route.connectors.join(',')
     ) {
-      throw new Error('Project changed while Python code was being prepared');
+      throw new Error(this.t('PROJECT_CHANGED_DURING_BUILD'));
     }
     const entryPath = this.electronService.pathJoin(projectPath, ...route.entry.split('/'));
     const source = window['fs'].readFileSync(entryPath, 'utf8');
@@ -175,7 +177,7 @@ export class UploaderService {
     if (this.isPythonProject()) {
       const pythonRoute = this.currentLinuxBoardRoute();
       if (!pythonRoute) {
-        throw new Error('Python board.json 必须配置 mode: ["python"]，connector 必须是 ["ssh"]、["serial"] 或两者');
+        throw new Error(this.t('INVALID_BOARD_CONFIG'));
       }
       return this.uploadPythonProject(pythonRoute);
     }
@@ -253,6 +255,10 @@ export class UploaderService {
         },
       );
     }
+  }
+
+  private t(key: string, params?: Record<string, unknown>): string {
+    return this.translate.instant(`AILY_CONNECTOR.${key}`, params);
   }
 
   /**

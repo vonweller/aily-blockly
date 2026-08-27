@@ -1,4 +1,5 @@
 import { Injectable, NgZone, OnDestroy } from '@angular/core';
+import { TranslateService } from '@ngx-translate/core';
 import { Subject, Subscription } from 'rxjs';
 
 import { UiService } from '@core/app-shell/public-api';
@@ -86,6 +87,7 @@ export class AilyConnectorService implements OnDestroy {
     private readonly zone: NgZone,
     private readonly uiService: UiService,
     private readonly subappResourceLifecycle: SubappResourceLifecycleService,
+    private readonly translate: TranslateService,
   ) {
     this.resourceSignalSubscription = this.uiService.actionSubject.subscribe(action => {
       this.handleExternalSerialResourceSignal(action as Record<string, unknown>);
@@ -130,7 +132,7 @@ export class AilyConnectorService implements OnDestroy {
 
   async connectSerial(options: AilySerialConnectOptions): Promise<AilyConnectorSession> {
     const port = String(options.port || '').trim();
-    if (!port) throw new Error('Serial port is required');
+    if (!port) throw new Error(this.t('SERIAL_PORT_REQUIRED'));
 
     const lease: SerialConnectorLease = {
       port,
@@ -223,14 +225,18 @@ export class AilyConnectorService implements OnDestroy {
 
   private requireApi(): ConnectorPreloadApi {
     const api = this.api;
-    if (!api) throw new Error('Aily Connector is available only in the Electron application');
+    if (!api) throw new Error(this.t('ELECTRON_ONLY'));
     return api;
   }
 
   private requireKnownSession(sessionId: string): AilyConnectorSession {
     const session = this.sessions.get(sessionId);
-    if (!session) throw new Error('Connector session is not connected');
+    if (!session) throw new Error(this.t('SESSION_NOT_CONNECTED'));
     return session;
+  }
+
+  private t(key: string, params?: Record<string, unknown>): string {
+    return this.translate.instant(`AILY_CONNECTOR.${key}`, params);
   }
 
   private addSession(session: AilyConnectorSession): void {

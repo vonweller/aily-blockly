@@ -111,7 +111,7 @@ export class HeaderComponent implements OnInit, OnDestroy {
 
   connectorState: LinuxBoardConnectorState;
   connectorStopBtn: IMenuItem = {
-    name: '停止',
+    name: 'MENU.STOP',
     action: 'connector-stop',
     icon: 'fa-regular fa-stop',
     type: 'act-btn',
@@ -668,7 +668,9 @@ export class HeaderComponent implements OnInit, OnDestroy {
         extra: item.extra,
       };
     } catch (error) {
-      this.message.error(error instanceof Error ? error.message : String(error || '选择串口失败'));
+      this.message.error(error instanceof Error
+        ? error.message
+        : String(error || this.translate.instant('AILY_CONNECTOR.UNKNOWN_ERROR')));
       return;
     }
     this.closePortList();
@@ -683,7 +685,7 @@ export class HeaderComponent implements OnInit, OnDestroy {
     if (supportsSsh && !supportsSerial) {
       this.configList = [
         {
-          name: 'SSH 连接设置',
+          name: 'SSH_CONNECTION_DIALOG.TITLE',
           text: this.connectorState.selectedTransport === 'ssh'
             ? this.connectorState.endpointLabel
             : '',
@@ -720,7 +722,7 @@ export class HeaderComponent implements OnInit, OnDestroy {
             && item.name === this.serialService.currentPort,
         }))
         : [{
-          name: 'Device not found',
+          name: 'AILY_CONNECTOR.DEVICE_NOT_FOUND',
           text: '',
           type: 'serial',
           icon: 'fa-light fa-triangle-exclamation',
@@ -748,7 +750,7 @@ export class HeaderComponent implements OnInit, OnDestroy {
             && item.name === this.serialService.currentPort,
         }))
         : [{
-          name: 'Device not found',
+          name: 'AILY_CONNECTOR.DEVICE_NOT_FOUND',
           text: '',
           type: 'serial',
           icon: 'fa-light fa-triangle-exclamation',
@@ -758,7 +760,7 @@ export class HeaderComponent implements OnInit, OnDestroy {
         ...serialPorts,
         { sep: true },
         {
-          name: 'SSH 连接设置',
+          name: 'SSH_CONNECTION_DIALOG.TITLE',
           text: this.connectorState.selectedTransport === 'ssh'
             ? this.connectorState.endpointLabel
             : '',
