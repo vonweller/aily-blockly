@@ -95,6 +95,7 @@ export class ProjectNewComponent implements OnDestroy {
   private searchSubject = new Subject<string>();
   private destroy$ = new Subject<void>();
   private searchIndex: AnyOrama | null = null;
+  private todoBoardImageClickCount = 0;
 
   /** 基本设定页：Blockly 图形化 / Coder 代码编辑 */
   selectedProjectCategory: 'blockly' | 'coder' = 'blockly';
@@ -366,6 +367,7 @@ export class ProjectNewComponent implements OnDestroy {
   }
 
   selectBoard(boardInfo: any) {
+    this.todoBoardImageClickCount = 0;
     this.currentBoard = boardInfo;
     this.newProjectData.board.name = boardInfo.name;
     this.newProjectData.board.nickname = boardInfo._nickname || boardInfo.nickname;
@@ -384,6 +386,22 @@ export class ProjectNewComponent implements OnDestroy {
       this.myTemplateList = [];
       this.selectedTemplateName = '';
     }
+  }
+
+  onCurrentBoardImageClick(): void {
+    if (this.currentBoard?.state !== 'todo') {
+      this.todoBoardImageClickCount = 0;
+      return;
+    }
+
+    this.todoBoardImageClickCount += 1;
+    if (this.todoBoardImageClickCount < 5) {
+      return;
+    }
+
+    this.todoBoardImageClickCount = 0;
+    this.currentBoard.state = 'alpha';
+    this.message.success('已解锁开发者模式');
   }
 
   checkHasExamples(boardName: string) {

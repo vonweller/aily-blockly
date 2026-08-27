@@ -68,7 +68,7 @@
         </div>
         @if(currentBoard){
         <div class="desc-box">
-          <div class="img-box ccenter">
+          <div class="img-box ccenter" (click)="onCurrentBoardImageClick()">
             <img [src]="resourceUrl+'/imgs/boards/'+currentBoard.img" />
           </div>
           <div class="content">
