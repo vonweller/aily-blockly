@@ -59,6 +59,12 @@ const CODER_REVEAL_DURATION_MS = 480;
 const CODER_GIT_COMMAND_TIMEOUT_MS = 30000;
 const CODER_GIT_MAX_STDOUT_CHARS = 16 * 1024 * 1024;
 const CODER_GIT_MAX_STDERR_CHARS = 64 * 1024;
+const AILY_CODER_NATIVE_SEARCH_PROTOCOL_VERSION = 1;
+const CODER_NATIVE_SEARCH_MAX_RESULTS = 1000;
+const CODER_NATIVE_SEARCH_MAX_GLOBS = 128;
+const CODER_NATIVE_SEARCH_MAX_GLOB_LENGTH = 1000;
+const CODER_NATIVE_SEARCH_MAX_PATTERN_LENGTH = 10000;
+const CODER_NATIVE_SEARCH_MAX_FILE_SIZE = 20 * 1024 * 1024;
 const AILY_CODER_HOST_LIFECYCLE_REQUEST_CHANNEL = 'aily-coder-host-lifecycle-request';
 const AILY_CODER_HOST_LIFECYCLE_RESPONSE_CHANNEL = 'aily-coder-host-lifecycle-response';
 /** Coder 生成或依赖目录不进入默认搜索、Git 状态与提交。 */
@@ -86,6 +92,43 @@ type CoderGitHistoryRefs = {
   remote?: CoderGitHistoryRef;
   refs: CoderGitHistoryRef[];
 };
+
+type CoderNativeSearchApi = {
+  searchText?: (params: Record<string, unknown>) => Promise<unknown>;
+  cancelSearch?: (requestId: string) => void;
+};
+
+function normalizeCoderNativeSearchRequestId(value: unknown): string {
+  const requestId = typeof value === 'string' ? value.trim() : '';
+  if (!requestId || requestId.length > 200 || requestId.includes('\0')) {
+    throw new Error('原生搜索 requestId 无效');
+  }
+  return requestId;
+}
+
+function normalizeCoderNativeSearchGlobs(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const result: string[] = [];
+  for (const item of value) {
+    if (result.length >= CODER_NATIVE_SEARCH_MAX_GLOBS) break;
+    const glob = typeof item === 'string' ? item.trim() : '';
+    if (!glob || glob.length > CODER_NATIVE_SEARCH_MAX_GLOB_LENGTH || glob.includes('\0')) {
+      continue;
+    }
+    if (!result.includes(glob)) result.push(glob);
+  }
+  return result;
+}
+
+function boundedCoderNativeSearchInteger(
+  value: unknown,
+  fallback: number,
+  maximum: number,
+): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.min(maximum, Math.max(1, Math.trunc(parsed)));
+}
 
 @Component({
   selector: 'app-code-editor-pro',
@@ -151,6 +194,8 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
   /** 内嵌 Coder nativeFsWatchStart 注册的宿主 fs.watch 句柄 */
   private coderEmbedFsWatchers = new Map<number, () => void>();
   private coderEmbedFsWatchSeq = 0;
+  /** iframe 发起、Electron ripgrep 主进程仍在执行的搜索。 */
+  private readonly coderNativeSearchRequestIds = new Set<string>();
   /** 监听 .aily/build 与全局 aily-builder 缓存变更，编译产物增删后同步 hints / hostContext */
   private disposeBuildOutputsWatch?: () => void;
   private disposeGlobalBuildOutputsWatch?: () => void;
@@ -931,8 +976,26 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
   /** iframe 重载或销毁前统一断开消息桥和其注册的宿主 watcher。 */
   private detachCoderEmbedFrame(): void {
     this.stopAllCoderEmbedFsWatchers();
+    this.stopAllCoderNativeSearches();
     this.codeCompletionHostBridge.registerFrame(null);
     this.aiCoderDiffBridge.registerEmbed(null);
+  }
+
+  private getCoderNativeSearchApi(): CoderNativeSearchApi | undefined {
+    return window['ripgrep'] as CoderNativeSearchApi | undefined;
+  }
+
+  /** iframe 重载时不保留无消费者的 rg 子进程。 */
+  private stopAllCoderNativeSearches(): void {
+    const searchApi = this.getCoderNativeSearchApi();
+    for (const requestId of this.coderNativeSearchRequestIds) {
+      try {
+        searchApi?.cancelSearch?.(requestId);
+      } catch {
+        /* Electron 正在退出时 IPC 可能已释放。 */
+      }
+    }
+    this.coderNativeSearchRequestIds.clear();
   }
 
   /** 关闭 .aily/build 与全局编译缓存目录监听 */
@@ -1608,6 +1671,78 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
         return;
       }
       switch (msg.op) {
+        case 'nativeSearchCapabilities': {
+          const searchApi = this.getCoderNativeSearchApi();
+          this.replyCoderNativeFs(ev.source as Window, msg.id!, {
+            protocolVersion: AILY_CODER_NATIVE_SEARCH_PROTOCOL_VERSION,
+            textSearch: typeof searchApi?.searchText === 'function',
+            cancellation: typeof searchApi?.cancelSearch === 'function',
+          });
+          break;
+        }
+        case 'nativeSearchCancel': {
+          const requestId = normalizeCoderNativeSearchRequestId(payload['requestId']);
+          this.getCoderNativeSearchApi()?.cancelSearch?.(requestId);
+          this.coderNativeSearchRequestIds.delete(requestId);
+          this.replyCoderNativeFs(ev.source as Window, msg.id!, {});
+          break;
+        }
+        case 'nativeSearchText': {
+          const workspaceRoot = this.assertPathInsideCoderEmbedRoot(
+            String(payload['workspaceRoot']),
+          );
+          const requestId = normalizeCoderNativeSearchRequestId(payload['requestId']);
+          const pattern = typeof payload['pattern'] === 'string' ? payload['pattern'] : '';
+          if (
+            !pattern
+            || pattern.length > CODER_NATIVE_SEARCH_MAX_PATTERN_LENGTH
+            || pattern.includes('\0')
+          ) {
+            replyErr(new Error('原生搜索 pattern 为空、过长或包含非法字符'));
+            return;
+          }
+          const searchApi = this.getCoderNativeSearchApi();
+          if (typeof searchApi?.searchText !== 'function') {
+            replyErr(new Error('当前 Electron 宿主不支持原生文本搜索'));
+            return;
+          }
+          this.coderNativeSearchRequestIds.add(requestId);
+          try {
+            const result = await searchApi.searchText({
+              requestId,
+              path: workspaceRoot,
+              pattern,
+              isRegex: !!payload['isRegex'],
+              isCaseSensitive: !!payload['isCaseSensitive'],
+              isWordMatch: !!payload['isWordMatch'],
+              isMultiline: !!payload['isMultiline'],
+              usePCRE2: !!payload['usePCRE2'],
+              includeIgnoredFiles: !!payload['includeIgnoredFiles'],
+              includeHidden: payload['includeHidden'] !== false,
+              includeGlobs: normalizeCoderNativeSearchGlobs(payload['includeGlobs']),
+              excludeGlobs: normalizeCoderNativeSearchGlobs(payload['excludeGlobs']),
+              maxResults: boundedCoderNativeSearchInteger(
+                payload['maxResults'],
+                500,
+                CODER_NATIVE_SEARCH_MAX_RESULTS,
+              ),
+              maxLineLength: boundedCoderNativeSearchInteger(
+                payload['maxLineLength'],
+                500,
+                2000,
+              ),
+              maxFileSize: boundedCoderNativeSearchInteger(
+                payload['maxFileSize'],
+                10 * 1024 * 1024,
+                CODER_NATIVE_SEARCH_MAX_FILE_SIZE,
+              ),
+            });
+            this.replyCoderNativeFs(ev.source as Window, msg.id!, result);
+          } finally {
+            this.coderNativeSearchRequestIds.delete(requestId);
+          }
+          break;
+        }
         case 'nativeFsStat': {
           const abs = this.assertPathAllowedForCoderNativeFsStat(String(payload['path']));
           if (!fsAny['existsSync'](abs)) {
