@@ -54,14 +54,15 @@
             @for (board of boardList; track board.name) {
             <div class="board ccenter btn" [ngClass]="{ selected: currentBoard == board, disabled: board.disabled }"
               (click)="selectBoard(board)">
+              @if(board.state){
+              <nz-tag class="state-tag" [nzColor]="board.state === 'todo' ? 'warning' : 'processing'">
+                {{board.state}}
+              </nz-tag>
+              }
               <div class="img-box">
                 <img [sequentialSrc]="resourceUrl+'/imgs/boards/'+board.img" />
               </div>
-              <div class="name">{{ board._nickname }}
-                @if(board.state){
-                <span>({{board.state}})</span>
-                }
-              </div>
+              <div class="name">{{ board._nickname }}</div>
             </div>
             }
           </div>
