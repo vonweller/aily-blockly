@@ -49,6 +49,7 @@ let daemon = null;
 const sessionOwners = new Map();
 const ownerSessions = new Map();
 const watchedOwners = new Map();
+const pendingOwners = new Set();
 
 class ConnectorDaemonClient extends EventEmitter {
   constructor(toolState) {
@@ -92,7 +93,11 @@ class ConnectorDaemonClient extends EventEmitter {
     });
     child.stderr?.on('data', chunk => {
       const text = String(chunk || '').trim();
-      if (text) console.warn('[aily-connector]', text.slice(0, 2_000));
+      if (text) {
+        const message = text.slice(0, 2_000);
+        console.warn('[aily-connector]', message);
+        this.emit('stderr', message);
+      }
     });
     child.once('error', error => this.fail(error));
     child.once('exit', (code, signal) => {
@@ -280,6 +285,12 @@ async function ensureDaemon() {
   if (!daemon) {
     daemon = new ConnectorDaemonClient(state);
     daemon.on('sessionEvent', routeSessionEvent);
+    daemon.on('stderr', message => {
+      notifyAllOwners({
+        type: 'connector.stderr',
+        error: { code: 'DAEMON_STDERR', message },
+      });
+    });
     daemon.on('crash', error => {
       notifyDisconnectedOwners(error);
       notifyAllOwners({
@@ -412,23 +423,28 @@ function registerHandlers() {
     return connectorIpcResult(async () => {
       const request = normalizeConnectParams(params);
       const ownerGeneration = watchOwner(event.sender);
-      const client = await ensureDaemon();
-      const result = assertSessionResult(
-        await requestSessionConnect(client, request),
-        request.transport,
-      );
-      if (!isCurrentOwner(event.sender, ownerGeneration)) {
-        await client.request(
-          'session.disconnect',
-          { sessionId: result.sessionId },
-          10_000,
-        ).catch(() => undefined);
-        const error = new Error('Connector owner was closed while the board was connecting');
-        error.code = 'SESSION_CLOSED';
-        throw error;
+      pendingOwners.add(event.sender.id);
+      try {
+        const client = await ensureDaemon();
+        const result = assertSessionResult(
+          await requestSessionConnect(client, request),
+          request.transport,
+        );
+        if (!isCurrentOwner(event.sender, ownerGeneration)) {
+          await client.request(
+            'session.disconnect',
+            { sessionId: result.sessionId },
+            10_000,
+          ).catch(() => undefined);
+          const error = new Error('Connector owner was closed while the board was connecting');
+          error.code = 'SESSION_CLOSED';
+          throw error;
+        }
+        bindSession(event.sender.id, result.sessionId);
+        return result;
+      } finally {
+        pendingOwners.delete(event.sender.id);
       }
-      bindSession(event.sender.id, result.sessionId);
-      return result;
     });
   });
   ipcMain.handle('aily-connector-request', async (event, params = {}) => {
@@ -591,7 +607,8 @@ function notifyDisconnectedOwners(error) {
 }
 
 function notifyAllOwners(payload) {
-  for (const ownerId of ownerSessions.keys()) {
+  const ownerIds = new Set([...ownerSessions.keys(), ...pendingOwners]);
+  for (const ownerId of ownerIds) {
     const owner = webContents.fromId(ownerId);
     if (owner && !owner.isDestroyed()) owner.send('aily-connector-event', payload);
   }
@@ -600,6 +617,7 @@ function notifyAllOwners(payload) {
 function clearOwners() {
   sessionOwners.clear();
   ownerSessions.clear();
+  pendingOwners.clear();
 }
 
 async function shutdown() {
@@ -607,6 +625,7 @@ async function shutdown() {
   daemon = null;
   if (active) {
     active.removeAllListeners('sessionEvent');
+    active.removeAllListeners('stderr');
     active.removeAllListeners('crash');
     await active.stop().catch(() => undefined);
   }

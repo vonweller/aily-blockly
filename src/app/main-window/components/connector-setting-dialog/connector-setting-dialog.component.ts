@@ -3,7 +3,6 @@ import { Component, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { NzCheckboxModule } from 'ng-zorro-antd/checkbox';
 import { NzInputModule } from 'ng-zorro-antd/input';
-import { NzMessageService } from 'ng-zorro-antd/message';
 import { NZ_MODAL_DATA, NzModalRef } from 'ng-zorro-antd/modal';
 
 import {
@@ -28,7 +27,6 @@ export interface ConnectorSettingDialogData {
 })
 export class ConnectorSettingDialogComponent {
   private readonly modal = inject(NzModalRef);
-  private readonly message = inject(NzMessageService);
   private readonly connector = inject(LinuxBoardConnectorService);
   private readonly data = inject<ConnectorSettingDialogData | null>(NZ_MODAL_DATA, { optional: true });
 
@@ -95,8 +93,8 @@ export class ConnectorSettingDialogComponent {
       await this.connector.connectSsh({ ...this.settings });
       this.settings.password = '';
       this.modal.close({ connected: true });
-    } catch (error) {
-      this.message.error(error instanceof Error ? error.message : String(error || 'SSH 连接失败'));
+    } catch {
+      // LinuxBoardConnectorService 将连接错误统一发布到 <app-notification>。
     } finally {
       this.connecting = false;
     }

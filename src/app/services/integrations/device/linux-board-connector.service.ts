@@ -9,6 +9,7 @@ import {
   AilyConnectorTransport,
   AilySshConnectOptions,
 } from './aily-connector.service';
+import { NoticeService } from '@core/app-shell/public-api';
 import { LogService } from '@core/platform/public-api';
 import { ConfigService } from '@core/preferences/public-api';
 import { ProjectService } from '@domain/project/public-api';
@@ -99,6 +100,7 @@ export class LinuxBoardConnectorService implements OnDestroy {
     private readonly connector: AilyConnectorService,
     private readonly serialService: SerialService,
     private readonly logService: LogService,
+    private readonly noticeService: NoticeService,
     private readonly projectService: ProjectService,
     private readonly configService: ConfigService,
   ) {
@@ -486,6 +488,10 @@ export class LinuxBoardConnectorService implements OnDestroy {
   }
 
   private handleConnectorEvent(message: AilyConnectorSessionEvent): void {
+    if (message.type === 'connector.stderr') {
+      this.writeError('Aily Connector 输出错误', message.error?.message || '未知错误');
+      return;
+    }
     if (message.type === 'connector.crashed') {
       if (this.session) {
         this.writeError('Aily Connector 已停止', message.error?.message || '连接进程异常退出');
@@ -502,11 +508,7 @@ export class LinuxBoardConnectorService implements OnDestroy {
       return;
     }
     if (event.type === 'diagnostic.stderr' && typeof event.text === 'string' && event.text) {
-      this.logService.update({
-        title: 'Linux 开发板',
-        detail: `[stderr] ${event.text}`,
-        state: 'error',
-      });
+      this.writeError('Aily Connector 输出错误', event.text);
       return;
     }
     if (event.type === 'run.started' || event.type === 'run.start') {
@@ -528,10 +530,13 @@ export class LinuxBoardConnectorService implements OnDestroy {
         || (typeof exitCode === 'number' && exitCode !== 0)
         || (!wasStopRequested && Boolean(event['signal']));
       if (wasStopRequested) return;
-      this.writeLog(
-        isError ? 'Python 程序异常结束' : 'Python 程序已结束',
-        isError ? 'error' : 'done',
-      );
+      if (isError) {
+        const errorMessage = this.connectorEventErrorMessage(event);
+        if (errorMessage) this.writeError('Python 程序异常结束', errorMessage);
+        else this.writeLog('Python 程序异常结束', 'error');
+      } else {
+        this.writeLog('Python 程序已结束', 'done');
+      }
       return;
     }
     if (event.type === 'connector.outputDropped') {
@@ -540,6 +545,13 @@ export class LinuxBoardConnectorService implements OnDestroy {
     }
     if (event.type === 'device.error') {
       this.writeError('Linux 开发板连接错误', event['message'] || '未知错误');
+      return;
+    }
+    if (event.type === 'driver.protocolDesync' || event.type.endsWith('.error')) {
+      this.writeError(
+        'Aily Connector 运行错误',
+        this.connectorEventErrorMessage(event) || event.type,
+      );
       return;
     }
     if (event.type === 'device.disconnected') {
@@ -645,6 +657,10 @@ export class LinuxBoardConnectorService implements OnDestroy {
   }
 
   private writeLog(detail: string, state?: string): void {
+    if (state === 'error') {
+      this.publishError(detail, `[Connector] ${detail}`);
+      return;
+    }
     this.logService.update({
       title: 'Linux 开发板',
       detail: `[Connector] ${detail}`,
@@ -654,11 +670,42 @@ export class LinuxBoardConnectorService implements OnDestroy {
 
   private writeError(title: string, error: unknown): void {
     const message = error instanceof Error ? error.message : String(error || '未知错误');
-    this.logService.update({
+    const text = `${title}: ${message}`;
+    this.publishError(text, `[Connector] ${text}`);
+  }
+
+  private publishError(text: string, detail: string): void {
+    this.noticeService.update({
       title: 'Linux 开发板',
-      detail: `[Connector] ${title}: ${message}`,
+      text,
+      detail,
       state: 'error',
+      setTimeout: 600_000,
     });
+  }
+
+  private connectorEventErrorMessage(event: AilyConnectorSessionEvent['event']): string {
+    if (!event) return '';
+    for (const value of [event['message'], event.text, event['reason']]) {
+      const text = String(value || '').trim();
+      if (text) return text;
+    }
+    const error = event['error'];
+    if (error instanceof Error) return error.message;
+    if (error && typeof error === 'object' && typeof error['message'] === 'string') {
+      return error['message'].trim();
+    }
+    const payload = event['payload'];
+    if (typeof payload === 'string') return payload.trim();
+    if (payload && typeof payload === 'object') {
+      try {
+        return JSON.stringify(payload);
+      } catch {
+        return '';
+      }
+    }
+    const exitCode = event['code'] ?? event['exitCode'];
+    return exitCode === undefined ? '' : `退出码 ${String(exitCode)}`;
   }
 
   private persistSshCredentials(projectPath: string, settings: LinuxBoardSshSettings): void {
