@@ -19,6 +19,7 @@
         "OPEN_IN_EXPLORER": "Open in Explorer",
         "BUILD": "Build",
         "RUN": "Upload",
+        "PLAY": "Run",
         "STOP": "Stop",
         "CODE": "View Code",
         "CODE_EXPORT": "Export Code",

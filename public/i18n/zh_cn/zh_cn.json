@@ -19,6 +19,7 @@
         "OPEN_IN_EXPLORER": "在资源管理器打开",
         "BUILD": "编译",
         "RUN": "烧录",
+        "PLAY": "运行",
         "STOP": "停止",
         "CODE": "查看代码",
         "CODE_EXPORT": "导出代码",

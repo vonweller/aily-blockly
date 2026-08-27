@@ -1,6 +1,6 @@
 import { CommonModule } from '@angular/common';
 import { ChangeDetectorRef, Component, ElementRef, isDevMode, NgZone, OnDestroy, OnInit, ViewChild, viewChild } from '@angular/core';
-import { HEADER_BTNS, HEADER_MENU, IMenuItem } from '../../../configs/menu.config';
+import { HEADER_BTNS, HEADER_BTNS_LINUX, HEADER_MENU, IMenuItem } from '../../../configs/menu.config';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { FormsModule } from '@angular/forms';
 import { ProjectService, RECENT_PROJECTS_STORAGE_LIMIT } from '@domain/project/public-api';
@@ -78,7 +78,7 @@ interface NetworkOtaTarget {
   styleUrl: './header.component.scss',
 })
 export class HeaderComponent implements OnInit, OnDestroy {
-  headerBtns = HEADER_BTNS;
+  headerBtns: IMenuItem[] = HEADER_BTNS;
   headerMenu = HEADER_MENU;
   headerApps: AppItem[] = [];
 
@@ -134,6 +134,11 @@ export class HeaderComponent implements OnInit, OnDestroy {
   get isPythonProject(): boolean {
     // 顶栏模式与生成/上传一致，只读取当前项目 package.json.devmode。
     return normalizeProjectMode(this.projectService.currentPackageData) === 'python';
+  }
+
+  private loadHeaderButtons(): void {
+    this.headerBtns = this.isPythonProject ? HEADER_BTNS_LINUX : HEADER_BTNS;
+    this.initShortcutMap();
   }
 
   get linuxBoardConnectors(): LinuxBoardConnector[] {
@@ -212,6 +217,7 @@ export class HeaderComponent implements OnInit, OnDestroy {
   }
 
   ngOnInit(): void {
+    this.loadHeaderButtons();
     void this.toolI18n.load('serial-monitor');
 
     this.unregisterHeaderMenuAutomation = this.uiAutomationRegistry.registerMenuProvider('header', {
@@ -230,8 +236,11 @@ export class HeaderComponent implements OnInit, OnDestroy {
     this.connectorStateSubscription = this.linuxBoardConnector.state$.subscribe(state => {
       const wasRunning = this.connectorState.running;
       this.connectorState = state;
-      if (state.running && !wasRunning) {
-        this.connectorStopBtn.state = 'default';
+      const playButton = this.headerBtns.find(button => button.action === 'play');
+      if (playButton && state.running && playButton.state !== 'stopping') {
+        playButton.state = 'running';
+      } else if (playButton && !state.running && (wasRunning || playButton.state === 'stopping')) {
+        playButton.state = 'default';
       }
       this.cd.markForCheck();
     });
@@ -280,6 +289,7 @@ export class HeaderComponent implements OnInit, OnDestroy {
 
     this.projectService.stateSubject.subscribe((state) => {
       if (state == 'loaded' || state == 'saved') {
+        this.loadHeaderButtons();
         // 将headerMenu中有disabled的按钮置为可用
         this.headerMenu.forEach((menu) => {
           if (menu.disabled) {
@@ -1059,7 +1069,31 @@ export class HeaderComponent implements OnInit, OnDestroy {
           item.state = this.resolveActionErrorState(err, ['buildResult']);
         })
         break;
+      case 'play':
+        if (this.connectorState.running || item.state === 'running') {
+          this.stopLinuxBoardProject(item);
+          break;
+        }
+        if (this.uploaderService.requiresLocalPort() && !this.serialService.currentPort) {
+          this.message.warning(this.translate.instant('SERIAL.SELECT_PORT_FIRST'));
+          this.openPortList(event);
+          return;
+        }
+        if (item.state === 'doing') return;
+        item.state = 'doing';
+        this.uploaderService.upload().then(result => {
+          item.state = this.connectorState.running
+            ? 'running'
+            : result.state || 'done';
+        }).catch(err => {
+          item.state = this.resolveActionErrorState(err, ['result']);
+        });
+        break;
       case 'upload':
+        if (this.isLinuxBoardProject && this.connectorState.running) {
+          this.stopLinuxBoardProject(item);
+          break;
+        }
         // Arduino 和 Linux-serial 需要本地端口；Linux-SSH 由连接器设置提供目标。
         if (this.uploaderService.requiresLocalPort() && !this.serialService.currentPort) {
           this.message.warning(this.translate.instant('SERIAL.SELECT_PORT_FIRST'));
@@ -1077,13 +1111,7 @@ export class HeaderComponent implements OnInit, OnDestroy {
         break;
       case 'connector-stop':
         // 停止操作仅属于 Linux/Python 远端运行，不进入 Arduino 上传流程。
-        if (item.state === 'doing') return;
-        item.state = 'doing';
-        this.uploaderService.stopPythonProject().then(result => {
-          item.state = (result['state'] as IMenuItem['state']) || 'done';
-        }).catch(err => {
-          item.state = this.resolveActionErrorState(err, ['result']);
-        });
+        this.stopLinuxBoardProject(item);
         break;
       case 'connector-settings':
         // 只有声明 SSH 能力的 Linux 板开放连接设置。
@@ -1180,6 +1208,18 @@ export class HeaderComponent implements OnInit, OnDestroy {
     return `${filePath}.svg`;
   }
 
+  private stopLinuxBoardProject(button: IMenuItem): void {
+    if (button.state === 'doing' || button.state === 'stopping') return;
+    button.state = 'stopping';
+    this.uploaderService.stopPythonProject().then(() => {
+      button.state = this.connectorState.running ? 'running' : 'default';
+    }).catch(err => {
+      button.state = this.connectorState.running
+        ? 'running'
+        : this.resolveActionErrorState(err, ['result']);
+    });
+  }
+
   private resolveActionErrorState(err: any, nestedKeys: string[] = []): RunState['state'] {
     const directState = err?.state;
     if (this.isFailureRunState(directState)) {
@@ -1260,6 +1300,7 @@ export class HeaderComponent implements OnInit, OnDestroy {
   // 快捷键功能，监听键盘事件,执行对应的操作
   private shortcutMap: Map<string, IMenuItem> = new Map();
   private initShortcutMap(): void {
+    this.shortcutMap.clear();
     // 处理 HEADER_MENU 的快捷键
     for (const item of HEADER_MENU) {
       if (item.text) {
@@ -1270,8 +1311,8 @@ export class HeaderComponent implements OnInit, OnDestroy {
         }
       }
     }
-    // 处理 HEADER_BTNS 的快捷键（编译、上传等）
-    for (const item of HEADER_BTNS) {
+    // 处理当前项目对应的 Header 按钮快捷键（编译、上传等）
+    for (const item of this.headerBtns) {
       if (item.text) {
         const shortcutKey = this.normalizeShortcutKey(item.text);
         if (shortcutKey) {
@@ -1871,6 +1912,9 @@ export class HeaderComponent implements OnInit, OnDestroy {
   }
 
   headerButtonLabel(button: IMenuItem): string {
+    if (button.action === 'play' && this.connectorState.running) {
+      return this.translate.instant('MENU.STOP');
+    }
     // Python/Linux 的构建产物是源码，因此将 Arduino 的“编译”按钮文案改为“生成”。
     if (this.isLinuxBoardProject && button.action === 'compile') {
       return '生成';
@@ -1887,6 +1931,6 @@ export class HeaderComponent implements OnInit, OnDestroy {
 }
 
 export interface RunState {
-  state: 'default' | 'doing' | 'done' | 'error' | 'warn';
+  state: 'default' | 'doing' | 'done' | 'error' | 'warn' | 'running' | 'stopping';
   text: string;
 }

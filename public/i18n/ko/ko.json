@@ -18,6 +18,7 @@
         "OPEN_IN_EXPLORER": "탐색기에서 열기",
         "BUILD": "컴파일",
         "RUN": "업로드",
+        "PLAY": "실행",
         "STOP": "중지",
         "CODE": "코드 보기",
         "CODE_EXPORT": "코드 내보내기",

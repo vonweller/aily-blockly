@@ -18,6 +18,7 @@
         "OPEN_IN_EXPLORER": "エクスプローラーで開く",
         "BUILD": "コンパイル",
         "RUN": "書き込み",
+        "PLAY": "実行",
         "STOP": "停止",
         "CODE": "コードを表示",
         "CODE_EXPORT": "コードをエクスポート",

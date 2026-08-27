@@ -226,7 +226,6 @@ export class LinuxBoardConnectorService implements OnDestroy {
       );
       const remotePath = `${remoteRoot.replace(/\/$/, '')}/${normalizedEntry}`;
       this.stopRequested = false;
-      this.patchState({ running: true });
       this.writeLog(`正在运行 ${remotePath}`, 'doing');
       try {
         const run = await this.connector.request<Record<string, unknown>>(

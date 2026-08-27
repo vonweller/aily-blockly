@@ -18,6 +18,7 @@
         "OPEN_IN_EXPLORER": "Abrir en Explorador",
         "BUILD": "Compilar",
         "RUN": "Cargar",
+        "PLAY": "Ejecutar",
         "STOP": "Detener",
         "CODE": "Ver Código",
         "CODE_EXPORT": "Exportar Código",

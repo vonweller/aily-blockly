@@ -18,6 +18,7 @@
         "OPEN_IN_EXPLORER": "在資源管理器開啟",
         "BUILD": "編譯",
         "RUN": "燒錄",
+        "PLAY": "運行",
         "STOP": "停止",
         "CODE": "查看程式碼",
         "CODE_EXPORT": "匯出程式碼",
