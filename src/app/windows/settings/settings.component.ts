@@ -133,11 +133,13 @@ export class SettingsComponent implements OnDestroy {
   boardOperations = {};
   ailyBuilderStatus: any = null;
   ailyLinterStatus: any = null;
+  ailyConnectorStatus: any = null;
   ailyToolsCheckingUpdates = false;
   applying = false;
   regionSwitching = false;
   private ailyBuilderStatusTimer: ReturnType<typeof setTimeout> | null = null;
   private ailyLinterStatusTimer: ReturnType<typeof setTimeout> | null = null;
+  private ailyConnectorStatusTimer: ReturnType<typeof setTimeout> | null = null;
   private settingsReadyObserver: MutationObserver | null = null;
 
   // 搜索关键字
@@ -419,6 +421,7 @@ export class SettingsComponent implements OnDestroy {
     this.clearScrollEndTimer();
     this.clearAilyBuilderStatusTimer();
     this.clearAilyLinterStatusTimer();
+    this.clearAilyConnectorStatusTimer();
     this._clearCacheSubscription?.unsubscribe();
     this.coderDependencySubscription.unsubscribe();
     this.configReloadSubscription.unsubscribe();
@@ -438,6 +441,7 @@ export class SettingsComponent implements OnDestroy {
     this.updateBoardList();
     void this.loadAilyBuilderStatus();
     void this.loadAilyLinterStatus();
+    void this.loadAilyConnectorStatus();
     void this.loadCacheStats();
     this.notifySettingsWindowReady();
   }
@@ -508,6 +512,21 @@ export class SettingsComponent implements OnDestroy {
     }
   }
 
+  async loadAilyConnectorStatus() {
+    if (!window['connector']?.status) {
+      return;
+    }
+    try {
+      this.ailyConnectorStatus = await window['connector'].status();
+      if (this.ailyConnectorStatus?.installing) {
+        this.scheduleAilyConnectorStatusReload();
+      }
+    } catch (error) {
+      console.warn('加载 aily-connector 状态失败:', error);
+      this.ailyConnectorStatus = null;
+    }
+  }
+
   getAilyToolVersion(status: any) {
     return status?.installedVersion || this.translateService.instant('SETTINGS.FIELDS.AILY_TOOL_UNKNOWN');
   }
@@ -547,12 +566,14 @@ export class SettingsComponent implements OnDestroy {
   isAilyToolsUpdateLoading() {
     return this.ailyToolsCheckingUpdates ||
       !!this.ailyBuilderStatus?.installing ||
-      !!this.ailyLinterStatus?.installing;
+      !!this.ailyLinterStatus?.installing ||
+      !!this.ailyConnectorStatus?.installing;
   }
 
   canCheckAilyToolsUpdates() {
     return !!window['builder']?.checkForUpdate &&
       !!window['linter']?.checkForUpdate &&
+      !!window['connector']?.checkForUpdate &&
       !this.isAilyToolsUpdateLoading();
   }
 
@@ -574,6 +595,11 @@ export class SettingsComponent implements OnDestroy {
         name: 'aily-linter',
         api: window['linter'],
         setStatus: (status: any) => this.ailyLinterStatus = status
+      },
+      {
+        name: 'aily-connector',
+        api: window['connector'],
+        setStatus: (status: any) => this.ailyConnectorStatus = status
       }
     ];
 
@@ -595,7 +621,8 @@ export class SettingsComponent implements OnDestroy {
     try {
       await Promise.all([
         this.loadAilyBuilderStatus(),
-        this.loadAilyLinterStatus()
+        this.loadAilyLinterStatus(),
+        this.loadAilyConnectorStatus()
       ]);
 
       if (updatedTools.length) {
@@ -647,6 +674,21 @@ export class SettingsComponent implements OnDestroy {
     if (this.ailyLinterStatusTimer) {
       clearTimeout(this.ailyLinterStatusTimer);
       this.ailyLinterStatusTimer = null;
+    }
+  }
+
+  private scheduleAilyConnectorStatusReload() {
+    this.clearAilyConnectorStatusTimer();
+    this.ailyConnectorStatusTimer = setTimeout(() => {
+      this.ailyConnectorStatusTimer = null;
+      this.loadAilyConnectorStatus();
+    }, 2000);
+  }
+
+  private clearAilyConnectorStatusTimer() {
+    if (this.ailyConnectorStatusTimer) {
+      clearTimeout(this.ailyConnectorStatusTimer);
+      this.ailyConnectorStatusTimer = null;
     }
   }
 

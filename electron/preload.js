@@ -28,6 +28,20 @@ function updateAilyBuilderEnv(result) {
   return result;
 }
 
+async function invokeAilyConnector(channel, payload) {
+  const envelope = await ipcRenderer.invoke(channel, payload);
+  if (!envelope || envelope.ailyConnectorIpc !== 1) {
+    throw new Error('Invalid aily-connector IPC response');
+  }
+  if (!envelope.ok) {
+    const error = new Error(envelope.error?.message || 'Aily Connector request failed');
+    error.code = envelope.error?.code || 'CONNECTOR_ERROR';
+    if (envelope.error?.details) error.details = envelope.error.details;
+    throw error;
+  }
+  return envelope.result;
+}
+
 const pathApi = {
   getUserHome: () => require("os").homedir(),
   getAilyChildPath: () => process.env.AILY_CHILD_PATH,
@@ -486,6 +500,20 @@ contextBridge.exposeInMainWorld("electronAPI", {
     checkForUpdate: () => ipcRenderer.invoke("aily-builder-check-update"),
     update: () => ipcRenderer.invoke("aily-builder-update"),
     waitForReady: () => ipcRenderer.invoke("aily-builder-wait-ready"),
+  },
+  connector: {
+    status: () => ipcRenderer.invoke("aily-connector-status"),
+    checkForUpdate: () => ipcRenderer.invoke("aily-connector-check-update"),
+    update: () => ipcRenderer.invoke("aily-connector-update"),
+    waitForReady: () => ipcRenderer.invoke("aily-connector-wait-ready"),
+    connect: (options) => invokeAilyConnector("aily-connector-connect", options),
+    request: (options) => invokeAilyConnector("aily-connector-request", options),
+    disconnect: (options) => invokeAilyConnector("aily-connector-disconnect", options),
+    onEvent: (callback) => {
+      const listener = (_event, payload) => callback(payload);
+      ipcRenderer.on("aily-connector-event", listener);
+      return () => ipcRenderer.removeListener("aily-connector-event", listener);
+    },
   },
   simulatorGateway: {
     iframeUrlOverride:

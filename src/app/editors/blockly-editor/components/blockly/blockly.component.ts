@@ -891,8 +891,13 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
                 // Handle npm libs: batch npm install
                 if (npmLibs.length > 0) {
                   const pkgs = npmLibs.map(l => l.version ? `${l.name}@${l.version}` : l.name).join(' ');
+                  // 动态补装库时由项目 devmode 选择 Linux 或默认 Arduino npm 来源。
                   const { code, stderr } = await this.cmdService.runAsync(
-                    `npm install ${pkgs}`, projectPath
+                    this.configService.withProjectNpmRegistry(
+                      `npm install ${pkgs}`,
+                      this.projectService.currentPackageData,
+                    ),
+                    projectPath,
                   );
                   if (code !== 0) throw new Error(stderr || `Exit code: ${code}`);
                 }
@@ -1436,7 +1441,12 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
 
   initDevMode() {
     console.log('DEV MODE: ', this.devmode);
-    const mode = this.devmode === 'micropython' ? 'micropython' : 'arduino';
+    // 每个项目只激活一种生成器；Python/Linux 与 Arduino 库脚本在独立运行域中互不混用。
+    const mode = this.devmode === 'python'
+      ? 'python'
+      : this.devmode === 'micropython'
+        ? 'micropython'
+        : 'arduino';
     this.generatorRuntime.activate({
       mode,
       boardConfig: this.blocklyService.boardConfig,

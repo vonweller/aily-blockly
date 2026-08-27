@@ -23,6 +23,10 @@ import {
   resolveInitialProjectCategory,
   type ProjectCreationCategory,
 } from '../../utils/project-creation-category';
+import {
+  isBoardCompatibleWithProjectMode,
+  normalizeBoardModes,
+} from '@shared/public-api';
 
 @Component({
   selector: 'app-project-new',
@@ -194,7 +198,10 @@ export class ProjectNewComponent implements OnDestroy {
   }
 
   private filterBoardsForCategory(list: any[]): any[] {
-    return list;
+    if (this.selectedProjectCategory !== 'coder') {
+      return list;
+    }
+    return list.filter(board => isBoardCompatibleWithProjectMode(board, { devmode: 'arduino' }));
   }
 
   onProjectCategoryChange(): void {
@@ -203,13 +210,7 @@ export class ProjectNewComponent implements OnDestroy {
       this.selectedProjectCategory,
     );
     this.applyRecommendedProjectName();
-    if (this.selectedProjectCategory === 'blockly' && this.currentBoard) {
-      this.loadMyTemplates(this.currentBoard.name);
-      return;
-    }
-    this.myTemplateList = [];
-    this.selectedTemplateName = '';
-    this.isLoadingTemplates = false;
+    this.refreshBoardListForCurrentFilters();
   }
 
   private refreshBoardListForCurrentFilters(): void {
@@ -295,8 +296,11 @@ export class ProjectNewComponent implements OnDestroy {
     this.newProjectData.board.name = boardInfo.name;
     this.newProjectData.board.nickname = boardInfo._nickname || boardInfo.nickname;
     this.newProjectData.board.version = boardInfo.version;
-    const boardModes = (boardInfo as BoardInfo & { mode?: string[] }).mode;
-    this.newProjectData.devmode = boardModes?.[0] || 'arduino';
+    if (this.selectedProjectCategory === 'coder') {
+      this.newProjectData.devmode = 'arduino';
+    } else {
+      this.newProjectData.devmode = normalizeBoardModes(boardInfo)[0] || 'arduino';
+    }
     if (this.selectedProjectCategory === 'blockly') {
       this.loadMyTemplates(boardInfo.name);
     } else {
@@ -347,7 +351,11 @@ export class ProjectNewComponent implements OnDestroy {
   async nextStep() {
     this.boardVersionList = [this.newProjectData.board.version];
     this.currentStep = this.currentStep + 1;
-    this.boardVersionList = (await this.npmService.getPackageVersionList(this.newProjectData.board.name)).reverse();
+    // 项目尚未创建，按所选板的 mode 决定从 Linux 还是默认 Arduino npm 来源查询版本。
+    this.boardVersionList = (await this.npmService.getPackageVersionList(
+      this.newProjectData.board.name,
+      this.configService.getNpmRegistryForBoard(this.currentBoard),
+    )).reverse();
   }
 
   async selectFolder() {

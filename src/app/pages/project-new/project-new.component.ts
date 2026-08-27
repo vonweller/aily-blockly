@@ -30,6 +30,10 @@ import {
   resolveInitialProjectCategory,
   type ProjectCreationCategory,
 } from '../../utils/project-creation-category';
+import {
+  isBoardCompatibleWithProjectMode,
+  normalizeBoardModes,
+} from '@shared/public-api';
 
 @Component({
   selector: 'app-project-new',
@@ -87,6 +91,7 @@ export class ProjectNewComponent implements OnDestroy {
   private searchSubject = new Subject<string>();
   private destroy$ = new Subject<void>();
   private searchIndex: AnyOrama | null = null;
+  private todoBoardImageClickCount = 0;
 
   /** 基本设定页：Blockly 图形化 / Coder 代码编辑 */
   selectedProjectCategory: ProjectCreationCategory = 'blockly';
@@ -198,7 +203,10 @@ export class ProjectNewComponent implements OnDestroy {
   }
 
   private filterBoardsForCategory(list: any[]): any[] {
-    return list;
+    if (this.selectedProjectCategory !== 'coder') {
+      return list;
+    }
+    return list.filter(board => isBoardCompatibleWithProjectMode(board, { devmode: 'arduino' }));
   }
 
   /** 表单切换项目类型：仅切换模板，不切换主板数据源。 */
@@ -208,15 +216,7 @@ export class ProjectNewComponent implements OnDestroy {
       this.selectedProjectCategory,
     );
     this.applyRecommendedProjectName();
-    if (this.selectedProjectCategory === 'blockly' && this.currentBoard) {
-      this.checkHasExamples(this.currentBoard.name);
-      this.loadMyTemplates(this.currentBoard.name);
-      return;
-    }
-    this.hasExamples = false;
-    this.myTemplateList = [];
-    this.selectedTemplateName = '';
-    this.isLoadingTemplates = false;
+    this.refreshBoardListForCurrentFilters();
   }
 
   private refreshBoardListForCurrentFilters(): void {
@@ -338,11 +338,18 @@ export class ProjectNewComponent implements OnDestroy {
   }
 
   selectBoard(boardInfo: any) {
+    this.todoBoardImageClickCount = 0;
     this.currentBoard = boardInfo;
     this.newProjectData.board.name = boardInfo.name;
     this.newProjectData.board.nickname = boardInfo._nickname || boardInfo.nickname;
     this.newProjectData.board.version = boardInfo.version;
-    this.newProjectData.devmode = boardInfo.mode ? this.currentBoard.mode[0] : 'arduino';
+    if (this.selectedProjectCategory === 'coder') {
+      // Coder 使用 template_arduino；不要让 Linux 板的 Python mode 改写安装源。
+      this.newProjectData.devmode = 'arduino';
+    } else {
+      // Blockly 项目从 boards.json.mode 继承模式；旧 Arduino 板未声明 mode 时默认 arduino。
+      this.newProjectData.devmode = normalizeBoardModes(boardInfo)[0] || 'arduino';
+    }
     this.devmodes = boardInfo.mode;
     if (this.selectedProjectCategory === 'blockly') {
       this.checkHasExamples(boardInfo.name);
@@ -352,6 +359,22 @@ export class ProjectNewComponent implements OnDestroy {
       this.myTemplateList = [];
       this.selectedTemplateName = '';
     }
+  }
+
+  onCurrentBoardImageClick(): void {
+    if (this.currentBoard?.state !== 'todo') {
+      this.todoBoardImageClickCount = 0;
+      return;
+    }
+
+    this.todoBoardImageClickCount += 1;
+    if (this.todoBoardImageClickCount < 5) {
+      return;
+    }
+
+    this.todoBoardImageClickCount = 0;
+    this.currentBoard.state = 'alpha';
+    this.message.success('已解锁开发者模式');
   }
 
   checkHasExamples(boardName: string) {
@@ -409,7 +432,11 @@ export class ProjectNewComponent implements OnDestroy {
   async nextStep() {
     this.boardVersionList = [this.newProjectData.board.version];
     this.currentStep = this.currentStep + 1;
-    this.boardVersionList = (await this.npmService.getPackageVersionList(this.newProjectData.board.name)).reverse();
+    // 项目尚未创建，按所选板的 mode 决定从 Linux 还是默认 Arduino npm 来源查询版本。
+    this.boardVersionList = (await this.npmService.getPackageVersionList(
+      this.newProjectData.board.name,
+      this.configService.getNpmRegistryForBoard(this.currentBoard),
+    )).reverse();
   }
 
   async selectFolder() {
