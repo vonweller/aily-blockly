@@ -1,6 +1,7 @@
 import { Injectable } from '@angular/core';
 import { CrossPlatformCmdService } from './cross-platform-cmd.service';
 import { ElectronService } from './electron.service';
+import { isAilyLibraryPackageName } from './development-resource-routing';
 
 /** 项目 package.json 中记录「包名 → 本机原库目录」的字段名 */
 export const AILY_LOCAL_LIBRARY_SOURCES_KEY = 'ailyLocalLibrarySources';
@@ -68,7 +69,7 @@ export class LocalLibrarySyncService {
     const entries = Object.entries(mapping).filter(
       ([name, src]) =>
         typeof name === 'string' &&
-        name.startsWith('@aily-project/lib-') &&
+        isAilyLibraryPackageName(name) &&
         typeof src === 'string' &&
         src.length > 0,
     );

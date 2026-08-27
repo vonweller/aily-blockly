@@ -11,6 +11,7 @@ const projectLock = require("./project-lock");
 const { startCliBridge } = require("./cli-bridge");
 const builder = require("./builder");
 const linter = require("./linter");
+const connector = require("./connector");
 const simulatorGateway = require("./simulator-gateway");
 const simulatorSubappHost = require("./simulator-subapp-host");
 const {
@@ -2063,6 +2064,10 @@ function loadEnv() {
     process.env.AILY_APPDATA_PATH = conf["appdata_path"]["linux"];
   }
   builder.configureCacheEnvironment();
+  process.env.AILY_CONNECTOR_DATA_PATH = path.join(
+    process.env.AILY_APPDATA_PATH,
+    "connector",
+  );
 
   // 确保应用数据目录存在
   if (!fs.existsSync(process.env.AILY_APPDATA_PATH)) {
@@ -2102,9 +2107,11 @@ function loadEnv() {
     "ucenter_web",
     "tool_web",
     "npm_registry",
+    "npm_registry_linux",
     "resource",
     "updater",
   ];
+  const defaultRegions = conf.regions || {};
   const defaultCnRegion = (conf.regions && conf.regions.cn) || {};
   const forcedCnRegionUrls = cnRegionUrlKeys.reduce((urls, key) => {
     if (typeof defaultCnRegion[key] === 'string') {
@@ -2145,7 +2152,24 @@ function loadEnv() {
     }
 
     // 合并配置文件
-    Object.assign(conf, userConf);
+    const userRegions = userConf.regions || {};
+    const mergedRegions = Object.fromEntries(
+      [...new Set([...Object.keys(defaultRegions), ...Object.keys(userRegions)])]
+        .map((regionKey) => [
+          regionKey,
+          {
+            ...(defaultRegions[regionKey] || {}),
+            ...(userRegions[regionKey] || {}),
+          },
+        ]),
+    );
+    Object.assign(conf, userConf, {
+      linux: {
+        ...(conf.linux || {}),
+        ...(userConf.linux || {}),
+      },
+      regions: mergedRegions,
+    });
 
     const buildFlavor = getBuildFlavor(conf);
     const officialRegion = getOfficialRegionForFlavor(buildFlavor);
@@ -2189,17 +2213,27 @@ function loadEnv() {
   process.env.AILY_OFFICIAL_REGION = officialRegion;
   // npm registry
   process.env.AILY_NPM_REGISTRY = regionConfig.npm_registry;
+  process.env.AILY_NPM_REGISTRY_LINUX = regionConfig.npm_registry_linux || conf.linux?.npm_registry || "";
   // 子应用目录与当前服务区域共用 regions.<region>.resource 配置。
   process.env.AILY_SUBAPP_INDEX_URL = buildSubappIndexUrl(regionConfig.resource);
   // 设置 npm 使用应用数据目录下的配置文件，忽略系统 .npmrc
   const appNpmrcPath = path.join(process.env.AILY_APPDATA_PATH, ".npmrc");
-  // 如果不存在则创建
-  if (!fs.existsSync(appNpmrcPath)) {
-    try {
-      fs.writeFileSync(appNpmrcPath, `@aily-project:registry=\${AILY_NPM_REGISTRY}\naudit=false\nfund=false\n`);
-    } catch (error) {
-      console.error("创建 .npmrc 文件失败:", error);
+  try {
+    const linuxRegistryLine = "@aily-project-linux:registry=${AILY_NPM_REGISTRY_LINUX}";
+    if (!fs.existsSync(appNpmrcPath)) {
+      fs.writeFileSync(
+        appNpmrcPath,
+        `@aily-project:registry=\${AILY_NPM_REGISTRY}\n${linuxRegistryLine}\naudit=false\nfund=false\n`,
+      );
+    } else {
+      const existingNpmrc = fs.readFileSync(appNpmrcPath, "utf8");
+      if (!/^@aily-project-linux:registry=/m.test(existingNpmrc)) {
+        const separator = existingNpmrc.endsWith("\n") ? "" : "\n";
+        fs.appendFileSync(appNpmrcPath, `${separator}${linuxRegistryLine}\n`);
+      }
     }
+  } catch (error) {
+    console.error("创建或升级 .npmrc 文件失败:", error);
   }
   process.env.NPM_CONFIG_USERCONFIG = appNpmrcPath;
   // 清理可能来自系统/终端的代理相关环境变量，避免 npm 在 app 内部使用系统代理
@@ -2221,7 +2255,7 @@ function loadEnv() {
   } catch (e) {
     console.error('清理代理环境变量失败:', e);
   }
-  // aily-builder / aily-linter 使用独立的 npm 全局 prefix。
+  // aily-builder / aily-linter / aily-connector 使用独立的 npm 全局 prefix。
   // AppData 根目录本身是开发板、SDK 和工具包的普通 npm 项目；两者共用
   // node_modules 时，开发板依赖的 npm install/uninstall 会清理掉全局工具。
   process.env.AILY_NPM_PREFIX = path.join(process.env.AILY_APPDATA_PATH, "npm-global");
@@ -2247,7 +2281,7 @@ function loadEnv() {
 
   process.env.AILY_PROJECT_PATH = conf["project_path"];
   // child 目录只管理 Node、7z、probe-rs 等随应用分发的工具；
-  // aily-builder 与 aily-linter 由 npm 安装到应用专用的全局 prefix。
+  // aily-builder、aily-linter 与 aily-connector 由 npm 安装到应用专用的全局 prefix。
 
   // 必须先让 child Node 可用。首次启动和应用版本变化时安装 latest，
   // 同一应用版本复用现有工具；两个 npm 全局安装串行执行。
@@ -2260,13 +2294,13 @@ function loadEnv() {
     allowE2ERefresh,
   });
   if (isE2E && !allowE2ERefresh) {
-    console.log("E2E mode: skipping automatic aily-builder and aily-linter latest refresh");
+    console.log("E2E mode: skipping automatic aily-builder, aily-linter and aily-connector latest refresh");
   }
   if (installLatest) {
     try {
       markInstalledForAppVersion(userConfigPath, appVersion);
       userConf.installed = appVersion;
-      console.log(`aily blockly ${appVersion} will refresh aily-builder and aily-linter to latest`);
+      console.log(`aily blockly ${appVersion} will refresh aily-builder, aily-linter and aily-connector to latest`);
     } catch (error) {
       console.error("Failed to save aily tools refresh marker:", error);
     }
@@ -2286,6 +2320,20 @@ function loadEnv() {
   const linterInitialization = linter.initialize(childPath, builderInitialization, {
     installLatest,
   });
+  const connectorInitialization = connector.initialize(
+    childPath,
+    linterInitialization,
+    {
+      // Install the latest protocol-compatible connector. Local development uses
+      // setup:local-connector or an explicit AILY_CONNECTOR_PROJECT override.
+      installManaged: installLatest,
+    },
+  );
+  connectorInitialization.then((result) => {
+    if (!result.ok) {
+      console.warn(`aily-connector is not ready: ${result.error || "unknown error"}`);
+    }
+  }).catch((error) => console.warn("aily-connector initialization failed:", error));
   linterInitialization.then((result) => {
     if (installLatest && !result.startupInstallSucceeded) {
       console.error(`aily-linter@latest startup install failed: ${result.startupInstallError || result.error || "unknown error"}`);
@@ -2574,6 +2622,7 @@ function createWindow() {
   });
   builder.registerHandlers(() => mainWindow);
   linter.registerHandlers(() => mainWindow);
+  connector.registerHandlers();
   simulatorGateway.registerHandlers({
     ipcMain,
     app,
@@ -3004,6 +3053,7 @@ function cleanupRegisteredChildProcesses() {
     killAllNpmProcesses(),
     killAllTerminals(),
     cancelAllAilyServicesStreams(),
+    connector.shutdown(),
     simulatorGateway.stop(),
     simulatorSubappHost.defaultHost.stop(),
     packagedRendererServer.close(),

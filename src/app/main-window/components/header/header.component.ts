@@ -45,6 +45,17 @@ import {
 } from './board-config-selection';
 import { hasLinkUploadParam } from '../../../services/debugger-upload-policy';
 import { selectSerialPort } from '../../../services/serial-port-selection';
+import {
+  LinuxBoardConnector,
+  normalizeProjectMode,
+  resolveLinuxBoardExecutionRoute,
+} from '../../../services/linux-board-project-route';
+import {
+  LinuxBoardConnectorService,
+  LinuxBoardConnectorState,
+  LinuxBoardSshSettings,
+} from '../../../services/linux-board-connector.service';
+import { ConnectorSettingDialogComponent } from '../connector-setting-dialog/connector-setting-dialog.component';
 
 interface NetworkOtaTarget {
   id: string;
@@ -100,6 +111,17 @@ export class HeaderComponent implements OnInit, OnDestroy {
   private unsaveDialogOpen = false; // 标记未保存对话框是否已打开
   private selectDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   private unregisterHeaderMenuAutomation: (() => void) | null = null;
+  private connectorStateSubscription?: Subscription;
+
+  connectorState: LinuxBoardConnectorState;
+  connectorStopBtn: IMenuItem = {
+    name: '停止',
+    action: 'connector-stop',
+    icon: 'fa-regular fa-stop',
+    type: 'act-btn',
+    color: '#d4380d',
+    state: 'default',
+  };
 
   get projectData() {
     return this.projectService.currentPackageData || { path: '', name: '' };
@@ -113,7 +135,36 @@ export class HeaderComponent implements OnInit, OnDestroy {
     return this.uiService.terminalIsOpen;
   }
 
+  get isPythonProject(): boolean {
+    // 顶栏模式与生成/上传一致，只读取当前项目 package.json.devmode。
+    return normalizeProjectMode(this.projectService.currentPackageData) === 'python';
+  }
+
+  get linuxBoardConnectors(): LinuxBoardConnector[] {
+    // 只有 Python 项目与 Linux 板能力匹配时才显示 SSH/串口执行入口；Arduino 得到空列表。
+    return resolveLinuxBoardExecutionRoute(
+      this.projectService.currentPackageData,
+      this.projectService.currentBoardConfig,
+    )?.connectors || [];
+  }
+
+  get isLinuxBoardProject(): boolean {
+    return this.linuxBoardConnectors.length > 0;
+  }
+
+  supportsLinuxBoardConnector(connector: LinuxBoardConnector): boolean {
+    return this.linuxBoardConnectors.includes(connector);
+  }
+
   get currentPort() {
+    // Linux 板优先展示已选连接端点；未进入 Linux 路由时继续展示 Arduino 的本地端口。
+    if (
+      this.connectorState.selectedTransport !== null
+      && this.supportsLinuxBoardConnector(this.connectorState.selectedTransport)
+      && this.connectorState.endpointLabel
+    ) {
+      return this.connectorState.endpointLabel;
+    }
     if (this.serialService.currentPortInfo?.type === 'ble'
       || this.serialService.currentPortInfo?.type === 'network-ota') {
       return this.serialService.currentPortInfo?.text || this.serialService.currentPort;
@@ -159,7 +210,10 @@ export class HeaderComponent implements OnInit, OnDestroy {
     private cmdService: CmdService,
     private blocklyService: BlocklyService,
     private uiAutomationRegistry: UiAutomationRegistryService,
-  ) { }
+    private linuxBoardConnector: LinuxBoardConnectorService,
+  ) {
+    this.connectorState = this.linuxBoardConnector.snapshot;
+  }
 
   ngOnInit(): void {
     void this.toolI18n.load('serial-monitor');
@@ -176,6 +230,14 @@ export class HeaderComponent implements OnInit, OnDestroy {
     });
     this.boardChangeSubscription = this.projectService.boardChangeSubject.subscribe(() => {
       void this.resetDebuggerSelectionAfterBoardChange();
+    });
+    this.connectorStateSubscription = this.linuxBoardConnector.state$.subscribe(state => {
+      const wasRunning = this.connectorState.running;
+      this.connectorState = state;
+      if (state.running && !wasRunning) {
+        this.connectorStopBtn.state = 'default';
+      }
+      this.cd.markForCheck();
     });
   }
 
@@ -550,7 +612,7 @@ export class HeaderComponent implements OnInit, OnDestroy {
 
   async selectPort(item) {
     if (item.action) {
-      this.process(item)
+      await this.process(item);
       return
     }
 
@@ -583,24 +645,132 @@ export class HeaderComponent implements OnInit, OnDestroy {
       return;
     }
 
-    this.serialService.currentPort = item.name;
-    this.serialService.currentPortInfo = {
-      name: item.name,
-      text: item.text,
-      type: item.type,
-      icon: item.icon,
-      probeSerial: item.extra?.serial || '',
-      probeVidPid: item.extra?.vidPid || '',
-      extra: item.extra,
-    };
+    try {
+      // Linux 串口执行还需同步连接器状态；Arduino 只更新原 SerialService 选择。
+      if (this.supportsLinuxBoardConnector('serial') && (!item.type || item.type === 'serial')) {
+        await this.linuxBoardConnector.selectSerialPort(item.name);
+      }
+      this.serialService.currentPort = item.name;
+      this.serialService.currentPortInfo = {
+        name: item.name,
+        text: item.text,
+        type: item.type,
+        icon: item.icon,
+        probeSerial: item.extra?.serial || '',
+        probeVidPid: item.extra?.vidPid || '',
+        extra: item.extra,
+      };
+    } catch (error) {
+      this.message.error(error instanceof Error ? error.message : String(error || '选择串口失败'));
+      return;
+    }
     this.closePortList();
   }
 
   async getDevicePortList(skipDetect = false) {
     const generation = ++this.portListGeneration;
-    let portList0: IMenuItem[] = await this.serialService.getSerialPorts();
+    // Linux 菜单严格按 board.json.connector 组合；没有 Linux 执行路由时走后面的 Arduino 端口菜单。
+    const supportsSsh = this.supportsLinuxBoardConnector('ssh');
+    const supportsSerial = this.supportsLinuxBoardConnector('serial');
+    // 纯 SSH 板不枚举本地串口。
+    if (supportsSsh && !supportsSerial) {
+      this.configList = [
+        {
+          name: 'SSH 连接设置',
+          text: this.connectorState.selectedTransport === 'ssh'
+            ? this.connectorState.endpointLabel
+            : '',
+          icon: 'fa-light fa-network-wired',
+          action: 'connector-settings',
+          current: this.connectorState.selectedTransport === 'ssh',
+        },
+        { sep: true },
+        {
+          name: this.translate.instant('BOARD_SELECTOR.TITLE'),
+          icon: 'fa-light fa-layer-group',
+          action: 'board-select',
+        },
+      ];
+      setTimeout(() => this.cd.detectChanges(), 0);
+      return;
+    }
+    let portList0: IMenuItem[];
+    try {
+      portList0 = await this.serialService.getSerialPorts();
+    } catch (error) {
+      if (!this.isLinuxBoardProject) throw error;
+      console.warn('Linux board serial enumeration failed:', error);
+      portList0 = [];
+    }
     let hasSelectablePort = portList0.length > 0;
 
+    // 纯串口 Linux 板沿用系统串口枚举，但选择结果交给 Linux connector 执行。
+    if (supportsSerial && !supportsSsh) {
+      const serialPorts: IMenuItem[] = hasSelectablePort
+        ? portList0.map(item => ({
+          ...item,
+          current: this.connectorState.selectedTransport === 'serial'
+            && item.name === this.serialService.currentPort,
+        }))
+        : [{
+          name: 'Device not found',
+          text: '',
+          type: 'serial',
+          icon: 'fa-light fa-triangle-exclamation',
+          disabled: true,
+        }];
+      this.configList = [
+        ...serialPorts,
+        { sep: true },
+        {
+          name: this.translate.instant('BOARD_SELECTOR.TITLE'),
+          icon: 'fa-light fa-layer-group',
+          action: 'board-select',
+        },
+      ];
+      setTimeout(() => this.cd.detectChanges(), 0);
+      return;
+    }
+
+    // 同时支持 SSH/串口的 Linux 板并列展示两种方式，由用户明确选择。
+    if (this.isLinuxBoardProject) {
+      const serialPorts: IMenuItem[] = hasSelectablePort
+        ? portList0.map(item => ({
+          ...item,
+          current: this.connectorState.selectedTransport === 'serial'
+            && item.name === this.serialService.currentPort,
+        }))
+        : [{
+          name: 'Device not found',
+          text: '',
+          type: 'serial',
+          icon: 'fa-light fa-triangle-exclamation',
+          disabled: true,
+        }];
+      this.configList = [
+        ...serialPorts,
+        { sep: true },
+        {
+          name: 'SSH 连接设置',
+          text: this.connectorState.selectedTransport === 'ssh'
+            ? this.connectorState.endpointLabel
+            : '',
+          icon: 'fa-light fa-network-wired',
+          action: 'connector-settings',
+          current: this.connectorState.selectedTransport === 'ssh',
+        },
+        { sep: true },
+        {
+          name: this.translate.instant('BOARD_SELECTOR.TITLE'),
+          icon: 'fa-light fa-layer-group',
+          action: 'board-select',
+        },
+      ];
+      setTimeout(() => this.cd.detectChanges(), 0);
+      return;
+    }
+
+    // 未命中 Linux 路由，以下保持 Arduino 的串口、BLE、OTA 与调试器逻辑不变。
     let core = (this.projectService.currentBoardConfig?.['core'] || '').toLowerCase();
     const canShowBleOtaPorts = await this.canShowBleOtaPorts(core);
     const canShowNetworkOtaPorts = await this.canShowNetworkOtaPorts(core);
@@ -893,8 +1063,8 @@ export class HeaderComponent implements OnInit, OnDestroy {
         })
         break;
       case 'upload':
-        // 确认是否选择串口
-        if (!this.serialService.currentPort) {
+        // Arduino 和 Linux-serial 需要本地端口；Linux-SSH 由连接器设置提供目标。
+        if (this.uploaderService.requiresLocalPort() && !this.serialService.currentPort) {
           this.message.warning(this.translate.instant('SERIAL.SELECT_PORT_FIRST'));
           this.openPortList(event);
           return;
@@ -907,6 +1077,21 @@ export class HeaderComponent implements OnInit, OnDestroy {
           // console.log("上传未完成: ", JSON.stringify(err));
           item.state = this.resolveActionErrorState(err, ['result']);
         });
+        break;
+      case 'connector-stop':
+        // 停止操作仅属于 Linux/Python 远端运行，不进入 Arduino 上传流程。
+        if (item.state === 'doing') return;
+        item.state = 'doing';
+        this.uploaderService.stopPythonProject().then(result => {
+          item.state = (result['state'] as IMenuItem['state']) || 'done';
+        }).catch(err => {
+          item.state = this.resolveActionErrorState(err, ['result']);
+        });
+        break;
+      case 'connector-settings':
+        // 只有声明 SSH 能力的 Linux 板开放连接设置。
+        if (!this.supportsLinuxBoardConnector('ssh')) return;
+        this.openConnectorSettingDialog();
         break;
       case 'settings-open':
         this.uiService.openWindow(item.data);
@@ -1037,6 +1222,7 @@ export class HeaderComponent implements OnInit, OnDestroy {
     this.unregisterHeaderMenuAutomation = null;
     this.appStoreSubscription?.unsubscribe();
     this.boardChangeSubscription?.unsubscribe();
+    this.connectorStateSubscription?.unsubscribe();
     if (this.bleDevicesSubscription) {
       this.bleDevicesSubscription.unsubscribe();
     }
@@ -1667,6 +1853,29 @@ export class HeaderComponent implements OnInit, OnDestroy {
 
   async openBoardSelectorDialog() {
     await this.uiService.openBoardSelector();
+  }
+
+  openConnectorSettingDialog(settings?: Partial<LinuxBoardSshSettings>): void {
+    if (!this.supportsLinuxBoardConnector('ssh')) return;
+    this.closePortList();
+    this.modal.create({
+      nzTitle: null,
+      nzFooter: null,
+      nzClosable: false,
+      nzMaskClosable: false,
+      nzBodyStyle: { padding: '0' },
+      nzWidth: '440px',
+      nzContent: ConnectorSettingDialogComponent,
+      nzData: settings ? { settings } : null,
+    });
+  }
+
+  headerButtonLabel(button: IMenuItem): string {
+    // Python/Linux 的构建产物是源码，因此将 Arduino 的“编译”按钮文案改为“生成”。
+    if (this.isLinuxBoardProject && button.action === 'compile') {
+      return '生成';
+    }
+    return this.translate.instant(button.name || '');
   }
 
   appStoreBtn = {

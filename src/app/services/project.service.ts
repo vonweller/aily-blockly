@@ -36,6 +36,19 @@ import {
   ExternalProjectDataImportResult,
 } from './project-data/project-data-legacy-import';
 import { materializeGenericProjectDataValues } from './project-data/project-data-generic-values';
+import {
+  isBoardCompatibleWithProjectMode,
+  normalizeProjectMode,
+} from './linux-board-project-route';
+import {
+  AILY_LINUX_NPM_SCOPE,
+  AILY_NPM_SCOPE,
+  AILY_PACKAGE_SCOPES,
+  isAilyBoardPackageName,
+  isAilyCoreLibraryPackageName,
+  isAilyLibraryPackageName,
+  isAilyScopedPackageName,
+} from './development-resource-routing';
 
 interface ProjectPackageData {
   name: string;
@@ -214,10 +227,10 @@ export class ProjectService {
   ): Record<string, string> {
     return Object.fromEntries(
       Object.entries(deps || {}).filter(([key]) => {
-        if (key.startsWith('@aily-project/board-') || key.startsWith('@aily-project/coder-')) {
+        if (isAilyBoardPackageName(key) || key.startsWith('@aily-project/coder-')) {
           return false;
         }
-        if (key.startsWith('@aily-project/lib-core-')) {
+        if (isAilyCoreLibraryPackageName(key)) {
           return false;
         }
         return true;
@@ -425,7 +438,7 @@ export class ProjectService {
     if (!normalized) {
       return normalized;
     }
-    if (normalized.startsWith('@aily-project/')) {
+    if (isAilyScopedPackageName(normalized)) {
       return normalized;
     }
     if (normalized.startsWith('board-')) {
@@ -445,7 +458,7 @@ export class ProjectService {
 
   private async buildNpmInstallCommand(
     packageSpec: string,
-    options: string | { prefixPath?: string; noSave?: boolean } = {}
+    options: string | { prefixPath?: string; noSave?: boolean; registry?: string } = {}
   ): Promise<string> {
     const installOptions = typeof options === 'string' ? { prefixPath: options } : options;
     const args = [`npm install ${packageSpec}`];
@@ -458,14 +471,22 @@ export class ProjectService {
     const userConfig = this.electronService.isElectron && window['env']?.get
       ? String(await window['env'].get('NPM_CONFIG_USERCONFIG') || '').trim()
       : '';
-    const registry = this.electronService.isElectron && window['env']?.get
-      ? String(await window['env'].get('AILY_NPM_REGISTRY') || '').trim()
-      : '';
+    // 调用方为 Python/Linux 显式传专用仓库；Arduino 未传时保持原 AILY_NPM_REGISTRY 行为。
+    const isLinuxPackage = packageSpec.startsWith(`${AILY_LINUX_NPM_SCOPE}/`);
+    const registryEnvName = isLinuxPackage ? 'AILY_NPM_REGISTRY_LINUX' : 'AILY_NPM_REGISTRY';
+    const registry = String(installOptions.registry || '').trim() || (
+      this.electronService.isElectron && window['env']?.get
+        ? String(await window['env'].get(registryEnvName) || '').trim()
+        : ''
+    );
     if (userConfig) {
       args.push(`--userconfig "${userConfig}"`);
     }
     if (registry) {
-      args.push(`--@aily-project:registry="${registry}"`);
+      const registryScope = isLinuxPackage
+        ? AILY_LINUX_NPM_SCOPE
+        : AILY_NPM_SCOPE;
+      args.push(`--${registryScope}:registry="${registry}"`);
     }
     return args.join(' ');
   }
@@ -518,7 +539,7 @@ export class ProjectService {
         packageJson.name = inputName;
         packageJson.nickname = packageJson.name;
       }
-      // 设置开发框架
+      // 将向导选择持久化为唯一模式来源，后续据此切换 Python/Linux 与 Arduino 全链路。
       packageJson.devmode = newProjectData.devmode;
 
       window['fs'].writeFileSync(`${projectPath}/package.json`, JSON.stringify(packageJson, null, 2));
@@ -547,7 +568,11 @@ export class ProjectService {
       const projectPath = this.buildProjectPath(newProjectData);
       const boardPackageName = this.normalizeAilyBoardPackageName(newProjectData.board.name);
       const boardPackage = this.buildNpmPackageSpec(boardPackageName, newProjectData.board.version);
-      const installCommand = await this.buildNpmInstallCommand(boardPackage, appDataPath);
+      // 创建前还没有 package.json，用向导选定的 devmode 决定板包仓库。
+      const installCommand = await this.buildNpmInstallCommand(boardPackage, {
+        prefixPath: appDataPath,
+        registry: this.configService.getNpmRegistryForProject({ devmode: newProjectData.devmode }),
+      });
 
       this.uiService.updateFooterState({ state: 'doing', text: this.translate.instant('PROJECT.CREATING_PROJECT') });
       const npmInstallResult = await this.appDataResourceLock.runExclusive(`project:new:install-board:${boardPackage}`, () =>
@@ -813,7 +838,7 @@ export class ProjectService {
         ...(packageJson?.dependencies || {}),
         ...(packageJson?.devDependencies || {}),
         ...(packageJson?.optionalDependencies || {}),
-      }).filter((name) => name.startsWith('@aily-project/lib-')),
+      }).filter((name) => isAilyLibraryPackageName(name)),
     );
     const scannedLibraryNames = new Set(libraryNames);
     const missingRetainedLibraryNames = [...new Set(loadedLibraryNames)]
@@ -861,7 +886,7 @@ export class ProjectService {
       ...(packageJson?.devDependencies || {}),
       ...(packageJson?.optionalDependencies || {}),
     })
-      .filter(([name]) => name.startsWith('@aily-project/lib-'))
+      .filter(([name]) => isAilyLibraryPackageName(name))
       .map(([name, version]) => [name, String(version ?? '')] as const)
       .sort(([a], [b]) => a.localeCompare(b));
     const language = this.translate.currentLang || this.translate.defaultLang || 'en';
@@ -872,21 +897,23 @@ export class ProjectService {
       'generator.js',
       window['path'].join('i18n', `${language}.json`),
     ];
-    const scopePath = window['path'].join(projectPath, 'node_modules', '@aily-project');
     const libraryFileSignatures: Array<[string, string, string]> = [];
 
-    if (window['fs'].existsSync(scopePath)) {
-      const libraryDirectoryNames = window['fs'].readdirSync(scopePath)
-        .filter((name: string) => name.startsWith('lib-'))
-        .sort((a: string, b: string) => a.localeCompare(b));
+    for (const scope of AILY_PACKAGE_SCOPES) {
+      const scopePath = window['path'].join(projectPath, 'node_modules', scope);
+      if (window['fs'].existsSync(scopePath)) {
+        const libraryDirectoryNames = window['fs'].readdirSync(scopePath)
+          .filter((name: string) => name.startsWith('lib-'))
+          .sort((a: string, b: string) => a.localeCompare(b));
 
-      for (const directoryName of libraryDirectoryNames) {
-        for (const fileName of runtimeFileNames) {
-          const filePath = window['path'].join(scopePath, directoryName, fileName);
-          const fileSignature = window['fs'].existsSync(filePath)
-            ? window['fs'].md5Buffer(window['fs'].readFileSync(filePath))
-            : 'missing';
-          libraryFileSignatures.push([directoryName, fileName, fileSignature]);
+        for (const directoryName of libraryDirectoryNames) {
+          for (const fileName of runtimeFileNames) {
+            const filePath = window['path'].join(scopePath, directoryName, fileName);
+            const fileSignature = window['fs'].existsSync(filePath)
+              ? window['fs'].md5Buffer(window['fs'].readFileSync(filePath))
+              : 'missing';
+            libraryFileSignatures.push([`${scope}/${directoryName}`, fileName, fileSignature]);
+          }
         }
       }
     }
@@ -1489,14 +1516,14 @@ export class ProjectService {
     const prjPackageJson = await this.getPackageJson();
     const deps = Object.keys(prjPackageJson.dependencies || {});
     const fromDeps =
-      deps.find((dep) => dep.startsWith('@aily-project/board-'))
+      deps.find((dep) => isAilyBoardPackageName(dep))
       ?? deps.find((dep) => dep.startsWith('@aily-project/coder-'));
     if (fromDeps) {
       return fromDeps;
     }
     const boardDeps = Object.keys(prjPackageJson.boardDependencies || {});
     const fromBoardDeps =
-      boardDeps.find((dep) => dep.startsWith('@aily-project/board-'))
+      boardDeps.find((dep) => isAilyBoardPackageName(dep))
       ?? boardDeps.find((dep) => dep.startsWith('@aily-project/coder-'));
     if (fromBoardDeps) {
       return fromBoardDeps;
@@ -1511,7 +1538,7 @@ export class ProjectService {
             return boardPackage;
           }
           const board = String(aci?.target?.board ?? '').trim();
-          if (board.startsWith('@aily-project/')) {
+          if (isAilyScopedPackageName(board)) {
             return board;
           }
         } catch {
@@ -2377,7 +2404,12 @@ export class ProjectService {
     }
   }
 
-  async changeBoard(boardInfo: { "name": string, "version": string }) {
+  async changeBoard(boardInfo: {
+    name: string;
+    version: string;
+    mode?: string[];
+    selectedFramework?: string;
+  }) {
     this.isBoardSwitchInProgress = true;
     let reloadPromise: Promise<void> | null = null;
     try {
@@ -2385,31 +2417,52 @@ export class ProjectService {
       if (!this.currentProjectPath) {
         throw new Error('当前项目路径未设置');
       }
+      const currentPackageJson = await this.getPackageJson();
+      const currentProjectMode = normalizeProjectMode(currentPackageJson) || 'arduino';
+      const isAilyCode = this.isAilyCodeProject();
+      const requestedBoardInfo = {
+        ...boardInfo,
+        name: this.normalizeAilyBoardPackageName(boardInfo.name),
+      };
+      let normalizedBoardInfo = requestedBoardInfo;
+      if (!isAilyCode) {
+        const catalogBoard = this.configService.boardDict[requestedBoardInfo.name];
+        if (!catalogBoard) {
+          throw new Error(`开发板 ${requestedBoardInfo.name} 不在当前开发板目录中`);
+        }
+        normalizedBoardInfo = { ...catalogBoard, ...requestedBoardInfo };
+        if (!isBoardCompatibleWithProjectMode(normalizedBoardInfo, currentPackageJson)) {
+          throw new Error(
+            `当前 ${currentProjectMode} 项目不能切换到其他开发模式的开发板`,
+          );
+        }
+      }
       // 0. 保存当前项目
       await this.save();
       this.message.loading(this.translate.instant('PROJECT.SWITCHING_BOARD'), { nzDuration: 5000 });
 
       // 记录开发板使用次数
-      const normalizedBoardInfo = {
-        ...boardInfo,
-        name: this.normalizeAilyBoardPackageName(boardInfo.name),
-      };
       this.configService.recordBoardUsage(normalizedBoardInfo.name);
       const currentBoardModule = await this.getBoardModule();
 
       // 1. npm install 安装boardInfo.name@boardInfo.version 到 appDataPath（与 projectNew 一致）
       const appDataPath = window['path'].getAppDataPath();
       const newBoardPackage = this.buildNpmPackageSpec(normalizedBoardInfo.name, normalizedBoardInfo.version);
+      // 切板先按目标 boards.json.mode 选择仓库，不能继续沿用旧项目的 devmode。
+      const boardRegistry = this.configService.getNpmRegistryForBoard(normalizedBoardInfo);
       console.log('安装新开发板模块:', newBoardPackage);
       this.uiService.updateFooterState({ state: 'doing', text: this.translate.instant('PROJECT.INSTALLING_NEW_BOARD') });
-      const appDataInstallCommand = await this.buildNpmInstallCommand(newBoardPackage, appDataPath);
+      const appDataInstallCommand = await this.buildNpmInstallCommand(newBoardPackage, {
+        prefixPath: appDataPath,
+        registry: boardRegistry,
+      });
       await this.appDataResourceLock.runExclusive(`project:switch-board:install-appdata:${newBoardPackage}`, () =>
         this.cmdService.runAsyncChecked(appDataInstallCommand)
       );
 
       // 2. 预安装到当前项目的 node_modules，但不写 package.json；最终 package.json 变更交给 watcher 处理。
       await this.cmdService.runAsyncChecked(
-        await this.buildNpmInstallCommand(newBoardPackage, { noSave: true }),
+        await this.buildNpmInstallCommand(newBoardPackage, { noSave: true, registry: boardRegistry }),
         this.currentProjectPath,
       );
 
@@ -2418,8 +2471,6 @@ export class ProjectService {
       this.uiService.updateFooterState({ state: 'doing', text: this.translate.instant('PROJECT.UPDATING_PROJECT_CONFIG') });
 
       // 读取当前package.json保留项目基本信息
-      const currentPackageJson = await this.getPackageJson();
-
       // 获取新开发板的模板package.json（从 appDataPath 读取）
       const templatePath = window['path'].join(appDataPath, 'node_modules', normalizedBoardInfo.name, 'template');
       const templatePackageJsonPath = `${templatePath}${separator}package.json`;
@@ -2428,10 +2479,10 @@ export class ProjectService {
         // 读取模板package.json
         const templatePackageJson = JSON.parse(window['fs'].readFileSync(templatePackageJsonPath, 'utf8'));
 
-        const selectedFramework = String((boardInfo as { selectedFramework?: string }).selectedFramework ?? '').trim();
-        const isAilyCode = this.isAilyCodeProject();
+        const selectedFramework = String(normalizedBoardInfo.selectedFramework ?? '').trim();
 
         // 合并配置：保留当前项目的基本信息，使用新开发板的依赖和配置
+        // Blockly 切板保留当前 devmode；Aily Code 继续由所选 framework 决定。
         const newPackageJson: Record<string, unknown> = {
           ...templatePackageJson,
           name: currentPackageJson.name, // 保留项目名称
@@ -2450,12 +2501,14 @@ export class ProjectService {
             newPackageJson['devmode'] = selectedFramework;
           }
         } else {
+          // 同模式切板只替换板包和模板配置，不改变当前项目的开发模式。
+          newPackageJson['devmode'] = currentProjectMode;
           newPackageJson['dependencies'] = {
             // 从模板获取新的开发板依赖和基础库
             ...templatePackageJson.dependencies,
             ...Object.fromEntries(
               Object.entries(currentPackageJson.dependencies || {})
-                .filter(([key]) => !key.startsWith('@aily-project/board-')),
+                .filter(([key]) => !isAilyBoardPackageName(key)),
             ),
           };
         }

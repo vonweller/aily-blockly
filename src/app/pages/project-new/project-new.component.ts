@@ -34,6 +34,7 @@ import { NzModalService } from 'ng-zorro-antd/modal';
 import { AilyCodeProjectService } from '../../services/aily-code-project.service';
 import type { AilyCodeNewProjectData } from '../../services/aily-code-project.service';
 import { UnsaveDialogComponent } from '../../main-window/components/unsave-dialog/unsave-dialog.component';
+import { normalizeBoardModes } from '../../services/linux-board-project-route';
 
 @Component({
   selector: 'app-project-new',
@@ -375,7 +376,8 @@ export class ProjectNewComponent implements OnDestroy {
     if (this.selectedProjectCategory === 'coder') {
       this.syncCoderPlatformSelection(boardInfo);
     } else {
-      this.newProjectData.devmode = boardInfo.mode ? this.currentBoard.mode[0] : 'arduino';
+      // Blockly 项目从 boards.json.mode 继承模式；旧 Arduino 板未声明 mode 时默认 arduino。
+      this.newProjectData.devmode = normalizeBoardModes(boardInfo)[0] || 'arduino';
     }
     this.devmodes = boardInfo.mode;
     if (this.selectedProjectCategory === 'blockly') {
@@ -459,7 +461,11 @@ export class ProjectNewComponent implements OnDestroy {
   async nextStep() {
     this.boardVersionList = [this.newProjectData.board.version];
     this.currentStep = this.currentStep + 1;
-    this.boardVersionList = (await this.npmService.getPackageVersionList(this.newProjectData.board.name)).reverse();
+    // 项目尚未创建，按所选板的 mode 决定从 Linux 还是默认 Arduino npm 来源查询版本。
+    this.boardVersionList = (await this.npmService.getPackageVersionList(
+      this.newProjectData.board.name,
+      this.configService.getNpmRegistryForBoard(this.currentBoard),
+    )).reverse();
   }
 
   async selectFolder() {

@@ -9,12 +9,16 @@ import {
   createMicroPythonGenerator,
 } from '../components/blockly/generators/micropython/micropython';
 import {
+  PythonGenerator,
+  createPythonGenerator,
+} from '../components/blockly/generators/python/python';
+import {
   prepareBlocklyProjectDataForCodeGeneration,
   wrapProjectDataGeneratorFunctions,
 } from '../../../services/project-data/blockly-project-data-adapter';
 
-export type BlocklyGeneratorMode = 'arduino' | 'micropython';
-export type ProjectGenerator = ArduinoGenerator | MicroPythonGenerator;
+export type BlocklyGeneratorMode = 'arduino' | 'micropython' | 'python';
+export type ProjectGenerator = ArduinoGenerator | MicroPythonGenerator | PythonGenerator;
 
 export interface GeneratorRuntimeContext {
   mode: BlocklyGeneratorMode;
@@ -29,6 +33,7 @@ export interface GeneratorLoadResult {
   filePath: string;
   arduinoBlockTypes: string[];
   micropythonBlockTypes: string[];
+  pythonBlockTypes: string[];
   globalNames: string[];
 }
 
@@ -150,9 +155,12 @@ export class BlocklyGeneratorRuntimeService {
       throw new Error('Unable to create Blockly generator runtime realm');
     }
 
-    const generator = context.mode === 'micropython'
-      ? createMicroPythonGenerator()
-      : createArduinoGenerator();
+    // 模式只在会话创建处决策一次，保证同一项目不会同时持有 Python 与 Arduino 生成器状态。
+    const generator = context.mode === 'python'
+      ? createPythonGenerator()
+      : context.mode === 'micropython'
+        ? createMicroPythonGenerator()
+        : createArduinoGenerator();
     const session: RuntimeSession = {
       id: sessionId,
       epoch,
@@ -263,6 +271,7 @@ export class BlocklyGeneratorRuntimeService {
     wrapProjectDataGeneratorFunctions(session.generator, [
       ...result.arduinoBlockTypes,
       ...result.micropythonBlockTypes,
+      ...result.pythonBlockTypes,
     ]);
     return result;
   }
@@ -337,9 +346,11 @@ export class BlocklyGeneratorRuntimeService {
 
     realm['Blockly'] = blocklyFacade;
     realm['global'] = session.realmWindow;
+    // 库脚本仅能看到当前模式的生成器全局，阻止 Linux/Python 与 Arduino handler 交叉注册。
     realm['Arduino'] = session.context.mode === 'arduino' ? session.generator : undefined;
     realm['MPY'] = session.context.mode === 'micropython' ? session.generator : undefined;
     realm['MicropPython'] = session.context.mode === 'micropython' ? session.generator : undefined;
+    realm['Python'] = session.context.mode === 'python' ? session.generator : undefined;
     realm['pinyinPro'] = (globalThis as Record<string, unknown>)['pinyinPro'];
     realm['__BLOCKLY_LIB_I18N__'] = Object.create(null);
 
@@ -590,10 +601,12 @@ export class BlocklyGeneratorRuntimeService {
   ): GeneratorLoadResult {
     const arduino = (session.realmWindow as any).Arduino;
     const micropython = (session.realmWindow as any).MPY || (session.realmWindow as any).MicropPython;
+    const python = (session.realmWindow as any).Python;
     return {
       filePath,
       arduinoBlockTypes: arduino?.forBlock ? Object.keys(arduino.forBlock) : [],
       micropythonBlockTypes: micropython?.forBlock ? Object.keys(micropython.forBlock) : [],
+      pythonBlockTypes: python?.forBlock ? Object.keys(python.forBlock) : [],
       globalNames,
     };
   }

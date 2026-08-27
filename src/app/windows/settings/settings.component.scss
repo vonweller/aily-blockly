@@ -26,11 +26,11 @@
   align-items: center;
   gap: 0;
 
-  > button:first-child {
+  >button:first-child {
     border-radius: 6px;
   }
 
-  &.has-coder > button:first-child {
+  &.has-coder>button:first-child {
     border-radius: 6px 0 0 6px;
   }
 }
@@ -164,9 +164,10 @@ textarea {
 
 .tool-item {
   flex-wrap: nowrap;
+  margin-bottom: 0 !important;
 
-  &:first-child {
-    margin-bottom: 0 !important;
+  &:last-child {
+    margin-bottom: 15px !important;
   }
 }
 

@@ -182,7 +182,8 @@
     "test:e2e:simulator-subapp-mainline": "node ./scripts/run-simulator-subapp-mainline-e2e.mjs",
     "validate:e2e:simulator-debug": "node ./scripts/validate-simulator-debug-e2e-report.mjs",
     "setup:external-tools": "node scripts/install-external-tools.js",
-    "setup:local-builder": "node scripts/use-local-builder.mjs"
+    "setup:local-builder": "node scripts/use-local-builder.mjs",
+    "setup:local-connector": "node scripts/use-local-connector.mjs"
   },
   "private": true,
   "dependencies": {

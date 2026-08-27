@@ -6,6 +6,14 @@ import { API, setServerUrl, setRegistryUrl, setToolWebUrl } from '../configs/api
 import { calculateSimilarity, extractKeywords } from '../utils/fuzzy-search.utils';
 import { mapCoderBoardIndexToBoardList, type CoderBoardIndexEntry } from '../utils/coder-board.mapper';
 import { normalizeLanguageCode } from '../utils/language-code';
+import {
+  appendScopedNpmRegistry,
+  isPythonBoard,
+  isPythonProject,
+  LinuxDevelopmentSources,
+  mergeBoardCatalogs,
+  selectLibraryCatalog,
+} from './development-resource-routing';
 
 export const DEVELOPMENT_MODE_PREFERENCES = ['coder', 'blockly'] as const;
 export type DevelopmentModePreference = typeof DEVELOPMENT_MODE_PREFERENCES[number];
@@ -212,7 +220,28 @@ export class ConfigService {
     }
 
     // 合并用户配置和默认配置
-    this.data = { ...this.data, ...userConfData };
+    const defaultData = this.data;
+    const defaultRegions = defaultData?.regions || {};
+    const userRegions = userConfData?.regions || {};
+    const mergedRegions = Object.fromEntries(
+      [...new Set([...Object.keys(defaultRegions), ...Object.keys(userRegions)])]
+        .map((regionKey) => [
+          regionKey,
+          {
+            ...(defaultRegions[regionKey] || {}),
+            ...(userRegions[regionKey] || {}),
+          },
+        ]),
+    );
+    this.data = {
+      ...defaultData,
+      ...userConfData,
+      linux: {
+        ...(defaultData?.linux || {}),
+        ...(userConfData?.linux || {}),
+      },
+      regions: mergedRegions,
+    };
     this.data.selectedLanguage = normalizeLanguageCode(this.data.selectedLanguage);
     this.data.developmentModePreference = this.isCoderEnabled()
       ? this.normalizeDevelopmentModePreference(this.data.developmentModePreference)
@@ -267,25 +296,18 @@ export class ConfigService {
 
   private async loadAndCacheBoardList(configFilePath: string): Promise<void> {
     const localPath = `${configFilePath}/boards.json`;
-
-    try {
-      if (this.electronService.exists(localPath)) {
-        this.boardList = this.parseBoardList(this.electronService.readFile(localPath));
-        const boardList = await this.loadBoardList();
-        if (boardList.length > 0) {
-          this.boardList = boardList;
-          this.electronService.writeFile(localPath, JSON.stringify(boardList));
-        }
-      } else {
-        // 首次启动软件，创建boards.json
-        const boardList = await this.fetchBoardListOrThrow();
-        this.boardList = boardList;
-        this.electronService.writeFile(localPath, JSON.stringify(boardList));
-      }
-    } catch (error) {
-      console.error('[ConfigService] boards.json 加载失败，尝试从线上恢复:', error);
-      await this.reloadBoardListFromRemote(localPath, error);
-    }
+    const linuxBoardsUrl = this.getLinuxBoardsUrl();
+    // Arduino 与 Linux 板目录独立加载和缓存，完成后再合并成统一的选择列表。
+    const [arduinoBoardList, linuxBoardList] = await Promise.all([
+      this.loadAndCacheArduinoBoardList(localPath),
+      this.loadConfiguredCatalog(
+        `${configFilePath}/boards-linux.json`,
+        linuxBoardsUrl,
+        'Linux 开发板列表',
+        'boards',
+      ),
+    ]);
+    this.boardList = mergeBoardCatalogs(arduinoBoardList, linuxBoardList);
 
     this.boardDict = {};
     // 创建一个boardDict，方便通过name快速查找board信息
@@ -293,6 +315,31 @@ export class ConfigService {
       this.boardDict[board.name] = board;
     });
     // console.log(`[ConfigService] boardDict创建完成，共 ${Object.keys(this.boardDict).length} 个开发板`);
+  }
+
+  private async loadAndCacheArduinoBoardList(localPath: string): Promise<any[]> {
+    let arduinoBoardList: any[] = [];
+
+    try {
+      if (this.electronService.exists(localPath)) {
+        arduinoBoardList = this.parseBoardList(this.electronService.readFile(localPath));
+        const boardList = await this.loadBoardList();
+        if (boardList.length > 0) {
+          arduinoBoardList = boardList;
+          this.electronService.writeFile(localPath, JSON.stringify(boardList));
+        }
+      } else {
+        // 首次启动软件，创建boards.json
+        const boardList = await this.fetchBoardListOrThrow();
+        arduinoBoardList = boardList;
+        this.electronService.writeFile(localPath, JSON.stringify(boardList));
+      }
+    } catch (error) {
+      console.error('[ConfigService] boards.json 加载失败，尝试从线上恢复:', error);
+      await this.reloadBoardListFromRemote(localPath, error);
+      arduinoBoardList = this.boardList;
+    }
+    return arduinoBoardList;
   }
 
   private async loadAndCacheLibraryList(configFilePath: string): Promise<void> {
@@ -559,6 +606,44 @@ export class ConfigService {
    */
   getCurrentNpmRegistry(): string {
     return this.getCurrentRegionConfig()?.npm_registry || '';
+  }
+
+  getLinuxBoardsUrl(): string {
+    const resourceUrl = this.normalizeResourceSourceUrl(this.getCurrentResourceUrl());
+    return resourceUrl ? `${resourceUrl}/boards-linux.json` : '';
+  }
+
+  getLinuxLibrariesUrl(): string {
+    const resourceUrl = this.normalizeResourceSourceUrl(this.getCurrentResourceUrl());
+    return resourceUrl ? `${resourceUrl}/libraries-linux.json` : '';
+  }
+
+  getLinuxNpmRegistry(): string {
+    return this.normalizeResourceSourceUrl(
+      this.data?.linux?.npm_registry
+      || this.getCurrentRegionConfig()?.npm_registry_linux
+      || '',
+    );
+  }
+
+  getNpmRegistryForProject(packageData: unknown): string {
+    // 已存在项目以 devmode 为准：Python 使用 Linux 仓库，Arduino 返回空值沿用原 npm 配置。
+    return isPythonProject(packageData) ? this.getLinuxNpmRegistry() : '';
+  }
+
+  getNpmRegistryForBoard(boardData: unknown): string {
+    // 新建或切换开发板时项目模式尚未落盘，因此改由 boards.json.mode 选择仓库。
+    return isPythonBoard(boardData) ? this.getLinuxNpmRegistry() : '';
+  }
+
+  withProjectNpmRegistry(command: string, packageData: unknown): string {
+    // 项目内 npm 命令统一在此按 devmode 注入 Linux 作用域仓库。
+    return appendScopedNpmRegistry(command, this.getNpmRegistryForProject(packageData));
+  }
+
+  withBoardNpmRegistry(command: string, boardData: unknown): string {
+    // 项目外的板包命令统一在此按 boards.json.mode 注入 Linux 作用域仓库。
+    return appendScopedNpmRegistry(command, this.getNpmRegistryForBoard(boardData));
   }
 
   /**
@@ -853,6 +938,9 @@ export class ConfigService {
 
   libraryList = [];
   libraryDict = {};
+  private linuxLibraryList: any[] = [];
+  private linuxLibrarySourceUrl: string | null = null;
+  private linuxLibraryLoadPromise: Promise<void> | null = null;
 
   tagList: any = {};
 
@@ -1240,6 +1328,97 @@ export class ConfigService {
     this.emitDedupedError('library-index', message);
   }
 
+  async ensureLibraryListForProject(packageData: unknown): Promise<void> {
+    // Arduino 库目录已在启动阶段加载；只有 Python 项目需要按需加载独立 libraries-linux.json。
+    if (!isPythonProject(packageData) || !this.electronService.isElectron) {
+      return;
+    }
+
+    const sourceUrl = this.getLinuxLibrariesUrl();
+    if (this.linuxLibrarySourceUrl === sourceUrl) {
+      return;
+    }
+    if (this.linuxLibraryLoadPromise) {
+      return this.linuxLibraryLoadPromise;
+    }
+
+    this.linuxLibraryLoadPromise = (async () => {
+      const configFilePath = window['path'].getAppDataPath();
+      const libraries = await this.loadConfiguredCatalog(
+        `${configFilePath}/libraries-linux.json`,
+        sourceUrl,
+        'Linux 扩展库列表',
+        'libraries',
+      );
+      this.linuxLibraryList = libraries;
+      this.linuxLibrarySourceUrl = libraries.length > 0 || !sourceUrl ? sourceUrl : null;
+    })().finally(() => {
+      this.linuxLibraryLoadPromise = null;
+    });
+
+    return this.linuxLibraryLoadPromise;
+  }
+
+  getLibraryListForProject(packageData: unknown): any[] {
+    // 库管理器只读取当前模式对应的目录，避免 Arduino 与 Linux 同名库相互污染。
+    return selectLibraryCatalog(packageData, this.libraryList, this.linuxLibraryList);
+  }
+
+  private async loadConfiguredCatalog(
+    localPath: string,
+    sourceUrl: string,
+    resourceLabel: string,
+    wrapperKey: string,
+  ): Promise<any[]> {
+    if (!sourceUrl) {
+      return [];
+    }
+
+    let cachedItems: any[] = [];
+    if (this.electronService.exists(localPath)) {
+      try {
+        const cache = JSON.parse(this.electronService.readFile(localPath));
+        if (cache?.sourceUrl === sourceUrl && Array.isArray(cache.items)) {
+          cachedItems = cache.items;
+        }
+      } catch (error) {
+        console.warn(`[ConfigService] ignored invalid ${resourceLabel} cache:`, error);
+      }
+    }
+
+    try {
+      const response: any = await lastValueFrom(
+        this.http.get(sourceUrl, { responseType: 'json' })
+          .pipe(timeout(ConfigService.RESOURCE_REQUEST_TIMEOUT_MS)),
+      );
+      const items = Array.isArray(response)
+        ? response
+        : response && Array.isArray(response[wrapperKey])
+          ? response[wrapperKey]
+          : null;
+      if (!items) {
+        throw new Error(`${resourceLabel} JSON 格式无效`);
+      }
+      if (items.length > 0) {
+        this.electronService.writeFile(localPath, JSON.stringify({ sourceUrl, items }));
+        return items;
+      }
+      return cachedItems;
+    } catch (error) {
+      if (cachedItems.length > 0) {
+        console.warn(`[ConfigService] ${resourceLabel} refresh failed; using cache:`, error);
+        return cachedItems;
+      }
+
+      console.error(`[ConfigService] ${resourceLabel} load failed:`, error);
+      this.emitDedupedError(
+        `configured-catalog:${wrapperKey}`,
+        this.buildReloadFailureMessage(resourceLabel, sourceUrl, error, error),
+      );
+      return [];
+    }
+  }
+
   private parseArrayPayload(raw: string, invalidMessage: string, wrapperKey?: string): any[] {
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
@@ -1592,6 +1771,9 @@ interface AppConfig {
   /** 资源源列表 */
   resource_sources?: ResourceSourceConfig[];
 
+  /** Python-mode npm source. Catalogs continue to use the current resource base URL. */
+  linux?: LinuxDevelopmentSources;
+
   /** 区域配置 */
   regions: {
     [key: string]: {
@@ -1603,6 +1785,7 @@ interface AppConfig {
       ucenter_web?: string;
       tool_web: string;
       npm_registry: string;
+      npm_registry_linux?: string;
       resource: string;
       updater: string;
     }

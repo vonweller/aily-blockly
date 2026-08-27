@@ -27,6 +27,7 @@ import {
   resolveCoderFrameworkOption,
   resolveDefaultCoderFramework,
 } from '../../utils/coder-board.mapper';
+import { normalizeBoardModes } from '../../services/linux-board-project-route';
 
 export type ProjectCreationCategory = 'blockly' | 'coder';
 
@@ -336,6 +337,8 @@ export class ProjectNewComponent implements OnDestroy {
     this.newProjectData.board.version = boardInfo.version;
     if (this.selectedProjectCategory === 'coder') {
       this.syncCoderPlatformSelection(boardInfo);
+    } else {
+      this.newProjectData.devmode = normalizeBoardModes(boardInfo)[0] || 'arduino';
     }
     if (this.selectedProjectCategory === 'blockly') {
       this.loadMyTemplates(boardInfo.name);
@@ -387,7 +390,11 @@ export class ProjectNewComponent implements OnDestroy {
   async nextStep() {
     this.boardVersionList = [this.newProjectData.board.version];
     this.currentStep = this.currentStep + 1;
-    this.boardVersionList = (await this.npmService.getPackageVersionList(this.newProjectData.board.name)).reverse();
+    // 项目尚未创建，按所选板的 mode 决定从 Linux 还是默认 Arduino npm 来源查询版本。
+    this.boardVersionList = (await this.npmService.getPackageVersionList(
+      this.newProjectData.board.name,
+      this.configService.getNpmRegistryForBoard(this.currentBoard),
+    )).reverse();
   }
 
   async selectFolder() {

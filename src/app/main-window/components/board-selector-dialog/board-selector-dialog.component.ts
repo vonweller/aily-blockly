@@ -13,6 +13,7 @@ import {
   getCoderFrameworkOptions,
   resolveDefaultCoderFramework,
 } from '../../../utils/coder-board.mapper';
+import { isBoardCompatibleWithProjectMode } from '../../../services/linux-board-project-route';
 
 @Component({
   selector: 'app-board-selector-dialog',
@@ -71,7 +72,14 @@ export class BoardSelectorDialogComponent implements OnInit {
 
   async ngOnInit(): Promise<void> {
     this.loadingText = this.translate.instant('BOARD_SELECTOR.LOADING');
-    this.boardList = (this.data.boardList || []).filter(board => board.state !== 'todo');
+    const availableBoards = (this.data.boardList || []).filter(board => board.state !== 'todo');
+    // Aily Code 仍由 framework 选择器处理；Blockly 只能看到与当前 devmode 对应的板卡。
+    this.boardList = this.data.isAilyCode
+      ? availableBoards
+      : availableBoards.filter(board => isBoardCompatibleWithProjectMode(
+        board,
+        this.projectService.currentPackageData,
+      ));
     this.filteredBoardList = [...this.boardList];
     if (this.data.isAilyCode) {
       await this.initAilyCodeSelection();
