@@ -11,16 +11,15 @@ import {
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Router } from '@angular/router';
-import { TranslateModule } from '@ngx-translate/core';
+import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { NzModalService } from 'ng-zorro-antd/modal';
-import { TranslateService } from '@ngx-translate/core';
 import Sortable from 'sortablejs';
 import { ToolContainerComponent } from '../../components/tool-container/tool-container.component';
 import { SubWindowComponent } from '../../components/sub-window/sub-window.component';
-import { UiService } from '../../services/ui.service';
-import { ProjectService } from '../../services/project.service';
+import { UiService } from '@core/app-shell/public-api';
+import { ProjectService } from '@domain/project/public-api';
 import {
   APP_STORE_ZONES,
   AppItem,
@@ -29,11 +28,13 @@ import {
 } from './app-store.config';
 import { AppStoreService } from './app-store.service';
 import { Subscription } from 'rxjs';
-import { ToolI18nService } from '../../services/tool-i18n.service';
-import { SubappManagerService } from '../../services/subapp-manager.service';
-import { ChildToolProcessService } from '../../services/child-tool-process.service';
-import { MainUiAutomationService } from '../../services/main-ui-automation.service';
-import { ChildAppHostRegistryService } from '../../services/child-app-host-registry.service';
+import { ToolI18nService } from '@core/preferences/public-api';
+import {
+  SubappManagerService,
+  ChildToolProcessService,
+  ChildAppHostRegistryService,
+} from '@integration/subapps/public-api';
+import { MainUiAutomationService } from '@integration/automation/public-api';
 
 const SUBAPP_MORE_MENU_VIEWPORT_MARGIN = 8;
 const SUBAPP_MORE_MENU_GAP = 3;

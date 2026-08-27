@@ -20,7 +20,16 @@
             <div class="right-inner">
               <div class="item">
                 <div>{{ 'SETTINGS.FIELDS.PROJECT_FOLDER' | translate }}:</div>
-                <input nz-input [(ngModel)]="configData.project_path" [disabled]="true" />
+                <nz-input-group [nzAddOnAfter]="projectFolderButton">
+                  <input nz-input [(ngModel)]="configData.project_path" [disabled]="true" />
+                </nz-input-group>
+                <ng-template #projectFolderButton>
+                  <div class="btn ccenter ffull" (click)="selectProjectFolder()"
+                    [attr.aria-label]="'SETTINGS.FIELDS.PROJECT_FOLDER' | translate"
+                    [attr.title]="'SETTINGS.FIELDS.PROJECT_FOLDER' | translate">
+                    <i class="fa-light fa-folder"></i>
+                  </div>
+                </ng-template>
               </div>
               <div class="item lang-item">
                 <div>{{ 'SETTINGS.FIELDS.LANGUAGE' | translate }}:</div>
@@ -37,6 +46,7 @@
                 <div>{{ 'SETTINGS.FIELDS.DEVELOPMENT_MODE_PREFERENCE' | translate }}:</div>
                 <div class="development-mode-buttons" [class.has-coder]="coderEnabled">
                   <button
+                    class="development-mode-button blockly-mode-button"
                     nz-button
                     nzSize="small"
                     [nzType]="developmentModePreference === 'blockly' ? 'primary' : 'default'"
@@ -48,7 +58,7 @@
                     [nzTooltipTitle]="coderDependencyState.installed
                       ? null
                       : ('SETTINGS.FIELDS.CODER_EXTENSION_HINT' | translate)">
-                    <button nz-button nzSize="small"
+                    <button class="development-mode-button coder-mode-button" nz-button nzSize="small"
                       [disabled]="coderDependencyState.installing"
                       [nzType]="developmentModePreference === 'coder' ? 'primary' : 'default'"
                       (click)="onDevelopmentModePreferenceChange('coder')">

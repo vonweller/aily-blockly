@@ -112,6 +112,9 @@ export const API = {
   get cancelTask() { return `${getServerUrl()}/api/v1/cancel_task`; },
   get generateTitle() { return `${getServerUrl()}/api/v1/generate_title`; },
   get conversationFeedback() { return `${getServerUrl()}/api/v1/conversation_feedback`; },
+  // Aily Coder cloud inline completion (host-authenticated SSE proxy)
+  get codeCompletions() { return `${getServerUrl()}/api/v3/code/completions`; },
+  get codeCompletionQuota() { return `${getServerUrl()}/api/v3/code/completions/quota`; },
   // cloud
   get cloudBase() { return `${getServerUrl()}/api/v1/cloud`; },
   get cloudSync() { return `${getServerUrl()}/api/v1/cloud/sync`; },

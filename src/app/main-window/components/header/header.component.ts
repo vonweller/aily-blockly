@@ -1,60 +1,56 @@
 import { CommonModule } from '@angular/common';
 import { ChangeDetectorRef, Component, ElementRef, isDevMode, NgZone, OnDestroy, OnInit, ViewChild, viewChild } from '@angular/core';
-import { HEADER_BTNS, HEADER_MENU } from '../../../configs/menu.config';
+import { HEADER_BTNS, HEADER_MENU, IMenuItem } from '../../../configs/menu.config';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { FormsModule } from '@angular/forms';
-import { ProjectService } from '../../../services/project.service';
-import { UiService } from '../../../services/ui.service';
-import { BuilderService } from '../../../services/builder.service';
-import { UploaderService } from '../../../services/uploader.service';
+import { ProjectService, RECENT_PROJECTS_STORAGE_LIMIT } from '@domain/project/public-api';
+import { UiService, UpdateService } from '@core/app-shell/public-api';
+import { BuilderService, ProbeRsService } from '@domain/build/public-api';
+import {
+  UploaderService,
+  PortItem,
+  SerialService,
+  BleOtaDeviceItem,
+  UploaderBleService,
+  hasLinkUploadParam,
+  selectSerialPort,
+} from '@domain/device/public-api';
 import { MenuComponent } from '../../../components/menu/menu.component';
-import { PortItem, SerialService } from '../../../services/serial.service';
 import { ActBtnComponent } from '../act-btn/act-btn.component';
-import { IMenuItem } from '../../../configs/menu.config';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { NzModalService } from 'ng-zorro-antd/modal';
 import { UnsaveDialogComponent } from '../unsave-dialog/unsave-dialog.component';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
-import { UpdateService } from '../../../services/update.service';
 import { Router } from '@angular/router';
-import { ElectronService } from '../../../services/electron.service';
-import { ConfigService } from '../../../services/config.service';
-import { AuthService } from '../../../services/auth.service';
-import { PlatformService } from '../../../services/platform.service';
-import { ProbeRsService } from '../../../services/probe-rs.service';
+import { ElectronService, PlatformService, CmdOutput, CmdService } from '@core/platform/public-api';
+import { ConfigService, ToolI18nService } from '@core/preferences/public-api';
+import { AuthService } from '@core/auth/public-api';
 import { AppItem } from '../../../configs/tool.config';
 import { AppStoreService } from '../../../tools/app-store/app-store.service';
 import { Subscription } from 'rxjs';
-import { BleOtaDeviceItem, UploaderBleService } from '../../../services/uploader-ble.service';
-import { ToolI18nService } from '../../../services/tool-i18n.service';
-import { CmdOutput, CmdService } from '../../../services/cmd.service';
 import { BlocklyService } from '../../../editors/blockly-editor/services/blockly.service';
 import {
   UiAutomationRegistryService,
   type UiAutomationCommandResult,
   type UiAutomationMenuItem,
   type UiAutomationMenuListOptions,
-} from '../../../services/ui-automation-registry.service';
-import {
   HOST_EXIT_REQUIRES_USER_REASON,
   mainMenuAutomationRejection,
-} from '../../../services/main-menu-automation-policy';
+} from '@integration/automation/public-api';
 import {
   persistBoardConfigSelection,
   shouldRunBoardConfigSelectionEffects,
 } from './board-config-selection';
-import { hasLinkUploadParam } from '../../../services/debugger-upload-policy';
-import { selectSerialPort } from '../../../services/serial-port-selection';
 import {
-  LinuxBoardConnector,
+  type LinuxBoardConnector,
   normalizeProjectMode,
   resolveLinuxBoardExecutionRoute,
-} from '../../../services/linux-board-project-route';
+} from '@shared/public-api';
 import {
   LinuxBoardConnectorService,
-  LinuxBoardConnectorState,
-  LinuxBoardSshSettings,
-} from '../../../services/linux-board-connector.service';
+  type LinuxBoardConnectorState,
+  type LinuxBoardSshSettings,
+} from '@integration/device/public-api';
 import { ConnectorSettingDialogComponent } from '../connector-setting-dialog/connector-setting-dialog.component';
 
 interface NetworkOtaTarget {
@@ -393,7 +389,8 @@ export class HeaderComponent implements OnInit, OnDestroy {
     if (!entry) {
       return;
     }
-    const recent = this.projectService.recentlyProjects || [];
+    const recent = (this.projectService.recentlyProjects || [])
+      .slice(0, RECENT_PROJECTS_STORAGE_LIMIT);
     entry.children =
       recent.length > 0
         ? recent.map((p: { name?: string; nickname?: string; path: string }) => ({
@@ -1035,7 +1032,7 @@ export class HeaderComponent implements OnInit, OnDestroy {
           const canContinue = await this.checkUnsavedChanges('close');
           if (!canContinue) return;
         }
-        this.projectService.close();
+        await this.projectService.close();
         break;
       case 'project-open-by-explorer':
         window['other'].openByExplorer(this.projectService.currentProjectPath);
@@ -1679,9 +1676,12 @@ export class HeaderComponent implements OnInit, OnDestroy {
       return null;
     }
     const pathApi = window['path'];
+    const sourceRoot = this.projectService.isAilyCodeProject(projectRoot)
+      ? pathApi.join(projectRoot, 'sketch', 'src')
+      : pathApi.join(projectRoot, 'src');
     return {
-      srcDir: pathApi.join(projectRoot, 'src'),
-      requiredFilePath: pathApi.join(projectRoot, 'src', 'partitions.csv'),
+      srcDir: sourceRoot,
+      requiredFilePath: pathApi.join(sourceRoot, 'partitions.csv'),
       legacyFilePath: pathApi.join(projectRoot, 'partitions.csv'),
     };
   }

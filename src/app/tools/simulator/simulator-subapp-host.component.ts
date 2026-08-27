@@ -9,7 +9,7 @@ import {
 } from '@angular/core';
 import { Subscription } from 'rxjs';
 
-import { ProjectService } from '../../services/project.service';
+import { ProjectService } from '@domain/project/public-api';
 import { BlocklyService } from '../../editors/blockly-editor/services/blockly.service';
 import {
   SimulatorSubappFrameAdapter,
@@ -18,7 +18,6 @@ import {
   type SimulatorSubappSurface,
   type SimulatorSubappFrameState,
 } from './simulator-subapp-frame-adapter';
-import { SimulatorProjectRebuildBridgeService } from '../../services/simulator-project-rebuild-bridge.service';
 
 interface SimulatorSubappElectronApi {
   openProjectScene(options: {
@@ -121,9 +120,7 @@ implements AfterViewInit, OnDestroy {
     private readonly projectService: ProjectService,
     private readonly blocklyService: BlocklyService,
     private readonly ngZone: NgZone,
-    rebuildBridge: SimulatorProjectRebuildBridgeService,
   ) {
-    rebuildBridge.start();
     this.projectActivationSubscription =
       this.projectService.projectActivation$.subscribe(() => {
         if (!this.destroyed) void this.restart();

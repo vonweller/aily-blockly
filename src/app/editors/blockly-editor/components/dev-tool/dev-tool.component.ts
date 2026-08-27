@@ -4,18 +4,16 @@ import { NzMessageService } from 'ng-zorro-antd/message';
 import { NzModalService } from 'ng-zorro-antd/modal';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
-import { ActionService } from '../../../../services/action.service';
-import { AuthService } from '../../../../services/auth.service';
-import { BuilderService } from '../../../../services/builder.service';
-import { ConnectionGraphService } from '../../../../services/connection-graph.service';
-import { ConfigService } from '../../../../services/config.service';
-import { ElectronService } from '../../../../services/electron.service';
-import { ProjectService } from '../../../../services/project.service';
-import { ThemeService } from '../../../../services/theme.service';
-import { UiService } from '../../../../services/ui.service';
-import { WorkflowService, ProcessState } from '../../../../services/workflow.service';
+import { ActionService, UiService, WorkflowService, ProcessState } from '@core/app-shell/public-api';
+import { AuthService } from '@core/auth/public-api';
+import { BuilderService } from '@domain/build/public-api';
+import { ConnectionGraphService } from '@domain/schematic/public-api';
+import { ConfigService, ThemeService } from '@core/preferences/public-api';
+import { ElectronService } from '@core/platform/public-api';
+import { ProjectService } from '@domain/project/public-api';
 import { ImageViewerComponent } from '../../../../components/image-viewer/image-viewer.component';
-import { BackgroundAgentService } from '../../../../services/background-agent.service';
+import { AilyChatDemandSessionService } from '@integration/simulator/public-api';
+import { Subscription } from 'rxjs';
 import { DevToolDragController, DragBounds, DragPoint } from './dev-tool-drag-controller';
 
 @Component({
@@ -36,6 +34,8 @@ export class DevToolComponent implements OnInit, AfterViewInit, OnDestroy {
 
   boardPackagePath = '';
   isReloading = false;
+  isArchitectureGenerating = false;
+  isSchematicGenerating = false;
   dragTooltipVisible?: boolean;
 
   private _autoSave = true;
@@ -45,6 +45,7 @@ export class DevToolComponent implements OnInit, AfterViewInit, OnDestroy {
   private resizeAnimationFrame: number | null = null;
   private initAnimationFrame: number | null = null;
   private containerResizeObserver: ResizeObserver | null = null;
+  private diagramGenerationSubscription: Subscription | null = null;
 
   get autoSave(): boolean {
     return this._autoSave;
@@ -74,12 +75,19 @@ export class DevToolComponent implements OnInit, AfterViewInit, OnDestroy {
     private translate: TranslateService,
     private authService: AuthService,
     private themeService: ThemeService,
-    private backgroundAgent: BackgroundAgentService,
+    private ailyChatDemandSession: AilyChatDemandSessionService,
     private ngZone: NgZone
   ) { }
 
   ngOnInit() {
-    void this.backgroundAgent;
+    this.diagramGenerationSubscription = this.ailyChatDemandSession.diagramGenerationState$.subscribe(
+      state => {
+        this.ngZone.run(() => {
+          this.isArchitectureGenerating = state.architecture !== null;
+          this.isSchematicGenerating = state.schematic !== null;
+        });
+      },
+    );
     const devmode = this.ensureDevModeConfig();
     this._autoSave = devmode.autoSave ?? true;
     this.loadBoardInfo();
@@ -112,6 +120,8 @@ export class DevToolComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   ngOnDestroy() {
+    this.diagramGenerationSubscription?.unsubscribe();
+    this.diagramGenerationSubscription = null;
     const handle = this.dragHandle?.nativeElement;
     handle?.removeEventListener('pointerleave', this.onDragHandleLeave);
     this.dragController?.disconnect();
@@ -369,6 +379,7 @@ export class DevToolComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   async showArch(): Promise<void> {
+    if (this.isArchitectureGenerating) return;
     if (!this.requireLogin()) return;
     if (!this.electronService.isElectron) {
       this.messageService.warning(this.translate.instant('FLOAT_SIDER.ARCH_ELECTRON_ONLY'));
@@ -387,15 +398,12 @@ export class DevToolComponent implements OnInit, AfterViewInit, OnDestroy {
 
     if (!this.electronService.exists(archPath)) {
       const prompt = this.translate.instant('FLOAT_SIDER.GENERATE_ARCH_PROMPT');
-//       const prompt = `${this.translate.instant('FLOAT_SIDER.GENERATE_ARCH_PROMPT')}
-
-// Generate a Mermaid project architecture diagram and save it to arch.md. If the architecture save tool is deferred, use tool_search for blockly-architecture or save_arch, then call save_arch with raw Mermaid DSL in code. Do not only print Mermaid source.`;
-      this.uiService.openAndSendToChat(prompt, {
-        sender: 'FloatSider',
-        type: 'arch',
-        autoSend: true,
-        newChatFirst: true,
-      });
+      void this.ailyChatDemandSession
+        .createArchitectureSession(prompt)
+        .catch(error => {
+          const message = error instanceof Error ? error.message : String(error);
+          this.messageService.error(message);
+        });
       return;
     }
 
@@ -409,7 +417,7 @@ export class DevToolComponent implements OnInit, AfterViewInit, OnDestroy {
 
       const [{ default: mermaid }, { MermaidComponent }] = await Promise.all([
         import('mermaid'),
-        import('../../../../tools/aily-chat/components/aily-mermaid-viewer/mermaid/mermaid.component')
+        import('../../../../components/mermaid/mermaid.component')
       ]);
 
       mermaid.initialize({ theme: this.themeService.getMermaidTheme() as any, startOnLoad: false });
@@ -454,6 +462,7 @@ export class DevToolComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   async showCircuit() {
+    if (this.isSchematicGenerating) return;
     if (!this.requireLogin()) return;
     if (!this.requireFeaturePreviewAccess()) return;
 

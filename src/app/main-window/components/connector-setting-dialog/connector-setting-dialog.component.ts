@@ -12,7 +12,7 @@ import {
 import {
   LinuxBoardConnectorService,
   LinuxBoardSshSettings,
-} from '../../../services/linux-board-connector.service';
+} from '@integration/device/public-api';
 
 export interface ConnectorSettingDialogData {
   settings?: Partial<LinuxBoardSshSettings>;

@@ -13,15 +13,14 @@ const INDEX_CACHE_FILE = 'subapp-index.json';
 const INDEX_CACHE_META_FILE = 'subapp-index.meta.json';
 const MAX_INDEX_BYTES = 2 * 1024 * 1024;
 const TOOL_ID_ALIASES = Object.freeze({
-  'aily-chat': 'aily-chat-react',
   'ffs-manager': 'ffs-manager-child',
   'aily-simulator': 'simulator',
 });
 const STARTUP_TIMEOUTS = Object.freeze({
-  'aily-chat-react': 30000,
+  'aily-chat': 30000,
   'ffs-manager-child': 10000,
 });
-const DEFAULT_TOOLBAR_IDS = new Set(['aily-chat-react']);
+const DEFAULT_TOOLBAR_IDS = new Set(['aily-chat']);
 const mutationQueues = new Map();
 
 function buildSubappIndexUrl(resourceUrl) {
@@ -664,7 +663,7 @@ function readInstalledState(rootDir, entry) {
           id: toolId,
           extension: entry.app.extension === true || packageApp.extension === true,
           ...(DEFAULT_TOOLBAR_IDS.has(toolId) ? { defaultToolbar: true } : {}),
-          ...(toolId === 'aily-chat-react' ? { more: 'v2' } : {}),
+          ...(toolId === 'aily-chat' ? { more: 'v2' } : {}),
         },
       } : null,
       ...(rejectsDistLayout

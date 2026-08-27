@@ -1,15 +1,14 @@
 import { ChangeDetectorRef, Component, NgZone, OnDestroy, OnInit } from '@angular/core';
 import { LibManagerComponent } from './components/lib-manager/lib-manager.component';
 import { NotificationComponent } from '../../components/notification/notification.component';
-import { UiService } from '../../services/ui.service';
+import { UiService, OnboardingService, NoticeService } from '@core/app-shell/public-api';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { ActivatedRoute } from '@angular/router';
-import { ElectronService } from '../../services/electron.service';
+import { ElectronService, CmdService, CrossPlatformCmdService } from '@core/platform/public-api';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { NzModalService } from 'ng-zorro-antd/modal';
-import { ConfigService } from '../../services/config.service';
-import { NpmService } from '../../services/npm.service';
-import { CmdService } from '../../services/cmd.service';
+import { ConfigService } from '@core/preferences/public-api';
+import { NpmService, LocalLibrarySyncService, BlocklyLibraryPackageService } from '@domain/dependencies/public-api';
 import {
   AILY_BLOCKLY_USED_LIBRARIES_FIELD,
   BlocklyProjectDocument,
@@ -22,26 +21,19 @@ import { _ProjectService } from './services/project.service';
 import { _UploaderService } from './services/uploader.service';
 import { _BuilderService } from './services/builder.service';
 import { BitmapUploadService } from './services/bitmap-upload.service';
-import { ProjectService } from '../../services/project.service';
+import { ProjectService, projectDataRuntime, ProjectDataError } from '@domain/project/public-api';
 import { DevToolComponent } from './components/dev-tool/dev-tool.component';
-import { OnboardingService } from '../../services/onboarding.service';
 import { BLOCKLY_ONBOARDING_CONFIG } from '../../configs/onboarding.config';
-import { NoticeService } from '../../services/notice.service';
-import { LocalLibrarySyncService } from '../../services/local-library-sync.service';
 import { CodeViewerIpcService } from './services/code-viewer-ipc.service';
-import { CrossPlatformCmdService } from '../../services/cross-platform-cmd.service';
 import { MissingLibInfo, PasteInstallDialogComponent } from './components/paste-install-dialog/paste-install-dialog.component';
 import { Subscription } from 'rxjs';
-import { BlocklyLibraryPackageService } from '../../services/blockly-library-package.service';
-import { projectDataRuntime } from '../../services/project-data/project-data-runtime';
 import { projectResourceGc } from './services/project-resource-gc.service';
 import { BlocklyGeneratorRuntimeService } from './services/blockly-generator-runtime.service';
-import { ProjectDataError } from '../../services/project-data/project-data.types';
-import { AuthService } from '../../services/auth.service';
+import { AuthService } from '@core/auth/public-api';
 import { boardRequiresCloudAuth } from './board-auth-gate';
 import {
   normalizeProjectMode,
-} from '../../services/linux-board-project-route';
+} from '@shared/public-api';
 
 @Component({
   selector: 'app-blockly-editor',

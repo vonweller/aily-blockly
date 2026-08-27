@@ -4,8 +4,8 @@ import { Subject, combineLatest } from 'rxjs';
 
 import { debounceTime, takeUntil, map, distinctUntilChanged, pairwise, startWith } from 'rxjs/operators';
 import { TranslateService } from '@ngx-translate/core';
-import { UiService } from '../../../../services/ui.service';
-import { AuthService } from '../../../../services/auth.service';
+import { NoticeService } from '@core/app-shell/public-api';
+import { AuthService } from '@core/auth/public-api';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { normalizeLanguageCode, type SupportedLanguageCode } from '../../../../utils/language-code';
 
@@ -43,6 +43,7 @@ const BLOCKLY_LOCALES: Record<SupportedLanguageCode, any> = {
 // } from './plugins/continuous-toolbox/src/index.js';
 import './plugins/toolbox-search/src/index';
 import './plugins/block-plus-minus/src/index.js';
+import './plugins/stable-comment-icon';
 import {
   normalizeArduinoGeneratedCode,
   type BlockCodeMapping,
@@ -52,8 +53,16 @@ import {
   BlocklyGeneratorRuntimeService,
   runWithPreparedActiveProjectGenerator,
 } from '../../services/blockly-generator-runtime.service';
-import { BitmapUploadResponse, GlobalServiceManager } from '../../services/bitmap-upload.service';
-import { projectDataRuntime } from '../../../../services/project-data/project-data-runtime';
+import { BitmapUploadResponse, GlobalServiceManager, BitmapUploadService } from '../../services/bitmap-upload.service';
+import {
+  projectDataRuntime,
+  ProjectService,
+  createEmptyProjectDebugConfigurationState,
+  getProjectBreakpointMarkerState,
+  ProjectBlockBreakpointIntent,
+  ProjectDebugConfigurationService,
+  ProjectDebugConfigurationState,
+} from '@domain/project/public-api';
 
 import './renderer/aily-icon';
 import './renderer/aily-thrasos/thrasos';
@@ -84,15 +93,10 @@ import { NzModalModule, NzModalService } from 'ng-zorro-antd/modal';
 import { NzResizableModule, NzResizeEvent } from 'ng-zorro-antd/resizable';
 import * as BlockDynamicConnection from '@blockly/block-dynamic-connection';
 import { CommonModule } from '@angular/common';
-import { BitmapUploadService } from '../../services/bitmap-upload.service';
 import { ImageUploadDialogComponent } from './components/image-upload-dialog/image-upload-dialog.component';
 import { HttpErrorResponse } from '@angular/common/http';
-import { ConfigService } from '../../../../services/config.service';
-import { NoticeService } from '../../../../services/notice.service';
-import { CmdService } from '../../../../services/cmd.service';
-import { ProjectService } from '../../../../services/project.service';
-import { ElectronService } from '../../../../services/electron.service';
-import { CrossPlatformCmdService } from '../../../../services/cross-platform-cmd.service';
+import { ConfigService, type ThemeMode, ThemeService } from '@core/preferences/public-api';
+import { CmdService, ElectronService, CrossPlatformCmdService, PlatformService } from '@core/platform/public-api';
 import { PasteInstallDialogComponent, MissingLibInfo } from '../paste-install-dialog/paste-install-dialog.component';
 import { Minimap } from '@blockly/workspace-minimap';
 import {
@@ -101,22 +105,13 @@ import {
   LightTheme,
   blocklyGridColourForUiTheme,
 } from './theme.config';
-import type { ThemeMode } from '../../../../services/theme.service';
-import { ThemeService } from '../../../../services/theme.service';
-import { PlatformService } from '../../../../services/platform.service';
 import { applyWindowsBlocklyScrollbarThickness } from '../../utils/apply-windows-blockly-scrollbar-thickness';
 import { BlocklyToolboxPaneComponent } from './components/blockly-toolbox-pane/blockly-toolbox-pane.component';
 import { BlocklyWorkspacePagesComponent } from './components/blockly-workspace-pages/blockly-workspace-pages.component';
 import { BlocklyConfirmDialogComponent } from './components/confirm-dialog/confirm-dialog.component';
 import { CodeViewerIpcService } from '../../services/code-viewer-ipc.service';
 import { writeArduinoGeneratedArtifacts } from '../../services/generated-code-artifacts';
-import {
-  createEmptyProjectDebugConfigurationState,
-  getProjectBreakpointMarkerState,
-  ProjectBlockBreakpointIntent,
-  ProjectDebugConfigurationService,
-  ProjectDebugConfigurationState,
-} from '../../../../services/project-debug-configuration.service';
+import { AilyChatDemandSessionService } from '@integration/simulator/public-api';
 
 type BlocklyWorkspaceEvent = { type?: string } | null | undefined;
 
@@ -486,7 +481,7 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
     private themeService: ThemeService,
     private platformService: PlatformService,
     private codeViewerIpcService: CodeViewerIpcService,
-    private uiService: UiService,
+    private ailyChatDemandSession: AilyChatDemandSessionService,
     private authService: AuthService,
     private message: NzMessageService,
     private generatorRuntime: BlocklyGeneratorRuntimeService,
@@ -523,6 +518,10 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
 
   ngOnInit(): void {
     this.initAiWritingSubscription();
+    // Establish the host-owned locale before the generator runtime snapshots
+    // Blockly.Msg. Otherwise the initial checkpoint contains Blockly's default
+    // English messages and an AI-triggered library rebuild restores them.
+    this.initLanguage();
     this.initDevMode();
     this.initBlocklyDialogs();
     this.initCodeGenerationDebounce();
@@ -714,7 +713,7 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   private initAiWritingSubscription(): void {
-    // 与旧版 Angular 一致：遮罩只在 aiWriting（积木工具执行）或短暂 aiWaitWriting 时显示，
+    // 遮罩只在 aiWriting（新版 Agent 积木写入）或短暂 aiWaitWriting 时显示，
     // 不随整轮 request/aiWaiting 常亮。
     combineLatest([
       this.blocklyService.aiWriting$,
@@ -815,10 +814,6 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
           }
         };
       })(console.error);
-
-      // 根据当前语言设置 Blockly locale
-      const currentLang = this.translateService.currentLang || 'zh_cn';
-      this.updateBlocklyLocale(currentLang);
 
       // 在工作区创建前设置 block registry 拦截
       this.setupBlockRegistryInterception();
@@ -2088,17 +2083,18 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
     );
 
     const prompt = this.translateService.instant('BLOCKLY_EDITOR.EXPLAIN_BLOCK_PROMPT');
-    this.uiService.openAndSendToChat(prompt, {
-      sender: 'BlocklyComponent',
-      type: 'block-explain',
-      autoSend: true,
-      resources: this.blocklyService.getSelectedBlockContextLabels().map(item => ({
-        type: 'block',
-        name: item.label,
-        blockId: item.blockId,
-        blockContext: item.formatted,
-      })),
-    });
+    const resources = this.blocklyService.getSelectedBlockContextLabels().map(item => ({
+      type: 'block',
+      name: item.label,
+      blockId: item.blockId,
+      blockContext: item.formatted,
+    } as const));
+    void this.ailyChatDemandSession
+      .explainBlocks(prompt, resources)
+      .catch(error => {
+        const message = error instanceof Error ? error.message : String(error);
+        this.message.error(message);
+      });
   }
 
   updateBlocklyLocale(lang: string) {
@@ -2122,6 +2118,7 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
     setTftEsPiAnimationFieldTranslator((key, params) => this.translateService.instant(key, params));
     setTftEsPiImageFieldTranslator((key, params) => this.translateService.instant(key, params));
     setAudioFieldTranslator((key, params) => this.translateService.instant(key, params));
+    this.generatorRuntime.refreshBlocklyMessageSnapshot();
     this.queueProjectBreakpointMarkerSync();
 
     // 如果工作区已存在，刷新工具箱以应用新语言

@@ -34,14 +34,9 @@
     border-radius: 6px 0 0 6px;
   }
 }
-
 .coder-mode-option {
   position: relative;
   display: inline-flex;
-
-  button {
-    border-radius: 0 6px 6px 0;
-  }
 }
 
 .coder-install-dot {
@@ -341,29 +336,33 @@ ngx-simplebar {
 
 .development-mode-buttons {
   display: flex;
+  align-items: center;
   flex-wrap: wrap;
+  gap: 0;
 
-  button {
+  .development-mode-button {
     position: relative;
     margin-right: -1px;
     margin-bottom: -1px;
     border-radius: 0;
-
-    &:first-child {
-      border-top-left-radius: 2px;
-      border-bottom-left-radius: 2px;
-    }
-
-    &:last-child {
-      border-top-right-radius: 2px;
-      border-bottom-right-radius: 2px;
-    }
 
     &:hover,
     &:focus,
     &.ant-btn-primary {
       z-index: 1;
     }
+  }
+
+  > .blockly-mode-button {
+    border-radius: 2px;
+  }
+
+  &.has-coder > .blockly-mode-button {
+    border-radius: 2px 0 0 2px;
+  }
+
+  .coder-mode-button {
+    border-radius: 0 2px 2px 0;
   }
 }
 

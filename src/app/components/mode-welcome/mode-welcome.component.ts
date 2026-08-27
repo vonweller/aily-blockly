@@ -10,13 +10,12 @@ import {
 } from '@angular/core';
 import { Subscription } from 'rxjs';
 import { TranslateModule } from '@ngx-translate/core';
-import { ThemeService } from '../../services/theme.service';
-import type { DevelopmentModePreference } from '../../services/config.service';
+import { ThemeService, type DevelopmentModePreference } from '@core/preferences/public-api';
 import { AILY_CODER_SUBAPP_ID } from '../../configs/required-subapp.config';
 import {
   RequiredSubappService,
   RequiredSubappState,
-} from '../../services/required-subapp.service';
+} from '@integration/subapps/public-api';
 
 type WelcomeSide = DevelopmentModePreference;
 

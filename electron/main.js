@@ -14,17 +14,12 @@ const linter = require("./linter");
 const connector = require("./connector");
 const simulatorGateway = require("./simulator-gateway");
 const simulatorSubappHost = require("./simulator-subapp-host");
-const {
-  createProjectSceneGenerationBroker,
-} = require("./project-scene-generation-broker");
-const {
-  createSimulatorProjectRebuildCoordinator,
-} = require("./simulator-project-rebuild-coordinator");
 const { createPackagedRendererServer } = require("./packaged-renderer-server");
 const {
   markInstalledForAppVersion,
   shouldInstallForAppVersion,
 } = require("./aily-tools-install-state");
+const { mergeConfigChanges } = require("./config-persistence");
 const ORIGINAL_PROCESS_PATH = process.env.PATH || process.env.Path || "";
 
 // 设置应用名称，用于 Windows 系统通知显示
@@ -693,6 +688,10 @@ let projectContextState = {
   workspace: null,
   version: 0,
 };
+let hostAuthState = {
+  authenticated: false,
+  version: 0,
+};
 
 function registerProcessHealthDiagnostics() {
   if (processHealthDiagnosticsRegistered) return;
@@ -837,113 +836,6 @@ function requestMainWindow(channel, responseChannel, payload, timeoutMs = 12000,
       rendererGeneration: requestGeneration,
     });
   });
-}
-
-let projectSceneGenerationBroker = null;
-
-function getProjectSceneGenerationBroker() {
-  if (projectSceneGenerationBroker) return projectSceneGenerationBroker;
-  projectSceneGenerationBroker = createProjectSceneGenerationBroker({
-    async resolveHardwareIntent(request, { signal }) {
-      const response = await requestMainWindow(
-        'cli-bridge:blockly-live-operation',
-        'cli-bridge:blockly-live-operation:response',
-        {
-          path: '',
-          operation: 'project_hardware_intent_snapshot',
-          params: { request },
-        },
-        120000,
-        signal,
-      );
-      if (response?.ok !== true || !response.snapshot) {
-        throw new Error(
-          response?.message || 'Project hardware intent provider is unavailable.',
-        );
-      }
-      return response.snapshot;
-    },
-    async requestProposal(input, { signal }) {
-      const requestId = typeof input?.request?.requestId === 'string'
-        ? input.request.requestId
-        : '';
-      const cancelProviderRequest = () => {
-        if (!requestId) return;
-        void requestMainWindow(
-          'cli-bridge:blockly-live-operation',
-          'cli-bridge:blockly-live-operation:response',
-          {
-            path: '',
-            operation: 'project_scene_proposal_cancel',
-            params: { requestId },
-          },
-          15000,
-        ).catch(() => undefined);
-      };
-      signal?.addEventListener('abort', cancelProviderRequest, { once: true });
-      if (signal?.aborted) cancelProviderRequest();
-      try {
-        const response = await requestMainWindow(
-          'cli-bridge:blockly-live-operation',
-          'cli-bridge:blockly-live-operation:response',
-          {
-            path: '',
-            operation: 'project_scene_proposal_request',
-            params: input,
-          },
-          10 * 60 * 1000,
-          signal,
-        );
-        if (response?.ok !== true || !response.proposal) {
-          throw new Error(
-            response?.message || 'Project Scene proposal provider is unavailable.',
-          );
-        }
-        return response.proposal;
-      } finally {
-        signal?.removeEventListener('abort', cancelProviderRequest);
-      }
-    },
-    async onProposalReady(candidate) {
-      await simulatorSubappHost.defaultHost.stageSceneGenerationCandidate(
-        candidate,
-      );
-    },
-  });
-  return projectSceneGenerationBroker;
-}
-
-let simulatorProjectRebuildCoordinator = null;
-
-function getSimulatorProjectRebuildCoordinator() {
-  if (simulatorProjectRebuildCoordinator) {
-    return simulatorProjectRebuildCoordinator;
-  }
-  simulatorProjectRebuildCoordinator =
-    createSimulatorProjectRebuildCoordinator({
-      async requestProjectRebuild(request) {
-        const response = await requestMainWindow(
-          'simulator-project-rebuild-request',
-          'simulator-project-rebuild-response',
-          { request },
-          30 * 60 * 1000,
-        );
-        return response?.result;
-      },
-      onStateChanged(artifactRebuild) {
-        if (!isCurrentRendererGenerationReady()) return;
-        mainWindow.webContents.send('simulator-subapp-state-changed', {
-          state: 'artifact-rebuild-state-changed',
-          artifactRebuild,
-        });
-      },
-      async onCandidateReady(candidateEvent) {
-        await simulatorSubappHost.defaultHost.stageRebuildCandidate(
-          candidateEvent,
-        );
-      },
-    });
-  return simulatorProjectRebuildCoordinator;
 }
 
 /** 处理来自 CLI 的命令 */
@@ -1244,29 +1136,6 @@ function getPackagedMetadata() {
 function getPackagedBuildFlavor() {
   return getPackagedMetadata()?.ailyBuildFlavor;
 }
-
-function configurePackagedChatExecutionHost() {
-  const packageMetadata = getPackagedMetadata();
-  const configuredMode = typeof packageMetadata?.ailyChatExecutionHost === 'string'
-    ? packageMetadata.ailyChatExecutionHost.trim()
-    : '';
-  const configuredRuntimeModule = typeof packageMetadata?.ailyChatExecutionHostRuntimeModule === 'string'
-    ? packageMetadata.ailyChatExecutionHostRuntimeModule.trim()
-    : '';
-
-  if (!configuredMode || !configuredRuntimeModule) {
-    return;
-  }
-
-  if (!process.env.AILY_CHAT_EXECUTION_HOST) {
-    process.env.AILY_CHAT_EXECUTION_HOST = configuredMode;
-  }
-  if (!process.env.AILY_CHAT_EXECUTION_HOST_RUNTIME_MODULE) {
-    process.env.AILY_CHAT_EXECUTION_HOST_RUNTIME_MODULE = path.resolve(app.getAppPath(), configuredRuntimeModule);
-  }
-}
-
-configurePackagedChatExecutionHost();
 
 function getBuildFlavor(conf) {
   return normalizeBuildFlavor(process.env.AILY_BUILD_FLAVOR || getPackagedBuildFlavor() || conf?.build_flavor);
@@ -2633,13 +2502,6 @@ function createWindow() {
     app,
     mainWindow: () => mainWindow,
   });
-  simulatorSubappHost.defaultHost.setRebuildCoordinator(
-    getSimulatorProjectRebuildCoordinator(),
-  );
-  simulatorSubappHost.defaultHost.setSceneGenerationBroker(
-    getProjectSceneGenerationBroker(),
-  );
-
   // 在多实例模式下，监听OAuth回调文件的变化
   if (shouldUseMultiInstance()) {
     const callbackFilePath = path.join(app.getPath('userData'), 'oauth-callback.json');
@@ -3294,6 +3156,32 @@ ipcMain.handle("env-get", (event, key) => {
   return process.env[key];
 })
 
+let configSaveQueue = Promise.resolve();
+process.env.AILY_CONFIG_MERGED_SAVE = '1';
+
+ipcMain.handle("config-save-merged", (_event, payload = {}) => {
+  const operation = configSaveQueue.then(() => {
+    if (!process.env.AILY_APPDATA_PATH) {
+      throw new Error('AILY_APPDATA_PATH is not initialized');
+    }
+
+    const configPath = path.join(process.env.AILY_APPDATA_PATH, 'config.json');
+    const latest = fs.existsSync(configPath)
+      ? JSON.parse(fs.readFileSync(configPath, 'utf8'))
+      : {};
+    const merged = mergeConfigChanges(payload.base || {}, payload.next || {}, latest);
+    fs.writeFileSync(configPath, JSON.stringify(merged, null, 2));
+    userConf = merged;
+    if (typeof merged.project_path === 'string' && merged.project_path.trim()) {
+      process.env.AILY_PROJECT_PATH = merged.project_path.trim();
+    }
+    return { success: true };
+  });
+
+  configSaveQueue = operation.catch(() => undefined);
+  return operation;
+});
+
 // 移动文件到回收站
 ipcMain.handle("move-to-trash", async (event, filePath) => {
   try {
@@ -3424,6 +3312,32 @@ ipcMain.on("host-project-context-changed", (event, data = {}) => {
 });
 
 ipcMain.handle("host-project-context-get", () => ({ ...projectContextState }));
+
+ipcMain.on("host-auth-state-changed", (event, data = {}) => {
+  const senderWindow = BrowserWindow.fromWebContents(event.sender);
+  if (!mainWindow || senderWindow !== mainWindow || typeof data.authenticated !== "boolean") {
+    return;
+  }
+
+  hostAuthState = {
+    authenticated: data.authenticated,
+    ...(data.authenticated && data.user ? { user: data.user } : {}),
+    ...(data.authenticated && data.quotaSnapshot ? { quotaSnapshot: data.quotaSnapshot } : {}),
+    version: hostAuthState.version + 1,
+  };
+
+  BrowserWindow.getAllWindows().forEach((win) => {
+    try {
+      if (win && !win.isDestroyed() && win.webContents && !win.webContents.isDestroyed()) {
+        win.webContents.send("host-auth-state-changed", hostAuthState);
+      }
+    } catch (error) {
+      console.error("host-auth-state-changed broadcast failed:", error.message);
+    }
+  });
+});
+
+ipcMain.handle("host-auth-state-get", () => ({ ...hostAuthState }));
 
 // OAuth状态管理的IPC处理器
 ipcMain.handle("oauth-register-state", (event, state) => {

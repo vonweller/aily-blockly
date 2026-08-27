@@ -1,18 +1,22 @@
 import { Injectable, inject } from "@angular/core";
 import { TranslateService } from '@ngx-translate/core';
-import { ProjectService } from "../../../services/project.service";
-import { SerialService } from "../../../services/serial.service";
+import { ProjectService } from "@domain/project/public-api";
+import {
+  SerialService,
+  BleOtaProgress,
+  UploaderBleService,
+  resolveUploadRecoveryPolicy,
+  type UploadRecoveryPolicy,
+  getLinkUploadParam,
+} from '@domain/device/public-api';
 import { NzMessageService } from "ng-zorro-antd/message";
 import { _BuilderService } from "./builder.service";
-import { BuilderService as HostBuilderService } from "../../../services/builder.service";
-import { NoticeService } from "../../../services/notice.service";
+import { BuilderService as HostBuilderService } from "@domain/build/public-api";
+import { NoticeService, ActionState, ActionService, WorkflowService, ProcessState } from '@core/app-shell/public-api';
 import { NzModalService } from "ng-zorro-antd/modal";
-import { CmdOutput, CmdService } from "../../../services/cmd.service";
-import { LogService } from "../../../services/log.service";
-import { NpmService } from "../../../services/npm.service";
+import { CmdOutput, CmdService, LogService, AppDataResourceLockService } from '@core/platform/public-api';
+import { NpmService } from "@domain/dependencies/public-api";
 import { SerialMonitorService } from "../../../tools/serial-monitor/serial-monitor.service";
-import { ActionState } from "../../../services/ui.service";
-import { ActionService } from "../../../services/action.service";
 import {
   normalizeArduinoGeneratedCode,
 } from "../components/blockly/generators/arduino/arduino";
@@ -20,16 +24,8 @@ import {
   runWithPreparedActiveProjectGenerator,
 } from './blockly-generator-runtime.service';
 import { BlocklyService } from "./blockly.service";
-import { WorkflowService, ProcessState } from '../../../services/workflow.service';
-import { BleOtaProgress, UploaderBleService } from '../../../services/uploader-ble.service';
-import { AppDataResourceLockService } from '../../../services/appdata-resource-lock.service';
 import { writeArduinoGeneratedArtifacts } from './generated-code-artifacts';
 import { appendProjectLog, type ProjectLogLevel } from '../../../utils/project-log.utils';
-import {
-  resolveUploadRecoveryPolicy,
-  type UploadRecoveryPolicy,
-} from '../../../services/upload-recovery-policy';
-import { getLinkUploadParam } from '../../../services/debugger-upload-policy';
 
 interface NetworkOtaUploadTarget {
   id?: string;
@@ -394,7 +390,7 @@ export class _UploaderService {
 
         // 第一步：检查是否需要编译。Coder 页面没有 Blockly workspace，
         // 但仍复用后续同一套板卡上传脚本、进度、错误和资源恢复流程；
-        // 唯一差异是从 project.aci.entry 构建并使用 Coder 的实际产物目录。
+        // 唯一差异是从 package.json.entry 构建并使用 Coder 的实际产物目录。
         const projectPath = this.projectService.currentProjectPath;
         const isAilyCodeProject = this.projectService.isAilyCodeProject(projectPath);
         let buildPath: string;
@@ -580,7 +576,9 @@ export class _UploaderService {
 
         // 准备上传配置
         const currentProjectPath = this.projectService.currentProjectPath;
-        const tempPath = window['path'].join(currentProjectPath, '.temp');
+        const tempPath = this.projectService.isAilyCodeProject(currentProjectPath)
+          ? window['path'].join(currentProjectPath, 'sketch')
+          : window['path'].join(currentProjectPath, '.temp');
         if (!window['fs'].existsSync(tempPath)) {
           window['fs'].mkdirSync(tempPath, { recursive: true });
         }
@@ -1152,7 +1150,9 @@ export class _UploaderService {
     this.logNetworkOtaUpload(this.networkT('LOG_FIRMWARE_SIZE', { size: this.formatBytes(firmwareSize) }));
 
     const currentProjectPath = this.projectService.currentProjectPath;
-    const tempPath = window['path'].join(currentProjectPath, '.temp');
+    const tempPath = this.projectService.isAilyCodeProject(currentProjectPath)
+      ? window['path'].join(currentProjectPath, 'sketch')
+      : window['path'].join(currentProjectPath, '.temp');
     if (!window['fs'].existsSync(tempPath)) {
       window['fs'].mkdirSync(tempPath, { recursive: true });
     }
@@ -1672,7 +1672,9 @@ export class _UploaderService {
       const currentProjectPath = this.projectService.currentProjectPath;
 
       // 创建一个临时的 buildPath，用于存放 softdevice hex 文件
-      const tempBuildPath = window['path'].join(currentProjectPath, '.temp', 'softdevice');
+      const tempBuildPath = this.projectService.isAilyCodeProject(currentProjectPath)
+        ? window['path'].join(currentProjectPath, '.build', 'softdevice')
+        : window['path'].join(currentProjectPath, '.temp', 'softdevice');
       if (!window['fs'].existsSync(tempBuildPath)) {
         window['fs'].mkdirSync(tempBuildPath, { recursive: true });
       }
@@ -1694,7 +1696,9 @@ export class _UploaderService {
       };
 
       // 写入配置文件
-      const tempPath = window['path'].join(currentProjectPath, '.temp');
+      const tempPath = this.projectService.isAilyCodeProject(currentProjectPath)
+        ? window['path'].join(currentProjectPath, 'sketch')
+        : window['path'].join(currentProjectPath, '.temp');
       if (!window['fs'].existsSync(tempPath)) {
         window['fs'].mkdirSync(tempPath, { recursive: true });
       }

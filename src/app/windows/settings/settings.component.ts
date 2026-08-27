@@ -5,30 +5,31 @@ import { NzButtonModule } from 'ng-zorro-antd/button';
 import { NzInputModule } from 'ng-zorro-antd/input';
 import { FormsModule } from '@angular/forms';
 import { CommonModule } from '@angular/common';
-import { UiService } from '../../services/ui.service';
+import { UiService } from '@core/app-shell/public-api';
 import { NzRadioModule } from 'ng-zorro-antd/radio';
-import { SettingsService } from '../../services/settings.service';
-import { TranslationService } from '../../services/translation.service';
-import { ConfigService } from '../../services/config.service';
+import {
+  SettingsService,
+  TranslationService,
+  ConfigService,
+  ThemeService,
+  ThemeMode,
+} from '@core/preferences/public-api';
 import { SimplebarAngularComponent, SimplebarAngularModule } from 'simplebar-angular';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { NzSwitchModule } from 'ng-zorro-antd/switch';
 import { NzSelectModule } from 'ng-zorro-antd/select';
-import { AuthService } from '../../services/auth.service';
+import { AuthService, switchServiceRegionAndRequestLogin } from '@core/auth/public-api';
 import { NzModalService } from 'ng-zorro-antd/modal';
 import { NzMessageService } from 'ng-zorro-antd/message';
-import { ThemeService, ThemeMode } from '../../services/theme.service';
-import { CmdService } from '../../services/cmd.service';
-import { ElectronService } from '../../services/electron.service';
+import { CmdService, ElectronService } from '@core/platform/public-api';
 import { NzToolTipModule } from "ng-zorro-antd/tooltip";
-import { NpmService } from '../../services/npm.service';
+import { NpmService } from '@domain/dependencies/public-api';
 import { AILY_CODER_SUBAPP_ID } from '../../configs/required-subapp.config';
+import { RequiredSubappService, RequiredSubappState, ChildAppSafetyService } from '@integration/subapps/public-api';
 import {
-  RequiredSubappService,
-  RequiredSubappState,
-} from '../../services/required-subapp.service';
-import { switchServiceRegionAndRequestLogin } from '../../services/service-region-switch';
-import { ChildAppSafetyService } from '../../services/child-app-safety.service';
+  PROJECT_ROOT_PATH_SETTING_CHANGED_ACTION,
+  resolveConfiguredProjectRootPath,
+} from '@domain/project/public-api';
 
 type CacheClearOption = 'all' | 'unused-7' | 'unused-30';
 type DependencyRemovalOption = 'all' | 'unused-30' | 'unused-90';
@@ -356,6 +357,7 @@ export class SettingsComponent implements OnDestroy {
     percent: 0,
   };
   private readonly coderDependencySubscription: Subscription;
+  private readonly configReloadSubscription: Subscription;
 
   async onDevelopmentModePreferenceChange(value: string) {
     if (value !== 'coder') {
@@ -406,6 +408,9 @@ export class SettingsComponent implements OnDestroy {
         this.coderDependencyState = state;
         this.cdr.markForCheck();
       });
+    this.configReloadSubscription = this.configService.configReloaded$.subscribe(() => {
+      this.cdr.markForCheck();
+    });
   }
 
   ngOnDestroy() {
@@ -419,6 +424,7 @@ export class SettingsComponent implements OnDestroy {
     this.clearAilyConnectorStatusTimer();
     this._clearCacheSubscription?.unsubscribe();
     this.coderDependencySubscription.unsubscribe();
+    this.configReloadSubscription.unsubscribe();
     if (this._clearCacheLoadingRef) {
       this.message.remove(this._clearCacheLoadingRef);
       this._clearCacheLoadingRef = null;
@@ -691,6 +697,24 @@ export class SettingsComponent implements OnDestroy {
     window['ipcRenderer'].send('setting-changed', { action: 'language-changed', data: lang.code });
   }
 
+  async selectProjectFolder(): Promise<void> {
+    const pathApi = window['path'];
+    const currentPath = resolveConfiguredProjectRootPath(this.configData.project_path, {
+      userDocuments: pathApi.getUserDocuments(),
+      userHome: pathApi.getUserHome(),
+      separator: window['platform'].type === 'win32' ? '\\' : '/',
+    });
+    const result = await window['ipcRenderer'].invoke('dialog-select-files', {
+      title: this.translateService.instant('SETTINGS.FIELDS.PROJECT_FOLDER'),
+      defaultPath: currentPath,
+      properties: ['openDirectory'],
+    });
+    if (result?.canceled || !result?.filePaths?.[0]) {
+      return;
+    }
+    this.configData.project_path = result.filePaths[0];
+  }
+
   // 使用锚点滚动到指定部分
   scrollToSection(item) {
     this.activeSection = item.name;
@@ -768,6 +792,14 @@ export class SettingsComponent implements OnDestroy {
       await this.configService.applyResourceSourceRuntimeSelection();
       // 保存到config.json，如有需要立即加载的，再加载
       await this.configService.save();
+      await window['env']?.set?.({
+        key: 'AILY_PROJECT_PATH',
+        value: this.configData.project_path,
+      });
+      window['ipcRenderer'].send('setting-changed', {
+        action: PROJECT_ROOT_PATH_SETTING_CHANGED_ACTION,
+        data: { path: this.configData.project_path },
+      });
       window['ipcRenderer'].send('setting-changed', { action: 'devmode-changed', data: this.configData.devmode });
       // 保存完毕后关闭窗口
       this.uiService.closeWindow();
