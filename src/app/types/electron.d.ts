@@ -6,7 +6,7 @@ interface AilyConnectorSshEndpoint {
   port?: number;
   username: string;
   privateKeyPath?: string;
-  hostKeyPolicy?: 'trust-on-first-use' | 'strict';
+  hostKeyPolicy?: 'accept-any' | 'trust-on-first-use' | 'strict';
 }
 
 interface AilyConnectorSerialEndpoint {

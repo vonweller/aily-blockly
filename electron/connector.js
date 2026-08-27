@@ -23,6 +23,11 @@ const {
   normalizeDisconnectParams,
   normalizeSessionRequest,
 } = require('./connector-ipc-policy');
+const {
+  forgetKnownSshHost,
+  prepareConnectorRequest,
+  shouldIgnoreSshHostKey,
+} = require('./ssh-host-key-policy');
 
 const TOOL_KEY = 'aily-connector';
 const PACKAGE_NAME = '@aily-project/aily-connector';
@@ -37,6 +42,7 @@ let childPath = '';
 let readyState = null;
 let initializationPromise = null;
 let mutationPromise = null;
+let sshConnectQueue = Promise.resolve();
 let handlersRegistered = false;
 let daemon = null;
 
@@ -408,7 +414,7 @@ function registerHandlers() {
       const ownerGeneration = watchOwner(event.sender);
       const client = await ensureDaemon();
       const result = assertSessionResult(
-        await client.request('session.connect', request),
+        await requestSessionConnect(client, request),
         request.transport,
       );
       if (!isCurrentOwner(event.sender, ownerGeneration)) {
@@ -446,6 +452,29 @@ function registerHandlers() {
       return result;
     });
   });
+}
+
+function requestSessionConnect(client, request) {
+  if (request.transport !== 'ssh') {
+    return client.request('session.connect', request);
+  }
+
+  const task = sshConnectQueue.then(async () => {
+    if (!shouldIgnoreSshHostKey(request)) {
+      return client.request('session.connect', request);
+    }
+
+    await forgetKnownSshHost(request.endpoint);
+    try {
+      return await client.request('session.connect', prepareConnectorRequest(request));
+    } finally {
+      await forgetKnownSshHost(request.endpoint).catch(error => {
+        console.warn('[aily-connector] Failed to clear ignored SSH host key:', error);
+      });
+    }
+  });
+  sshConnectQueue = task.then(() => undefined, () => undefined);
+  return task;
 }
 
 async function connectorIpcResult(action) {

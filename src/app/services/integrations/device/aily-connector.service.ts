@@ -33,8 +33,7 @@ export interface AilySshConnectOptions {
   username: string;
   password?: string;
   privateKeyPath?: string;
-  hostKey?: string;
-  hostKeyPolicy?: 'trust-on-first-use' | 'strict';
+  hostKeyPolicy?: 'accept-any' | 'trust-on-first-use';
 }
 
 export interface AilySerialConnectOptions {
@@ -109,7 +108,6 @@ export class AilyConnectorService implements OnDestroy {
   async connectSsh(options: AilySshConnectOptions): Promise<AilyConnectorSession> {
     const credentials = {
       ...(options.password !== undefined ? { password: options.password } : {}),
-      ...(options.hostKey !== undefined ? { hostKey: options.hostKey } : {}),
     };
     try {
       const session = await this.requireApi().connect({
@@ -119,7 +117,7 @@ export class AilyConnectorService implements OnDestroy {
           port: options.port ?? 22,
           username: options.username,
           ...(options.privateKeyPath ? { privateKeyPath: options.privateKeyPath } : {}),
-          ...(options.hostKeyPolicy === 'strict' ? { hostKeyPolicy: 'strict' } : {}),
+          hostKeyPolicy: options.hostKeyPolicy ?? 'trust-on-first-use',
         },
         credentials,
       }) as AilyConnectorSession;

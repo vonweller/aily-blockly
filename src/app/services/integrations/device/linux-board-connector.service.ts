@@ -1,4 +1,5 @@
 import { Injectable, OnDestroy } from '@angular/core';
+import { Buffer } from 'buffer';
 import { BehaviorSubject, Subscription } from 'rxjs';
 
 import {
@@ -9,9 +10,10 @@ import {
   AilySshConnectOptions,
 } from './aily-connector.service';
 import { LogService } from '@core/platform/public-api';
+import { ConfigService } from '@core/preferences/public-api';
 import { ProjectService } from '@domain/project/public-api';
 import { SerialService } from '@domain/device/public-api';
-import { PYTHON_PROJECT_ENTRY } from '@shared/public-api';
+import { PYTHON_PROJECT_ENTRY, resolveLinuxBoardExecutionRoute } from '@shared/public-api';
 
 export const LINUX_BOARD_SERIAL_BAUD_RATE = 921_600;
 
@@ -21,6 +23,22 @@ export interface LinuxBoardSshSettings {
   username: string;
   password: string;
   privateKeyPath: string;
+  autoTrustHostKey: boolean;
+  rememberCredentials: boolean;
+}
+
+interface StoredSshCredentials {
+  projectPath: string;
+  host: string;
+  port: number;
+  username: string;
+  password: string;
+}
+
+interface SafeStorageApi {
+  isEncryptionAvailable(): boolean;
+  encryptString(plainText: string): Uint8Array;
+  decryptString(encrypted: Uint8Array): string;
 }
 
 export interface LinuxBoardConnectorState {
@@ -39,7 +57,11 @@ const DEFAULT_SSH_SETTINGS: LinuxBoardSshSettings = {
   username: '',
   password: '',
   privateKeyPath: '',
+  autoTrustHostKey: true,
+  rememberCredentials: true,
 };
+
+const SSH_CREDENTIAL_STORAGE_PREFIX = 'aily:linux-board:ssh-credentials:';
 
 const INITIAL_STATE: LinuxBoardConnectorState = {
   selectedTransport: null,
@@ -64,8 +86,12 @@ export class LinuxBoardConnectorService implements OnDestroy {
   private disconnectTask: Promise<void> | null = null;
   private stopRequested = false;
   private readonly projectPathSubscription: Subscription;
+  private readonly projectStateSubscription: Subscription;
   private readonly boardChangeSubscription: Subscription;
+  private readonly boardConfigUpdatedSubscription: Subscription;
   private observedProjectPath = '';
+  private projectContextRevision = 0;
+  private projectContextResetTask: Promise<void> = Promise.resolve();
 
   readonly state$ = this.stateSubject.asObservable();
 
@@ -74,6 +100,7 @@ export class LinuxBoardConnectorService implements OnDestroy {
     private readonly serialService: SerialService,
     private readonly logService: LogService,
     private readonly projectService: ProjectService,
+    private readonly configService: ConfigService,
   ) {
     this.connectorEventSubscription = this.connector.events$.subscribe(event => {
       this.handleConnectorEvent(event);
@@ -83,12 +110,30 @@ export class LinuxBoardConnectorService implements OnDestroy {
       const nextPath = normalizeLocalProjectPath(path);
       const previousPath = this.observedProjectPath;
       this.observedProjectPath = nextPath;
-      if (!previousPath || previousPath === nextPath) return;
-      this.resetForProjectContextChange('项目已切换，正在断开原开发板会话');
+      if (previousPath === nextPath) return;
+      this.projectContextRevision += 1;
+      this.projectContextResetTask = this.resetForProjectContextChange(
+        '项目已切换，正在断开原开发板会话',
+      );
+    });
+    this.projectStateSubscription = this.projectService.stateSubject.subscribe(state => {
+      if (state === 'loaded') {
+        void this.restoreProjectSshSettings(this.projectContextRevision);
+      }
     });
     this.boardChangeSubscription = this.projectService.boardChangeSubject.subscribe(() => {
-      this.resetForProjectContextChange('开发板已切换，正在断开原开发板会话');
+      this.projectContextRevision += 1;
+      const revision = this.projectContextRevision;
+      this.projectContextResetTask = this.resetForProjectContextChange(
+        '开发板已切换，正在断开原开发板会话',
+      );
+      void this.restoreProjectSshSettings(revision);
     });
+    this.boardConfigUpdatedSubscription = this.projectService.boardConfigUpdatedSubject.subscribe(
+      boardConfig => {
+        void this.restoreProjectSshSettings(this.projectContextRevision, boardConfig);
+      },
+    );
   }
 
   get snapshot(): LinuxBoardConnectorState {
@@ -96,27 +141,50 @@ export class LinuxBoardConnectorService implements OnDestroy {
   }
 
   getSshSettings(): LinuxBoardSshSettings {
-    return { ...this.sshSettings, password: '' };
+    const settings = { ...this.sshSettings, password: '' };
+    if (!settings.rememberCredentials) return settings;
+
+    const credentials = this.readStoredSshCredentials(
+      normalizeLocalProjectPath(this.projectService.currentProjectPath),
+      settings,
+    );
+    return credentials
+      ? { ...settings, username: credentials.username, password: credentials.password }
+      : settings;
   }
 
-  async connectSsh(
-    settings: LinuxBoardSshSettings,
-    confirmedHostKey?: string,
-  ): Promise<AilyConnectorSession> {
+  async connectSsh(settings: LinuxBoardSshSettings): Promise<AilyConnectorSession> {
     const normalized = normalizeSshSettings(settings);
+    const projectPath = normalizeLocalProjectPath(this.projectService.currentProjectPath);
     this.assertTargetCanChange();
     if (this.snapshot.running) {
       throw new Error('请先停止正在运行的 Python 程序，再切换连接');
     }
 
     await this.disconnectIfTargetChanged('ssh', sshTargetKey(normalized));
-    this.sshSettings = { ...normalized, password: '' };
+    this.sshSettings = {
+      ...normalized,
+      username: normalized.rememberCredentials ? normalized.username : '',
+      password: '',
+    };
     this.patchState({
       selectedTransport: 'ssh',
       endpointLabel: formatSshLabel(normalized),
     });
     try {
-      return await this.ensureConnected(undefined, normalized, confirmedHostKey);
+      const session = await this.ensureConnected(undefined, normalized);
+      if (projectPath === normalizeLocalProjectPath(this.projectService.currentProjectPath)) {
+        this.persistSshCredentials(projectPath, normalized);
+        try {
+          await this.configService.saveProjectSshConnectorSettings(
+            this.projectService,
+            normalized,
+          );
+        } catch (error) {
+          this.writeError('SSH 连接设置保存失败', error);
+        }
+      }
+      return session;
     } finally {
       normalized.password = '';
     }
@@ -218,7 +286,9 @@ export class LinuxBoardConnectorService implements OnDestroy {
   ngOnDestroy(): void {
     this.connectorEventSubscription.unsubscribe();
     this.projectPathSubscription.unsubscribe();
+    this.projectStateSubscription.unsubscribe();
     this.boardChangeSubscription.unsubscribe();
+    this.boardConfigUpdatedSubscription.unsubscribe();
     void this.disconnect().catch(() => undefined);
     this.stateSubject.complete();
   }
@@ -270,10 +340,9 @@ export class LinuxBoardConnectorService implements OnDestroy {
   private async ensureConnected(
     expectedTransport?: AilyConnectorTransport,
     sshOverride?: LinuxBoardSshSettings,
-    confirmedHostKey?: string,
   ): Promise<AilyConnectorSession> {
     if (this.disconnectTask) await this.disconnectTask;
-    const target = this.resolveSelectedTarget(sshOverride, confirmedHostKey);
+    const target = this.resolveSelectedTarget(sshOverride);
     if (expectedTransport && target.transport !== expectedTransport) {
       throw new Error(
         `board.json requires the ${expectedTransport} connector, but ${target.transport} is selected`,
@@ -360,10 +429,7 @@ export class LinuxBoardConnectorService implements OnDestroy {
     }
   }
 
-  private resolveSelectedTarget(
-    sshOverride?: LinuxBoardSshSettings,
-    confirmedHostKey?: string,
-  ):
+  private resolveSelectedTarget(sshOverride?: LinuxBoardSshSettings):
     | { transport: 'ssh'; key: string; label: string; options: AilySshConnectOptions }
     | { transport: 'serial'; key: string; label: string; port: string } {
     if (this.snapshot.selectedTransport === 'ssh') {
@@ -378,8 +444,7 @@ export class LinuxBoardConnectorService implements OnDestroy {
           username: settings.username,
           ...(settings.password ? { password: settings.password } : {}),
           ...(settings.privateKeyPath ? { privateKeyPath: settings.privateKeyPath } : {}),
-          hostKeyPolicy: 'strict',
-          ...(confirmedHostKey ? { hostKey: confirmedHostKey } : {}),
+          hostKeyPolicy: settings.autoTrustHostKey ? 'accept-any' : 'trust-on-first-use',
         },
       };
     }
@@ -506,16 +571,62 @@ export class LinuxBoardConnectorService implements OnDestroy {
     });
   }
 
-  private resetForProjectContextChange(detail: string): void {
+  private resetForProjectContextChange(detail: string): Promise<void> {
     this.sshSettings.password = '';
     if (!this.session && !this.connectTask) {
       this.clearSelectedTarget();
-      return;
+      return Promise.resolve();
     }
     this.writeLog(detail, 'info');
-    void this.disconnect()
+    return this.disconnect()
       .then(() => this.clearSelectedTarget())
       .catch(() => undefined);
+  }
+
+  private async restoreProjectSshSettings(revision: number, boardConfig?: unknown): Promise<void> {
+    await this.projectContextResetTask;
+    const projectPath = normalizeLocalProjectPath(this.projectService.currentProjectPath);
+    if (
+      revision !== this.projectContextRevision
+      || !projectPath
+      || projectPath !== this.observedProjectPath
+    ) {
+      return;
+    }
+
+    let packageJson: any;
+    try {
+      packageJson = await this.projectService.getPackageJson();
+      boardConfig ??= await this.projectService.getBoardJson();
+    } catch {
+      return;
+    }
+    if (
+      revision !== this.projectContextRevision
+      || projectPath !== normalizeLocalProjectPath(this.projectService.currentProjectPath)
+    ) {
+      return;
+    }
+    const route = resolveLinuxBoardExecutionRoute(packageJson, boardConfig);
+    if (!route?.connectors.includes('ssh')) return;
+
+    const saved = this.configService.getProjectSshConnectorSettings(
+      packageJson,
+    );
+    if (!saved) return;
+
+    const normalized = normalizeSshSettings({ ...saved, password: '' }, false);
+    const credentials = normalized.rememberCredentials
+      ? this.readStoredSshCredentials(projectPath, normalized)
+      : null;
+    const restored = credentials
+      ? { ...normalized, username: credentials.username }
+      : normalized;
+    this.sshSettings = restored;
+    this.patchState({
+      selectedTransport: 'ssh',
+      endpointLabel: formatSshLabel(restored),
+    });
   }
 
   private defaultRemoteRoot(session: AilyConnectorSession, projectPath: string): string {
@@ -550,14 +661,84 @@ export class LinuxBoardConnectorService implements OnDestroy {
       state: 'error',
     });
   }
+
+  private persistSshCredentials(projectPath: string, settings: LinuxBoardSshSettings): void {
+    if (!projectPath) return;
+    const storageKey = sshCredentialStorageKey(projectPath);
+    if (!settings.rememberCredentials) {
+      localStorage.removeItem(storageKey);
+      return;
+    }
+
+    const safeStorage = (window as any).electronAPI?.safeStorage as SafeStorageApi | undefined;
+    if (!safeStorage) {
+      localStorage.removeItem(storageKey);
+      this.writeLog('系统安全存储不可用，用户名和密码未保存', 'warn');
+      return;
+    }
+
+    try {
+      if (!safeStorage.isEncryptionAvailable()) {
+        localStorage.removeItem(storageKey);
+        this.writeLog('系统安全存储不可用，用户名和密码未保存', 'warn');
+        return;
+      }
+      const credentials: StoredSshCredentials = {
+        projectPath,
+        host: settings.host,
+        port: settings.port,
+        username: settings.username,
+        password: settings.password,
+      };
+      const encrypted = safeStorage.encryptString(JSON.stringify(credentials));
+      localStorage.setItem(storageKey, Buffer.from(encrypted).toString('base64'));
+    } catch (error) {
+      localStorage.removeItem(storageKey);
+      this.writeError('用户名和密码保存失败', error);
+    }
+  }
+
+  private readStoredSshCredentials(
+    projectPath: string,
+    settings: LinuxBoardSshSettings,
+  ): StoredSshCredentials | null {
+    if (!projectPath || !settings.host) return null;
+    const storageKey = sshCredentialStorageKey(projectPath);
+    const encrypted = localStorage.getItem(storageKey);
+    if (!encrypted) return null;
+
+    const safeStorage = (window as any).electronAPI?.safeStorage as SafeStorageApi | undefined;
+    if (!safeStorage) return null;
+    try {
+      if (!safeStorage.isEncryptionAvailable()) return null;
+      const decrypted = safeStorage.decryptString(Buffer.from(encrypted, 'base64'));
+      const credentials = JSON.parse(decrypted) as Partial<StoredSshCredentials>;
+      if (
+        credentials.projectPath !== projectPath
+        || String(credentials.host || '').trim().toLowerCase() !== settings.host.toLowerCase()
+        || Number(credentials.port) !== settings.port
+        || typeof credentials.username !== 'string'
+        || typeof credentials.password !== 'string'
+      ) {
+        return null;
+      }
+      return credentials as StoredSshCredentials;
+    } catch {
+      localStorage.removeItem(storageKey);
+      return null;
+    }
+  }
 }
 
-function normalizeSshSettings(settings: LinuxBoardSshSettings): LinuxBoardSshSettings {
+function normalizeSshSettings(
+  settings: LinuxBoardSshSettings,
+  requireUsername = true,
+): LinuxBoardSshSettings {
   const host = String(settings?.host || '').trim();
   const username = String(settings?.username || '').trim();
   const port = Number(settings?.port || 22);
   if (!host) throw new Error('请输入 SSH 地址');
-  if (!username) throw new Error('请输入 SSH 用户名');
+  if (requireUsername && !username) throw new Error('请输入 SSH 用户名');
   if (!Number.isInteger(port) || port < 1 || port > 65_535) {
     throw new Error('SSH 端口必须是 1 到 65535 之间的整数');
   }
@@ -567,6 +748,8 @@ function normalizeSshSettings(settings: LinuxBoardSshSettings): LinuxBoardSshSet
     username,
     password: String(settings?.password || ''),
     privateKeyPath: String(settings?.privateKeyPath || '').trim(),
+    autoTrustHostKey: settings?.autoTrustHostKey !== false,
+    rememberCredentials: settings?.rememberCredentials !== false,
   };
 }
 
@@ -575,7 +758,8 @@ function formatSshLabel(settings: LinuxBoardSshSettings): string {
 }
 
 function sshTargetKey(settings: LinuxBoardSshSettings): string {
-  return `ssh:${settings.username}@${settings.host.toLowerCase()}:${settings.port}:${settings.privateKeyPath}`;
+  const hostKeyPolicy = settings.autoTrustHostKey ? 'accept-any' : 'trust-on-first-use';
+  return `ssh:${settings.username}@${settings.host.toLowerCase()}:${settings.port}:${settings.privateKeyPath}:${hostKeyPolicy}`;
 }
 
 function serialTargetKey(port: string): string {
@@ -584,6 +768,10 @@ function serialTargetKey(port: string): string {
 
 function normalizeLocalProjectPath(projectPath: string): string {
   return String(projectPath || '').trim().replace(/[\\/]+$/, '');
+}
+
+function sshCredentialStorageKey(projectPath: string): string {
+  return `${SSH_CREDENTIAL_STORAGE_PREFIX}${stablePathHash(projectPath)}`;
 }
 
 function stablePathHash(value: string): string {

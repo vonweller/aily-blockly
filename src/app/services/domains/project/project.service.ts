@@ -1618,6 +1618,7 @@ export class ProjectService {
       const boardJson = await this.getBoardJson();
       this.currentBoardConfig = boardJson;
       window['boardConfig'] = boardJson;
+      this.boardConfigUpdatedSubject.next(boardJson);
       return true;
     } catch (e) {
       console.warn('同步开发板配置失败:', e);

@@ -26,8 +26,12 @@ function normalizeConnectParams(value) {
     if (!Number.isInteger(port) || port < 1 || port > 65_535) {
       throw invalid('SSH port is invalid');
     }
-    if (endpoint.hostKeyPolicy !== 'strict') {
-      throw invalid('SSH host-key verification must use strict mode');
+    if (
+      endpoint.hostKeyPolicy !== 'trust-on-first-use'
+      && endpoint.hostKeyPolicy !== 'strict'
+      && endpoint.hostKeyPolicy !== 'accept-any'
+    ) {
+      throw invalid('SSH host-key verification policy is invalid');
     }
   } else {
     requireText(endpoint.port, 'Serial port', 1024);
