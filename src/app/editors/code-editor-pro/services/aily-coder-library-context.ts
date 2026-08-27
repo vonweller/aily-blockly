@@ -82,3 +82,9 @@ export function toAilyCoderWorkbenchLocale(language: unknown): string | null {
   if (normalized === 'pt' || normalized.startsWith('pt-')) return 'pt-br';
   return ['de', 'es', 'fr', 'ja', 'ko', 'ru'].includes(normalized) ? normalized : null;
 }
+
+/** Stable language identity used to decide whether the embedded Workbench must restart. */
+export function normalizeAilyCoderHostLanguage(language: unknown): string {
+  const normalized = boundedText(language, 40).toLowerCase().replace(/-/g, '_');
+  return normalized || 'en';
+}
