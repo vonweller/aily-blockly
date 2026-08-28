@@ -796,14 +796,14 @@ export interface WindowOpts {
   path: string;
   data?: any;
   title?: string;
-  /** 全局置顶；内置窗口相对主窗口的层级由 windowClass 单独管理。 */
+  /** 全局置顶；普通独立窗口应保持 false，由用户焦点决定窗口层级。 */
   alwaysOnTop?: boolean;
   width?: number;
   height?: number;
   /** 窗口可缩放下限；内置窗口和子应用窗口仍受宿主基础下限保护。 */
   minWidth?: number;
   minHeight?: number;
-  /** 窗口来源类型：内置窗口归属主窗口，子应用窗口保持独立顶层。 */
+  /** 窗口来源类型，用于宿主尺寸和行为策略；两类独立窗均保持正常顶层窗口语义。 */
   windowClass?: 'builtin' | 'subapp';
   x?: number;
   y?: number;

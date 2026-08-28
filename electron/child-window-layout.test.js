@@ -6,7 +6,7 @@ const {
     resolveChildWindowMinimumSize,
 } = require('./child-window-layout');
 
-test('classifies built-in windows as main-window-owned by default', () => {
+test('classifies built-in windows by default', () => {
     assert.equal(resolveChildWindowClass('/settings'), 'builtin');
     assert.equal(resolveChildWindowClass('/code-viewer'), 'builtin');
 });

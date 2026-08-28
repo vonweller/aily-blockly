@@ -56,7 +56,7 @@ async function readOwnership(
 }
 
 test.describe('独立窗口归属', () => {
-  test('内置窗口只置于主窗口之上，子应用窗口保持独立', async ({ electronApp, mainWindow }) => {
+  test('主窗口与内置窗口按用户焦点切换层级，子应用窗口保持独立', async ({ electronApp, mainWindow }) => {
     const builtinMarker = '#/about?ownership=builtin';
     await openWindow(mainWindow, {
       path: 'about?ownership=builtin',
@@ -69,17 +69,16 @@ test.describe('独立窗口归属', () => {
       mainWindowId: expect.any(Number),
       target: {
         id: expect.any(Number),
-        parentWindowId: expect.any(Number),
+        parentWindowId: null,
         alwaysOnTop: false,
       },
     });
     const builtinState = await readOwnership(electronApp, builtinMarker);
-    expect(builtinState.target?.parentWindowId).toBe(builtinState.mainWindowId);
-    expect(builtinState.childWindowIds).toContain(builtinState.target?.id);
+    expect(builtinState.childWindowIds).not.toContain(builtinState.target?.id);
     await expect.poll(() => readHostWindowState(mainWindow, '/about?ownership=builtin')).toMatchObject({
       windowClass: 'builtin',
-      ownedByMainWindow: true,
-      parentWindowId: builtinState.mainWindowId,
+      ownedByMainWindow: false,
+      parentWindowId: null,
       alwaysOnTop: false,
     });
 
@@ -108,7 +107,7 @@ test.describe('独立窗口归属', () => {
     });
   });
 
-  test('设置预热窗口展示后归属主窗口且不再全局置顶', async ({ electronApp, mainWindow }) => {
+  test('设置预热窗口展示后保持普通顶层且不再全局置顶', async ({ electronApp, mainWindow }) => {
     await openWindow(mainWindow, {
       path: 'settings',
       windowClass: 'builtin',
@@ -120,16 +119,16 @@ test.describe('独立窗口归属', () => {
       mainWindowId: expect.any(Number),
       target: {
         id: expect.any(Number),
-        parentWindowId: expect.any(Number),
+        parentWindowId: null,
         alwaysOnTop: false,
       },
     });
     const settingsState = await readOwnership(electronApp, '#/settings');
-    expect(settingsState.target?.parentWindowId).toBe(settingsState.mainWindowId);
+    expect(settingsState.childWindowIds).not.toContain(settingsState.target?.id);
     await expect.poll(() => readHostWindowState(mainWindow, '/settings')).toMatchObject({
       windowClass: 'builtin',
-      ownedByMainWindow: true,
-      parentWindowId: settingsState.mainWindowId,
+      ownedByMainWindow: false,
+      parentWindowId: null,
       alwaysOnTop: false,
     });
   });

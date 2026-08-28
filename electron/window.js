@@ -895,25 +895,30 @@ function registerWindowHandlers(mainWindow, options = {}) {
         broadcastChildToolSessionStateChanged();
     };
 
-    /**
-     * 内置独立窗属于主窗口，只保持相对主窗口的层级；子应用独立窗保持顶层窗口语义。
-     * 统一在展示前应用，以兼容通用窗口池和设置预热窗口。
-     */
-    const applySubWindowOwnership = (targetWindow, windowUrl, requestedWindowClass = '') => {
+    const applySubWindowClass = (targetWindow, windowUrl, requestedWindowClass = '') => {
         const windowClass = resolveChildWindowClass(windowUrl, requestedWindowClass);
         if (!targetWindow || targetWindow.isDestroyed()) {
             return windowClass;
         }
-        const expectedParent = windowClass === 'builtin'
-            && mainWindow
-            && !mainWindow.isDestroyed()
-            ? mainWindow
-            : null;
-        if (targetWindow.getParentWindow() !== expectedParent) {
-            targetWindow.setParentWindow(expectedParent);
-        }
         targetWindow.__ailyWindowClass = windowClass;
         return windowClass;
+    };
+
+    /** Windows 普通顶层窗按用户最后选择的窗口调整 Z-order，不建立 Win32 owner 关系。 */
+    const moveFocusedWindowToTop = (targetWindow) => {
+        try {
+            if (process.platform === 'win32'
+                && targetWindow
+                && !targetWindow.isDestroyed()
+                && targetWindow.isVisible()
+                && !targetWindow.isMinimized()
+                && !targetWindow.isAlwaysOnTop()
+                && typeof targetWindow.moveTop === 'function') {
+                targetWindow.moveTop();
+            }
+        } catch (error) {
+            console.warn('[WindowLayer] 聚焦窗口层级调整失败:', error.message);
+        }
     };
 
     const focusSubWindow = (targetWindow) => {
@@ -1316,6 +1321,8 @@ function registerWindowHandlers(mainWindow, options = {}) {
      * @param {string} windowUrl
      */
     const attachSubWindowLifecycleListeners = (subWindow, windowUrl) => {
+        subWindow.on('focus', () => moveFocusedWindowToTop(subWindow));
+
         subWindow.on('enter-full-screen', () => {
             try {
                 if (subWindow && subWindow.webContents) {
@@ -1475,7 +1482,7 @@ function registerWindowHandlers(mainWindow, options = {}) {
             height: data.minHeight,
         }, 'builtin');
         try {
-            applySubWindowOwnership(win, SETTINGS_WINDOW_URL, 'builtin');
+            applySubWindowClass(win, SETTINGS_WINDOW_URL, 'builtin');
             win.setAlwaysOnTop(!!data.alwaysOnTop);
             applySubWindowMinimumSize(win, minimumSize);
             placeSubWindowBeforeReveal(win, mainWindow, data, width, height, minimumSize);
@@ -1541,6 +1548,7 @@ function registerWindowHandlers(mainWindow, options = {}) {
 
     mainWindow.on('focus', () => {
         try {
+            moveFocusedWindowToTop(mainWindow);
             // 仅清除本功能设置�?Dock 角标，避免覆盖其它模块可能的徽章
             if (process.platform === 'darwin' && app.dock && typeof app.dock.getBadge === 'function') {
                 try {
@@ -1632,7 +1640,7 @@ function registerWindowHandlers(mainWindow, options = {}) {
             const existingWindow = openWindows.get(windowUrl);
             // 确保窗口仍然有效
             if (existingWindow && !existingWindow.isDestroyed()) {
-                applySubWindowOwnership(existingWindow, windowUrl, windowClass);
+                applySubWindowClass(existingWindow, windowUrl, windowClass);
                 applySubWindowMinimumSize(existingWindow, minimumSize);
                 // 激活已存在的窗�?
                 const currentBounds = existingWindow.getBounds();
@@ -1707,7 +1715,7 @@ function registerWindowHandlers(mainWindow, options = {}) {
             }
         }
 
-        applySubWindowOwnership(subWindow, windowUrl, windowClass);
+        applySubWindowClass(subWindow, windowUrl, windowClass);
         applySubWindowMinimumSize(subWindow, minimumSize);
         placeSubWindowBeforeReveal(subWindow, mainWindow, data, width, height, minimumSize);
 
