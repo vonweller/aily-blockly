@@ -12,7 +12,7 @@ import { BuilderService } from '../code-editor/services/builder.service';
 import { BuilderService as TopBuilderService } from '@domain/build/public-api';
 import { UploaderService } from '@domain/device/public-api';
 import { ElectronService, CmdService, type CmdOutput } from '@core/platform/public-api';
-import { ThemeService } from '@core/preferences/public-api';
+import { ConfigService, ThemeService } from '@core/preferences/public-api';
 import {
   CodeEditorProProjectService,
   type CodeEditorProPersistenceBridge,
@@ -29,9 +29,20 @@ import {
   CoderLoadingComponent,
   CoderLoadingStage,
 } from './coder-loading/coder-loading.component';
+import {
+  LibManagerService,
+  type PackageInfo,
+} from '../blockly-editor/components/lib-manager/lib-manager.service';
+import {
+  createAilyCoderLibraryContext,
+  normalizeAilyCoderHostLanguage,
+  toAilyCoderWorkbenchLocale,
+} from './services/aily-coder-library-context';
 
 /** 与独立 aily-coder 子应用包 src/hostEmbedContext.ts 中 channel 常量一致 */
 const AILY_CODER_HOST_CONTEXT_CHANNEL = 'aily-coder-host-context';
+/** iframe 已完成监听后主动索要上下文，避免一次性 postMessage 早于子应用监听器。 */
+const AILY_CODER_HOST_CONTEXT_REQUEST_CHANNEL = 'aily-coder-host-context-request';
 /** 内嵌 Coder 请求在系统文件管理器中显示绝对路径 */
 const AILY_CODER_REVEAL_IN_OS_CHANNEL = 'aily-coder-reveal-in-os';
 /** Aily View：Installed Libraries 展开/折叠时同步宿主库管理侧栏 */
@@ -159,6 +170,9 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
   private coderLegacyReadyTimer?: ReturnType<typeof setTimeout>;
   private coderReadyTimeoutTimer?: ReturnType<typeof setTimeout>;
   private coderReadyProtocolSupported = false;
+  /** Workbench 当前启动时使用的宿主语言；核心语言包只能在初始化前加载。 */
+  private coderEmbedHostLanguage: string | null = null;
+  private coderLanguageReloadGeneration = 0;
 
   private readonly coderDevEmbedBase = 'http://127.0.0.1:5174/';
   private coderRuntimeHostInfo: ChildToolHostInfo | null = null;
@@ -200,6 +214,8 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
   private disposeBuildOutputsWatch?: () => void;
   private disposeGlobalBuildOutputsWatch?: () => void;
   private buildOutputsWatchDebounce?: ReturnType<typeof setTimeout>;
+  /** 只允许最近一次异步 host-context 解析结果写入 iframe，避免空旧快照覆盖完整目录。 */
+  private coderHostContextGeneration = 0;
 
   constructor(
     private projectService: ProjectService,
@@ -212,6 +228,7 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
     private electronService: ElectronService,
     private sanitizer: DomSanitizer,
     private themeService: ThemeService,
+    private configService: ConfigService,
     private npmService: NpmService,
     private uiService: UiService,
     private aiCoderDiffBridge: AiCoderDiffBridgeService,
@@ -221,6 +238,7 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
     private readonly translate: TranslateService,
     private readonly elementRef: ElementRef<HTMLElement>,
     private readonly codeCompletionHostBridge: CodeCompletionHostBridgeService,
+    private readonly libManagerService: LibManagerService,
   ) {
     toObservable(this.themeService.theme)
       .pipe(takeUntilDestroyed())
@@ -290,6 +308,29 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
         void this.syncBoardConfigForHeader();
         void this.writeCoderEmbedHints(root);
         void this.pushAilyCoderHostContext(root);
+      }),
+    );
+    // 子应用语言由主软件统一控制。VS Code 核心语言包必须在 Workbench 初始化前加载，
+    // 因此先保存编辑器，再只重启 iframe（Runtime 进程保持不变）。
+    this.componentSubscriptions.add(
+      this.translate.onLangChange.subscribe(() => {
+        const root = this.coderEmbedWorkspaceRoot;
+        if (!root) return;
+        const hostLanguage = this.translate.currentLang || this.translate.defaultLang || 'en';
+        const nextLanguage = normalizeAilyCoderHostLanguage(hostLanguage);
+        const generation = ++this.coderLanguageReloadGeneration;
+        if (!this.coderEmbedSrc || this.coderEmbedHostLanguage === nextLanguage) {
+          void this.pushAilyCoderHostContext(root);
+          return;
+        }
+        void this.reloadCoderEmbedForLanguage(root, nextLanguage, generation);
+      }),
+    );
+    this.componentSubscriptions.add(
+      this.configService.libraryListChanged$.subscribe((libraryList) => {
+        if (libraryList.length === 0) return;
+        const root = this.coderEmbedWorkspaceRoot;
+        if (root) void this.pushAilyCoderHostContext(root);
       }),
     );
     this.proProject.init();
@@ -559,6 +600,13 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
       u.searchParams.set('mode', 'full-workbench');
       u.searchParams.set('folder', projectPath);
       u.searchParams.set('theme', this.themeService.theme());
+      const hostLanguage = this.translate.currentLang || this.translate.defaultLang || 'en';
+      this.coderEmbedHostLanguage = normalizeAilyCoderHostLanguage(hostLanguage);
+      u.searchParams.set('lang', hostLanguage);
+      const coderLocale = toAilyCoderWorkbenchLocale(hostLanguage);
+      if (coderLocale) {
+        u.searchParams.set('locale', coderLocale);
+      }
       if (this.electronService.isElectron) {
         u.searchParams.set('nativeFsBridge', 'true');
       }
@@ -580,6 +628,48 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
       this.coderEmbedError = e?.message || String(e);
       this.message.error('无法启动内嵌代码编辑器：' + this.coderEmbedError);
     }
+  }
+
+  /**
+   * Workbench NLS 在模块初始化时固化，无法通过 host-context 安全热替换。
+   * 重载前要求所有已打开文件落盘；保存失败时保留当前 iframe，避免丢失修改。
+   */
+  private async reloadCoderEmbedForLanguage(
+    projectRoot: string,
+    nextLanguage: string,
+    generation: number,
+  ): Promise<void> {
+    // 自定义 Webview 可先热更新；核心 Search/SCM 标题在后续 iframe 重启时更新。
+    void this.pushAilyCoderHostContext(projectRoot);
+
+    if (this.coderWorkbenchReady) {
+      const saveResult = await this.requestCoderLifecycle('save-all');
+      if (
+        generation !== this.coderLanguageReloadGeneration
+        || !this.isCurrentCoderWorkspace(projectRoot)
+      ) {
+        return;
+      }
+      if (!saveResult.ok || saveResult.dirtyAfter > 0) {
+        console.warn('[CodeEditorPro] language reload skipped because editors could not be saved', saveResult);
+        const detail = saveResult.message || this.translate.instant('UPDATE_DIALOG.SAVE_FAILED');
+        this.message.warning(this.translate.instant('LIBRARY_PUBLISH.RELOAD_SAVE_FAILED', {
+          error: detail,
+        }));
+        return;
+      }
+    }
+
+    if (
+      generation !== this.coderLanguageReloadGeneration
+      || !this.isCurrentCoderWorkspace(projectRoot)
+      || normalizeAilyCoderHostLanguage(
+        this.translate.currentLang || this.translate.defaultLang || 'en',
+      ) !== nextLanguage
+    ) {
+      return;
+    }
+    await this.initCoderEmbed(projectRoot);
   }
 
   private async acquireCoderRuntime(): Promise<ChildToolHostInfo> {
@@ -806,21 +896,97 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
     }
   }
 
+  /** 主软件内存目录未就绪时，同步读取库管理使用的同一个 libraries.json 缓存。 */
+  private getAilyLibraryCatalogForEmbed(): PackageInfo[] {
+    if (Array.isArray(this.configService.libraryList) && this.configService.libraryList.length > 0) {
+      return this.configService.libraryList;
+    }
+    try {
+      const appDataPath = window['path'].getAppDataPath() as string;
+      const cachePath = window['path'].join(appDataPath, 'libraries.json') as string;
+      if (!this.electronService.exists(cachePath)) return [];
+      const parsed = JSON.parse(this.electronService.readFile(cachePath));
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+
+  private createAilyLibrariesForEmbed(
+    sourceLibraries: PackageInfo[],
+    boardType: string,
+    hostLanguage: string,
+    installedLibraries: PackageInfo[] = [],
+  ) {
+    const availableLibraries = this.libManagerService.filterByBoardType(
+      sourceLibraries,
+      boardType,
+    );
+    const mergedLibraries = installedLibraries.length > 0
+      ? this.libManagerService.mergeInstalledLibraries(
+          this.libManagerService.cloneLibraryList(availableLibraries),
+          installedLibraries,
+          true,
+        )
+      : this.libManagerService.cloneLibraryList(availableLibraries);
+    const localizedLibraries = this.libManagerService.applyLocalization(
+      this.libManagerService.filterByBoardType(mergedLibraries, boardType),
+      hostLanguage,
+    );
+    return createAilyCoderLibraryContext(localizedLibraries);
+  }
+
   /**
-   * 将构建路径等注入内嵌 Coder；与 hints 同源，避免 Coder 拿到错误的工程内虚拟路径。
+   * 先同步注入库目录与语言，再异步补充安装状态、构建产物和平台包。
+   * 库面板不能被无关的构建/依赖解析阻塞。
    */
   private async pushAilyCoderHostContext(projectRoot: string): Promise<void> {
     if (!this.isCurrentCoderWorkspace(projectRoot)) return;
+    const generation = ++this.coderHostContextGeneration;
     const win = this.coderEmbedFrame?.nativeElement?.contentWindow;
     if (!win) {
       return;
     }
+    const hostLanguage = this.translate.currentLang || this.translate.defaultLang || 'en';
+    const boardType = typeof this.projectService.currentBoardConfig?.type === 'string'
+      ? this.projectService.currentBoardConfig.type.trim()
+      : '';
+    const sourceLibraries = this.getAilyLibraryCatalogForEmbed();
+    const initialAilyLibraries = this.createAilyLibrariesForEmbed(
+      sourceLibraries,
+      boardType,
+      hostLanguage,
+    );
+    const appDataPath = window['path'].getAppDataPath() as string;
+    if (
+      this.isCurrentCoderWorkspace(projectRoot)
+      && win === this.coderEmbedFrame?.nativeElement?.contentWindow
+    ) {
+      win.postMessage({
+        channel: AILY_CODER_HOST_CONTEXT_CHANNEL,
+        payload: {
+          v: 1 as const,
+          workspaceRoot: projectRoot,
+          appDataPath,
+          ailyLibraries: initialAilyLibraries,
+          meta: { theme: this.themeService.theme(), lang: hostLanguage },
+        },
+      }, '*');
+    }
     try {
-      const { buildPath, artifacts, mainHexAbs, mainHexRelPath } =
-        await this.resolveEmbedBuildOutputs(projectRoot);
-      const platformPackages = await this.loadPlatformPackagesForEmbed();
-      const boardProfile = await this.buildBoardProfileForEmbed(projectRoot);
-      const appDataPath = window['path'].getAppDataPath() as string;
+      const [buildOutputs, platformPackages, boardProfile, installedLibraries] = await Promise.all([
+        this.resolveEmbedBuildOutputs(projectRoot),
+        this.loadPlatformPackagesForEmbed(),
+        this.buildBoardProfileForEmbed(projectRoot),
+        this.npmService.getAllInstalledLibraries(projectRoot).catch(() => []),
+      ]);
+      const { buildPath, artifacts, mainHexAbs, mainHexRelPath } = buildOutputs;
+      const ailyLibraries = this.createAilyLibrariesForEmbed(
+        sourceLibraries,
+        boardType,
+        hostLanguage,
+        installedLibraries,
+      );
       const payload = {
         v: 1 as const,
         workspaceRoot: projectRoot,
@@ -843,10 +1009,12 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
           : {}),
         ...(platformPackages.length > 0 ? { platformPackages } : {}),
         ...(boardProfile ? { boardProfile } : {}),
-        meta: { theme: this.themeService.theme() },
+        ailyLibraries,
+        meta: { theme: this.themeService.theme(), lang: hostLanguage },
       };
       if (
-        !this.isCurrentCoderWorkspace(projectRoot)
+        generation !== this.coderHostContextGeneration
+        || !this.isCurrentCoderWorkspace(projectRoot)
         || win !== this.coderEmbedFrame?.nativeElement?.contentWindow
       ) {
         return;
@@ -1599,6 +1767,14 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
       payload?: Record<string, unknown>;
       absPath?: string;
     };
+    if (msg?.channel === AILY_CODER_HOST_CONTEXT_REQUEST_CHANNEL) {
+      const frameWindow = this.coderEmbedFrame?.nativeElement?.contentWindow;
+      const root = this.coderEmbedWorkspaceRoot;
+      if (frameWindow && root && ev.source === frameWindow) {
+        void this.pushAilyCoderHostContext(root);
+      }
+      return;
+    }
     if (
       msg?.channel === AILY_CODER_READY_PROTOCOL_CHANNEL
       || msg?.channel === AILY_CODER_READY_CHANNEL
@@ -1624,6 +1800,11 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
         this.coderReadyProtocolSupported = true;
         this.coderWorkbenchReady = true;
         if (this.coderEmbedLoading) this.completeCoderEmbedLoading();
+        // iframe load / host theme events can race with a language-triggered navigation.
+        // Replay the latest snapshot only after the new Workbench has installed its
+        // host-context listener so a simultaneous theme change cannot be lost.
+        const root = this.coderEmbedWorkspaceRoot;
+        if (root) void this.pushAilyCoderHostContext(root);
       }
       return;
     }

@@ -1,6 +1,6 @@
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Injectable } from '@angular/core';
-import { lastValueFrom, Subject, timeout } from 'rxjs';
+import { lastValueFrom, ReplaySubject, Subject, timeout } from 'rxjs';
 import { ElectronService } from '@core/platform/public-api';
 import { API, setServerUrl, setRegistryUrl, setToolWebUrl } from '../../../configs/api.config';
 import { calculateSimilarity, extractKeywords } from '../../../utils/fuzzy-search.utils';
@@ -63,6 +63,8 @@ export class ConfigService {
 
   /** 配置重新加载完成时发出，供 blockly 等组件实时应用新配置 */
   configReloaded$ = new Subject<void>();
+  /** libraries.json 首次缓存命中、远端刷新或恢复完成后发出；晚订阅者可拿到最后一次目录。 */
+  readonly libraryListChanged$ = new ReplaySubject<readonly any[]>(1);
   readonly configNotice$ = new Subject<ConfigServiceNotice>();
   
   // 数据加载状态标识
@@ -445,15 +447,18 @@ export class ConfigService {
     try {
       if (this.electronService.exists(localPath)) {
         this.libraryList = this.parseLibraryList(this.electronService.readFile(localPath));
+        this.libraryListChanged$.next(this.libraryList);
         const libraryList = await this.loadLibraryList();
         if (libraryList.length > 0) {
           this.libraryList = libraryList;
+          this.libraryListChanged$.next(this.libraryList);
           this.electronService.writeFile(localPath, JSON.stringify(libraryList));
         }
       } else {
         // 首次启动软件，创建libraries.json
         const libraryList = await this.fetchLibraryListOrThrow();
         this.libraryList = libraryList;
+        this.libraryListChanged$.next(this.libraryList);
         this.electronService.writeFile(localPath, JSON.stringify(libraryList));
       }
     } catch (error) {
@@ -1219,10 +1224,12 @@ export class ConfigService {
     try {
       const latestLibraryList = await this.fetchLibraryListOrThrow();
       this.libraryList = latestLibraryList;
+      this.libraryListChanged$.next(this.libraryList);
       this.electronService.writeFile(localPath, JSON.stringify(latestLibraryList));
       //console.log('[ConfigService] 已使用线上最新 libraries.json 覆盖本地缓存');
     } catch (remoteError) {
       this.libraryList = [];
+      this.libraryListChanged$.next(this.libraryList);
       const message = this.getLibraryReloadFailureMessage(remoteError, originalError);
       console.error('[ConfigService] 从线上恢复 libraries.json 失败:', remoteError);
       this.emitLibraryLoadError(message);

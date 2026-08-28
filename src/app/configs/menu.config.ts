@@ -72,7 +72,7 @@ export let HEADER_MENU: IMenuItem[] = [
     name: 'MENU.PROJECT_NEW',
     text: 'Ctrl + N',
     action: 'project-new',
-    data: { type: 'project-new', path: 'project-new', alwaysOnTop: true, width: 820, height: 550 },
+    data: { type: 'project-new', path: 'project-new', windowClass: 'builtin', width: 820, height: 550 },
     icon: 'fa-light fa-file-circle-plus',
   },
   {
@@ -137,7 +137,7 @@ export let HEADER_MENU: IMenuItem[] = [
   {
     name: 'MENU.SETTINGS',
     action: 'settings-open',
-    data: { type: 'window', path: 'settings', alwaysOnTop: true, width: 700, height: 550 },
+    data: { type: 'window', path: 'settings', windowClass: 'builtin', width: 700, height: 550 },
     icon: 'fa-light fa-gear',
   },
   {
@@ -185,7 +185,7 @@ export let GUIDE_MENU: IMenuItem[] = [
   {
     name: 'MENU.PROJECT_NEW',
     action: 'project-new',
-    data: { type: 'project-new', path: 'project-new', alwaysOnTop: true, width: 820, height: 550 },
+    data: { type: 'project-new', path: 'project-new', windowClass: 'builtin', width: 820, height: 550 },
     icon: 'fa-light fa-file-circle-plus',
   },
   {

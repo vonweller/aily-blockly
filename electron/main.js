@@ -19,16 +19,16 @@ const {
 const { isWin32, isDarwin, isLinux } = require("./platform");
 const projectLock = require("./project-lock");
 const { startCliBridge } = require("./cli-bridge");
-const builder = require("./builder");
-const linter = require("./linter");
-const connector = require("./connector");
+const builder = require("./tools/builder");
+const linter = require("./tools/linter");
+const connector = require("./tools/connector");
 const simulatorGateway = require("./simulator-gateway");
 const simulatorSubappHost = require("./simulator-subapp-host");
 const { createPackagedRendererServer } = require("./packaged-renderer-server");
 const {
   markInstalledForAppVersion,
   shouldInstallForAppVersion,
-} = require("./aily-tools-install-state");
+} = require("./tools/aily-tools-install-state");
 const { mergeConfigChanges } = require("./config-persistence");
 const { registerSafeStorageIpc } = require("./safe-storage-ipc");
 const ORIGINAL_PROCESS_PATH = process.env.PATH || process.env.Path || "";
@@ -2174,7 +2174,7 @@ function loadEnv() {
   // aily-builder、aily-linter 与 aily-connector 由 npm 安装到应用专用的全局 prefix。
 
   // 必须先让 child Node 可用。首次启动和应用版本变化时安装 latest，
-  // 同一应用版本复用现有工具；两个 npm 全局安装串行执行。
+  // 同一应用版本复用现有工具；三个 npm 全局安装串行执行。
   runInstallEnv(childPath);
   const appVersion = app.getVersion();
   const isE2E = process.env.AILY_E2E === "1";
@@ -2220,6 +2220,9 @@ function loadEnv() {
     },
   );
   connectorInitialization.then((result) => {
+    if (result.startupInstallAttempted && !result.startupInstallSucceeded) {
+      console.warn(`aily-connector@latest startup install failed: ${result.startupInstallError || result.error || "unknown error"}`);
+    }
     if (!result.ok) {
       console.warn(`aily-connector is not ready: ${result.error || "unknown error"}`);
     }
