@@ -37,6 +37,7 @@ const {
     SUBAPP_SUB_WINDOW_MINIMUM_SIZE,
     calculateChildWindowLayout,
     clampBoundsToWorkArea,
+    resolveChildWindowClass,
     resolveChildWindowMinimumSize,
 } = require('./child-window-layout');
 const { exec, execSync } = require('child_process');
@@ -894,6 +895,27 @@ function registerWindowHandlers(mainWindow, options = {}) {
         broadcastChildToolSessionStateChanged();
     };
 
+    /**
+     * 内置独立窗属于主窗口，只保持相对主窗口的层级；子应用独立窗保持顶层窗口语义。
+     * 统一在展示前应用，以兼容通用窗口池和设置预热窗口。
+     */
+    const applySubWindowOwnership = (targetWindow, windowUrl, requestedWindowClass = '') => {
+        const windowClass = resolveChildWindowClass(windowUrl, requestedWindowClass);
+        if (!targetWindow || targetWindow.isDestroyed()) {
+            return windowClass;
+        }
+        const expectedParent = windowClass === 'builtin'
+            && mainWindow
+            && !mainWindow.isDestroyed()
+            ? mainWindow
+            : null;
+        if (targetWindow.getParentWindow() !== expectedParent) {
+            targetWindow.setParentWindow(expectedParent);
+        }
+        targetWindow.__ailyWindowClass = windowClass;
+        return windowClass;
+    };
+
     const focusSubWindow = (targetWindow) => {
         if (!targetWindow || targetWindow.isDestroyed()) {
             return false;
@@ -941,12 +963,17 @@ function registerWindowHandlers(mainWindow, options = {}) {
                 minimized: false,
                 maximized: false,
                 fullScreen: false,
+                alwaysOnTop: false,
+                windowClass: resolveChildWindowClass(normalizedWindowUrl),
+                parentWindowId: null,
+                ownedByMainWindow: false,
                 bounds: null,
             };
         }
 
         const display = screen.getDisplayMatching(targetWindow.getBounds());
         const primaryDisplay = screen.getPrimaryDisplay();
+        const parentWindow = targetWindow.getParentWindow();
         return {
             path: normalizedWindowUrl,
             open: true,
@@ -955,6 +982,11 @@ function registerWindowHandlers(mainWindow, options = {}) {
             minimized: targetWindow.isMinimized(),
             maximized: targetWindow.isMaximized(),
             fullScreen: targetWindow.isFullScreen(),
+            alwaysOnTop: targetWindow.isAlwaysOnTop(),
+            windowClass: targetWindow.__ailyWindowClass
+                || resolveChildWindowClass(normalizedWindowUrl),
+            parentWindowId: parentWindow?.id ?? null,
+            ownedByMainWindow: parentWindow === mainWindow,
             bounds: targetWindow.getBounds(),
             display: {
                 id: display.id,
@@ -1004,6 +1036,8 @@ function registerWindowHandlers(mainWindow, options = {}) {
                     minimized: mainWindow.isMinimized(),
                     maximized: mainWindow.isMaximized(),
                     fullScreen: mainWindow.isFullScreen(),
+                    alwaysOnTop: mainWindow.isAlwaysOnTop(),
+                    childWindowIds: mainWindow.getChildWindows().map(childWindow => childWindow.id),
                     bounds: mainWindow.getBounds(),
                     display: listDisplaySnapshots().find(display =>
                         display.id === screen.getDisplayMatching(mainWindow.getBounds()).id) || null,
@@ -1439,8 +1473,9 @@ function registerWindowHandlers(mainWindow, options = {}) {
         const minimumSize = resolveChildWindowMinimumSize(SETTINGS_WINDOW_URL, {
             width: data.minWidth,
             height: data.minHeight,
-        });
+        }, 'builtin');
         try {
+            applySubWindowOwnership(win, SETTINGS_WINDOW_URL, 'builtin');
             win.setAlwaysOnTop(!!data.alwaysOnTop);
             applySubWindowMinimumSize(win, minimumSize);
             placeSubWindowBeforeReveal(win, mainWindow, data, width, height, minimumSize);
@@ -1586,16 +1621,18 @@ function registerWindowHandlers(mainWindow, options = {}) {
         const height = data.height ? data.height : 600;
         const alwaysOnTop = data.alwaysOnTop ? data.alwaysOnTop : false;
         const needInitPayload = !!(data.data || data.url || data.title);
+        const windowClass = resolveChildWindowClass(windowUrl, data.windowClass);
         const minimumSize = resolveChildWindowMinimumSize(windowUrl, {
             width: data.minWidth,
             height: data.minHeight,
-        }, data.windowClass);
+        }, windowClass);
 
         // 检查是否已存在该URL的窗�?
         if (openWindows.has(windowUrl)) {
             const existingWindow = openWindows.get(windowUrl);
             // 确保窗口仍然有效
             if (existingWindow && !existingWindow.isDestroyed()) {
+                applySubWindowOwnership(existingWindow, windowUrl, windowClass);
                 applySubWindowMinimumSize(existingWindow, minimumSize);
                 // 激活已存在的窗�?
                 const currentBounds = existingWindow.getBounds();
@@ -1670,6 +1707,7 @@ function registerWindowHandlers(mainWindow, options = {}) {
             }
         }
 
+        applySubWindowOwnership(subWindow, windowUrl, windowClass);
         applySubWindowMinimumSize(subWindow, minimumSize);
         placeSubWindowBeforeReveal(subWindow, mainWindow, data, width, height, minimumSize);
 

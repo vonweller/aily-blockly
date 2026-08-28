@@ -2,8 +2,20 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 
 const {
+    resolveChildWindowClass,
     resolveChildWindowMinimumSize,
 } = require('./child-window-layout');
+
+test('classifies built-in windows as main-window-owned by default', () => {
+    assert.equal(resolveChildWindowClass('/settings'), 'builtin');
+    assert.equal(resolveChildWindowClass('/code-viewer'), 'builtin');
+});
+
+test('keeps subapp windows independent through explicit class or legacy route fallback', () => {
+    assert.equal(resolveChildWindowClass('/apps/custom-surface', 'subapp'), 'subapp');
+    assert.equal(resolveChildWindowClass('/child-tool/aily-chat'), 'subapp');
+    assert.equal(resolveChildWindowClass('/child-tool/aily-chat', 'builtin'), 'builtin');
+});
 
 test('uses a larger minimum for built-in detached windows', () => {
     assert.deepEqual(resolveChildWindowMinimumSize('/settings'), {

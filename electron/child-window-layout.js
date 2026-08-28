@@ -35,12 +35,16 @@ function isSubappWindowPath(routePath) {
     return /^\/?child-tool\/[^/?#]+/.test(normalizedPath);
 }
 
+function resolveChildWindowClass(routePath, windowClass = '') {
+    if (windowClass === 'subapp' || windowClass === 'builtin') {
+        return windowClass;
+    }
+    return isSubappWindowPath(routePath) ? 'subapp' : 'builtin';
+}
+
 function resolveChildWindowMinimumSize(routePath, requestedMinimumSize = {}, windowClass = '') {
-    const normalizedWindowClass = windowClass === 'subapp' || windowClass === 'builtin'
-        ? windowClass
-        : '';
-    const baseline = normalizedWindowClass === 'subapp'
-        || (!normalizedWindowClass && isSubappWindowPath(routePath))
+    const resolvedWindowClass = resolveChildWindowClass(routePath, windowClass);
+    const baseline = resolvedWindowClass === 'subapp'
         ? SUBAPP_SUB_WINDOW_MINIMUM_SIZE
         : BUILTIN_SUB_WINDOW_MINIMUM_SIZE;
     return {
@@ -222,5 +226,6 @@ module.exports = {
     chooseAutoLayout,
     clampBoundsToWorkArea,
     isSubappWindowPath,
+    resolveChildWindowClass,
     resolveChildWindowMinimumSize,
 };
