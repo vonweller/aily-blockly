@@ -236,6 +236,11 @@ export class UiService {
   }
 
   openToolWindow(name: string, options?: Omit<WindowOpts, 'path'>) {
+    const subappConfig = getChildToolConfig(name);
+    const isSubappWindow = !!subappConfig;
+    const defaultSurface = subappConfig?.ui?.surfaces?.['default'];
+    const minWidth = options?.minWidth ?? defaultSurface?.minWidth;
+    const minHeight = options?.minHeight ?? defaultSurface?.minHeight;
     const toolWindowPath = this.getToolWindowPath(name);
     if (!toolWindowPath) {
       return false;
@@ -246,6 +251,9 @@ export class UiService {
       title: options?.title || name,
       width: options?.width ?? 1200,
       height: options?.height ?? 800,
+      windowClass: isSubappWindow ? 'subapp' : 'builtin',
+      ...(minWidth !== undefined ? { minWidth } : {}),
+      ...(minHeight !== undefined ? { minHeight } : {}),
       ...(options?.x !== undefined ? { x: options.x } : {}),
       ...(options?.y !== undefined ? { y: options.y } : {}),
       ...(options?.displayId !== undefined ? { displayId: options.displayId } : {}),
@@ -791,6 +799,11 @@ export interface WindowOpts {
   alwaysOnTop?: boolean;
   width?: number;
   height?: number;
+  /** 窗口可缩放下限；内置窗口和子应用窗口仍受宿主基础下限保护。 */
+  minWidth?: number;
+  minHeight?: number;
+  /** 窗口来源类型，不依赖当前宿主路由命名判断。 */
+  windowClass?: 'builtin' | 'subapp';
   x?: number;
   y?: number;
   displayId?: string | number;

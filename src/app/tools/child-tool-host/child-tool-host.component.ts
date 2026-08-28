@@ -1644,13 +1644,18 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     }
     const query = new URLSearchParams({ surface, launch: JSON.stringify(params) });
     const path = `${this.config.routePath || `/child-tool/${this.config.id}`}?${query.toString()}`;
-    const width = Math.max(surfaceConfig.minWidth || 400, Math.min(1800, Number(payload.width) || 1020));
-    const height = Math.max(surfaceConfig.minHeight || 300, Math.min(1200, Number(payload.height) || surfaceConfig.preferredHeight || 720));
+    const minWidth = Math.max(400, surfaceConfig.minWidth || 0);
+    const minHeight = Math.max(500, surfaceConfig.minHeight || 0);
+    const width = Math.max(minWidth, Math.min(1800, Number(payload.width) || 1020));
+    const height = Math.max(minHeight, Math.min(1200, Number(payload.height) || surfaceConfig.preferredHeight || 720));
     this.uiService.openWindow({
       path: path.replace(/^\/+/, ''),
       title: typeof payload.title === 'string' ? payload.title.slice(0, 160) : this.titleKey,
       width,
       height,
+      minWidth,
+      minHeight,
+      windowClass: 'subapp',
       alwaysOnTop: payload.alwaysOnTop === true,
       relativeToDisplay: true,
       clampToWorkArea: true,
