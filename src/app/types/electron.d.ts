@@ -6,7 +6,7 @@ interface AilyConnectorSshEndpoint {
   port?: number;
   username: string;
   privateKeyPath?: string;
-  hostKeyPolicy?: 'trust-on-first-use' | 'strict';
+  hostKeyPolicy?: 'accept-any' | 'trust-on-first-use' | 'strict';
 }
 
 interface AilyConnectorSerialEndpoint {
@@ -73,6 +73,8 @@ declare global {
         isEncryptionAvailable: () => boolean;
         encryptString: (plainText: string) => Buffer;
         decryptString: (encrypted: Buffer) => string;
+        encryptStringToBase64: (plainText: string) => string;
+        decryptStringFromBase64: (encryptedBase64: string) => string;
       };
       ipcRenderer: any;
       path: any;
