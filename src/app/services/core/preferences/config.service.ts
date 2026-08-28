@@ -69,6 +69,8 @@ export class ConfigService {
   
   // 数据加载状态标识
   private _isDataReady = false;
+  private initializationPromise: Promise<void> | null = null;
+  private boardListLoadPromise: Promise<void> | null = null;
   private activeResourceSourceKey: string | null = null;
   private developmentModeSyncListenerRegistered = false;
   private persistedDataSnapshot: AppConfig | any | null = null;
@@ -224,7 +226,17 @@ export class ConfigService {
     return this.getDevelopmentModePreference() === 'coder' ? 'coder' : 'blockly';
   }
 
-  async init() {
+  init(): Promise<void> {
+    if (!this.initializationPromise) {
+      this.initializationPromise = this.initialize().catch(error => {
+        this.initializationPromise = null;
+        throw error;
+      });
+    }
+    return this.initializationPromise;
+  }
+
+  private async initialize(): Promise<void> {
     if (!this.electronService.isElectron) {
       //console.log('[ConfigService] 非Electron环境，跳过数据加载，直接标记就绪');
       // 非 Electron 环境下，跳过 loading 状态（没有数据源）
@@ -370,7 +382,7 @@ export class ConfigService {
 
     // 并行加载缓存的boards.json、libraries.json和tags.json（旧格式，用于基础功能）
     // await Promise.all([
-    this.loadAndCacheBoardList(configFilePath);
+    this.boardListLoadPromise = this.loadAndCacheBoardList(configFilePath);
     this.loadAndCacheLibraryList(configFilePath);
     this.loadAndCacheTagList(configFilePath);
     this.loadAndCacheCoderBoardIndex(configFilePath);
@@ -1056,6 +1068,17 @@ export class ConfigService {
       return [];
     }
     return this.sortBoardsByUsage([...this.boardList]);
+  }
+
+  /**
+   * Waits for the startup board catalog load before taking a snapshot.
+   * Independent BrowserWindows bootstrap their own Angular injector, so their
+   * route components can otherwise observe the initial empty array forever.
+   */
+  async getBoardListWhenReady(): Promise<any[]> {
+    await this.init();
+    await this.boardListLoadPromise;
+    return [...this.boardList];
   }
 
   /** Coder 新建项目使用的开发板索引（由 coder_board_index.json 映射而来） */
