@@ -82,6 +82,10 @@ interface ChildSurfaceWindowRequest {
   alwaysOnTop?: boolean;
 }
 
+interface ChatResourcePickerRequest {
+  kind?: 'file' | 'folder';
+}
+
 @Component({
   selector: 'app-child-tool-host',
   imports: [
@@ -1004,7 +1008,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
         startGithubLogin: (payload: { inviteCode?: string } = {}) => this.startGithubLogin(payload),
         requestLogin: (payload: { reason?: string } = {}) => this.requestHostLogin(payload),
         openUserSubscription: () => this.openUserSubscription(),
-        selectChatResources: () => this.selectChatResources(),
+        selectChatResources: (payload: ChatResourcePickerRequest = {}) => this.selectChatResources(payload),
         listChildApps: (payload: { limit?: number } = {}) => this.listChatChildApps(payload),
         openChildApp: (payload: { toolId?: string; mode?: 'embedded' | 'window' } = {}) => this.openChatChildApp(payload),
         openChildSurfaceWindow: (payload: ChildSurfaceWindowRequest = {}) => this.openChildSurfaceWindow(payload),
@@ -1884,7 +1888,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     return { ok: true };
   }
 
-  private async selectChatResources(): Promise<Record<string, unknown>> {
+  private async selectChatResources(payload: ChatResourcePickerRequest = {}): Promise<Record<string, unknown>> {
     if (!this.isAilyChatTool()) {
       return { ok: false, message: 'Resource selection is only available to Aily Chat' };
     }
@@ -1893,9 +1897,10 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     if (!dialog?.selectFiles || !fs?.isDirectory) {
       return { ok: false, message: 'Host file picker is unavailable' };
     }
+    const kind = payload.kind === 'folder' ? 'folder' : 'file';
     const result = await dialog.selectFiles({
-      title: '选择文件或文件夹',
-      properties: ['openFile', 'openDirectory', 'multiSelections'],
+      title: kind === 'folder' ? '选择文件夹' : '选择文件',
+      properties: [kind === 'folder' ? 'openDirectory' : 'openFile', 'multiSelections'],
     });
     if (result?.canceled || !Array.isArray(result?.filePaths)) {
       return { ok: true, resources: [] };
