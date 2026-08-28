@@ -4,7 +4,17 @@ const os = require("os");
 const fs = require("fs");
 const { spawn } = require("child_process");
 const WinState = require('electron-win-state').default;
-const { app, BrowserWindow, ipcMain, dialog, screen, shell, Menu, powerMonitor } = require("electron");
+const {
+  app,
+  BrowserWindow,
+  ipcMain,
+  dialog,
+  screen,
+  shell,
+  Menu,
+  powerMonitor,
+  safeStorage,
+} = require("electron");
 
 const { isWin32, isDarwin, isLinux } = require("./platform");
 const projectLock = require("./project-lock");
@@ -20,7 +30,10 @@ const {
   shouldInstallForAppVersion,
 } = require("./aily-tools-install-state");
 const { mergeConfigChanges } = require("./config-persistence");
+const { registerSafeStorageIpc } = require("./safe-storage-ipc");
 const ORIGINAL_PROCESS_PATH = process.env.PATH || process.env.Path || "";
+
+registerSafeStorageIpc(ipcMain, safeStorage);
 
 // 设置应用名称，用于 Windows 系统通知显示
 app.setName("aily blockly");

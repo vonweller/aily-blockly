@@ -32,6 +32,22 @@ export interface ConfigServiceNotice {
   message: string;
 }
 
+export const PROJECT_CONNECTOR_SETTINGS_KEY = 'connectorSettings';
+
+export interface ProjectSshConnectorSettings {
+  host: string;
+  port: number;
+  username: string;
+  privateKeyPath: string;
+  autoTrustHostKey: boolean;
+  rememberCredentials: boolean;
+}
+
+export interface ProjectPackageConfigStore {
+  getPackageJson(): Promise<any>;
+  setPackageJson(packageJson: any): Promise<void>;
+}
+
 @Injectable({
   providedIn: 'root',
 })
@@ -452,6 +468,45 @@ export class ConfigService {
     const operation = this.configSaveQueue.then(() => this.persistCurrentData());
     this.configSaveQueue = operation.catch(() => undefined);
     return operation;
+  }
+
+  /** Read credential-free SSH connection settings stored in a project package.json. */
+  getProjectSshConnectorSettings(packageJson: unknown): ProjectSshConnectorSettings | null {
+    const packageRecord = asConfigRecord(packageJson);
+    const connectorSettings = asConfigRecord(packageRecord?.[PROJECT_CONNECTOR_SETTINGS_KEY]);
+    return normalizeProjectSshConnectorSettings(connectorSettings?.['ssh']);
+  }
+
+  /**
+   * Persist SSH connection settings through the project's package store. Usernames and
+   * passwords are deliberately omitted so credentials never become part of the manifest.
+   */
+  async saveProjectSshConnectorSettings(
+    store: ProjectPackageConfigStore,
+    settings: ProjectSshConnectorSettings,
+  ): Promise<ProjectSshConnectorSettings> {
+    const normalized = normalizeProjectSshConnectorSettings(settings);
+    if (!normalized) {
+      throw new Error('Invalid SSH connector settings');
+    }
+
+    const packageJson = await store.getPackageJson();
+    const packageRecord = asConfigRecord(packageJson);
+    if (!packageRecord) {
+      throw new Error('Current project package.json is unavailable');
+    }
+
+    const currentConnectorSettings = asConfigRecord(
+      packageRecord[PROJECT_CONNECTOR_SETTINGS_KEY],
+    ) || {};
+    await store.setPackageJson({
+      ...packageRecord,
+      [PROJECT_CONNECTOR_SETTINGS_KEY]: {
+        ...currentConnectorSettings,
+        ssh: { ...normalized, username: '' },
+      },
+    });
+    return { ...normalized, username: '' };
   }
 
   private async persistCurrentData(): Promise<void> {
@@ -1901,6 +1956,41 @@ export class ConfigService {
     return { exists: false, board: null, fuzzyMatch: false, originalQuery: boardName };
   }
 
+}
+
+function asConfigRecord(value: unknown): Record<string, any> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, any>
+    : null;
+}
+
+function normalizeProjectSshConnectorSettings(
+  value: unknown,
+): ProjectSshConnectorSettings | null {
+  const settings = asConfigRecord(value);
+  if (!settings) return null;
+
+  const host = String(settings['host'] || '').trim();
+  const username = String(settings['username'] || '').trim();
+  const port = Number(settings['port']);
+  const rememberCredentials = settings['rememberCredentials'] !== false;
+  if (
+    !host
+    || !Number.isInteger(port)
+    || port < 1
+    || port > 65_535
+  ) {
+    return null;
+  }
+
+  return {
+    host,
+    port,
+    username: rememberCredentials ? username : '',
+    privateKeyPath: String(settings['privateKeyPath'] || '').trim(),
+    autoTrustHostKey: settings['autoTrustHostKey'] !== false,
+    rememberCredentials,
+  };
 }
 
 interface ResourceSourceConfig {

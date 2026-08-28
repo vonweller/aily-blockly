@@ -23,6 +23,11 @@ const {
   normalizeDisconnectParams,
   normalizeSessionRequest,
 } = require('./connector-ipc-policy');
+const {
+  forgetKnownSshHost,
+  prepareConnectorRequest,
+  shouldIgnoreSshHostKey,
+} = require('./ssh-host-key-policy');
 
 const TOOL_KEY = 'aily-connector';
 const PACKAGE_NAME = '@aily-project/aily-connector';
@@ -37,12 +42,14 @@ let childPath = '';
 let readyState = null;
 let initializationPromise = null;
 let mutationPromise = null;
+let sshConnectQueue = Promise.resolve();
 let handlersRegistered = false;
 let daemon = null;
 
 const sessionOwners = new Map();
 const ownerSessions = new Map();
 const watchedOwners = new Map();
+const pendingOwners = new Set();
 
 class ConnectorDaemonClient extends EventEmitter {
   constructor(toolState) {
@@ -86,7 +93,11 @@ class ConnectorDaemonClient extends EventEmitter {
     });
     child.stderr?.on('data', chunk => {
       const text = String(chunk || '').trim();
-      if (text) console.warn('[aily-connector]', text.slice(0, 2_000));
+      if (text) {
+        const message = text.slice(0, 2_000);
+        console.warn('[aily-connector]', message);
+        this.emit('stderr', message);
+      }
     });
     child.once('error', error => this.fail(error));
     child.once('exit', (code, signal) => {
@@ -274,6 +285,12 @@ async function ensureDaemon() {
   if (!daemon) {
     daemon = new ConnectorDaemonClient(state);
     daemon.on('sessionEvent', routeSessionEvent);
+    daemon.on('stderr', message => {
+      notifyAllOwners({
+        type: 'connector.stderr',
+        error: { code: 'DAEMON_STDERR', message },
+      });
+    });
     daemon.on('crash', error => {
       notifyDisconnectedOwners(error);
       notifyAllOwners({
@@ -406,23 +423,28 @@ function registerHandlers() {
     return connectorIpcResult(async () => {
       const request = normalizeConnectParams(params);
       const ownerGeneration = watchOwner(event.sender);
-      const client = await ensureDaemon();
-      const result = assertSessionResult(
-        await client.request('session.connect', request),
-        request.transport,
-      );
-      if (!isCurrentOwner(event.sender, ownerGeneration)) {
-        await client.request(
-          'session.disconnect',
-          { sessionId: result.sessionId },
-          10_000,
-        ).catch(() => undefined);
-        const error = new Error('Connector owner was closed while the board was connecting');
-        error.code = 'SESSION_CLOSED';
-        throw error;
+      pendingOwners.add(event.sender.id);
+      try {
+        const client = await ensureDaemon();
+        const result = assertSessionResult(
+          await requestSessionConnect(client, request),
+          request.transport,
+        );
+        if (!isCurrentOwner(event.sender, ownerGeneration)) {
+          await client.request(
+            'session.disconnect',
+            { sessionId: result.sessionId },
+            10_000,
+          ).catch(() => undefined);
+          const error = new Error('Connector owner was closed while the board was connecting');
+          error.code = 'SESSION_CLOSED';
+          throw error;
+        }
+        bindSession(event.sender.id, result.sessionId);
+        return result;
+      } finally {
+        pendingOwners.delete(event.sender.id);
       }
-      bindSession(event.sender.id, result.sessionId);
-      return result;
     });
   });
   ipcMain.handle('aily-connector-request', async (event, params = {}) => {
@@ -446,6 +468,29 @@ function registerHandlers() {
       return result;
     });
   });
+}
+
+function requestSessionConnect(client, request) {
+  if (request.transport !== 'ssh') {
+    return client.request('session.connect', request);
+  }
+
+  const task = sshConnectQueue.then(async () => {
+    if (!shouldIgnoreSshHostKey(request)) {
+      return client.request('session.connect', request);
+    }
+
+    await forgetKnownSshHost(request.endpoint);
+    try {
+      return await client.request('session.connect', prepareConnectorRequest(request));
+    } finally {
+      await forgetKnownSshHost(request.endpoint).catch(error => {
+        console.warn('[aily-connector] Failed to clear ignored SSH host key:', error);
+      });
+    }
+  });
+  sshConnectQueue = task.then(() => undefined, () => undefined);
+  return task;
 }
 
 async function connectorIpcResult(action) {
@@ -562,7 +607,8 @@ function notifyDisconnectedOwners(error) {
 }
 
 function notifyAllOwners(payload) {
-  for (const ownerId of ownerSessions.keys()) {
+  const ownerIds = new Set([...ownerSessions.keys(), ...pendingOwners]);
+  for (const ownerId of ownerIds) {
     const owner = webContents.fromId(ownerId);
     if (owner && !owner.isDestroyed()) owner.send('aily-connector-event', payload);
   }
@@ -571,6 +617,7 @@ function notifyAllOwners(payload) {
 function clearOwners() {
   sessionOwners.clear();
   ownerSessions.clear();
+  pendingOwners.clear();
 }
 
 async function shutdown() {
@@ -578,6 +625,7 @@ async function shutdown() {
   daemon = null;
   if (active) {
     active.removeAllListeners('sessionEvent');
+    active.removeAllListeners('stderr');
     active.removeAllListeners('crash');
     await active.stop().catch(() => undefined);
   }

@@ -1,5 +1,5 @@
 // 通过预加载桥接向渲染进程安全暴露 Electron 和原生能力。
-const { contextBridge, ipcRenderer, shell, safeStorage, webFrame, clipboard } = require("electron");
+const { contextBridge, ipcRenderer, shell, webFrame, clipboard } = require("electron");
 const { SerialPort } = require("serialport");
 const { createThrottledSerialPort, createRawSerialPort, listPorts } = require("./serial");
 const { exec } = require("child_process");
@@ -10,6 +10,7 @@ const { isAbsolute } = require("path");
 const { tmpdir } = require("os");
 const nodeFsp = require("node:fs/promises");
 const { calculateDirectoryStats } = require("./directory-stats");
+const { createSafeStorageBridge } = require("./safe-storage-bridge");
 
 // 单双杠虽不影响实用性，为了路径规范好看，还是单独使用
 const pt = process.platform === "win32" ? "\\" : "/"
@@ -870,11 +871,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     }
   },
   // 安全存储 API
-  safeStorage: {
-    isEncryptionAvailable: () => safeStorage.isEncryptionAvailable(),
-    encryptString: (plainText) => safeStorage.encryptString(plainText),
-    decryptString: (encrypted) => safeStorage.decryptString(encrypted)
-  },
+  safeStorage: createSafeStorageBridge(ipcRenderer),
   // 窗口缩放 API
   webFrame: {
     setZoomLevel: (level) => webFrame.setZoomLevel(level),

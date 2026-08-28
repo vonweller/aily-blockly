@@ -9,7 +9,7 @@ export interface IMenuItem {
   more?: string;
   ai?: boolean;
   sep?: boolean;
-  state?: 'default' | 'doing' | 'done' | 'error' | 'warn';
+  state?: 'default' | 'doing' | 'done' | 'error' | 'warn' | 'running' | 'stopping';
   disabled?: boolean;
   dev?: boolean;
   router?: string[]; // 在指定路由中显示
@@ -48,14 +48,22 @@ export let HEADER_BTNS: IMenuItem[] = [
     color: '#009600',
     state: 'default',
     router: ['/main/blockly-editor', '/main/code-editor', '/main/code-editor-pro']
-  },
-  // {
-  //   name: 'MENU.DEBUG',
-  //   data: { type: 'cmd', data: 'debug' },
-  //   icon: 'fa-regular fa-rocket',
-  //   type: 'act-btn',
-  //   color: '#f18800',
-  // },
+  }
+];
+
+
+export let HEADER_BTNS_LINUX: IMenuItem[] = [
+  {
+    name: 'MENU.PLAY',
+    text: 'F5',
+    action: 'play',
+    data: { type: 'cmd', data: 'play' },
+    icon: 'fa-regular fa-play',
+    type: 'act-btn',
+    color: '#009600',
+    state: 'default',
+    router: ['/main/blockly-editor', '/main/code-editor', '/main/code-editor-pro']
+  }
 ];
 
 
