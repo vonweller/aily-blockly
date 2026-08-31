@@ -208,20 +208,6 @@ export class ConfigService {
     return normalized;
   }
 
-  async markDevelopmentModePreferencePrompted(options: { save?: boolean } = {}): Promise<void> {
-    this.data.developmentModePreferencePromptedAt = Date.now();
-    if (options.save !== false) {
-      await this.save();
-    }
-  }
-
-  shouldPromptDevelopmentModePreference(): boolean {
-    if (!this.isCoderEnabled()) {
-      return false;
-    }
-    return !this.data?.developmentModePreferenceSource && !this.data?.developmentModePreferencePromptedAt;
-  }
-
   getPreferredChatAgentRuntimeMode(): 'coder' | 'blockly' {
     return this.getDevelopmentModePreference() === 'coder' ? 'coder' : 'blockly';
   }
@@ -2057,9 +2043,6 @@ interface AppConfig {
 
   /** 开发模式偏好更新时间 */
   developmentModePreferenceUpdatedAt?: number;
-
-  /** 开发模式偏好首次提示时间 */
-  developmentModePreferencePromptedAt?: number;
 
   /** 打包版型 */
   build_flavor?: string;
