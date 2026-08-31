@@ -303,7 +303,7 @@
 .welcome-heading + .auth-panel {
     height: 196px;
     min-height: 196px;
-    overflow: auto;
+    overflow: hidden;
     overscroll-behavior: contain;
 }
 
