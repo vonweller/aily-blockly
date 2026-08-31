@@ -10,20 +10,17 @@ import {
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { NZ_MODAL_DATA } from 'ng-zorro-antd/modal';
 import { ActivatedRoute } from '@angular/router';
-import { ElectronService } from '../../services/electron.service';
-import { ConnectionGraphService } from '../../services/connection-graph.service';
-import { NoticeService } from '../../services/notice.service';
+import { ElectronService } from '@core/platform/public-api';
+import { ConnectionGraphService } from '@domain/schematic/public-api';
+import { NoticeService } from '@core/app-shell/public-api';
 import { SubWindowComponent } from '../../components/sub-window/sub-window.component';
 import { NotificationComponent } from '../../components/notification/notification.component';
 import { CommonModule } from '@angular/common';
 import { WindowMessenger, connect, Connection } from 'penpal';
-import { UiService } from '../../services/ui.service';
 import { TranslateService } from '@ngx-translate/core';
 import { Subscription } from 'rxjs';
-import { ToolI18nService } from '../../services/tool-i18n.service';
-import {
-  SimulatorIframeBridgeService,
-} from '../../services/simulator-iframe-bridge.service';
+import { ToolI18nService } from '@core/preferences/public-api';
+import { AilyChatDemandSessionService, SimulatorIframeBridgeService } from '@integration/simulator/public-api';
 
 /** iframe IPC 统一载荷（规范：docs/iframe-ipc-spec.md） */
 export interface IframeIpcPayload<T = unknown> {
@@ -35,14 +32,17 @@ export interface IframeIpcPayload<T = unknown> {
 export type ConnectionGraphIpcType =
   | 'generate-graph-data'
   | 'generate-graph-updated'
+  | 'generate-graph-applied'
+  | 'connection-graph-ready-request'
+  | 'connection-graph-ready'
   | 'get-graph-data'
   | 'set-graph-data'
   | 'save-graph-data'
   | 'save-graph-data-result'
-  | 'send-to-chat'
   | 'generate-graph-code';
 
 const IFRAME_CHANNEL_CONNECTION_GRAPH = 'iframe-message-connection-graph';
+const CONNECTION_GRAPH_PENPAL_TIMEOUT_MS = 20_000;
 
 export interface IframeModalData {
   /** 要加载的 iframe URL */
@@ -66,6 +66,7 @@ export class IframeComponent implements OnInit, OnDestroy {
 
   iframeSrc: SafeResourceUrl = '';
   private iframeData: unknown;
+  private currentIframeUrl = '';
   private allowedOrigins: string[] = ['*'];
 
   // Penpal 连接
@@ -90,6 +91,8 @@ export class IframeComponent implements OnInit, OnDestroy {
   isConnectionGraphWindow = false;
   /** connection-graph IPC 统一监听清理函数 */
   private connectionGraphIpcCleanup: (() => void) | null = null;
+  /** 串行应用连线图更新，避免旧 payload 在新 payload 之后完成 */
+  private connectionGraphUpdateQueue: Promise<void> = Promise.resolve();
   /** 连线图生成进度通知订阅 */
   private noticeSubscription: Subscription | null = null;
   /** 待响应的保存请求：messageId -> resolve */
@@ -103,10 +106,10 @@ export class IframeComponent implements OnInit, OnDestroy {
     private connectionGraphService: ConnectionGraphService,
     private noticeService: NoticeService,
     private ngZone: NgZone,
-    private uiService: UiService,
     private translate: TranslateService,
     private toolI18n: ToolI18nService,
     private simulatorIframeBridge: SimulatorIframeBridgeService,
+    private ailyChatDemandSession: AilyChatDemandSessionService,
   ) {
     if (this.data) {
       if (this.data.url) {
@@ -155,6 +158,7 @@ export class IframeComponent implements OnInit, OnDestroy {
    * 统一应用 URL：设置 iframeSrc、allowedOrigins、isConnectionGraphWindow
    */
   private applyUrl(url: string): void {
+    this.currentIframeUrl = url;
     this.iframeSrc = this.sanitizer.bypassSecurityTrustResourceUrl(url);
     try {
       this.allowedOrigins = [new URL(url).origin];
@@ -226,6 +230,9 @@ export class IframeComponent implements OnInit, OnDestroy {
       // 父窗口暴露给子页面的方法
       this.penpalConnection = connect({
         messenger,
+        ...(this.isConnectionGraphWindow
+          ? { timeout: CONNECTION_GRAPH_PENPAL_TIMEOUT_MS }
+          : {}),
         methods: {
           initedComponentViewer: () => {
             this.pushDataToRemote();
@@ -240,10 +247,7 @@ export class IframeComponent implements OnInit, OnDestroy {
               state: 'doing',
               showProgress: false,
             });
-            // this.backgroundAgent.generateSchematic();
-            // this.uiService.openAndSendToChat('@SchematicAgent 生成项目连线图', { autoSend: true });
-            this.sendToChat('@SchematicAgent 生成项目连线图');
-            // this.sendToMain('generate-graph-data');
+            this.generateSchematic('生成项目连线图', true);
           },
           regenerateGraphData: () => {
             this.onRegenerate();
@@ -344,6 +348,13 @@ export class IframeComponent implements OnInit, OnDestroy {
       const remote = await this.penpalConnection.promise;
       this.remoteApi = remote;
 
+      if (this.isConnectionGraphWindow) {
+        this.sendToMain('connection-graph-ready', {
+          url: this.currentIframeUrl,
+          ready: true,
+        });
+      }
+
       // 将 remote API 注册到 ConnectionGraphService，供 Agent 工具推送数据
       this.connectionGraphService.setIframeApi(remote);
 
@@ -407,16 +418,19 @@ export class IframeComponent implements OnInit, OnDestroy {
   /**
    * 推送数据给已连接的子页面（penpal 方式）
    */
-  private async pushDataToRemote(): Promise<void> {
-    if (!this.remoteApi) return;
+  private async pushDataToRemote(): Promise<boolean> {
+    if (!this.remoteApi || typeof this.remoteApi['receiveData'] !== 'function') {
+      return false;
+    }
+
     try {
-      if (typeof this.remoteApi['receiveData'] === 'function') {
-        await (
-          this.remoteApi['receiveData'] as (data: unknown) => Promise<void>
-        )(this.iframeData);
-      }
+      await (
+        this.remoteApi['receiveData'] as (data: unknown) => Promise<void>
+      )(this.iframeData);
+      return true;
     } catch (error) {
       console.warn('推送数据给子页面失败:', error);
+      return false;
     }
   }
 
@@ -452,9 +466,39 @@ export class IframeComponent implements OnInit, OnDestroy {
     const handler = (_event: unknown, payload: IframeIpcPayload) => {
       const { type, data } = payload ?? {};
       switch (type) {
-        case 'generate-graph-updated':
-          this.ngZone.run(() => this.handleConnectionGraphUpdate(data));
+        case 'generate-graph-updated': {
+          const update = data as { messageId?: string; payload?: unknown } | undefined;
+          const messageId = typeof update?.messageId === 'string' ? update.messageId : '';
+          const graphPayload = messageId ? update?.payload : data;
+
+          const applyUpdate = async (): Promise<void> => {
+            const applied = await this.ngZone.run(() =>
+              this.handleConnectionGraphUpdate(graphPayload)
+            );
+            if (messageId) {
+              this.sendToMain('generate-graph-applied', { messageId, applied });
+            }
+          };
+
+          this.connectionGraphUpdateQueue = this.connectionGraphUpdateQueue.then(
+            applyUpdate,
+            applyUpdate,
+          );
           break;
+        }
+        case 'connection-graph-ready-request': {
+          const request = data as { requestId?: string; url?: string } | undefined;
+          if (!request?.url || request.url === this.currentIframeUrl) {
+            this.sendToMain('connection-graph-ready', {
+              requestId: request?.requestId,
+              url: this.currentIframeUrl,
+              ready:
+                !!this.remoteApi
+                && typeof this.remoteApi['receiveData'] === 'function',
+            });
+          }
+          break;
+        }
         case 'set-graph-data': {
           break;
         }
@@ -514,8 +558,9 @@ export class IframeComponent implements OnInit, OnDestroy {
   /**
    * 处理连线图全量更新
    */
-  private async handleConnectionGraphUpdate(data: any): Promise<void> {
-    if (!data) return;
+  private async handleConnectionGraphUpdate(data: any): Promise<boolean> {
+    if (!data) return false;
+
     try {
       // 使用 IPC 发送过来的完整 payload（包含最新的 componentConfigs）
       const currentPayload = this.iframeData as any;
@@ -534,7 +579,8 @@ export class IframeComponent implements OnInit, OnDestroy {
           : {}),
       };
       this.iframeData = newPayload;
-      await this.pushDataToRemote();
+      const applied = await this.pushDataToRemote();
+      if (!applied) return false;
 
       // 区分预览推送（空连线）和最终推送（有连线）
       const hasConnections = Array.isArray(data.connections) && data.connections.length > 0;
@@ -553,8 +599,10 @@ export class IframeComponent implements OnInit, OnDestroy {
           showProgress: false,
         });
       }
+      return true;
     } catch (error) {
       console.error('[IframeComponent] 处理连线图更新失败:', error);
+      return false;
     }
   }
 
@@ -563,15 +611,13 @@ export class IframeComponent implements OnInit, OnDestroy {
   // =====================================================
 
   /**
-   * 向 aily-chat 发送消息。
-   * 嵌入模式（主窗口内）直接调用 ChatService；
-   * 独立窗口通过 IPC 转发到主窗口由 BackgroundAgentService 处理。
+   * 直接请求新版 Runtime 创建需求 session 并执行 SchematicAgent。
    */
-  private sendToChat(text: string): void {
+  private generateSchematic(prompt: string, revealSession = false): void {
     if (this.embedded) {
-      this.uiService.openAndSendToChat(text, { autoSend: true });
+      void this.ailyChatDemandSession.generateSchematic(prompt, { revealSession });
     } else {
-      this.sendToMain('send-to-chat', { text, autoSend: true });
+      this.sendToMain('generate-graph-data', { prompt, revealSession });
     }
   }
 
@@ -585,7 +631,7 @@ export class IframeComponent implements OnInit, OnDestroy {
       state: 'doing',
       showProgress: false,
     });
-    this.sendToChat('@SchematicAgent 请根据当前项目的引脚配置和组件信息，重新生成连线图方案。');
+    this.generateSchematic('请根据当前项目的引脚配置和组件信息，重新生成连线图方案。');
   }
 
   /**
@@ -598,6 +644,12 @@ export class IframeComponent implements OnInit, OnDestroy {
       state: 'doing',
       showProgress: false,
     });
-    this.sendToChat('请根据当前连线图方案，将硬件连线配置同步到项目代码中。');
+    if (this.embedded) {
+      void this.ailyChatDemandSession
+        .syncSchematicToCode('请根据当前连线图方案，将硬件连线配置同步到项目代码中。')
+        .catch(error => console.error('[IframeComponent] 同步到代码失败:', error));
+    } else {
+      this.sendToMain('generate-graph-code');
+    }
   }
 }

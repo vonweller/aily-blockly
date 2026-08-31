@@ -1,5 +1,5 @@
 // 通过预加载桥接向渲染进程安全暴露 Electron 和原生能力。
-const { contextBridge, ipcRenderer, shell, safeStorage, webFrame, clipboard } = require("electron");
+const { contextBridge, ipcRenderer, shell, webFrame, clipboard } = require("electron");
 const { SerialPort } = require("serialport");
 const { createThrottledSerialPort, createRawSerialPort, listPorts } = require("./serial");
 const { exec } = require("child_process");
@@ -10,6 +10,7 @@ const { isAbsolute } = require("path");
 const { tmpdir } = require("os");
 const nodeFsp = require("node:fs/promises");
 const { calculateDirectoryStats } = require("./directory-stats");
+const { createSafeStorageBridge } = require("./safe-storage-bridge");
 
 // 单双杠虽不影响实用性，为了路径规范好看，还是单独使用
 const pt = process.platform === "win32" ? "\\" : "/"
@@ -26,6 +27,20 @@ function updateAilyBuilderEnv(result) {
     ailyBuilderEnv.command = result.command;
   }
   return result;
+}
+
+async function invokeAilyConnector(channel, payload) {
+  const envelope = await ipcRenderer.invoke(channel, payload);
+  if (!envelope || envelope.ailyConnectorIpc !== 1) {
+    throw new Error('Invalid aily-connector IPC response');
+  }
+  if (!envelope.ok) {
+    const error = new Error(envelope.error?.message || 'Aily Connector request failed');
+    error.code = envelope.error?.code || 'CONNECTOR_ERROR';
+    if (envelope.error?.details) error.details = envelope.error.details;
+    throw error;
+  }
+  return envelope.result;
 }
 
 const pathApi = {
@@ -327,31 +342,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
       };
     },
   },
-  chatRuntimeHost: {
-    registerRuntimeOwner: (runtimeOwnerId) => ipcRenderer.invoke("aily-chat-runtime-owner-register", { runtimeOwnerId }),
-    unregisterRuntimeOwner: (runtimeOwnerId) => ipcRenderer.invoke("aily-chat-runtime-owner-unregister", { runtimeOwnerId }),
-    registerResourceOperationHandler: (handlerId) => ipcRenderer.invoke("aily-chat-runtime-resource-handler-register", { handlerId }),
-    unregisterResourceOperationHandler: (handlerId) => ipcRenderer.invoke("aily-chat-runtime-resource-handler-unregister", { handlerId }),
-    call: (method, args) => ipcRenderer.invoke("aily-chat-runtime-host-command", { method, args }),
-    onRuntimeOwnerCommand: (callback) => {
-      const listener = (_event, payload) => callback(payload);
-      ipcRenderer.on("aily-chat-runtime-owner-command", listener);
-      return () => ipcRenderer.removeListener("aily-chat-runtime-owner-command", listener);
-    },
-    onResourceOperationCommand: (callback) => {
-      const listener = (_event, payload) => callback(payload);
-      ipcRenderer.on("aily-chat-runtime-resource-handler-command", listener);
-      return () => ipcRenderer.removeListener("aily-chat-runtime-resource-handler-command", listener);
-    },
-    sendRuntimeOwnerResponse: (payload) => ipcRenderer.send("aily-chat-runtime-owner-response", payload),
-    sendResourceOperationResponse: (payload) => ipcRenderer.send("aily-chat-runtime-resource-handler-response", payload),
-    emitRuntimeOwnerEvent: (payload) => ipcRenderer.send("aily-chat-runtime-owner-event", payload),
-    onEvent: (callback) => {
-      const listener = (_event, payload) => callback(payload);
-      ipcRenderer.on("aily-chat-runtime-host-event", listener);
-      return () => ipcRenderer.removeListener("aily-chat-runtime-host-event", listener);
-    },
-  },
   webviewBridge: {
     fetchPage: (data) => ipcRenderer.invoke("webview-bridge-fetch", data),
     searchWeb: (data) => ipcRenderer.invoke("webview-bridge-search", data),
@@ -418,9 +408,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
       }),
     release: (projectPath) => ipcRenderer.invoke("project-lock-release", { projectPath }),
     focusProcess: (pid) => ipcRenderer.invoke("project-lock-focus", { pid }),
-  },
-  coderEmbed: {
-    getBaseUrl: () => ipcRenderer.invoke("coder-embed-get-base-url"),
   },
   subWindow: (() => {
     // 立即监听 window-init-data，缓存数据，避免 Angular 组件注册监听前数据丢失
@@ -515,6 +502,20 @@ contextBridge.exposeInMainWorld("electronAPI", {
     update: () => ipcRenderer.invoke("aily-builder-update"),
     waitForReady: () => ipcRenderer.invoke("aily-builder-wait-ready"),
   },
+  connector: {
+    status: () => ipcRenderer.invoke("aily-connector-status"),
+    checkForUpdate: () => ipcRenderer.invoke("aily-connector-check-update"),
+    update: () => ipcRenderer.invoke("aily-connector-update"),
+    waitForReady: () => ipcRenderer.invoke("aily-connector-wait-ready"),
+    connect: (options) => invokeAilyConnector("aily-connector-connect", options),
+    request: (options) => invokeAilyConnector("aily-connector-request", options),
+    disconnect: (options) => invokeAilyConnector("aily-connector-disconnect", options),
+    onEvent: (callback) => {
+      const listener = (_event, payload) => callback(payload);
+      ipcRenderer.on("aily-connector-event", listener);
+      return () => ipcRenderer.removeListener("aily-connector-event", listener);
+    },
+  },
   simulatorGateway: {
     iframeUrlOverride:
       process.env.AILY_E2E === "1"
@@ -579,28 +580,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
         listener,
       );
     },
-    onProjectRebuildRequested: (callback) => {
-      const listener = (_event, payload) => callback(
-        payload?.request,
-        {
-          requestId: payload?.requestId,
-          rendererGeneration: payload?.rendererGeneration,
-        },
-      );
-      ipcRenderer.on("simulator-project-rebuild-request", listener);
-      return () => ipcRenderer.removeListener(
-        "simulator-project-rebuild-request",
-        listener,
-      );
-    },
-    respondProjectRebuild: (transport, result) => ipcRenderer.send(
-      "simulator-project-rebuild-response",
-      {
-        requestId: transport?.requestId,
-        rendererGeneration: transport?.rendererGeneration,
-        result,
-      },
-    ),
   },
   linter: {
     status: () => ipcRenderer.invoke("aily-linter-status"),
@@ -892,11 +871,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     }
   },
   // 安全存储 API
-  safeStorage: {
-    isEncryptionAvailable: () => safeStorage.isEncryptionAvailable(),
-    encryptString: (plainText) => safeStorage.encryptString(plainText),
-    decryptString: (encrypted) => safeStorage.decryptString(encrypted)
-  },
+  safeStorage: createSafeStorageBridge(ipcRenderer),
   // 窗口缩放 API
   webFrame: {
     setZoomLevel: (level) => webFrame.setZoomLevel(level),

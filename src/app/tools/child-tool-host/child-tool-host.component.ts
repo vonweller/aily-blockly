@@ -7,42 +7,44 @@ import { NzMessageService } from 'ng-zorro-antd/message';
 import { NzModalService } from 'ng-zorro-antd/modal';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { Connection, WindowMessenger, connect } from 'penpal';
-import { combineLatest, firstValueFrom, Subscription } from 'rxjs';
+import { combineLatest, firstValueFrom, merge, Subscription } from 'rxjs';
 import { SubWindowComponent } from '../../components/sub-window/sub-window.component';
 import { ToolContainerComponent } from '../../components/tool-container/tool-container.component';
 import { ChildToolConfig, getChildToolConfig } from '../../configs/tool.config';
+import { AILY_CODER_SUBAPP_ID } from '../../configs/required-subapp.config';
 import {
   ChildToolHostInfo,
   ChildToolProcessService,
   type ChildToolRuntimeSnapshot,
-} from '../../services/child-tool-process.service';
-import {
   type SubappCatalogItem,
   type SubappInstallProgress,
   SubappManagerService,
-} from '../../services/subapp-manager.service';
-import {
   ChildAppHostRegistryService,
   type ChildAppLifecycleOptions,
   type ChildAppWindowPlacement,
-} from '../../services/child-app-host-registry.service';
-import { AuthService } from '../../services/auth.service';
-import { ConfigService } from '../../services/config.service';
-import { BlocklyService } from '../../editors/blockly-editor/services/blockly.service';
-import { ElectronService } from '../../services/electron.service';
-import { LogService } from '../../services/log.service';
-import { MainUiAutomationService } from '../../services/main-ui-automation.service';
-import { NoticeService } from '../../services/notice.service';
-import { ProjectService } from '../../services/project.service';
-import { ThemeService } from '../../services/theme.service';
-import { ToolI18nService } from '../../services/tool-i18n.service';
-import { UiService } from '../../services/ui.service';
-import { toHostResourceLifecycleRequest } from '../../services/subapp-resource-lifecycle-adapter';
-import {
+  RequiredSubappService,
+  toHostResourceLifecycleRequest,
   SubappActivityService,
   type SubappActivity,
-} from '../../services/subapp-activity.service';
-import { ChatSubappDockComponent } from '../aily-chat/components/subapp-activity/chat-subapp-dock.component';
+} from '@integration/subapps/public-api';
+import { AuthService } from '@core/auth/public-api';
+import {
+  ConfigService,
+  resolveDevelopmentModeContext,
+  ThemeService,
+  ToolI18nService,
+} from '@core/preferences/public-api';
+import { BlocklyService } from '../../editors/blockly-editor/services/blockly.service';
+import { ElectronService, LogService } from '@core/platform/public-api';
+import { MainUiAutomationService, AiOperationRegistryService } from '@integration/automation/public-api';
+import { NoticeService, UiService } from '@core/app-shell/public-api';
+import { ProjectService } from '@domain/project/public-api';
+import { SubappActivityDockComponent } from '../../components/subapp-activity-dock/subapp-activity-dock.component';
+import {
+  type ChildAuthStateSnapshot,
+  normalizeChildAuthStateSnapshot,
+  resolveChildAuthStateSnapshot,
+} from './child-auth-state';
 
 type HostStatus = 'idle' | 'starting' | 'ready' | 'error' | 'closed';
 type HostMessageState = 'success' | 'info' | 'warning' | 'error' | 'loading';
@@ -51,6 +53,13 @@ type ChildLifecycleReason = 'close' | 'restart' | 'update';
 interface HostProjectContext {
   workspace?: string | null;
   version?: number;
+}
+
+interface HostAuthContext {
+  authenticated?: boolean;
+  version?: number;
+  user?: unknown;
+  quotaSnapshot?: unknown;
 }
 
 interface NormalizedHostMessage {
@@ -73,6 +82,10 @@ interface ChildSurfaceWindowRequest {
   alwaysOnTop?: boolean;
 }
 
+interface ChatResourcePickerRequest {
+  kind?: 'file' | 'folder';
+}
+
 @Component({
   selector: 'app-child-tool-host',
   imports: [
@@ -81,7 +94,7 @@ interface ChildSurfaceWindowRequest {
     NzToolTipModule,
     SubWindowComponent,
     ToolContainerComponent,
-    ChatSubappDockComponent,
+    SubappActivityDockComponent,
   ],
   templateUrl: './child-tool-host.component.html',
   styleUrl: './child-tool-host.component.scss'
@@ -141,10 +154,15 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   private standaloneWorkspaceVersion = -1;
   private projectContextListenerRegistered = false;
   private projectContextListenerCleanup: (() => void) | null = null;
+  private standaloneAuthSnapshot: ChildAuthStateSnapshot | null = null;
+  private standaloneAuthVersion = -1;
+  private authContextListenerRegistered = false;
+  private authContextListenerCleanup: (() => void) | null = null;
   private unregisterHostController: (() => void) | null = null;
   private ailyChatOperationActive = false;
   private ailyChatOperationSessionId = '';
   private aiOperationNoticeShown = false;
+  private readonly pendingExternalInputSignals: Array<Record<string, unknown>> = [];
   ailyChatSessionId = '';
 
   constructor(
@@ -171,6 +189,8 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     private subappManager: SubappManagerService,
     private noticeService: NoticeService,
     private subappActivityService: SubappActivityService,
+    private requiredSubapps: RequiredSubappService,
+    private aiOperationRegistry: AiOperationRegistryService,
   ) {
     this.langSubscription = this.translate.onLangChange.subscribe(() => this.syncHostContext());
     this.themeSubscription = this.themeService.themeChanged$.subscribe(() => this.syncHostContext());
@@ -195,12 +215,17 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
         this.clearAiOperationNotice();
       }
     });
-    this.authStateSubscription = this.authService.isLoggedIn$.subscribe((authenticated) => {
-      this.pushChildAuthState(authenticated);
+    this.authStateSubscription = merge(
+      this.authService.isLoggedIn$,
+      this.authService.authChanged$,
+    ).subscribe(() => {
+      if (this.initialized && this.isStandalone) return;
+      this.pushChildAuthState();
     });
     this.lastKnownApiServer = this.normalizeApiServer(this.configService.getCurrentApiServer());
     this.configReloadSubscription = this.configService.configReloaded$.subscribe(() => {
       this.handleApiServerChange();
+      this.syncHostContext();
     });
   }
 
@@ -358,8 +383,12 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     this.projectContextListenerCleanup?.();
     this.projectContextListenerCleanup = null;
     this.projectContextListenerRegistered = false;
+    this.authContextListenerCleanup?.();
+    this.authContextListenerCleanup = null;
+    this.authContextListenerRegistered = false;
     this.unregisterHostController?.();
     this.unregisterHostController = null;
+    this.pendingExternalInputSignals.length = 0;
     const releaseToolId = this.acquired ? this.resolvedToolId : '';
     this.acquired = false;
     this.destroyPenpalConnection();
@@ -618,7 +647,10 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     this.currentUrl = this.router.url;
     this.registerHostController();
 
-    await this.initializeStandaloneProjectContext();
+    await Promise.all([
+      this.initializeStandaloneProjectContext(),
+      this.initializeStandaloneAuthContext(),
+    ]);
 
     this.log('config loaded', {
       id: config.id,
@@ -938,6 +970,9 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       messenger,
       methods: {
         getHostContext: () => this.createHostContext(),
+        setDevelopmentMode: (payload: { mode?: string } = {}) => {
+          return this.ngZone.run(() => this.setChatDevelopmentMode(payload));
+        },
         childReady: (payload: any) => {
           this.ngZone.run(() => {
             this.log('child ready', payload || {});
@@ -972,7 +1007,8 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
         },
         startGithubLogin: (payload: { inviteCode?: string } = {}) => this.startGithubLogin(payload),
         requestLogin: (payload: { reason?: string } = {}) => this.requestHostLogin(payload),
-        selectChatResources: () => this.selectChatResources(),
+        openUserSubscription: () => this.openUserSubscription(),
+        selectChatResources: (payload: ChatResourcePickerRequest = {}) => this.selectChatResources(payload),
         listChildApps: (payload: { limit?: number } = {}) => this.listChatChildApps(payload),
         openChildApp: (payload: { toolId?: string; mode?: 'embedded' | 'window' } = {}) => this.openChatChildApp(payload),
         openChildSurfaceWindow: (payload: ChildSurfaceWindowRequest = {}) => this.openChildSurfaceWindow(payload),
@@ -1007,7 +1043,9 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
         this.log('penpal connected');
         this.remoteApi = remote;
         this.penpalState = 'connected';
+        this.flushPendingExternalInputSignals();
         this.syncHostContext();
+        this.pushChildAuthState();
         this.pushChatSubappActivities();
       })
       .catch(error => {
@@ -1384,19 +1422,42 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     // Resource handoff is delivered directly to every compatible running
     // Runtime by SubappResourceLifecycleService. Keeping it out of the iframe
     // path makes the handoff independent of full/compact UI lifecycle.
-    if (resourceRequest || typeof this.remoteApi?.handleToolSignal !== 'function') return;
-    const task = Promise.resolve(this.remoteApi.handleToolSignal({
+    if (resourceRequest) return;
+    const forwardedSignal = {
       action: action.action,
       type: action.type,
       data: action.data,
       payload
-    })).then(() => undefined).catch(() => undefined);
+    };
+    if (typeof this.remoteApi?.handleToolSignal !== 'function') {
+      if (String(action.data || '') === `${this.resolvedToolId}:external-input`) {
+        if (this.pendingExternalInputSignals.length >= 8) {
+          this.pendingExternalInputSignals.shift();
+        }
+        this.pendingExternalInputSignals.push(forwardedSignal);
+      }
+      return;
+    }
+    const task = Promise.resolve(this.remoteApi.handleToolSignal(forwardedSignal))
+      .then(() => undefined)
+      .catch(() => undefined);
 
     if (Array.isArray(action?.payload?.waitFor)) {
       action.payload.waitFor.push(task);
     } else {
       void task.catch(() => undefined);
     }
+  }
+
+  private flushPendingExternalInputSignals(): void {
+    if (typeof this.remoteApi?.handleToolSignal !== 'function') return;
+    const pending = this.pendingExternalInputSignals.splice(0);
+    void pending.reduce(
+      (previous, signal) => previous.then(() =>
+        Promise.resolve(this.remoteApi?.handleToolSignal(signal)).then(() => undefined),
+      ),
+      Promise.resolve(),
+    ).catch(() => undefined);
   }
 
   private async sendToolSignalFromChild(signal: string, payload: any = {}): Promise<{ ok: boolean; waitFor: number }> {
@@ -1459,6 +1520,12 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   private createHostContext(): Record<string, unknown> {
     const isAilyChat = this.isAilyChatTool();
     const launch = this.resolveLaunchContext();
+    const workspace = this.resolveHostWorkspace();
+    const developmentModeContext = resolveDevelopmentModeContext({
+      preference: this.configService.getDevelopmentModePreference(),
+      projectPath: workspace,
+      isCoderProject: workspace ? this.projectService.isAilyCodeProject(workspace) : false,
+    });
     return {
       toolId: this.resolvedToolId,
       contextId: this.hostContextId,
@@ -1467,20 +1534,21 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       theme: this.normalizeTheme(this.themeService.theme()),
       platform: (window as any).electronAPI?.platform?.type || 'browser',
       embedded: !this.isStandalone,
+      ...developmentModeContext,
       surface: launch.surface,
       surfaceParams: launch.params,
-      workspace: this.resolveHostWorkspace(),
+      workspace,
       activeChatSessionId: isAilyChat ? (this.ailyChatSessionId || null) : null,
       blockResources: isAilyChat && this.active ? this.createSelectedBlockResources() : [],
       capabilities: {
         snapshotRefresh: true,
-        // A detached surface runs in a separate Angular renderer and therefore
-        // cannot continuously mirror the main window's AuthService subject.
-        // Keep the child's focus/visibility refresh fallback enabled there.
-        authStateRefresh: isAilyChat && !this.isStandalone,
+        // Detached renderers receive the same token-free, host-owned auth
+        // snapshot through Electron IPC. Older hosts retain the child fallback.
+        authStateRefresh: isAilyChat && (!this.isStandalone || this.standaloneAuthSnapshot !== null),
         userInteractionNotifications: true,
         hostGithubLogin: isAilyChat,
         hostLoginDialog: isAilyChat,
+        userSubscription: isAilyChat,
         resourcePicker: isAilyChat
           && typeof (window as any).dialog?.selectFiles === 'function',
         childAppMenu: isAilyChat,
@@ -1492,9 +1560,50 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
         childSurfaceWindow: true,
         aiOperationState: isAilyChat,
         subappDock: isAilyChat,
-        runtimeRecovery: isAilyChat
+        runtimeRecovery: isAilyChat,
+        developmentModeControl: isAilyChat && this.configService.isCoderEnabled()
       }
     };
+  }
+
+  private async setChatDevelopmentMode(payload: { mode?: string } = {}): Promise<Record<string, unknown>> {
+    const mode = payload.mode === 'coder' ? 'coder' : payload.mode === 'blockly' ? 'blockly' : null;
+    if (!mode) {
+      return { ok: false, code: 'INVALID_DEVELOPMENT_MODE', message: 'Development mode must be blockly or coder.' };
+    }
+    if (!this.configService.isCoderEnabled()) {
+      return {
+        ok: false,
+        code: 'DEVELOPMENT_MODE_UNAVAILABLE',
+        message: 'Coder mode is not enabled in this application build.',
+        context: this.createHostContext(),
+      };
+    }
+
+    const workspace = this.resolveHostWorkspace();
+    if (workspace) {
+      return {
+        ok: false,
+        code: 'PROJECT_MODE_LOCKED',
+        message: 'Development mode follows the currently open project.',
+        context: this.createHostContext(),
+      };
+    }
+
+    try {
+      if (mode === 'coder') {
+        await this.requiredSubapps.ensureInstalled(AILY_CODER_SUBAPP_ID);
+      }
+      await this.configService.setDevelopmentModePreference(mode, 'settings');
+      return { ok: true, context: this.createHostContext() };
+    } catch (error) {
+      return {
+        ok: false,
+        code: 'DEVELOPMENT_MODE_UPDATE_FAILED',
+        message: error instanceof Error ? error.message : String(error || 'Failed to update development mode.'),
+        context: this.createHostContext(),
+      };
+    }
   }
 
   private resolveLaunchContext(): { surface: string; params: Record<string, string> } {
@@ -1535,13 +1644,18 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     }
     const query = new URLSearchParams({ surface, launch: JSON.stringify(params) });
     const path = `${this.config.routePath || `/child-tool/${this.config.id}`}?${query.toString()}`;
-    const width = Math.max(surfaceConfig.minWidth || 400, Math.min(1800, Number(payload.width) || 1020));
-    const height = Math.max(surfaceConfig.minHeight || 300, Math.min(1200, Number(payload.height) || surfaceConfig.preferredHeight || 720));
+    const minWidth = Math.max(400, surfaceConfig.minWidth || 0);
+    const minHeight = Math.max(500, surfaceConfig.minHeight || 0);
+    const width = Math.max(minWidth, Math.min(1800, Number(payload.width) || 1020));
+    const height = Math.max(minHeight, Math.min(1200, Number(payload.height) || surfaceConfig.preferredHeight || 720));
     this.uiService.openWindow({
       path: path.replace(/^\/+/, ''),
       title: typeof payload.title === 'string' ? payload.title.slice(0, 160) : this.titleKey,
       width,
       height,
+      minWidth,
+      minHeight,
+      windowClass: 'subapp',
       alwaysOnTop: payload.alwaysOnTop === true,
       relativeToDisplay: true,
       clampToWorkArea: true,
@@ -1621,6 +1735,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       invocationCount: activity.invocationCount,
       activeInvocationCount: activity.activeInvocationCount,
       lastUsedAt: activity.lastUsedAt,
+      extension: getChildToolConfig(activity.toolId)?.app?.extension === true,
       ...(activity.summary ? { summary: { ...activity.summary } } : {}),
     };
   }
@@ -1668,6 +1783,14 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
 
     this.ailyChatOperationActive = active;
     this.ailyChatOperationSessionId = active ? sessionId : '';
+    this.aiOperationRegistry.setActive(
+      `child-tool:${this.hostContextId}`,
+      active,
+      {
+        projectPath: this.projectService.currentProjectPath,
+        sessionId: this.ailyChatOperationSessionId,
+      },
+    );
     // 会话执行态用于预编译等宿主协调；视觉遮罩由 live Blockly 写入态精确驱动。
     this.blocklyService.setAiExecutionActive(`child-tool:${this.hostContextId}`, active);
 
@@ -1716,7 +1839,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   private isAilyChatTool(): boolean {
-    return this.resolvedToolId === 'aily-chat' || this.resolvedToolId === 'aily-chat-react';
+    return this.resolvedToolId === 'aily-chat';
   }
 
   private async writeClipboardText(payload: { text?: string }): Promise<Record<string, unknown>> {
@@ -1770,7 +1893,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     return { ok: true };
   }
 
-  private async selectChatResources(): Promise<Record<string, unknown>> {
+  private async selectChatResources(payload: ChatResourcePickerRequest = {}): Promise<Record<string, unknown>> {
     if (!this.isAilyChatTool()) {
       return { ok: false, message: 'Resource selection is only available to Aily Chat' };
     }
@@ -1779,9 +1902,10 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     if (!dialog?.selectFiles || !fs?.isDirectory) {
       return { ok: false, message: 'Host file picker is unavailable' };
     }
+    const kind = payload.kind === 'folder' ? 'folder' : 'file';
     const result = await dialog.selectFiles({
-      title: '选择文件或文件夹',
-      properties: ['openFile', 'openDirectory', 'multiSelections'],
+      title: kind === 'folder' ? '选择文件夹' : '选择文件',
+      properties: [kind === 'folder' ? 'openDirectory' : 'openFile', 'multiSelections'],
     });
     if (result?.canceled || !Array.isArray(result?.filePaths)) {
       return { ok: true, resources: [] };
@@ -1915,7 +2039,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
 
     const reason = typeof payload.reason === 'string' && payload.reason.trim()
       ? payload.reason.trim().slice(0, 80)
-      : 'aily-chat-react';
+      : 'aily-chat';
 
     if (this.isStandalone) {
       const sendToMain = window['iWindow']?.send;
@@ -1931,28 +2055,49 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
         return { ok: false, message: 'The main-window login request timed out' };
       }
 
-      const initializationState = String(response?.initializationState || '');
-      if (response?.authenticated === true) {
-        this.pushChildAuthState(true);
-      } else if (response?.authenticated === false && initializationState === 'signed_out') {
-        this.pushChildAuthState(false);
-      }
       return { ok: true, authenticated: response?.authenticated === true };
     }
 
     this.ngZone.run(() => this.authService.requestLogin(reason));
-    this.pushChildAuthState(this.authService.isLoggedIn);
+    this.pushChildAuthState();
     return { ok: true, authenticated: this.authService.isLoggedIn };
   }
 
-  private pushChildAuthState(authenticated: boolean): void {
+  private async openUserSubscription(): Promise<Record<string, unknown>> {
+    if (!this.isAilyChatTool()) {
+      return { ok: false, message: 'The user subscription page is only available to Aily Chat' };
+    }
+    if (!this.authService.isLoggedIn) {
+      return { ok: false, message: 'The user is not signed in' };
+    }
+
+    const response = await firstValueFrom(this.authService.generateSSOToken('/user/subscription'));
+    const targetUrl = typeof response?.target_url === 'string' ? response.target_url.trim() : '';
+    if (!targetUrl) {
+      return { ok: false, message: 'The user subscription URL is unavailable' };
+    }
+
+    this.electronService.openUrl(targetUrl);
+    return { ok: true };
+  }
+
+  private pushChildAuthState(): void {
+    const snapshot = resolveChildAuthStateSnapshot({
+      detached: this.isStandalone,
+      detachedSnapshot: this.standaloneAuthSnapshot,
+      authenticated: this.authService.isLoggedIn,
+      user: this.authService.currentUser,
+      authSnapshot: this.authService.getAuthSnapshot(),
+    });
+    if (!snapshot) return;
+
     if (typeof this.remoteApi?.refreshAuthState === 'function') {
-      void Promise.resolve(this.remoteApi.refreshAuthState({ authenticated })).catch(() => {
-        this.postLegacyChildAuthState(authenticated);
+      void Promise.resolve(this.remoteApi.refreshAuthState(snapshot)).catch(() => {
+        this.postLegacyChildAuthState(snapshot.authenticated);
       });
       return;
     }
-    this.postLegacyChildAuthState(authenticated);
+    this.postLegacyChildAuthState(snapshot.authenticated);
   }
 
   private postLegacyChildAuthState(authenticated: boolean): void {
@@ -2000,6 +2145,53 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     } catch {
       // Older hosts do not expose project context; keep the local service fallback.
     }
+  }
+
+  private async initializeStandaloneAuthContext(): Promise<void> {
+    if (!this.isStandalone) {
+      this.standaloneAuthSnapshot = null;
+      this.standaloneAuthVersion = -1;
+      this.authContextListenerCleanup?.();
+      this.authContextListenerCleanup = null;
+      this.authContextListenerRegistered = false;
+      return;
+    }
+
+    const ipcRenderer = window['ipcRenderer'] || (window as any).electronAPI?.ipcRenderer;
+    if (!ipcRenderer?.invoke) return;
+
+    if (!this.authContextListenerRegistered && ipcRenderer.on) {
+      const cleanup = ipcRenderer.on(
+        'host-auth-state-changed',
+        (_event: unknown, context: HostAuthContext) => {
+          this.ngZone.run(() => this.applyStandaloneAuthContext(context, true));
+        },
+      );
+      if (typeof cleanup === 'function') {
+        this.authContextListenerCleanup = cleanup;
+      }
+      this.authContextListenerRegistered = true;
+    }
+
+    try {
+      const context = await ipcRenderer.invoke('host-auth-state-get');
+      this.applyStandaloneAuthContext(context, false);
+    } catch {
+      // Older hosts do not expose auth context; retain the child fallback.
+    }
+  }
+
+  private applyStandaloneAuthContext(context: HostAuthContext, refreshChild: boolean): void {
+    const version = Number(context?.version);
+    if (Number.isFinite(version) && version < this.standaloneAuthVersion) return;
+
+    const snapshot = normalizeChildAuthStateSnapshot(context);
+    if (!snapshot) return;
+
+    this.standaloneAuthSnapshot = snapshot;
+    this.authService.applyHostAuthStateSnapshot(snapshot);
+    if (Number.isFinite(version)) this.standaloneAuthVersion = version;
+    if (refreshChild) this.pushChildAuthState();
   }
 
   private applyStandaloneProjectContext(context: HostProjectContext, refreshSnapshot: boolean): void {

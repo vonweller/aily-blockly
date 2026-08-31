@@ -40,9 +40,70 @@ interface PythonRuntimeApi {
 }
 
 // 扩展 Window 接口以包含 electronAPI
+type AilyConnectorTransport = 'ssh' | 'serial';
+
+interface AilyConnectorSshEndpoint {
+  host: string;
+  port?: number;
+  username: string;
+  privateKeyPath?: string;
+  hostKeyPolicy?: 'accept-any' | 'trust-on-first-use' | 'strict';
+}
+
+interface AilyConnectorSerialEndpoint {
+  port: string;
+  baudRate?: number;
+  allowRawConsole?: boolean;
+}
+
+interface AilyConnectorCredentials {
+  password?: string;
+  hostKey?: string;
+}
+
+interface AilyConnectorSession {
+  sessionId: string;
+  transport: AilyConnectorTransport;
+  status: Record<string, unknown>;
+  capabilities: Record<string, unknown> | null;
+}
+
+interface AilyConnectorEvent {
+  sessionId?: string;
+  transport?: AilyConnectorTransport;
+  sequence?: number;
+  event?: {
+    type: string;
+    text?: string;
+    data?: Uint8Array;
+    [key: string]: unknown;
+  };
+  type?: string;
+  error?: { code: string; message: string };
+}
+
+interface AilyConnectorApi {
+  status(): Promise<Record<string, unknown>>;
+  checkForUpdate(): Promise<Record<string, unknown>>;
+  update(): Promise<Record<string, unknown>>;
+  waitForReady(): Promise<{ version: string; protocolVersion: number }>;
+  connect(options: {
+    transport: AilyConnectorTransport;
+    endpoint: AilyConnectorSshEndpoint | AilyConnectorSerialEndpoint;
+    credentials?: AilyConnectorCredentials;
+  }): Promise<AilyConnectorSession>;
+  request<T = unknown>(options: {
+    sessionId: string;
+    operation: string;
+    payload?: Record<string, unknown>;
+    timeoutMs?: number;
+  }): Promise<T>;
+  disconnect(options: { sessionId: string }): Promise<{ disconnected: boolean }>;
+  onEvent(callback: (event: AilyConnectorEvent) => void): () => void;
+}
+
 declare global {
   interface Window {
-    openAndSendToAilyChat: (text: string, options?: Record<string, any>) => void;
     electronAPI: {
       SerialPort: {
         list: () => Promise<any[]>;
@@ -53,6 +114,8 @@ declare global {
         isEncryptionAvailable: () => boolean;
         encryptString: (plainText: string) => Buffer;
         decryptString: (encrypted: Buffer) => string;
+        encryptStringToBase64: (plainText: string) => string;
+        decryptStringFromBase64: (encryptedBase64: string) => string;
       };
       ipcRenderer: any;
       path: any;
@@ -70,19 +133,6 @@ declare global {
         start: (data: any) => Promise<{ ok?: boolean; streamId?: string; error?: string }>;
         cancel: (streamId: string) => Promise<any>;
         onEvent: (streamId: string, callback: (payload: any) => void) => () => void;
-      };
-      chatRuntimeHost?: {
-        registerRuntimeOwner: (runtimeOwnerId: string) => Promise<{ ok?: boolean; runtimeOwnerId?: string }>;
-        unregisterRuntimeOwner: (runtimeOwnerId: string) => Promise<{ ok?: boolean }>;
-        registerResourceOperationHandler: (handlerId: string) => Promise<{ ok?: boolean; handlerId?: string }>;
-        unregisterResourceOperationHandler: (handlerId: string) => Promise<{ ok?: boolean }>;
-        call: (method: string, args: readonly unknown[]) => Promise<unknown>;
-        onRuntimeOwnerCommand: (callback: (payload: unknown) => void) => () => void;
-        onResourceOperationCommand: (callback: (payload: unknown) => void) => () => void;
-        sendRuntimeOwnerResponse: (payload: unknown) => void;
-        sendResourceOperationResponse: (payload: unknown) => void;
-        emitRuntimeOwnerEvent: (payload: unknown) => void;
-        onEvent: (callback: (payload: any) => void) => () => void;
       };
       subapps?: {
         list: (options?: { refresh?: boolean; locale?: string }) => Promise<any>;
@@ -106,11 +156,9 @@ declare global {
       };
       iWindow: any;
       subWindow: any;
-      coderEmbed: {
-        getBaseUrl: () => Promise<string>;
-      };
       codeViewer: any;
       builder: any;
+      connector?: AilyConnectorApi;
       simulatorGateway?: {
         iframeUrlOverride?: string;
         start: (projectPath: string, ownerId?: string) => Promise<{
@@ -325,22 +373,6 @@ declare global {
             requirement?: Record<string, unknown>;
           }) => void,
         ) => () => void;
-        onProjectRebuildRequested: (
-          callback: (
-            request: Record<string, unknown>,
-            transport: {
-              requestId: string;
-              rendererGeneration: number;
-            },
-          ) => void,
-        ) => () => void;
-        respondProjectRebuild: (
-          transport: {
-            requestId: string;
-            rendererGeneration: number;
-          },
-          result: Record<string, unknown>,
-        ) => void;
       };
       linter: any;
       uploader: any;
