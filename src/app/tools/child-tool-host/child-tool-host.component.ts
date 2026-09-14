@@ -11,7 +11,7 @@ import { combineLatest, firstValueFrom, merge, Subscription } from 'rxjs';
 import { SubWindowComponent } from '../../components/sub-window/sub-window.component';
 import { ToolContainerComponent } from '../../components/tool-container/tool-container.component';
 import { ChildToolConfig, getChildToolConfig } from '../../configs/tool.config';
-import { AILY_CODER_SUBAPP_ID } from '../../configs/required-subapp.config';
+import { AILY_CODER_EDITOR_SUBAPP_ID } from '../../configs/required-subapp.config';
 import {
   ChildToolHostInfo,
   ChildToolProcessService,
@@ -38,7 +38,7 @@ import { BlocklyService } from '../../editors/blockly-editor/services/blockly.se
 import { ElectronService, LogService } from '@core/platform/public-api';
 import { MainUiAutomationService, AiOperationRegistryService } from '@integration/automation/public-api';
 import { NoticeService, UiService } from '@core/app-shell/public-api';
-import { ProjectService } from '@domain/project/public-api';
+import { ProjectService, type CoderWorkspaceContext } from '@domain/project/public-api';
 import { SubappActivityDockComponent } from '../../components/subapp-activity-dock/subapp-activity-dock.component';
 import {
   type ChildAuthStateSnapshot,
@@ -52,6 +52,7 @@ type ChildLifecycleReason = 'close' | 'restart' | 'update';
 
 interface HostProjectContext {
   workspace?: string | null;
+  coderWorkspace?: CoderWorkspaceContext | null;
   version?: number;
 }
 
@@ -124,6 +125,10 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   private acquired = false;
   private penpalConnection: Connection | null = null;
   private remoteApi: any = null;
+  private childFrameElement: HTMLIFrameElement | null = null;
+  private webviewDebuggerSurfaceId = '';
+  private webviewDebuggerSurfaceEventCleanup: (() => void) | null = null;
+  private webviewDebuggerSurfaceBounds: Record<string, number> | null = null;
   private childReadyTimer: ReturnType<typeof setTimeout> | null = null;
   private childToolUrl = '';
   private penpalRemoteWindow: Window | null = null;
@@ -149,8 +154,10 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   private subappCatalogSubscription: Subscription | null = null;
   private subappProgressSubscription: Subscription | null = null;
   private subappRestartRequired = false;
+  private deferPreparedUpdateOnInitialLaunch = false;
   private lastKnownApiServer = '';
   private standaloneWorkspace: string | null | undefined;
+  private standaloneCoderWorkspace: CoderWorkspaceContext | null | undefined;
   private standaloneWorkspaceVersion = -1;
   private projectContextListenerRegistered = false;
   private projectContextListenerCleanup: (() => void) | null = null;
@@ -194,7 +201,10 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   ) {
     this.langSubscription = this.translate.onLangChange.subscribe(() => this.syncHostContext());
     this.themeSubscription = this.themeService.themeChanged$.subscribe(() => this.syncHostContext());
-    this.projectPathSubscription = this.projectService.currentProjectPath$.subscribe(() => {
+    this.projectPathSubscription = combineLatest([
+      this.projectService.currentProjectPath$,
+      this.projectService.coderWorkspace$,
+    ]).subscribe(() => {
       if (this.initialized) {
         this.syncHostContext(true);
       }
@@ -298,10 +308,16 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     if (this.subappRestartInProgress) {
       return this.translate.instant('APP_STORE.RESTARTING');
     }
+    if (this.isSubappRestartRequired) {
+      return this.translate.instant('APP_STORE.RESTART');
+    }
     const status = this.currentSubappCatalogItem?.updateStatus;
     if (status?.state === 'downloading') {
       const progress = status.progress ? ` ${status.progress}%` : '';
-      return `${this.translate.instant('APP_STORE.DOWNLOADING_UPDATE')}${progress}`;
+      const label = status.phase === 'extract'
+        ? 'APP_STORE.INSTALLING_UPDATE'
+        : 'APP_STORE.DOWNLOADING_UPDATE';
+      return `${this.translate.instant(label)}${progress}`;
     }
     if (status?.state === 'available') {
       return this.translate.instant(this.currentSubappCatalogItem?.updatePolicy
@@ -321,7 +337,9 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
 
   get subappVersionActionTooltip(): string {
     const item = this.currentSubappCatalogItem;
-    if (!this.subappVersionActionBusy && item?.updateStatus.state === 'ready') {
+    if (!this.isSubappRestartRequired
+      && !this.subappVersionActionBusy
+      && item?.updateStatus.state === 'ready') {
       return this.translate.instant('APP_STORE.INSTALL_UPDATE_TOOLTIP', {
         available: item.availableVersion,
       });
@@ -339,10 +357,18 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   get isSubappRestartRequired(): boolean {
-    const installedVersion = String(this.currentSubappCatalogItem?.installedVersion || '').trim();
+    const item = this.currentSubappCatalogItem;
+    const installedVersion = String(item?.installedVersion || '').trim();
     const runningVersion = String(this.childVersion || '').trim();
+    const preparedVersion = item?.updateStatus.ready === true || item?.updateStatus.state === 'ready'
+      ? String(item.availableVersion || '').trim()
+      : '';
+    const processRunning = this.hostStatus === 'ready' || this.hostStatus === 'starting';
     return this.subappRestartRequired
-      || (!!installedVersion && !!runningVersion && installedVersion !== runningVersion);
+      || (processRunning && !!runningVersion
+        && (preparedVersion
+          ? preparedVersion !== runningVersion
+          : !!installedVersion && installedVersion !== runningVersion));
   }
 
   ngOnInit(): void {
@@ -372,6 +398,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
 
     if (this.initialized && changes['active']) {
       this.syncHostContext(true);
+      void this.syncWebviewDebuggerSurfaceVisibility();
     }
   }
 
@@ -471,6 +498,11 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     const item = this.currentSubappCatalogItem;
     if (!item) return;
 
+    if (this.isSubappRestartRequired) {
+      this.confirmUpdatedSubappRestart();
+      return;
+    }
+
     if (!item.updatePolicy && item.updateAvailable) {
       await this.installSubappUpdate(item, false);
       return;
@@ -486,14 +518,23 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       return;
     }
 
-    if (this.isSubappRestartRequired) {
-      this.confirmUpdatedSubappRestart();
-    }
   }
 
   async reloadChildUi(): Promise<void> {
-    this.uiHealthFailed = false;
-    await this.reloadChildFrame('manual');
+    if (!this.config || !this.acquired || this.closing || this.hostStatus === 'closed') return;
+    const previous = this.serverInfo;
+    try {
+      const hostInfo = await this.processService.ensureRunning(this.config.id);
+      if (!this.initialized || this.closing || !this.acquired) return;
+      // A replacement Runtime is already remounted by observeRuntime.
+      if (previous?.url !== hostInfo.url || previous?.pid !== hostInfo.pid) return;
+      await this.reloadChildFrame('manual');
+    } catch (error) {
+      this.hostStatus = 'error';
+      this.errorMessage = error instanceof Error ? error.message : String(error);
+      this.logError('reload child UI failed', this.errorMessage);
+      this.cdr.markForCheck();
+    }
   }
 
   private handleApiServerChange(): void {
@@ -543,6 +584,16 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       return { ok: false, message: '子应用拒绝重启，可能存在未完成操作。' };
     }
 
+    const itemBeforeRestart = this.currentSubappCatalogItem;
+    const expectedVersion = itemBeforeRestart?.updateStatus.ready === true
+      || itemBeforeRestart?.updateStatus.state === 'ready'
+      ? String(itemBeforeRestart.availableVersion || '').trim()
+      : String(itemBeforeRestart?.installedVersion || '').trim();
+    if (!force && itemBeforeRestart
+      && (itemBeforeRestart.updateStatus.ready === true
+        || itemBeforeRestart.updateStatus.state === 'ready')) {
+      await this.subappManager.installUpdate(itemBeforeRestart.id);
+    }
     const updatedConfig = getChildToolConfig(this.resolvedToolId);
     if (!updatedConfig) {
       return { ok: false, message: `子应用配置未找到: ${this.resolvedToolId}` };
@@ -560,7 +611,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     await this.startServer(true);
     const restartedStatus = this.hostStatus as HostStatus;
     if (restartedStatus === 'ready') {
-      const expectedVersion = String(this.currentSubappCatalogItem?.installedVersion || '').trim();
+      await this.subappManager.refresh(false);
       const runningVersion = String(this.childVersion || '').trim();
       if (expectedVersion && runningVersion !== expectedVersion) {
         this.subappRestartRequired = true;
@@ -611,6 +662,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
 
   onFrameLoad(event: Event): void {
     const iframe = event.target as HTMLIFrameElement;
+    this.childFrameElement = iframe;
     this.log('iframe load', {
       url: this.sanitizeUrl(this.serverInfo?.url),
       hasContentWindow: !!iframe.contentWindow,
@@ -667,6 +719,11 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
 
     this.config = config;
     this.resolvedToolId = config.id;
+    const catalogItemAtOpen = this.subappManager.state.apps.find(item => item.toolId === config.id);
+    this.deferPreparedUpdateOnInitialLaunch = catalogItemAtOpen?.installed === true
+      && catalogItemAtOpen.updatePolicy?.install === 'next-launch'
+      && catalogItemAtOpen.updateStatus.state !== 'ready'
+      && catalogItemAtOpen.updateStatus.ready !== true;
     this.runtimeSubscription?.unsubscribe();
     this.runtimeSubscription = this.processService.observeRuntime(config.id).subscribe(snapshot => {
       this.handleRuntimeSnapshot(snapshot);
@@ -708,9 +765,14 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     const item = this.currentSubappCatalogItem;
     const installedVersion = String(item?.installedVersion || '').trim();
     const runningVersion = String(this.childVersion || '').trim();
-    if (item?.installed && installedVersion && runningVersion && installedVersion !== runningVersion) {
-      this.subappRestartRequired = true;
-    }
+    const preparedVersion = item?.updateStatus.ready === true || item?.updateStatus.state === 'ready'
+      ? String(item.availableVersion || '').trim()
+      : '';
+    const processRunning = this.hostStatus === 'ready' || this.hostStatus === 'starting';
+    if (!item?.installed || !runningVersion || !processRunning) return;
+    this.subappRestartRequired = preparedVersion
+      ? preparedVersion !== runningVersion
+      : !!installedVersion && installedVersion !== runningVersion;
   }
 
   private applySubappUpdateProgress(progress: SubappInstallProgress | null): void {
@@ -936,9 +998,11 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     this.log(restart ? 'restart server' : 'start server');
 
     try {
+      const deferPreparedUpdate = !restart && this.deferPreparedUpdateOnInitialLaunch;
+      this.deferPreparedUpdateOnInitialLaunch = false;
       this.serverInfo = restart
         ? await this.processService.restart(this.config.id)
-        : await this.processService.acquire(this.config.id);
+        : await this.processService.acquire(this.config.id, { deferPreparedUpdate });
       this.acquired = true;
       this.adoptRuntimeConfig(this.serverInfo);
       const childToolUrl = this.buildChildToolUrl(this.serverInfo.url);
@@ -961,6 +1025,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     this.childVersion = config.version || '';
     this.titleKey = config.titleKey;
     this.routePath = config.routePath || `/child-tool/${config.id}`;
+    this.syncSubappRestartRequirement();
   }
 
   private handleRuntimeSnapshot(snapshot: ChildToolRuntimeSnapshot): void {
@@ -1082,6 +1147,10 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
         listChildApps: (payload: { limit?: number } = {}) => this.listChatChildApps(payload),
         openChildApp: (payload: { toolId?: string; mode?: 'embedded' | 'window' } = {}) => this.openChatChildApp(payload),
         openChildSurfaceWindow: (payload: ChildSurfaceWindowRequest = {}) => this.openChildSurfaceWindow(payload),
+        openNativeWebviewSurface: (payload: Record<string, unknown> = {}) => this.openNativeWebviewSurface(payload),
+        setNativeWebviewSurfaceBounds: (payload: Record<string, unknown> = {}) => this.setNativeWebviewSurfaceBounds(payload),
+        commandNativeWebviewSurface: (payload: Record<string, unknown> = {}) => this.commandNativeWebviewSurface(payload),
+        closeNativeWebviewSurface: () => this.closeNativeWebviewSurface(),
         focusChildFrame: () => this.focusChildFrame(),
         writeClipboardText: (payload: { text?: string } = {}) => this.writeClipboardText(payload),
         openFile: (payload: { path?: string } = {}) => this.openFile(payload),
@@ -1325,6 +1394,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   private destroyPenpalConnection(): void {
     this.clearChildReadyTimer();
     this.setAilyChatOperationActive(false);
+    void this.closeNativeWebviewSurface();
     this.remoteApi = null;
     if (this.penpalConnection) {
       this.penpalConnection.destroy();
@@ -1332,6 +1402,113 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     }
     this.penpalRemoteWindow = null;
     this.penpalState = 'idle';
+  }
+
+  private isWebviewDebuggerTool(): boolean {
+    return this.resolvedToolId === 'webview-debugger';
+  }
+
+  private getWebviewDebuggerSurfaceApi(): any {
+    return (window as any).electronAPI?.webviewDebuggerSurface;
+  }
+
+  private normalizeWebviewDebuggerBounds(payload: Record<string, unknown>): Record<string, number> | null {
+    const iframe = this.childFrameElement;
+    if (!iframe) return null;
+    const frameRect = iframe.getBoundingClientRect();
+    const local = this.isRecord(payload['bounds']) ? payload['bounds'] : payload;
+    const scaleX = frameRect.width / Math.max(1, iframe.clientWidth);
+    const scaleY = frameRect.height / Math.max(1, iframe.clientHeight);
+    const x = Math.max(0, Number(local['x']) || 0);
+    const y = Math.max(0, Number(local['y']) || 0);
+    const width = Math.max(1, Number(local['width']) || 1);
+    const height = Math.max(1, Number(local['height']) || 1);
+    return {
+      x: Math.round(frameRect.left + x * scaleX),
+      y: Math.round(frameRect.top + y * scaleY),
+      width: Math.round(width * scaleX),
+      height: Math.round(height * scaleY),
+    };
+  }
+
+  private async openNativeWebviewSurface(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const api = this.getWebviewDebuggerSurfaceApi();
+    if (!this.isWebviewDebuggerTool() || !api) {
+      return { ok: false, errorCode: 'WEBVIEW_NATIVE_UNAVAILABLE', error: 'Native WebView surface is unavailable' };
+    }
+    const bounds = this.normalizeWebviewDebuggerBounds(payload);
+    if (!bounds) {
+      return { ok: false, errorCode: 'WEBVIEW_FRAME_UNAVAILABLE', error: 'Child frame geometry is unavailable' };
+    }
+    await this.closeNativeWebviewSurface();
+    const result = await api.create({
+      url: String(payload['url'] || 'about:blank'),
+      bounds,
+      visible: this.active,
+    });
+    if (result?.ok !== true || !result?.surfaceId) return result;
+    this.webviewDebuggerSurfaceId = String(result.surfaceId);
+    this.webviewDebuggerSurfaceBounds = bounds;
+    this.webviewDebuggerSurfaceEventCleanup = api.onEvent((event: any) => {
+      if (String(event?.surfaceId || '') !== this.webviewDebuggerSurfaceId) return;
+      void Promise.resolve(this.remoteApi?.setNativeWebviewState?.(event)).catch(error => {
+        this.logError('native WebView event forward failed', error);
+      });
+    });
+    return result;
+  }
+
+  private async setNativeWebviewSurfaceBounds(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const api = this.getWebviewDebuggerSurfaceApi();
+    if (!this.isWebviewDebuggerTool() || !api || !this.webviewDebuggerSurfaceId) {
+      return { ok: false, errorCode: 'WEBVIEW_NATIVE_UNAVAILABLE', error: 'Native WebView surface is unavailable' };
+    }
+    const bounds = this.normalizeWebviewDebuggerBounds(payload);
+    if (!bounds) {
+      return { ok: false, errorCode: 'WEBVIEW_FRAME_UNAVAILABLE', error: 'Child frame geometry is unavailable' };
+    }
+    this.webviewDebuggerSurfaceBounds = bounds;
+    return await api.setBounds({
+      surfaceId: this.webviewDebuggerSurfaceId,
+      bounds,
+      visible: this.active && payload['visible'] !== false,
+    });
+  }
+
+  private async syncWebviewDebuggerSurfaceVisibility(): Promise<void> {
+    const api = this.getWebviewDebuggerSurfaceApi();
+    if (!api || !this.webviewDebuggerSurfaceId || !this.webviewDebuggerSurfaceBounds) return;
+    await api.setBounds({
+      surfaceId: this.webviewDebuggerSurfaceId,
+      bounds: this.webviewDebuggerSurfaceBounds,
+      visible: this.active,
+    }).catch(() => undefined);
+  }
+
+  private async commandNativeWebviewSurface(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const api = this.getWebviewDebuggerSurfaceApi();
+    if (!this.isWebviewDebuggerTool() || !api || !this.webviewDebuggerSurfaceId) {
+      return { ok: false, errorCode: 'WEBVIEW_NATIVE_UNAVAILABLE', error: 'Native WebView surface is unavailable' };
+    }
+    return await api.command({
+      surfaceId: this.webviewDebuggerSurfaceId,
+      action: String(payload['action'] || ''),
+      params: this.isRecord(payload['params']) ? payload['params'] : {},
+    });
+  }
+
+  private async closeNativeWebviewSurface(): Promise<Record<string, unknown>> {
+    const surfaceId = this.webviewDebuggerSurfaceId;
+    this.webviewDebuggerSurfaceId = '';
+    this.webviewDebuggerSurfaceBounds = null;
+    this.webviewDebuggerSurfaceEventCleanup?.();
+    this.webviewDebuggerSurfaceEventCleanup = null;
+    const api = this.getWebviewDebuggerSurfaceApi();
+    if (!surfaceId || !api) return { ok: true, destroyed: false };
+    return await api.destroy({ surfaceId }).catch(error => ({
+      ok: false,
+      error: error instanceof Error ? error.message : String(error || 'Unable to close native WebView surface'),
+    }));
   }
 
   private async reloadChildFrame(reason: 'manual'): Promise<void> {
@@ -1612,6 +1789,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       surface: launch.surface,
       surfaceParams: launch.params,
       workspace,
+      coderWorkspace: this.resolveHostCoderWorkspace(),
       activeChatSessionId: isAilyChat ? (this.ailyChatSessionId || null) : null,
       blockResources: isAilyChat && this.active ? this.createSelectedBlockResources() : [],
       capabilities: {
@@ -1678,7 +1856,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
 
     try {
       if (mode === 'coder') {
-        await this.requiredSubapps.ensureInstalled(AILY_CODER_SUBAPP_ID);
+        await this.requiredSubapps.ensureInstalled(AILY_CODER_EDITOR_SUBAPP_ID);
       }
       await this.configService.setDevelopmentModePreference(mode, 'settings');
       return { ok: true, context: this.createHostContext() };
@@ -2200,6 +2378,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   private async initializeStandaloneProjectContext(): Promise<void> {
     if (!this.isStandalone) {
       this.standaloneWorkspace = undefined;
+      this.standaloneCoderWorkspace = undefined;
       this.standaloneWorkspaceVersion = -1;
       this.projectContextListenerCleanup?.();
       this.projectContextListenerCleanup = null;
@@ -2288,9 +2467,14 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
 
     const rawWorkspace = typeof context?.workspace === 'string' ? context.workspace : '';
     const workspace = rawWorkspace.trim() ? rawWorkspace : null;
-    const changed = this.standaloneWorkspace !== workspace;
+    const coderWorkspace = context?.coderWorkspace && typeof context.coderWorkspace === 'object'
+      ? context.coderWorkspace
+      : null;
+    const changed = this.standaloneWorkspace !== workspace ||
+      JSON.stringify(this.standaloneCoderWorkspace) !== JSON.stringify(coderWorkspace);
 
     this.standaloneWorkspace = workspace;
+    this.standaloneCoderWorkspace = coderWorkspace;
     if (Number.isFinite(version)) {
       this.standaloneWorkspaceVersion = version;
     }
@@ -2305,6 +2489,13 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       return this.standaloneWorkspace;
     }
     return this.projectService.currentProjectPath || null;
+  }
+
+  private resolveHostCoderWorkspace(): CoderWorkspaceContext | null {
+    if (this.isStandalone && this.standaloneCoderWorkspace !== undefined) {
+      return this.standaloneCoderWorkspace;
+    }
+    return this.projectService.coderWorkspace;
   }
 
   private normalizeLang(lang: string): string {

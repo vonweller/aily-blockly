@@ -15,7 +15,10 @@ export * from './project-data/project-data.types';
 export * from './project-debug-configuration.service';
 export * from './operations/project-creation-workflow';
 export * from './project-root-path';
+export * from './project-package-name';
 export * from './project-mode';
 export * from './project.service';
 export * from './recent-projects';
 export * from './ports/project-application.port';
+
+export { CODER_EXECUTION_PORT, type CoderExecutionPort } from './ports/coder-execution.port';

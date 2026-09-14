@@ -28,7 +28,6 @@
         "IMAGE_EXPORT_FAILED": "Échec de l'exportation de l'image de l'espace de travail",
         "DEBUG": "Déboguer",
         "TERMINAL": "Terminal",
-        "TOOL_SERIAL": "Outil Série",
         "MQTT_DEBUGGER": "MQTT Debugger",
         "NETWORK_DEBUGGER": "Network Debugger",
         "AI": "IA",
@@ -146,6 +145,7 @@
     "GUIDE": {
         "START": "Démarrer",
         "RECENTLY": "Récent",
+        "UNMERGE_CODER_WORKSPACE": "Dissocier l’espace de travail multiprojet",
         "USER_GROUP": "Communauté des Utilisateurs",
         "USER_GROUP_DESC": "Rejoignez la communauté pour échanger avec l'équipe de développement et d'autres utilisateurs",
         "AI_APP_CENTER": "Centre d'Applications IA",
@@ -870,6 +870,16 @@
             "DONE": "Terminé"
         }
     },
+    "CODER_SUBAPP_INSTALL": {
+        "TITLE": "Préparation d’Aily Coder Editor",
+        "INSTALLING": "Téléchargement et installation de l’éditeur ({{percent}} %)",
+        "FAILED": "L’installation de l’éditeur n’a pas abouti. Vérifiez le réseau et réessayez.",
+        "RETRY": "Réessayer l’installation",
+        "REINSTALL": "Réinstaller l’éditeur",
+        "REINSTALL_TITLE": "Réinstaller Aily Coder Editor ?",
+        "REINSTALL_HINT": "Cette action ferme le service d’édition actuel et télécharge un nouveau paquet. Enregistrez d’abord les fichiers du projet. Toute installation existante sera restaurée en cas d’échec.",
+        "REINSTALL_CONFIRM": "Réinstaller"
+    },
     "NPM": {
         "INSTALLING": "Installation de {{name}}...",
         "INSTALLING_DEPENDENCY": "Installation de la dépendance {{name}}...",
@@ -1012,6 +1022,7 @@
         }
     },
     "PLAYGROUND": {
+        "HOME": "Accueil",
         "LOADING_EXAMPLE": "Chargement de l'exemple...",
         "EXAMPLE_LOAD_SUCCESS": "Exemple chargé avec succès",
         "EXAMPLE_LOAD_FAILED": "Échec du chargement de l'exemple",
@@ -1048,6 +1059,12 @@
         "LOCK_ACQUIRE_FAILED": "Could not acquire project lock. Please try again."
     },
     "LIBRARY_PUBLISH": {
+        "SUBMIT_FAILED": "Échec de la publication : {{error}}",
+        "NETWORK_ERROR": "Échec de la connexion réseau. Vérifiez la connexion et le statut de la soumission dans le centre utilisateur avant de réessayer.",
+        "SERVICE_ERROR": "Le service est temporairement indisponible. Vérifiez plus tard le statut de la soumission dans le centre utilisateur.",
+        "GITHUB_AUTH_TIMEOUT": "Le délai d’autorisation GitHub a expiré. Publiez à nouveau et terminez l’autorisation.",
+        "LOCAL_SAVE_FAILED": "La soumission a été acceptée, mais les métadonnées locales n’ont pas pu être enregistrées : {{error}}. Vérifiez les fichiers locaux ; inutile de publier à nouveau.",
+        "PACKAGE_NAME_UNAVAILABLE": "Le nom de bibliothèque {{name}} est déjà utilisé par un autre utilisateur. Modifiez-le avant de publier.",
         "RELOAD_TITLE": "Recharger le projet actuel",
         "RELOAD_RENAMED": "La bibliothèque locale a été renommée de {{previousName}} en {{nextName}}.",
         "RELOAD_UPDATED": "Les informations de la bibliothèque locale ont été mises à jour.",

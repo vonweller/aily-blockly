@@ -28,7 +28,6 @@
         "IMAGE_EXPORT_FAILED": "ワークスペース画像のエクスポートに失敗しました",
         "DEBUG": "デバッグ",
         "TERMINAL": "ターミナル",
-        "TOOL_SERIAL": "シリアルツール",
         "MQTT_DEBUGGER": "MQTT Debugger",
         "NETWORK_DEBUGGER": "Network Debugger",
         "AI": "AI",
@@ -146,6 +145,7 @@
     "GUIDE": {
         "START": "スタート",
         "RECENTLY": "最近",
+        "UNMERGE_CODER_WORKSPACE": "複数プロジェクトの統合を解除",
         "USER_GROUP": "ユーザーコミュニティ",
         "USER_GROUP_DESC": "コミュニティに参加して、開発チームや他のユーザーと交流しましょう",
         "AI_APP_CENTER": "AIアプリセンター",
@@ -870,6 +870,16 @@
             "DONE": "完了"
         }
     },
+    "CODER_SUBAPP_INSTALL": {
+        "TITLE": "Aily Coder Editor を準備しています",
+        "INSTALLING": "エディターをダウンロードしてインストールしています（{{percent}}%）",
+        "FAILED": "エディターのインストールが完了しませんでした。ネットワークを確認して再試行してください。",
+        "RETRY": "インストールを再試行",
+        "REINSTALL": "エディターを再インストール",
+        "REINSTALL_TITLE": "Aily Coder Editor を再インストールしますか？",
+        "REINSTALL_HINT": "現在のエディターサービスを停止し、新しいパッケージをダウンロードします。先にプロジェクトファイルを保存してください。既存のインストールがある場合、失敗時に復元されます。",
+        "REINSTALL_CONFIRM": "再インストール"
+    },
     "NPM": {
         "INSTALLING": "{{name}}をインストール中...",
         "INSTALLING_DEPENDENCY": "{{name}}の依存関係をインストール中...",
@@ -1012,6 +1022,7 @@
         }
     },
     "PLAYGROUND": {
+        "HOME": "ホーム",
         "LOADING_EXAMPLE": "サンプルを読み込み中...",
         "EXAMPLE_LOAD_SUCCESS": "サンプルの読み込みが完了しました",
         "EXAMPLE_LOAD_FAILED": "サンプルの読み込みに失敗しました",
@@ -1048,6 +1059,12 @@
         "LOCK_ACQUIRE_FAILED": "プロジェクトロックを取得できませんでした。再試行してください。"
     },
     "LIBRARY_PUBLISH": {
+        "SUBMIT_FAILED": "公開に失敗しました：{{error}}",
+        "NETWORK_ERROR": "ネットワーク接続に失敗しました。接続とユーザーセンターの提出状況を確認してから再試行してください。",
+        "SERVICE_ERROR": "サービスは一時的に利用できません。後ほどユーザーセンターで提出状況を確認してください。",
+        "GITHUB_AUTH_TIMEOUT": "GitHub 認証がタイムアウトしました。もう一度公開操作を行い、認証を完了してください。",
+        "LOCAL_SAVE_FAILED": "提出は受理されましたが、ローカル情報の保存に失敗しました：{{error}}。ローカルファイルを確認してください。再提出は不要です。",
+        "PACKAGE_NAME_UNAVAILABLE": "ライブラリ名 {{name}} は別のユーザーが使用しています。名前を変更してから公開してください。",
         "RELOAD_TITLE": "現在のプロジェクトを再読み込み",
         "RELOAD_RENAMED": "ローカルライブラリは {{previousName}} から {{nextName}} に名前変更されました。",
         "RELOAD_UPDATED": "ローカルライブラリ情報が更新されました。",

@@ -100,6 +100,7 @@ declare global {
           locale?: string;
         }) => Promise<any>;
         install: (options: { id: string; locale?: string; forceClose?: boolean }) => Promise<any>;
+        reinstall: (options: { id: string; locale?: string; forceClose?: boolean }) => Promise<any>;
         update: (options: { id: string; locale?: string; forceClose?: boolean }) => Promise<any>;
         downloadUpdate: (options: { id: string; locale?: string }) => Promise<any>;
         installUpdate: (options: { id: string; locale?: string; forceClose?: boolean }) => Promise<any>;
@@ -118,6 +119,13 @@ declare global {
       webviewBridge?: {
         fetchPage: (data: any) => Promise<any>;
         searchWeb: (data: any) => Promise<any>;
+      };
+      webviewDebuggerSurface?: {
+        create: (data: any) => Promise<any>;
+        setBounds: (data: any) => Promise<any>;
+        command: (data: any) => Promise<any>;
+        destroy: (data: any) => Promise<any>;
+        onEvent: (callback: (payload: any) => void) => () => void;
       };
       iWindow: any;
       subWindow: any;

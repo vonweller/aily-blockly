@@ -53,6 +53,8 @@ aily-todos/*.json
 docs/performance-optimization.md
 
 # child
+/child/windows/
+/child/macos/
 child/node*
 child/aily-builder*
 /child/node
@@ -66,6 +68,8 @@ child/aily-builder*
 /child/probe-rs
 /child/tools/*/node_modules/*
 /child/xpm
+/child/aily-coder-editor.tgz
+/child/aily-coder-editor.json
 
 # Playwright E2E
 /renderer

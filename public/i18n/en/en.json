@@ -1,4 +1,10 @@
 {
+  "CODER_TABS": {
+    "PROJECTS": "Projects",
+    "CLOSE": "Close Project",
+    "BUILDING": "Building",
+    "UPLOADING": "Uploading"
+  },
     "CLOUD_SPACE_ERRORS": {
         "PUBLISH_FAILED": "Failed to publish project",
         "WORKSPACE_PROJECT_NOT_FOUND": "Project not found",
@@ -11,6 +17,7 @@
         "PROJECT_NEW": "New Project",
         "PROJECT_NEW_AILY_CODE": "New Aily Code Project",
         "PROJECT_OPEN": "Open Project",
+        "PROJECT_ADD": "Add Project",
         "RECENT_PROJECTS": "Recent Projects",
         "RECENT_PROJECTS_EMPTY": "No recent projects",
         "PROJECT_SAVE": "Save Project",
@@ -29,7 +36,6 @@
         "IMAGE_EXPORT_FAILED": "Failed to export workspace image",
         "DEBUG": "Debug",
         "TERMINAL": "Terminal",
-        "TOOL_SERIAL": "Serial Tool",
         "MQTT_DEBUGGER": "MQTT Debugger",
         "NETWORK_DEBUGGER": "Network Debugger",
         "AI": "AI",
@@ -185,6 +191,7 @@
     "GUIDE": {
         "START": "Start",
         "RECENTLY": "Recent",
+        "UNMERGE_CODER_WORKSPACE": "Unmerge multi-project workspace",
         "USER_GROUP": "User Community",
         "USER_GROUP_DESC": "Join the community to connect with the development team and other users",
         "AI_APP_CENTER": "AI App Center",
@@ -1009,6 +1016,16 @@
         "TIMEOUT": "The code workspace took too long to start. Please try again.",
         "RETRY": "Try again"
     },
+    "CODER_SUBAPP_INSTALL": {
+        "TITLE": "Preparing Aily Coder Editor",
+        "INSTALLING": "Downloading and installing the editor ({{percent}}%)",
+        "FAILED": "Editor installation did not finish. Check the network and try again.",
+        "RETRY": "Retry installation",
+        "REINSTALL": "Reinstall editor",
+        "REINSTALL_TITLE": "Reinstall Aily Coder Editor?",
+        "REINSTALL_HINT": "This closes the current editor service and downloads a fresh package. Save project files first. Any existing installation is restored if reinstallation fails.",
+        "REINSTALL_CONFIRM": "Reinstall"
+    },
     "NPM": {
         "INSTALLING": "Installing {{name}}...",
         "INSTALLING_DEPENDENCY": "Installing {{name}} dependency...",
@@ -1151,6 +1168,7 @@
         }
     },
     "PLAYGROUND": {
+        "HOME": "Home",
         "LOADING_EXAMPLE": "Loading example...",
         "EXAMPLE_LOAD_SUCCESS": "Example loaded successfully",
         "EXAMPLE_LOAD_FAILED": "Failed to load example",
@@ -1194,6 +1212,12 @@
         "CANCEL": "Cancel"
     },
     "LIBRARY_PUBLISH": {
+        "SUBMIT_FAILED": "Publishing failed: {{error}}",
+        "NETWORK_ERROR": "Network connection failed. Check your connection and the submission status in User Center before retrying.",
+        "SERVICE_ERROR": "The service is temporarily unavailable. Check the submission status in User Center later.",
+        "GITHUB_AUTH_TIMEOUT": "GitHub authorization timed out. Publish again and complete authorization.",
+        "LOCAL_SAVE_FAILED": "The submission was accepted, but local metadata could not be saved: {{error}}. Check the local files; you do not need to publish again.",
+        "PACKAGE_NAME_UNAVAILABLE": "The library name {{name}} is already used by another user. Change the name before publishing.",
         "RELOAD_TITLE": "Reload current project",
         "RELOAD_RENAMED": "The local library was renamed from {{previousName}} to {{nextName}}.",
         "RELOAD_UPDATED": "The local library information has been updated.",

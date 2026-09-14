@@ -21,6 +21,7 @@ export interface SubappUpdateStatus {
   state: SubappUpdateState;
   targetVersion: string;
   progress?: number;
+  phase?: string;
   ready?: boolean;
   error?: string;
   downloadedAt?: string;
@@ -34,10 +35,12 @@ export interface SubappUpdatePolicy {
 export interface SubappCatalogItem {
   id: string;
   toolId: string;
+  only: string;
   packageName: string;
   availableVersion: string;
   installedVersion?: string | null;
   installed: boolean;
+  uninstalling?: boolean;
   updateAvailable: boolean;
   updateStatus: SubappUpdateStatus;
   updatePolicy?: SubappUpdatePolicy;
@@ -150,6 +153,10 @@ export class SubappManagerService implements OnDestroy {
     return this.mutate('install', id, options);
   }
 
+  reinstall(id: string, options: { forceClose?: boolean } = {}): Promise<void> {
+    return this.mutate('reinstall', id, options);
+  }
+
   update(id: string, options: { forceClose?: boolean } = {}): Promise<void> {
     return this.mutate('update', id, options);
   }
@@ -172,6 +179,7 @@ export class SubappManagerService implements OnDestroy {
       .map((item) => ({
         ...(item.app || {}),
         id: item.toolId,
+        only: item.only,
         name: item.name,
         description: item.description,
         action: 'tool-open',
@@ -187,6 +195,7 @@ export class SubappManagerService implements OnDestroy {
           availableVersion: item.availableVersion,
           installedVersion: item.installedVersion,
           installed: item.installed,
+          uninstalling: item.uninstalling === true,
           updateAvailable: item.updateAvailable,
           updateStatus: item.updateStatus,
           updatePolicy: item.updatePolicy,
@@ -242,7 +251,7 @@ export class SubappManagerService implements OnDestroy {
   }
 
   private async mutate(
-    action: 'install' | 'update' | 'downloadUpdate' | 'installUpdate' | 'uninstall',
+    action: 'install' | 'reinstall' | 'update' | 'downloadUpdate' | 'installUpdate' | 'uninstall',
     id: string,
     options: { forceClose?: boolean } = {},
   ): Promise<void> {
@@ -304,7 +313,9 @@ export class SubappManagerService implements OnDestroy {
     if (!payload || typeof payload.id !== 'string') return;
     const percent = Math.max(0, Math.min(100, Math.round(Number(payload.percent) || 0)));
     const previous = this.progressSubject.value;
-    const nextPercent = previous?.id === payload.id && previous.action === payload.action
+    const nextPercent = previous?.id === payload.id
+      && previous.action === payload.action
+      && previous.phase === payload.phase
       ? Math.max(previous.percent || 0, percent)
       : percent;
     const progress = {
@@ -333,6 +344,7 @@ export class SubappManagerService implements OnDestroy {
           ...item.updateStatus,
           state,
           progress: progress.percent,
+          phase: payload.phase,
           ...(failed && payload.error ? { error: payload.error } : {}),
           ...(payload.action === 'download-update' ? { ready: false } : {}),
         },

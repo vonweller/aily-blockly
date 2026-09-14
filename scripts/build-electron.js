@@ -1,5 +1,6 @@
 const path = require('path');
 const { spawnSync } = require('child_process');
+const { getProductAuthConfig } = require('../electron/build-product');
 
 const BUILD_PRODUCTS = Object.freeze({
   blockly: Object.freeze({
@@ -16,13 +17,13 @@ const BUILD_PRODUCTS = Object.freeze({
   coder: Object.freeze({
     id: 'coder',
     appId: 'coder.aily.pro',
-    productName: 'Aily Coder',
+    productName: 'aily coder',
     appUserModelId: 'pro.aily.coder',
     outputDirectory: 'dist/aily-coder/',
     artifactBase: 'aily-coder',
     artifactBaseCn: 'aily-coder-CN',
     installerInclude: 'build/installer-coder.nsh',
-    shortcutName: 'Aily Coder',
+    shortcutName: 'aily coder',
   }),
 });
 
@@ -61,7 +62,7 @@ function createBuilderConfig(plan, baseConfig) {
     extraMetadata: {
       ...(baseConfig.extraMetadata || {}),
       ...(plan.buildProduct === 'coder'
-        ? { name: 'aily-coder', productName: product.productName }
+        ? { name: 'aily-coder', productName: product.productName, description: product.productName }
         : {}),
       ailyBuildFlavor: plan.buildFlavor,
       ailyBuildProduct: plan.buildProduct,
@@ -71,17 +72,22 @@ function createBuilderConfig(plan, baseConfig) {
       ...(baseConfig.directories || {}),
       output: product.outputDirectory,
     },
-    extraResources: (baseConfig.extraResources || []).filter(
-      (resource) => resource?.to !== 'app-update.yml',
-    ),
+    extraResources: [
+      ...(baseConfig.extraResources || []).filter(
+        (resource) => resource?.to !== 'app-update.yml',
+      ),
+    ],
     publish: [{
       provider: 'generic',
       url: plan.updateBaseUrl,
     }],
     protocols: (baseConfig.protocols || []).map((protocol) => ({
       ...protocol,
-      ...(plan.buildProduct === 'coder' && protocol?.name === 'Aily Blockly OAuth'
-        ? { name: 'Aily Coder OAuth' }
+      ...(protocol?.name === 'Aily Blockly OAuth'
+        ? {
+          name: plan.buildProduct === 'coder' ? 'Aily Coder OAuth' : protocol.name,
+          schemes: getProductAuthConfig(plan.buildProduct).protocols,
+        }
         : {}),
     })),
     win: {
