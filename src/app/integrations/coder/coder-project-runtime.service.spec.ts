@@ -135,4 +135,43 @@ describe('Coder concurrent process integration', () => {
     project.currentProjectPath = '/a'; project.currentProjectPath$.next('/a');
     expect(serial.currentPort).toBe('/dev/A'); expect(shown.at(-1).title).toBe('A build');
   });
+
+  it('shows each completed build once across project switches, including a background completion', () => {
+    const a = runtime.getSession('/a'); const b = runtime.getSession('/b');
+    const shown: any[] = [];
+    TestBed.inject(NoticeService).stateSubject.subscribe(value => shown.push(value));
+
+    a.notice.update({ title: 'A completed', state: 'done', setTimeout: 600000 });
+    b.notice.update({ title: 'B completed', state: 'done', setTimeout: 600000 });
+    expect(shown.filter(value => value?.title === 'A completed').length).toBe(1);
+    expect(shown.filter(value => value?.title === 'B completed').length).toBe(0);
+
+    project.currentProjectPath = '/b'; project.currentProjectPath$.next('/b');
+    expect(shown.at(-1)?.title).toBe('B completed');
+    project.currentProjectPath = '/a'; project.currentProjectPath$.next('/a');
+    expect(shown.at(-1)).toBeNull();
+    project.currentProjectPath = '/b'; project.currentProjectPath$.next('/b');
+    expect(shown.at(-1)).toBeNull();
+    expect(shown.filter(value => value?.title === 'A completed').length).toBe(1);
+    expect(shown.filter(value => value?.title === 'B completed').length).toBe(1);
+
+    b.notice.update({ title: 'B rebuilt', state: 'done', setTimeout: 600000 });
+    expect(shown.at(-1)?.title).toBe('B rebuilt');
+  });
+
+  it('restores a running build after switching away and shows its completion once', () => {
+    const a = runtime.getSession('/a'); runtime.getSession('/b');
+    const shown: any[] = [];
+    TestBed.inject(NoticeService).stateSubject.subscribe(value => shown.push(value));
+    a.notice.update({ title: 'A building', state: 'doing', progress: 35 });
+    project.currentProjectPath = '/b'; project.currentProjectPath$.next('/b');
+    project.currentProjectPath = '/a'; project.currentProjectPath$.next('/a');
+    expect(shown.at(-1)?.title).toBe('A building');
+    a.notice.update({ title: 'A completed', state: 'done' });
+    expect(shown.at(-1)?.title).toBe('A completed');
+    project.currentProjectPath = '/b'; project.currentProjectPath$.next('/b');
+    project.currentProjectPath = '/a'; project.currentProjectPath$.next('/a');
+    expect(shown.at(-1)).toBeNull();
+    expect(shown.filter(value => value?.title === 'A completed').length).toBe(1);
+  });
 });

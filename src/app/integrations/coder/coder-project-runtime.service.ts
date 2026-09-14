@@ -29,6 +29,7 @@ export interface CoderProjectSession {
   busy: 'build' | 'upload' | null;
   editorReady: boolean;
   builderObserved?: boolean;
+  noticePresented?: boolean;
   state: CoderProjectRunState;
 }
 
@@ -58,7 +59,11 @@ export class CoderProjectRuntimeService implements CoderExecutionPort {
       this.serial.currentPortInfo = session.serial.currentPortInfo;
       this.logs.list = session.log.list;
       this.notices.clear();
-      if (session.state.notice) this.notices.update({ ...session.state.notice, sendToLog: false });
+      const notice = session.state.notice;
+      if (notice && (notice.state === 'doing' || !session.noticePresented)) {
+        this.notices.update({ ...notice, sendToLog: false });
+        session.noticePresented = true;
+      }
     });
     projects.coderOperationsSubject.subscribe(() => this.publish());
     projects.coderProjects$.subscribe(open => {
@@ -102,8 +107,12 @@ export class CoderProjectRuntimeService implements CoderExecutionPort {
     this.sessions.set(key, session);
     session.notice.stateSubject.subscribe(notice => {
       session.state = { ...session.state, notice };
+      session.noticePresented = false;
       this.publish();
-      if (this.isActive(path)) notice ? this.notices.update({ ...notice, sendToLog: false }) : this.notices.clear();
+      if (this.isActive(path)) {
+        notice ? this.notices.update({ ...notice, sendToLog: false }) : this.notices.clear();
+        if (notice) session.noticePresented = true;
+      }
     });
     session.log.stateSubject.subscribe(log => {
       if (this.isActive(path)) { this.logs.list = session.log.list; this.logs.stateSubject.next(log); }

@@ -33,6 +33,24 @@ app-code-editor-frame {
   background: var(--aily-bg-secondary, #252526);
   border-bottom: 1px solid var(--aily-border-primary, #333);
   scrollbar-width: thin;
+  scrollbar-color: var(--aily-scrollbar-thumb) transparent;
+
+  &::-webkit-scrollbar {
+    height: 6px;
+  }
+
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    border-radius: 3px;
+    background: var(--aily-scrollbar-thumb);
+  }
+
+  &::-webkit-scrollbar-thumb:hover {
+    background: var(--aily-scrollbar-thumb-hover);
+  }
 }
 .coder-project-tab {
   position: relative;
