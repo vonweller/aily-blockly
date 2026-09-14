@@ -258,12 +258,17 @@ ${dependenciesStr}
   }
 
   // 获取错误日志
-  getErrorLogs(): string {
+  async getErrorLogs(): Promise<string> {
     // 获取最近十条错误日志
-    const errorLogs = this.logService.list
-      .filter(log => log.state === 'error')
+    let entries;
+    try {
+      entries = (await this.logService.readPage({ mode: 'tail', errorsOnly: true, limit: 20 })).entries;
+    } catch (error) {
+      console.warn('读取错误日志文件失败，使用最近日志缓存:', error);
+      entries = this.logService.list.filter(log => log.state === 'error').slice(-20);
+    }
+    const errorLogs = entries
       .sort((a, b) => b.timestamp! - a.timestamp!)
-      .slice(0, 20);
 
     const errorLogsStr = errorLogs.length > 0
       ? errorLogs.map(log => `  - [${new Date(log.timestamp!).toLocaleTimeString()}] ${stripAnsi(log.detail || '')}`).join('\n')
@@ -339,7 +344,7 @@ ${descriptionStr}
       // 获取基本信息
       basicInfo = await this.getBasicInfo();
       // 获取错误日志
-      errorLogs = this.getErrorLogs();
+      errorLogs = await this.getErrorLogs();
 
       // 获取问题描述
       const issueDescription = this.getIssueDescription();
