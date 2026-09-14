@@ -7,12 +7,11 @@
   display: flex;
   height: calc(100% - 60px);
   position: relative;
-  gap: 15px;
 
   .left {
     width: 25vw;
     height: 100%;
-    padding: 15px 0;
+    padding: 15px;
     flex-shrink: 0;
 
     .left-inner {
@@ -25,7 +24,7 @@
   }
 
   .right {
-    padding: 15px 0;
+    padding: 15px;
     flex-grow: 1;
 
     .right-inner {
