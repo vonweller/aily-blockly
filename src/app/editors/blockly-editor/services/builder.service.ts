@@ -25,7 +25,7 @@ import {
 import { BlocklyService } from './blockly.service';
 
 import { writeArduinoGeneratedArtifacts } from './generated-code-artifacts';
-import { CompileValidationService } from '@domain/build/public-api';
+import { CompileValidationService, type BuildCheckpoint } from '@domain/build/public-api';
 import { NpmService } from '@domain/dependencies/public-api';
 import { debounceTime } from 'rxjs/operators';
 import {
@@ -257,6 +257,7 @@ export class _BuilderService {
   private async generateWorkspaceBuildSnapshotForPreprocess(
     workspace: unknown,
     detail?: string,
+    checkpoint?: BuildCheckpoint,
   ): Promise<{
     code: string;
     blockSourceMappings: Array<{
@@ -275,6 +276,7 @@ export class _BuilderService {
       () => runWithPreparedActiveProjectGenerator(
         workspace as any,
         (generator) => {
+          if (checkpoint) checkpoint.inputCapturedAt = Date.now();
           const code = normalizeArduinoGeneratedCode(generator.workspaceToCode(workspace as any));
           const activeGenerator = generator as {
             blockCodeMap?: Map<string, BlockCodeMapping>;
@@ -474,14 +476,15 @@ export class _BuilderService {
 
     this.initialized = true;
     this.actionService.listen('compile-begin', async (action) => {
+      const checkpoint: BuildCheckpoint = {};
       try {
         const graphSemanticRevision =
           action.payload?.graphSemanticRevision as string | undefined;
         const requestId = action.payload?.requestId as string | undefined;
-        const result = await this.build(graphSemanticRevision, requestId);
-        return { success: true, result };
+        const result = await this.build(graphSemanticRevision, requestId, checkpoint);
+        return { success: true, result, checkpoint };
       } catch (msg) {
-        return { success: false, result: msg };
+        return { success: false, result: msg, checkpoint };
       }
     }, 'builder-compile-begin');
     this.actionService.listen('compile-cancel', (action) => {
@@ -1272,6 +1275,7 @@ export class _BuilderService {
   async build(
     graphSemanticRevision?: string,
     requestId?: string,
+    checkpoint: BuildCheckpoint = {},
   ): Promise<ActionState> {
     if (
       graphSemanticRevision !== undefined
@@ -1303,6 +1307,8 @@ export class _BuilderService {
       this.message.warning(this.t('BUSY_RETRY_LATER', { message: msg }));
       return Promise.reject({ state: 'warn', text: this.t('BUSY_WAIT', { message: msg }) });
     }
+
+    checkpoint.startedAt = Date.now();
 
     if (pythonRoute) {
       try {
@@ -1424,7 +1430,7 @@ export class _BuilderService {
           this.preprocessError = null;
           this.preprocessFullError = '';
           
-          reject({ state: 'error', text: this.t('PRECOMPILE_FAILED_RETRY') });
+          reject({ state: 'error', text: this.t('PRECOMPILE_FAILED_RETRY'), fullStdErr: cleanError });
           return;
         }
 
@@ -1546,6 +1552,7 @@ export class _BuilderService {
           } = await this.generateWorkspaceBuildSnapshotForPreprocess(
             this.blocklyService.workspace,
             'compile_config',
+            checkpoint,
           );
           this.lastCode = code;
           
