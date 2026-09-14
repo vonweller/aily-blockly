@@ -1,7 +1,6 @@
 import { AfterViewInit, Component, OnInit, inject } from '@angular/core';
 import { RouterOutlet } from '@angular/router';
 import { CommonModule } from '@angular/common';
-import { ElectronService } from '@core/platform/public-api';
 import { ConfigService, TranslationService, ThemeService } from '@core/preferences/public-api';
 import { SubappManagerService } from '@integration/subapps/public-api';
 
@@ -15,14 +14,12 @@ import { SubappManagerService } from '@integration/subapps/public-api';
 export class AppComponent implements OnInit, AfterViewInit {
   title = 'aily';
 
-  private electronService = inject(ElectronService);
   private configService = inject(ConfigService);
   private translationService = inject(TranslationService);
   private themeService = inject(ThemeService);
   private subappManager = inject(SubappManagerService);
 
   async ngOnInit() {
-    await this.electronService.init();
     await this.configService.init();
     this.title = this.configService.getApplicationName();
     document.title = this.title;

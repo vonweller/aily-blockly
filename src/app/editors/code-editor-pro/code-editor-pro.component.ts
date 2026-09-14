@@ -8,10 +8,11 @@ import { CodeEditorFrameComponent } from './code-editor-frame.component';
 import { CodeEditorProProjectService } from './services/code-editor-pro-project.service';
 import { CoderProjectRuntimeService } from '../../integrations/coder/coder-project-runtime.service';
 import { NotificationComponent } from '../../components/notification/notification.component';
+import { DevToolComponent } from '../blockly-editor/components/dev-tool/dev-tool.component';
 
 @Component({
   selector: 'app-code-editor-pro',
-  imports: [TranslateModule, CodeEditorFrameComponent, NotificationComponent],
+  imports: [TranslateModule, CodeEditorFrameComponent, DevToolComponent, NotificationComponent],
   templateUrl: './code-editor-pro.component.html',
   styleUrl: './code-editor-pro.component.scss',
 })
