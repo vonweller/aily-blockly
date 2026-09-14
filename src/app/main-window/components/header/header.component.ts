@@ -1,5 +1,7 @@
+import { CodeEditorProProjectService } from '../../../editors/code-editor-pro/services/code-editor-pro-project.service';
+import { CoderProjectRuntimeService } from '../../../integrations/coder/coder-project-runtime.service';
 import { CommonModule } from '@angular/common';
-import { ChangeDetectorRef, Component, ElementRef, isDevMode, NgZone, OnDestroy, OnInit, ViewChild, viewChild } from '@angular/core';
+import { ChangeDetectorRef, Component, ElementRef, isDevMode, NgZone, OnDestroy, OnInit, ViewChild, viewChild, inject } from '@angular/core';
 import { HEADER_BTNS, HEADER_BTNS_LINUX, HEADER_MENU, IMenuItem } from '../../../configs/menu.config';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { FormsModule } from '@angular/forms';
@@ -23,7 +25,7 @@ import { UnsaveDialogComponent } from '../unsave-dialog/unsave-dialog.component'
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { Router } from '@angular/router';
 import { ElectronService, PlatformService, CmdOutput, CmdService } from '@core/platform/public-api';
-import { ConfigService, ToolI18nService } from '@core/preferences/public-api';
+import { ConfigService } from '@core/preferences/public-api';
 import { AuthService } from '@core/auth/public-api';
 import { AppItem } from '../../../configs/tool.config';
 import { AppStoreService } from '../../../tools/app-store/app-store.service';
@@ -78,6 +80,10 @@ interface NetworkOtaTarget {
   styleUrl: './header.component.scss',
 })
 export class HeaderComponent implements OnInit, OnDestroy {
+  private readonly coderRuntime = inject(CoderProjectRuntimeService);
+  private readonly coderPersistence = inject(CodeEditorProProjectService);
+  private readonly coderHeaderButtons = new Map<string, IMenuItem[]>();
+
   headerBtns: IMenuItem[] = HEADER_BTNS;
   headerMenu = HEADER_MENU;
   headerApps: AppItem[] = [];
@@ -123,6 +129,13 @@ export class HeaderComponent implements OnInit, OnDestroy {
     return this.projectService.currentPackageData || { path: '', name: '' };
   }
 
+  get projectTitle(): string {
+    const applicationName = this.configService.getApplicationName();
+    return this.projectService.currentProjectPath
+      ? this.projectData.nickname || this.projectData.name || applicationName
+      : applicationName;
+  }
+
   get openToolList() {
     return this.uiService.openToolList;
   }
@@ -137,8 +150,23 @@ export class HeaderComponent implements OnInit, OnDestroy {
   }
 
   private loadHeaderButtons(): void {
-    this.headerBtns = this.isPythonProject ? HEADER_BTNS_LINUX : HEADER_BTNS;
+    const template = this.isPythonProject ? HEADER_BTNS_LINUX : HEADER_BTNS;
+    const path = this.projectService.currentProjectPath;
+    if (this.projectService.getProjectMode(path) === 'coder') {
+      if (!this.coderHeaderButtons.has(path)) this.coderHeaderButtons.set(path, template.map(item => ({ ...item })));
+      this.headerBtns = this.coderHeaderButtons.get(path)!;
+      this.syncCoderActionStates();
+    } else this.headerBtns = template;
     this.initShortcutMap();
+  }
+
+  private syncCoderActionStates(): void {
+    if (this.projectService.getProjectMode(this.projectService.currentProjectPath) !== 'coder') return;
+    const state = this.coderRuntime.getState(this.projectService.currentProjectPath);
+    for (const item of this.headerBtns) {
+      if (item.action === 'compile') item.state = this.projectService.getCoderOperation(this.projectService.currentProjectPath)?.kind === 'build' ? 'doing' : state.build;
+      if (item.action === 'play' || item.action === 'upload') item.state = state.upload;
+    }
   }
 
   get linuxBoardConnectors(): LinuxBoardConnector[] {
@@ -207,7 +235,6 @@ export class HeaderComponent implements OnInit, OnDestroy {
     private uploaderBleService: UploaderBleService,
     private ngZone: NgZone,
     private appStoreService: AppStoreService,
-    private toolI18n: ToolI18nService,
     private cmdService: CmdService,
     private blocklyService: BlocklyService,
     private uiAutomationRegistry: UiAutomationRegistryService,
@@ -218,7 +245,6 @@ export class HeaderComponent implements OnInit, OnDestroy {
 
   ngOnInit(): void {
     this.loadHeaderButtons();
-    void this.toolI18n.load('serial-monitor');
 
     this.unregisterHeaderMenuAutomation = this.uiAutomationRegistry.registerMenuProvider('header', {
       list: (options) => this.createHeaderMenuAutomationSnapshot(options).items,
@@ -287,6 +313,7 @@ export class HeaderComponent implements OnInit, OnDestroy {
       }
     }
 
+    this.coderRuntime.states$.subscribe(() => { this.syncCoderActionStates(); this.cd.markForCheck(); });
     this.projectService.stateSubject.subscribe((state) => {
       if (state == 'loaded' || state == 'saved') {
         this.loadHeaderButtons();
@@ -993,6 +1020,14 @@ export class HeaderComponent implements OnInit, OnDestroy {
   }
 
   async selectSaveAsFolder() {
+    const sourcePath = this.projectService.currentProjectPath;
+    if (this.projectService.getProjectMode(sourcePath) === 'coder') {
+      return window['ipcRenderer'].invoke('select-folder-saveAs', {
+        path: window['path'].dirname(sourcePath),
+        suggestedName: window['path'].basename(sourcePath) + '_new',
+        returnEmptyOnCancel: true,
+      });
+    }
     const folderPath = await window['ipcRenderer'].invoke('select-folder-saveAs', {
       path: this.projectData.path,
       suggestedName: this.projectData.name + '_new',
@@ -1008,8 +1043,47 @@ export class HeaderComponent implements OnInit, OnDestroy {
     }
   }
 
+  private coderProjectsAdding = false;
+
+  private async addCoderProjects(): Promise<void> {
+    if (this.coderProjectsAdding || this.projectService.getProjectMode(this.projectService.currentProjectPath) !== 'coder') return;
+    this.coderProjectsAdding = true;
+    try {
+      const selection = await window['ipcRenderer'].invoke('dialog-select-files', {
+        title: this.translate.instant('MENU.PROJECT_ADD'),
+        defaultPath: window['path'].dirname(this.projectService.currentProjectPath),
+        properties: ['openDirectory', 'multiSelections'],
+      });
+      for (const path of selection?.filePaths || []) await this.projectService.addCoderProject(path);
+    } catch (error) {
+      this.message.error(error instanceof Error ? error.message : String(error));
+    } finally {
+      this.coderProjectsAdding = false;
+    }
+  }
+
   updateSubscription: any = null;
   private workspaceImageExporting = false;
+  private coderProjectSavingAs = false;
+
+  private async saveCoderProjectAs(): Promise<void> {
+    if (this.coderProjectSavingAs) return;
+    this.coderProjectSavingAs = true;
+    const sourcePath = this.projectService.currentProjectPath;
+    try {
+      const path = await this.selectSaveAsFolder();
+      if (!path) return;
+      if (this.projectService.currentProjectPath !== sourcePath) {
+        throw new Error('当前项目已切换，请重新执行另存为');
+      }
+      await this.projectService.saveAs(path);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      this.message.error(`另存为失败：${detail}`);
+    } finally {
+      this.coderProjectSavingAs = false;
+    }
+  }
 
   async process(item: IMenuItem, event = null) {
     switch (item.action) {
@@ -1027,10 +1101,17 @@ export class HeaderComponent implements OnInit, OnDestroy {
         }
         this.openProject();
         break;
+      case 'project-add':
+        await this.addCoderProjects();
+        break;
       case 'project-save':
         this.projectService.save();
         break;
       case 'project-save-as':
+        if (this.projectService.getProjectMode(this.projectService.currentProjectPath) === 'coder') {
+          await this.saveCoderProjectAs();
+          break;
+        }
         const path = await this.selectSaveAsFolder();
         if (path) {
           await this.projectService.saveAs(path);
@@ -1445,6 +1526,8 @@ export class HeaderComponent implements OnInit, OnDestroy {
   }
 
   async checkUnsavedChanges(action: 'close' | 'open' | 'new'): Promise<boolean> {
+    // Coder activation retains each iframe, including its unsaved editor buffers.
+    if (action !== 'close' && this.projectService.getProjectMode(this.projectService.currentProjectPath) === 'coder') return true;
     // 检查项目是否有未保存的更改
     if (!await this.projectService.hasUnsavedChanges()) {
       return true;
@@ -1484,8 +1567,14 @@ export class HeaderComponent implements OnInit, OnDestroy {
         switch (result.result) {
           case 'save':
             // 保存项目并继续
-            await this.projectService.save();
-            resolve(true);
+            try {
+              if (this.projectService.getProjectMode(this.projectService.currentProjectPath) === 'coder') await this.coderPersistence.saveAllOpenProjects();
+              else await this.projectService.save();
+              resolve(true);
+            } catch (error) {
+              this.message.error(error instanceof Error ? error.message : String(error));
+              resolve(false);
+            }
             break;
           case 'continue':
             // 不保存，但继续操作

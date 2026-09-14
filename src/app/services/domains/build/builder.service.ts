@@ -1,6 +1,6 @@
-import { Inject, Injectable } from '@angular/core';
-import { Subject } from 'rxjs';
-import { ProjectService } from '@domain/project/public-api';
+import { Inject, Injectable, Optional } from '@angular/core';
+import { firstValueFrom, Subject } from 'rxjs';
+import { ProjectService, CODER_EXECUTION_PORT, type CoderExecutionPort } from '@domain/project/public-api';
 import {
   CmdService,
   CrossPlatformCmdService,
@@ -10,6 +10,7 @@ import { CompileService } from './compile.service';
 import { BUILD_ACTION_PORT, type BuildActionPort } from './ports/build-action.port';
 
 export interface BuildFinishedEvent {
+  projectPath?: string;
   success: boolean;
   result?: any;
   error?: any;
@@ -37,6 +38,7 @@ export class BuilderService {
     private crossPlatformCmdService: CrossPlatformCmdService,
     private electronService: ElectronService,
     private compileService: CompileService,
+    @Optional() @Inject(CODER_EXECUTION_PORT) private coderExecution?: CoderExecutionPort,
   ) {
     this.init();
   }
@@ -62,12 +64,16 @@ export class BuilderService {
   /*
    * 开始编译
    */
-  async build(projectPath?: string) {
-    if (projectPath) {
-      return this.buildFromProjectPath(projectPath);
+  async build(projectPath?: string, options: { preprocessOnly?: boolean } = {}) {
+    const targetPath = projectPath || this.projectService.currentProjectPath;
+    if (this.coderExecution && this.projectService.isAilyCodeProject(targetPath) && !this.projectService.isCoderProjectContext) return this.coderExecution.build(targetPath, options);
+    const finish = this.projectService.beginCoderOperation('build', targetPath);
+    try {
+      if (projectPath || this.projectService.isAilyCodeProject(targetPath)) return await this.buildFromProjectPath(targetPath, options);
+      return await this.buildCurrentBlocklyProject({});
+    } finally {
+      finish();
     }
-
-    return this.buildCurrentBlocklyProject({});
   }
 
   /**
@@ -112,11 +118,15 @@ export class BuilderService {
     },
   ) {
     try {
+      const projectPath = this.projectService.currentProjectPath;
+      await this.persistActiveCoderProjectBeforeBuild(
+        projectPath,
+      );
       // Pro / code-editor-pro 路由下 Blockly 未挂载，compile-begin 无监听者会一直等反馈；
       // Coder 工程改为直接走磁盘源码 + 同一套 preprocess/compile 脚本。
       let feedback: any;
       if (!this.actionService.hasListener('builder-compile-begin')) {
-        const r = await this.compileService.runCompileFromDisk();
+        const r = await this.compileService.runCompileFromDisk({ projectPath });
         feedback = {
           success: true,
           data: { success: r.success, result: r.result },
@@ -148,11 +158,11 @@ export class BuilderService {
         error.text = buildResult?.text || feedback?.error || '编译失败';
         error.fullStdErr = buildResult?.fullStdErr;
         error.buildResult = buildResult;
-        this.buildFinishedSubject.next({ success: false, result: buildResult, error });
+        this.buildFinishedSubject.next({ projectPath, success: false, result: buildResult, error });
         throw error;
       }
 
-      this.buildFinishedSubject.next({ success: true, result: buildResult });
+      this.buildFinishedSubject.next({ projectPath, success: true, result: buildResult });
       return buildResult;
     } catch (error: any) {
       // console.error('编译失败:', error);
@@ -175,8 +185,9 @@ export class BuilderService {
     return normalize(left) === normalize(right);
   }
 
-  private async buildFromProjectPath(projectPath: string) {
-    const compileResult = await this.compileService.runCompileFromDisk({ projectPath });
+  private async buildFromProjectPath(projectPath: string, options: { preprocessOnly?: boolean } = {}) {
+    await this.persistActiveCoderProjectBeforeBuild(projectPath);
+    const compileResult = await this.compileService.runCompileFromDisk({ projectPath, ...options });
     const buildResult = compileResult.result;
     if (!compileResult.success || buildResult?.state === 'error') {
       const error: any = new Error(buildResult?.text || 'Build failed');
@@ -184,19 +195,51 @@ export class BuilderService {
       error.text = buildResult?.text || 'Build failed';
       error.fullStdErr = buildResult?.fullStdErr;
       error.buildResult = buildResult;
-      this.buildFinishedSubject.next({ success: false, result: buildResult, error });
+      this.buildFinishedSubject.next({ projectPath, success: false, result: buildResult, error });
       throw error;
     }
 
-    this.buildFinishedSubject.next({ success: true, result: buildResult });
+    this.buildFinishedSubject.next({ projectPath, success: true, result: buildResult });
     return buildResult;
+  }
+
+  /**
+   * Coder compiles persistent source directly from sketch/. Flush the embedded
+   * editor before the disk read so manual builds, uploads, and Agent builds
+   * cannot compile an older editor revision. Blockly keeps its existing
+   * compile-begin/project-save workflow and never enters this branch.
+   */
+  private async persistActiveCoderProjectBeforeBuild(projectPath: string): Promise<void> {
+    if (
+      !projectPath
+      || !this.projectService.isAilyCodeProject(projectPath)
+      || !this.projectService.coderProjects.some(project => this.isSameProjectPath(projectPath, project.path))
+    ) {
+      return;
+    }
+
+    const feedback = await firstValueFrom(
+      this.actionService.dispatchWithFeedback(
+        'project-save',
+        { path: projectPath },
+        15_000,
+      ),
+    );
+    if (feedback?.success !== true) {
+      throw new Error(
+        feedback?.error
+        || 'Aily Coder source could not be saved to disk before compilation.',
+      );
+    }
   }
 
   /*
    * 取消当前编译过程
    */
-  cancel() {
+  cancel(projectPath = this.projectService.currentProjectPath) {
+    if (this.coderExecution && this.projectService.isAilyCodeProject(projectPath) && !this.projectService.isCoderProjectContext) { this.coderExecution.cancel(projectPath, 'build'); return; }
     this.compileService.cancel();
+    if (this.projectService.isCoderProjectContext) return;
     this.actionService.dispatch('compile-cancel', {}, result => {
       if (result.success) {
       } else {
@@ -256,6 +299,22 @@ export class BuilderService {
     if (window['fs'].existsSync(libraryCachePath)) {
       console.log('清除本地库指纹缓存:', libraryCachePath);
       await this.crossPlatformCmdService.removeItem(libraryCachePath, false, true);
+    }
+
+    {
+      const preprocessResultPath = this.electronService.pathJoin(
+        projectPath,
+        isAilyCode ? 'sketch' : '.temp',
+        'preprocess.json',
+      );
+      if (window['fs'].existsSync(preprocessResultPath)) {
+        console.log('清除 Coder 预处理结果:', preprocessResultPath);
+        await this.crossPlatformCmdService.removeItem(
+          preprocessResultPath,
+          false,
+          true,
+        );
+      }
     }
   }
 

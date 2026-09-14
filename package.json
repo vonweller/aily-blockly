@@ -14,6 +14,7 @@
     ],
     "appId": "blockly.aily.pro",
     "forceCodeSigning": false,
+    "afterPack": "scripts/package-child-resources.js",
     "asar": true,
     "asarUnpack": [
       "electron/preload.js",
@@ -29,6 +30,7 @@
       {
         "name": "Aily Blockly OAuth",
         "schemes": [
+          "abis",
           "ailyblockly"
         ]
       }
@@ -89,16 +91,6 @@
           "icon": "public/icon.ico",
           "role": "Editor"
         }
-      ],
-      "extraResources": [
-        {
-          "from": "child/windows",
-          "to": "child",
-          "filter": [
-            "**/*",
-            "!aily-builder-*.7z"
-          ]
-        }
       ]
     },
     "mac": {
@@ -110,16 +102,6 @@
           "name": "Aily Blockly Project",
           "description": "Aily Blockly Project File",
           "role": "Editor"
-        }
-      ],
-      "extraResources": [
-        {
-          "from": "child/macos",
-          "to": "child",
-          "filter": [
-            "**/*",
-            "!aily-builder-*.7z"
-          ]
         }
       ]
     },
@@ -161,12 +143,15 @@
     "smoke:simulator-gateway": "node scripts/smoke-simulator-gateway-bridge.mjs",
     "smoke:simulator-gateway-crash": "node scripts/smoke-simulator-gateway-crash.mjs",
     "electron": "concurrently \"npm start\" \"wait-on tcp:4200 && node ./scripts/run-electron-dev.js --serve\"",
+    "electron:coder": "node ./scripts/run-electron-coder-dev.js",
+    "prepare:child": "node scripts/prepare-child-resources.js",
     "prepare:simulator-runtime": "node scripts/prepare-simulator-runtime.js",
     "prepare:simulator-runtime:release": "node scripts/prepare-simulator-runtime.js",
     "prepare:electron-runtime": "npm run prepare:simulator-runtime",
     "build": "npm run prepare:electron-runtime && ng build --base-href ./ && electron-builder build",
     "build:cn": "node ./scripts/build-electron.js --flavor cn",
     "build:global": "node ./scripts/build-electron.js --flavor global",
+    "build:coder": "node ./scripts/build-electron.js --product coder",
     "build:mac": "npm run prepare:electron-runtime && ng build --base-href ./ && electron-builder --mac --arm64 --x64",
     "build:mac:universal": "npm run prepare:electron-runtime && ng build --base-href ./ && electron-builder --mac --universal",
     "test:e2e": "node ./scripts/run-e2e.mjs test",
@@ -178,7 +163,7 @@
     "test:e2e:simulator-debug": "node ./scripts/run-simulator-debug-e2e.mjs",
     "test:e2e:simulator-subapp-mainline": "node ./scripts/run-simulator-subapp-mainline-e2e.mjs",
     "validate:e2e:simulator-debug": "node ./scripts/validate-simulator-debug-e2e-report.mjs",
-    "setup:external-tools": "node scripts/install-external-tools.js",
+    "setup:external-tools": "node scripts/prepare-child-resources.js",
     "setup:local-builder": "node scripts/use-local-builder.mjs",
     "setup:local-connector": "node scripts/use-local-connector.mjs"
   },
@@ -222,7 +207,6 @@
     "install": "^0.13.0",
     "js-base64": "^3.7.8",
     "jsonrepair": "^3.13.0",
-    "lightweight-charts": "^5.1.0",
     "loaders.css": "^0.1.2",
     "marked": "^15.0.12",
     "marked-highlight": "^2.2.1",

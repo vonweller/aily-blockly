@@ -89,6 +89,8 @@ export class UiService {
       });
 
       window['ipcRenderer'].on('window-receive', async (event, message) => {
+        // ProjectService replies only after activation or mode rejection completes.
+        if (message.data?.action === 'open-project') return;
         // console.log('window-receive', message);
         let data;
         if (message.data?.action === 'get-auth-state') {
@@ -327,6 +329,15 @@ export class UiService {
       return false;
     }
 
+    // Local chat history and an existing runtime remain accessible offline.
+    // The service still authenticates each remote operation with the stored token.
+    if (name === 'aily-chat' && !this.authService.isSessionInvalidating) {
+      const state = this.authService.getAuthInitializationState();
+      if (this.authService.hasLocalAuthSession || state === 'idle' || state === 'checking') {
+        return false;
+      }
+    }
+
     this.authService.requestLogin(`tool:${name}`);
     return true;
   }
@@ -353,7 +364,6 @@ export class UiService {
 
     switch (name) {
       case 'code-viewer':
-      case 'serial-monitor':
         return `/${name}`;
       default:
         return null;

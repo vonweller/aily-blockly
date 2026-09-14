@@ -225,6 +225,12 @@ function extractLeadingTimestampMs(line) {
 }
 
 contextBridge.exposeInMainWorld("electronAPI", {
+  auth: {
+    ...require('./build-product').getProductAuthConfig(process.env.AILY_BUILD_PRODUCT),
+    read: () => ipcRenderer.invoke('auth-credentials-read'),
+    write: (record, expectedRefreshToken) => ipcRenderer.invoke('auth-credentials-write', record, expectedRefreshToken),
+    clear: () => ipcRenderer.invoke('auth-credentials-clear'),
+  },
   ipcRenderer: {
     send: (channel, data) => ipcRenderer.send(channel, data),
     on: (channel, callback) => {
@@ -346,6 +352,17 @@ contextBridge.exposeInMainWorld("electronAPI", {
     fetchPage: (data) => ipcRenderer.invoke("webview-bridge-fetch", data),
     searchWeb: (data) => ipcRenderer.invoke("webview-bridge-search", data),
   },
+  webviewDebuggerSurface: {
+    create: (data) => ipcRenderer.invoke('webview-debugger-surface-create', data),
+    setBounds: (data) => ipcRenderer.invoke('webview-debugger-surface-bounds', data),
+    command: (data) => ipcRenderer.invoke('webview-debugger-surface-command', data),
+    destroy: (data) => ipcRenderer.invoke('webview-debugger-surface-destroy', data),
+    onEvent: (callback) => {
+      const listener = (_event, payload) => callback(payload);
+      ipcRenderer.on('webview-debugger-surface-event', listener);
+      return () => ipcRenderer.removeListener('webview-debugger-surface-event', listener);
+    },
+  },
   iWindow: {
     minimize: () => ipcRenderer.send("window-minimize"),
     maximize: () => ipcRenderer.send("window-maximize"),
@@ -452,6 +469,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
     respond: (requestId, result) => ipcRenderer.send('child-app-host-command-response', { requestId, result }),
   },
   childToolSession: {
+    onHostShutdown: (callback) => {
+      const listener = () => callback();
+      ipcRenderer.on("child-tool-host-shutdown", listener);
+      return () => ipcRenderer.removeListener("child-tool-host-shutdown", listener);
+    },
     acquire: (toolId) => ipcRenderer.invoke("child-tool-session-acquire", toolId),
     register: (payload) => ipcRenderer.invoke("child-tool-session-register", payload),
     release: (toolIdOrPayload) => ipcRenderer.invoke("child-tool-session-release", toolIdOrPayload),
@@ -472,9 +494,14 @@ contextBridge.exposeInMainWorld("electronAPI", {
     },
   },
   subapps: {
+    prepareLaunch: (options) => ipcRenderer.invoke("subapp-manager-prepare-launch", options),
+    finishLaunch: (token) => ipcRenderer.invoke("subapp-manager-finish-launch", token),
     list: (options = {}) => ipcRenderer.invoke("subapp-manager-list", options),
     install: (options) => ipcRenderer.invoke("subapp-manager-install", options),
+    reinstall: (options) => ipcRenderer.invoke("subapp-manager-reinstall", options),
     update: (options) => ipcRenderer.invoke("subapp-manager-update", options),
+    downloadUpdate: (options) => ipcRenderer.invoke("subapp-manager-download-update", options),
+    installUpdate: (options) => ipcRenderer.invoke("subapp-manager-install-update", options),
     uninstall: (options) => ipcRenderer.invoke("subapp-manager-uninstall", options),
     onChanged: (callback) => {
       const listener = (_event, payload) => callback(payload);
@@ -591,6 +618,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     upload: (data) => ipcRenderer.invoke("uploader-upload", data),
   },
   fs: {
+    readCodeDeclaration: (candidate, roots) => require('./code-suggestion-declarations').readCodeDeclaration(candidate, roots),
     readFileSync: (path, encoding = "utf8") => require("fs").readFileSync(path, encoding),
     readFileBufferAsync: async (path) => {
       const buffer = await require("fs").promises.readFile(path);
