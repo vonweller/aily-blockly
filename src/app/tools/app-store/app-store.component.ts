@@ -35,18 +35,8 @@ import {
   ChildAppHostRegistryService,
 } from '@integration/subapps/public-api';
 import { MainUiAutomationService } from '@integration/automation/public-api';
-
-const SUBAPP_MORE_MENU_VIEWPORT_MARGIN = 8;
-const SUBAPP_MORE_MENU_GAP = 3;
-const SUBAPP_MORE_MENU_ESTIMATED_WIDTH = 148;
-const SUBAPP_MORE_ACTION_HEIGHT = 28;
-const SUBAPP_MORE_MENU_PADDING = 8;
-const SUBAPP_MORE_ACTION_COUNT = 2;
-
-interface SubappMoreMenuPosition {
-  left: number;
-  top: number;
-}
+import { resolveSubappMoreMenuPosition } from './subapp-more-menu-layout';
+import type { SubappMoreMenuPosition } from './subapp-more-menu-layout';
 
 @Component({
   selector: 'app-app-store',
@@ -340,8 +330,8 @@ export class AppStoreComponent implements OnInit, AfterViewInit, OnDestroy {
     return !!app.subapp && this.openMoreCatalogId === app.subapp.catalogId;
   }
 
-  getSubappMoreMenuLeft(app: AppItem): number | null {
-    return this.isSubappMoreOpen(app) ? this.subappMoreMenuPosition?.left ?? null : null;
+  getSubappMoreMenuRight(app: AppItem): number | null {
+    return this.isSubappMoreOpen(app) ? this.subappMoreMenuPosition?.right ?? null : null;
   }
 
   getSubappMoreMenuTop(app: AppItem): number | null {
@@ -872,50 +862,9 @@ export class AppStoreComponent implements OnInit, AfterViewInit, OnDestroy {
   ): SubappMoreMenuPosition {
     const triggerElement = trigger instanceof HTMLElement ? trigger : null;
     const triggerRect = triggerElement?.getBoundingClientRect();
-    const menuWidth = SUBAPP_MORE_MENU_ESTIMATED_WIDTH;
-    const menuHeight =
-      SUBAPP_MORE_ACTION_COUNT * SUBAPP_MORE_ACTION_HEIGHT + SUBAPP_MORE_MENU_PADDING;
     const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
     const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
-
-    if (!triggerRect) {
-      return {
-        left: Math.max(
-          SUBAPP_MORE_MENU_VIEWPORT_MARGIN,
-          viewportWidth - menuWidth - SUBAPP_MORE_MENU_VIEWPORT_MARGIN
-        ),
-        top: SUBAPP_MORE_MENU_VIEWPORT_MARGIN,
-      };
-    }
-
-    const preferredLeft = triggerRect.right - menuWidth;
-    const left = this.clamp(
-      preferredLeft,
-      SUBAPP_MORE_MENU_VIEWPORT_MARGIN,
-      Math.max(
-        SUBAPP_MORE_MENU_VIEWPORT_MARGIN,
-        viewportWidth - menuWidth - SUBAPP_MORE_MENU_VIEWPORT_MARGIN
-      )
-    );
-    const bottomTop = triggerRect.bottom + SUBAPP_MORE_MENU_GAP;
-    const topTop = triggerRect.top - menuHeight - SUBAPP_MORE_MENU_GAP;
-    const top =
-      bottomTop + menuHeight + SUBAPP_MORE_MENU_VIEWPORT_MARGIN <= viewportHeight
-        ? bottomTop
-        : this.clamp(
-          topTop,
-          SUBAPP_MORE_MENU_VIEWPORT_MARGIN,
-          Math.max(
-            SUBAPP_MORE_MENU_VIEWPORT_MARGIN,
-            viewportHeight - menuHeight - SUBAPP_MORE_MENU_VIEWPORT_MARGIN
-          )
-        );
-
-    return { left, top };
-  }
-
-  private clamp(value: number, min: number, max: number): number {
-    return Math.min(Math.max(value, min), max);
+    return resolveSubappMoreMenuPosition(triggerRect ?? null, viewportWidth, viewportHeight);
   }
 
   private createVisibilityContext() {
