@@ -27,7 +27,7 @@ export class GuideComponent implements OnInit, OnDestroy {
   private projectOpenSubscription: Subscription | null = null;
 
   get logoSrc(): string {
-    return this.themeService.theme() === 'light' ? 'imgs/logo-light.webp' : 'imgs/logo.webp';
+    return this.configService.getApplicationLogoSrc(this.themeService.theme());
   }
 
   get applicationName(): string {
@@ -300,6 +300,14 @@ export class GuideComponent implements OnInit, OnDestroy {
   removeProject(event: Event, project: any) {
     event.stopPropagation();
     this.projectService.removeRecentlyProject({ path: project.path });
+  }
+
+  unmergeProject(event: Event, project: any) {
+    event.stopPropagation();
+    this.projectService.unmergeCoderWorkspace({
+      workspaceId: project.coderWorkspaceId,
+      path: project.path,
+    });
   }
 
   process(item) {

@@ -1,4 +1,6 @@
-import { ApplicationConfig, importProvidersFrom, inject, provideAppInitializer, provideZoneChangeDetection } from '@angular/core';
+import { CODER_EXECUTION_PORT } from '@domain/project/public-api';
+import { CoderProjectRuntimeService } from './integrations/coder/coder-project-runtime.service';
+import { ApplicationConfig, EnvironmentInjector, importProvidersFrom, inject, provideAppInitializer, provideZoneChangeDetection } from '@angular/core';
 import { DOCUMENT } from '@angular/common';
 import { provideRouter, withHashLocation } from '@angular/router';
 import { provideTranslateService } from "@ngx-translate/core";
@@ -30,9 +32,11 @@ import { DeviceApplicationAdapter } from './integrations/device/device-applicati
 import { ProjectApplicationAdapter } from './integrations/project/project-application.adapter';
 import { SUBAPP_AUTOMATION_PORT } from '@integration/subapps/public-api';
 import { SubappAutomationAdapter } from './integrations/subapps/subapp-automation.adapter';
+import { ElectronService } from '@core/platform/public-api';
 
 export const appConfig: ApplicationConfig = {
   providers: [
+    { provide: CODER_EXECUTION_PORT, useExisting: CoderProjectRuntimeService },
     provideZoneChangeDetection({ 
       eventCoalescing: true,
       runCoalescing: true
@@ -88,8 +92,12 @@ export const appConfig: ApplicationConfig = {
       useExisting: SubappAutomationAdapter,
     },
     provideAppInitializer(() => {
-      inject(BlocklyLiveOperationBridgeService).ensureInitialized();
-      inject(McpBridgeService).ensureInitialized();
+      const injector = inject(EnvironmentInjector);
+      return inject(ElectronService).init().then(() => {
+        // Bridges construct ConnectionGraphService, whose IPC listener needs the initialized Electron API.
+        injector.get(BlocklyLiveOperationBridgeService).ensureInitialized();
+        injector.get(McpBridgeService).ensureInitialized();
+      });
     }),
   ]
 };

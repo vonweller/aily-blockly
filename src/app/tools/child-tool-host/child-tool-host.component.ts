@@ -10,7 +10,7 @@ import { Connection, WindowMessenger, connect } from 'penpal';
 import { combineLatest, firstValueFrom, merge, Subscription } from 'rxjs';
 import { SubWindowComponent } from '../../components/sub-window/sub-window.component';
 import { ToolContainerComponent } from '../../components/tool-container/tool-container.component';
-import { ChildToolConfig, getChildToolConfig } from '../../configs/tool.config';
+import { ChildToolConfig, getChildToolConfig, isAppAvailableForApplication } from '../../configs/tool.config';
 import { AILY_CODER_EDITOR_SUBAPP_ID } from '../../configs/required-subapp.config';
 import {
   ChildToolHostInfo,
@@ -38,7 +38,7 @@ import { BlocklyService } from '../../editors/blockly-editor/services/blockly.se
 import { ElectronService, LogService } from '@core/platform/public-api';
 import { MainUiAutomationService, AiOperationRegistryService } from '@integration/automation/public-api';
 import { NoticeService, UiService } from '@core/app-shell/public-api';
-import { ProjectService } from '@domain/project/public-api';
+import { ProjectService, type CoderWorkspaceContext } from '@domain/project/public-api';
 import { SubappActivityDockComponent } from '../../components/subapp-activity-dock/subapp-activity-dock.component';
 import {
   type ChildAuthStateSnapshot,
@@ -52,6 +52,7 @@ type ChildLifecycleReason = 'close' | 'restart' | 'update';
 
 interface HostProjectContext {
   workspace?: string | null;
+  coderWorkspace?: CoderWorkspaceContext | null;
   version?: number;
 }
 
@@ -153,8 +154,10 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   private subappCatalogSubscription: Subscription | null = null;
   private subappProgressSubscription: Subscription | null = null;
   private subappRestartRequired = false;
+  private deferPreparedUpdateOnInitialLaunch = false;
   private lastKnownApiServer = '';
   private standaloneWorkspace: string | null | undefined;
+  private standaloneCoderWorkspace: CoderWorkspaceContext | null | undefined;
   private standaloneWorkspaceVersion = -1;
   private projectContextListenerRegistered = false;
   private projectContextListenerCleanup: (() => void) | null = null;
@@ -198,7 +201,10 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   ) {
     this.langSubscription = this.translate.onLangChange.subscribe(() => this.syncHostContext());
     this.themeSubscription = this.themeService.themeChanged$.subscribe(() => this.syncHostContext());
-    this.projectPathSubscription = this.projectService.currentProjectPath$.subscribe(() => {
+    this.projectPathSubscription = combineLatest([
+      this.projectService.currentProjectPath$,
+      this.projectService.coderWorkspace$,
+    ]).subscribe(() => {
       if (this.initialized) {
         this.syncHostContext(true);
       }
@@ -302,10 +308,16 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     if (this.subappRestartInProgress) {
       return this.translate.instant('APP_STORE.RESTARTING');
     }
+    if (this.isSubappRestartRequired) {
+      return this.translate.instant('APP_STORE.RESTART');
+    }
     const status = this.currentSubappCatalogItem?.updateStatus;
     if (status?.state === 'downloading') {
       const progress = status.progress ? ` ${status.progress}%` : '';
-      return `${this.translate.instant('APP_STORE.DOWNLOADING_UPDATE')}${progress}`;
+      const label = status.phase === 'extract'
+        ? 'APP_STORE.INSTALLING_UPDATE'
+        : 'APP_STORE.DOWNLOADING_UPDATE';
+      return `${this.translate.instant(label)}${progress}`;
     }
     if (status?.state === 'available') {
       return this.translate.instant(this.currentSubappCatalogItem?.updatePolicy
@@ -325,7 +337,9 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
 
   get subappVersionActionTooltip(): string {
     const item = this.currentSubappCatalogItem;
-    if (!this.subappVersionActionBusy && item?.updateStatus.state === 'ready') {
+    if (!this.isSubappRestartRequired
+      && !this.subappVersionActionBusy
+      && item?.updateStatus.state === 'ready') {
       return this.translate.instant('APP_STORE.INSTALL_UPDATE_TOOLTIP', {
         available: item.availableVersion,
       });
@@ -343,10 +357,18 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   get isSubappRestartRequired(): boolean {
-    const installedVersion = String(this.currentSubappCatalogItem?.installedVersion || '').trim();
+    const item = this.currentSubappCatalogItem;
+    const installedVersion = String(item?.installedVersion || '').trim();
     const runningVersion = String(this.childVersion || '').trim();
+    const preparedVersion = item?.updateStatus.ready === true || item?.updateStatus.state === 'ready'
+      ? String(item.availableVersion || '').trim()
+      : '';
+    const processRunning = this.hostStatus === 'ready' || this.hostStatus === 'starting';
     return this.subappRestartRequired
-      || (!!installedVersion && !!runningVersion && installedVersion !== runningVersion);
+      || (processRunning && !!runningVersion
+        && (preparedVersion
+          ? preparedVersion !== runningVersion
+          : !!installedVersion && installedVersion !== runningVersion));
   }
 
   ngOnInit(): void {
@@ -476,6 +498,11 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     const item = this.currentSubappCatalogItem;
     if (!item) return;
 
+    if (this.isSubappRestartRequired) {
+      this.confirmUpdatedSubappRestart();
+      return;
+    }
+
     if (!item.updatePolicy && item.updateAvailable) {
       await this.installSubappUpdate(item, false);
       return;
@@ -491,14 +518,23 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       return;
     }
 
-    if (this.isSubappRestartRequired) {
-      this.confirmUpdatedSubappRestart();
-    }
   }
 
   async reloadChildUi(): Promise<void> {
-    this.uiHealthFailed = false;
-    await this.reloadChildFrame('manual');
+    if (!this.config || !this.acquired || this.closing || this.hostStatus === 'closed') return;
+    const previous = this.serverInfo;
+    try {
+      const hostInfo = await this.processService.ensureRunning(this.config.id);
+      if (!this.initialized || this.closing || !this.acquired) return;
+      // A replacement Runtime is already remounted by observeRuntime.
+      if (previous?.url !== hostInfo.url || previous?.pid !== hostInfo.pid) return;
+      await this.reloadChildFrame('manual');
+    } catch (error) {
+      this.hostStatus = 'error';
+      this.errorMessage = error instanceof Error ? error.message : String(error);
+      this.logError('reload child UI failed', this.errorMessage);
+      this.cdr.markForCheck();
+    }
   }
 
   private handleApiServerChange(): void {
@@ -548,6 +584,16 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       return { ok: false, message: '子应用拒绝重启，可能存在未完成操作。' };
     }
 
+    const itemBeforeRestart = this.currentSubappCatalogItem;
+    const expectedVersion = itemBeforeRestart?.updateStatus.ready === true
+      || itemBeforeRestart?.updateStatus.state === 'ready'
+      ? String(itemBeforeRestart.availableVersion || '').trim()
+      : String(itemBeforeRestart?.installedVersion || '').trim();
+    if (!force && itemBeforeRestart
+      && (itemBeforeRestart.updateStatus.ready === true
+        || itemBeforeRestart.updateStatus.state === 'ready')) {
+      await this.subappManager.installUpdate(itemBeforeRestart.id);
+    }
     const updatedConfig = getChildToolConfig(this.resolvedToolId);
     if (!updatedConfig) {
       return { ok: false, message: `子应用配置未找到: ${this.resolvedToolId}` };
@@ -565,7 +611,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     await this.startServer(true);
     const restartedStatus = this.hostStatus as HostStatus;
     if (restartedStatus === 'ready') {
-      const expectedVersion = String(this.currentSubappCatalogItem?.installedVersion || '').trim();
+      await this.subappManager.refresh(false);
       const runningVersion = String(this.childVersion || '').trim();
       if (expectedVersion && runningVersion !== expectedVersion) {
         this.subappRestartRequired = true;
@@ -670,9 +716,18 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       this.showConfigError(`Child tool is not registered: ${nextToolId}`);
       return;
     }
+    if (config.app?.extension === true) {
+      this.showConfigError(`${nextToolId} 是扩展服务，不支持在右侧面板或独立窗口中打开。`);
+      return;
+    }
 
     this.config = config;
     this.resolvedToolId = config.id;
+    const catalogItemAtOpen = this.subappManager.state.apps.find(item => item.toolId === config.id);
+    this.deferPreparedUpdateOnInitialLaunch = catalogItemAtOpen?.installed === true
+      && catalogItemAtOpen.updatePolicy?.install === 'next-launch'
+      && catalogItemAtOpen.updateStatus.state !== 'ready'
+      && catalogItemAtOpen.updateStatus.ready !== true;
     this.runtimeSubscription?.unsubscribe();
     this.runtimeSubscription = this.processService.observeRuntime(config.id).subscribe(snapshot => {
       this.handleRuntimeSnapshot(snapshot);
@@ -714,9 +769,14 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     const item = this.currentSubappCatalogItem;
     const installedVersion = String(item?.installedVersion || '').trim();
     const runningVersion = String(this.childVersion || '').trim();
-    if (item?.installed && installedVersion && runningVersion && installedVersion !== runningVersion) {
-      this.subappRestartRequired = true;
-    }
+    const preparedVersion = item?.updateStatus.ready === true || item?.updateStatus.state === 'ready'
+      ? String(item.availableVersion || '').trim()
+      : '';
+    const processRunning = this.hostStatus === 'ready' || this.hostStatus === 'starting';
+    if (!item?.installed || !runningVersion || !processRunning) return;
+    this.subappRestartRequired = preparedVersion
+      ? preparedVersion !== runningVersion
+      : !!installedVersion && installedVersion !== runningVersion;
   }
 
   private applySubappUpdateProgress(progress: SubappInstallProgress | null): void {
@@ -942,10 +1002,13 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     this.log(restart ? 'restart server' : 'start server');
 
     try {
+      const deferPreparedUpdate = !restart && this.deferPreparedUpdateOnInitialLaunch;
+      this.deferPreparedUpdateOnInitialLaunch = false;
       this.serverInfo = restart
         ? await this.processService.restart(this.config.id)
-        : await this.processService.acquire(this.config.id);
+        : await this.processService.acquire(this.config.id, { deferPreparedUpdate });
       this.acquired = true;
+      this.adoptRuntimeConfig(this.serverInfo);
       const childToolUrl = this.buildChildToolUrl(this.serverInfo.url);
       this.childToolUrl = childToolUrl;
       this.log('server acquired', this.sanitizeHostInfo(this.serverInfo));
@@ -957,6 +1020,16 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       this.errorMessage = error instanceof Error ? error.message : String(error || '');
       this.logError('start failed', this.errorMessage);
     }
+  }
+
+  private adoptRuntimeConfig(hostInfo: ChildToolHostInfo): void {
+    const config = hostInfo.runtimeConfig;
+    if (!config) return;
+    this.config = config;
+    this.childVersion = config.version || '';
+    this.titleKey = config.titleKey;
+    this.routePath = config.routePath || `/child-tool/${config.id}`;
+    this.syncSubappRestartRequirement();
   }
 
   private handleRuntimeSnapshot(snapshot: ChildToolRuntimeSnapshot): void {
@@ -983,6 +1056,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       recovered: this.sanitizeHostInfo(recoveredHost),
     });
     this.serverInfo = recoveredHost;
+    this.adoptRuntimeConfig(recoveredHost);
     this.childToolUrl = this.buildChildToolUrl(recoveredHost.url);
     this.frameLoaded = false;
     this.uiHealthFailed = false;
@@ -1107,8 +1181,10 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       }
     });
 
-    void this.penpalConnection.promise
+    const connection = this.penpalConnection;
+    void connection.promise
       .then(remote => {
+        if (this.penpalConnection !== connection) return;
         this.log('penpal connected');
         this.remoteApi = remote;
         this.penpalState = 'connected';
@@ -1118,6 +1194,8 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
         this.pushChatSubappActivities();
       })
       .catch(error => {
+        // A restart may destroy the previous handshake after a new one has begun.
+        if (this.penpalConnection !== connection) return;
         this.ngZone.run(() => {
           this.penpalState = 'failed';
           this.hostStatus = 'error';
@@ -1715,6 +1793,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       surface: launch.surface,
       surfaceParams: launch.params,
       workspace,
+      coderWorkspace: this.resolveHostCoderWorkspace(),
       activeChatSessionId: isAilyChat ? (this.ailyChatSessionId || null) : null,
       blockResources: isAilyChat && this.active ? this.createSelectedBlockResources() : [],
       capabilities: {
@@ -2187,9 +2266,24 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     if (!this.isAilyChatTool()) {
       return { ok: false, message: 'Child app listing is only available to Aily Chat' };
     }
-    return this.mainUiAutomation.listChildApps({
+    const listed = await this.mainUiAutomation.listChildApps({
       limit: Math.max(1, Math.min(100, Number(payload?.limit) || 100)),
     });
+    if (listed['ok'] !== true || !Array.isArray(listed['items'])) return listed;
+
+    const catalogByToolId = new Map(this.subappManager.state.apps.map(item => [item.toolId, item]));
+    const applicationName = this.configService.getApplicationName();
+    const items = listed['items'].filter((value: unknown) => {
+      if (!value || typeof value !== 'object') return false;
+      const item = value as Record<string, unknown>;
+      const toolId = typeof item['id'] === 'string' ? item['id'] : '';
+      const catalog = catalogByToolId.get(toolId);
+      return item['extension'] !== true
+        && catalog?.extension !== true
+        && catalog?.app?.extension !== true
+        && isAppAvailableForApplication(catalog?.only ?? getChildToolConfig(toolId)?.app?.only, applicationName);
+    });
+    return { ok: true, items };
   }
 
   private async openChatChildApp(
@@ -2303,6 +2397,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   private async initializeStandaloneProjectContext(): Promise<void> {
     if (!this.isStandalone) {
       this.standaloneWorkspace = undefined;
+      this.standaloneCoderWorkspace = undefined;
       this.standaloneWorkspaceVersion = -1;
       this.projectContextListenerCleanup?.();
       this.projectContextListenerCleanup = null;
@@ -2391,9 +2486,14 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
 
     const rawWorkspace = typeof context?.workspace === 'string' ? context.workspace : '';
     const workspace = rawWorkspace.trim() ? rawWorkspace : null;
-    const changed = this.standaloneWorkspace !== workspace;
+    const coderWorkspace = context?.coderWorkspace && typeof context.coderWorkspace === 'object'
+      ? context.coderWorkspace
+      : null;
+    const changed = this.standaloneWorkspace !== workspace ||
+      JSON.stringify(this.standaloneCoderWorkspace) !== JSON.stringify(coderWorkspace);
 
     this.standaloneWorkspace = workspace;
+    this.standaloneCoderWorkspace = coderWorkspace;
     if (Number.isFinite(version)) {
       this.standaloneWorkspaceVersion = version;
     }
@@ -2408,6 +2508,13 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       return this.standaloneWorkspace;
     }
     return this.projectService.currentProjectPath || null;
+  }
+
+  private resolveHostCoderWorkspace(): CoderWorkspaceContext | null {
+    if (this.isStandalone && this.standaloneCoderWorkspace !== undefined) {
+      return this.standaloneCoderWorkspace;
+    }
+    return this.projectService.coderWorkspace;
   }
 
   private normalizeLang(lang: string): string {

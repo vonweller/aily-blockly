@@ -1,3 +1,4 @@
+import { CoderProjectRuntimeService } from '../../../integrations/coder/coder-project-runtime.service';
 import { Inject, Injectable, NgZone } from '@angular/core';
 import * as Blockly from 'blockly';
 
@@ -5,6 +6,7 @@ import { ConfigService, ThemeService } from '@core/preferences/public-api';
 import { ElectronService } from '@core/platform/public-api';
 import {
   executeCoderProjectCreateOperation,
+  getProjectApplicationName,
   getProjectCreationModeError,
   ProjectService,
 } from '@domain/project/public-api';
@@ -30,6 +32,7 @@ import {
 } from '../../../integrations/blockly/blockly-host-operations';
 import { searchBoardsLibrariesTool } from '../../../integrations/blockly/board-library-search';
 import { runProjectBuild } from '../../../integrations/blockly/project-build-operation';
+import { getBoardConfig, setBoardConfig } from '../../../integrations/blockly/board-config-operation';
 import type { EditorOperationEvent } from '../../../integrations/blockly/editor-operation-event';
 import type { HostToolResult } from '../../../integrations/blockly/host-tool-result';
 import {
@@ -71,6 +74,7 @@ export class BlocklyLiveOperationBridgeService {
     private readonly serialService: SerialService,
     private readonly uploaderService: UploaderService,
     private readonly ngZone: NgZone,
+    private readonly coderRuntime: CoderProjectRuntimeService,
   ) {}
 
   ensureInitialized(): void {
@@ -117,6 +121,12 @@ export class BlocklyLiveOperationBridgeService {
   }
 
   private async execute(payload: BlocklyLiveOperationPayload): Promise<Record<string, any>> {
+    if (payload.operation === 'project_list') return {
+      ok: true,
+      project: this.projectService.currentProjectPath,
+      projects: this.projectService.coderProjects.map(project => project.path),
+      coderWorkspace: this.projectService.coderWorkspace,
+    };
     if (payload.operation === 'abs_apply_status') {
       return {
         ok: true,
@@ -135,6 +145,12 @@ export class BlocklyLiveOperationBridgeService {
       return this.executeProjectClose();
     }
     if (payload.operation === 'project_load_status') {
+      const path = payload.path || this.projectService.currentProjectPath;
+      if (this.projectService.getProjectMode(path) === 'coder') {
+        const opened = this.projectService.coderProjects.some(project => this.normalizePath(project.path) === this.normalizePath(path));
+        const ready = opened && this.coderRuntime.getSession(path).editorReady;
+        return { ok: opened, operation: payload.operation, project: path, state: ready ? 'loaded' : opened ? 'loading' : 'default', ready };
+      }
       return {
         ok: true,
         operation: 'project_load_status',
@@ -189,6 +205,15 @@ export class BlocklyLiveOperationBridgeService {
         developmentMode: agentContext['developmentMode'] === 'coder' ? 'coder' : 'blockly',
       });
     }
+    const coderPath = payload.path || this.projectService.currentProjectPath;
+    if (this.projectService.getProjectMode(coderPath) === 'coder'
+      && ['project_build', 'project_upload', 'serial_ports_list', 'project_save'].includes(payload.operation)) {
+      if (!this.projectService.coderProjects.some(project => this.normalizePath(project.path) === this.normalizePath(coderPath))) {
+        return { ok: false, project: coderPath, message: '请先添加此 Coder 工程' };
+      }
+      return this.executeCoderProjectOperation(coderPath, payload.operation, payload.params || {});
+    }
+
     const requestedProject = this.normalizePath(payload.path);
     const currentProject = this.normalizePath(this.projectService.currentProjectPath);
     if (!currentProject) {
@@ -263,6 +288,10 @@ export class BlocklyLiveOperationBridgeService {
         return this.executeProjectAbiCheck();
       case 'project_build':
         return this.executeProjectBuild(payload.params || {});
+      case 'get_board_config':
+        return getBoardConfig(this.projectService);
+      case 'set_board_config':
+        return setBoardConfig(this.projectService, this.builderService, this.electronService, payload.params || {});
       case 'serial_ports_list':
         return this.executeSerialPortsList(payload.params || {});
       case 'project_upload':
@@ -724,7 +753,7 @@ export class BlocklyLiveOperationBridgeService {
   }
 
   private async executeCoderProjectCreate(params: Record<string, any>): Promise<Record<string, any>> {
-    return executeCoderProjectCreateOperation(params, {
+    const result = await executeCoderProjectCreateOperation(params, {
       normalizeBoardName: (value) => this.normalizeAilyBoardPackageName(value),
       getBoards: () => this.configService.getBoardListForSelector(),
       loadBoards: () => this.configService.loadBoardList(),
@@ -745,6 +774,35 @@ export class BlocklyLiveOperationBridgeService {
       }),
       recordBoardUsage: (boardName) => this.configService.recordBoardUsage(boardName),
     });
+    return {
+      ...result,
+      ...(result['ok'] === true && this.projectService.coderWorkspace
+        ? { coderWorkspace: this.projectService.coderWorkspace }
+        : {}),
+    };
+  }
+
+  private async executeCoderProjectOperation(path: string, operation: string, params: Record<string, any>): Promise<Record<string, any>> {
+    try {
+      if (operation === 'serial_ports_list') {
+        const { session, ports, selection } = await this.coderRuntime.resolvePort(path, params['port']);
+        return { ok: true, operation, project: path, currentPort: session.serial.currentPort,
+          board: session.project.currentBoardConfig,
+          ports: ports.map(port => this.serializeSerialPort(port, session.serial.currentPort)),
+          recommendation: { port: selection.selected?.name || null, reason: selection.reason, confidence: selection.confidence, message: selection.message },
+        };
+      }
+      if (operation === 'project_save') {
+        const result = await this.coderRuntime.getSession(path).project.save(path, 15000);
+        return { ok: result.success, operation, project: path, ...result };
+      }
+      const result = operation === 'project_upload'
+        ? await this.coderRuntime.upload(path, params['port'])
+        : await this.coderRuntime.build(path, { preprocessOnly: params['preprocess_only'] === true, clearCache: params['clear_cache'] === true });
+      return { ok: true, operation, project: path, message: result?.text || '', result };
+    } catch (error: any) {
+      return { ok: false, operation, project: path, message: error?.text || error?.message || String(error), result: error?.result || error?.buildResult };
+    }
   }
 
   private async executeProjectBuild(params: Record<string, any>): Promise<Record<string, any>> {
@@ -951,6 +1009,41 @@ export class BlocklyLiveOperationBridgeService {
       return { ok: false, operation: 'project_open', message: `项目目录不存在: ${requestedProject}` };
     }
 
+    // Chat-triggered opens must never surface the manual cross-product dialog or
+    // bind an opposite-mode project into this renderer.  Keep this preflight in
+    // the bridge even though ProjectService also guards interactive UI opens: it
+    // gives older/remote Agents a stable machine-readable rejection before any
+    // route, lock, recent-project or activation state can change.
+    await this.configService.init();
+    const developmentMode = this.configService.getPreferredChatAgentRuntimeMode();
+    const projectType = this.projectService.getProjectMode(requestedProject);
+    if (!projectType) {
+      return {
+        ok: false,
+        operation: 'project_open',
+        project: requestedProject,
+        reason: 'project_mode_unknown',
+        developmentMode,
+        projectType: null,
+        stateChanged: false,
+        message: '无法识别项目类型，已阻止打开。',
+      };
+    }
+    if (projectType !== developmentMode) {
+      return {
+        ok: false,
+        operation: 'project_open',
+        project: requestedProject,
+        reason: 'project_mode_mismatch',
+        developmentMode,
+        projectType,
+        stateChanged: false,
+        referenceOnly: true,
+        message: `当前 ${getProjectApplicationName(developmentMode)} 不能直接打开 ${getProjectApplicationName(projectType)} 工程。`,
+        guidance: '如果只需参考对方模式的代码，可以使用只读文件工具，但不能将该目录绑定为当前项目；如需继续编辑，请在对应应用中手动打开。',
+      };
+    }
+
     const sameProject = this.normalizePath(requestedProject)
       === this.normalizePath(this.projectService.currentProjectPath);
     try {
@@ -977,6 +1070,9 @@ export class BlocklyLiveOperationBridgeService {
         project: requestedProject,
         message: '项目已打开并完成加载',
         loadStatus,
+        ...(this.projectService.coderWorkspace
+          ? { coderWorkspace: this.projectService.coderWorkspace }
+          : {}),
       };
     } catch (error) {
       const loadStatus = this.projectService.getBlocklyProjectLoadStatus(requestedProject);
@@ -1030,6 +1126,16 @@ export class BlocklyLiveOperationBridgeService {
     }
     try {
       const opened = await this.projectService.projectOpen(projectPath, { reason: 'chat-tool-reload' });
+      if (opened && this.projectService.getProjectMode(projectPath) === 'coder') {
+        const deadline = Date.now() + 30_000;
+        while (!this.coderRuntime.getSession(projectPath).editorReady && Date.now() < deadline) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        const ready = this.coderRuntime.getSession(projectPath).editorReady;
+        return { ok: ready, operation: 'project_reload', project: projectPath,
+          message: ready ? '项目已从磁盘重新加载' : '项目编辑器重新加载超时',
+          loadStatus: { project: projectPath, state: ready ? 'loaded' : 'loading', ready } };
+      }
       const loadStatus = this.projectService.getBlocklyProjectLoadStatus(projectPath);
       const editorReady = this.electronService.exists(
         this.electronService.pathJoin(projectPath, 'project.abi'),

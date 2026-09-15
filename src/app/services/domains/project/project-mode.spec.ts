@@ -14,16 +14,22 @@ describe('project mode boundaries', () => {
       data: { recentlyProjects: [coder, blockly] },
       init: jasmine.createSpy('init').and.resolveTo(),
       getPreferredChatAgentRuntimeMode: () => mode,
+      getApplicationName: () => 'Aily',
       save: jasmine.createSpy('save').and.resolveTo(),
     };
+    service.coderOperations = new Map();
+    service.coderOperationsSubject = new BehaviorSubject(new Map());
+    service.coderOperationSubject = new BehaviorSubject(null);
+    service.coderProjectsSubject = new BehaviorSubject([]);
     service.currentProjectPathSubject = new BehaviorSubject(blockly.path);
     service.stateSubject = new BehaviorSubject('loaded');
     service.projectActivationSubject = new Subject();
-    service.electronService = { isElectron: true, exists: () => true };
+    service.electronService = { isElectron: true, exists: () => true, setTitle: () => {} };
     service.messageService = { error: jasmine.createSpy('error'), warning: jasmine.createSpy('warning') };
     service.modalService = { confirm: jasmine.createSpy('confirm') };
     service.translate = { instant: (key: string) => key };
     spyOn(service, 'getProjectMode').and.callFake((path: string) => path.includes('code') ? 'coder' : path.includes('blocks') ? 'blockly' : null);
+    service.getCoderProjectContext = () => ({ currentPackageData: { name: 'Code' }, stateSubject: new BehaviorSubject('loaded'), syncCurrentBoardConfig: async () => true });
     spyOn(service, 'shouldBlockForAiOperation').and.returnValue(false);
     return service;
   }
@@ -121,7 +127,57 @@ describe('project mode boundaries', () => {
         expect(createCoder).toHaveBeenCalledWith({ boardName: 'board-uno' });
       }
     });
+
+    it(`rejects AI opening the other project type in ${mode} before invoking projectOpen`, async () => {
+      const bridge: any = Object.create(BlocklyLiveOperationBridgeService.prototype);
+      bridge.configService = {
+        init: jasmine.createSpy('init').and.resolveTo(),
+        getPreferredChatAgentRuntimeMode: () => mode,
+      };
+      bridge.electronService = { exists: () => true };
+      const projectOpen = jasmine.createSpy('projectOpen');
+      bridge.projectService = {
+        currentProjectPath: blockly.path,
+        getProjectMode: () => mode === 'blockly' ? 'coder' : 'blockly',
+        projectOpen,
+      };
+
+      const result = await bridge.executeProjectOpen('/projects/other-mode');
+
+      expect(result).toEqual(jasmine.objectContaining({
+        ok: false,
+        reason: 'project_mode_mismatch',
+        developmentMode: mode,
+        projectType: mode === 'blockly' ? 'coder' : 'blockly',
+        stateChanged: false,
+        referenceOnly: true,
+      }));
+      expect(projectOpen).not.toHaveBeenCalled();
+    });
   }
+
+  it('rejects an unknown project type before invoking projectOpen', async () => {
+    const bridge: any = Object.create(BlocklyLiveOperationBridgeService.prototype);
+    bridge.configService = {
+      init: jasmine.createSpy('init').and.resolveTo(),
+      getPreferredChatAgentRuntimeMode: () => 'blockly',
+    };
+    bridge.electronService = { exists: () => true };
+    const projectOpen = jasmine.createSpy('projectOpen');
+    bridge.projectService = {
+      getProjectMode: () => null,
+      projectOpen,
+    };
+
+    const result = await bridge.executeProjectOpen('/projects/unknown');
+
+    expect(result).toEqual(jasmine.objectContaining({
+      ok: false,
+      reason: 'project_mode_unknown',
+      stateChanged: false,
+    }));
+    expect(projectOpen).not.toHaveBeenCalled();
+  });
 
   it('only offers the download action when the companion is absent and does not launch without a click', async () => {
     const service = createService('blockly');

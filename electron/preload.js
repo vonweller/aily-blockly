@@ -469,6 +469,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
     respond: (requestId, result) => ipcRenderer.send('child-app-host-command-response', { requestId, result }),
   },
   childToolSession: {
+    onHostShutdown: (callback) => {
+      const listener = () => callback();
+      ipcRenderer.on("child-tool-host-shutdown", listener);
+      return () => ipcRenderer.removeListener("child-tool-host-shutdown", listener);
+    },
     acquire: (toolId) => ipcRenderer.invoke("child-tool-session-acquire", toolId),
     register: (payload) => ipcRenderer.invoke("child-tool-session-register", payload),
     release: (toolIdOrPayload) => ipcRenderer.invoke("child-tool-session-release", toolIdOrPayload),
@@ -489,6 +494,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     },
   },
   subapps: {
+    prepareLaunch: (options) => ipcRenderer.invoke("subapp-manager-prepare-launch", options),
+    finishLaunch: (token) => ipcRenderer.invoke("subapp-manager-finish-launch", token),
     list: (options = {}) => ipcRenderer.invoke("subapp-manager-list", options),
     install: (options) => ipcRenderer.invoke("subapp-manager-install", options),
     reinstall: (options) => ipcRenderer.invoke("subapp-manager-reinstall", options),
@@ -611,6 +618,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     upload: (data) => ipcRenderer.invoke("uploader-upload", data),
   },
   fs: {
+    readCodeDeclaration: (candidate, roots) => require('./code-suggestion-declarations').readCodeDeclaration(candidate, roots),
     readFileSync: (path, encoding = "utf8") => require("fs").readFileSync(path, encoding),
     readFileBufferAsync: async (path) => {
       const buffer = await require("fs").promises.readFile(path);

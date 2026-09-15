@@ -233,12 +233,16 @@ export class UiService {
   }
 
   openWindow(opt: WindowOpts) {
+    if (getChildToolConfig(this.resolveToolNameFromWindowPath(opt.path))?.app?.extension === true) {
+      return;
+    }
     this.updateSubWindowState(opt.path, true);
     window['subWindow'].open(opt);
   }
 
   openToolWindow(name: string, options?: Omit<WindowOpts, 'path'>) {
     const subappConfig = getChildToolConfig(name);
+    if (subappConfig?.app?.extension === true) return false;
     const isSubappWindow = !!subappConfig;
     const defaultSurface = subappConfig?.ui?.surfaces?.['default'];
     const minWidth = options?.minWidth ?? defaultSurface?.minWidth;
@@ -268,6 +272,7 @@ export class UiService {
 
   // 这个方法是给header用的
   turnTool(opt: ToolOpts) {
+    if (getChildToolConfig(opt?.data)?.app?.extension === true) return;
     if (this.requestLoginForProtectedTool(opt?.data)) {
       return;
     }
@@ -280,6 +285,7 @@ export class UiService {
 
   // 如果其它组件/程序要打开工具，调用这个方法
   openTool(name: string) {
+    if (getChildToolConfig(name)?.app?.extension === true) return;
     if (this.requestLoginForProtectedTool(name)) {
       return;
     }
@@ -308,6 +314,7 @@ export class UiService {
    * the requested presentation mode before calling this method.
    */
   openToolEmbedded(name: string): boolean {
+    if (getChildToolConfig(name)?.app?.extension === true) return false;
     if (this.requestLoginForProtectedTool(name)) {
       return false;
     }
@@ -316,6 +323,7 @@ export class UiService {
   }
 
   private openToolInMainWindow(name: string) {
+    if (getChildToolConfig(name)?.app?.extension === true) return;
     if (!name || this.requestLoginForProtectedTool(name)) {
       return;
     }
@@ -327,6 +335,15 @@ export class UiService {
   private requestLoginForProtectedTool(name: string | null | undefined): boolean {
     if (!isAuthRequiredTool(name) || this.authService.isLoggedIn) {
       return false;
+    }
+
+    // Local chat history and an existing runtime remain accessible offline.
+    // The service still authenticates each remote operation with the stored token.
+    if (name === 'aily-chat' && !this.authService.isSessionInvalidating) {
+      const state = this.authService.getAuthInitializationState();
+      if (this.authService.hasLocalAuthSession || state === 'idle' || state === 'checking') {
+        return false;
+      }
     }
 
     this.authService.requestLogin(`tool:${name}`);
@@ -355,7 +372,6 @@ export class UiService {
 
     switch (name) {
       case 'code-viewer':
-      case 'serial-monitor':
         return `/${name}`;
       default:
         return null;

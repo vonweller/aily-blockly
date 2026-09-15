@@ -72,9 +72,11 @@ function createBuilderConfig(plan, baseConfig) {
       ...(baseConfig.directories || {}),
       output: product.outputDirectory,
     },
-    extraResources: (baseConfig.extraResources || []).filter(
-      (resource) => resource?.to !== 'app-update.yml',
-    ),
+    extraResources: [
+      ...(baseConfig.extraResources || []).filter(
+        (resource) => resource?.to !== 'app-update.yml',
+      ),
+    ],
     publish: [{
       provider: 'generic',
       url: plan.updateBaseUrl,
