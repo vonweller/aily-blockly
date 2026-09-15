@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { mkdir, mkdtemp, readFile, rm, symlink, writeFile } = require('node:fs/promises');
+const { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
@@ -26,6 +26,55 @@ test('Blockly stages a canonical library without additional builder metadata', a
     const { libraries, materialize } = await fixture(t);
     assert.deepEqual(await materialize(), ['AilyEspNow']);
     assert.equal(await readFile(path.join(libraries, 'AilyEspNow', 'AilyEspNow.h'), 'utf8'), '#pragma once');
+});
+
+test('Blockly follows project node_modules links to canonical local libraries outside the project', async t => {
+    const { root } = await fixture(t);
+    const project = path.join(root, 'project');
+    const linkedPackageName = '@aily-project/lib-linked';
+    const nestedPackageName = '@aily-project/lib-linked-support';
+    const linkedPackage = path.join(root, 'local-library-store', 'lib-linked');
+    const nestedPackage = path.join(linkedPackage, 'node_modules', nestedPackageName);
+    const projectPackage = path.join(project, 'node_modules', linkedPackageName);
+    const libraries = path.join(project, '.temp', 'libraries');
+
+    await mkdir(path.join(linkedPackage, 'src', 'Linked'), { recursive: true });
+    await mkdir(path.join(nestedPackage, 'src', 'LinkedSupport'), { recursive: true });
+    await writeFile(path.join(linkedPackage, 'src', 'Linked', 'Linked.h'), '#pragma once\n');
+    await writeFile(path.join(nestedPackage, 'src', 'LinkedSupport', 'LinkedSupport.h'), '#pragma once\n');
+    await writeFile(path.join(linkedPackage, 'package.json'), JSON.stringify({
+        name: linkedPackageName,
+        version: '1.0.0',
+        dependencies: { [nestedPackageName]: '1.0.0' },
+    }));
+    await writeFile(path.join(nestedPackage, 'package.json'), JSON.stringify({
+        name: nestedPackageName,
+        version: '1.0.0',
+        dependencies: {},
+    }));
+    await mkdir(path.dirname(projectPackage), { recursive: true });
+    await symlink(linkedPackage, projectPackage, process.platform === 'win32' ? 'junction' : 'dir');
+
+    const blocklyPackages = collectDependencyLibraryPackages({ [linkedPackageName]: 'file:../lib-linked' }, project);
+    assert.deepEqual(blocklyPackages.map(item => item.packageName), [linkedPackageName, nestedPackageName]);
+    assert.equal(blocklyPackages[0].packagePath, projectPackage);
+    assert.equal(await realpath(blocklyPackages[0].packagePath), await realpath(linkedPackage));
+    assert.deepEqual(
+        (await processLibrariesParallel(blocklyPackages, libraries, project, '', false, {})).sort(),
+        ['Linked', 'LinkedSupport']
+    );
+    assert.equal(await readFile(path.join(libraries, 'Linked', 'Linked.h'), 'utf8'), '#pragma once\n');
+    assert.equal(
+        await readFile(path.join(libraries, 'LinkedSupport', 'LinkedSupport.h'), 'utf8'),
+        '#pragma once\n'
+    );
+
+    // The relaxed link handling belongs to Blockly only. Coder still refuses a
+    // dependency whose canonical package root escapes the project boundary.
+    assert.deepEqual(
+        collectDependencyLibraryPackages({ [linkedPackageName]: 'file:../lib-linked' }, project, true),
+        []
+    );
 });
 
 test('a nested library copy failure stops preprocessing with the package identity', async t => {

@@ -155,7 +155,8 @@ async function main() {
         // and are searched last so they override npm packages with the same headers.
         const libsPath = collectDependencyLibraryPackages(
             dependencies,
-            currentProjectPath
+            currentProjectPath,
+            isAilyCode
         );
         logger.log(`开始处理 ${libsPath.length} 个库文件`);
         let copiedLibraries = [];
@@ -511,13 +512,14 @@ function isCompilableLibraryPackage(packageName) {
         && !packageName.startsWith('@aily-project/lib-core');
 }
 
-function collectLibraryPackages(projectDependencies, currentProjectPath) {
+function collectLibraryPackages(projectDependencies, currentProjectPath, requireProjectOwnedPackages = false) {
     const libraries = [];
     const visited = new Set();
+    const projectPath = path.resolve(currentProjectPath);
     const realProjectPath = fs.realpathSync(currentProjectPath);
     const pending = Object.keys(projectDependencies || {}).map(packageName => ({
         packageName,
-        packagePath: path.join(currentProjectPath, 'node_modules', packageName),
+        packagePath: path.join(projectPath, 'node_modules', packageName),
     }));
 
     for (let index = 0; index < pending.length; index++) {
@@ -531,11 +533,19 @@ function collectLibraryPackages(projectDependencies, currentProjectPath) {
         } catch {
             continue;
         }
-        if (!isPathWithin(realProjectPath, realPackagePath) || visited.has(realPackagePath)) {
+        // Coder package roots are compiler inputs, so keep its real paths inside
+        // the project. Blockly keeps its established npm-link/junction behavior:
+        // the project-owned node_modules entry may resolve to a canonical local
+        // library outside the project and is staged into .temp/libraries.
+        if ((requireProjectOwnedPackages && !isPathWithin(realProjectPath, realPackagePath))
+            || visited.has(realPackagePath)) {
             continue;
         }
         visited.add(realPackagePath);
-        libraries.push({ packageName, packagePath: realPackagePath });
+        libraries.push({
+            packageName,
+            packagePath: requireProjectOwnedPackages ? realPackagePath : packagePath
+        });
 
         const packageJsonPath = path.join(realPackagePath, 'package.json');
         if (!fs.existsSync(packageJsonPath)) {
@@ -554,8 +564,8 @@ function collectLibraryPackages(projectDependencies, currentProjectPath) {
         Object.keys(packageJson.dependencies || {}).forEach(dependencyName => {
             if (!isCompilableLibraryPackage(dependencyName)) return;
             const dependencyPath = resolveLibraryDependencyPath(
-                realPackagePath,
-                realProjectPath,
+                packagePath,
+                projectPath,
                 dependencyName
             );
             if (dependencyPath) {
@@ -578,8 +588,8 @@ function resolveLibraryDependencyPath(parentPackagePath, projectRoot, dependency
     return null;
 }
 
-function collectDependencyLibraryPackages(projectDependencies, currentProjectPath) {
-    return collectLibraryPackages(projectDependencies, currentProjectPath);
+function collectDependencyLibraryPackages(projectDependencies, currentProjectPath, isAilyCode = false) {
+    return collectLibraryPackages(projectDependencies, currentProjectPath, isAilyCode);
 }
 
 /**
