@@ -248,6 +248,9 @@ async function main() {
         // 6. 配置路径和参数
         const fullCompilerPath = path.join(compilerPath, compiler);
         const fullSdkPath = path.join(sdkPath, sdk);
+        if (!isAilyCode) {
+            librarySearchPaths = prependSdkLibrarySearchPath(fullSdkPath, librarySearchPaths);
+        }
         
         // 7. 获取编译命令
         let compilerParam = boardJson.compilerParam;
@@ -626,6 +629,26 @@ function collectWorkspaceLibraries(librariesPath) {
             sourcePath: path.join(librariesPath, entry.name)
         }))
         .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+/**
+ * Board SDKs may ship Arduino-compatible libraries beside their core and
+ * variants. aily-builder does not discover that directory from --sdk-path,
+ * so pass it explicitly. Keep it first: later project/package roots retain
+ * their existing override precedence.
+ */
+function prependSdkLibrarySearchPath(fullSdkPath, librarySearchPaths) {
+    const current = Array.isArray(librarySearchPaths) ? librarySearchPaths : [];
+    const sdkLibrariesPath = path.join(fullSdkPath, 'libraries');
+    if (!fs.existsSync(sdkLibrariesPath) || !fs.statSync(sdkLibrariesPath).isDirectory()) {
+        return current;
+    }
+
+    const sdkRoot = path.resolve(sdkLibrariesPath);
+    return [
+        sdkLibrariesPath,
+        ...current.filter(searchPath => path.resolve(searchPath) !== sdkRoot)
+    ];
 }
 
 /**
@@ -1092,5 +1115,6 @@ module.exports = {
     normalizeExtractedSourceDirectory,
     processComponentLibraries,
     processLibrariesParallel,
+    prependSdkLibrarySearchPath,
     resolveCoderLibrarySearchPaths,
 };
