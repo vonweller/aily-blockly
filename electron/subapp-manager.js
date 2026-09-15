@@ -698,7 +698,8 @@ function resolveInstalledPackagePath(rootDir, entry) {
       selectionError: error.message,
     };
   }
-  // A managed dev link always wins over a selected release.
+  // Legacy development links remain readable during migration. New dev runs use
+  // a pinned <version>-dev generation in the version store below.
   if (fs.lstatSync(legacyPath, { throwIfNoEntry: false })?.isSymbolicLink()) {
     return { packagePath: legacyPath, development: true, source: 'development' };
   }
@@ -893,6 +894,7 @@ function createCatalogState(rootDir, index, locale, meta = {}) {
       .map((entry) => {
         const installedState = readInstalledState(rootDir, entry);
         const updateAvailable = installedState.installed
+          && !installedState.development
           && hasUpdate(installedState.installedVersion, entry.version);
         const updateStatus = readSubappUpdateStatus(
           meta.updateRootDir || resolveSubappUpdateRoot(),
@@ -1346,11 +1348,11 @@ function mergeDevelopmentLinkedEntries(rootDir, remoteIndex, developmentIndex) {
   for (const [id, entry] of Object.entries(developmentIndex || {})) {
     if (id === 'dev') continue;
     try {
-      if (fs.lstatSync(packagePathFor(rootDir, entry.package)).isSymbolicLink()) {
+      if (resolveInstalledPackagePath(rootDir, entry).development === true) {
         merged[id] = entry;
       }
     } catch {
-      // Ignore stale development catalog entries whose package link no longer exists.
+      // Ignore stale development catalog entries whose development generation is no longer active.
     }
   }
 
@@ -1406,10 +1408,12 @@ function verifyStagedAssets(updateRootDir, record) {
 
 function readSubappUpdateStatus(updateRootDir, entry, installedState, operation = null, rootDir = null) {
   const targetVersion = entry.version;
-  if (!installedState.installed || !hasUpdate(installedState.installedVersion, targetVersion)) {
+  if (installedState.development
+    || !installedState.installed
+    || !hasUpdate(installedState.installedVersion, targetVersion)) {
     return { state: 'current', targetVersion };
   }
-  if (!entry.update || installedState.development) {
+  if (!entry.update) {
     return { state: 'available', targetVersion };
   }
   if (operation && operation.version === targetVersion) {
@@ -1619,7 +1623,7 @@ async function prepareVersionPackage(rootDir, entry, npmRunner, options = {}) {
 
 async function stageSubappUpdate(rootDir, updateRootDir, entry, npmRunner, options = {}) {
   const installedState = readInstalledState(rootDir, entry);
-  if (installedState.development) throw new Error(`Development-linked subapp cannot be updated: ${entry.id}`);
+  if (installedState.development) throw new Error(`Development subapp cannot be updated: ${entry.id}`);
   if (!installedState.installed || !hasUpdate(installedState.installedVersion, entry.version)) {
     throw new Error(`Subapp update is not available: ${entry.id}`);
   }
@@ -2267,7 +2271,7 @@ async function activateStagedSubappUpdate(rootDir, updateRootDir, entry, npmRunn
   const release = options.lockHeld ? () => {} : await waitForUpdateLock(path.join(rootDir, 'store', '.locks'));
   try {
     const installed = readInstalledState(rootDir, entry);
-    if (installed.development) throw new Error(`Development-linked subapp cannot be updated: ${entry.id}`);
+    if (installed.development) throw new Error(`Development subapp cannot be updated: ${entry.id}`);
     if (installed.installed && semver.valid(installed.installedVersion)
       && semver.gt(installed.installedVersion, entry.version)) {
       return { id: entry.id, version: installed.installedVersion, status: 'current' };

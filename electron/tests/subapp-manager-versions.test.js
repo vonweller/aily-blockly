@@ -242,6 +242,33 @@ test('auto mode uses a newer normal B, while a managed development link always w
   assert.equal(selected.config.env.AILY_SUBAPP_SOURCE, 'development');
 });
 
+test('uses a pinned version-dev generation as the active development package', (t) => {
+  const f = fixture(t, { version: '1.0.0' });
+  const releaseCandidate = versions.createCandidate(f.rootDir, f.entry);
+  writeRunnablePackage(releaseCandidate.source, '1.0.0');
+  const release = versions.publishCandidate(f.rootDir, f.entry, releaseCandidate, {
+    distribution: f.entry.dist,
+  });
+  versions.activate(f.rootDir, f.entry, release);
+
+  const devEntry = { ...f.entry, version: '1.0.0-dev' };
+  const devCandidate = versions.createCandidate(f.rootDir, devEntry);
+  writeRunnablePackage(devCandidate.source, '1.0.0-dev');
+  const development = versions.publishCandidate(f.rootDir, devEntry, devCandidate, {
+    distribution: null,
+    installMode: 'development',
+  });
+  versions.activate(f.rootDir, devEntry, development, { mode: 'pinned' });
+
+  const selected = readInstalledState(f.rootDir, f.entry);
+  assert.equal(selected.development, true);
+  assert.equal(selected.installedVersion, '1.0.0-dev');
+  assert.equal(selected.packagePath, path.join(
+    f.rootDir, 'store', 'subapp-aily-chat', '1.0.0-dev', 'source',
+  ));
+  assert.equal(selected.config.env.AILY_SUBAPP_SOURCE, 'development');
+});
+
 test('a legacy package without a portable declaration runs npm only inside A/source', async (t) => {
   const version = '3.0.0';
   const archive = npmTarball({
