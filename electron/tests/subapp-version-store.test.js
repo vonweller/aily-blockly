@@ -91,6 +91,26 @@ test('publishes a pinned version-dev generation as development', (t) => {
   assert.equal(selected.selectionMode, 'pinned');
 });
 
+test('publishes a pinned version-next generation as a local packaged build', (t) => {
+  const { root } = fixture(t);
+  const nextEntry = { ...ENTRY, version: `${ENTRY.version}-next` };
+  const prepared = prepare(root, nextEntry, {
+    distribution: null,
+    integrity: 'sha512-bG9jYWwtbmV4dA==',
+    installMode: 'next',
+  });
+  store.activate(root, nextEntry, prepared, { mode: 'pinned' });
+
+  const selected = store.readSelection(root, { id: ENTRY.id, package: ENTRY.package });
+  assert.equal(selected.version, '0.1.33-next');
+  assert.equal(selected.installMode, 'next');
+  assert.equal(selected.localNext, true);
+  assert.equal(selected.integrity, 'sha512-bG9jYWwtbmV4dA==');
+  assert.equal(selected.development, undefined);
+  assert.equal(selected.source, 'version-store');
+  assert.equal(selected.selectionMode, 'pinned');
+});
+
 test('same-version repair uses a staged replacement and never mutates files in place', (t) => {
   const { root } = fixture(t);
   const first = prepare(root, ENTRY, { marker: 'first' });

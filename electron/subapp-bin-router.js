@@ -258,7 +258,7 @@ function inspectVersion(rootDir, packageName, binName, storeKey, locator) {
     || ready.packageName !== packageName || ready.storeKey !== storeKey
     || ready.version !== locator.version || ready.path !== locator.path
     || typeof ready.installedAt !== 'string' || !Number.isFinite(Date.parse(ready.installedAt))
-    || !['portable', 'legacy-npm', 'development'].includes(ready.installMode)
+    || !['portable', 'legacy-npm', 'development', 'next'].includes(ready.installMode)
     || (locator.integrity || null) !== readyIntegrity) {
     throw new Error(`Invalid version-store completion receipt: ${packageName}@${locator.version}`);
   }

@@ -61,7 +61,7 @@ function validateDistribution(value) {
 }
 
 function validateInstallMode(value) {
-  if (!['portable', 'legacy-npm', 'development'].includes(value)) {
+  if (!['portable', 'legacy-npm', 'development', 'next'].includes(value)) {
     throw new Error(`Invalid version-store install mode: ${String(value)}`);
   }
   return value;
@@ -199,6 +199,7 @@ function inspectVersion(rootDir, entry, locator) {
     packagePath: source,
     source: installMode === 'development' ? 'development' : 'version-store',
     ...(installMode === 'development' ? { development: true } : {}),
+    ...(installMode === 'next' ? { localNext: true } : {}),
   };
 }
 
@@ -259,7 +260,9 @@ function publishCandidate(rootDir, entry, candidate, options = {}) {
     distribution,
     installMode: options.installMode === 'development'
       ? 'development'
-      : options.installMode === 'legacy-npm' ? 'legacy-npm' : 'portable',
+      : options.installMode === 'legacy-npm'
+        ? 'legacy-npm'
+        : options.installMode === 'next' ? 'next' : 'portable',
     installedAt: new Date().toISOString(),
   });
 

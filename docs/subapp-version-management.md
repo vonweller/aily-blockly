@@ -67,9 +67,12 @@ R/
         │       ├── server/
         │       ├── runtime/
         │       └── ui/
-        └── 0.1.33-dev/                   # 当前源码对应的开发版本
-            ├── ready.json                # installMode=development
-            └── source/                   # package.json.version=0.1.33-dev
+        ├── 0.1.33-dev/                   # 当前源码对应的开发版本
+        │   ├── ready.json                # installMode=development
+        │   └── source/                   # package.json.version=0.1.33-dev
+        └── 0.1.33-next/                  # 本机构建产物的打包态验证版本
+            ├── ready.json                # installMode=next
+            └── source/                   # npm pack/install 后的 package root
 ```
 
 `subapp-aily-chat` 是由目录中的正式存储键生成的稳定名称。`ready.json` 必须同时保存完整 npm 包名 `@aily-project/subapp-aily-chat`，防止不同 scope 或目录名碰撞。
@@ -82,7 +85,7 @@ A 的 `source` 是可直接运行的 package root。推荐的子应用发布物�
 
 不符合 portable 规范的旧包不能假装成可直接运行的 A。它们进入独立的 legacy npm prepare 分支，在 A 内准备依赖，不触碰 R/B；需要执行安装脚本时，还必须经过可信目录和包策略校验。
 
-正式版本目录完成后视为不可变。相同正式版本需要修复或重装时，先在同级临时目录准备；只有确认没有进程使用损坏目录时才替换。若仍被使用，则推迟到所有持有者退出，不能原地覆盖。`<version>-dev` 是明确标记的开发例外：其 `source` 映射到当前源码/构建输出，只能由 dev 脚本创建、刷新和移除。
+正式版本目录完成后视为不可变。相同正式版本需要修复或重装时，先在同级临时目录准备；只有确认没有进程使用损坏目录时才替换。若仍被使用，则推迟到所有持有者退出，不能原地覆盖。`<version>-dev` 是明确标记的开发例外：其 `source` 映射到当前源码/构建输出，只能由 dev 脚本创建、刷新和移除。`<version>-next` 是本机打包态验证例外：运行文件必须来自已有构建的 npm pack/install 结果，不得链接源码或启动 watcher。
 
 ## 4. 为什么不建议让 B 指向 A
 
@@ -147,7 +150,7 @@ A 的 `source` 是可直接运行的 package root。推荐的子应用发布物�
 
 解析顺序如下：
 
-1. 如果 `active.json.mode=pinned` 且 selected 指向带 `installMode=development` 收据的 `<version>-dev`，验证后使用该开发版本。
+1. 如果 `active.json.mode=pinned` 且 selected 指向带 `installMode=development` 的 `<version>-dev` 或带 `installMode=next` 的 `<version>-next`，验证后使用该固定版本。
 2. 如果 B 是历史受管理开发软链接或 junction，仍兼容读取 B；新的 dev 命令不再创建此入口。
 3. 如果 `active.json.mode` 是显式回滚或固定正式版本，验证 selected 后使用 A。
 4. 自动模式下，同时检查 selected、previous 和普通目录 B。选择其中完整且版本最高的候选，防止旧主程序刚通过 npm 把 B 更新到更高版本后，新主程序仍启动较旧的 A。
@@ -226,6 +229,14 @@ npm 官方说明，普通安装会同时安装 dependencies，并可能执行生
 3. dev 脚本先备份原 `active.json`，再以 `mode: pinned` 选择开发版本；因此普通 B 或版本号更高的正式版本不会盖过本地调试。
 4. `dev:unlink` 先恢复原 `active.json`，再只清理带 `installMode: development` 的版本目录。正式版本目录、B、根 `package.json` 和锁文件保持不变。
 5. 源码版本号变化后重新运行 dev，会创建新的 `<version>-dev` 并清理旧开发代；不会把旧开发代误当正式历史版本保留。
+
+### 7.5 本机构建产物验证版本
+
+1. `deploy:next` 必须内置执行 `build:subapp`；`--skip-build` 只用于隔离测试或明确复用已有正式构建产物，任何路径都不得复用源码链接。
+2. `deploy:next` 对构建目录执行 `npm pack` 和隔离安装，把 npm 实际收录的文件部署到 `store/<storeKey>/<version>-next/source`，并写入 `installMode: next`。
+3. 本地 next 使用 `mode: pinned`，但运行环境仍为 `AILY_SUBAPP_SOURCE=version-store`，以保持正式打包态启动语义。
+4. 本地目录索引继续使用 `dev: true` 防止远端更新覆盖验收版本；`deploy:next -- --unlink` 恢复原 `active.json` 和目录项，并只清理带 `installMode: next` 的目录。
+5. 同一包允许同时保留本地版本，运行优先级固定为 `dev > next > 线上正式版`：部署 next 不抢占正在运行的 dev，退出 dev 自动落到 next，退出 next 再落到线上正式版。
 
 ## 8. 与旧 npm 安装的兼容边界
 

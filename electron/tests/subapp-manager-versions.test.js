@@ -269,6 +269,33 @@ test('uses a pinned version-dev generation as the active development package', (
   assert.equal(selected.config.env.AILY_SUBAPP_SOURCE, 'development');
 });
 
+test('keeps a pinned version-next package on the production runtime path and local catalog', async (t) => {
+  const f = fixture(t, { version: '1.0.0' });
+  const nextEntry = { ...f.entry, version: '1.0.0-next' };
+  const nextCandidate = versions.createCandidate(f.rootDir, nextEntry);
+  writeRunnablePackage(nextCandidate.source, nextEntry.version);
+  const next = versions.publishCandidate(f.rootDir, nextEntry, nextCandidate, {
+    distribution: null,
+    installMode: 'next',
+  });
+  versions.activate(f.rootDir, nextEntry, next, { mode: 'pinned' });
+  fs.writeFileSync(path.join(f.rootDir, 'subapp-index.json'), JSON.stringify({
+    [ID]: nextEntry,
+    dev: true,
+  }));
+
+  const selected = readInstalledState(f.rootDir, f.entry);
+  assert.equal(selected.localNext, true);
+  assert.equal(selected.development, false);
+  assert.equal(selected.installedVersion, '1.0.0-next');
+  assert.equal(selected.config.env.AILY_SUBAPP_SOURCE, 'version-store');
+
+  const state = await f.manager.list({ refresh: true });
+  assert.equal(state.apps[0].availableVersion, '1.0.0-next');
+  assert.equal(state.apps[0].installedVersion, '1.0.0-next');
+  assert.equal(state.apps[0].updateAvailable, false);
+});
+
 test('a legacy package without a portable declaration runs npm only inside A/source', async (t) => {
   const version = '3.0.0';
   const archive = npmTarball({

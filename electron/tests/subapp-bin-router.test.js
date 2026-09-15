@@ -107,6 +107,16 @@ test('routes a pinned version-dev generation as development', (t) => {
   assert.match(resolved.packagePath, /1\.2\.3-dev[/\\]source$/);
 });
 
+test('routes a pinned version-next generation with production version-store semantics', (t) => {
+  const f = fixture(t);
+  const selected = publish(f.rootDir, '1.2.3-next', { installMode: 'next' });
+  versions.activate(f.rootDir, entry('1.2.3-next'), selected, { mode: 'pinned' });
+
+  const resolved = resolveStableBin(f.rootDir, PACKAGE, BIN);
+  assert.equal(resolved.version, '1.2.3-next');
+  assert.equal(resolved.source, 'version-store');
+});
+
 test('the stable router delegates stdio without changing the client working directory', (t) => {
   const f = fixture(t);
   const expectedCwd = path.join(f.temporary, 'third-party workspace');
