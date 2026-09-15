@@ -19,7 +19,7 @@ import {
   type PortItem,
   UploaderService,
 } from '@domain/device/public-api';
-import { AbsAutoSyncService } from '../../../integrations/blockly/abs/abs-auto-sync.service';
+import { AbsGenerationToolsService } from '../../../integrations/blockly/abs/abs-generation-tools.service';
 import {
   connectBlocks,
   createBlock,
@@ -64,7 +64,7 @@ export class BlocklyLiveOperationBridgeService {
     private readonly electronService: ElectronService,
     private readonly builderService: BuilderService,
     private readonly themeService: ThemeService,
-    private readonly absAutoSyncService: AbsAutoSyncService,
+    private readonly absGenerationTools: AbsGenerationToolsService,
     private readonly mainUiAutomationService: MainUiAutomationService,
     private readonly aiOperations: AiOperationRegistryService,
     private readonly subappAgentBridgeService: SubappAgentBridgeService,
@@ -111,6 +111,7 @@ export class BlocklyLiveOperationBridgeService {
     } catch (error) {
       respond({
         ok: false,
+        code: (error as any)?.code,
         message: error instanceof Error ? error.message : String(error),
       });
     }
@@ -242,19 +243,28 @@ export class BlocklyLiveOperationBridgeService {
     let toolResult: HostToolResult;
     switch (payload.operation) {
       case 'abi_add':
-        toolResult = await this.runBlockWritingOperation(() => this.executeAbiAdd(payload.params || {}));
+        toolResult = await this.runQueuedBlockWritingOperation(() => this.executeAbiAdd(payload.params || {}));
         break;
       case 'abi_delete':
-        toolResult = await this.runBlockWritingOperation(() => this.executeAbiDelete(payload.params || {}));
+        toolResult = await this.runQueuedBlockWritingOperation(() => this.executeAbiDelete(payload.params || {}));
         break;
       case 'abi_connect':
-        toolResult = await this.runBlockWritingOperation(() => this.executeAbiConnect(payload.params || {}));
+        toolResult = await this.runQueuedBlockWritingOperation(() => this.executeAbiConnect(payload.params || {}));
         break;
       case 'abi_set_field':
-        toolResult = await this.runBlockWritingOperation(() => this.executeAbiSetField(payload.params || {}));
+        toolResult = await this.runQueuedBlockWritingOperation(() => this.executeAbiSetField(payload.params || {}));
         break;
       case 'abs_apply':
         return this.runAbsOperation(() => this.executeAbsApply(payload.params || {}));
+      case 'abs_projection':
+        return this.executeAbsProjection(payload.params || {});
+      case 'abs_validate':
+        return this.executeAbsCandidateValidation(payload.params || {});
+      case 'abs_recovery':
+        return { project: this.projectService.currentProjectPath, ...await this.absGenerationTools.execute('abs_recovery', payload.params || {}) };
+      case 'abs_capabilities':
+        return { ok: true, operation: 'abs_capabilities', project: this.projectService.currentProjectPath,
+          capabilities: this.absGenerationTools.capabilities(payload.params || {}) };
       case 'block_metadata_snapshot':
         return this.executeBlockMetadataSnapshot();
       case 'library_runtime_sync':
@@ -270,9 +280,6 @@ export class BlocklyLiveOperationBridgeService {
       case 'blocks_tidy':
         return this.runBlockWritingOperation(() => this.executeBlocksTidy());
       case 'project_save':
-        if (payload.params?.['forAbsApply'] === true) {
-          return this.runAbsOperation(() => this.executeProjectSave(true));
-        }
         return this.runBlockWritingOperation(() => this.executeProjectSave());
       case 'project_reload':
         return this.runBlockWritingOperation(() => this.executeProjectReload());
@@ -288,7 +295,7 @@ export class BlocklyLiveOperationBridgeService {
       };
     }
 
-    await this.blocklyEditor.saveProject(this.projectService.currentProjectPath, false);
+    await this.blocklyEditor.saveProject(this.projectService.currentProjectPath);
     return {
       ok: true,
       operation: payload.operation,
@@ -313,6 +320,10 @@ export class BlocklyLiveOperationBridgeService {
     }
   }
 
+  private runQueuedBlockWritingOperation<T>(operation: () => Promise<T>): Promise<T> {
+    return this.blocklyEditor.runWorkspaceOperation(() => this.runBlockWritingOperation(operation));
+  }
+
   private async runAbsOperation<T>(operation: () => Promise<T>): Promise<T> {
     const source = 'live-abs-operation';
     this.absApplyInProgress = true;
@@ -332,6 +343,10 @@ export class BlocklyLiveOperationBridgeService {
       'abi_connect',
       'abi_set_field',
       'abs_apply',
+      'abs_projection',
+      'abs_validate',
+      'abs_recovery',
+      'abs_capabilities',
       'block_metadata_snapshot',
       'library_runtime_sync',
       'blocks_tidy',
@@ -495,90 +510,34 @@ export class BlocklyLiveOperationBridgeService {
     );
   }
 
-  private async executeAbsApply(params: Record<string, any>): Promise<Record<string, any>> {
-    const hasText = typeof params['abs'] === 'string';
-    const hasPath = typeof params['absPath'] === 'string';
-    if (hasText === hasPath) {
-      return { ok: false, message: '必须且只能提供 abs 或 absPath。' };
-    }
+  private readAbsSource(params: Record<string, any>): string {
+    const hasText = typeof params['abs'] === 'string', hasPath = typeof params['absPath'] === 'string';
+    if (hasText === hasPath) throw new Error('必须且只能提供 abs 或 absPath。');
+    const source = hasPath ? this.electronService.readFile(params['absPath']) : params['abs'];
+    if (typeof source !== 'string' || !source.trim()) throw new Error('缺少 ABS 内容');
+    return source;
+  }
 
-    const abs = hasPath ? this.electronService.readFile(params['absPath']) : params['abs'];
-    const chunk = params['chunk'] === true;
-    const projectPath = this.projectService.currentProjectPath;
-    if (!abs.trim()) {
-      return { ok: false, message: '缺少 ABS 内容' };
-    }
+  private executeAbsProjection(params: Record<string, any>) {
+    return this.absGenerationTools.execute('abs_projection', params);
+  }
 
-    this.absAutoSyncService.initialize(projectPath);
+  private executeAbsCandidateValidation(params: Record<string, any>) {
+    return this.absGenerationTools.execute('abs_validate', params, this.readAbsSource(params));
+  }
+
+  private async executeAbsApply(params: Record<string, any>) {
+    const source = this.readAbsSource(params);
     const operationId = `abs-apply:${Date.now().toString(36)}`;
-    this.emitLiveOperationProgress('abs_apply', {
-      type: 'editor_operation_progress',
-      operationId,
-      operationKind: 'blockly.abs.apply',
-      phase: 'started',
-      label: 'Apply ABS to Blockly workspace',
-      timestamp: Date.now(),
+    const progress = (phase: 'started' | 'progress' | 'completed' | 'failed', detail?: string) => this.emitLiveOperationProgress('abs_apply', {
+      type: 'editor_operation_progress', operationId, operationKind: 'blockly.abs.apply',
+      phase, label: 'Apply ABS generation', detail, timestamp: Date.now(),
     });
-    const syncResult = await this.ngZone.runOutsideAngular(
-      () => this.absAutoSyncService.importContent(abs, {
-        chunk,
-        onProgress: (blocks, batches) => this.emitLiveOperationProgress('abs_apply', {
-          type: 'editor_operation_progress',
-          operationId,
-          operationKind: 'blockly.abs.apply',
-          phase: 'progress',
-          label: 'Apply ABS to Blockly workspace',
-          detail: `已装载 ${blocks} 个块，完成 ${batches} 批`,
-          timestamp: Date.now(),
-        }),
-      }),
-    );
-
-    if (!syncResult.success) {
-      const message = [...(syncResult.errors ?? []), ...(syncResult.warnings ?? [])].join('\n')
-        || 'ABS 导入失败';
-      this.emitLiveOperationProgress('abs_apply', {
-        type: 'editor_operation_progress',
-        operationId,
-        operationKind: 'blockly.abs.apply',
-        phase: 'failed',
-        label: 'Apply ABS to Blockly workspace',
-        detail: message,
-        timestamp: Date.now(),
-      });
-      return {
-        ok: false,
-        operation: 'abs_apply',
-        project: projectPath,
-        message,
-      };
-    }
-
-    if (this.projectService.currentProjectPath !== projectPath) {
-      return { ok: false, project: projectPath, message: 'ABS 导入期间工程已改变，停止保存。' };
-    }
-    // Keep the operation active until the actual save feedback arrives. HTTP/IPC
-    // can expire independently; status polling must never treat an active save as idle.
-    const saveResult = await this.projectService.save(projectPath, 0);
-    const ok = saveResult.success === true;
-    const message = ok ? 'ABS 已导入 Blockly 工作区并保存项目' : `ABS 已导入，但保存失败: ${saveResult.error || '未知错误'}`;
-    this.emitLiveOperationProgress('abs_apply', {
-      type: 'editor_operation_progress',
-      operationId,
-      operationKind: 'blockly.abs.apply',
-      phase: ok ? 'completed' : 'failed',
-      label: 'Apply ABS to Blockly workspace',
-      detail: message,
-      timestamp: Date.now(),
-    });
-
-    return {
-      ok,
-      operation: 'abs_apply',
-      project: projectPath,
-      message,
-      ...(chunk ? { chunk: true, batchCount: syncResult.batchCount } : {}),
-    };
+    progress('started');
+    const result = await this.ngZone.runOutsideAngular(() => this.absGenerationTools.execute('abs_apply', params, source,
+      (blocks, batches) => progress('progress', `已装载 ${blocks} 个块，完成 ${batches} 批`)));
+    progress(result.ok ? 'completed' : 'failed', result.ok ? 'ABS 已完成身份合并、完整读回及同代保存' : (result as any).message);
+    return result; // The coordinator already saved ABI and prepared outputs. Never save or generate twice.
   }
 
   private executeBlockMetadataSnapshot(): Record<string, any> {
@@ -893,12 +852,12 @@ export class BlocklyLiveOperationBridgeService {
       };
     }
 
-    Blockly.Events.setGroup(true);
-    try {
-      workspace.cleanUp();
-    } finally {
-      Blockly.Events.setGroup(false);
-    }
+    await this.blocklyEditor.runWorkspaceOperation(async () => {
+      if (workspace !== this.blocklyEditor.getWorkspace()) throw new Error('整理操作所属工作区已改变。');
+      const previousGroup = Blockly.Events.getGroup();
+      Blockly.Events.setGroup(true);
+      try { workspace.cleanUp(); } finally { Blockly.Events.setGroup(previousGroup); }
+    });
 
     const saveResult = await this.projectService.save(this.projectService.currentProjectPath);
     if (!saveResult.success) {
@@ -919,13 +878,13 @@ export class BlocklyLiveOperationBridgeService {
     };
   }
 
-  private async executeProjectSave(forAbsApply = false): Promise<Record<string, any>> {
+  private async executeProjectSave(): Promise<Record<string, any>> {
     const projectPath = this.projectService.currentProjectPath;
     if (!projectPath) {
       return { ok: false, message: '当前未打开 Blockly 项目' };
     }
     await this.projectService.ensureBlocklyLibraryRuntimeReady(projectPath);
-    const saveResult = await this.projectService.save(projectPath, forAbsApply ? 0 : 5000);
+    const saveResult = await this.projectService.save(projectPath, 5000);
     if (!saveResult.success) {
       return {
         ok: false,

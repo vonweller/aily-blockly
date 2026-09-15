@@ -53,4 +53,22 @@ describe('BlocklyGeneratorRuntimeService', () => {
 
     expect(Blockly.Msg['PROJECT_LIBRARY_ONLY']).toBeUndefined();
   });
+
+  it('does not let late generator-load cleanup destroy a replacement runtime', () => {
+    activateRuntime(); const previous = service.getActiveGenerator();
+    const current = service.rebuild();
+    service.destroy(previous);
+    expect(service.getActiveGenerator()).toBe(current);
+    service.destroy(current);
+    expect(service.getActiveGenerator()).toBeNull();
+  });
+
+  it('can clean up the owned session even after a script failure deactivates it', () => {
+    activateRuntime(); const owner = service.getActiveGenerator();
+    const internal = service as any, session = internal.session;
+    internal.markFailed(session);
+    expect(service.getActiveGenerator()).toBeNull();
+    service.destroy(owner);
+    expect(internal.session).toBeNull(); expect(session.iframe.isConnected).toBeFalse();
+  });
 });

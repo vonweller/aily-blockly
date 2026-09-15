@@ -178,6 +178,30 @@
             "assets": [],
             "styles": [],
             "scripts": []
+          },
+          "configurations": {
+            "abs-sync": {
+              "tsConfig": "tsconfig.abs-sync.spec.json",
+              "include": [
+                "src/app/integrations/blockly/abs/**/*.spec.ts",
+                "src/app/editors/blockly-editor/services/builder.service.spec.ts",
+                "src/app/editors/blockly-editor/services/blockly-generator-runtime.service.spec.ts",
+                "src/app/services/shared/abs/**/*.spec.ts",
+                "src/app/services/domains/project/project-data/project-data-abs.spec.ts",
+                "src/app/services/domains/project/project-data/project-data-generic-values.spec.ts",
+                "src/app/services/domains/project/project-data/project-data-normalization.spec.ts",
+                "src/app/services/domains/project/project-save-as.spec.ts",
+                "src/app/services/domains/project/project-block-field-updates.spec.ts"
+              ]
+            },
+            "abs-project-load": {
+              "tsConfig": "tsconfig.abs-sync.spec.json",
+              "preserveSymlinks": false,
+              "include": [
+                "src/app/editors/blockly-editor/blockly-editor-load.spec.ts",
+                "src/app/pages/playground/example-list/example-list-import.spec.ts"
+              ]
+            }
           }
         }
       }

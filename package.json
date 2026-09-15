@@ -156,6 +156,7 @@
     "watch": "ng build --watch --configuration development",
     "test": "ng test",
     "test:unit:ci": "ng test --watch=false --browsers=ChromeHeadless",
+    "test:abs-sync": "ng test --configuration=abs-sync --watch=false --browsers=ChromeHeadless",
     "guard:aily-chat-mainline": "node scripts/guard-aily-chat-mainline.js",
     "architecture:services": "node scripts/check-angular-service-architecture.mjs",
     "architecture:services:inventory": "node scripts/check-angular-service-architecture.mjs --inventory",

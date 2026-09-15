@@ -1,5 +1,8 @@
 import { Injectable } from '@angular/core';
 import * as Blockly from 'blockly';
+import { adaptBundledArduinoProcedureCalls } from './blockly-bundled-procedure-generator';
+import { registerCustomFunctionContract, clearCustomFunctionRegistration } from './blockly-custom-function-contract';
+import { registerVariableDeclarationContract, clearVariableDeclarationRegistration } from './blockly-variable-declaration-contract';
 import {
   ArduinoGenerator,
   createArduinoGenerator,
@@ -30,6 +33,7 @@ export interface GeneratorRuntimeContext {
 }
 
 export interface GeneratorLoadResult {
+  contractsReady?: Promise<void>;
   filePath: string;
   arduinoBlockTypes: string[];
   micropythonBlockTypes: string[];
@@ -72,10 +76,14 @@ interface RuntimeSession {
 }
 
 let activeProjectGenerator: ProjectGenerator | null = null;
+let activeProjectGeneratorRevision = 0;
 
 export function getActiveProjectGenerator(): ProjectGenerator | null {
   return activeProjectGenerator;
 }
+
+/** Configuration/library changes invalidate prepared code even if workspace bytes are unchanged. */
+export function getActiveProjectGeneratorRevision(): number { return activeProjectGeneratorRevision; }
 
 /**
  * Cross the asynchronous Project Data barrier while retaining the identity of
@@ -89,12 +97,13 @@ export async function runWithPreparedActiveProjectGenerator<T>(
   projectValue?: unknown,
 ): Promise<T> {
   const generator = activeProjectGenerator;
+  const revision = activeProjectGeneratorRevision;
   if (!generator) {
     throw new Error('Blockly generator runtime is not active');
   }
 
   await prepareBlocklyProjectDataForCodeGeneration(workspace, projectValue);
-  if (activeProjectGenerator !== generator) {
+  if (activeProjectGenerator !== generator || activeProjectGeneratorRevision !== revision) {
     throw new Error('Blockly generator runtime changed while Project Data was being prepared');
   }
 
@@ -183,6 +192,7 @@ export class BlocklyGeneratorRuntimeService {
 
     this.session = session;
     activeProjectGenerator = generator;
+    activeProjectGeneratorRevision++;
     this.installRealmBridge(session);
     return generator;
   }
@@ -234,6 +244,7 @@ export class BlocklyGeneratorRuntimeService {
 
   updateContext(context: Partial<Omit<GeneratorRuntimeContext, 'mode' | 'getWorkspace'>>): void {
     const session = this.requireActiveSession();
+    activeProjectGeneratorRevision++;
     session.context = { ...session.context, ...context };
     this.publishContextToRealm(session);
   }
@@ -250,6 +261,7 @@ export class BlocklyGeneratorRuntimeService {
 
   setLibraryI18n(packageName: string, value: unknown): void {
     const session = this.requireActiveSession();
+    activeProjectGeneratorRevision++;
     const realm = session.realmWindow as unknown as Record<string, any>;
     realm['__BLOCKLY_LIB_I18N__'][packageName] = cloneRuntimeValue(value);
   }
@@ -260,6 +272,7 @@ export class BlocklyGeneratorRuntimeService {
       return this.describeLoadedGenerator(session, filePath, []);
     }
 
+    activeProjectGeneratorRevision++;
     const globalsBefore = new Set(Reflect.ownKeys(session.realmWindow).map(String));
     let scriptError: ErrorEvent | null = null;
     const errorHandler = (event: ErrorEvent) => {
@@ -303,6 +316,11 @@ export class BlocklyGeneratorRuntimeService {
       ...result.micropythonBlockTypes,
       ...result.pythonBlockTypes,
     ]);
+    if (session.context.mode === 'arduino') adaptBundledArduinoProcedureCalls(session.generator);
+    if (session.context.mode === 'arduino') result.contractsReady = Promise.all([
+      registerCustomFunctionContract(source, session.realmWindow, Blockly.Blocks, session, () => this.session === session && session.active),
+      registerVariableDeclarationContract(source, session.realmWindow, session.generator, Blockly.Blocks, session, () => this.session === session && session.active),
+    ]).then(() => undefined);
     return result;
   }
 
@@ -318,13 +336,15 @@ export class BlocklyGeneratorRuntimeService {
     return Reflect.apply(candidate as (...values: unknown[]) => T, session.realmWindow, bridgedArgs);
   }
 
-  destroy(): void {
+  destroy(expectedGenerator?: ProjectGenerator | null): void {
     const session = this.session;
-    if (!session) {
+    if (!session || expectedGenerator !== undefined && session.generator !== expectedGenerator) {
       return;
     }
 
     session.active = false;
+    clearCustomFunctionRegistration(Blockly.Blocks, session);
+    clearVariableDeclarationRegistration(Blockly.Blocks, session);
     this.clearResources(session);
     this.restoreHostState(session.registrySnapshot);
     session.loadedPaths.clear();

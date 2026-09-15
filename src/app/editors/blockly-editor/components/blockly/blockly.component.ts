@@ -44,14 +44,10 @@ const BLOCKLY_LOCALES: Record<SupportedLanguageCode, any> = {
 import './plugins/toolbox-search/src/index';
 import './plugins/block-plus-minus/src/index.js';
 import './plugins/stable-comment-icon';
-import {
-  normalizeArduinoGeneratedCode,
-  type BlockCodeMapping,
-} from './generators/arduino/arduino';
+import { type BlockCodeMapping } from './generators/arduino/arduino';
 import { BlocklyService, WorkspaceBlockSearchState } from '../../services/blockly.service';
 import {
   BlocklyGeneratorRuntimeService,
-  runWithPreparedActiveProjectGenerator,
 } from '../../services/blockly-generator-runtime.service';
 import { BitmapUploadResponse, GlobalServiceManager, BitmapUploadService } from '../../services/bitmap-upload.service';
 import {
@@ -110,7 +106,7 @@ import { BlocklyToolboxPaneComponent } from './components/blockly-toolbox-pane/b
 import { BlocklyWorkspacePagesComponent } from './components/blockly-workspace-pages/blockly-workspace-pages.component';
 import { BlocklyConfirmDialogComponent } from './components/confirm-dialog/confirm-dialog.component';
 import { CodeViewerIpcService } from '../../services/code-viewer-ipc.service';
-import { writeArduinoGeneratedArtifacts } from '../../services/generated-code-artifacts';
+import { writePreparedArduinoGeneratedArtifacts } from '../../services/generated-code-artifacts';
 import { AilyChatDemandSessionService } from '@integration/simulator/public-api';
 
 type BlocklyWorkspaceEvent = { type?: string } | null | undefined;
@@ -307,6 +303,7 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
 
   // RxJS debounce optimization
   private codeGenerationSubject = new Subject<void>();
+  private forceNextCodeGeneration = false;
   private minimapSyncSubject = new Subject<void>();
   private destroy$ = new Subject<void>();
   private resizeObserver: ResizeObserver | null = null;
@@ -2200,6 +2197,7 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
       return;
     }
 
+    if (forceGenerate) this.forceNextCodeGeneration = true;
     this.requestCodeGeneration();
   }
 
@@ -2308,49 +2306,45 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
     ).subscribe(async () => {
       try {
         const projectPath = this.projectService.currentProjectPath;
-        const projectDocument = this.blocklyService.getProjectDocument();
-        const generated = await runWithPreparedActiveProjectGenerator(
-          this.workspace,
-          (generator) => {
-            const activeBlockCodeMap = (
-              generator as { blockCodeMap?: Map<string, BlockCodeMapping> }
-            ).blockCodeMap;
-            return {
-              code: normalizeArduinoGeneratedCode(generator.workspaceToCode(this.workspace)),
-              generator,
-              blockCodeMap: activeBlockCodeMap ? new Map(activeBlockCodeMap) : null,
-            };
-          },
-          projectDocument,
-        );
-        const { code, generator } = generated;
-        const blockCodeMap = generated.blockCodeMap ?? new Map<string, BlockCodeMapping>();
-        await writeArduinoGeneratedArtifacts(projectPath, generator);
-        this.blocklyService.publishGeneratedCode(code);
-        void this.projectDebugConfigurationService.updateWorkspaceGeneratedCode(
-          projectPath,
-          code,
-        );
-        // 发布 block-to-code 映射
-        if (generated.blockCodeMap) {
-          this.blocklyService.blockCodeMapSubject.next(blockCodeMap);
-          this.blocklyService.absBlockLineMap.next(new Map());
-        }
+        const workspace = this.workspace;
+        const force = this.forceNextCodeGeneration;
+        this.forceNextCodeGeneration = false;
+        const assertContext = () => {
+          if (this.destroy$.isStopped || projectPath !== this.projectService.currentProjectPath || workspace !== this.blocklyService.workspace) {
+            throw new Error('Blockly page changed before code publication.');
+          }
+        };
+        await this.blocklyService.runWithPreparedProjectCode(async (generated, assertCurrent) => {
+          assertContext();
+          await writePreparedArduinoGeneratedArtifacts(projectPath, generated.artifacts);
+          assertContext(); assertCurrent();
+          const code = generated.code;
+          this.blocklyService.publishGeneratedCode(code);
+          const blockCodeMap = new Map<string, BlockCodeMapping>(generated.blockCodeMapText ? JSON.parse(generated.blockCodeMapText) : []);
+          void this.projectDebugConfigurationService.updateWorkspaceGeneratedCode(
+            projectPath,
+            code,
+          );
+          // 发布 block-to-code 映射
+          if (generated.blockCodeMapText !== null) {
+            this.blocklyService.blockCodeMapSubject.next(blockCodeMap);
+          }
 
-        this.codeViewerIpcService.publishCodeState(
-          code,
-          blockCodeMap,
-          this.blocklyService.selectedBlockSubject.value,
-          this.blocklyService.selectedBlockIdsSubject.value,
-        );
+          this.codeViewerIpcService.publishCodeState(
+            code,
+            blockCodeMap,
+            this.blocklyService.selectedBlockSubject.value,
+            this.blocklyService.selectedBlockIdsSubject.value,
+          );
 
-        // Extract #include and #define, check for changes
-        const currentDependencies = this.extractDependencies(code);
-        if (currentDependencies !== this.previousDependencies) {
-          // console.log('currentDependencies: ', currentDependencies);
-          this.blocklyService.dependencySubject.next(currentDependencies);
-          this.previousDependencies = currentDependencies;
-        }
+          // Extract #include and #define, check for changes
+          const currentDependencies = this.extractDependencies(code);
+          if (currentDependencies !== this.previousDependencies) {
+            // console.log('currentDependencies: ', currentDependencies);
+            this.blocklyService.dependencySubject.next(currentDependencies);
+            this.previousDependencies = currentDependencies;
+          }
+        }, force);
       } catch (error) {
         console.error('Code generation error:', error);
         // 当代码生成失败时，输出更多诊断信息帮助定位缺失的生成器

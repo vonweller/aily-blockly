@@ -70,6 +70,11 @@ class ProjectDataRuntime {
     return this.store;
   }
 
+  /** Opaque identity only; consumers cannot access or retain a previous project's store. */
+  getSessionToken(): string | null {
+    return this.sessionId || null;
+  }
+
   private captureSession(operation: string): ProjectDataRuntimeSessionSnapshot {
     if (!this.store || !this.sessionId) {
       throw new ProjectDataError(

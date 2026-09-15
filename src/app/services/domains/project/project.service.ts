@@ -3,7 +3,6 @@ import { BehaviorSubject, Subject } from 'rxjs';
 import {
   AppDataResourceLockService,
   CmdService,
-  CrossPlatformCmdService,
   ElectronService,
   PlatformService,
 } from '@core/platform/public-api';
@@ -27,10 +26,10 @@ import { projectDataRuntime } from './project-data/project-data-runtime';
 import { assertNoOversizedInlineValues } from './project-data/project-data-policy';
 import { ProjectDataStore } from './project-data/project-data-store';
 import {
-  ensureExternalProjectDataDocument,
   ExternalProjectDataImportResult,
 } from './project-data/project-data-legacy-import';
-import { materializeGenericProjectDataValues } from './project-data/project-data-generic-values';
+import { normalizeProjectDataDocument } from './project-data/project-data-normalization';
+import { ProjectDataError } from './project-data/project-data.types';
 import {
   isBoardCompatibleWithProjectMode,
   normalizeProjectMode,
@@ -61,6 +60,7 @@ import {
 } from './project-root-path';
 import { detectProjectMode, getProjectApplicationName, type ProjectMode } from './project-mode';
 import { deriveProjectPackageName } from './project-package-name';
+import { ProjectBlockFieldUpdates, updateProjectBlockFields } from './project-block-field-updates';
 
 interface ProjectPackageData {
   name: string;
@@ -302,7 +302,6 @@ export class ProjectService {
   constructor(
     private electronService: ElectronService,
     private cmdService: CmdService,
-    private crossPlatformCmdService: CrossPlatformCmdService,
     private configService: ConfigService,
     private platformService: PlatformService,
     private translate: TranslateService,
@@ -607,7 +606,6 @@ export class ProjectService {
   async projectNew(newProjectData: NewProjectData, options: ProjectCreationOptions = {}): Promise<boolean> {
     try {
       await this.assertProjectCreationMode(options.templateDirectory === CODER_TEMPLATE_DIRECTORY ? 'coder' : 'blockly');
-      const separator = this.platformService.getPlatformSeparator();
       // console.log('newProjectData: ', newProjectData);
       const appDataPath = window['path'].getAppDataPath();
       const projectPath = this.buildProjectPath(newProjectData);
@@ -641,15 +639,14 @@ export class ProjectService {
       if (!window['fs'].existsSync(templatePath)) {
         throw new Error(`板卡模板目录不存在，可能是板卡包安装失败或模板缺失: ${templatePath}`);
       }
-      // 创建项目目录
-      await this.crossPlatformCmdService.createDirectory(projectPath, true);
       if (isCoderTemplate) {
+        window['fs'].mkdirSync(projectPath);
         copyCoderArduinoTemplate(templatePath, projectPath, window['path'], window['fs'], {
           useDefaultSource: coderTemplate?.useDefaultSource === true,
         });
       } else {
         // 复制 Blockly 模板文件到项目目录
-        await this.crossPlatformCmdService.copyItem(`${templatePath}${separator}*`, projectPath, true, true);
+        this.importProjectDirectory(templatePath, projectPath);
       }
 
       if (templateDirectory === 'template') {
@@ -679,12 +676,10 @@ export class ProjectService {
       const mode = this.getProjectMode(templatePath);
       if (!mode) throw new Error(this.translate.instant('PROJECT.MODE_UNKNOWN'));
       await this.assertProjectCreationMode(mode);
-      const separator = this.platformService.getPlatformSeparator();
       const projectPath = this.buildProjectPath(newProjectData);
 
       this.application.updateFooterState({ state: 'doing', text: this.translate.instant('PROJECT.CREATING_PROJECT') });
-      await this.crossPlatformCmdService.createDirectory(projectPath, true);
-      await this.crossPlatformCmdService.copyItem(`${templatePath}${separator}*`, projectPath, true, true);
+      this.importProjectDirectory(templatePath, projectPath);
 
       await this.initializeProjectDataSchema(projectPath);
       this.updateNewProjectPackageJson(projectPath, newProjectData, { removeCloudId: true });
@@ -696,24 +691,32 @@ export class ProjectService {
     }
   }
 
+  importProjectDirectory(source: string, destination: string, unwrapArchive = false): string {
+    if (typeof window['fs']?.importProjectDirectory !== 'function') {
+      throw new Error('项目导入需要更新后的 Electron 宿主，请完整重启应用');
+    }
+    return window['fs'].importProjectDirectory(source, destination, unwrapArchive);
+  }
+
   /**
    * Board, example, and cloud templates are source material for a new local
    * project. Known legacy inline payloads are migrated once at this copy
    * boundary.
    */
-  async initializeProjectDataSchema(projectPath: string): Promise<void> {
+  async initializeProjectDataSchema(projectPath: string, assertCurrent: () => void = () => {}, fieldUpdates?: ProjectBlockFieldUpdates): Promise<void> {
+    assertCurrent();
     const abiPath = window['path'].join(projectPath, 'project.abi');
-    if (!window['fs'].existsSync(abiPath)) return;
+    if (!window['fs'].existsSync(abiPath)) {
+      if (fieldUpdates && Object.keys(fieldUpdates).length) throw new ProjectDataError('missing', 'Field updates require project.abi.');
+      return;
+    }
     const originalContent = window['fs'].readFileSync(abiPath, 'utf8');
     const abi = JSON.parse(originalContent);
 
-    const store = new ProjectDataStore();
-    store.configure(projectPath);
-    const result = await ensureExternalProjectDataDocument(abi, store);
-    if (result.documentChanged) {
-      this.writeProjectAbiAtomically(abiPath, result.document);
-      this.logProjectDataMigration(projectPath, result);
-    }
+    const updated = fieldUpdates === undefined ? { document: abi, changed: false } : updateProjectBlockFields(abi, fieldUpdates);
+    const result = await normalizeProjectDataDocument({ projectPath, document: updated.document, sourceChanged: updated.changed, originalContent, materialize: false },
+      this.createProjectDataStore(projectPath), assertCurrent);
+    this.reportProjectDataNormalization(projectPath, result);
   }
 
   /**
@@ -725,27 +728,22 @@ export class ProjectService {
     projectPath: string,
     document: unknown,
     originalContent?: string,
+    assertCurrent: () => void = () => {},
   ): Promise<Record<string, unknown>> {
-    const store = projectDataRuntime.isConfigured()
-      && projectDataRuntime.getStore().getProjectPath() === projectPath
-      ? projectDataRuntime.getStore()
-      : this.createProjectDataStore(projectPath);
-    const result = await ensureExternalProjectDataDocument(document, store);
-    if (result.documentChanged && originalContent !== undefined) {
-      const abiPath = window['path'].join(projectPath, 'project.abi');
-      const backupPath = `${abiPath}.pre-project-data.bak`;
-      if (!window['fs'].existsSync(backupPath)) {
-        window['fs'].writeFileSync(backupPath, originalContent);
+    const session = projectDataRuntime.getSessionToken();
+    const currentPath = this.currentProjectPath;
+    const check = () => {
+      assertCurrent();
+      if (this.currentProjectPath !== currentPath || projectDataRuntime.getSessionToken() !== session) {
+        throw new ProjectDataError('cancelled', 'Project Data normalization was cancelled because the project session changed.');
       }
-      this.writeProjectAbiAtomically(abiPath, result.document);
-      this.logProjectDataMigration(projectPath, result);
-    }
-
-    const reader = projectDataRuntime.isConfigured()
-      && projectDataRuntime.getStore().getProjectPath() === projectPath
-      ? projectDataRuntime
-      : store;
-    return materializeGenericProjectDataValues(result.document, reader);
+    };
+    check();
+    // Bind one independent store to this path. Never reselect the global runtime after await.
+    const result = await normalizeProjectDataDocument({ projectPath, document, originalContent, materialize: true },
+      this.createProjectDataStore(projectPath), check);
+    this.reportProjectDataNormalization(projectPath, result);
+    return result.document;
   }
 
   private createProjectDataStore(projectPath: string): ProjectDataStore {
@@ -754,19 +752,10 @@ export class ProjectService {
     return store;
   }
 
-  private writeProjectAbiAtomically(
-    abiPath: string,
-    document: Record<string, unknown>,
-  ): void {
-    const tempPath = `${abiPath}.tmp`;
-    try {
-      window['fs'].writeFileSync(tempPath, JSON.stringify(document));
-      window['fs'].renameSync(tempPath, abiPath);
-    } finally {
-      if (window['fs'].existsSync(tempPath) && typeof window['fs'].unlinkSync === 'function') {
-        window['fs'].unlinkSync(tempPath);
-      }
-    }
+  private reportProjectDataNormalization(projectPath: string,
+    result: Awaited<ReturnType<typeof normalizeProjectDataDocument>>): void {
+    if (result.publication && result.migration.documentChanged) this.logProjectDataMigration(projectPath, result.migration);
+    for (const warning of result.publication?.warnings ?? []) console.warn('[ProjectData] Publication cleanup:', warning);
   }
 
   private logProjectDataMigration(
@@ -1161,24 +1150,37 @@ export class ProjectService {
       await this.saveCoderAs(sourceProjectPath, path);
       return;
     }
+    const session = projectDataRuntime.getSessionToken();
+    const assertCurrent = () => {
+      if (this.currentProjectPath !== sourceProjectPath || projectDataRuntime.getSessionToken() !== session) {
+        throw new Error('当前项目会话已切换，请重新执行另存为');
+      }
+    };
+    path = await this.resolveSaveAsTarget(sourceProjectPath, path);
+    assertCurrent();
     const saveResult = await this.save(sourceProjectPath);
+    assertCurrent();
     if (!saveResult.success) {
       throw new Error(saveResult.error || '保存当前项目失败，无法另存为');
     }
     await projectDataRuntime.flushPending();
-    const sourceAbi = JSON.parse(window['fs'].readFileSync(`${sourceProjectPath}/project.abi`, 'utf8'));
+    assertCurrent();
+    const store = projectDataRuntime.getStore();
+    const sourceContent = window['fs'].readFileSync(`${sourceProjectPath}/project.abi`, 'utf8');
+    const sourceAbi = JSON.parse(sourceContent);
     assertNoOversizedInlineValues(sourceAbi);
-    const validation = await projectDataRuntime.getStore().validateReferences(
-      projectDataRuntime.getStore().collectReferences(sourceAbi),
-    );
+    const validation = await store.validateReferences(store.collectReferences(sourceAbi));
+    assertCurrent();
     if (!validation.valid) {
       throw new Error(`项目数据资源不完整，无法另存为: ${validation.issues.map((issue) => issue.error).join('; ')}`);
     }
+    if (window['fs'].readFileSync(`${sourceProjectPath}/project.abi`, 'utf8') !== sourceContent) {
+      throw new Error('资源校验期间 project.abi 已被修改，请重新执行另存为');
+    }
     //在当前路径下创建一个新的目录
-    path = path.replace(/\s/g, '_');
     window['fs'].mkdirSync(path);
     // 复制项目目录到新路径
-    window['fs'].copySync(sourceProjectPath, path);
+    window['fs'].copyProjectDirectory(sourceProjectPath, path);
     // 修改package.json文件
     const packageJson = JSON.parse(window['fs'].readFileSync(`${path}/package.json`));
     // 另存为时去掉cloudId
@@ -1197,9 +1199,12 @@ export class ProjectService {
     this.addRecentlyProject({ name: this.currentPackageData.name, path: path, nickname: this.currentPackageData.nickname || this.currentPackageData.name });
   }
 
-  private async saveCoderAs(sourceProjectPath: string, targetPath: string): Promise<void> {
+  private async resolveSaveAsTarget(sourceProjectPath: string, targetPath: string): Promise<string> {
     const pathApi = window['path'];
     const fs = window['fs'];
+    if (typeof fs.copyProjectDirectory !== 'function') {
+      throw new Error('另存为需要更新后的 Electron 宿主，请完整重启应用');
+    }
     if (!targetPath || !pathApi.isAbsolute(targetPath)) {
       throw new Error('请选择有效的另存为路径');
     }
@@ -1219,6 +1224,16 @@ export class ProjectService {
       && relativeTarget !== '..' && !/^\.\.[/\\]/.test(relativeTarget))) {
       throw new Error('另存为位置不能位于当前项目内部，请选择其他目录');
     }
+    return targetProjectPath;
+  }
+
+  private async saveCoderAs(sourceProjectPath: string, targetPath: string): Promise<void> {
+    const pathApi = window['path'];
+    const fs = window['fs'];
+    const targetProjectPath = await this.resolveSaveAsTarget(sourceProjectPath, targetPath);
+    if (!this.isSameProjectPath(sourceProjectPath, this.currentProjectPath)) {
+      throw new Error('当前项目已切换，请重新执行另存为');
+    }
 
     // The embedded Workbench has a 10s save handshake; wait for disk persistence
     // before copying any source files, including dirty tabs and local libraries.
@@ -1234,7 +1249,7 @@ export class ProjectService {
     // existing folder, even if another operation created it while saving.
     await window['fsp'].mkdir(targetProjectPath);
     try {
-      fs.copySync(sourceProjectPath, targetProjectPath);
+      fs.copyProjectDirectory(sourceProjectPath, targetProjectPath);
       const packagePath = pathApi.join(targetProjectPath, 'package.json');
       const packageJson = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
       const name = pathApi.basename(targetProjectPath);

@@ -44,6 +44,36 @@
 - ProjectService 的宏写入可继续收敛为显式 projectPath API，以覆盖已经进入 `await` 的极端晚到 Promise。
 - checkpoint 方案若未来需要并发 project runtime 或可组合的单库卸载，再升级为 owner journal；当前不提前支付这部分复杂度。
 
+### 0.4 2026-09-14 补充：生成准备与保存边界
+
+ABS / ABI 主线第十七批沿用本方案的项目 iframe、active Generator、session 资源屏障与销毁顺序，不引入新 Realm，也不修改库。新增 `prepared-project-code.ts`：在编辑租约内完成异步资源准备，再以一次同步 `workspaceToCode` 捕获代码、头文件文本和代码映射；允许必要的同步模型注册，之后固定持久化 revision。异步等待期间的文档/上下文变化仍拒绝，不能靠放宽 revision 接受旧结果。
+
+保存只消费已准备输出；ABS 在生成后重新核对请求状态；防抖页面生成、Builder 与 Uploader 通过同一个队列/租约入口消费。生成缓存不再只依赖事件计数，使用完整文档 revision、workspace/page、Generator 实例/配置版本与 Project Data session。Runtime 的配置、库注册、库 i18n 更新推进配置版本，同实例配置变更也会使在途生成及缓存失效。
+
+详细实现、失败语义与真实工程证据见 [主执行方案第 31 节](D:/codes/aily-blockly/docs/abs-abi-lossless-sync-execution-plan.md)。这不将 iframe 提升为恶意库沙箱，也不宣称 `.h` 存在等价于 C++ 编译或硬件播放通过。
+
+### 0.5 2026-09-15 补充：声明式块的准备来源
+
+ABS / ABI 主线第二十批在 `BlocklyService.loadLibBlocks` 完成 i18n、boardConfig、静态路径和 Project Data 内存装饰并实际注册后，记录声明式 JSON 与注册对象/`init` 的对应关系。该目录属于项目 editor，reset 与原地 runtime rebuild 一起清空，不增加全局 Blockly 元数据缓存，也不另建 probe workspace 或 iframe。
+
+候选使用的声明在异步资源准备、实际装载和最终宿主 CAS 前仍需保持原注册来源；定义覆盖、源 JSON 改变或目录重建都会使快照失效。静态合同只覆盖可证明的字段/默认值/连接种类；包含 extension、mutator 或未知字段工厂的定义不能冒充静态合同。实际执行阶段仍受同一租约和完整读回保护，这不是恶意库沙箱，也不允许因为新块而忽略额外 serializer/model 状态。详细记录见 [ABS / ABI 主线第 34 节](D:/codes/aily-blockly/docs/abs-abi-lossless-sync-execution-plan.md)。
+
+### 0.6 2026-09-15 补充：宿主原生过程输入适配
+
+ABS 第二十四批为主程序打包的 legacy 调用提供 `blockly-bundled-procedure-generator.ts`。在既有项目 iframe 的 Generator 脚本加载完成后，针对注册身份仍为宿主实现的调用块包装当前 Generator handler；只读 block view 将库的 INPUT<n> 读取映射到实际 ARG<n>，不修改工作区、库脚本或另一项目的 Generator。保留原 handler 的变量/函数命名、返回类型及代码生成逻辑，不替换为新的代码生成算法。同名块定义被替换时不使用此适配，custom_function_* 不在本合同内。详细验收见 ABS 主执行方案第 38 节。
+
+### 0.7 2026-09-15 补充：自定义函数合同与派生状态
+
+ABS 第二十六批在既有 generator 加载边界，以规范化源码哈希及实际 mutator、调用定义、依赖函数和 extension 注册身份确认有类型函数协议。加载顺序保持 generator.js → block.json：前者验证脚本注册，后者继续由 editor 声明目录证明定义来源，不能在脚本执行时要求声明式定义已注册。异步摘要绑定原 runtime session；旧 session 完成时不能登记或销毁新实例。运行时结束清除所属合同，不增加 iframe，也不修改库包。
+
+ABS 的候选模型/签名准备保持纯数据变换，显式 FUNC/参数模型与工作区通过原事务一起提交。实际加载后及失败回滚后，仅从完整工作区重建该 Realm 内的 customFunctionRegistry 和定义名称缓存；不调用可能创建/删除模型、同步工具箱的库初始化函数。普通工程序列化和 ABS 既有实例采集前，再通过已审计定义的 serializer 准备查找表，覆盖延迟监听器清空注册表的时间窗；不读取调用 serializer 来推断定义，不等待完成事件。普通快照不推进未提交的函数名编辑缓存。派生注册表不能取代持久化状态和完整读回校验。源码更新或注册被覆盖须重新审核，不以版本名作为许可。详细验收见主执行方案第 40 节。
+
+### 0.8 2026-09-15 补充：普通声明模型准备
+
+普通变量声明复用既有 generator 加载/销毁边界登记模型效果，不增加 Realm、probe workspace 或库侧配置。`blockly-variable-declaration-contract.ts` 验证已加载源码摘要、实际 handler/依赖 helper 身份和捕获的入口类型；声明式目录另外证明 block.json 字段/连接与全局容器形状。当前覆盖普通 variable_define 的全局声明，C++ TYPE 与空 native model type 明确分离。已安装预览脚本与库主线仅有两个未使用 GORP 读取的差异，审计后分别绑定摘要，不按包名放行未知代码。
+
+`abs-declaration-intents.ts` 在 detached AST 已完成身份匹配后、引用绑定前复用原模型准备层；加载和生成只消费准备好的模型。前向引用与二次编辑可复用确定性身份，拼错引用不能新建模型；未知作用域、重复存储声明、模型冲突和隐式重命名拒绝。单次验证不执行库回调、不修改真实工作区；完整读回仍拒绝额外模型。所属 runtime 销毁时清理登记，旧异步摘要或旧 owner 不能注册/清除新 session。
+
 ## 目录
 
 - [1. 背景](#1-背景)

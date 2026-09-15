@@ -51,6 +51,7 @@ export async function loadAbsWorkspaceInChunks(
   abi: Record<string, any>,
   workspace: Blockly.WorkspaceSvg,
   onProgress?: (blocks: number, batches: number) => void,
+  assertCurrent: () => void = () => undefined,
 ): Promise<{ blockCount: number; batchCount: number }> {
   // appendInternal is exported by the bundled Blockly runtime. It preserves
   // parent-before-field loading and queues rendering instead of forcing it.
@@ -58,6 +59,7 @@ export async function loadAbsWorkspaceInChunks(
     throw new Error('当前 Blockly 运行时不支持 ABS 切片装载。');
   }
 
+  assertCurrent();
   const pending: PendingFragment[] = (abi['blocks']?.blocks || [])
     .map((state: BlockState) => ({ state }))
     .reverse();
@@ -69,8 +71,10 @@ export async function loadAbsWorkspaceInChunks(
   let blockCount = 0;
   let batchCount = 0;
   while (pending.length > 0) {
+    assertCurrent();
     let batchBlocks = 0;
     while (pending.length > 0 && batchBlocks < BLOCKS_PER_BATCH) {
+      assertCurrent();
       const item = pending.pop()!;
       const fragment = takeFragment(item.state, BLOCKS_PER_BATCH - batchBlocks);
       const parent = item.parent ? workspace.getBlockById(item.parent.id) : undefined;
@@ -98,5 +102,6 @@ export async function loadAbsWorkspaceInChunks(
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
   }
 
+  assertCurrent();
   return { blockCount, batchCount };
 }
