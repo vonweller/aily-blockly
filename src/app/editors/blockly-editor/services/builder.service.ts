@@ -214,11 +214,14 @@ export class _BuilderService {
   private async generateWorkspaceCodeForPreprocess(
     workspace: unknown,
     detail?: string,
+    forceGenerate = false,
   ): Promise<string> {
     // Code-generation events publish the exact workspace revision before they
     // trigger preprocessing. Reuse it to avoid generating the same workspace
     // synchronously again on the renderer thread.
-    const reusableCode = this.blocklyService.getReusableGeneratedCode();
+    const reusableCode = forceGenerate
+      ? null
+      : this.blocklyService.getReusableGeneratedCode();
     if (reusableCode !== null) {
       return reusableCode;
     }
@@ -1103,7 +1106,15 @@ export class _BuilderService {
     const tempPath = this.electronService.pathJoin(currentProjectPath, '.temp');
     
     // 生成代码
-    const code = await this.generateWorkspaceCodeForPreprocess(this.blocklyService.workspace, 'sync_preprocess');
+    // A synchronous preprocess is the build's recovery boundary. Generate from
+    // the live workspace even when a renderer cache claims to be current: a
+    // programmatic workspace replacement can intentionally suppress Blockly
+    // events, and older callers may therefore have left that cache stale.
+    const code = await this.generateWorkspaceCodeForPreprocess(
+      this.blocklyService.workspace,
+      'sync_preprocess',
+      true,
+    );
     this.lastCode = code; // 保存代码用于后续 hash 计算
 
     // 构建配置对象
