@@ -28,7 +28,6 @@
         "IMAGE_EXPORT_FAILED": "Falha ao exportar a imagem da área de trabalho",
         "DEBUG": "Depurar",
         "TERMINAL": "Terminal",
-        "TOOL_SERIAL": "Ferramenta serial",
         "MQTT_DEBUGGER": "MQTT Debugger",
         "NETWORK_DEBUGGER": "Network Debugger",
         "AI": "IA",
@@ -146,6 +145,7 @@
     "GUIDE": {
         "START": "Iniciar",
         "RECENTLY": "Recentes",
+        "UNMERGE_CODER_WORKSPACE": "Desagrupar espaço de trabalho multiprojeto",
         "USER_GROUP": "Comunidade de Usuários",
         "USER_GROUP_DESC": "Junte-se à comunidade para interagir com a equipe de desenvolvimento e outros usuários",
         "AI_APP_CENTER": "Centro de Aplicativos IA",
@@ -870,6 +870,16 @@
             "DONE": "Concluir"
         }
     },
+    "CODER_SUBAPP_INSTALL": {
+        "TITLE": "Preparando o Aily Coder Editor",
+        "INSTALLING": "Baixando e instalando o editor ({{percent}}%)",
+        "FAILED": "A instalação do editor não foi concluída. Verifique a rede e tente novamente.",
+        "RETRY": "Tentar instalar novamente",
+        "REINSTALL": "Reinstalar editor",
+        "REINSTALL_TITLE": "Reinstalar o Aily Coder Editor?",
+        "REINSTALL_HINT": "Isso fechará o serviço atual do editor e baixará um novo pacote. Salve primeiro os arquivos do projeto. Se houver uma instalação anterior, ela será restaurada em caso de falha.",
+        "REINSTALL_CONFIRM": "Reinstalar"
+    },
     "NPM": {
         "INSTALLING": "Instalando {{name}}...",
         "INSTALLING_DEPENDENCY": "Instalando dependência {{name}}...",
@@ -1012,12 +1022,21 @@
         }
     },
     "PLAYGROUND": {
+        "HOME": "Início",
         "LOADING_EXAMPLE": "Carregando exemplo...",
         "EXAMPLE_LOAD_SUCCESS": "Exemplo carregado com sucesso",
         "EXAMPLE_LOAD_FAILED": "Falha ao carregar o exemplo",
         "NO_TUTORIAL_PROVIDED": "O autor da biblioteca não forneceu um tutorial"
     },
     "PROJECT": {
+      "MODE_UNKNOWN": "Tipo de projeto desconhecido. Selecione um projeto válido do Aily Blockly ou Aily Coder.",
+      "MODE_CREATE_RESTRICTED": "O modo atual do {{application}} não pode criar este tipo de projeto. Use {{targetApplication}}.",
+      "MODE_MISMATCH_TITLE": "Modo do projeto incompatível",
+      "MODE_OPEN_OTHER": "Este projeto requer {{application}}, que já está instalado. Abrir em uma nova janela desse aplicativo? O projeto atual permanecerá inalterado.",
+      "MODE_DOWNLOAD_OTHER": "Este projeto requer {{application}}. Nenhuma instalação foi encontrada. Baixe e instale pelo site oficial.",
+      "MODE_OPEN_BUTTON": "Abrir com {{application}}",
+      "MODE_DOWNLOAD_BUTTON": "Baixar do site oficial",
+      "MODE_LAUNCH_FAILED": "Não foi possível iniciar {{application}}. Abra manualmente ou instale a versão mais recente pelo site oficial.",
         "CANNOT_OPEN_PROJECT": "Não é possível abrir o projeto: ",
         "CREATING_PROJECT": "Criando projeto...",
         "PROJECT_CREATED": "Projeto criado com sucesso",
@@ -1040,6 +1059,12 @@
         "LOCK_ACQUIRE_FAILED": "Could not acquire project lock. Please try again."
     },
     "LIBRARY_PUBLISH": {
+        "SUBMIT_FAILED": "Falha ao publicar: {{error}}",
+        "NETWORK_ERROR": "Falha na conexão de rede. Verifique a conexão e o estado do envio na central do usuário antes de tentar novamente.",
+        "SERVICE_ERROR": "O serviço está temporariamente indisponível. Verifique mais tarde o estado do envio na central do usuário.",
+        "GITHUB_AUTH_TIMEOUT": "O tempo de autorização do GitHub esgotou. Publique novamente e conclua a autorização.",
+        "LOCAL_SAVE_FAILED": "O envio foi aceito, mas os metadados locais não puderam ser salvos: {{error}}. Verifique os arquivos locais; não é necessário publicar novamente.",
+        "PACKAGE_NAME_UNAVAILABLE": "O nome da biblioteca {{name}} já é usado por outro usuário. Altere o nome antes de publicar.",
         "RELOAD_TITLE": "Recarregar projeto atual",
         "RELOAD_RENAMED": "A biblioteca local foi renomeada de {{previousName}} para {{nextName}}.",
         "RELOAD_UPDATED": "As informações da biblioteca local foram atualizadas.",

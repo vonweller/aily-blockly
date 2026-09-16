@@ -76,6 +76,7 @@ export class ConfigService {
   private persistedDataSnapshot: AppConfig | any | null = null;
   private configSaveQueue: Promise<void> = Promise.resolve();
   private mergedConfigIpcAvailable: boolean | null = null;
+  private runtimeBuildProduct: 'blockly' | 'coder' = 'blockly';
   
   // 测试用：模拟慢速加载（毫秒），设为0禁用
   private readonly SIMULATE_SLOW_LOADING = 0; // 改为2000可以看到loading效果
@@ -169,10 +170,32 @@ export class ConfigService {
   }
 
   isCoderEnabled(): boolean {
-    return this.data?.coder?.enabled === true;
+    return this.isCoderProduct() || this.data?.coder?.enabled === true;
+  }
+
+  /** 当前启动/构建产品是否为独立 Aily Coder；该状态不读写用户配置。 */
+  isCoderProduct(): boolean {
+    return this.runtimeBuildProduct === 'coder';
+  }
+
+  getApplicationName(): string {
+    return this.isCoderProduct() ? 'aily coder' : 'aily blockly';
+  }
+
+  getApplicationLogoSrc(theme: 'light' | 'dark' = 'dark'): string {
+    // Coder 共用透明字标，由显示位置按主题着色，避免两套字形偏移。
+    if (this.isCoderProduct()) return 'imgs/logo-coder.png';
+    return theme === 'light' ? 'imgs/logo-light.webp' : 'imgs/logo.webp';
+  }
+
+  getDefaultProjectImageSrc(): string {
+    return this.isCoderProduct() ? 'imgs/subject-coder.png' : 'imgs/subject.webp';
   }
 
   getDevelopmentModePreference(): DevelopmentModePreference {
+    if (this.isCoderProduct()) {
+      return 'coder';
+    }
     if (!this.isCoderEnabled()) {
       return 'blockly';
     }
@@ -184,6 +207,10 @@ export class ConfigService {
     source: DevelopmentModePreferenceSource = 'settings',
     options: { save?: boolean } = {},
   ): Promise<DevelopmentModePreference> {
+    if (this.isCoderProduct()) {
+      return 'coder';
+    }
+
     const normalized = this.isCoderEnabled()
       ? this.normalizeDevelopmentModePreference(preference)
       : 'blockly';
@@ -206,6 +233,20 @@ export class ConfigService {
     }
 
     return normalized;
+  }
+
+  async markDevelopmentModePreferencePrompted(options: { save?: boolean } = {}): Promise<void> {
+    this.data.developmentModePreferencePromptedAt = Date.now();
+    if (options.save !== false) {
+      await this.save();
+    }
+  }
+
+  shouldPromptDevelopmentModePreference(): boolean {
+    if (this.isCoderProduct() || !this.isCoderEnabled()) {
+      return false;
+    }
+    return !this.data?.developmentModePreferenceSource && !this.data?.developmentModePreferencePromptedAt;
   }
 
   getPreferredChatAgentRuntimeMode(): 'coder' | 'blockly' {
@@ -243,6 +284,9 @@ export class ConfigService {
 
     ipcRenderer.on('setting-changed', (_event: unknown, message: any) => {
       if (message?.action !== DEVELOPMENT_MODE_SETTING_CHANGED_ACTION) {
+        return;
+      }
+      if (this.isCoderProduct()) {
         return;
       }
 
@@ -307,6 +351,8 @@ export class ConfigService {
     const defaultData = this.data;
     const defaultRegions = defaultData?.regions || {};
     const userRegions = userConfData?.regions || {};
+    const defaultCoder = defaultData?.coder || {};
+    const userCoder = userConfData?.coder || {};
     const mergedRegions = Object.fromEntries(
       [...new Set([...Object.keys(defaultRegions), ...Object.keys(userRegions)])]
         .map((regionKey) => [
@@ -324,23 +370,27 @@ export class ConfigService {
         ...(defaultData?.linux || {}),
         ...(userConfData?.linux || {}),
       },
+      coder: {
+        ...defaultCoder,
+        ...userCoder,
+      },
       regions: mergedRegions,
     };
     this.data.selectedLanguage = normalizeLanguageCode(this.data.selectedLanguage);
-    this.data.developmentModePreference = this.isCoderEnabled()
-      ? this.normalizeDevelopmentModePreference(this.data.developmentModePreference)
-      : 'blockly';
     this.data.build_flavor = this.normalizeBuildFlavor(this.data.build_flavor);
     this.data.official_region = this.resolveOfficialRegionKey();
 
     // 使用主进程已确定的 region 与官方 region 覆盖配置
     if (this.electronService.isElectron) {
       try {
-        const [region, officialRegion, buildFlavor] = await Promise.all([
+        const [region, officialRegion, buildFlavor, buildProduct] = await Promise.all([
           this.electronService.electron.ipcRenderer.invoke('env-get', 'AILY_REGION'),
           this.electronService.electron.ipcRenderer.invoke('env-get', 'AILY_OFFICIAL_REGION'),
-          this.electronService.electron.ipcRenderer.invoke('env-get', 'AILY_BUILD_FLAVOR')
+          this.electronService.electron.ipcRenderer.invoke('env-get', 'AILY_BUILD_FLAVOR'),
+          this.electronService.electron.ipcRenderer.invoke('env-get', 'AILY_BUILD_PRODUCT'),
         ]);
+
+        this.runtimeBuildProduct = buildProduct === 'coder' ? 'coder' : 'blockly';
 
         this.data.build_flavor = this.normalizeBuildFlavor(buildFlavor || this.data.build_flavor);
         this.data.official_region = officialRegion || this.resolveOfficialRegionKey();
@@ -356,6 +406,10 @@ export class ConfigService {
       }
     } else {
       this.applyRegionRuntimeConfig(this.data.region || this.resolveOfficialRegionKey());
+    }
+
+    if (!this.isCoderProduct()) {
+      this.data.developmentModePreference = this.getDevelopmentModePreference();
     }
 
     await this.applyResourceSourceRuntimeSelection();
@@ -2120,11 +2174,23 @@ interface AppConfig {
     enabled?: boolean;
   };
 
-  /** 串口监视器快速发送列表 */
-  quickSendList?: Array<{ name: string, type: "signal" | "text" | "hex", data: string }>;
-
   /** 最近打开的项目列表 */
-  recentlyProjects?: Array<{ name: string, path: string, nickname?: string }>;
+  recentlyProjects?: Array<{
+    name: string;
+    path: string;
+    nickname?: string;
+    coderWorkspaceId?: string;
+    coderProjects?: Array<{ path: string; name: string }>;
+  }>;
+
+  /** Coder logical workspaces survive tab/project closure without moving source directories. */
+  coderWorkspaceGroups?: Array<{
+    id: string;
+    root: string;
+    name: string;
+    projects: Array<{ path: string; name: string }>;
+    activeProject: string;
+  }>;
 
   /** 当前选择的语言 */
   selectedLanguage?: string;
@@ -2144,19 +2210,4 @@ interface AppConfig {
   /** AI聊天当前自定义智能体目标 */
   aiChatCustomAgentTarget?: string;
 
-  /** 串口监视器配置 */
-  serialMonitor?: {
-    /** 上次选择的串口 */
-    port?: string;
-    /** 上次选择的波特率 */
-    baudRate?: string;
-    /** 数据位 */
-    dataBits?: string;
-    /** 停止位 */
-    stopBits?: string;
-    /** 校验位 */
-    parity?: string;
-    /** 流控制 */
-    flowControl?: string;
-  };
 }

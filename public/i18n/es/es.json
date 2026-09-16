@@ -28,7 +28,6 @@
         "IMAGE_EXPORT_FAILED": "No se pudo exportar la imagen del espacio de trabajo",
         "DEBUG": "Depurar",
         "TERMINAL": "Terminal",
-        "TOOL_SERIAL": "Herramienta Serial",
         "MQTT_DEBUGGER": "MQTT Debugger",
         "NETWORK_DEBUGGER": "Network Debugger",
         "AI": "IA",
@@ -146,6 +145,7 @@
     "GUIDE": {
         "START": "Inicio",
         "RECENTLY": "Reciente",
+        "UNMERGE_CODER_WORKSPACE": "Desagrupar espacio de trabajo multiproyecto",
         "USER_GROUP": "Comunidad de Usuarios",
         "USER_GROUP_DESC": "Únase a la comunidad para comunicarse con el equipo de desarrollo y otros usuarios",
         "AI_APP_CENTER": "Centro de Aplicaciones IA",
@@ -870,6 +870,16 @@
             "DONE": "Listo"
         }
     },
+    "CODER_SUBAPP_INSTALL": {
+        "TITLE": "Preparando Aily Coder Editor",
+        "INSTALLING": "Descargando e instalando el editor ({{percent}} %)",
+        "FAILED": "La instalación del editor no se completó. Comprueba la red e inténtalo de nuevo.",
+        "RETRY": "Reintentar instalación",
+        "REINSTALL": "Reinstalar editor",
+        "REINSTALL_TITLE": "¿Reinstalar Aily Coder Editor?",
+        "REINSTALL_HINT": "Esto cerrará el servicio del editor actual y descargará un paquete nuevo. Guarda primero los archivos del proyecto. Si falla, se restaurará cualquier instalación existente.",
+        "REINSTALL_CONFIRM": "Reinstalar"
+    },
     "NPM": {
         "INSTALLING": "Instalando {{name}}...",
         "INSTALLING_DEPENDENCY": "Instalando dependencia {{name}}...",
@@ -1012,12 +1022,21 @@
         }
     },
     "PLAYGROUND": {
+        "HOME": "Inicio",
         "LOADING_EXAMPLE": "Cargando ejemplo...",
         "EXAMPLE_LOAD_SUCCESS": "Ejemplo cargado correctamente",
         "EXAMPLE_LOAD_FAILED": "Error al cargar el ejemplo",
         "NO_TUTORIAL_PROVIDED": "El autor de la biblioteca no proporcionó un tutorial"
     },
     "PROJECT": {
+      "MODE_UNKNOWN": "Tipo de proyecto desconocido. Seleccione un proyecto válido de Aily Blockly o Aily Coder.",
+      "MODE_CREATE_RESTRICTED": "El modo actual de {{application}} no puede crear este tipo de proyecto. Utilice {{targetApplication}}.",
+      "MODE_MISMATCH_TITLE": "El modo del proyecto no coincide",
+      "MODE_OPEN_OTHER": "Este proyecto requiere {{application}}, que ya está instalado. ¿Abrirlo en una nueva ventana de esa aplicación? El proyecto actual no cambiará.",
+      "MODE_DOWNLOAD_OTHER": "Este proyecto requiere {{application}}. No se encontró una instalación. Descárguelo e instálelo desde el sitio web oficial.",
+      "MODE_OPEN_BUTTON": "Abrir con {{application}}",
+      "MODE_DOWNLOAD_BUTTON": "Descargar del sitio web oficial",
+      "MODE_LAUNCH_FAILED": "No se pudo iniciar {{application}}. Ábralo manualmente o instale la última versión desde el sitio web oficial.",
         "CANNOT_OPEN_PROJECT": "No se puede abrir el proyecto: ",
         "CREATING_PROJECT": "Creando proyecto...",
         "PROJECT_CREATED": "Proyecto creado correctamente",
@@ -1040,6 +1059,12 @@
         "LOCK_ACQUIRE_FAILED": "Could not acquire project lock. Please try again."
     },
     "LIBRARY_PUBLISH": {
+        "SUBMIT_FAILED": "Error al publicar: {{error}}",
+        "NETWORK_ERROR": "Error de conexión. Comprueba la conexión y el estado del envío en el centro de usuario antes de reintentarlo.",
+        "SERVICE_ERROR": "El servicio no está disponible temporalmente. Comprueba más tarde el estado del envío en el centro de usuario.",
+        "GITHUB_AUTH_TIMEOUT": "La autorización de GitHub ha agotado el tiempo de espera. Vuelve a publicar y completa la autorización.",
+        "LOCAL_SAVE_FAILED": "El envío se ha aceptado, pero no se pudieron guardar los metadatos locales: {{error}}. Revisa los archivos locales; no es necesario volver a publicar.",
+        "PACKAGE_NAME_UNAVAILABLE": "Otro usuario ya utiliza el nombre de biblioteca {{name}}. Cambia el nombre antes de publicar.",
         "RELOAD_TITLE": "Recargar proyecto actual",
         "RELOAD_RENAMED": "La biblioteca local cambió de nombre de {{previousName}} a {{nextName}}.",
         "RELOAD_UPDATED": "La información de la biblioteca local se ha actualizado.",

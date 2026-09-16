@@ -13,7 +13,8 @@ import {
   TOOLBAR_APP_IDS_CONFIG_KEY
 } from './app-store.config';
 import {
-  getChildToolDefaultToolbarAppIds
+  getChildToolDefaultToolbarAppIds,
+  isAppAvailableForApplication,
 } from '../../configs/tool.config';
 import { ConfigService } from '@core/preferences/public-api';
 import { SubappManagerService } from '@integration/subapps/public-api';
@@ -23,6 +24,8 @@ export interface AppVisibilityContext {
   boardCore?: string;
   isDevMode?: boolean;
 }
+
+export { isAppAvailableForApplication } from '../../configs/tool.config';
 
 @Injectable({
   providedIn: 'root'
@@ -156,6 +159,10 @@ export class AppStoreService {
     }
 
     if (app.dev && !context.isDevMode) {
+      return false;
+    }
+
+    if (!isAppAvailableForApplication(app.only, this.configService.getApplicationName())) {
       return false;
     }
 

@@ -1,4 +1,10 @@
 {
+  "CODER_TABS": {
+    "PROJECTS": "專案",
+    "CLOSE": "關閉專案",
+    "BUILDING": "正在編譯",
+    "UPLOADING": "正在上傳"
+  },
     "CLOUD_SPACE_ERRORS": {
         "PUBLISH_FAILED": "專案公開失敗",
         "WORKSPACE_PROJECT_NOT_FOUND": "專案不存在",
@@ -10,6 +16,7 @@
         "MENU": "選單",
         "PROJECT_NEW": "新建專案",
         "PROJECT_OPEN": "開啟專案",
+        "PROJECT_ADD": "新增專案工程",
         "RECENT_PROJECTS": "最近的專案",
         "RECENT_PROJECTS_EMPTY": "暫無最近開啟的專案",
         "PROJECT_SAVE": "儲存專案",
@@ -28,7 +35,6 @@
         "IMAGE_EXPORT_FAILED": "匯出工作區圖片失敗",
         "DEBUG": "偵錯",
         "TERMINAL": "終端",
-        "TOOL_SERIAL": "串口工具",
         "MQTT_DEBUGGER": "MQTT調試器",
         "NETWORK_DEBUGGER": "網絡調試器",
         "AI": "AI",
@@ -148,6 +154,7 @@
     "GUIDE": {
         "START": "開始",
         "RECENTLY": "最近",
+        "UNMERGE_CODER_WORKSPACE": "解除多工程合併",
         "USER_GROUP": "用戶社區",
         "USER_GROUP_DESC": "加入社區，與開發團隊和其他用戶交流",
         "AI_APP_CENTER": "AI應用中心",
@@ -1089,12 +1096,21 @@
         }
     },
     "PLAYGROUND": {
+        "HOME": "返回主頁",
         "LOADING_EXAMPLE": "正在載入範例...",
         "EXAMPLE_LOAD_SUCCESS": "範例載入完成",
         "EXAMPLE_LOAD_FAILED": "範例載入失敗",
         "NO_TUTORIAL_PROVIDED": "庫作者未提供教程"
     },
     "PROJECT": {
+      "MODE_UNKNOWN": "無法識別專案類型，請選擇有效的 Aily Blockly 或 Aily Coder 專案。",
+      "MODE_CREATE_RESTRICTED": "目前 {{application}} 模式無法建立此類專案，請使用 {{targetApplication}} 建立。",
+      "MODE_MISMATCH_TITLE": "專案模式不符",
+      "MODE_OPEN_OTHER": "此專案需要使用 {{application}} 開啟。已偵測到安裝，是否在該軟件的新視窗中開啟？目前專案將保持不變。",
+      "MODE_DOWNLOAD_OTHER": "此專案需要使用 {{application}} 開啟。未偵測到安裝，請前往官網下載並安裝後開啟此專案。",
+      "MODE_OPEN_BUTTON": "使用 {{application}} 開啟",
+      "MODE_DOWNLOAD_BUTTON": "前往官網下載",
+      "MODE_LAUNCH_FAILED": "無法啟動 {{application}}，請手動開啟該軟件，或從官網下載並安裝最新版本。",
         "CANNOT_OPEN_PROJECT": "無法開啟專案: ",
         "CREATING_PROJECT": "正在建立專案...",
         "PROJECT_CREATED": "專案建立成功",
@@ -1124,6 +1140,12 @@
         "CANCEL": "取消"
     },
     "LIBRARY_PUBLISH": {
+        "SUBMIT_FAILED": "發佈失敗：{{error}}",
+        "NETWORK_ERROR": "網絡連線失敗，請檢查網絡，並到用戶中心確認提交狀態後再重試。",
+        "SERVICE_ERROR": "服務暫時無法使用，請稍後到用戶中心確認提交狀態。",
+        "GITHUB_AUTH_TIMEOUT": "GitHub 授權等待逾時，請重新發佈並完成授權。",
+        "LOCAL_SAVE_FAILED": "庫提交已受理，但本地資訊儲存失敗：{{error}}。請檢查本地檔案，無需重複發佈。",
+        "PACKAGE_NAME_UNAVAILABLE": "庫名 {{name}} 已被其他用戶發佈或佔用，請修改庫名後再發佈。",
         "RELOAD_TITLE": "重新載入目前專案",
         "RELOAD_RENAMED": "本地庫已從 {{previousName}} 重新命名為 {{nextName}}。",
         "RELOAD_UPDATED": "本地庫資訊已更新。",
@@ -1292,6 +1314,16 @@
         "FAILED": "無法開啟程式碼工作區",
         "TIMEOUT": "程式碼工作區啟動逾時，請重試",
         "RETRY": "重新嘗試"
+    },
+    "CODER_SUBAPP_INSTALL": {
+        "TITLE": "正在準備 Aily Coder Editor",
+        "INSTALLING": "正在下載並安裝編輯器（{{percent}}%）",
+        "FAILED": "編輯器安裝未完成，請檢查網絡後重試。",
+        "RETRY": "重試安裝",
+        "REINSTALL": "重新安裝編輯器",
+        "REINSTALL_TITLE": "重新安裝 Aily Coder Editor？",
+        "REINSTALL_HINT": "這會關閉目前的編輯器服務並重新下載安裝套件。請先確認專案檔案已儲存；若存在舊安裝，安裝失敗時會自動還原。",
+        "REINSTALL_CONFIRM": "重新安裝"
     },
     "AILYCODE_NEW_DIALOG": {
         "TITLE": "新建 Aily Code 專案",

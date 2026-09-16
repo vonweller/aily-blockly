@@ -8,7 +8,6 @@ import { NzTabsModule } from 'ng-zorro-antd/tabs';
 import { TerminalComponent } from '../tools/terminal/terminal.component';
 import { LogComponent } from '../tools/log/log.component';
 import { UiService, UpdateService, OnboardingService } from '@core/app-shell/public-api';
-import { SerialMonitorComponent } from '../tools/serial-monitor/serial-monitor.component';
 import { ChildToolHostComponent } from '../tools/child-tool-host/child-tool-host.component';
 import { CodeViewerComponent } from '../editors/blockly-editor/tools/code-viewer/code-viewer.component';
 import { ProjectService } from '@domain/project/public-api';
@@ -19,7 +18,7 @@ import { AppStoreService } from '../tools/app-store/app-store.service';
 import { NzModalModule, NzModalRef, NzModalService } from 'ng-zorro-antd/modal';
 import { NpmService } from '@domain/dependencies/public-api';
 import { NavigationEnd, Router, RouterModule } from '@angular/router';
-import { distinctUntilChanged, filter, merge, Subscription, take } from 'rxjs';
+import { combineLatest, distinctUntilChanged, filter, merge, Subscription, take } from 'rxjs';
 import { ConfigService, ToolI18nService } from '@core/preferences/public-api';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { CloudSpaceComponent } from '../tools/cloud-space/cloud-space.component';
@@ -47,6 +46,7 @@ import { LoginComponent } from '../components/login/login.component';
 import { LibManagerToolComponent } from '../tools/lib-manager-tool/lib-manager-tool.component';
 import { SimulatorSubappHostComponent } from '../tools/simulator/simulator-subapp-host.component';
 import { buildChildAuthStateSnapshot } from '../tools/child-tool-host/child-auth-state';
+import { CoderSubappInstallNoticeComponent } from '../components/coder-subapp-install-notice/coder-subapp-install-notice.component';
 
 const RIGHT_SIDER_WIDTH_STORAGE_KEY = 'aily-main-window.right-sider-width';
 const RIGHT_SIDER_DEFAULT_WIDTH = 450;
@@ -64,7 +64,6 @@ const RIGHT_SIDER_MAX_WIDTH = 800;
     NzTabsModule,
     TerminalComponent,
     LogComponent,
-    SerialMonitorComponent,
     ChildToolHostComponent,
     CodeViewerComponent,
     SimplebarAngularModule,
@@ -78,6 +77,7 @@ const RIGHT_SIDER_MAX_WIDTH = 800;
     TranslateModule,
     LibManagerToolComponent,
     SimulatorSubappHostComponent,
+    CoderSubappInstallNoticeComponent,
   ],
   templateUrl: './main-window.component.html',
   styleUrl: './main-window.component.scss',
@@ -96,7 +96,9 @@ export class MainWindowComponent implements OnDestroy {
   }
 
   get openToolList() {
-    return this.uiService.openToolList;
+    // Focus changes the z-index, not DOM order: moving an iframe reloads its document
+    // and invalidates in-flight child lifecycle calls (including prepareUpdate).
+    return [...this.uiService.openToolList].sort();
   }
 
   isChildTool(toolId: string): boolean {
@@ -177,9 +179,13 @@ export class MainWindowComponent implements OnDestroy {
     ]);
     this.uiService.init();
     this.projectService.init();
-    this.projectContextSubscription = this.projectService.currentProjectPath$.subscribe(workspace => {
+    this.projectContextSubscription = combineLatest([
+      this.projectService.currentProjectPath$,
+      this.projectService.coderWorkspace$,
+    ]).subscribe(([workspace, coderWorkspace]) => {
       window['ipcRenderer']?.send?.('host-project-context-changed', {
-        workspace: workspace || null
+        workspace: workspace || null,
+        coderWorkspace,
       });
     });
     this.updateService.init();

@@ -8,7 +8,6 @@ import {
   PlatformService,
 } from '@core/platform/public-api';
 import { NzMessageService } from 'ng-zorro-antd/message';
-import { pinyin } from "pinyin-pro";
 import { Router } from '@angular/router';
 import { generateDateString } from '../../../func/func';
 import { ConfigService } from '@core/preferences/public-api';
@@ -60,6 +59,8 @@ import {
   PROJECT_ROOT_PATH_SETTING_CHANGED_ACTION,
   resolveConfiguredProjectRootPath,
 } from './project-root-path';
+import { detectProjectMode, getProjectApplicationName, type ProjectMode } from './project-mode';
+import { deriveProjectPackageName } from './project-package-name';
 
 interface ProjectPackageData {
   name: string;
@@ -89,6 +90,24 @@ export interface ProjectActivationEvent {
   previousPath: string;
   reason: ProjectActivationReason;
   sessionResource?: string | null;
+}
+
+export interface CoderProjectOperation {
+  projectPath: string;
+  kind: 'build' | 'upload';
+}
+
+export interface CoderProjectTab {
+  path: string;
+  name: string;
+}
+
+export interface CoderWorkspaceContext {
+  id: string;
+  root: string;
+  name: string;
+  projects: CoderProjectTab[];
+  activeProject: string;
 }
 
 interface ProjectOpenOptions {
@@ -126,6 +145,375 @@ export class ProjectService {
   private currentProjectPathSubject = new BehaviorSubject<string>('');
   currentProjectPath$ = this.currentProjectPathSubject.asObservable();
 
+  private readonly coderOperations = new Map<symbol, CoderProjectOperation>();
+  readonly coderOperationSubject = new BehaviorSubject<CoderProjectOperation | null>(null);
+
+  readonly coderOperationsSubject = new BehaviorSubject<ReadonlyMap<string, CoderProjectOperation>>(new Map());
+  readonly isCoderProjectContext = false;
+  private readonly coderProjectContexts = new Map<string, ProjectService>();
+
+  /** Each open iframe and executor keeps a stable project context across tab changes. */
+  getCoderProjectContext(path: string): ProjectService {
+    const key = this.normalizeProjectPath(path);
+    const existing = this.coderProjectContexts.get(key);
+    if (existing) return existing;
+    if (this.getProjectMode(path) !== 'coder') throw new Error('请选择 Coder 工程文件夹');
+    const context: ProjectService = Object.assign(Object.create(ProjectService.prototype), this);
+    Object.assign(context, {
+      isCoderProjectContext: true,
+      currentProjectPathSubject: new BehaviorSubject(path),
+      currentPackageData: JSON.parse(this.electronService.readFile(window['path'].join(path, 'package.json'))),
+      currentBoardConfig: undefined,
+      currentBoardPinConfig: { board: null, variant: null, variant_h: null },
+      stateSubject: new BehaviorSubject('loaded'),
+      boardChangeSubject: new Subject<void>(),
+      boardConfigUpdatedSubject: new Subject<any>(),
+      projectOpenTask: null,
+    });
+    context.currentProjectPath$ = context.currentProjectPathSubject.asObservable();
+    context.projectOpen = this.projectOpen.bind(this);
+    context.beginCoderOperation = this.beginCoderOperation.bind(this);
+    context.syncCurrentBoardConfig = async () => {
+      try {
+        context.currentBoardConfig = await context.getBoardJson();
+        context.boardConfigUpdatedSubject.next(context.currentBoardConfig);
+        return true;
+      } catch { return false; }
+    };
+    const project = path;
+    context.stateSubject.subscribe(() => {
+      if (this.isSameProjectPath(this.currentProjectPath, project)) this.publishCoderProjectContext(context);
+    });
+    context.boardConfigUpdatedSubject.subscribe(() => {
+      if (this.isSameProjectPath(this.currentProjectPath, project)) {
+        this.publishCoderProjectContext(context);
+        this.boardConfigUpdatedSubject.next(context.currentBoardConfig);
+      }
+    });
+    this.coderProjectContexts.set(key, context);
+    return context;
+  }
+
+  private publishCoderProjectContext(context: ProjectService): void {
+    this.currentPackageData = context.currentPackageData;
+    this.currentBoardConfig = context.currentBoardConfig;
+    this.currentBoardPinConfig = context.currentBoardPinConfig;
+    window['boardConfig'] = context.currentBoardConfig;
+    this.stateSubject.next(context.stateSubject.value);
+  }
+
+  beginCoderOperation(kind: CoderProjectOperation['kind'], projectPath = this.currentProjectPath): () => void {
+    if (!this.isAilyCodeProject(projectPath)) return () => {};
+    const id = Symbol(kind);
+    this.coderOperations.set(id, { kind, projectPath });
+    this.publishCoderOperations();
+    return () => {
+      this.coderOperations.delete(id);
+      this.publishCoderOperations();
+    };
+  }
+
+  private publishCoderOperations(): void {
+    const operations = new Map<string, CoderProjectOperation>();
+    for (const operation of this.coderOperations.values()) operations.set(this.normalizeProjectPath(operation.projectPath), operation);
+    this.coderOperationsSubject.next(operations);
+    this.coderOperationSubject.next(operations.get(this.normalizeProjectPath(this.currentProjectPath)) || null);
+  }
+
+  getCoderOperation(path: string): CoderProjectOperation | null {
+    return this.coderOperationsSubject.value.get(this.normalizeProjectPath(path)) || null;
+  }
+
+  private readonly coderProjectsSubject = new BehaviorSubject<readonly CoderProjectTab[]>([]);
+  readonly coderProjects$ = this.coderProjectsSubject.asObservable();
+  private readonly coderWorkspaceSubject = new BehaviorSubject<CoderWorkspaceContext | null>(null);
+  readonly coderWorkspace$ = this.coderWorkspaceSubject.asObservable();
+
+  get coderProjects(): readonly CoderProjectTab[] {
+    return this.coderProjectsSubject.value;
+  }
+
+  get coderWorkspace(): CoderWorkspaceContext | null {
+    return this.coderWorkspaceSubject.value;
+  }
+
+  private registerCoderProject(path: string): void {
+    if (!this.coderProjects.some(folder => this.isSameProjectPath(folder.path, path))) {
+      this.coderProjectsSubject.next([...this.coderProjects, this.coderProjectTab(path)]);
+      this.publishCoderProjects();
+    }
+    if (!this.isCoderProjectContext) this.associateCoderProject(path);
+  }
+
+  /** Open projects become host tabs. Each editor iframe receives only its own project root. */
+  async addCoderProject(candidate: string): Promise<void> {
+    if (this.getProjectMode(this.currentProjectPath) !== 'coder') throw new Error('请先打开 Coder 工程');
+    const path = window['path'].resolve(candidate);
+    if (!window['fs'].isDirectory(path)) throw new Error(`文件夹不存在: ${path}`);
+    if (this.getProjectMode(path) !== 'coder') throw new Error('请选择 Coder 工程文件夹');
+    if (this.coderProjects.some(folder => this.isSameProjectPath(folder.path, path))) return;
+    if (window['projectLock']) {
+      const result = await window['projectLock'].tryAcquire(path);
+      if (!result.ok) throw new Error(`工程已被其他窗口占用: ${path}`);
+    }
+    this.registerCoderProject(path);
+    await this.restoreCoderWorkspaceTabs(path);
+  }
+
+  private publishCoderProjects(): void {
+    window['ipcRenderer']?.send?.('cli-bridge:coder-projects', this.coderProjects.map(project => project.path));
+  }
+
+  private coderProjectTab(path: string): CoderProjectTab {
+    return { path, name: path.replace(/\\/g, '/').split('/').filter(Boolean).pop() || path };
+  }
+
+  private storedCoderWorkspaces(): CoderWorkspaceContext[] {
+    const value = this.configService?.data?.coderWorkspaceGroups;
+    if (!Array.isArray(value)) return [];
+    return value.flatMap((candidate: unknown) => {
+      if (!candidate || typeof candidate !== 'object') return [];
+      const group = candidate as Partial<CoderWorkspaceContext>;
+      const projects = Array.isArray(group.projects)
+        ? group.projects.flatMap(project => typeof project?.path === 'string' && project.path
+          ? [this.coderProjectTab(project.path)]
+          : [])
+        : [];
+      if (typeof group.id !== 'string' || typeof group.root !== 'string' || projects.length < 2) return [];
+      return [{
+        id: group.id,
+        root: group.root,
+        name: typeof group.name === 'string' && group.name ? group.name : `${this.coderProjectTab(group.root).name} 工作区`,
+        projects,
+        activeProject: group.root,
+      }];
+    });
+  }
+
+  private storedCoderWorkspaceFor(path: string): CoderWorkspaceContext | null {
+    return this.storedCoderWorkspaces().find(group =>
+      group.projects.some(project => this.isSameProjectPath(project.path, path))) || null;
+  }
+
+  private associateCoderProject(path: string): void {
+    const current = this.currentProjectPath;
+    const currentGroup = current ? this.storedCoderWorkspaceFor(current) : null;
+    const candidateGroup = this.storedCoderWorkspaceFor(path);
+    const currentStartsGroup = Boolean(
+      current &&
+      !currentGroup &&
+      !this.isSameProjectPath(current, path) &&
+      this.getProjectMode(current) === 'coder'
+    );
+    // Keep the current workspace identity stable so its active/legacy session
+    // remains addressable when another persisted group is merged into it.
+    const existing = currentGroup || candidateGroup;
+    const shouldCreate = existing || (
+      current &&
+      !this.isSameProjectPath(current, path) &&
+      this.getProjectMode(current) === 'coder'
+    );
+    if (!shouldCreate) {
+      this.publishCoderWorkspaceContext();
+      return;
+    }
+
+    const root = currentGroup?.root || (currentStartsGroup ? current : candidateGroup?.root || current);
+    const candidates = [
+      this.coderProjectTab(root),
+      ...(currentGroup?.projects || []),
+      ...(candidateGroup?.projects || []),
+      ...(existing?.projects || []),
+      ...this.coderProjects,
+      this.coderProjectTab(path),
+    ];
+    const projects: CoderProjectTab[] = [];
+    for (const project of candidates) {
+      if (!projects.some(item => this.isSameProjectPath(item.path, project.path))) projects.push(this.coderProjectTab(project.path));
+    }
+    if (projects.length < 2) {
+      this.publishCoderWorkspaceContext();
+      return;
+    }
+
+    const inheritedIdentity = currentStartsGroup ? null : existing;
+    const group: CoderWorkspaceContext = {
+      id: inheritedIdentity?.id || `coder-workspace:${encodeURIComponent(this.normalizeProjectPath(root))}`,
+      root,
+      name: inheritedIdentity?.name || `${this.coderProjectTab(root).name} 工作区`,
+      projects,
+      activeProject: this.currentProjectPath || path,
+    };
+    const mergedProjectPaths = new Set(projects.map(project => this.normalizeProjectPath(project.path)));
+    const groups = this.storedCoderWorkspaces().filter(candidate =>
+      candidate.id !== group.id &&
+      !candidate.projects.some(project => mergedProjectPaths.has(this.normalizeProjectPath(project.path))));
+    this.configService.data.coderWorkspaceGroups = [...groups, group];
+    this.configService.save();
+    this.persistCoderWorkspaceRecent(group);
+    this.publishCoderWorkspaceContext(group);
+  }
+
+  private persistCoderWorkspaceRecent(group: CoderWorkspaceContext): void {
+    const memberPaths = new Set(group.projects.map(project => this.normalizeProjectPath(project.path)));
+    const recents = this.collapseCoderWorkspaceRecents(
+      this.configService.data?.recentlyProjects || [],
+    ).filter((project: RecentProject) =>
+      !memberPaths.has(this.normalizeProjectPath(project.path)));
+    this.configService.data.recentlyProjects = addRecentProject(recents, this.coderWorkspaceRecent(group));
+    this.recentProjectsCache = null;
+    this.configService.save();
+  }
+
+  private coderWorkspaceRecent(group: CoderWorkspaceContext): RecentProject {
+    return {
+      name: this.coderProjectTab(group.root).name,
+      nickname: `${group.name} (${group.projects.length} 个工程)`,
+      path: group.root,
+      coderWorkspaceId: group.id,
+      coderProjects: group.projects.map(project => ({ ...project })),
+    };
+  }
+
+  /**
+   * Async Coder iframe loads may write a plain member recent after the host has
+   * already persisted its workspace group. Collapse those late writes back to
+   * one workspace entry while preserving the newest member's list position.
+   */
+  private collapseCoderWorkspaceRecents(source: readonly RecentProject[]): RecentProject[] {
+    let recents = [...source];
+    for (const group of this.storedCoderWorkspaces()) {
+      const memberPaths = new Set(group.projects.map(project => this.normalizeProjectPath(project.path)));
+      const indexes = recents.flatMap((project, index) =>
+        project.coderWorkspaceId === group.id || memberPaths.has(this.normalizeProjectPath(project.path))
+          ? [index]
+          : []);
+      if (indexes.length === 0) continue;
+
+      const insertAt = Math.min(...indexes);
+      recents = recents.filter(project =>
+        project.coderWorkspaceId !== group.id &&
+        !memberPaths.has(this.normalizeProjectPath(project.path)));
+      recents.splice(insertAt, 0, this.coderWorkspaceRecent(group));
+    }
+    return recents;
+  }
+
+  private recentProjectListsEqual(left: readonly RecentProject[], right: readonly RecentProject[]): boolean {
+    return JSON.stringify(left) === JSON.stringify(right);
+  }
+
+  private persistIndependentCoderProjects(
+    projects: readonly CoderProjectTab[],
+    workspaceId?: string,
+  ): void {
+    const memberPaths = new Set(projects.map(project => this.normalizeProjectPath(project.path)));
+    let recents = this.collapseCoderWorkspaceRecents(
+      this.configService.data?.recentlyProjects || [],
+    ).filter((project: RecentProject) =>
+      project.coderWorkspaceId !== workspaceId &&
+      !memberPaths.has(this.normalizeProjectPath(project.path)));
+    for (const project of [...projects].reverse()) {
+      recents = addRecentProject(recents, {
+        name: project.name || this.coderProjectTab(project.path).name,
+        path: project.path,
+      });
+    }
+    this.configService.data.recentlyProjects = recents;
+    this.recentProjectsCache = null;
+    this.configService.save();
+  }
+
+  /** Dissolve only the host-side workspace group. Existing AI session associations are append-only and remain intact. */
+  unmergeCoderWorkspace(data: { workspaceId?: string; path?: string }): boolean {
+    const workspaceId = String(data?.workspaceId || '').trim();
+    const projectPath = String(data?.path || '').trim();
+    const group = this.storedCoderWorkspaces().find(candidate =>
+      (workspaceId && candidate.id === workspaceId) ||
+      (projectPath && candidate.projects.some(project => this.isSameProjectPath(project.path, projectPath))));
+    if (!group) return false;
+
+    this.configService.data.coderWorkspaceGroups = this.storedCoderWorkspaces()
+      .filter(candidate => candidate.id !== group.id);
+    this.persistIndependentCoderProjects(group.projects, group.id);
+    this.publishCoderWorkspaceContext();
+    return true;
+  }
+
+  private detachCoderProjectFromWorkspace(group: CoderWorkspaceContext, path: string): void {
+    const removed = group.projects.find(project => this.isSameProjectPath(project.path, path));
+    if (!removed) return;
+
+    const remaining = group.projects.filter(project => !this.isSameProjectPath(project.path, path));
+    const otherGroups = this.storedCoderWorkspaces().filter(candidate => candidate.id !== group.id);
+    this.configService.data.coderWorkspaceGroups = otherGroups;
+
+    if (remaining.length < 2) {
+      this.persistIndependentCoderProjects([...remaining, removed], group.id);
+      this.publishCoderWorkspaceContext();
+      return;
+    }
+
+    const root = remaining.some(project => this.isSameProjectPath(project.path, group.root))
+      ? group.root
+      : remaining[0].path;
+    const updated: CoderWorkspaceContext = {
+      ...group,
+      root,
+      name: this.isSameProjectPath(root, group.root)
+        ? group.name
+        : `${this.coderProjectTab(root).name} 工作区`,
+      projects: remaining.map(project => ({ ...project })),
+      activeProject: this.currentProjectPath,
+    };
+    this.configService.data.coderWorkspaceGroups = [...otherGroups, updated];
+    this.persistIndependentCoderProjects([removed], group.id);
+    this.persistCoderWorkspaceRecent(updated);
+    this.publishCoderWorkspaceContext(updated);
+  }
+
+  private publishCoderWorkspaceContext(group = this.storedCoderWorkspaceFor(this.currentProjectPath)): void {
+    if (!group || !this.currentProjectPath) {
+      this.coderWorkspaceSubject?.next(null);
+      return;
+    }
+    this.coderWorkspaceSubject?.next({
+      ...group,
+      projects: group.projects.map(project => ({ ...project })),
+      activeProject: this.currentProjectPath,
+    });
+  }
+
+  private async restoreCoderWorkspaceTabs(projectPath: string): Promise<void> {
+    const group = this.storedCoderWorkspaceFor(projectPath);
+    if (!group) return;
+    for (const project of group.projects) {
+      if (this.isSameProjectPath(project.path, projectPath)) continue;
+      if (this.coderProjects.some(open => this.isSameProjectPath(open.path, project.path))) continue;
+      if (!window['fs'].isDirectory(project.path) || this.getProjectMode(project.path) !== 'coder') continue;
+      if (window['projectLock']) {
+        const lock = await window['projectLock'].tryAcquire(project.path);
+        if (!lock.ok) continue;
+      }
+      this.coderProjectsSubject.next([...this.coderProjects, this.coderProjectTab(project.path)]);
+    }
+    this.publishCoderProjects();
+  }
+
+  async removeCoderProject(path: string): Promise<void> {
+    if (this.getCoderOperation(path)) throw new Error('工程正在编译或上传');
+    if (this.isSameProjectPath(path, this.currentProjectPath)) throw new Error('请先切换到另一个 Coder 工程，再移除此工程');
+    const folder = this.coderProjects.find(item => this.isSameProjectPath(item.path, path));
+    if (!folder) return;
+    const group = this.storedCoderWorkspaceFor(folder.path);
+    await window['projectLock']?.release(folder.path);
+    this.coderProjectsSubject.next(this.coderProjects.filter(item => item !== folder));
+    this.coderProjectContexts.delete(this.normalizeProjectPath(path));
+    this.publishCoderProjects();
+    if (group) this.detachCoderProjectFromWorkspace(group, folder.path);
+    else this.publishCoderWorkspaceContext();
+  }
+
   private projectActivationSubject = new Subject<ProjectActivationEvent>();
   projectActivation$ = this.projectActivationSubject.asObservable();
   private projectOpenTask: { path: string; promise: Promise<boolean> } | null = null;
@@ -138,9 +526,17 @@ export class ProjectService {
     promise: Promise<boolean>;
   } | null = null;
   private blocklyLibraryRuntimeSignatures = new Map<string, string>();
+  private recentProjectsCache: {
+    source: RecentProject[];
+    groups: unknown;
+    mode: ProjectMode;
+    time: number;
+    projects: RecentProject[];
+  } | null = null;
 
   currentPackageData: ProjectPackageData = {
-    name: 'aily blockly',
+    // 产品名称由界面显示，不作为空项目的项目名。
+    name: '',
   };
 
   projectRootPath: string;
@@ -153,7 +549,12 @@ export class ProjectService {
   }
 
   set currentProjectPath(path: string) {
+    if (path && this.getProjectMode(path) === 'coder') {
+      this.registerCoderProject(path);
+    }
     this.currentProjectPathSubject.next(path);
+    if (!this.isCoderProjectContext) this.publishCoderWorkspaceContext();
+    if (!this.isCoderProjectContext) this.publishCoderOperations();
   }
 
   get isProjectOpening(): boolean {
@@ -360,19 +761,23 @@ export class ProjectService {
       window['ipcRenderer'].on('window-receive', async (event, message) => {
         // console.log('window-receive', message);
         if (message.data.action == 'open-project') {
-          this.projectOpen(message.data.path, {
-            reason: this.parseProjectActivationReason(message.data.reason),
-            sessionResource: typeof message.data.sessionResource === 'string' ? message.data.sessionResource : null,
-          });
+          let opened = false;
+          try {
+            opened = await this.projectOpen(message.data.path, {
+              reason: this.parseProjectActivationReason(message.data.reason),
+              sessionResource: typeof message.data.sessionResource === 'string' ? message.data.sessionResource : null,
+            });
+          } catch (error) {
+            console.error('Project activation failed:', error);
+          }
+          if (message.messageId) {
+            window['ipcRenderer'].send('main-window-response', {
+              messageId: message.messageId,
+              data: opened ? 'success' : 'failed',
+            });
+          }
         } else {
           return;
-        }
-        // 反馈完成结果
-        if (message.messageId) {
-          window['ipcRenderer'].send('main-window-response', {
-            messageId: message.messageId,
-            result: "success"
-          });
         }
       });
 
@@ -387,6 +792,7 @@ export class ProjectService {
           this.message.error(this.translate.instant('PROJECT.CANNOT_OPEN_PROJECT') + error.message);
         }
       });
+      window['ipcRenderer'].send('project-open-ready');
 
       await this.ensureProjectRootPath();
       // if (!this.currentProjectPath) {
@@ -533,12 +939,6 @@ export class ProjectService {
     return args.join(' ');
   }
 
-  // 检测字符串是否包含中文字符
-  containsChineseCharacters(str: string): boolean {
-    const chineseRegex = /[\u4e00-\u9fa5]/;
-    return chineseRegex.test(str);
-  }
-
   private buildProjectPath(newProjectData: NewProjectData): string {
     const inputName = String(newProjectData.name ?? '').trim();
     const projectPath = window['path'].join(newProjectData.path, inputName.replace(/\s/g, '_'));
@@ -571,34 +971,27 @@ export class ProjectService {
   ) {
     const inputName = String(newProjectData.name ?? '').trim();
     const packageJson = JSON.parse(window['fs'].readFileSync(`${projectPath}/package.json`));
-      if (this.containsChineseCharacters(inputName)) {
-        packageJson.name = pinyin(inputName, {
-          toneType: "none",
-          separator: ""
-        }).replace(/\s/g, '_');
-        packageJson.nickname = inputName;
-      } else {
-        packageJson.name = inputName;
-        packageJson.nickname = packageJson.name;
-      }
-      // Coder 使用 Arduino 模板；框架固定为 arduino，不沿用 Blockly 表单中的其他 devmode。
-      if (!options?.coderTemplate && newProjectData.devmode) {
-        packageJson.devmode = newProjectData.devmode;
-      }
+    packageJson.name = deriveProjectPackageName(inputName);
+    packageJson.nickname = inputName;
+    // Coder 使用 Arduino 模板；框架固定为 arduino，不沿用 Blockly 表单中的其他 devmode。
+    if (!options?.coderTemplate && newProjectData.devmode) {
+      packageJson.devmode = newProjectData.devmode;
+    }
 
-      if (options?.coderTemplate) {
-        const boardPackageName = this.normalizeAilyBoardPackageName(newProjectData.board.name);
-        const boardRange = this.normalizeAilyCodeBoardDepRange(newProjectData.board.version);
-        applyCoderProjectPackageConfig(packageJson, boardPackageName, boardRange);
-      }
+    if (options?.coderTemplate) {
+      const boardPackageName = this.normalizeAilyBoardPackageName(newProjectData.board.name);
+      const boardRange = this.normalizeAilyCodeBoardDepRange(newProjectData.board.version);
+      applyCoderProjectPackageConfig(packageJson, boardPackageName, boardRange);
+    }
 
-      window['fs'].writeFileSync(`${projectPath}/package.json`, JSON.stringify(packageJson, null, 2));
+    window['fs'].writeFileSync(`${projectPath}/package.json`, JSON.stringify(packageJson, null, 2));
   }
 
   private async finishProjectCreation(projectPath: string, options: ProjectCreationOptions = {}): Promise<boolean> {
     this.application.updateFooterState({ state: 'done', text: this.translate.instant('PROJECT.PROJECT_CREATED') });
-    await window['iWindow'].send({
+    const result = await window['iWindow'].send({
       to: 'main',
+      timeout: 130000,
       data: {
         action: 'open-project',
         path: projectPath,
@@ -606,12 +999,13 @@ export class ProjectService {
         sessionResource: options.sessionResource ?? null,
       }
     });
-    return true;
+    return result === 'success';
   }
 
   // 新建项目
   async projectNew(newProjectData: NewProjectData, options: ProjectCreationOptions = {}): Promise<boolean> {
     try {
+      await this.assertProjectCreationMode(options.templateDirectory === CODER_TEMPLATE_DIRECTORY ? 'coder' : 'blockly');
       const separator = this.platformService.getPlatformSeparator();
       // console.log('newProjectData: ', newProjectData);
       const appDataPath = window['path'].getAppDataPath();
@@ -681,6 +1075,9 @@ export class ProjectService {
 
   async projectNewFromTemplate(newProjectData: NewProjectData, templatePath: string, options: ProjectCreationOptions = {}): Promise<boolean> {
     try {
+      const mode = this.getProjectMode(templatePath);
+      if (!mode) throw new Error(this.translate.instant('PROJECT.MODE_UNKNOWN'));
+      await this.assertProjectCreationMode(mode);
       const separator = this.platformService.getPlatformSeparator();
       const projectPath = this.buildProjectPath(newProjectData);
 
@@ -947,15 +1344,45 @@ export class ProjectService {
     const isSwitchingProject = !!previousProjectPath
       && !this.isSameProjectPath(previousProjectPath, projectPath);
 
-    if (this.shouldBlockForAiOperation(activationReason)) {
-      this.warnBlockingAiOperation();
-      return false;
-    }
-
     // 判断路径是否存在
     if (!this.electronService.exists(projectPath)) {
       this.removeRecentlyProject({ path: projectPath })
       this.message.error(this.translate.instant('PROJECT.PATH_NOT_EXIST'));
+      return false;
+    }
+
+    // Reject before acquiring locks, closing windows, changing routes or publishing activation.
+    if (!(await this.ensureProjectModeAllowed(projectPath))) return false;
+
+    // Coder tabs keep their iframe and in-flight operations. Activating another
+    // project only changes the host projection; it does not save or recreate editors.
+    if (this.getProjectMode(projectPath) === 'coder') {
+      const reload = activationReason === 'reload' || activationReason === 'chat-tool-reload';
+      if (reload && this.coderProjects.some(project => this.isSameProjectPath(project.path, projectPath))) {
+        if (this.getCoderOperation(projectPath)) throw new Error('工程正在编译或上传，请等待完成后重新加载');
+        const saved = await this.application.dispatchProjectSave(projectPath, 15_000);
+        if (!saved.success) throw new Error(saved.error || '重新加载前保存工程失败');
+      }
+      if (!this.coderProjects.some(project => this.isSameProjectPath(project.path, projectPath))) {
+        if (window['projectLock']) {
+          const lock = await window['projectLock'].tryAcquire(projectPath);
+          if (!lock.ok) { this.message.error('工程已被其他窗口占用'); return false; }
+        }
+        this.registerCoderProject(projectPath);
+        await this.restoreCoderWorkspaceTabs(projectPath);
+      }
+      const context = this.getCoderProjectContext(projectPath);
+      this.currentProjectPath = projectPath;
+      this.publishCoderProjectContext(context);
+      void window['ipcRenderer']?.invoke?.('logger-set-project-path', projectPath).catch(() => undefined);
+      this.electronService.setTitle(`${this.configService.getApplicationName()} - ${context.currentPackageData.name}`);
+      this.projectActivationSubject.next({ path: projectPath, previousPath: previousProjectPath, reason: activationReason, sessionResource: options.sessionResource ?? null });
+      await context.syncCurrentBoardConfig();
+      return this.router.navigate(['/main/code-editor-pro'], { queryParams: { path: projectPath }, replaceUrl: true });
+    }
+
+    if (this.shouldBlockForAiOperation(activationReason)) {
+      this.warnBlockingAiOperation();
       return false;
     }
 
@@ -986,7 +1413,8 @@ export class ProjectService {
     }
 
     if (isSwitchingProject && !(await this.application.closeConnectionGraphWindows())) {
-      if (this.electronService.isElectron && window['projectLock']) {
+      if (this.electronService.isElectron && window['projectLock']
+        && !this.coderProjects.some(project => this.isSameProjectPath(project.path, projectPath))) {
         try {
           await window['projectLock'].release(projectPath);
         } catch (e) {
@@ -1001,7 +1429,8 @@ export class ProjectService {
     if (this.electronService.isElectron
       && previousProjectPath
       && !this.isSameProjectPath(previousProjectPath, projectPath)
-      && window['projectLock']) {
+      && window['projectLock']
+      && !this.coderProjects.some(folder => this.isSameProjectPath(folder.path, previousProjectPath))) {
       try {
         await window['projectLock'].release(previousProjectPath);
       } catch (e) {
@@ -1011,7 +1440,7 @@ export class ProjectService {
 
     this.beginBlocklyProjectLoad(projectPath);
 
-    const abiIsExist = window['path'].isExists(projectPath + '/project.abi');
+    const abiIsExist = this.getProjectMode(projectPath) === 'blockly';
     const blocklyRouteIsBeingReused = abiIsExist && this.router.url.startsWith('/main/blockly-editor');
     if (blocklyRouteIsBeingReused) {
       // Angular reuses the component when only query params change. Take an
@@ -1090,9 +1519,7 @@ export class ProjectService {
       }, 120000);
 
       subscription = this.stateSubject.subscribe((state) => {
-        const isBlocklyProject = window['path']?.isExists?.(
-          window['path'].join(projectPath, 'project.abi'),
-        );
+        const isBlocklyProject = this.getProjectMode(projectPath) === 'blockly';
         if (!isBlocklyProject && state === 'loaded') {
           finish();
           return;
@@ -1116,7 +1543,7 @@ export class ProjectService {
 
   // 保存项目
   save(path = this.currentProjectPath, feedbackTimeoutMs = 5000) {
-    if (this.isProjectOpening) {
+    if (this.isProjectOpening && this.getProjectMode(path) !== 'coder') {
       return Promise.resolve({
         success: false,
         error: 'project is loading',
@@ -1124,7 +1551,8 @@ export class ProjectService {
       });
     }
 
-    if (window['path']?.isExists?.(window['path'].join(path, 'project.abi'))) {
+    if (this.getProjectMode(path) !== 'coder'
+      && window['path']?.isExists?.(window['path'].join(path, 'project.abi'))) {
       const loadStatus = this.getBlocklyProjectLoadStatus(path);
       if (!loadStatus.ready) {
         return Promise.resolve({
@@ -1157,6 +1585,10 @@ export class ProjectService {
 
   async saveAs(path: string): Promise<void> {
     const sourceProjectPath = this.currentProjectPath;
+    if (this.getProjectMode(sourceProjectPath) === 'coder') {
+      await this.saveCoderAs(sourceProjectPath, path);
+      return;
+    }
     const saveResult = await this.save(sourceProjectPath);
     if (!saveResult.success) {
       throw new Error(saveResult.error || '保存当前项目失败，无法另存为');
@@ -1182,18 +1614,14 @@ export class ProjectService {
       delete packageJson.cloudId;
     }
     // 获取新的项目名称（文件夹名）
-    let name = window['path'].basename(path);
-    if (this.containsChineseCharacters(name)) {
-      packageJson.name = pinyin(name, {
-        toneType: "none",
-        separator: ""
-      }).replace(/\s/g, '_');
-      packageJson.nickname = name;
-    } else {
-      packageJson.name = name;
-      packageJson.nickname = name;
-    }
+    const name = window['path'].basename(path);
+    packageJson.name = deriveProjectPackageName(name);
+    packageJson.nickname = name;
     window['fs'].writeFileSync(`${path}/package.json`, JSON.stringify(packageJson, null, 2));
+    // 清除副本的旧配置快照、日志和编译缓存，避免重开时恢复源项目的 cloudId。
+    for (const directory of ['.temp', '.log', '.build']) {
+      await window['fsp'].rm(window['path'].join(path, directory), { recursive: true, force: true });
+    }
     // 修改当前项目路径
     this.currentProjectPath = path;
     projectDataRuntime.configure(path);
@@ -1201,7 +1629,76 @@ export class ProjectService {
     this.addRecentlyProject({ name: this.currentPackageData.name, path: path, nickname: this.currentPackageData.nickname || this.currentPackageData.name });
   }
 
+  private async saveCoderAs(sourceProjectPath: string, targetPath: string): Promise<void> {
+    const pathApi = window['path'];
+    const fs = window['fs'];
+    if (!targetPath || !pathApi.isAbsolute(targetPath)) {
+      throw new Error('请选择有效的另存为路径');
+    }
+    // Preserve spaces in the selected path, including its parent directories.
+    const targetProjectPath = pathApi.resolve(targetPath);
+    if (fs.existsSync(targetProjectPath)) {
+      throw new Error('目标文件或文件夹已存在，请选择新的项目文件夹名称');
+    }
+    // Resolve symlinked parents too, so copying into the source cannot recurse.
+    const sourceRealPath = await fs.realpathAsync(sourceProjectPath);
+    const targetParent = await fs.realpathAsync(pathApi.dirname(targetProjectPath));
+    const relativeTarget = pathApi.relative(
+      sourceRealPath,
+      pathApi.join(targetParent, pathApi.basename(targetProjectPath)),
+    );
+    if (!relativeTarget || (!pathApi.isAbsolute(relativeTarget)
+      && relativeTarget !== '..' && !/^\.\.[/\\]/.test(relativeTarget))) {
+      throw new Error('另存为位置不能位于当前项目内部，请选择其他目录');
+    }
+
+    // The embedded Workbench has a 10s save handshake; wait for disk persistence
+    // before copying any source files, including dirty tabs and local libraries.
+    const saveResult = await this.save(sourceProjectPath, 15_000);
+    if (!saveResult.success) {
+      throw new Error(saveResult.error || '保存当前项目失败，无法另存为');
+    }
+    if (!this.isSameProjectPath(sourceProjectPath, this.currentProjectPath)) {
+      throw new Error('当前项目已切换，请重新执行另存为');
+    }
+
+    // Non-recursive mkdir reserves a new destination without merging into an
+    // existing folder, even if another operation created it while saving.
+    await window['fsp'].mkdir(targetProjectPath);
+    try {
+      fs.copySync(sourceProjectPath, targetProjectPath);
+      const packagePath = pathApi.join(targetProjectPath, 'package.json');
+      const packageJson = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
+      const name = pathApi.basename(targetProjectPath);
+      delete packageJson.cloudId;
+      packageJson.name = deriveProjectPackageName(name);
+      packageJson.nickname = name;
+      packageJson.type = 'coder';
+      if (Object.prototype.hasOwnProperty.call(packageJson, 'path')) {
+        packageJson.path = targetProjectPath;
+      }
+      fs.writeFileSync(packagePath, JSON.stringify(packageJson, null, 2));
+    } catch (error) {
+      try {
+        await window['fsp'].rm(targetProjectPath, { recursive: true, force: true });
+      } catch (cleanupError) {
+        console.warn('清理未完成的 Coder 另存为目录失败:', targetProjectPath, cleanupError);
+      }
+      throw error;
+    }
+
+    // Normal activation updates locks, route params, recent projects and the
+    // iframe's native-FS workspace root together. Do not configure Blockly data.
+    if (!(await this.projectOpen(targetProjectPath))) {
+      throw new Error(`项目已另存至 ${targetProjectPath}，但未能切换，请手动打开该项目`);
+    }
+  }
+
   async close(options: { allowDuringChatTool?: boolean } = {}) {
+    if (this.coderOperationsSubject.value.size) {
+      this.message.warning('工程正在编译或上传');
+      return false;
+    }
     if (!options.allowDuringChatTool && this.shouldBlockForAiOperation()) {
       this.warnBlockingAiOperation();
       return false;
@@ -1214,19 +1711,25 @@ export class ProjectService {
 
     if (this.electronService.isElectron && this.currentProjectPath && window['projectLock']) {
       try {
-        await window['projectLock'].release(this.currentProjectPath);
+        for (const path of new Set([this.currentProjectPath, ...this.coderProjects.map(folder => folder.path)])) {
+          await window['projectLock'].release(path);
+        }
       } catch (e) {
         console.warn('project-lock release:', e);
       }
     }
     this.application.closeTerminal();
+    this.coderProjectsSubject.next([]);
+    this.coderWorkspaceSubject.next(null);
+    this.coderProjectContexts.clear();
+    this.publishCoderProjects();
     this.currentProjectPath = '';
     this.loadingBlocklyProjectPath = '';
     this.loadedBlocklyProjectPath = '';
     this.blocklyProjectLoadFailure = null;
     void window['ipcRenderer']?.invoke?.('logger-set-project-path', '').catch(() => undefined);
     this.currentPackageData = {
-      name: 'aily blockly',
+      name: '',
     };
     this.stateSubject.next('default');
     // this.currentProjectPath = (await window['env'].get("AILY_PROJECT_PATH")).replace('%HOMEPATH%\\Documents', window['path'].getUserDocuments());
@@ -1287,22 +1790,125 @@ export class ProjectService {
     });
   }
 
-  // 通过ConfigService存储最近打开的项目
+  getProjectMode(projectPath: string): ProjectMode | null {
+    if (!projectPath || !this.electronService.isElectron) return null;
+    try {
+      const packagePath = window['path'].join(projectPath, 'package.json');
+      const manifest = window['fs'].existsSync(packagePath)
+        ? JSON.parse(window['fs'].readFileSync(packagePath, 'utf8')) : undefined;
+      return detectProjectMode({
+        manifest,
+        hasAbi: window['fs'].existsSync(window['path'].join(projectPath, 'project.abi')),
+        hasAci: window['fs'].existsSync(window['path'].join(projectPath, 'project.aci')),
+      });
+    } catch {
+      return null;
+    }
+  }
+
+  private async assertProjectCreationMode(mode: ProjectMode): Promise<void> {
+    await this.configService.init();
+    if (mode !== this.configService.getPreferredChatAgentRuntimeMode()) {
+      throw new Error(this.translate.instant('PROJECT.MODE_CREATE_RESTRICTED', {
+        application: getProjectApplicationName(this.configService.getPreferredChatAgentRuntimeMode()),
+        targetApplication: getProjectApplicationName(mode),
+      }));
+    }
+  }
+
+  async ensureProjectModeAllowed(projectPath: string): Promise<boolean> {
+    await this.configService.init();
+    const mode = this.getProjectMode(projectPath);
+    if (!mode) {
+      this.message.error(this.translate.instant('PROJECT.MODE_UNKNOWN'));
+      return false;
+    }
+    if (mode === this.configService.getPreferredChatAgentRuntimeMode()) return true;
+
+    const application = getProjectApplicationName(mode);
+    let installed = false;
+    try {
+      const status = await window['ipcRenderer'].invoke('project-companion-status', { mode });
+      installed = status?.installed === true;
+    } catch (error) {
+      console.warn('Companion application lookup failed:', error);
+    }
+    this.modal.confirm({
+      nzClassName: 'project-mode-mismatch-modal',
+      nzCentered: true,
+      nzWidth: 480,
+      nzMaskClosable: false,
+      nzTitle: this.translate.instant('PROJECT.MODE_MISMATCH_TITLE'),
+      nzContent: this.translate.instant(installed ? 'PROJECT.MODE_OPEN_OTHER' : 'PROJECT.MODE_DOWNLOAD_OTHER', { application }),
+      nzOkText: this.translate.instant(installed ? 'PROJECT.MODE_OPEN_BUTTON' : 'PROJECT.MODE_DOWNLOAD_BUTTON', { application }),
+      nzCancelText: this.translate.instant('PROJECT.LOCK_CANCEL'),
+      nzOnOk: async () => {
+        try {
+          const result = await window['ipcRenderer'].invoke(
+            installed ? 'project-companion-open' : 'project-companion-download',
+            { mode, projectPath },
+          );
+          if (result?.ok !== true) throw new Error(result?.error || 'Application launch failed');
+          return true;
+        } catch (error) {
+          console.warn('Companion application action failed:', error);
+          this.message.error(this.translate.instant('PROJECT.MODE_LAUNCH_FAILED', { application }));
+          return false;
+        }
+      },
+    });
+    return false;
+  }
+
+  // Filtering is a view: add/remove must always preserve the other mode's stored history.
   get recentlyProjects(): RecentProject[] {
-    return this.configService.data?.recentlyProjects || [];
+    const persisted: RecentProject[] = this.configService.data?.recentlyProjects || [];
+    const collapsed = this.collapseCoderWorkspaceRecents(persisted);
+    const source = this.recentProjectListsEqual(persisted, collapsed) ? persisted : collapsed;
+    if (source !== persisted) {
+      // Repair legacy/raced state once so remove/unmerge and later launches see
+      // the same single workspace entry as the current guide page.
+      this.configService.data.recentlyProjects = source;
+      this.recentProjectsCache = null;
+      void this.configService.save();
+    }
+    const groups = this.configService.data?.coderWorkspaceGroups;
+    const mode = this.configService.getPreferredChatAgentRuntimeMode();
+    const cache = this.recentProjectsCache;
+    if (
+      cache?.source === source &&
+      cache.groups === groups &&
+      cache.mode === mode &&
+      Date.now() - cache.time < 1000
+    ) return cache.projects;
+    const projects = source.filter((project) => this.getProjectMode(project.path) === mode);
+    this.recentProjectsCache = { source, groups, mode, time: Date.now(), projects };
+    return projects;
   }
 
   set recentlyProjects(data: RecentProject[]) {
     this.configService.data.recentlyProjects = data;
+    this.recentProjectsCache = null;
     this.configService.save();
   }
 
   addRecentlyProject(data: RecentProject) {
-    this.recentlyProjects = addRecentProject(this.recentlyProjects, data);
+    const group = this.storedCoderWorkspaceFor(data.path);
+    if (group) {
+      this.persistCoderWorkspaceRecent(group);
+      return;
+    }
+    this.recentlyProjects = addRecentProject(
+      this.collapseCoderWorkspaceRecents(this.configService.data?.recentlyProjects || []),
+      data,
+    );
   }
 
   removeRecentlyProject(data: { path: string }) {
-    this.recentlyProjects = removeRecentProject(this.recentlyProjects, data.path);
+    this.recentlyProjects = removeRecentProject(
+      this.collapseCoderWorkspaceRecents(this.configService.data?.recentlyProjects || []),
+      data.path,
+    );
   }
 
   // 检查项目是否未保存
@@ -2034,7 +2640,8 @@ export class ProjectService {
   }
 
   /** Build the current board's configuration menu from its root menu.json. */
-  async getBoardConfigMenu(): Promise<IMenuItem[]> {
+  async getBoardConfigMenu(options: { persistDefaults?: boolean } = {}): Promise<IMenuItem[]> {
+    const persistDefaults = options.persistDefaults !== false;
     const menu = this.cloneCurrentBoardMenuConfig();
     if (menu.length === 0) {
       return [];
@@ -2046,6 +2653,7 @@ export class ProjectService {
       packageJson = await this.getPackageJson();
       currentProjectConfig = packageJson?.projectConfig || {};
     } catch (error) {
+      if (!persistDefaults) throw error;
       console.warn('[ProjectService] failed to read current project config:', error);
     }
 
@@ -2083,7 +2691,7 @@ export class ProjectService {
         child.check = currentValue !== undefined && this.compareConfigs(child.data, currentValue);
         hasSelectedChild ||= child.check;
 
-        if (child.check && child.extra?.syncPinConfig) {
+        if (persistDefaults && child.check && child.extra?.syncPinConfig) {
           this.currentBoardPinConfig.board = child.data;
           this.currentBoardPinConfig.variant = child.extra?.build?.variant || null;
           this.currentBoardPinConfig.variant_h = child.extra?.build?.variant_h || null;
@@ -2097,7 +2705,7 @@ export class ProjectService {
       }
 
       if (
-        currentValue === undefined &&
+        persistDefaults && currentValue === undefined &&
         menuItem.extra?.selectFirstByDefault &&
         children.length > 0 &&
         packageJson

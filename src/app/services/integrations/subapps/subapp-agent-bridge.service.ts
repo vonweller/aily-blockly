@@ -17,6 +17,7 @@ import {
 } from './subapp-activity.service';
 import { resolveSubappAgentPresentation } from './models/subapp-agent-presentation';
 import { acquireSubappRuntimePresentationLease } from './models/subapp-runtime-presentation-lease';
+import { AILY_CODER_EDITOR_SUBAPP_ID } from '../../../configs/required-subapp.config';
 
 interface SubappRpcResponse {
   id?: string | number;
@@ -99,11 +100,14 @@ export class SubappAgentBridgeService implements OnDestroy {
       const params = this.record(input['params']);
       const hasExplicitPresentation = Object.prototype.hasOwnProperty.call(params, 'presentUi');
       const activeMode = !hasExplicitPresentation
+        && resolved.config.app?.extension !== true
         && resolved.definition.presentation
         && await this.automation.isChildAppWindowOpen(resolved.config.id)
         ? 'window' as const
         : undefined;
-      const presentationPolicy = resolveSubappAgentPresentation(params, resolved.definition, activeMode);
+      const presentationPolicy = resolved.config.app?.extension === true
+        ? { uiMode: 'none' as const, activityPresentation: undefined }
+        : resolveSubappAgentPresentation(params, resolved.definition, activeMode);
       this.subappActivityService.recordInvocationStarted({
         sessionId: ownerSessionId,
         toolId: resolved.config.id,
@@ -209,6 +213,28 @@ export class SubappAgentBridgeService implements OnDestroy {
         : response;
     } finally {
       await releasePresentationRuntimeLease?.().catch(() => undefined);
+    }
+  }
+
+  /** Host dependency installation uses the same Runtime and mutation lock as library installs. */
+  async materializeCoderProjectLibraries(workspaceRoot: string): Promise<void> {
+    const sessionId = `coder-dependencies-${Date.now()}-${Math.random()}`;
+    try {
+      const result = await this.request(
+        AILY_CODER_EDITOR_SUBAPP_ID,
+        'coder.library.materialize',
+        {},
+        300000,
+        true,
+        undefined,
+        sessionId,
+        { workspaceRoot, developmentMode: 'coder' },
+      ) as { ok?: boolean; ready?: boolean };
+      if (result?.ok !== true || result.ready !== true) {
+        throw new Error('Coder dependency library sources are not ready');
+      }
+    } finally {
+      await this.releaseSession(sessionId);
     }
   }
 
