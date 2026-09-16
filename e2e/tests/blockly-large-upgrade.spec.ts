@@ -16,7 +16,9 @@ test('large real-project copy preserves all blocks, code, JSON and live field un
   win.on('pageerror', error => errors.push(error.message));
   try {
     await cp(SOURCE!, project, {recursive: true, mode: constants.COPYFILE_FICLONE,
-      filter: source => !['.git', '.temp', 'build'].includes(path.basename(source))});
+      // Runtime locks belong to the source instance, never to the disposable
+      // clone. Keep the real user's project/lock completely untouched.
+      filter: source => !['.git', '.temp', '.build', 'build', '.workspace-history', 'project-open.lock'].includes(path.basename(source))});
     const started = Date.now();
     await openBlocklyProject(win, project);
     await expect.poll(() => win.evaluate(() => document.querySelector('iframe[data-blockly-generator-runtime]')?.getAttribute('data-runtime-ready')), {timeout: 90_000}).toBe('true');
