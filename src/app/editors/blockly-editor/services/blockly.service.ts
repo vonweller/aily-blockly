@@ -177,6 +177,13 @@ export class BlocklyService {
   loadedLibraryInfos = new Map<string, LoadedBlocklyLibraryInfo>(); // libPackagePath -> loaded metadata
   private runtimeDefinedLibraryBlockTypes = new Set<string>();
   private libraryLoadTasks = new Map<string, Promise<void>>();
+  private libraryLoadQueue: Promise<void> = Promise.resolve();
+  private libraryLoadEpoch = 0;
+  private failedLibraryLoads = new Map<string, {
+    snapshot: BlocklyLibraryPackageSnapshot;
+    localPath?: string;
+    errors: string[];
+  }>();
   private libraryIntegrityFailureLogSignatures = new Map<string, string>();
   private libraryIntegrityWarningLogSignatures = new Map<string, string>();
   private rebuildingLibraryRuntime = false;
@@ -1113,7 +1120,14 @@ export class BlocklyService {
       return;
     }
 
-    const loadTask = this.loadLibraryInternal(libPackageName, projectPath, libPackagePath);
+    // Recovery swaps the shared realm. Serialize different library loads too,
+    // so a concurrent lib_add cannot register into a realm being replaced.
+    const epoch = this.libraryLoadEpoch;
+    const loadTask = this.libraryLoadQueue.then(async () => {
+      if (epoch !== this.libraryLoadEpoch || this.loadedLibraries.has(libPackagePath)) return;
+      await this.loadLibraryInternal(libPackageName, projectPath, libPackagePath);
+    });
+    this.libraryLoadQueue = loadTask.catch(() => undefined);
     this.libraryLoadTasks.set(libPackagePath, loadTask);
     try {
       await loadTask;
@@ -1126,6 +1140,7 @@ export class BlocklyService {
 
   async retryLibrary(libPackageName: string, projectPath: string): Promise<boolean> {
     const libPackagePath = this.blocklyLibraryPackageService.getPackagePath(projectPath, libPackageName);
+    const projectDocument = this.getProjectDocument();
     try {
       await this.loadLibrary(libPackageName, projectPath);
     } catch (error) {
@@ -1144,6 +1159,9 @@ export class BlocklyService {
     const librarySnapshot = this.blocklyLibraryPackageService.readLibraryPackage(projectPath, libPackageName);
     const displayName = this.getLibraryToolboxDisplayName(librarySnapshot, libPackageName);
     if (this.loadedLibraries.has(libPackagePath)) {
+      // Replace instances created from the failed library's display definitions.
+      this.loadProjectDocument(projectDocument, false);
+      this.requestCodeViewerRefresh(true);
       this.noticeService.update({
         title: '库加载成功',
         text: displayName,
@@ -1155,10 +1173,19 @@ export class BlocklyService {
     }
 
     const diagnostics = this.blocklyLibraryPackageService.validateLibraryPackage(librarySnapshot, libPackageName);
-    const errors = diagnostics.errors.length > 0
-      ? diagnostics.errors
-      : [`${displayName} 运行时加载失败，请检查 generator.js 是否能正常执行。`];
-    const detail = errors.map((error) => `- ${error}`).join('\n');
+    const errors = this.failedLibraryLoads.get(libPackagePath)?.errors
+      || (diagnostics.errors.length > 0
+        ? diagnostics.errors
+        : [`${displayName} 运行时加载失败，请检查 generator.js 是否能正常执行。`]);
+    const localPath = this.resolveLibraryLocalPath(projectPath, libPackageName);
+    const detail = [
+      `积木库：${libPackageName}`,
+      `项目：${projectPath}`,
+      `安装目录：${libPackagePath}`,
+      ...(localPath ? [`本地源目录：${localPath}（请在源目录修复）`] : []),
+      ...errors,
+      '修复后点击异常库或通知中的重试，重新加载该库。',
+    ].join('\n');
     this.noticeService.update({
       title: `库加载失败：${displayName}`,
       text: errors[0],
@@ -1166,6 +1193,10 @@ export class BlocklyService {
       state: 'error',
       showProgress: false,
       setTimeout: 10000,
+      onRetry: () => {
+        // An old notification may outlive a project switch or a successful repair.
+        if (this.failedLibraryLoads.has(libPackagePath)) void this.retryLibrary(libPackageName, projectPath);
+      },
     });
     return false;
   }
@@ -1176,7 +1207,10 @@ export class BlocklyService {
     // 检查库的完整性
     const integrityCheck = this.checkLibraryIntegrity(librarySnapshot, libPackageName);
     if (!integrityCheck.valid) {
-      this.loadFailedLibraryToolbox(librarySnapshot, libPackageName, libPackagePath, !!libLocalPath);
+      this.failedLibraryLoads.set(libPackagePath, {
+        snapshot: librarySnapshot, localPath: libLocalPath, errors: integrityCheck.errors,
+      });
+      this.restoreFailedLibraryDisplay(libPackagePath);
       return;
     }
 
@@ -1247,6 +1281,7 @@ export class BlocklyService {
 
       // 仅在 generator 加载成功时才标记为已加载（失败时允许后续重试）
       if (generatorLoadSuccess) {
+        this.failedLibraryLoads.delete(libPackagePath);
         this.loadedLibraries.add(libPackagePath);
         this.loadedLibraryInfos.set(libPackagePath, {
           packageName: libPackageName,
@@ -1258,8 +1293,72 @@ export class BlocklyService {
       this.loadLibraryFinishedLoadingSubject.next();
     } catch (error) {
       console.error('加载库失败:', libPackageName, error);
-      throw error;
+      this.failedLibraryLoads.set(libPackagePath, {
+        snapshot: librarySnapshot,
+        localPath: libLocalPath,
+        errors: [String((error as Error)?.stack || (error as Error)?.message || error)],
+      });
+      await this.recoverLibraryRuntime(projectPath);
     }
+  }
+
+  /** Rebuild only successful libraries in a fresh realm: a failed classic script
+   * may already have registered helpers, extensions, listeners or const bindings. */
+  private async recoverLibraryRuntime(projectPath: string): Promise<void> {
+    const projectDocument = this.getProjectDocument();
+    const libraryNames = Array.from(this.loadedLibraryInfos.values(), info => info.packageName);
+    const wasRebuilding = this.rebuildingLibraryRuntime;
+    const wasReady = this.generatorRuntime.isReady();
+    this.rebuildingLibraryRuntime = true;
+    try {
+      this.generatorRuntime.rebuild({ projectPath });
+      this.clearLoadedLibraryStateForRuntimeRebuild(true);
+      for (const libraryName of libraryNames) {
+        await this.loadLibraryInternal(libraryName, projectPath,
+          this.blocklyLibraryPackageService.getPackagePath(projectPath, libraryName));
+      }
+      for (const libraryPath of this.failedLibraryLoads.keys()) {
+        this.restoreFailedLibraryDisplay(libraryPath);
+      }
+      if (!wasRebuilding) {
+        this.refreshToolboxFromContents();
+        this.loadProjectDocument(projectDocument, false);
+        if (wasReady) this.generatorRuntime.markReady(projectPath);
+      }
+    } finally {
+      this.rebuildingLibraryRuntime = wasRebuilding;
+    }
+  }
+
+  private restoreFailedLibraryDisplay(libraryPath: string): void {
+    const failure = this.failedLibraryLoads.get(libraryPath);
+    if (!failure) return;
+    const { snapshot, localPath } = failure;
+    // Retain readable block shapes so existing project blocks are not discarded.
+    // Explicitly reject code generation instead of silently skipping failed blocks.
+    if (Array.isArray(snapshot.blockJson)) {
+      for (const definition of snapshot.blockJson) {
+        if (!definition?.type || Blockly.Blocks[definition.type]) continue;
+        try {
+          const block = this.cloneJson(definition);
+          if (Array.isArray(block.extensions)) {
+            block.extensions = block.extensions.filter(name => Blockly.Extensions.isRegistered(name));
+          }
+          if (block.mutator && !Blockly.Extensions.isRegistered(block.mutator)) delete block.mutator;
+          this.loadLibBlocks([block], this.electronService.pathJoin(snapshot.ref.path, 'static'), snapshot.ref.name,
+            snapshot.packageJson?.version || '', localPath);
+          const generator = this.generatorRuntime.getActiveGenerator();
+          if (generator) {
+            generator.forBlock[block.type] = () => {
+              throw new Error(`库 ${snapshot.ref.name} 加载失败，修复并重新加载后才能生成代码。\n${failure.errors.join('\n')}`);
+            };
+          }
+        } catch (error) {
+          console.warn('无法恢复异常库的积木外观:', definition.type, error);
+        }
+      }
+    }
+    this.loadFailedLibraryToolbox(snapshot, snapshot.ref.name, libraryPath, !!localPath);
   }
 
   private checkLibraryIntegrity(
@@ -1506,6 +1605,7 @@ export class BlocklyService {
         boardConfig: this.boardConfig,
         projectService: options.projectService,
       });
+      this.failedLibraryLoads.clear();
       this.clearLoadedLibraryStateForRuntimeRebuild();
 
       for (const libraryName of options.libraryNames) {
@@ -1532,7 +1632,7 @@ export class BlocklyService {
     }
   }
 
-  private clearLoadedLibraryStateForRuntimeRebuild(): void {
+  private clearLoadedLibraryStateForRuntimeRebuild(preserveLoadTasks = false): void {
     unregisterProjectDataFieldSlots(Array.from(this.blockTypeToLibMap.keys()));
     this.iconsMap.clear();
     this.blockDefinitionsMap.clear();
@@ -1540,7 +1640,7 @@ export class BlocklyService {
     this.loadedLibraries.clear();
     this.loadedLibraryInfos.clear();
     this.runtimeDefinedLibraryBlockTypes.clear();
-    this.libraryLoadTasks.clear();
+    if (!preserveLoadTasks) this.libraryLoadTasks.clear();
     this.libraryIntegrityFailureLogSignatures.clear();
     this.libraryIntegrityWarningLogSignatures.clear();
     this.blockTypeToLibMap.clear();
@@ -1754,8 +1854,9 @@ export class BlocklyService {
       return Promise.resolve(true);
     } catch (error) {
       console.error(`Generator loading failed: ${filePath}`, error);
-      this.generatorRuntime.destroy();
-      return Promise.resolve(false);
+      // Keep the failed session context for recoverLibraryRuntime, which
+      // replaces the tainted realm and reloads the other libraries.
+      return Promise.reject(error);
     }
   }
 
@@ -1787,6 +1888,9 @@ export class BlocklyService {
       this.workspace = null;
     }
     this.generatorRuntime.destroy();
+    this.failedLibraryLoads.clear();
+    this.libraryLoadEpoch += 1;
+    this.libraryLoadQueue = Promise.resolve();
 
     unregisterProjectDataFieldSlots(Array.from(this.blockTypeToLibMap.keys()));
     this.iconsMap.clear();
