@@ -1,4 +1,4 @@
-import {test, expect, getMainWindow, openBlocklyProject} from '../fixtures/electron-app';
+import {test, expect, getMainWindow, openBlocklyProject, closeAilyElectronApp} from '../fixtures/electron-app';
 import {cp, mkdtemp, rm} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -18,7 +18,10 @@ test.describe('Blockly v13 production renderer contracts', () => {
     const win = await getMainWindow(electronApp);
     await win.evaluate(() => { window.location.hash = '#/main/guide'; }).catch(() => {});
     await expect(win.locator('app-blockly-editor')).toHaveCount(0);
-    await rm(tempRoot, {recursive: true, force: true});
+    // Finish this isolated app's background dependency/preprocess jobs before
+    // deleting their project directory. Route disposal alone does not stop them.
+    await closeAilyElectronApp(electronApp);
+    await rm(tempRoot, {recursive: true, force: true, maxRetries: 5, retryDelay: 200});
   });
 
   test('preserves code and project state through JSON/XML, comments and undo/redo', async ({electronApp}, testInfo) => {
@@ -142,6 +145,52 @@ test.describe('Blockly v13 production renderer contracts', () => {
       expect(result.width, result.type).toBeGreaterThan(0);
       expect(result.height, result.type).toBeGreaterThan(0);
     }
+  });
+
+  test('keeps the minimap synchronized and pans the main workspace', async ({electronApp}, testInfo) => {
+    const win = await getMainWindow(electronApp);
+    const errors: string[] = [];
+    win.on('pageerror', error => errors.push(error.message));
+    await openBlocklyProject(win, projectPath);
+    const ready = () => expect.poll(() => win.evaluate(() => document.querySelector('iframe[data-blockly-generator-runtime]')?.getAttribute('data-runtime-ready'))).toBe('true');
+    await ready();
+    // Change only this isolated process's in-memory preference, then use the
+    // real route lifecycle to create the optional minimap.
+    await win.evaluate(() => {
+      const realm = (document.querySelector('iframe[data-blockly-generator-runtime]') as HTMLIFrameElement).contentWindow as any;
+      realm.projectService.configService.data.blockly.minimap = true;
+      window.location.hash = '#/main/guide';
+    });
+    await expect(win.locator('app-blockly-editor')).toHaveCount(0);
+    await openBlocklyProject(win, projectPath);
+    await ready();
+    await expect(win.locator('.blockly-minimap')).toBeVisible();
+    const count = await win.evaluate(async () => {
+      const realm = (document.querySelector('iframe[data-blockly-generator-runtime]') as HTMLIFrameElement).contentWindow as any;
+      const ws = (window as any).blocklyWorkspace;
+      const block = ws.newBlock('math_number', 'minimap_probe');
+      block.setFieldValue(8193, 'NUM'); block.initSvg(); block.render(); block.moveBy(4000, 3000);
+      await realm.Blockly.renderManagement.finishQueuedRenders();
+      return ws.getAllBlocks(false).length;
+    });
+    const readMirror = () => win.evaluate(() => {
+      const realm = (document.querySelector('iframe[data-blockly-generator-runtime]') as HTMLIFrameElement).contentWindow as any;
+      const mini = realm.Blockly.common.getAllWorkspaces().find((ws: any) => ws.getInjectionDiv?.()?.closest('.blockly-minimap'));
+      return mini ? {count: mini.getAllBlocks(false).length,
+        values: mini.getAllBlocks(false).filter((b: any) => b.type === 'math_number').map((b: any) => b.getFieldValue('NUM'))} : null;
+    });
+    await expect.poll(readMirror).toMatchObject({count, values: expect.arrayContaining([8193])});
+    await win.evaluate(() => (window as any).blocklyWorkspace.getBlockById('minimap_probe').setFieldValue(8194, 'NUM'));
+    await expect.poll(readMirror).toMatchObject({count, values: expect.arrayContaining([8194])});
+    const before = await win.evaluate(() => ({x: (window as any).blocklyWorkspace.scrollX, y: (window as any).blocklyWorkspace.scrollY}));
+    const bounds = await win.locator('.blockly-minimap').boundingBox();
+    if (!bounds) throw new Error('Minimap has no rendered bounds');
+    await win.mouse.click(bounds.x + bounds.width * 0.8, bounds.y + bounds.height * 0.8);
+    await expect.poll(() => win.evaluate(() => ({x: (window as any).blocklyWorkspace.scrollX, y: (window as any).blocklyWorkspace.scrollY}))).not.toEqual(before);
+    await win.screenshot({path: testInfo.outputPath('minimap-pan.png')});
+    await win.evaluate(() => (window as any).blocklyWorkspace.getBlockById('minimap_probe').dispose(false));
+    await expect.poll(readMirror).toMatchObject({count: count - 1});
+    expect(errors).toEqual([]);
   });
 
   test('selects, drags, copies, pastes and deletes multiple blocks with real pointer and keyboard input', async ({electronApp}, testInfo) => {

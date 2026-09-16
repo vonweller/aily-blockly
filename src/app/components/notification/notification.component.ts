@@ -95,17 +95,21 @@ export class NotificationComponent {
       cancelAnimationFrame(this.animationFrameId);
     }
 
-    const startValue = this.progressValue;
+    const startValue = this.clampProgress(this.progressValue);
     const startTime = performance.now();
     const endValue = targetValue;
 
     // 动画函数
     const animateProgress = (currentTime: number) => {
       const elapsedTime = currentTime - startTime;
-      const progress = Math.min(elapsedTime / this.animationDuration, 1);
+      // A frame's shared timestamp can precede this animation's start time
+      // when earlier callbacks in that frame do expensive workspace rendering.
+      const progress = Math.max(0, Math.min(elapsedTime / this.animationDuration, 1));
 
       // 计算当前值（使用缓动函数使动画更平滑）
-      this.progressValue = Math.round(startValue + (endValue - startValue) * this.easeOutQuad(progress));
+      this.progressValue = this.clampProgress(
+        Math.round(startValue + (endValue - startValue) * this.easeOutQuad(progress))
+      );
       this.cd.detectChanges();
 
       // 如果动画未完成，则继续请求动画帧
