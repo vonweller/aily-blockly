@@ -39,9 +39,18 @@ test.describe('Blockly 编辑器', () => {
     const win = await getMainWindow(electronApp);
     await openBlocklyProject(win, PROJECT_PATH!);
 
-    await expect(win.locator('app-blockly-editor .blocklyToolboxDiv')).toBeVisible({
+    // The native toolbox is intentionally hidden by the external Angular pane.
+    // Assert the actual user entry and its flyout, not the hidden native DOM.
+    await expect(win.locator('app-blockly-toolbox-pane')).toBeVisible({
       timeout: 30_000,
     });
+    const category = win.locator('app-blockly-toolbox-pane .toolbox-item').filter({hasText: /循环|Loop/i}).first();
+    await expect(category).toBeVisible({timeout: 30_000});
+    await category.click();
+    await expect.poll(() => win.evaluate(() => {
+      const flyout = (window as any).blocklyWorkspace?.getFlyout();
+      return flyout?.isVisible() && flyout.getWorkspace().getAllBlocks(false).length > 0;
+    })).toBe(true);
   });
 
   test('连续打开两个项目时应重建 generator realm', async ({ electronApp }) => {
@@ -148,6 +157,7 @@ test.describe('Blockly 编辑器', () => {
       await openBlocklyProject(win, projectPath);
       await expect.poll(async () => (await readRuntime()).ready, { timeout: 60_000 }).toBe(true);
       await expect.poll(async () => (await readRuntime()).projectPath, { timeout: 60_000 }).toBe(projectPath);
+      await win.clock.install();
       const firstRuntime = await readRuntime();
       const workspaceBeforeRemoval = await readWorkspaceProgram();
       const toolboxOrderBeforeRemoval = await readToolboxOrder();
@@ -160,6 +170,15 @@ test.describe('Blockly 编辑器', () => {
       }, rendererRealmMarker);
       const rendererBeforeRemoval = await readRendererIdentity();
 
+      // Pause renderer timers while npm runs so its debounced watcher cannot
+      // rebuild before the retained-package outage is established.
+      await win.clock.pauseAt(new Date());
+      const retainedLibraryPath = path.join(projectPath, 'node_modules', ...RETAINED_LIBRARY.split('/'));
+      // Keep the moved package outside node_modules: the scanner correctly
+      // recognizes package.json names even if its folder has a temporary suffix.
+      const transientLibraryPath = path.join(tempRoot, 'retained-library-transient');
+      expect(existsSync(retainedLibraryPath)).toBe(true);
+
       execFileSync('npm', [
         'uninstall',
         REMOVAL_LIBRARY,
@@ -171,10 +190,8 @@ test.describe('Blockly 编辑器', () => {
       // npm may temporarily move/recreate unrelated packages while it updates
       // node_modules. The removal watcher must keep the current workspace intact
       // until every retained library is readable again.
-      const retainedLibraryPath = path.join(projectPath, 'node_modules', ...RETAINED_LIBRARY.split('/'));
-      const transientLibraryPath = `${retainedLibraryPath}.transient`;
-      expect(existsSync(retainedLibraryPath)).toBe(true);
       await rename(retainedLibraryPath, transientLibraryPath);
+      await win.clock.resume();
       await win.waitForTimeout(2_000);
       expect((await readRuntime()).id).toBe(firstRuntime.id);
       expect(await readWorkspaceProgram()).toEqual(workspaceBeforeRemoval);

@@ -1,7 +1,7 @@
 import { test as base, _electron, expect, type ElectronApplication, type Page } from '@playwright/test';
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { constants, existsSync } from 'node:fs';
+import { cp, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -44,6 +44,21 @@ export async function launchAilyElectron(options: {
 
   let app: ElectronApplication;
   try {
+    // Optional read-only toolchain seed for offline compile verification. Copy
+    // only installed packages/binaries into this test's disposable appdata;
+    // never copy accounts, auth, projects, .npmrc, locks or subapp activations.
+    const toolchainSeed = options.environment?.['AILY_E2E_TOOLCHAIN_SEED']
+      || process.env['AILY_E2E_TOOLCHAIN_SEED'];
+    if (toolchainSeed) {
+      for (const relative of ['package.json', 'package-lock.json', 'node_modules',
+        'tools', 'sdk', 'npm-global/bin', 'npm-global/lib']) {
+        const source = path.join(toolchainSeed, relative);
+        if (!existsSync(source)) continue;
+        const destination = path.join(userDataDir, relative);
+        await mkdir(path.dirname(destination), {recursive: true});
+        await cp(source, destination, {recursive: true, mode: constants.COPYFILE_FICLONE});
+      }
+    }
     app = await _electron.launch({
       args: ['.', `--user-data-dir=${userDataDir}`],
       cwd: ROOT,

@@ -423,7 +423,7 @@ const registerPaste = function(useCopyPasteCrossTab) {
     centerBlocksInViewport(blockList, workspace);
     applyConsecutivePasteStagger(blockList, workspace);
 
-    Blockly.common.setSelected(multiDraggable);
+    multiDraggable.selectAfterRender();
     Blockly.Events.setGroup(false);
   };
 
@@ -509,7 +509,7 @@ const registerSelectAll = function() {
         } else {
           Blockly.getSelected().unselect();
         }
-        Blockly.common.setSelected(null);
+        Blockly.getFocusManager().focusNode(workspace.getRootFocusableNode());
         multiDraggable.clearAll_();
         dragSelectionWeakMap.get(workspace).clear();
       }

@@ -137,6 +137,7 @@
     "watch": "ng build --watch --configuration development",
     "test": "ng test",
     "test:unit:ci": "ng test --watch=false --browsers=ChromeHeadless",
+    "blockly:sync": "node scripts/sync-blockly-fork.mjs",
     "guard:aily-chat-mainline": "node scripts/guard-aily-chat-mainline.js",
     "architecture:services": "node scripts/check-angular-service-architecture.mjs",
     "architecture:services:inventory": "node scripts/check-angular-service-architecture.mjs --inventory",
@@ -178,9 +179,9 @@
     "@angular/platform-browser": "^19.0.0",
     "@angular/platform-browser-dynamic": "^19.0.0",
     "@angular/router": "^19.0.0",
-    "@blockly/block-dynamic-connection": "^0.7.16",
-    "@blockly/field-colour-hsv-sliders": "^5.0.19",
-    "@blockly/workspace-minimap": "^0.2.16",
+    "@blockly/block-dynamic-connection": "13.3.0",
+    "@blockly/field-colour-hsv-sliders": "13.3.0",
+    "@blockly/workspace-minimap": "13.3.0",
     "@breezystack/lamejs": "^1.2.7",
     "@ctrl/tinycolor": "^4.1.0",
     "@lydell/node-pty": "^1.1.0",
@@ -197,7 +198,7 @@
     "altcha": "^2.3.0",
     "angular2-draggable": "^16.0.0",
     "animate.css": "^4.1.1",
-    "blockly": "npm:aily-project-blockly@^1.0.2",
+    "blockly": "file:vendor/aily-project-blockly-13.3.0.tgz",
     "buffer": "^6.0.3",
     "cropperjs": "^1.6.2",
     "dragselect": "^2.7.4",
@@ -254,6 +255,8 @@
     "dmg-license": "^1.0.11"
   },
   "overrides": {
-    "blockly": "npm:aily-project-blockly@^1.0.2"
+    "blockly": "$blockly",
+    "@blockly/field-colour": "13.3.0",
+    "@blockly/field-grid-dropdown": "13.3.0"
   }
 }

@@ -7,6 +7,11 @@ import { test, expect, navigate } from '../fixtures/electron-app';
  */
 test.describe('终端工具', () => {
   test('点击底部终端按钮应打开终端面板并初始化 xterm', async ({ mainWindow }) => {
+    // A fresh profile may asynchronously offer login. The terminal itself is
+    // available without an account; dismiss the offer through its real UI.
+    await mainWindow.addLocatorHandler(mainWindow.locator('.login-modal-wrap app-login .login-close'), async (button) => {
+      await button.click();
+    });
     // footer 终端按钮：图标 fa-square-terminal。
     const terminalBtn = mainWindow.locator('app-footer .footer-box .btn.ccenter', {
       has: mainWindow.locator('i.fa-square-terminal'),

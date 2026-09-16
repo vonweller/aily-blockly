@@ -1,5 +1,6 @@
 import { Injectable } from '@angular/core';
 import * as Blockly from 'blockly';
+import '../utils/blockly-legacy-library-compat';
 import {
   ArduinoGenerator,
   createArduinoGenerator,

@@ -217,7 +217,7 @@ const registerDuplicate = function() {
         });
         dragSelection.clear();
         multiDraggable.clearAll_();
-        Blockly.common.setSelected(null);
+        Blockly.getFocusManager().focusNode(workspace.getRootFocusableNode());
       } else {
         apply(scope.block);
       }
@@ -241,7 +241,7 @@ const registerDuplicate = function() {
       connectionDBList.forEach(function(connectionDB) {
         connectionDB[0].connect(connectionDB[1]);
       });
-      Blockly.common.setSelected(multiDraggable);
+      multiDraggable.selectAfterRender();
       Blockly.Events.setGroup(false);
     },
     scopeType: Blockly.ContextMenuRegistry.ScopeType.BLOCK,
@@ -771,7 +771,7 @@ const executePaste = async function(workspace) {
   moveBlocksToMousePosition(blockList, workspace);
   applyConsecutivePasteStagger(blockList, workspace);
   Blockly.Events.setGroup(false);
-  Blockly.common.setSelected(multiDraggable);
+  multiDraggable.selectAfterRender();
 };
 
 const registerPaste = function(useCopyPasteCrossTab) {
@@ -862,7 +862,7 @@ const registerSelectAll = function() {
         } else {
           Blockly.getSelected().unselect();
         }
-        Blockly.common.setSelected(null);
+        Blockly.getFocusManager().focusNode(scope.workspace.getRootFocusableNode());
         multiDraggable.clearAll_();
         dragSelectionWeakMap.get(scope.workspace).clear();
       }
@@ -1144,7 +1144,7 @@ const registerCommentDuplicate = function() {
         });
         dragSelection.clear();
         multiDraggable.clearAll_();
-        Blockly.common.setSelected(null);
+        Blockly.getFocusManager().focusNode(workspace.getRootFocusableNode());
       } else {
         apply(scope.comment);
       }

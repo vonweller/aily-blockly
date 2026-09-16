@@ -1,7 +1,7 @@
 import { Injectable } from '@angular/core';
 import { BehaviorSubject, Subject, debounceTime, filter, firstValueFrom, map, switchMap, take, timer } from 'rxjs';
 import * as Blockly from 'blockly';
-import { installBlocklyVariableComparator, loadBlocklyWorkspace } from '../utils/blockly-performance';
+import { loadBlocklyWorkspace } from '../utils/blockly-performance';
 import { processI18n, processJsonVar, processStaticFilePath, processToolboxI18n, resolveSerialPortValueAfterCdcDisabled } from '../components/blockly/abf';
 import { TranslateService } from '@ngx-translate/core';
 import { ElectronService, LogService } from '@core/platform/public-api';
@@ -1090,7 +1090,6 @@ export class BlocklyService {
       }
     });
 
-    installBlocklyVariableComparator();
     loadBlocklyWorkspace(this.workspace, workspaceJson);
   }
 
@@ -1984,7 +1983,7 @@ export class BlocklyService {
   private mountExternalToolbox() {
     if (!this.nativeToolboxElement && this.workspace) {
       const injectionDiv = (this.workspace as any).getInjectionDiv?.() as HTMLElement | undefined;
-      const currentNativeToolbox = injectionDiv?.querySelector<HTMLElement>('.blocklyToolboxDiv') || null;
+      const currentNativeToolbox = injectionDiv?.querySelector<HTMLElement>('.blocklyToolbox') || null;
       if (currentNativeToolbox) {
         this.nativeToolboxElement = currentNativeToolbox;
       }
@@ -2896,10 +2895,10 @@ export class BlocklyService {
       });
 
       // 获取工作区变量用于 ID → 名称转换
-      const variables = this.workspace!.getAllVariables().map(v => ({
+      const variables = this.workspace!.getVariableMap().getAllVariables().map(v => ({
         id: v.getId(),
-        name: v.name,
-        type: v.type || 'int'
+        name: v.getName(),
+        type: v.getType() || 'int'
       }));
 
       return convertBlockTreeToAbs(blockAbi, variables);
