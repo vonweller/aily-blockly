@@ -23,12 +23,18 @@ Node.js 最低 22；本次构建 Node 24.16.0，宿主内置 Node 22.21.0。
 - `/Users/downey/Projects/OutSource/aily--blockly` 已从 `265c3a774` 快进到宿主升级 `6ad2f5b3`，并安装对应 lockfile 依赖。
   原目录单测 **394/394**、TypeScript 检查通过；Node 读取 Blockly.VERSION 为 **13.3.0**，依赖树全部复用该版本，工作区无未提交代码。
 - 两仓库均保留 `codex/blockly-v11.2.2-backup` 分支；未发布 npm 包。
-- **运行中开发服务尚未切换**：保留的 `ng serve`（PID 8953）继续使用旧 Vite 预打包缓存。
-  新建的隔离 Electron 窗口连接该服务，实际读取 Blockly.VERSION 为 **1.0.2**，版本烟测失败；
+- 最初保留的 `ng serve`（PID 8953）继续使用旧 Vite 预打包缓存。
+  隔离 Electron 窗口当时读取 Blockly.VERSION 为 **1.0.2**，版本烟测失败；
   `.angular/cache/19.2.24/aily-blockly/vite/deps/chunk-CQKEK7E7.js` 同样包含旧版本。
-  这与新版生产构建的桌面 E2E 通过是不同层次，不能宣称原运行窗口已升级。
-  已关闭并清理本次隔离烟测进程；原 Electron（PID 9036）未关闭、用户项目未改写。
-  需要用户保存当前项目并确认重启开发服务，再读取实际版本完成热运行切换验收。
+  这与新版生产构建的桌面 E2E 通过是不同层次。
+- **用户授权后已重启开发服务**：仅停止旧 `ng serve`，新服务 PID 68255 继续监听 4200，
+  Vite 日志确认因 lockfile 变化重新预打包。连接该开发服务的全新隔离 Electron 实例已读取 **13.3.0**，
+  39 块测试项目加载、代码生成（572 字符）通过，无 pageerror；烟测退出码 0。
+  原 Electron（PID 9036）仍存活，没有主动关闭窗口或写入用户项目。
+  版本回读来自隔离实例，不冒充直接读取了原用户窗口的内部状态。
+  证据：`/tmp/aily-blockly-v13-restarted-smoke2.log`、`/tmp/aily-blockly-v13-dev-server.log`。
+  原窗口另外通过只读 CLI `app_info` 健康检查（HTTP 200、ok=true、Thrasos／dark），未进行项目写操作；
+  `e2e/.artifacts/blockly-v13/original-window-health.json` 不含鉴权 token。
 
 ## 新能力及边界
 
@@ -106,11 +112,59 @@ Node.js 最低 22；本次构建 Node 24.16.0，宿主内置 Node 22.21.0。
 原生窗口截图 3024×1768 已人工检查，积木、分类栏及通知显示正常；通知显示 4%，未再出现原截图的 -442%。
 初次加载通知观察器记录 1 次合法采样；这不是连续帧性能测试。早到／中间／结束帧另用 ChromeHeadless 真模板断言 0%／75%／100%。
 
-按不同测试用例去重，目前 **60 项桌面 E2E 已通过**（57 项常规，另加大项目、真实编译及小地图）；
+首轮按不同测试用例去重，**60 项 E2E 套件用例已通过**（57 项常规，另加大项目、真实编译及小地图）；
 这些结果来自分批运行，不冒充一次全量全绿。5 项外部条件测试未开启，详见下一节。
+其中套件同时包含 Electron 交互和编排辅助逻辑测试，不将全部用例都计为真实桌面交互。
+
+### 重启后的扩展回归
+
+新增 `blockly-v13-extended.spec.ts`，五项均在真实 Electron 生产加载路径通过：
+
+1. 原生数字编辑器提交／Escape 取消、撤销重做；键盘编辑滑杆到 100；中英双行文本输入。
+2. 实际发布库的 `variables_get` 重命名、引用查询、代码输出及 JSON 恢复保留变量 ID。
+3. 已连接语句块的折叠不改变代码；独立禁用原因不被旧 setEnabled API 清除；断开／撤销／JSON 恢复。
+4. 未失焦注释和数值改动真正写入 project.abi，关闭测试进程后用新 Electron 进程恢复，代码逐字一致。
+5. Thrasos／Zelos 两种 Aily 渲染器分别重新进入编辑器；逐块检查 SVG 正尺寸，放大／缩小还原比例，积木数与代码不变。
+
+扩展首轮 4/4，日志 `/tmp/aily-blockly-v13-extended-second.log`；随后加入双渲染器测试，完整套件中五项全部通过（48.1 秒）。
+第一轮数字撤销用例未等待字段提交事件入撤销栈，
+已改为等待编辑器关闭且对应字段事件入栈后执行撤销；未更改产品逻辑或放宽值断言。
+旧全流程脚本会清理共享 aily-builder 缓存，未运行该清理路径；新增创建／编译用例仅使用临时项目目录，
+只替代系统目录选择器返回值，其余创建、依赖安装、预处理和编译走实际应用流程。
+
+新建／连续编译用例 **1/1 通过**（1.8 分钟）：`@aily-project/board-xiao_esp32s3`，
+两次分别核验本次 buildInfo 的时间和 success 状态，并核验 BIN 大小与两次编译完成日志。
+另行复跑已有项目真实编译用例 **1/1 通过**；均未执行上传／烧录。
+日志：`/tmp/aily-blockly-v13-create-compile-third.log`、`/tmp/aily-blockly-v13-create-compile-first.log`（后者首个新用例失败、原编译用例通过）。
+新建用例初次曾匹配到 Plus 板型，随后目录断言定位到两个输入框；均为新测试选择器问题，
+已精确匹配基础板型和非 board 的路径输入框，未修改产品选板／创建逻辑。
+
+本轮原目录重新执行：宿主 **394/394**、Electron **91/91**、三种代码生成器旧新对照通过；
+新增 E2E 文件 TypeScript 检查通过；架构审计仍为原有 6 项违规，输出与基线一致。
+
+重启后的完整 E2E 首轮结果为 **63 通过、1 失败、7 未开启**（6.5 分钟），保留原始 JSON 报告，未覆盖失败记录。
+唯一失败在大项目的通知采样数量断言：功能恢复、撤销、保存重开及代码一致性断言均已通过，
+但采样器只观察首次编辑器中的通知节点，重开后节点已被替换，下载百分比出现时仍观察旧节点。
+现每次进入编辑器前重新绑定观察器，并额外断言两次挂载；保留百分比样本大于零和全部处于 0–100 的断言。
+该修正仅修改测试，不改变通知组件或业务行为。修正后专项 **1/1 通过**，两次挂载、4 次合法百分比采样，无 pageerror；
+完整功能流程 85.0 秒（首次加载 18.3 秒、单次代码生成 211 ms），7765 块／320 变量／181380 字符及旧版 SHA-256 均不变。
+截图人工核对为正常工作区，右下角通知 5%；证据为 `large-after-restart-contract.json`、`large-after-restart.png`。
+
+本轮按用例去重累计 **66 项通过**：完整套件的 63 项、大项目修正后复测 1 项、另行执行的编译 2 项。
+这是分批最终通过结果，**不是一次全量全绿**；仍有 5 个门控用例未运行（AI 1、旧全流程 3、模拟器 1）。
+旧单板全流程由本轮安全的新建／两次编译用例覆盖了所选 XIAO ESP32-S3，不代表所有板型均通过。
+
+无工具链 seed 的编辑器批次会在隔离 appdata 中触发后台工具下载；部分截图显示 SDK 路径尚未就绪，
+测试退出时相应 npm 子进程由正常清理生命周期终止。这些编辑器断言不等于 SDK／编译验收；
+真实编译采用前述白名单工具链 seed 独立执行，没有将背景安装中断算作编译成功。
+随后带白名单工具链再次复跑跨进程恢复和双渲染器，**2/2 通过**（2.7 分钟，重复用例不增加总数）。
+两种渲染器截图已人工核对，未再显示 SDK 路径错误；恢复注释截图仍有依赖安装进度，
+没有因此声称这两项已完成全部工具链安装。报告／截图保存在 `seeded-renderer-restore.json` 和 `seeded-renderer-restore-results/`。
 
 本机证据保存在原宿主和升级工作区的 `e2e/.artifacts/blockly-v13/`：
 `large-workspace-contract.json`、`large-workspace.png`、`negative-progress-before.png`、`minimap-pan.png`、`compile-success.png`。
+原宿主另保存本轮 `full-after-restart.json` 和 `full-after-restart-results/`，包括双渲染器和跨进程恢复注释截图；
+`new-project-compiled-twice.png` 为新建项目连续两次编译的真实窗口证据。
 最终桌面专项日志为 `/tmp/aily-blockly-v13-final-acceptance.log`。
 原目录复核日志为 `/tmp/aily-blockly-v13-original-unit.log`、`/tmp/aily-blockly-v13-original-typecheck.log`；
 旧开发缓存版本烟测失败见 `/tmp/aily-blockly-v13-original-smoke.log`，没有将该烟测计入通过数。
@@ -149,6 +203,10 @@ npm run test:e2e
 AILY_E2E_PROJECT=/absolute/path/to/installed-fixture \
 AILY_E2E_TOOLCHAIN_SEED=/absolute/path/to/toolchain-appdata \
 AILY_E2E_COMPILE=1 npm run test:e2e -- compile.spec.ts
+
+# 新建向导和两次真实编译：仅使用隔离工具链和临时项目，不清理共享缓存
+AILY_E2E_TOOLCHAIN_SEED=/absolute/path/to/toolchain-appdata \
+AILY_E2E_COMPILE=1 npm run test:e2e -- blockly-v13-create-compile.spec.ts
 ```
 
 旧新核心对照脚本是 headless 合同验证，不是三种语言所有第三方库的穷举测试。
@@ -158,4 +216,4 @@ AILY_E2E_COMPILE=1 npm run test:e2e -- compile.spec.ts
 
 源码历史保留升级前提交。回退时应将核心 tarball、宿主兼容层、官方插件和 lockfile 作为一个单元处理，
 先保留当前未提交内容，再用新的回退提交或独立工作区恢复基线；不要只单独降级 blockly，
-也不要对现有开发目录执行 hard reset。本次不会重启或关闭既有开发实例。
+也不要对现有开发目录执行 hard reset。本次先保留既有进程，确认旧缓存并获得用户授权后仅重启 `ng serve`；原 Electron 窗口保持运行。

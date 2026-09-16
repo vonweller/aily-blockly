@@ -4,11 +4,44 @@ import {cp, mkdtemp, rm, writeFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
+import type {Page} from '@playwright/test';
 
 const SOURCE = process.env['AILY_E2E_LARGE_PROJECT'];
 // DOM tracing recursively snapshots deeply nested SVG stacks and can dominate
 // the workload. Keep real screenshots/contract evidence without that observer.
 test.use({trace: 'off'});
+
+async function observeProgressOnNextEditor(win: Page) {
+  await win.evaluate(() => {
+    const state = window as any;
+    const evidence = state.__largeProgressEvidence ??= {samples: 0, invalid: [] as string[], mounts: 0};
+    state.__largeProgressObserver?.disconnect();
+    state.__largeProgressMountObserver?.disconnect();
+    // Each route entry creates a new notification element. Do not keep
+    // observing a detached element after the save/reopen part of this test.
+    const mountObserver = new MutationObserver(attach);
+    state.__largeProgressMountObserver = mountObserver;
+    function attach() {
+      const root = document.querySelector('app-blockly-editor app-notification');
+      if (!root) return;
+      mountObserver.disconnect();
+      evidence.mounts++;
+      const sample = () => {
+        const text = root.querySelector('.num-box')?.textContent?.trim();
+        if (!text) return;
+        evidence.samples++;
+        const value = Number(text.replace('%', ''));
+        if (!Number.isFinite(value) || value < 0 || value > 100) evidence.invalid.push(text);
+      };
+      const observer = new MutationObserver(sample);
+      state.__largeProgressObserver = observer;
+      observer.observe(root, {subtree: true, childList: true, characterData: true});
+      sample();
+    }
+    mountObserver.observe(document.body, {subtree: true, childList: true});
+    attach();
+  });
+}
 
 test('large real-project copy preserves all blocks, code, JSON and live field undo', async ({electronApp}, testInfo) => {
   test.skip(!SOURCE, 'Set AILY_E2E_LARGE_PROJECT to a real Blockly project; only a temporary copy is modified.');
@@ -22,29 +55,7 @@ test('large real-project copy preserves all blocks, code, JSON and live field un
     if (message.text().startsWith('[upgrade-large]')) console.log(new Date().toISOString(), message.text());
   });
   try {
-    await win.evaluate(() => {
-      const evidence = {samples: 0, invalid: [] as string[]};
-      (window as any).__largeProgressEvidence = evidence;
-      // The notification belongs to the editor route, not the initial guide.
-      // Stop observing the document as soon as that component is mounted.
-      const mountObserver = new MutationObserver(attach);
-      function attach() {
-        const root = document.querySelector('app-notification');
-        if (!root) return;
-        mountObserver.disconnect();
-        const sample = () => {
-          const text = root.querySelector('.num-box')?.textContent?.trim();
-          if (!text) return;
-          evidence.samples++;
-          const value = Number(text.replace('%', ''));
-          if (!Number.isFinite(value) || value < 0 || value > 100) evidence.invalid.push(text);
-        };
-        new MutationObserver(sample).observe(root, {subtree: true, childList: true, characterData: true});
-        sample();
-      }
-      mountObserver.observe(document.body, {subtree: true, childList: true});
-      attach();
-    });
+    await observeProgressOnNextEditor(win);
     await cp(SOURCE!, project, {recursive: true, mode: constants.COPYFILE_FICLONE,
       // Runtime locks belong to the source instance, never to the disposable
       // clone. Keep the real user's project/lock completely untouched.
@@ -112,6 +123,7 @@ test('large real-project copy preserves all blocks, code, JSON and live field un
     console.log('[upgrade-large] saved; reopening');
     await win.evaluate(() => { window.location.hash = '#/main/guide'; });
     await expect(win.locator('app-blockly-editor')).toHaveCount(0);
+    await observeProgressOnNextEditor(win);
     await openBlocklyProject(win, project);
     await expect.poll(() => win.evaluate(() => document.querySelector('iframe[data-blockly-generator-runtime]')?.getAttribute('data-runtime-ready')), {timeout: 90_000}).toBe('true');
     expect(await win.evaluate(() => (window as any).blocklyWorkspace.getAllBlocks(false).length)).toBe(result.count);
@@ -121,6 +133,7 @@ test('large real-project copy preserves all blocks, code, JSON and live field un
     })).toBe(result.code);
     expect(errors).toEqual([]);
     const progress = await win.evaluate(() => (window as any).__largeProgressEvidence);
+    expect(progress.mounts).toBe(2);
     expect(progress.samples).toBeGreaterThan(0);
     expect(progress.invalid).toEqual([]);
     const {code, ...contract} = result;
