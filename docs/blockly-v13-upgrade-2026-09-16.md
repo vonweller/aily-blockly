@@ -17,6 +17,19 @@
 
 Node.js 最低 22；本次构建 Node 24.16.0，宿主内置 Node 22.21.0。
 
+### 原目录落地状态与运行中版本
+
+- `/Users/downey/Projects/ZCK/aily-npm-blockly` 已合入核心升级 `fbee0c44d`，原目录独立执行核心测试通过。
+- `/Users/downey/Projects/OutSource/aily--blockly` 已从 `265c3a774` 快进到宿主升级 `6ad2f5b3`，并安装对应 lockfile 依赖。
+  原目录单测 **394/394**、TypeScript 检查通过；Node 读取 Blockly.VERSION 为 **13.3.0**，依赖树全部复用该版本，工作区无未提交代码。
+- 两仓库均保留 `codex/blockly-v11.2.2-backup` 分支；未发布 npm 包。
+- **运行中开发服务尚未切换**：保留的 `ng serve`（PID 8953）继续使用旧 Vite 预打包缓存。
+  新建的隔离 Electron 窗口连接该服务，实际读取 Blockly.VERSION 为 **1.0.2**，版本烟测失败；
+  `.angular/cache/19.2.24/aily-blockly/vite/deps/chunk-CQKEK7E7.js` 同样包含旧版本。
+  这与新版生产构建的桌面 E2E 通过是不同层次，不能宣称原运行窗口已升级。
+  已关闭并清理本次隔离烟测进程；原 Electron（PID 9036）未关闭、用户项目未改写。
+  需要用户保存当前项目并确认重启开发服务，再读取实际版本完成热运行切换验收。
+
 ## 新能力及边界
 
 - 13.2 改善插入标记、连接数据库更新、变量名比较和积木坐标计算，并修复相关内存泄漏。
@@ -96,9 +109,11 @@ Node.js 最低 22；本次构建 Node 24.16.0，宿主内置 Node 22.21.0。
 按不同测试用例去重，目前 **60 项桌面 E2E 已通过**（57 项常规，另加大项目、真实编译及小地图）；
 这些结果来自分批运行，不冒充一次全量全绿。5 项外部条件测试未开启，详见下一节。
 
-本机证据保存在升级工作区的 `e2e/.artifacts/blockly-v13/`：
+本机证据保存在原宿主和升级工作区的 `e2e/.artifacts/blockly-v13/`：
 `large-workspace-contract.json`、`large-workspace.png`、`negative-progress-before.png`、`minimap-pan.png`、`compile-success.png`。
 最终桌面专项日志为 `/tmp/aily-blockly-v13-final-acceptance.log`。
+原目录复核日志为 `/tmp/aily-blockly-v13-original-unit.log`、`/tmp/aily-blockly-v13-original-typecheck.log`；
+旧开发缓存版本烟测失败见 `/tmp/aily-blockly-v13-original-smoke.log`，没有将该烟测计入通过数。
 
 本次使用 webapp-testing 技能要求的真实 Electron 页面及交互验证；按 ui-function-repair 的实际入口／截图复核要求定位并修复通知动画越界，
 不能把构建／单测通过当作 UI 或硬件验收。
