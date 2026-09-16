@@ -1,6 +1,7 @@
 import { Injectable } from '@angular/core';
 import { BehaviorSubject, Subject, debounceTime, filter, firstValueFrom, map, switchMap, take, timer } from 'rxjs';
 import * as Blockly from 'blockly';
+import { installBlocklyVariableComparator, loadBlocklyWorkspace } from '../utils/blockly-performance';
 import { processI18n, processJsonVar, processStaticFilePath, processToolboxI18n, resolveSerialPortValueAfterCdcDisabled } from '../components/blockly/abf';
 import { TranslateService } from '@ngx-translate/core';
 import { ElectronService, LogService } from '@core/platform/public-api';
@@ -143,8 +144,6 @@ export class BlocklyService {
 
   private _workspace: Blockly.WorkspaceSvg | null = null;
   private workspaceReadySubject = new BehaviorSubject<Blockly.WorkspaceSvg | null>(null);
-  private workspaceRenderAfterLoadAnimationFrame: number | null = null;
-  private workspaceRenderAfterLoadTimeout: ReturnType<typeof setTimeout> | null = null;
 
   get workspace(): Blockly.WorkspaceSvg {
     return this._workspace as Blockly.WorkspaceSvg;
@@ -1091,38 +1090,8 @@ export class BlocklyService {
       }
     });
 
-    Blockly.serialization.workspaces.load(workspaceJson, this.workspace);
-    this.scheduleWorkspaceRenderAfterLoad();
-  }
-
-  private scheduleWorkspaceRenderAfterLoad(): void {
-    const workspace = this._workspace;
-    if (!workspace) {
-      return;
-    }
-
-    if (this.workspaceRenderAfterLoadAnimationFrame !== null) {
-      cancelAnimationFrame(this.workspaceRenderAfterLoadAnimationFrame);
-      this.workspaceRenderAfterLoadAnimationFrame = null;
-    }
-    if (this.workspaceRenderAfterLoadTimeout !== null) {
-      clearTimeout(this.workspaceRenderAfterLoadTimeout);
-      this.workspaceRenderAfterLoadTimeout = null;
-    }
-
-    const renderWorkspace = () => {
-      this.workspaceRenderAfterLoadAnimationFrame = null;
-      this.workspaceRenderAfterLoadTimeout = null;
-      if (this._workspace === workspace) {
-        workspace.render();
-      }
-    };
-
-    if (typeof requestAnimationFrame === 'function') {
-      this.workspaceRenderAfterLoadAnimationFrame = requestAnimationFrame(renderWorkspace);
-    } else {
-      this.workspaceRenderAfterLoadTimeout = setTimeout(renderWorkspace, 0);
-    }
+    installBlocklyVariableComparator();
+    loadBlocklyWorkspace(this.workspace, workspaceJson);
   }
 
   // 通过node_modules加载库
@@ -1960,21 +1929,18 @@ export class BlocklyService {
   }
 
   private collectBlockTypesFromBlock(block: any, blockTypes: Set<string>) {
-    if (!block || typeof block !== 'object') {
-      return;
+    const pending = [block];
+    while (pending.length) {
+      const current = pending.pop();
+      if (!current || typeof current !== 'object') continue;
+      if (typeof current.type === 'string' && current.type.length > 0) {
+        blockTypes.add(current.type);
+      }
+      pending.push(current.next?.block);
+      for (const input of Object.values(current.inputs || {}) as any[]) {
+        pending.push(input?.block, input?.shadow);
+      }
     }
-
-    if (typeof block.type === 'string' && block.type.length > 0) {
-      blockTypes.add(block.type);
-    }
-
-    const inputs = block.inputs && typeof block.inputs === 'object' ? block.inputs : {};
-    for (const input of Object.values(inputs) as any[]) {
-      this.collectBlockTypesFromBlock(input?.block, blockTypes);
-      this.collectBlockTypesFromBlock(input?.shadow, blockTypes);
-    }
-
-    this.collectBlockTypesFromBlock(block.next?.block, blockTypes);
   }
 
   private getPackageDependencySpec(packageJson: any, packageName: string): string {
@@ -2137,7 +2103,6 @@ export class BlocklyService {
     this.ensureToolboxItemIds(this.toolbox.contents);
     if (this.workspace) {
       this.workspace.updateToolbox(this.toolbox);
-      this.workspace.render();
     }
     this.rebuildToolboxFacade();
     this.syncToolboxFacadeWithWorkspace();
@@ -2584,7 +2549,7 @@ export class BlocklyService {
       ? sharedModel.procedureBlocks.map((block) => this.cloneJson(block))
       : [];
 
-    workspaceJson.blocks.blocks = [...sharedProcedureBlocks, ...pageBlocks.map((block) => this.cloneJson(block))];
+    workspaceJson.blocks.blocks = [...sharedProcedureBlocks, ...pageBlocks];
 
     if (sharedModel?.variables) {
       workspaceJson.variables = this.cloneJson(sharedModel.variables);
