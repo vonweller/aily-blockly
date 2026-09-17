@@ -41,6 +41,9 @@ export function isAppAvailableForApplication(only: unknown, applicationName: str
 
 export interface ChildToolAppConfig extends Partial<AppItem> {
   available?: boolean;
+  /** Install once in the background when the catalog is first initialized. */
+  autoInstall?: boolean;
+  /** Apply the initial toolbar placement once, preserving later user choices. */
   defaultToolbar?: boolean;
 }
 

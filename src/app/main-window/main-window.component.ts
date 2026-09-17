@@ -25,7 +25,7 @@ import { CloudSpaceComponent } from '../tools/cloud-space/cloud-space.component'
 import { UserCenterComponent } from '../tools/user-center/user-center.component';
 import { OnboardingComponent } from '../components/onboarding/onboarding.component';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
-import { isChildTool } from '../configs/tool.config';
+import { isChildTool, isAppAvailableForApplication } from '../configs/tool.config';
 import {
   AuthService,
   type AuthSessionInvalidationRequest,
@@ -38,8 +38,9 @@ import { ElectronService } from '@core/platform/public-api';
 import {
   SubappManagerService,
   ChildToolProcessService,
-  bootstrapDefaultAilyChatSubapp,
-  DEFAULT_AILY_CHAT_SUBAPP_BOOTSTRAP_KEY,
+  bootstrapDefaultSubapps,
+  isDefaultSubappActionCompleted,
+  DEFAULT_SUBAPP_STATE_KEY,
   DEFAULT_AILY_CHAT_SUBAPP_TOOL_ID,
 } from '@integration/subapps/public-api';
 import { LoginComponent } from '../components/login/login.component';
@@ -194,7 +195,7 @@ export class MainWindowComponent implements OnDestroy {
     this.setupExampleListListener();
     void this.electronService.sendRendererReady();
     void this.initializeAuthAndPromptIfNeeded();
-    void this.ensureDefaultAilyChatSubapp();
+    void this.ensureDefaultSubapps();
     // 重置 footer 状态
     this.uiService.updateFooterState({ text: '', timeout: 0 });
 
@@ -298,23 +299,36 @@ export class MainWindowComponent implements OnDestroy {
     );
   }
 
-  private async ensureDefaultAilyChatSubapp(): Promise<void> {
+  private async ensureDefaultSubapps(): Promise<void> {
+    if (!this.electronService.isElectron) return;
     try {
-      await bootstrapDefaultAilyChatSubapp({
-        completed: !!this.configService.data?.[DEFAULT_AILY_CHAT_SUBAPP_BOOTSTRAP_KEY],
-        initialize: () => this.subappManager.initialize(),
+      await bootstrapDefaultSubapps({
+        isCompleted: (id, action) => isDefaultSubappActionCompleted(this.configService.data, id, action),
+        initialize: () => this.subappManager.initializeForBootstrap(),
         readCatalog: () => this.subappManager.state.apps,
+        isAvailable: item => isAppAvailableForApplication(item.only, this.configService.getApplicationName()),
         install: catalogId => this.subappManager.install(catalogId),
-        isPinned: () => this.appStoreService.isAppInZone('header', DEFAULT_AILY_CHAT_SUBAPP_TOOL_ID),
-        pin: () => this.appStoreService.addAppToZone('header', DEFAULT_AILY_CHAT_SUBAPP_TOOL_ID),
-        markCompleted: async () => {
-          this.configService.data[DEFAULT_AILY_CHAT_SUBAPP_BOOTSTRAP_KEY] = Date.now();
-          await this.configService.save();
+        isPinned: toolId => this.appStoreService.isAppInZone('header', toolId),
+        pin: toolId => this.appStoreService.addAppToZone('header', toolId),
+        markCompleted: async (id, action) => {
+          const previous = this.configService.data[DEFAULT_SUBAPP_STATE_KEY];
+          this.configService.data[DEFAULT_SUBAPP_STATE_KEY] = {
+            ...previous,
+            [id]: { ...previous?.[id], [action]: Date.now() },
+          };
+          try {
+            await this.configService.save();
+          } catch (error) {
+            this.configService.data[DEFAULT_SUBAPP_STATE_KEY] = previous;
+            throw error;
+          }
         },
+        onError: (toolId, error) => console.warn(`[Subapp] Default ${toolId} installation failed:`, error),
       });
-      this.scheduleAilyChatPrewarm();
     } catch (error) {
-      console.warn('[Subapp] Default Aily Chat installation failed:', error);
+      console.warn('[Subapp] Default subapp initialization failed:', error);
+    } finally {
+      this.scheduleAilyChatPrewarm();
     }
   }
 
