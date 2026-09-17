@@ -56,9 +56,13 @@ export class AbsWorkspaceSyncService {
 
   /** Synchronous runtime-scoped advice. No lease, persistence, generation or callback probing. */
   describeCapabilities(input: Record<string, any>) {
-    if (input['version'] !== 1 || Object.keys(input).some(key => !['version', 'type', 'filter'].includes(key))
+    if (input['version'] !== 1 || Object.keys(input).some(key => !['version', 'type', 'types', 'filter'].includes(key))
       || ['type', 'filter'].some(key => input[key] !== undefined && (typeof input[key] !== 'string' || input[key].length > 256))
-      || input['type'] !== undefined && (!input['type'] || input['filter'] !== undefined)) {
+      || input['type'] !== undefined && !input['type']
+      || ['type', 'types', 'filter'].filter(key => input[key] !== undefined).length > 1
+      || input['types'] !== undefined && (!Array.isArray(input['types']) || !input['types'].length || input['types'].length > 16
+        || input['types'].some(type => typeof type !== 'string' || !type || type.length > 256)
+        || new Set(input['types']).size !== input['types'].length)) {
       throw new AbsSyncError('ABS_REQUEST_INVALID', 'Invalid ABS capability query.');
     }
     const context = this.context(), runtimeRevision = getActiveProjectGeneratorRevision();
@@ -69,12 +73,15 @@ export class AbsWorkspaceSyncService {
       replay.assertCurrent(); nativeValidation = true;
     } catch { /* Advice stays conservative when the complete runtime cannot be replayed. */ }
     const filter = (input['filter'] ?? '').toLowerCase();
-    const types = input['type'] !== undefined ? [input['type']] : context.definitions.types;
+    const selected: string[] | undefined = input['type'] !== undefined ? [input['type']] : input['types'];
+    const types = selected ?? context.definitions.types;
     const blocks = types.map(type => ({ type, library: this.editor.blockTypeToLibMap.get(type)?.name ?? 'host' }))
       .filter(item => !filter || item.type.toLowerCase().includes(filter) || item.library.toLowerCase().includes(filter))
       .map(item => ({ ...item, ...describeAbsBlockCapability(context.definitions, item.type, nativeValidation) }));
+    const instanceSyntax = selected ? this.editor.describeCommittedAbsSyntax(selected) : undefined;
     context.assertCurrent();
-    return { version: 1, scope: context.scope, runtimeRevision, blocks };
+    return { version: 1, scope: context.scope, runtimeRevision, blocks,
+      ...(selected ? { instanceSyntax: instanceSyntax ?? { scope: 'unavailable', reason: 'no-current-committed-snapshot' } } : {}) };
   }
 
   /** initialize must be explicit when replacing an existing unversioned ABS mirror. */

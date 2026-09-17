@@ -1,4 +1,5 @@
 import type { AbsProjection } from './abs-state';
+import { AbsSyntaxAdviceIndex } from './abs-syntax-advice';
 
 export interface AbsBlockContext { snippet: string; lineRange: string; generation: string }
 
@@ -7,11 +8,18 @@ export class AbsBlockContextIndex {
   private readonly nodes: Map<string, { start: number; end: number }>;
   private readonly source: string;
   private readonly generation: string;
+  private readonly syntax: AbsSyntaxAdviceIndex;
 
   constructor(projection: AbsProjection) {
     this.source = projection.abs;
     this.generation = projection.map.generation;
     this.nodes = new Map(projection.map.nodes.map(node => [node.blockId, { start: node.start, end: node.end }]));
+    this.syntax = new AbsSyntaxAdviceIndex(projection.workspace, projection.contracts,
+      projection.map.nodes.map(node => ({ id: node.blockId, start: node.start })));
+  }
+
+  describeSyntax(types: readonly string[]) {
+    return { scope: 'current-workspace' as const, generation: this.generation, ...this.syntax.describe(types) };
   }
 
   get(blockId: string): AbsBlockContext | undefined {

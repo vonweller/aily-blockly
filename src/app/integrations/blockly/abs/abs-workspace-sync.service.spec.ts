@@ -19,6 +19,7 @@ import { nativeReconciliationDefinition, nativeReconciliationSteps } from './abs
 import { nativeFieldOrder } from './abs-native-field-order';
 import { withNativeStateLoading } from '../../../editors/blockly-editor/services/blockly-native-state-loading';
 import { observeNativeBlockDefinition } from '../../../editors/blockly-editor/services/blockly-native-structure';
+import { AbsBlockContextIndex } from './abs-block-context';
 import { nativeDefaultSource } from './abs-native-defaults.fixture';
 import { nativeDormantSource } from './abs-native-shadows.fixture';
 import { modelDefinitions, modelSource } from './abs-native-models.fixture';
@@ -134,6 +135,7 @@ describe('v2 actual workspace generation coordinator', () => {
       prepareProjectCode: jasmine.createSpy('prepareCode').and.resolveTo(null),
       markWorkspaceCodeDirty: jasmine.createSpy('dirty'),
       publishAbsContext: jasmine.createSpy('publishAbsContext'),
+      describeCommittedAbsSyntax: jasmine.createSpy('describeCommittedAbsSyntax').and.returnValue(undefined),
     };
     Blockly.serialization.workspaces.load(seed(), editor.workspace);
     project = new _ProjectService(editor, {} as any, {} as any); project.currentProjectPath = scope.projectKey;
@@ -883,9 +885,37 @@ describe('v2 actual workspace generation coordinator', () => {
     expect(service.describeCapabilities({ version: 1, type: 'missing' }).blocks[0].level).toBe('unavailable');
   });
 
+  it('batches current instance advice without constructing blocks or granting creation authority', async () => {
+    enableNative();
+    editor.workspace.newBlock('native_commit_shape').setFieldValue('A', 'MODE');
+    editor.workspace.newBlock('native_commit_shape').setFieldValue('B', 'MODE');
+    const base = await baseline();
+    const committed = await new AbsBaselineStore(port, scope).loadCommitted();
+    const index = new AbsBlockContextIndex(committed!);
+    editor.describeCommittedAbsSyntax.and.callFake(types => index.describeSyntax(types));
+    const probe = spyOn(Blockly.Workspace.prototype, 'newBlock').and.callThrough();
+    const before = absJson(nativeState()), files = [...disk];
+    const report = service.describeCapabilities({ version: 1, types: ['native_commit_shape', 'missing'] });
+    expect(report.blocks.map(block => block.type)).toEqual(['native_commit_shape', 'missing']);
+    expect(report.blocks[0].level).toBe('validate');
+    expect((report.instanceSyntax as any).generation).toBe(base.generation);
+    expect((report.instanceSyntax as any).authority).toBeFalse();
+    const variants = (report.instanceSyntax as any).variants;
+    expect(variants.length).toBe(2);
+    expect(variants.find(item => item.selectors.MODE === 'B').argsOrder.map(arg => arg.name)).toEqual(['MODE', 'VALUE', 'DETAIL']);
+    expect(editor.describeCommittedAbsSyntax).toHaveBeenCalledOnceWith(['native_commit_shape', 'missing']);
+    expect(probe).not.toHaveBeenCalled(); expect(editor.prepareProjectCode).not.toHaveBeenCalled();
+    expect(absJson(nativeState())).toBe(before); expect([...disk]).toEqual(files);
+    editor.describeCommittedAbsSyntax.and.returnValue(undefined);
+    expect(service.describeCapabilities({ version: 1, type: 'abs_sync_root' }).instanceSyntax).toEqual({
+      scope: 'unavailable', reason: 'no-current-committed-snapshot' });
+  });
+
   it('rejects malformed capability requests and missing runtime context', () => {
     for (const query of [{}, { version: 2 }, { version: 1, type: '' }, { version: 1, filter: [] },
-      { version: 1, type: 'x', filter: 'y' }, { version: 1, execute: true }]) expect(() => service.describeCapabilities(query)).toThrow();
+      { version: 1, type: 'x', filter: 'y' }, { version: 1, execute: true }, { version: 1, types: [] },
+      { version: 1, types: ['x', 'x'] }, { version: 1, types: [1] }, { version: 1, types: ['x'], type: 'x' },
+      { version: 1, types: Array.from({ length: 17 }, (_, i) => 't' + i) }]) expect(() => service.describeCapabilities(query)).toThrow();
     project.currentProjectPath = '';
     expect(() => service.describeCapabilities({ version: 1 })).toThrow();
   });

@@ -6,7 +6,8 @@ describe('canonical selected-block context', () => {
   const projection = () => createAbsProjection({ blocks: { blocks: [{ type: 'text', id: 'selected',
     fields: { TEXT: '中文😀' }, next: { block: { type: 'text', id: 'sibling', fields: { TEXT: 'later' } } } }] } }, {
     document: {}, generation: 'context-generation', baselineRef: 'baseline', scope: { projectKey: 'project', pageId: 'main' },
-    savedAbiHash: null, contracts: { fields: { selected: { TEXT: { type: 'field_input' } }, sibling: { TEXT: { type: 'field_input' } } } },
+    savedAbiHash: null, contracts: { fields: { selected: { TEXT: { type: 'field_input' } }, sibling: { TEXT: { type: 'field_input' } } },
+      syntax: { selected: [{ kind: 'field', name: 'TEXT' }], sibling: [{ kind: 'field', name: 'TEXT' }] } },
   });
 
   it('reads exact canonical ranges and does not invent missing block or parent bindings', async () => {
@@ -29,10 +30,16 @@ describe('canonical selected-block context', () => {
     editor.isWorkspaceEditBlocked = () => blocked;
     editor.publishAbsContext(await projection(), revision, () => { if (!current) throw new Error('stale'); });
     expect(editor.readCommittedAbsContext('selected')).toBeDefined();
+    const advice = editor.describeCommittedAbsSyntax(['text']);
+    expect(advice.scope).toBe('current-workspace'); expect(advice.variants.length).toBe(1);
+    expect(JSON.stringify(advice)).not.toMatch(/中文|later|selected|sibling/);
     blocked = true; expect(editor.readCommittedAbsContext('selected')).toBeUndefined();
+    expect(editor.describeCommittedAbsSyntax(['text'])).toBeUndefined();
     blocked = false; expect(editor.readCommittedAbsContext('selected')).toBeDefined();
     revision++; expect(editor.readCommittedAbsContext('selected')).toBeUndefined();
+    expect(editor.describeCommittedAbsSyntax(['text'])).toBeUndefined();
     editor.publishAbsContext(await projection(), revision, () => { if (!current) throw new Error('stale'); });
     current = false; expect(editor.readCommittedAbsContext('selected')).toBeUndefined();
+    expect(editor.describeCommittedAbsSyntax(['text'])).toBeUndefined();
   });
 });

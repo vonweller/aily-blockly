@@ -3092,11 +3092,20 @@ export class BlocklyService {
   }
 
   private readCommittedAbsContext(blockId: string) {
+    return this.readCommittedAbsIndex()?.get(blockId);
+  }
+
+  /** Advice only, from the same current committed snapshot used by selection context. */
+  describeCommittedAbsSyntax(types: readonly string[]) {
+    return this.readCommittedAbsIndex()?.describeSyntax(types);
+  }
+
+  private readCommittedAbsIndex() {
     const context = this.absContext;
     if (!context || this.isWorkspaceEditBlocked()) return undefined;
     try {
       context.assertCurrent();
-      if (context.revision === this.getProjectPersistenceRevision()) return context.index.get(blockId);
+      if (context.revision === this.getProjectPersistenceRevision()) return context.index;
     } catch { /* A previous project/page/runtime must never supply selection context. */ }
     this.absContext = undefined;
     return undefined;
