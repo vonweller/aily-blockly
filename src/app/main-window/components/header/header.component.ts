@@ -1,5 +1,7 @@
+import { CodeEditorProProjectService } from '../../../editors/code-editor-pro/services/code-editor-pro-project.service';
+import { CoderProjectRuntimeService } from '../../../integrations/coder/coder-project-runtime.service';
 import { CommonModule } from '@angular/common';
-import { ChangeDetectorRef, Component, ElementRef, isDevMode, NgZone, OnDestroy, OnInit, ViewChild, viewChild } from '@angular/core';
+import { ChangeDetectorRef, Component, ElementRef, isDevMode, NgZone, OnDestroy, OnInit, ViewChild, viewChild, inject } from '@angular/core';
 import { HEADER_BTNS, HEADER_BTNS_LINUX, HEADER_MENU, IMenuItem } from '../../../configs/menu.config';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { FormsModule } from '@angular/forms';
@@ -78,6 +80,10 @@ interface NetworkOtaTarget {
   styleUrl: './header.component.scss',
 })
 export class HeaderComponent implements OnInit, OnDestroy {
+  private readonly coderRuntime = inject(CoderProjectRuntimeService);
+  private readonly coderPersistence = inject(CodeEditorProProjectService);
+  private readonly coderHeaderButtons = new Map<string, IMenuItem[]>();
+
   headerBtns: IMenuItem[] = HEADER_BTNS;
   headerMenu = HEADER_MENU;
   headerApps: AppItem[] = [];
@@ -130,6 +136,80 @@ export class HeaderComponent implements OnInit, OnDestroy {
       : applicationName;
   }
 
+  @ViewChild('projectTitleInput') projectTitleInput?: ElementRef<HTMLInputElement>;
+  isEditingProjectTitle = false;
+  isSavingProjectTitle = false;
+  private editingProjectPath = '';
+
+  get canEditProjectTitle(): boolean {
+    return !!this.projectService.currentProjectPath && !this.isSavingProjectTitle;
+  }
+
+  startEditingProjectTitle(): void {
+    if (!this.canEditProjectTitle || this.isEditingProjectTitle) return;
+
+    this.editingProjectPath = this.projectService.currentProjectPath;
+    this.isEditingProjectTitle = true;
+    this.cd.detectChanges();
+    const input = this.projectTitleInput?.nativeElement;
+    if (input) {
+      input.focus({ preventScroll: true });
+      input.setSelectionRange(input.value.length, input.value.length);
+    }
+  }
+
+  onProjectTitleKeydown(event: KeyboardEvent): void {
+    event.stopPropagation();
+    if (event.isComposing || event.keyCode === 229) return;
+
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      void this.saveProjectTitle((event.target as HTMLInputElement).value);
+    } else if (event.key === 'Escape' && !this.isSavingProjectTitle) {
+      event.preventDefault();
+      this.isEditingProjectTitle = false;
+    }
+  }
+
+  private readonly onProjectTitleOutsidePointerDown = (event: PointerEvent): void => {
+    const input = this.projectTitleInput?.nativeElement;
+    if (this.isEditingProjectTitle && input && event.target !== input) {
+      this.ngZone.run(() => void this.saveProjectTitle(input.value));
+    }
+  };
+
+  async saveProjectTitle(value: string): Promise<void> {
+    if (!this.isEditingProjectTitle || this.isSavingProjectTitle) return;
+
+    const nickname = value.trim();
+    const projectPath = this.editingProjectPath;
+    if (!projectPath || projectPath !== this.projectService.currentProjectPath
+      || !nickname || nickname === this.projectTitle) {
+      this.isEditingProjectTitle = false;
+      return;
+    }
+
+    this.isSavingProjectTitle = true;
+    try {
+      // 只提交昵称，让服务合并磁盘上的最新配置并同步 .temp 快照。
+      await this.projectService.setPackageJson({ nickname });
+      if (projectPath === this.projectService.currentProjectPath) {
+        this.projectService.addRecentlyProject({
+          name: this.projectData.name,
+          path: projectPath,
+          nickname,
+        });
+      }
+      this.isEditingProjectTitle = false;
+    } catch (error) {
+      console.error('保存项目名称失败:', error);
+      this.message.error(this.translate.instant('PROJECT_SETTING_DIALOG.ERROR_SAVE_FAILED'));
+    } finally {
+      this.isSavingProjectTitle = false;
+      this.cd.markForCheck();
+    }
+  }
+
   get openToolList() {
     return this.uiService.openToolList;
   }
@@ -144,8 +224,23 @@ export class HeaderComponent implements OnInit, OnDestroy {
   }
 
   private loadHeaderButtons(): void {
-    this.headerBtns = this.isPythonProject ? HEADER_BTNS_LINUX : HEADER_BTNS;
+    const template = this.isPythonProject ? HEADER_BTNS_LINUX : HEADER_BTNS;
+    const path = this.projectService.currentProjectPath;
+    if (this.projectService.getProjectMode(path) === 'coder') {
+      if (!this.coderHeaderButtons.has(path)) this.coderHeaderButtons.set(path, template.map(item => ({ ...item })));
+      this.headerBtns = this.coderHeaderButtons.get(path)!;
+      this.syncCoderActionStates();
+    } else this.headerBtns = template;
     this.initShortcutMap();
+  }
+
+  private syncCoderActionStates(): void {
+    if (this.projectService.getProjectMode(this.projectService.currentProjectPath) !== 'coder') return;
+    const state = this.coderRuntime.getState(this.projectService.currentProjectPath);
+    for (const item of this.headerBtns) {
+      if (item.action === 'compile') item.state = this.projectService.getCoderOperation(this.projectService.currentProjectPath)?.kind === 'build' ? 'doing' : state.build;
+      if (item.action === 'play' || item.action === 'upload') item.state = state.upload;
+    }
   }
 
   get linuxBoardConnectors(): LinuxBoardConnector[] {
@@ -223,6 +318,10 @@ export class HeaderComponent implements OnInit, OnDestroy {
   }
 
   ngOnInit(): void {
+    // Blockly 会阻止事件冒泡及默认的焦点切换，必须在捕获阶段处理外部点击。
+    this.ngZone.runOutsideAngular(() => {
+      document.addEventListener('pointerdown', this.onProjectTitleOutsidePointerDown, true);
+    });
     this.loadHeaderButtons();
 
     this.unregisterHeaderMenuAutomation = this.uiAutomationRegistry.registerMenuProvider('header', {
@@ -292,6 +391,7 @@ export class HeaderComponent implements OnInit, OnDestroy {
       }
     }
 
+    this.coderRuntime.states$.subscribe(() => { this.syncCoderActionStates(); this.cd.markForCheck(); });
     this.projectService.stateSubject.subscribe((state) => {
       if (state == 'loaded' || state == 'saved') {
         this.loadHeaderButtons();
@@ -971,7 +1071,7 @@ export class HeaderComponent implements OnInit, OnDestroy {
   }
 
   onClick(item, event = null) {
-    this.process(item, event);
+    this.process(item, event, event?.isTrusted ? 'manual' : 'system');
   }
 
   isOpenTool(btn) {
@@ -985,7 +1085,7 @@ export class HeaderComponent implements OnInit, OnDestroy {
 
   onMenuClick(item) {
     if (item.disabled) return;
-    this.process(item);
+    this.process(item, null, 'manual');
     this.closeMenu();
   }
 
@@ -1021,6 +1121,25 @@ export class HeaderComponent implements OnInit, OnDestroy {
     }
   }
 
+  private coderProjectsAdding = false;
+
+  private async addCoderProjects(): Promise<void> {
+    if (this.coderProjectsAdding || this.projectService.getProjectMode(this.projectService.currentProjectPath) !== 'coder') return;
+    this.coderProjectsAdding = true;
+    try {
+      const selection = await window['ipcRenderer'].invoke('dialog-select-files', {
+        title: this.translate.instant('MENU.PROJECT_ADD'),
+        defaultPath: window['path'].dirname(this.projectService.currentProjectPath),
+        properties: ['openDirectory', 'multiSelections'],
+      });
+      for (const path of selection?.filePaths || []) await this.projectService.addCoderProject(path);
+    } catch (error) {
+      this.message.error(error instanceof Error ? error.message : String(error));
+    } finally {
+      this.coderProjectsAdding = false;
+    }
+  }
+
   updateSubscription: any = null;
   private workspaceImageExporting = false;
   private coderProjectSavingAs = false;
@@ -1044,7 +1163,7 @@ export class HeaderComponent implements OnInit, OnDestroy {
     }
   }
 
-  async process(item: IMenuItem, event = null) {
+  async process(item: IMenuItem, event = null, source: 'manual' | 'ai' | 'system' = 'system') {
     switch (item.action) {
       case 'project-new':
         if (this.isLoaded()) { // 只在已加载项目时检查
@@ -1059,6 +1178,9 @@ export class HeaderComponent implements OnInit, OnDestroy {
           if (!canContinue) return;
         }
         this.openProject();
+        break;
+      case 'project-add':
+        await this.addCoderProjects();
         break;
       case 'project-save':
         this.projectService.save();
@@ -1101,7 +1223,7 @@ export class HeaderComponent implements OnInit, OnDestroy {
       case 'compile':
         if (item.state === 'doing') return;
         item.state = 'doing';
-        this.builderService.build().then(result => {
+        this.builderService.build(undefined, { source }).then(result => {
           item.state = result.state || 'done';
         }).catch(err => {
           // console.log("编译未完成: ", JSON.stringify(err));
@@ -1294,6 +1416,7 @@ export class HeaderComponent implements OnInit, OnDestroy {
   }
 
   ngOnDestroy() {
+    document.removeEventListener('pointerdown', this.onProjectTitleOutsidePointerDown, true);
     this.unregisterHeaderMenuAutomation?.();
     this.unregisterHeaderMenuAutomation = null;
     this.appStoreSubscription?.unsubscribe();
@@ -1437,7 +1560,7 @@ export class HeaderComponent implements OnInit, OnDestroy {
 
           // 执行对应的操作
           if (menuItem.action) {
-            this.process(menuItem);
+            this.process(menuItem, event, event.isTrusted ? 'manual' : 'system');
           }
         }
       }
@@ -1482,6 +1605,8 @@ export class HeaderComponent implements OnInit, OnDestroy {
   }
 
   async checkUnsavedChanges(action: 'close' | 'open' | 'new'): Promise<boolean> {
+    // Coder activation retains each iframe, including its unsaved editor buffers.
+    if (action !== 'close' && this.projectService.getProjectMode(this.projectService.currentProjectPath) === 'coder') return true;
     // 检查项目是否有未保存的更改
     if (!await this.projectService.hasUnsavedChanges()) {
       return true;
@@ -1521,8 +1646,14 @@ export class HeaderComponent implements OnInit, OnDestroy {
         switch (result.result) {
           case 'save':
             // 保存项目并继续
-            await this.projectService.save();
-            resolve(true);
+            try {
+              if (this.projectService.getProjectMode(this.projectService.currentProjectPath) === 'coder') await this.coderPersistence.saveAllOpenProjects();
+              else await this.projectService.save();
+              resolve(true);
+            } catch (error) {
+              this.message.error(error instanceof Error ? error.message : String(error));
+              resolve(false);
+            }
             break;
           case 'continue':
             // 不保存，但继续操作

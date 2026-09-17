@@ -104,7 +104,7 @@ async function main() {
         mkdirp(path.dirname(compileSourcePath));
         fs.writeFileSync(compileSourcePath, code);
         if (!isAilyCode) {
-            copyProjectSrcToSketch(currentProjectPath, sketchPath);
+            await copyProjectSrcToSketch(currentProjectPath, sketchPath);
         }
         ensureCustomPartitionFile(
             projectConfig,
@@ -510,7 +510,7 @@ main().catch(e => {
     exitWithFatalError(e);
 });
 
-function copyProjectSrcToSketch(currentProjectPath, sketchPath) {
+async function copyProjectSrcToSketch(currentProjectPath, sketchPath) {
     const projectSrcPath = path.join(currentProjectPath, 'src');
     if (!fs.existsSync(projectSrcPath)) {
         return;
@@ -519,7 +519,9 @@ function copyProjectSrcToSketch(currentProjectPath, sketchPath) {
         logger.warn(`Project src path exists but is not a directory: ${projectSrcPath}`);
         return;
     }
-    fs.cpSync(projectSrcPath, sketchPath, { recursive: true });
+    // Bundled Node 22 can crash natively in cpSync on Windows Unicode paths.
+    // The async copy preserves the same options and reports failures to main().
+    await fs.promises.cp(projectSrcPath, sketchPath, { recursive: true });
 }
 
 function ensureCustomPartitionFile(

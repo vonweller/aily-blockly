@@ -18,7 +18,7 @@ import { AppStoreService } from '../tools/app-store/app-store.service';
 import { NzModalModule, NzModalRef, NzModalService } from 'ng-zorro-antd/modal';
 import { NpmService } from '@domain/dependencies/public-api';
 import { NavigationEnd, Router, RouterModule } from '@angular/router';
-import { distinctUntilChanged, filter, merge, Subscription, take } from 'rxjs';
+import { combineLatest, distinctUntilChanged, filter, merge, Subscription, take } from 'rxjs';
 import { ConfigService, ToolI18nService } from '@core/preferences/public-api';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { CloudSpaceComponent } from '../tools/cloud-space/cloud-space.component';
@@ -96,7 +96,9 @@ export class MainWindowComponent implements OnDestroy {
   }
 
   get openToolList() {
-    return this.uiService.openToolList;
+    // Focus changes the z-index, not DOM order: moving an iframe reloads its document
+    // and invalidates in-flight child lifecycle calls (including prepareUpdate).
+    return [...this.uiService.openToolList].sort();
   }
 
   isChildTool(toolId: string): boolean {
@@ -177,9 +179,13 @@ export class MainWindowComponent implements OnDestroy {
     ]);
     this.uiService.init();
     this.projectService.init();
-    this.projectContextSubscription = this.projectService.currentProjectPath$.subscribe(workspace => {
+    this.projectContextSubscription = combineLatest([
+      this.projectService.currentProjectPath$,
+      this.projectService.coderWorkspace$,
+    ]).subscribe(([workspace, coderWorkspace]) => {
       window['ipcRenderer']?.send?.('host-project-context-changed', {
-        workspace: workspace || null
+        workspace: workspace || null,
+        coderWorkspace,
       });
     });
     this.updateService.init();

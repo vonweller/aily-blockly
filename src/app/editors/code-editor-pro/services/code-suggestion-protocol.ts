@@ -10,16 +10,21 @@ export type CodeWindow = { windowId: string; range: Range; text: string; purpose
 export type CandidateDocument = DocumentRef & {
   relativePath: string; languageId: string; version: number; permission: 'edit' | 'context-only'; windows: CodeWindow[]
 }
-export type RecentEdit = { fileId: string; before: string; after: string; ageMs: number; origin: 'typing' | 'paste' | 'completion' | 'undo' | 'redo' }
+export type RecentEdit = { fileId: string; before: string; after: string; ageMs: number; origin: 'typing' | 'paste' | 'completion' | 'undo' | 'redo' | 'external' }
+export type ClipboardContext = { operation: 'copy' | 'cut'; text: string; relativePath: string; languageId: string; ageMs: number }
+export const CLIPBOARD_HISTORY_LIMIT = 5
+export const CLIPBOARD_TEXT_LIMIT = 2048
+export const CLIPBOARD_TOTAL_LIMIT = 4096
+export const CLIPBOARD_MAX_AGE_MS = 300_000
 export type DiagnosticContext = DocumentRef & { range: Range; message: string; code?: string; severity: 'error' | 'warning'; freshness: 'version-matched' | 'observed-current' }
 export type SuggestionRequest = {
   protocolVersion: 2; requestId: string; opportunityId: string; workspaceSessionId: string
   client: { name: 'aily-coder-editor'; version: string; sessionId: string }
-  mode: 'completion' | 'alternatives' | 'next-edit'
-  trigger: 'typing' | 'edit' | 'accept' | 'diagnostic' | 'manual'
-  active: DocumentRef & { position: Position }
-  documents: CandidateDocument[]; recentEdits: RecentEdit[]; diagnostics: DiagnosticContext[]
-  options: { crossFile: false; autoImports: boolean; partialInsertAccept: boolean; maxCandidates: number }
+  mode: 'completion' | 'next-edit'
+  trigger: 'typing' | 'edit' | 'accept' | 'diagnostic' | 'cursor' | 'selection' | 'manual'
+  active: DocumentRef & { position: Position; selection?: Range }
+  documents: CandidateDocument[]; recentEdits: RecentEdit[]; diagnostics: DiagnosticContext[]; clipboardHistory?: ClipboardContext[]
+  options: { crossFile: boolean; autoImports: boolean; partialInsertAccept: boolean; maxCandidates: number }
 }
 export type TextEdit = { range: Range; expectedText: string; newText: string }
 export type Suggestion = DocumentRef & { candidateId: string; kind: 'insert' | 'edit'; primary: TextEdit; additionalEdits: TextEdit[] }
@@ -32,7 +37,7 @@ export type FeedbackEvent = typeof FEEDBACK_EVENTS[number]
 export type SuggestionFeedback = { opportunityId: string; candidateId: string; event: FeedbackEvent; acceptedCharacters?: number }
 export type SuggestionCapabilities = {
   protocolVersions: number[]; modes: SuggestionRequest['mode'][]; maxCandidates: number; maxRequestBytes: number; maxOutputBytes: number
-  features: { crossFile: boolean; atomicAdditionalEdits: boolean; partialInsertAccept: boolean; partialAcceptWithImports: boolean; extendedRange: boolean }
+  features: { crossFile: boolean; atomicAdditionalEdits: boolean; partialInsertAccept: boolean; partialAcceptWithImports: boolean; extendedRange: boolean; clipboardContext?: boolean }
   quota?: { enabled: boolean; allowed: boolean; remaining: number }
   model?: { id: string; selectable: boolean }
 }
@@ -62,28 +67,31 @@ export function validateRange(value: unknown): asserts value is Range {
 }
 export const sameRange = (a: Range, b: Range): boolean => comparePosition(a.start, b.start) === 0 && comparePosition(a.end, b.end) === 0
 export const wireBytes = (value: unknown): number => new TextEncoder().encode(JSON.stringify(value)).length
+function importLines(text: string): string[] { return text.split(/\r?\n/).map(line => line.trim()).filter(line => /^(?:#\s*include\b|import\b|from\s+\S+\s+import\b)/.test(line)) }
 export function parseSuggestionRequest(value: unknown): SuggestionRequest {
   if (wireBytes(value) > MAX_REQUEST_BYTES) throw new SuggestionError('SUGGESTION_TOO_LARGE', undefined, 413)
   const input = record(value)
-  keys(input, ['protocolVersion', 'requestId', 'opportunityId', 'workspaceSessionId', 'client', 'mode', 'trigger', 'active', 'documents', 'recentEdits', 'diagnostics', 'options'])
+  keys(input, ['protocolVersion', 'requestId', 'opportunityId', 'workspaceSessionId', 'client', 'mode', 'trigger', 'active', 'documents', 'recentEdits', 'diagnostics', 'clipboardHistory', 'options'])
   if (input['protocolVersion'] !== 2 || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(input['requestId'])) || input['requestId'] !== input['opportunityId']) throw new SuggestionError('INVALID_SUGGESTION_ID')
   str(input['workspaceSessionId'], 128, 8)
   const client = record(input['client']); keys(client, ['name', 'version', 'sessionId'])
   if (client['name'] !== 'aily-coder-editor') throw new SuggestionError('INVALID_SUGGESTION_CLIENT')
   str(client['version'], 64, 1); str(client['sessionId'], 128, 8)
-  if (!['completion', 'alternatives', 'next-edit'].includes(String(input['mode'])) || !['typing', 'edit', 'accept', 'diagnostic', 'manual'].includes(String(input['trigger']))) throw new SuggestionError('INVALID_SUGGESTION_MODE')
+  if (!['completion', 'next-edit'].includes(String(input['mode'])) || !['typing', 'edit', 'accept', 'diagnostic', 'cursor', 'selection', 'manual'].includes(String(input['trigger']))) throw new SuggestionError('INVALID_SUGGESTION_MODE')
   const options = record(input['options']); keys(options, ['crossFile', 'autoImports', 'partialInsertAccept', 'maxCandidates'])
-  if (options['crossFile'] !== false || typeof options['autoImports'] !== 'boolean' || typeof options['partialInsertAccept'] !== 'boolean') throw new SuggestionError('INVALID_SUGGESTION_OPTIONS')
-  integer(options['maxCandidates'], 3); if (options['maxCandidates'] === 0) throw new SuggestionError('INVALID_SUGGESTION_OPTIONS')
-  const active = record(input['active']); keys(active, ['fileId', 'snapshotId', 'position']); str(active['fileId'], 64, 1); str(active['snapshotId'], 128, 1)
+  if (typeof options['crossFile'] !== 'boolean' || typeof options['autoImports'] !== 'boolean' || typeof options['partialInsertAccept'] !== 'boolean' || (options['crossFile'] && input['mode'] !== 'next-edit')) throw new SuggestionError('INVALID_SUGGESTION_OPTIONS')
+  integer(options['maxCandidates'], 1); if (options['maxCandidates'] === 0) throw new SuggestionError('INVALID_SUGGESTION_OPTIONS')
+  const active = record(input['active']); keys(active, ['fileId', 'snapshotId', 'position', 'selection']); str(active['fileId'], 64, 1); str(active['snapshotId'], 128, 1)
   validateRange({ start: active['position'], end: active['position'] })
+  if (active['selection'] != null) validateRange(active['selection'])
   if (!Array.isArray(input['documents']) || input['documents'].length < 1 || input['documents'].length > 8) throw new SuggestionError('INVALID_SUGGESTION_DOCUMENTS')
   const files = new Map<string, CandidateDocument>(); const windowIds = new Set<string>()
   for (const item of input['documents']) {
     const doc = record(item); keys(doc, ['fileId', 'snapshotId', 'relativePath', 'languageId', 'version', 'permission', 'windows'])
     str(doc['fileId'], 64, 1); str(doc['snapshotId'], 128, 1); str(doc['relativePath'], 1024, 1); str(doc['languageId'], 64, 1); integer(doc['version'], Number.MAX_SAFE_INTEGER)
     if (/^(?:[\\/]|[a-z]:)/i.test(doc['relativePath']) || doc['relativePath'].replace(/\\/g, '/').split('/').includes('..') || files.has(doc['fileId'])) throw new SuggestionError('INVALID_SUGGESTION_DOCUMENT')
-    if (!['edit', 'context-only'].includes(String(doc['permission'])) || (doc['permission'] === 'edit' && doc['fileId'] !== active['fileId'])) throw new SuggestionError('INVALID_SUGGESTION_PERMISSION')
+    if (!['edit', 'context-only'].includes(String(doc['permission'])) || (doc['permission'] === 'edit' && doc['fileId'] !== active['fileId'] && !options['crossFile'])) throw new SuggestionError('INVALID_SUGGESTION_PERMISSION')
+    if (doc['permission'] === 'edit' && /(?:^|\/)(?:libraries|node_modules|vendor|@?sdk|\.git|build|dist|generated)(?:\/|$)/i.test(doc['relativePath'].replace(/\\/g, '/'))) throw new SuggestionError('INVALID_SUGGESTION_PERMISSION')
     if (!Array.isArray(doc['windows']) || doc['windows'].length > 10) throw new SuggestionError('INVALID_SUGGESTION_WINDOWS')
     for (const item of doc['windows']) {
       const window = record(item); keys(window, ['windowId', 'range', 'text', 'purpose', 'allowedNewText'])
@@ -98,11 +106,27 @@ export function parseSuggestionRequest(value: unknown): SuggestionRequest {
   }
   const activeDoc = files.get(active['fileId'])
   if (activeDoc?.snapshotId !== active['snapshotId'] || activeDoc.permission !== 'edit') throw new SuggestionError('INVALID_SUGGESTION_SNAPSHOT')
+  const selection = active['selection'] as Range | undefined
+  if (['cursor', 'selection'].includes(String(input['trigger'])) && input['mode'] !== 'next-edit') throw new SuggestionError('INVALID_SUGGESTION_SELECTION')
+  if ((input['trigger'] === 'selection') !== !!selection || (selection && (sameRange(selection, { start: selection.start, end: selection.start }) ||
+    comparePosition(selection.start, active['position'] as Position) > 0 || comparePosition(active['position'] as Position, selection.end) > 0 ||
+    !activeDoc.windows.some(window => window.purpose === 'completion' && sameRange(window.range, selection) && !!window.text)))) throw new SuggestionError('INVALID_SUGGESTION_SELECTION')
   if (input['mode'] !== 'next-edit' && !activeDoc.windows.some(w => w.purpose === 'completion' && sameRange(w.range, { start: active['position'] as Position, end: active['position'] as Position }))) throw new SuggestionError('INVALID_SUGGESTION_INSERT')
   if (!Array.isArray(input['recentEdits']) || input['recentEdits'].length > 20 || !Array.isArray(input['diagnostics']) || input['diagnostics'].length > 20) throw new SuggestionError('INVALID_SUGGESTION_CONTEXT')
   for (const item of input['recentEdits']) {
     const edit = record(item); keys(edit, ['fileId', 'before', 'after', 'ageMs', 'origin']); str(edit['before'], 4096); str(edit['after'], 4096); integer(edit['ageMs'], 300_000)
-    if (!files.has(String(edit['fileId'])) || !['typing', 'paste', 'completion', 'undo', 'redo'].includes(String(edit['origin']))) throw new SuggestionError('INVALID_SUGGESTION_HISTORY')
+    if (!files.has(String(edit['fileId'])) || !['typing', 'paste', 'completion', 'undo', 'redo', 'external'].includes(String(edit['origin']))) throw new SuggestionError('INVALID_SUGGESTION_HISTORY')
+  }
+  if (input['clipboardHistory'] !== undefined) {
+    if (!Array.isArray(input['clipboardHistory']) || input['clipboardHistory'].length > CLIPBOARD_HISTORY_LIMIT) throw new SuggestionError('INVALID_CLIPBOARD_HISTORY')
+    let characters = 0
+    for (const item of input['clipboardHistory']) {
+      const entry = record(item); keys(entry, ['operation', 'text', 'relativePath', 'languageId', 'ageMs'])
+      str(entry['text'], CLIPBOARD_TEXT_LIMIT, 1); str(entry['relativePath'], 1024, 1); str(entry['languageId'], 64, 1); integer(entry['ageMs'], CLIPBOARD_MAX_AGE_MS)
+      if (!['copy', 'cut'].includes(String(entry['operation'])) || !entry['text'].trim() || /^(?:[\\/]|[a-z]:)/i.test(entry['relativePath']) || entry['relativePath'].replace(/\\/g, '/').split('/').includes('..')) throw new SuggestionError('INVALID_CLIPBOARD_HISTORY')
+      characters += entry['text'].length
+    }
+    if (characters > CLIPBOARD_TOTAL_LIMIT) throw new SuggestionError('INVALID_CLIPBOARD_HISTORY')
   }
   for (const item of input['diagnostics']) {
     const diag = record(item); keys(diag, ['fileId', 'snapshotId', 'range', 'message', 'severity', 'code', 'freshness']); validateRange(diag['range']); str(diag['message'], 2048)
@@ -114,7 +138,9 @@ export function parseSuggestionRequest(value: unknown): SuggestionRequest {
 export function validateSuggestionResult(value: unknown, request: SuggestionRequest): SuggestionResult {
   const result = record(value); keys(result, ['protocolVersion', 'requestId', 'opportunityId', 'completionId', 'suggestions', 'expiresInMs', 'finishReason'])
   if (wireBytes(value) > MAX_OUTPUT_BYTES || result['protocolVersion'] !== 2 || result['requestId'] !== request.requestId || result['opportunityId'] !== request.opportunityId || !/^sug_[a-f0-9]{32}$/.test(String(result['completionId']))) throw new SuggestionError('INVALID_SUGGESTION_ID')
-  integer(result['expiresInMs'], 30_000)
+  // Advanced comparison results intentionally live longer than automatic
+  // inline suggestions so a user can review three candidates before applying.
+  integer(result['expiresInMs'], 120_000)
   if (!Array.isArray(result['suggestions']) || result['suggestions'].length > request.options['maxCandidates'] || (request.mode === 'next-edit' && result['suggestions'].length > 1)) throw new SuggestionError('INVALID_SUGGESTION_COUNT')
   const ids = new Set<string>()
   for (const item of result['suggestions']) {
@@ -123,7 +149,7 @@ export function validateSuggestionResult(value: unknown, request: SuggestionRequ
     if (!new RegExp(`^${result['completionId']}_[0-2]$`).test(candidate['candidateId']) || ids.has(candidate['candidateId'])) throw new SuggestionError('INVALID_SUGGESTION_ID')
     ids.add(candidate['candidateId'])
     const doc = request.documents.find(d => d.fileId === candidate['fileId'] && d.snapshotId === candidate['snapshotId'] && d.permission === 'edit')
-    if (doc == null || doc['fileId'] !== request.active['fileId'] || !['insert', 'edit'].includes(String(candidate['kind'])) || !Array.isArray(candidate['additionalEdits']) || candidate['additionalEdits'].length > 2) throw new SuggestionError('INVALID_SUGGESTION_TARGET')
+    if (doc == null || (doc['fileId'] !== request.active['fileId'] && (!request.options.crossFile || request.mode !== 'next-edit')) || !['insert', 'edit'].includes(String(candidate['kind'])) || !Array.isArray(candidate['additionalEdits']) || candidate['additionalEdits'].length > 2) throw new SuggestionError('INVALID_SUGGESTION_TARGET')
     const edits = [candidate['primary'], ...candidate['additionalEdits']] as TextEdit[]
     for (let index = 0; index < edits.length; index++) {
       const edit = record(edits[index]); keys(edit, ['range', 'expectedText', 'newText']); validateRange(edit['range']); str(edit['expectedText'], 16_384); str(edit['newText'], 16_384)
@@ -131,6 +157,9 @@ export function validateSuggestionResult(value: unknown, request: SuggestionRequ
       if (!window || edit['newText'] === edit['expectedText'] || (index > 0 && (!request.options['autoImports'] || !window['allowedNewText']?.includes(edit['newText'])))) throw new SuggestionError('INVALID_SUGGESTION_EDIT')
     }
     const primary = edits[0]!
+    const previousImports = importLines(primary.expectedText)
+    const allowedImports = request.options.autoImports ? doc.windows.filter(window => window.purpose === 'import').flatMap(window => (window.allowedNewText ?? []).flatMap(importLines)) : []
+    for (const line of importLines(primary.newText)) if (!previousImports.includes(line) && !allowedImports.includes(line)) throw new SuggestionError('UNVERIFIED_SUGGESTION_IMPORT')
     const empty = comparePosition(primary.range['start'], primary.range['end']) === 0
     if ((candidate['kind'] === 'insert') !== empty || (request.mode !== 'next-edit' && (!empty || comparePosition(primary.range['start'], request.active['position']) !== 0))) throw new SuggestionError('INVALID_SUGGESTION_KIND')
     const sorted = [...edits].sort((a, b) => comparePosition(a.range['start'], b.range['start']))

@@ -14,6 +14,7 @@ export interface AppItem extends IMenuItem {
     availableVersion: string;
     installedVersion?: string | null;
     installed: boolean;
+    uninstalling?: boolean;
     updateAvailable: boolean;
     updateStatus: {
       state: 'current' | 'available' | 'downloading' | 'ready' | 'installing' | 'failed';
@@ -29,6 +30,13 @@ export interface AppItem extends IMenuItem {
     };
     installPath?: string;
   };
+}
+
+export function isAppAvailableForApplication(only: unknown, applicationName: string): boolean {
+  const target = typeof only === 'string' && only.trim()
+    ? only.trim().toLowerCase()
+    : 'all';
+  return target === 'all' || target === applicationName.trim().toLowerCase();
 }
 
 export interface ChildToolAppConfig extends Partial<AppItem> {

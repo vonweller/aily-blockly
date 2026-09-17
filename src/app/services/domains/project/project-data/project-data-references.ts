@@ -16,14 +16,16 @@ export function projectDataFieldReference(fieldState: unknown, fieldName: string
 export function collectProjectDataReferences(value: unknown): AilyDataRef[] {
   const refs = new Map<string, AilyDataRef>();
   const visited = new Set<object>();
-  const visit = (current: unknown): void => {
+  const pending: unknown[] = [value];
+  while (pending.length) {
+    const current = pending.pop();
     if (typeof current === 'string' && current.includes('$ailyData') && current.trim().startsWith('{')) {
       let parsed: unknown;
       try { parsed = JSON.parse(current); }
       catch (error) { throw new ProjectDataError('invalid-ref', 'String containing reserved $ailyData metadata is invalid JSON.', { cause: String(error) }); }
-      visit(parsed); return;
+      pending.push(parsed); continue;
     }
-    if (!current || typeof current !== 'object' || visited.has(current)) return;
+    if (!current || typeof current !== 'object' || visited.has(current)) continue;
     visited.add(current);
     if (!Array.isArray(current) && Object.hasOwn(current, '$ailyData')) {
       assertAilyDataRef(current);
@@ -31,10 +33,10 @@ export function collectProjectDataReferences(value: unknown): AilyDataRef[] {
       if (previous && !areAilyDataRefsEquivalent(previous, current)) {
         throw new ProjectDataError('corrupt', `Conflicting metadata for project data ID: ${current.$ailyData.id}`);
       }
-      refs.set(current.$ailyData.id, current); return;
+      refs.set(current.$ailyData.id, current); continue;
     }
-    for (const member of Object.values(current)) visit(member);
-  };
-  visit(value);
+    const members = Object.values(current);
+    for (let index = members.length - 1; index >= 0; index--) pending.push(members[index]);
+  }
   return [...refs.values()];
 }

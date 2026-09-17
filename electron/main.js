@@ -18,6 +18,7 @@ const {
 } = require("electron");
 
 const { isWin32, isDarwin, isLinux } = require("./platform");
+const { getPlatformResources } = require("./child-resources");
 const projectLock = require("./project-lock");
 const { startCliBridge } = require("./cli-bridge");
 const builder = require("./tools/builder");
@@ -767,6 +768,7 @@ const {
   registerWindowHandlers,
   forceStopChildToolByCatalogId,
   listChildToolHoldersForCatalogId,
+  getRunningSubappConfig,
 } = require("./window");
 const { registerNpmHandlers, killAllNpmProcesses, getActiveNpmProcesses } = require("./npm");
 const { registerUpdaterHandlers } = require("./updater");
@@ -801,6 +803,7 @@ let hasProcessCleanupCompleted = false;
 let processHealthDiagnosticsRegistered = false;
 let projectContextState = {
   workspace: null,
+  coderWorkspace: null,
   version: 0,
 };
 let hostAuthState = {
@@ -1025,6 +1028,7 @@ async function handleCliBridgeCommand(action, payload) {
         'project_open',
         'project_close',
         'project_load_status',
+        'project_list',
         'app_info',
         'main_menu_list',
         'main_menu_execute',
@@ -1050,7 +1054,7 @@ async function handleCliBridgeCommand(action, payload) {
             ? 600000
           : operation === 'project_save' && payload?.params?.chunk === true
             ? 140000
-          : operation === 'abs_apply' || operation === 'abs_validate' || operation === 'abs_projection' || operation === 'library_runtime_sync'
+          : operation === 'abs_apply' || operation === 'abs_validate' || operation === 'abs_projection' || operation === 'library_runtime_sync' || operation === 'set_board_config'
             ? 120000
             : operation === 'subapp_agent_call'
               ? 620000
@@ -1181,10 +1185,17 @@ async function handleCliBridgeCommand(action, payload) {
   }
 }
 
+let coderOpenProjects = [];
+ipcMain.on('cli-bridge:coder-projects', (event, projects) => {
+  if (event.sender !== mainWindow?.webContents || !Array.isArray(projects)) return;
+  coderOpenProjects = [...new Set(projects.filter(project => typeof project === 'string' && path.isAbsolute(project)).map(project => path.resolve(project)))];
+});
+
 function getCliBridgeStatus() {
   return {
     pid: process.pid,
     project: getOpenedProjectPathFromWindow(),
+    projects: coderOpenProjects,
     serve: !!serve,
   };
 }
@@ -1473,81 +1484,7 @@ function installChildEnv(childPath, options) {
     afterNodeInstall,
   } = options;
 
-  // 从文件名中提取版本号
-  function extractVersion(filename, keyword) {
-    // node 格式：node-v22.21.0-darwin-arm64.7z → 22.21.0
-    // probe-rs 格式：probe-rs-0.31.0.7z → 0.31.0
-    if (keyword === "node") {
-      const match = filename.match(/node-v(\d+\.\d+\.\d+)/);
-      return match ? match[1] : null;
-    } else if (keyword === "probe-rs") {
-      const match = filename.match(/probe-rs-(\d+\.\d+\.\d+)/);
-      return match ? match[1] : null;
-    }
-    return null;
-  }
-
-  // 比较语义化版本号
-  function compareSemver(version1, version2) {
-    if (!version1 || !version2) return 0;
-
-    // 移除可能的 'v' 前缀
-    const v1 = version1.replace(/^v/, '').split('.').map(Number);
-    const v2 = version2.replace(/^v/, '').split('.').map(Number);
-
-    // 确保两个版本号都有三个部分
-    while (v1.length < 3) v1.push(0);
-    while (v2.length < 3) v2.push(0);
-
-    // 比较主版本号
-    if (v1[0] !== v2[0]) {
-      return v1[0] > v2[0] ? 1 : -1;
-    }
-    // 比较次版本号
-    if (v1[1] !== v2[1]) {
-      return v1[1] > v2[1] ? 1 : -1;
-    }
-    // 比较修订版本号
-    if (v1[2] !== v2[2]) {
-      return v1[2] > v2[2] ? 1 : -1;
-    }
-    return 0;
-  }
-
-  // 查找指定目录下关键字匹配的最新版本文件
-  function findLatestVersionFile(directory, keyword) {
-    try {
-      if (!fs.existsSync(directory)) {
-        return null;
-      }
-
-      const files = fs.readdirSync(directory);
-      const matchingFiles = files.filter(file => {
-        return file.startsWith(keyword) && file.endsWith('.7z');
-      });
-
-      if (matchingFiles.length === 0) {
-        return null;
-      }
-
-      // 提取版本号并找到最新版本
-      let latestFile = matchingFiles[0];
-      let latestVersion = extractVersion(latestFile, keyword);
-
-      for (let i = 1; i < matchingFiles.length; i++) {
-        const currentVersion = extractVersion(matchingFiles[i], keyword);
-        if (currentVersion && compareSemver(currentVersion, latestVersion) > 0) {
-          latestFile = matchingFiles[i];
-          latestVersion = currentVersion;
-        }
-      }
-
-      return path.join(directory, latestFile);
-    } catch (error) {
-      console.error(`查找${keyword}文件失败:`, error);
-      return null;
-    }
-  }
+  const resources = getPlatformResources();
 
   function ensure7z() {
     const z7Path = path.join(childPath, z7Name);
@@ -1598,23 +1535,20 @@ function installChildEnv(childPath, options) {
     }
   }
 
-  function readInstalledVersion(targetPath) {
+  function readInstalledHash(targetPath) {
     const versionFile = path.join(targetPath, ".installed-version");
     if (!fs.existsSync(versionFile)) {
       return null;
     }
     try {
-      return fs.readFileSync(versionFile, "utf8").trim() || null;
+      return JSON.parse(fs.readFileSync(versionFile, "utf8")).sha256 || null;
     } catch (_) {
       return null;
     }
   }
 
-  function writeInstalledVersion(targetPath, version) {
-    if (!version) {
-      return;
-    }
-    fs.writeFileSync(path.join(targetPath, ".installed-version"), version);
+  function writeInstalledHash(targetPath, sha256) {
+    fs.writeFileSync(path.join(targetPath, ".installed-version"), JSON.stringify({ sha256 }));
   }
 
   function removeInstallDir(targetPath) {
@@ -1645,7 +1579,8 @@ function installChildEnv(childPath, options) {
   }
 
   function extract7zPackage(z7Path, archivePath, targetPath, keyword, validateComplete) {
-    const installedVersion = readInstalledVersion(targetPath);
+    const installedHash = readInstalledHash(targetPath);
+    const archiveHash = resources[keyword].sha256;
     const isComplete = validateComplete(targetPath);
 
     if (!archivePath || !fs.existsSync(archivePath)) {
@@ -1656,16 +1591,11 @@ function installChildEnv(childPath, options) {
       return false;
     }
 
-    const archiveVersion = extractVersion(path.basename(archivePath), keyword);
-
     if (isComplete) {
-      if (!installedVersion && archiveVersion) {
-        writeInstalledVersion(targetPath, archiveVersion);
-      }
-      if (!archiveVersion || !installedVersion || installedVersion === archiveVersion) {
+      if (installedHash === archiveHash) {
         return true;
       }
-      console.warn(`${keyword} 版本不匹配，准备重新解压: ${installedVersion} -> ${archiveVersion}`);
+      console.warn(`${keyword} 与资源清单不匹配，准备重新解压`);
       removeInstallDir(targetPath);
     } else if (fs.existsSync(targetPath)) {
       console.warn(`${keyword} 安装不完整，准备重新解压: ${targetPath}`);
@@ -1684,7 +1614,7 @@ function installChildEnv(childPath, options) {
         throw new Error(`${keyword} 解压后缺少关键文件`);
       }
 
-      writeInstalledVersion(targetPath, archiveVersion);
+      writeInstalledHash(targetPath, archiveHash);
       console.log(`安装解压 ${keyword}: ${archivePath} 成功！`);
       if (!serve) {
         fs.unlinkSync(archivePath);
@@ -1710,9 +1640,10 @@ function installChildEnv(childPath, options) {
 
   for (const pkg of packages) {
     const targetPath = path.join(childPath, pkg.name);
-    const archivePath =
-      findLatestVersionFile(sourceDir, pkg.name) ||
-      findLatestVersionFile(path.join(childPath, platformDir), pkg.name);
+    const sourceArchive = path.join(sourceDir, resources[pkg.name].file);
+    const archivePath = fs.existsSync(sourceArchive)
+      ? sourceArchive
+      : path.join(childPath, platformDir, resources[pkg.name].file);
     if (z7Path) {
       extract7zPackage(z7Path, archivePath, targetPath, pkg.name, validators[pkg.name]);
     } else {
@@ -2677,6 +2608,8 @@ function createWindow() {
   registerProbeRsHandlers(mainWindow);
   registerBleHandlers();
   registerSubappManagerHandlers(() => mainWindow, {
+    canMutateSharedTree: () => !hasOtherRunningInstances(),
+    getRunningSubappConfig,
     forceStopChildToolByCatalogId,
     listChildToolHoldersForCatalogId,
     canActivateUpdate: (entry) => {
@@ -3481,8 +3414,10 @@ ipcMain.on("host-project-context-changed", (event, data = {}) => {
   }
 
   const rawWorkspace = typeof data.workspace === "string" ? data.workspace : "";
+  const coderWorkspace = normalizeCoderWorkspaceContext(data.coderWorkspace);
   projectContextState = {
     workspace: rawWorkspace.trim() ? rawWorkspace : null,
+    coderWorkspace,
     version: projectContextState.version + 1,
   };
 
@@ -3498,6 +3433,31 @@ ipcMain.on("host-project-context-changed", (event, data = {}) => {
 });
 
 ipcMain.handle("host-project-context-get", () => ({ ...projectContextState }));
+
+function normalizeCoderWorkspaceContext(value) {
+  if (!value || typeof value !== "object") return null;
+  const id = typeof value.id === "string" ? value.id.trim() : "";
+  const root = typeof value.root === "string" ? value.root.trim() : "";
+  const activeProject = typeof value.activeProject === "string" ? value.activeProject.trim() : "";
+  const projects = Array.isArray(value.projects)
+    ? value.projects.flatMap((project) => {
+        const path = typeof project?.path === "string" ? project.path.trim() : "";
+        if (!path) return [];
+        const name = typeof project?.name === "string" && project.name.trim()
+          ? project.name.trim()
+          : path.replace(/\\/g, "/").split("/").filter(Boolean).pop() || path;
+        return [{ path, name }];
+      })
+    : [];
+  if (!id || !root || !activeProject || projects.length < 2) return null;
+  return {
+    id,
+    root,
+    activeProject,
+    name: typeof value.name === "string" && value.name.trim() ? value.name.trim() : "Coder Workspace",
+    projects,
+  };
+}
 
 ipcMain.on("host-auth-state-changed", (event, data = {}) => {
   const senderWindow = BrowserWindow.fromWebContents(event.sender);

@@ -19,7 +19,7 @@ import { type BlockCodeMapping } from '../components/blockly/generators/arduino/
 import { BlocklyService } from './blockly.service';
 
 import { writePreparedArduinoGeneratedArtifacts } from './generated-code-artifacts';
-import { CompileValidationService } from '@domain/build/public-api';
+import { CompileValidationService, type BuildCheckpoint } from '@domain/build/public-api';
 import { NpmService } from '@domain/dependencies/public-api';
 import { debounceTime } from 'rxjs/operators';
 import {
@@ -208,6 +208,7 @@ export class _BuilderService {
   private async generateWorkspaceCodeForPreprocess(
     workspace: unknown,
     detail?: string,
+    forceGenerate = false,
   ): Promise<string> {
     await this.waitForOneIdleBoundary();
     const projectPath = this.projectService.currentProjectPath;
@@ -219,7 +220,7 @@ export class _BuilderService {
         assertCurrent();
         this.blocklyService.publishGeneratedCode(prepared.code);
         return prepared.code;
-      }),
+      }, forceGenerate),
       detail,
     );
   }
@@ -233,6 +234,7 @@ export class _BuilderService {
   private async generateWorkspaceBuildSnapshotForPreprocess(
     workspace: unknown,
     detail?: string,
+    checkpoint?: BuildCheckpoint,
   ): Promise<{
     code: string;
     blockSourceMappings: Array<{
@@ -249,6 +251,9 @@ export class _BuilderService {
       'workspace_to_code',
       () => this.blocklyService.runWithPreparedProjectCode(async (prepared, assertCurrent) => {
         if (workspace !== this.blocklyService.workspace || projectPath !== this.projectService.currentProjectPath) throw new Error('Build project changed.');
+        // The prepared revision is guarded for the entire publication, including
+        // artifact writes; record the code/map snapshot before that async I/O.
+        if (checkpoint) checkpoint.inputCapturedAt = Date.now();
         await writePreparedArduinoGeneratedArtifacts(projectPath, prepared.artifacts);
         assertCurrent();
         return { code: prepared.code, blockSourceMappings: this.createBlockSourceMappings(
@@ -429,14 +434,15 @@ export class _BuilderService {
 
     this.initialized = true;
     this.actionService.listen('compile-begin', async (action) => {
+      const checkpoint: BuildCheckpoint = {};
       try {
         const graphSemanticRevision =
           action.payload?.graphSemanticRevision as string | undefined;
         const requestId = action.payload?.requestId as string | undefined;
-        const result = await this.build(graphSemanticRevision, requestId);
-        return { success: true, result };
+        const result = await this.build(graphSemanticRevision, requestId, checkpoint);
+        return { success: true, result, checkpoint };
       } catch (msg) {
-        return { success: false, result: msg };
+        return { success: false, result: msg, checkpoint };
       }
     }, 'builder-compile-begin');
     this.actionService.listen('compile-cancel', (action) => {
@@ -1055,7 +1061,15 @@ export class _BuilderService {
     const tempPath = this.electronService.pathJoin(currentProjectPath, '.temp');
     
     // 生成代码
-    const code = await this.generateWorkspaceCodeForPreprocess(this.blocklyService.workspace, 'sync_preprocess');
+    // A synchronous preprocess is the build's recovery boundary. Generate from
+    // the live workspace even when a renderer cache claims to be current: a
+    // programmatic workspace replacement can intentionally suppress Blockly
+    // events, and older callers may therefore have left that cache stale.
+    const code = await this.generateWorkspaceCodeForPreprocess(
+      this.blocklyService.workspace,
+      'sync_preprocess',
+      true,
+    );
     this.lastCode = code; // 保存代码用于后续 hash 计算
 
     // 构建配置对象
@@ -1227,6 +1241,7 @@ export class _BuilderService {
   async build(
     graphSemanticRevision?: string,
     requestId?: string,
+    checkpoint: BuildCheckpoint = {},
   ): Promise<ActionState> {
     if (
       graphSemanticRevision !== undefined
@@ -1258,6 +1273,8 @@ export class _BuilderService {
       this.message.warning(this.t('BUSY_RETRY_LATER', { message: msg }));
       return Promise.reject({ state: 'warn', text: this.t('BUSY_WAIT', { message: msg }) });
     }
+
+    checkpoint.startedAt = Date.now();
 
     if (pythonRoute) {
       try {
@@ -1379,7 +1396,7 @@ export class _BuilderService {
           this.preprocessError = null;
           this.preprocessFullError = '';
           
-          reject({ state: 'error', text: this.t('PRECOMPILE_FAILED_RETRY') });
+          reject({ state: 'error', text: this.t('PRECOMPILE_FAILED_RETRY'), fullStdErr: cleanError });
           return;
         }
 
@@ -1501,6 +1518,7 @@ export class _BuilderService {
           } = await this.generateWorkspaceBuildSnapshotForPreprocess(
             this.blocklyService.workspace,
             'compile_config',
+            checkpoint,
           );
           this.lastCode = code;
           
@@ -1560,7 +1578,13 @@ export class _BuilderService {
           // 启动进度初始化定时器（3秒后如果还没有进度就显示初始进度）
           // this.startProgressInitTimer(boardName);
 
-          this.buildSubscription = this.cmdService.run(compileCommand, null, false).subscribe({
+          this.logService.update({ detail: compileCommand, state: 'info' });
+          // Launch Node directly so a native crash keeps its real exit code and
+          // project paths are passed as arguments without another shell parser.
+          this.buildSubscription = this.cmdService.spawn('node', [compileScriptPath, configFilePath], {
+            cwd: this.currentProjectPath,
+            shellProfile: false,
+          }).subscribe({
             next: (output: CmdOutput) => {
               // 第一时间检查取消状态
               if (this.cancelled) {
@@ -1578,17 +1602,6 @@ export class _BuilderService {
               if (output.type === 'close') {
                 processExitCode = output.code ?? (output.signal ? 1 : 0);
                 processSignal = output.signal || null;
-
-                if (processExitCode !== 0 || processSignal) {
-                  this.isErrored = true;
-                  const processErrorMessage = processSignal
-                    ? this.t('PROCESS_SIGNAL_TERMINATED', { signal: processSignal })
-                    : this.t('PROCESS_EXITED_WITH_CODE', { code: processExitCode });
-                  lastStdErr = lastStdErr || processErrorMessage;
-                  if (!fullStdErr) {
-                    fullStdErr = processErrorMessage;
-                  }
-                }
 
                 // A process may exit without a final newline.
                 outputLines = outputLineBuffer.flush();
@@ -1722,6 +1735,20 @@ export class _BuilderService {
                       lastLogLines.shift();
                     }
               });
+
+              if (output.type === 'close' && (processExitCode !== 0 || processSignal)) {
+                this.isErrored = true;
+                const processErrorMessage = processSignal
+                  ? this.t('PROCESS_SIGNAL_TERMINATED', { signal: processSignal })
+                  : this.t('PROCESS_EXITED_WITH_CODE', { code: processExitCode });
+                lastStdErr = lastStdErr || processErrorMessage;
+                // Flush streamed lines first, then recover missing diagnostics from
+                // the close event without duplicating output already received.
+                fullStdErr = fullStdErr.trim()
+                  || output.stderr?.trim()
+                  || output.stdout?.trim()
+                  || processErrorMessage;
+              }
             },
             error: (error: any) => {
               this.isErrored = true;

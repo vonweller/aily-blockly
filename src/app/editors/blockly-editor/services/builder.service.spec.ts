@@ -127,10 +127,15 @@ describe('BuilderService background preprocess ownership', () => {
     const prepared = { code: 'void setup() {}\n', artifacts: null, blockCodeMapText: JSON.stringify([...generatedMap]) };
     service.blocklyService.runWithPreparedProjectCode = operation => operation(prepared, () => undefined);
 
+    const checkpoint: { inputCapturedAt?: number } = {};
+    const startedAt = Date.now();
     const snapshot = await service.generateWorkspaceBuildSnapshotForPreprocess(
       workspace,
       'spec',
+      checkpoint,
     );
+    expect(checkpoint.inputCapturedAt).toBeGreaterThanOrEqual(startedAt);
+    expect(checkpoint.inputCapturedAt).toBeLessThanOrEqual(Date.now());
 
     generatedMap.get('statement-block')!.lineRanges[0].startLine = 99;
     generatedMap.get('statement-block')!.executableLineRanges![0].startLine = 99;
@@ -147,5 +152,28 @@ describe('BuilderService background preprocess ownership', () => {
       executableRanges: [{ startLine: 12, endLine: 13 }],
       supportRanges: [{ startLine: 4, endLine: 4 }],
     }]);
+  });
+
+  it('routes forced preprocessing through the prepared code/artifact cache', async () => {
+    const service = Object.create(_BuilderService.prototype) as any;
+    const workspace = {};
+    const prepared = { code: 'void setup() {}\n', artifacts: null };
+    const assertCurrent = jasmine.createSpy('assertCurrent');
+    const prepare = jasmine.createSpy('prepare').and.callFake(operation => operation(prepared, assertCurrent));
+    service.blocklyService = {
+      workspace, runWithPreparedProjectCode: prepare,
+      publishGeneratedCode: jasmine.createSpy('publish'),
+      getReusableGeneratedCode: () => { throw new Error('Code-only cache cannot publish artifacts.'); },
+    };
+    service.projectService = { currentProjectPath: 'D:/project' };
+    service.waitForOneIdleBoundary = () => Promise.resolve();
+    service.runBuilderPreprocessPhase = (_tag: string, operation: () => unknown) => operation();
+
+    expect(await service.generateWorkspaceCodeForPreprocess(workspace, 'spec', true)).toBe(prepared.code);
+    expect(prepare.calls.mostRecent().args[1]).toBeTrue();
+    expect(assertCurrent).toHaveBeenCalled();
+    expect(service.blocklyService.publishGeneratedCode).toHaveBeenCalledWith(prepared.code);
+    await service.generateWorkspaceCodeForPreprocess(workspace, 'spec');
+    expect(prepare.calls.mostRecent().args[1]).toBeFalse();
   });
 });

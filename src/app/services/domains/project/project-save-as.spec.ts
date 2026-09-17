@@ -65,6 +65,15 @@ describe('ProjectService save as mode isolation', () => {
         ? to.slice(from.length + 1) : '../' + to.slice(to.lastIndexOf('/') + 1),
     };
     service = Object.create(ProjectService.prototype);
+    service.coderOperations = new Map();
+    service.coderOperationsSubject = new BehaviorSubject(new Map());
+    service.coderOperationSubject = new BehaviorSubject(null);
+    service.coderProjectsSubject = new BehaviorSubject([]);
+    service.coderWorkspaceSubject = new BehaviorSubject(null);
+    service.configService = {
+      data: { coderWorkspaceGroups: [], recentlyProjects: [] },
+      save: jasmine.createSpy('configSave'),
+    };
     service.currentProjectPathSubject = new BehaviorSubject(source);
     service.stateSubject = new BehaviorSubject('loaded');
     service.electronService = { isElectron: true };

@@ -40,28 +40,37 @@ function visitProjectDataDocument(document: unknown, onPayload: (payload: Projec
     onPayload({ owner, key, jsonPointer: projectDataChildPointer(pointer, key), ...context });
   };
   const block = (value: unknown, pointer: string) => {
-    const state = record(value);
-    if (!state) return;
-    onBlock(state, pointer);
-    const context = { blockId: state['id'] as string | undefined, blockType: state['type'] as string | undefined };
-    const fields = record(state['fields']);
-    if (fields) for (const fieldName of Object.keys(fields)) {
-      add(fields, fieldName, `${pointer}/fields`, { ...context, fieldName });
+    // Preserve depth-first serialization order without consuming the call stack
+    // for long statement chains or deeply nested value/statement inputs.
+    const pending: Array<{ value: unknown; pointer: string; connection: boolean }> = [
+      { value, pointer, connection: false },
+    ];
+    while (pending.length) {
+      const { value, pointer, connection } = pending.pop()!;
+      const state = record(value);
+      if (!state) continue;
+      if (connection) {
+        if (state['shadow']) pending.push({ value: state['shadow'], pointer: `${pointer}/shadow`, connection: false });
+        if (state['block']) pending.push({ value: state['block'], pointer: `${pointer}/block`, connection: false });
+        continue;
+      }
+      onBlock(state, pointer);
+      const context = { blockId: state['id'] as string | undefined, blockType: state['type'] as string | undefined };
+      const fields = record(state['fields']);
+      if (fields) for (const fieldName of Object.keys(fields)) {
+        add(fields, fieldName, `${pointer}/fields`, { ...context, fieldName });
+      }
+      for (const key of ['extraState', 'data', 'icons']) {
+        if (Object.hasOwn(state, key)) add(state, key, pointer, context);
+      }
+      const inputs = record(state['inputs']);
+      pending.push({ value: state['next'], pointer: `${pointer}/next`, connection: true });
+      const entries = inputs ? Object.entries(inputs) : [];
+      for (let index = entries.length - 1; index >= 0; index--) {
+        const [name, value] = entries[index];
+        pending.push({ value, pointer: projectDataChildPointer(`${pointer}/inputs`, name), connection: true });
+      }
     }
-    for (const key of ['extraState', 'data', 'icons']) {
-      if (Object.hasOwn(state, key)) add(state, key, pointer, context);
-    }
-    const connection = (value: unknown, path: string) => {
-      const input = record(value);
-      if (!input) return;
-      if (input['block']) block(input['block'], `${path}/block`);
-      if (input['shadow']) block(input['shadow'], `${path}/shadow`);
-    };
-    const inputs = record(state['inputs']);
-    if (inputs) for (const [name, value] of Object.entries(inputs)) {
-      connection(value, projectDataChildPointer(`${pointer}/inputs`, name));
-    }
-    connection(state['next'], `${pointer}/next`);
   };
   const blocks = (values: unknown, pointer: string) => {
     if (Array.isArray(values)) values.forEach((value, index) => block(value, `${pointer}/${index}`));

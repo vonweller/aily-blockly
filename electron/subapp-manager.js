@@ -5,20 +5,20 @@ const https = require('https');
 const os = require('os');
 const path = require('path');
 const { createHash, randomUUID } = require('crypto');
-const { exec, spawn } = require('child_process');
+const { exec, execFile, spawn } = require('child_process');
 const { URL } = require('url');
 const semver = require('semver');
 const { killRegisteredProcessTree } = require('./process-tree');
+const versions = require('./subapp-version-store');
+const { acquireInstallLock: acquireUpdateLock } = require('./subapp-install-lock');
+const { extractNpmTarballInBackground } = require('./subapp-package-worker-client');
+const { resolveAilyNpmPrefix } = require('./appdata-path');
+const subappBinRouter = require('./subapp-bin-router');
 
 const INDEX_CACHE_FILE = 'subapp-index.json';
 const INDEX_CACHE_META_FILE = 'subapp-index.meta.json';
 const UPDATE_STATE_FILE = 'state.json';
 const UPDATE_PACKAGE_FILE = 'package.tgz';
-const UPDATE_LOCK_FILE = 'activate.lock';
-const UPDATE_JOURNAL_FILE = 'activation.json';
-const UPDATE_ROLLBACK_PACKAGE = 'rollback-package';
-const UPDATE_ROLLBACK_MANIFEST = 'rollback-package.json';
-const UPDATE_ROLLBACK_LOCK_MANIFEST = 'rollback-package-lock.json';
 const UPDATE_SCHEMA_VERSION = 1;
 const MAX_INDEX_BYTES = 2 * 1024 * 1024;
 const TOOL_ID_ALIASES = Object.freeze({
@@ -53,27 +53,29 @@ function readDefaultIndexUrl() {
 const DEFAULT_INDEX_URL = readDefaultIndexUrl();
 
 function resolveAppDataPath(env = process.env, platform = process.platform, home = os.homedir()) {
-  if (env.AILY_APPDATA_PATH) return path.resolve(env.AILY_APPDATA_PATH);
   const platformPath = platform === 'win32' ? path.win32 : path.posix;
+  if (env.AILY_APPDATA_PATH) return platformPath.resolve(env.AILY_APPDATA_PATH);
   if (platform === 'win32') return platformPath.join(home, 'AppData', 'Local', 'aily-project');
   if (platform === 'darwin') return platformPath.join(home, 'Library', 'aily-project');
   return platformPath.join(home, '.config', 'aily-project');
 }
 
 function resolveSubappRoot(options = {}) {
-  if (options.rootDir) return path.resolve(options.rootDir);
   const platform = options.platform || process.platform;
   const platformPath = platform === 'win32' ? path.win32 : path.posix;
-  return platformPath.join(
-    resolveAppDataPath(options.env, options.platform, options.home),
-    'npm-global',
-    'app',
-  );
+  if (options.rootDir) return path.resolve(options.rootDir);
+  return platformPath.join(resolveAilyNpmPrefix({
+    env: options.env || process.env,
+    platform,
+    appDataPath: resolveAppDataPath(options.env, platform, options.home),
+  }), 'app');
 }
 
 function resolveSubappUpdateRoot(options = {}) {
+  const platform = options.platform || process.platform;
+  const platformPath = platform === 'win32' ? path.win32 : path.posix;
   if (options.updateRootDir) return path.resolve(options.updateRootDir);
-  return path.join(
+  return platformPath.join(
     resolveAppDataPath(options.env, options.platform, options.home),
     'temp',
     'subapp-updates',
@@ -137,14 +139,14 @@ function validatePackageName(value) {
 
 function validateVersion(value) {
   const version = requireText(value, 'subapp version');
-  if (!semver.valid(version)) {
+  if (semver.valid(version) !== version) {
     throw new Error(`Invalid subapp version: ${version}`);
   }
   return version;
 }
 
 function validateUpdatePolicy(value, id) {
-  if (value === undefined) return null;
+  if (value === undefined) return { download: 'background', install: 'next-launch' };
   if (!isObject(value)) throw new Error(`${id} update policy must be an object`);
   if (value.download !== 'background' || value.install !== 'next-launch') {
     throw new Error(`${id} update policy must use background download and next-launch install`);
@@ -681,16 +683,81 @@ function readSubappAgentConfig(packagePath, packageJson) {
   };
 }
 
+function resolveInstalledPackagePath(rootDir, entry) {
+  const legacyPath = packagePathFor(rootDir, entry.package);
+  // An interrupted uninstall suppresses every package source until cleanup is retried.
+  try {
+    if (versions.isUninstalling(rootDir, entry)) {
+      return { packagePath: legacyPath, disabled: true, uninstalling: true };
+    }
+  } catch (error) {
+    return {
+      packagePath: legacyPath,
+      disabled: true,
+      uninstalling: true,
+      selectionError: error.message,
+    };
+  }
+  // Legacy development links remain readable during migration. New dev runs use
+  // a pinned <version>-dev generation in the version store below.
+  if (fs.lstatSync(legacyPath, { throwIfNoEntry: false })?.isSymbolicLink()) {
+    return { packagePath: legacyPath, development: true, source: 'development' };
+  }
+  let selectionError;
+  let selection = null;
+  try {
+    selection = versions.readSelection(rootDir, entry, prepared => {
+      const manifest = readJson(path.join(prepared.packagePath, 'package.json'));
+      const runnable = resolveRunnablePackage(prepared.packagePath, entry.id, manifest);
+      if (isDistRelativePath(runnable.mainEntry) || isDistRelativePath(runnable.uiIndex)
+        || !fs.existsSync(path.join(runnable.packagePath, runnable.mainEntry))
+        || !fs.existsSync(path.join(runnable.packagePath, runnable.uiIndex))) {
+        throw new Error(`Selected subapp runtime is incomplete: ${entry.id}`);
+      }
+    });
+  } catch (error) {
+    selectionError = error.message;
+  }
+  if (selection?.selectionMode === 'pinned') return selection;
+
+  // Old npm installs remain valid. In auto mode, a newer B wins so an old host cannot
+  // silently downgrade a version selected by a newer host.
+  if (fs.existsSync(path.join(legacyPath, 'package.json'))) {
+    try {
+      const legacy = readJson(path.join(legacyPath, 'package.json'));
+      const legacyVersion = legacy.name === entry.package && semver.valid(legacy.version) ? legacy.version : null;
+      if (!selection || (legacyVersion && semver.gt(legacyVersion, selection.version))) {
+        return { packagePath: legacyPath, source: 'legacy-npm', selectionError };
+      }
+    } catch (error) {
+      selectionError ||= error.message;
+    }
+  }
+  if (selection) return selection;
+  return { packagePath: legacyPath, source: 'legacy-npm', selectionError };
+}
+
 function readInstalledState(rootDir, entry) {
-  const packagePath = packagePathFor(rootDir, entry.package);
+  const selected = resolveInstalledPackagePath(rootDir, entry);
+  const packagePath = selected.packagePath;
   const packageJsonPath = path.join(packagePath, 'package.json');
-  if (!fs.existsSync(packageJsonPath)) {
-    return { installed: false, installedVersion: null, packagePath, config: null };
+  if (selected.disabled || !fs.existsSync(packageJsonPath)) {
+    return {
+      installed: false,
+      installedVersion: null,
+      packagePath,
+      config: null,
+      ...(selected.uninstalling ? { uninstalling: true } : {}),
+    };
   }
 
   try {
-    const development = fs.lstatSync(packagePath).isSymbolicLink();
+    const development = selected.development === true;
+    const localNext = selected.localNext === true;
     const packageJson = readJson(packageJsonPath);
+    if (!development && packageJson.name !== entry.package) {
+      throw new Error('Installed subapp package name does not match the catalog');
+    }
     const installedVersion = typeof packageJson.version === 'string' ? packageJson.version : null;
     const runnable = resolveRunnablePackage(packagePath, entry.id, packageJson);
     const runnablePackagePath = runnable.packagePath;
@@ -738,6 +805,7 @@ function readInstalledState(rootDir, entry) {
       installed: complete,
       installedVersion,
       development,
+      localNext,
       packagePath: runnablePackagePath,
       config: complete ? {
         id: toolId,
@@ -747,6 +815,15 @@ function readInstalledState(rootDir, entry) {
         version: installedVersion || '',
         packageName: entry.package,
         packagePath: runnablePackagePath,
+        env: {
+          AILY_SUBAPP_INSTALL_ROOT: rootDir,
+          AILY_SUBAPP_PACKAGE_PATH: runnablePackagePath,
+          AILY_SUBAPP_VERSION: installedVersion || '',
+          AILY_SUBAPP_SOURCE: selected.source || (development ? 'development' : 'legacy-npm'),
+          ...(subappBinRouter.isStableRouterReady(rootDir)
+            ? { AILY_SUBAPP_BIN_ROUTER: subappBinRouter.stableRouterPath(rootDir) }
+            : {}),
+        },
         entry: mainEntry,
         uiIndex,
         routePath: `/child-tool/${toolId}`,
@@ -762,6 +839,7 @@ function readInstalledState(rootDir, entry) {
           ...(toolId === 'aily-chat' ? { more: 'v2' } : {}),
         },
       } : null,
+      ...(selected.selectionError ? { selectionWarning: selected.selectionError } : {}),
       ...(rejectsDistLayout
         ? { installError: `Subapp entry must be package-root (got ${mainEntry}); dist/ layouts are not runnable` }
         : agentError
@@ -818,12 +896,15 @@ function createCatalogState(rootDir, index, locale, meta = {}) {
       .map((entry) => {
         const installedState = readInstalledState(rootDir, entry);
         const updateAvailable = installedState.installed
+          && !installedState.development
+          && !installedState.localNext
           && hasUpdate(installedState.installedVersion, entry.version);
         const updateStatus = readSubappUpdateStatus(
           meta.updateRootDir || resolveSubappUpdateRoot(),
           entry,
           installedState,
           meta.updateOperations?.get(`${entry.id}@${entry.version}`) || null,
+          rootDir,
         );
         const copy = resolveLocalizedCopy(entry, locale);
         const toolId = TOOL_ID_ALIASES[entry.id] || entry.id;
@@ -850,6 +931,7 @@ function createCatalogState(rootDir, index, locale, meta = {}) {
           availableVersion: entry.version,
           installedVersion: installedState.installedVersion,
           installed: installedState.installed,
+          uninstalling: installedState.uninstalling === true,
           updateAvailable,
           updateStatus,
           ...(entry.update ? { updatePolicy: entry.update } : {}),
@@ -900,64 +982,6 @@ function readBundledCoderFallback(options = {}) {
   return { entry, tarballPath, integrity: manifest.integrity };
 }
 
-async function installBundledCoderPackage(rootDir, bundle, npmRunner, options) {
-  const { entry, tarballPath, integrity } = bundle;
-  verifyFileIntegrity(tarballPath, integrity);
-  const stagingRoot = fs.mkdtempSync(path.join(rootDir, '.subapp-bundled-'));
-  const tracker = options.progressTracker;
-  try {
-    // 隔离 npm reify，避免离线安装时重新解析或裁剪全局目录中的其它子应用。
-    ensureInstallProject(stagingRoot);
-    tracker?.setDownload(100);
-    await npmRunner([
-      'install', '--prefix', stagingRoot, '--offline', '--ignore-scripts',
-      '--save-exact', '--omit=dev', '--no-audit', '--no-fund', tarballPath,
-    ], withProgressOutput(options, tracker));
-
-    const installed = readInstalledState(stagingRoot, entry);
-    const stagedPath = packagePathFor(stagingRoot, entry.package);
-    const packageJson = readJson(path.join(stagedPath, 'package.json'));
-    if (
-      !installed.installed || installed.installError || installed.installedVersion !== entry.version
-      || packageJson.name !== entry.package || packageJson.ailySubapp?.id !== entry.id
-      || !fs.existsSync(path.join(stagedPath, 'runtime', 'index.js'))
-      || Object.keys({
-        ...packageJson.dependencies, ...packageJson.optionalDependencies, ...packageJson.peerDependencies,
-      }).length > 0
-    ) {
-      throw new Error('Bundled Aily Coder Editor is not a complete self-contained package');
-    }
-
-    const targetPath = packagePathFor(rootDir, entry.package);
-    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
-    await renameWithBusyRetry(stagedPath, targetPath, options);
-
-    // 保留其它子应用记录，使用版本号，不能把临时安装路径写入全局依赖。
-    const manifestPath = path.join(rootDir, 'package.json');
-    const manifest = readJson(manifestPath);
-    manifest.dependencies = { ...manifest.dependencies, [entry.package]: entry.version };
-    writeJsonAtomic(manifestPath, manifest);
-    const lockPath = path.join(rootDir, 'package-lock.json');
-    if (fs.existsSync(lockPath)) {
-      const lock = readJson(lockPath);
-      if (lock.packages) {
-        lock.packages[''] = {
-          ...lock.packages[''],
-          dependencies: { ...lock.packages['']?.dependencies, [entry.package]: entry.version },
-        };
-        lock.packages[`node_modules/${entry.package}`] = { version: entry.version, integrity };
-      }
-      if (lock.dependencies) {
-        lock.dependencies[entry.package] = { version: entry.version, integrity };
-      }
-      writeJsonAtomic(lockPath, lock);
-    }
-    tracker?.setExtract(100);
-  } finally {
-    fs.rmSync(stagingRoot, { recursive: true, force: true });
-  }
-}
-
 function npmExecutable(env = process.env, platform = process.platform) {
   const childPath = env.AILY_CHILD_PATH || '';
   const bundled = platform === 'win32'
@@ -978,24 +1002,48 @@ function prepareNpmSpawn(args, options = {}) {
   if (platform !== 'win32') {
     return { command, args, shell: false };
   }
+  const searchPath = Object.entries(options.env || {}).find(([key]) => key.toLowerCase() === 'path')?.[1]
+    ?? Object.entries(process.env).find(([key]) => key.toLowerCase() === 'path')?.[1] ?? '';
+  const commands = command !== 'npm.cmd' ? [command] : String(searchPath).split(';')
+    .filter(Boolean).map(directory => path.join(directory.replace(/^"|"$/g, ''), 'npm.cmd'));
+  for (const npmCommand of commands) {
+    const directory = path.dirname(npmCommand);
+    const cli = path.join(directory, 'node_modules', 'npm', 'bin', 'npm-cli.js');
+    if (!fs.existsSync(cli)) continue;
+    const node = path.join(directory, 'node.exe');
+    return {
+      command: fs.existsSync(node) ? node : process.execPath,
+      args: [cli, ...args],
+      shell: false,
+      env: { ELECTRON_RUN_AS_NODE: '1' },
+    };
+  }
+  // Compatibility for unusual legacy npm.cmd layouts. Never send expansion characters to cmd.
+  if ([command, ...args].some(value => /["%\r\n]/.test(String(value)))) {
+    throw new Error('Cannot safely run this npm path through cmd.exe; install the bundled npm CLI');
+  }
   return {
     command: quoteWindowsShellPath(command),
-    args: args.map((arg) => {
-      const value = String(arg);
-      if (value.includes(' ') && !value.startsWith('"') && !value.startsWith("'")) {
-        return quoteWindowsShellPath(value);
-      }
-      return value;
-    }),
+    args: args.map(quoteWindowsShellPath),
     shell: true,
   };
 }
 
 function runNpm(args, options = {}) {
   return new Promise((resolve, reject) => {
-    const { command, args: spawnArgs, shell } = prepareNpmSpawn(args, options);
+    const { command, args: spawnArgs, shell, env: spawnEnv } = prepareNpmSpawn(args, options);
+    const env = { ...process.env };
+    for (const [key, value] of Object.entries({ ...(options.env || {}), ...spawnEnv })) {
+      if ((options.platform || process.platform) === 'win32') {
+        for (const existing of Object.keys(env)) {
+          if (existing.toLowerCase() === key.toLowerCase()) delete env[existing];
+        }
+      }
+      env[key] = value;
+    }
     const child = spawn(command, spawnArgs, {
-      env: { ...process.env, ...(options.env || {}) },
+      env,
+      cwd: options.cwd,
       shell,
       windowsHide: true,
     });
@@ -1303,11 +1351,12 @@ function mergeDevelopmentLinkedEntries(rootDir, remoteIndex, developmentIndex) {
   for (const [id, entry] of Object.entries(developmentIndex || {})) {
     if (id === 'dev') continue;
     try {
-      if (fs.lstatSync(packagePathFor(rootDir, entry.package)).isSymbolicLink()) {
+      const selected = resolveInstalledPackagePath(rootDir, entry);
+      if (selected.development === true || selected.localNext === true) {
         merged[id] = entry;
       }
     } catch {
-      // Ignore stale development catalog entries whose package link no longer exists.
+      // Ignore stale local catalog entries whose dev/next generation is no longer active.
     }
   }
 
@@ -1320,10 +1369,6 @@ function stagedManifestPaths(updateRootDir, id, version) {
     directory,
     package: path.join(directory, UPDATE_PACKAGE_FILE),
     state: path.join(directory, UPDATE_STATE_FILE),
-    journal: path.join(directory, UPDATE_JOURNAL_FILE),
-    rollbackPackage: path.join(directory, UPDATE_ROLLBACK_PACKAGE),
-    rollbackPackageJson: path.join(directory, UPDATE_ROLLBACK_MANIFEST),
-    rollbackPackageLock: path.join(directory, UPDATE_ROLLBACK_LOCK_MANIFEST),
   };
 }
 
@@ -1362,16 +1407,18 @@ function verifyStagedAssets(updateRootDir, record) {
   }
   const distribution = validateDistribution(record.distribution, record.id);
   if (!fs.existsSync(paths.package)) throw new Error('Staged update package is missing');
-  verifyFileIntegrity(paths.package, distribution.integrity);
   return paths;
 }
 
-function readSubappUpdateStatus(updateRootDir, entry, installedState, operation = null) {
+function readSubappUpdateStatus(updateRootDir, entry, installedState, operation = null, rootDir = null) {
   const targetVersion = entry.version;
-  if (!installedState.installed || !hasUpdate(installedState.installedVersion, targetVersion)) {
+  if (installedState.development
+    || installedState.localNext
+    || !installedState.installed
+    || !hasUpdate(installedState.installedVersion, targetVersion)) {
     return { state: 'current', targetVersion };
   }
-  if (!entry.update || installedState.development) {
+  if (!entry.update) {
     return { state: 'available', targetVersion };
   }
   if (operation && operation.version === targetVersion) {
@@ -1379,10 +1426,19 @@ function readSubappUpdateStatus(updateRootDir, entry, installedState, operation 
       state: operation.state,
       targetVersion,
       progress: clampProgress(operation.progress),
+      ...(operation.phase ? { phase: operation.phase } : {}),
       ...(operation.error ? { error: operation.error } : {}),
     };
   }
 
+  if (rootDir) {
+    try {
+      const prepared = readPreparedVersion(rootDir, entry);
+      if (prepared) return { state: 'ready', targetVersion, ready: true, downloadedAt: prepared.installedAt };
+    } catch (error) {
+      return { state: 'failed', targetVersion, ready: false, error: error.message };
+    }
+  }
   const record = readUpdateRecord(updateRootDir, entry);
   if (!record) return { state: 'available', targetVersion };
   if (record.state === 'failed' && record.phase !== 'install') {
@@ -1419,167 +1475,204 @@ function readSubappUpdateStatus(updateRootDir, entry, installedState, operation 
   }
 }
 
+// Extraction and dependency resolution happen in a private generation. Activation never runs npm.
+function validatePreparedPackage(packagePath, entry) {
+  const manifest = readJson(path.join(packagePath, 'package.json'));
+  if (manifest.name !== entry.package || manifest.version !== entry.version) {
+    throw new Error(`Prepared subapp package identity does not match: ${entry.id}@${entry.version}`);
+  }
+  const runnable = resolveRunnablePackage(packagePath, entry.id, manifest);
+  if (isDistRelativePath(runnable.mainEntry) || isDistRelativePath(runnable.uiIndex)
+    || !fs.existsSync(path.join(runnable.packagePath, runnable.mainEntry))
+    || !fs.existsSync(path.join(runnable.packagePath, runnable.uiIndex))) {
+    throw new Error(`Prepared subapp runtime is incomplete: ${entry.id}@${entry.version}`);
+  }
+  return { manifest, runnable };
+}
+
+function portablePackageStatus(packagePath, manifest, options = {}) {
+  const declaration = isObject(manifest.ailyPortable) ? manifest.ailyPortable : null;
+  const scripts = isObject(manifest.scripts) ? manifest.scripts : {};
+  if (['preinstall', 'install', 'postinstall'].some(name => typeof scripts[name] === 'string' && scripts[name].trim())) {
+    return { portable: false, reason: 'package has install lifecycle scripts' };
+  }
+  const dependencies = {
+    ...(isObject(manifest.dependencies) ? manifest.dependencies : {}),
+    ...(isObject(manifest.optionalDependencies) ? manifest.optionalDependencies : {}),
+    ...(isObject(manifest.peerDependencies) ? manifest.peerDependencies : {}),
+  };
+  const bundled = new Set([
+    ...(Array.isArray(manifest.bundledDependencies) ? manifest.bundledDependencies : []),
+    ...(Array.isArray(manifest.bundleDependencies) ? manifest.bundleDependencies : []),
+  ]);
+  // Aily Coder Editor 0.1.6/0.1.7 were already published as complete runtime
+  // bundles before the portable marker became mandatory. Keep this narrowly
+  // scoped compatibility path so those immutable packages are not sent through
+  // npm after extraction. Generic unmarked packages still use legacy npm.
+  if (!declaration || declaration.version !== 1) {
+    const isSelfContainedCoder = manifest.name === BUNDLED_CODER_PACKAGE
+      && manifest.ailySubapp?.id === BUNDLED_CODER_ID
+      && ['0.1.6', '0.1.7'].includes(manifest.version)
+      && ['darwin', 'win32', 'linux'].includes(options.platform || process.platform)
+      && ['arm64', 'x64'].includes(options.arch || process.arch)
+      && Object.keys(dependencies).length === 0
+      && fs.existsSync(path.join(packagePath, 'runtime', 'index.js'));
+    return isSelfContainedCoder
+      ? { portable: true, compatibility: 'aily-coder-editor-pre-portable-marker' }
+      : { portable: false, reason: 'missing ailyPortable v1' };
+  }
+  const platform = options.platform || process.platform;
+  const architecture = options.arch || process.arch;
+  if (Array.isArray(declaration.platforms) && !declaration.platforms.includes(platform)) {
+    throw new Error(`Subapp package does not support ${platform}`);
+  }
+  if (Array.isArray(declaration.architectures) && !declaration.architectures.includes(architecture)) {
+    throw new Error(`Subapp package does not support ${architecture}`);
+  }
+  for (const dependency of Object.keys(dependencies)) {
+    if (!bundled.has(dependency)
+      || !fs.existsSync(path.join(packagePath, 'node_modules', ...dependency.split('/'), 'package.json'))) {
+      return { portable: false, reason: `dependency is not bundled: ${dependency}` };
+    }
+  }
+  return { portable: true };
+}
+
+function readPreparedVersion(rootDir, entry) {
+  const prepared = versions.readPrepared(rootDir, entry);
+  if (!prepared) return null;
+  validatePreparedPackage(prepared.packagePath, entry);
+  return prepared;
+}
+
+async function prepareVersionPackage(rootDir, entry, npmRunner, options = {}) {
+  const lockRoot = path.join(rootDir, 'store', '.locks', versions.storeKeyForPackage(entry.package));
+  const release = await waitForUpdateLock(lockRoot);
+  let candidate;
+  let published = false;
+  try {
+    if (versions.isUninstalling(rootDir, entry)) {
+      throw new Error(`Subapp uninstall is still being completed: ${entry.id}`);
+    }
+    if (!options.reinstall) {
+      try {
+        const existing = readPreparedVersion(rootDir, entry);
+        if (existing) return existing;
+      } catch {
+        // Repair into a new generation; never overwrite files a running process may hold.
+      }
+    }
+    candidate = versions.createCandidate(rootDir, entry);
+    const tracker = options.progressTracker;
+    const tarball = candidate.tarball;
+    const bundle = options.bundledCoderFallback;
+    const distribution = bundle ? null : (options.distribution || await resolvePackageDistribution(entry, npmRunner, options));
+    const source = bundle?.tarballPath || options.tarballPath;
+    if (source) {
+      await fs.promises.copyFile(source, tarball);
+    } else {
+      await (options.downloadFile || downloadFileWithProgress)(
+        distribution.tarball, tarball, percent => tracker?.setDownload(percent), options,
+      );
+    }
+    tracker?.setDownload(100);
+    await extractNpmTarballInBackground(tarball, candidate.source, {
+      integrity: bundle?.integrity || distribution.integrity,
+      onProgress: percent => tracker?.setExtract(percent),
+    });
+    let { manifest } = validatePreparedPackage(candidate.source, entry);
+    let portability = portablePackageStatus(candidate.source, manifest, options);
+    if (bundle && !portability.portable) {
+      // The application-owned offline fallback is validated as a self-contained artifact below.
+      portability = { portable: true, bundledFallback: true };
+    }
+    if (!portability.portable) {
+      // Compatibility path for older npm packages: install dependencies and run lifecycle scripts
+      // inside A/source. The shared legacy app project and B are never reified.
+      const npmSource = fs.realpathSync(candidate.source);
+      await npmRunner([
+        'install', '--prefix', npmSource, '--omit=dev', '--no-audit', '--no-fund',
+        '--foreground-scripts', '--cache', path.join(rootDir, 'store', versions.storeKeyForPackage(entry.package), 'download-cache', 'npm-cache'),
+        '--prefer-offline',
+      ], withProgressOutput({ ...options, cwd: npmSource }, tracker));
+      ({ manifest } = validatePreparedPackage(candidate.source, entry));
+    }
+    if (bundle) {
+      if (manifest.ailySubapp?.id !== entry.id
+        || !fs.existsSync(path.join(candidate.source, 'runtime', 'index.js'))
+        || Object.keys({ ...manifest.dependencies, ...manifest.optionalDependencies, ...manifest.peerDependencies }).length) {
+        throw new Error('Bundled Aily Coder Editor is not a complete self-contained package');
+      }
+    }
+    if (versions.isUninstalling(rootDir, entry)) {
+      throw new Error(`Subapp was uninstalled while preparing: ${entry.id}`);
+    }
+    const prepared = versions.publishCandidate(rootDir, entry, candidate, {
+      distribution,
+      integrity: bundle?.integrity || distribution?.integrity,
+      installMode: portability.portable ? 'portable' : 'legacy-npm',
+      replace: options.reinstall === true,
+    });
+    published = true;
+    tracker?.setExtract(100);
+    return prepared;
+  } finally {
+    // Published generations are immutable, including when progress delivery throws.
+    try {
+      if (candidate && !published) fs.rmSync(candidate.project, { recursive: true, force: true });
+    } finally {
+      release();
+    }
+  }
+}
+
 async function stageSubappUpdate(rootDir, updateRootDir, entry, npmRunner, options = {}) {
-  if (!entry.update) throw new Error(`Subapp does not support background updates: ${entry.id}`);
   const installedState = readInstalledState(rootDir, entry);
-  if (installedState.development) throw new Error(`Development-linked subapp cannot be updated: ${entry.id}`);
+  if (installedState.development || installedState.localNext) {
+    throw new Error(`Local subapp cannot be updated: ${entry.id}`);
+  }
   if (!installedState.installed || !hasUpdate(installedState.installedVersion, entry.version)) {
     throw new Error(`Subapp update is not available: ${entry.id}`);
   }
-
-  const existing = readUpdateRecord(updateRootDir, entry);
-  if (existing) {
-    try {
-      const existingPaths = verifyStagedAssets(updateRootDir, existing);
-      await prepareUpdateNpmCache(updateRootDir, existingPaths, entry, npmRunner, options);
-      const readyRecord = {
-        ...existing,
-        state: 'ready',
-        phase: 'download',
-        error: undefined,
-      };
-      writeJsonAtomic(updateStatePath(updateRootDir, entry.id, entry.version), readyRecord);
-      return readyRecord;
-    } catch {
-      // Replace an incomplete or corrupt staged update with a fresh download.
-    }
-  }
-
-  const paths = stagedManifestPaths(updateRootDir, entry.id, entry.version);
-  fs.rmSync(paths.directory, { recursive: true, force: true });
-  fs.mkdirSync(paths.directory, { recursive: true });
-  const temporaryPackage = `${paths.package}.${process.pid}.${randomUUID()}.tmp`;
   const tracker = options.progressTracker;
   tracker?.start();
-  let distribution = null;
   try {
-    distribution = await resolvePackageDistribution(entry, npmRunner, options);
-    const download = options.downloadFile || downloadFileWithProgress;
-    await download(
-      distribution.tarball,
-      temporaryPackage,
-      (percent) => tracker?.setDownload(percent),
-      options,
-    );
-    verifyFileIntegrity(temporaryPackage, distribution.integrity);
-    fs.renameSync(temporaryPackage, paths.package);
-    tracker?.setDownload(100);
-
-    await prepareUpdateNpmCache(updateRootDir, paths, entry, npmRunner, options);
+    const existing = readUpdateRecord(updateRootDir, entry);
+    let stagedOptions = options;
+    // Accept tarballs downloaded by old hosts, without depending on the old shared npm cache.
+    if (existing) {
+      try {
+        const paths = verifyStagedAssets(updateRootDir, existing);
+        stagedOptions = { ...options, tarballPath: paths.package, distribution: existing.distribution };
+      } catch { /* Re-download an incomplete legacy cache. */ }
+    }
+    const prepared = await prepareVersionPackage(rootDir, entry, npmRunner, stagedOptions);
     const record = {
-      schemaVersion: UPDATE_SCHEMA_VERSION,
-      id: entry.id,
-      packageName: entry.package,
-      version: entry.version,
-      state: 'ready',
-      phase: 'download',
-      stagedAt: new Date().toISOString(),
-      entry,
-      distribution,
+      schemaVersion: UPDATE_SCHEMA_VERSION, id: entry.id, packageName: entry.package,
+      version: entry.version, state: 'ready', phase: 'download', stagedAt: prepared.installedAt,
+      entry, distribution: prepared.distribution, versionStore: true,
     };
-    writeJsonAtomic(paths.state, record);
+    writeJsonAtomic(updateStatePath(updateRootDir, entry.id, entry.version), record);
     tracker?.complete();
     return record;
   } catch (error) {
-    if (fs.existsSync(temporaryPackage)) fs.rmSync(temporaryPackage, { force: true });
-    writeJsonAtomic(paths.state, {
-      schemaVersion: UPDATE_SCHEMA_VERSION,
-      id: entry.id,
-      packageName: entry.package,
-      version: entry.version,
-      state: 'failed',
-      phase: 'download',
-      failedAt: new Date().toISOString(),
-      error: error.message || String(error),
-      entry,
-      ...(distribution ? { distribution } : {}),
+    writeJsonAtomic(updateStatePath(updateRootDir, entry.id, entry.version), {
+      schemaVersion: UPDATE_SCHEMA_VERSION, id: entry.id, packageName: entry.package,
+      version: entry.version, state: 'failed', phase: 'download', entry,
+      failedAt: new Date().toISOString(), error: error.message || String(error),
     });
     throw error;
   }
 }
 
-async function prepareUpdateNpmCache(updateRootDir, paths, entry, npmRunner, options = {}) {
-  const cacheRoot = path.join(updateRootDir, 'npm-cache');
-  const probeRoot = path.join(paths.directory, '.offline-probe');
-  fs.mkdirSync(cacheRoot, { recursive: true });
-  await npmRunner(['cache', 'add', paths.package, '--cache', cacheRoot], options);
-  await npmRunner(['cache', 'add', `${entry.package}@${entry.version}`, '--cache', cacheRoot], options);
-
-  fs.rmSync(probeRoot, { recursive: true, force: true });
-  fs.mkdirSync(probeRoot, { recursive: true });
-  writeJsonAtomic(path.join(probeRoot, 'package.json'), {
-    name: 'aily-subapp-update-offline-probe',
-    private: true,
-    version: '1.0.0',
-  });
-  try {
-    await npmRunner([
-      'install', '--prefix', probeRoot, '--save-exact', '--package-lock-only', '--offline',
-      '--cache', cacheRoot, '--ignore-scripts', '--omit=dev', '--no-audit', '--no-fund',
-      `${entry.package}@${entry.version}`,
-    ], options);
-  } finally {
-    fs.rmSync(probeRoot, { recursive: true, force: true });
+async function waitForUpdateLock(directory) {
+  const deadline = Date.now() + 120000;
+  let release;
+  while (!(release = acquireUpdateLock(directory))) {
+    if (Date.now() >= deadline) throw new Error('Timed out waiting for subapp installation');
+    await sleep(100);
   }
-}
-
-function isProcessAlive(pid) {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function acquireUpdateLock(updateRootDir) {
-  fs.mkdirSync(updateRootDir, { recursive: true });
-  const lockPath = path.join(updateRootDir, UPDATE_LOCK_FILE);
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      const descriptor = fs.openSync(lockPath, 'wx', 0o600);
-      fs.writeFileSync(descriptor, `${JSON.stringify({ pid: process.pid, createdAt: Date.now() })}\n`);
-      fs.closeSync(descriptor);
-      return () => fs.rmSync(lockPath, { force: true });
-    } catch (error) {
-      if (error.code !== 'EEXIST') throw error;
-      let owner = null;
-      try {
-        owner = readJson(lockPath);
-      } catch {
-        // A malformed lock is stale.
-      }
-      if (isProcessAlive(Number(owner?.pid))) return null;
-      try {
-        fs.rmSync(lockPath, { force: true });
-      } catch {
-        return null;
-      }
-    }
-  }
-  return null;
-}
-
-function snapshotFile(filePath) {
-  return fs.existsSync(filePath)
-    ? { exists: true, contents: fs.readFileSync(filePath) }
-    : { exists: false, contents: null };
-}
-
-function restoreFile(filePath, snapshot) {
-  if (snapshot.exists) {
-    fs.writeFileSync(filePath, snapshot.contents);
-  } else if (fs.existsSync(filePath)) {
-    fs.rmSync(filePath, { force: true });
-  }
-}
-
-function packageInstallArgs(rootDir, entry) {
-  return [
-    'install', '--prefix', rootDir, '--save-exact', '--omit=dev', '--no-audit', '--no-fund',
-    '--foreground-scripts', `${entry.package}@${entry.version}`,
-  ];
+  return release;
 }
 
 function packageInstallFromTarballArgs(rootDir, tarballPath) {
@@ -1589,83 +1682,11 @@ function packageInstallFromTarballArgs(rootDir, tarballPath) {
   ];
 }
 
-function packageActivateFromCacheArgs(rootDir, entry, cacheRoot) {
-  return [
-    'install', '--prefix', rootDir, '--save-exact', '--offline', '--cache', cacheRoot,
-    '--ignore-scripts', '--omit=dev', '--no-audit', '--no-fund',
-    `${entry.package}@${entry.version}`,
-  ];
-}
-
 function withProgressOutput(options = {}, tracker) {
   return {
     ...options,
     onOutput: createProgressOutputHandler(tracker, options.onOutput),
   };
-}
-
-async function installPackage(rootDir, entry, npmRunner, options = {}) {
-  if (options.bundledCoderFallback) {
-    return installBundledCoderPackage(rootDir, options.bundledCoderFallback, npmRunner, options);
-  }
-  const tracker = options.progressTracker;
-  const npmOptions = withProgressOutput(options, tracker);
-  const retryOptions = {
-    retries: options.npmBusyRetries,
-    baseDelayMs: options.npmBusyRetryDelayMs,
-    sleep: options.sleep,
-    packagePath: packagePathFor(rootDir, entry.package),
-  };
-
-  if (options.disableTarballProgress === true) {
-    await runNpmWithBusyRetry(npmRunner, packageInstallArgs(rootDir, entry), npmOptions, retryOptions);
-    tracker?.setDownload(100);
-    tracker?.setExtract(100);
-    return;
-  }
-
-  let stagingRoot = null;
-  try {
-    stagingRoot = fs.mkdtempSync(path.join(rootDir, '.subapp-download-'));
-    const tarballPath = path.join(stagingRoot, 'package.tgz');
-    const tarballUrl = await resolvePackageTarballUrl(entry, npmRunner, npmOptions);
-    const download = options.downloadFile || downloadFileWithProgress;
-    await download(
-      tarballUrl,
-      tarballPath,
-      (percent) => tracker?.setDownload(percent),
-      npmOptions,
-    );
-    tracker?.setDownload(100);
-    await runNpmWithBusyRetry(
-      npmRunner,
-      packageInstallFromTarballArgs(rootDir, tarballPath),
-      npmOptions,
-      retryOptions,
-    );
-    tracker?.setExtract(100);
-  } catch (error) {
-    console.warn(
-      '[subapp-manager] progress-aware install failed, falling back to npm install:',
-      error.message || error,
-    );
-    await runNpmWithBusyRetry(
-      npmRunner,
-      packageInstallArgs(rootDir, entry),
-      npmOptions,
-      retryOptions,
-    );
-    tracker?.setDownload(100);
-    tracker?.setExtract(100);
-  } finally {
-    if (stagingRoot && fs.existsSync(stagingRoot)) {
-      try {
-        fs.rmSync(stagingRoot, { recursive: true, force: true });
-      } catch (cleanupError) {
-        console.warn('[subapp-manager] failed to cleanup download staging:', cleanupError.message || cleanupError);
-      }
-    }
-  }
 }
 
 function sleep(ms, sleepImpl = globalThis.setTimeout) {
@@ -1739,9 +1760,72 @@ function getSubappBusyDialogStrings(options = {}) {
   return defaults;
 }
 
+// Inventory failures defer destructive cleanup. They must never be interpreted as idle.
+function hasProcessesUsingPackagePath(packagePath, platform = process.platform) {
+  const needle = path.resolve(packagePath);
+  const windows = platform === 'win32';
+  const command = windows ? 'powershell.exe' : 'ps';
+  const args = windows
+    ? ['-NoProfile', '-NonInteractive', '-Command',
+      'Get-CimInstance Win32_Process | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress']
+    : ['-ww', '-axo', 'pid=,command='];
+  return new Promise(resolve => {
+    execFile(command, args, { windowsHide: true, timeout: 15000, maxBuffer: 8 * 1024 * 1024 }, (error, stdout) => {
+      if (error) return resolve(true);
+      try {
+        const rows = windows
+          ? [JSON.parse(stdout || '[]')].flat().map(row => ({ pid: row.ProcessId, command: row.CommandLine || '' }))
+          : stdout.trim().split('\n').map(line => {
+            const match = line.trim().match(/^(\d+)\s+(.*)$/);
+            return { pid: Number(match?.[1]), command: match?.[2] || '' };
+          });
+        resolve(rows.some(row => Number(row.pid) !== process.pid
+          && (windows ? row.command.toLowerCase().includes(needle.toLowerCase()) : row.command.includes(needle))));
+      } catch {
+        resolve(true);
+      }
+    });
+  });
+}
+
 function listProcessesUsingPath(packagePath, options = {}) {
   const platform = options.platform || process.platform;
-  if (platform !== 'win32' || !packagePath) return Promise.resolve([]);
+  if (!packagePath) return Promise.resolve([]);
+
+  if (platform !== 'win32') {
+    const execFileImpl = options.execFileImpl || execFile;
+    const needle = path.resolve(packagePath);
+    return new Promise((resolve) => {
+      execFileImpl(
+        'ps',
+        ['-ww', '-axo', 'pid=,command='],
+        { windowsHide: true, timeout: 15000, maxBuffer: 8 * 1024 * 1024 },
+        (error, stdout) => {
+          if (error) {
+            console.warn('[subapp-manager] listProcessesUsingPath failed:', error.message || error);
+            resolve([]);
+            return;
+          }
+          const selfPid = process.pid;
+          resolve(String(stdout || '').trim().split('\n').flatMap((line) => {
+            const match = line.trim().match(/^(\d+)\s+(.*)$/);
+            const pid = Number(match?.[1]);
+            const commandLine = match?.[2] || '';
+            if (!Number.isInteger(pid) || pid <= 0 || pid === selfPid || !commandLine.includes(needle)) {
+              return [];
+            }
+            const executable = commandLine.match(/^(?:"([^"]+)"|'([^']+)'|(\S+))/)?.slice(1).find(Boolean) || '';
+            return [{
+              pid,
+              name: path.basename(executable) || 'unknown',
+              commandLine,
+              source: 'command-line',
+            }];
+          }));
+        },
+      );
+    });
+  }
 
   const execImpl = options.execImpl || exec;
   const needle = path.resolve(packagePath).toLowerCase().replace(/'/g, "''");
@@ -1884,6 +1968,32 @@ async function forceCloseBusyHolders(packagePath, entry, holders, options = {}) 
   }
 }
 
+async function ensureVersionReplacementIsIdle(rootDir, entry, options = {}) {
+  const target = path.join(
+    rootDir,
+    'store',
+    versions.storeKeyForPackage(entry.package),
+    entry.version,
+  );
+  if (!fs.existsSync(target)) return;
+
+  const holders = await collectBusyHolders(target, entry, options);
+  if (holders.length) {
+    if (options.forceClose !== true) throw formatBusyNeedsForceError(target, holders);
+    await forceCloseBusyHolders(target, entry, holders, options);
+    const sleepImpl = options.sleep || sleep;
+    await sleepImpl(Number.isFinite(options.forceCloseSettleMs) ? options.forceCloseSettleMs : 500);
+  }
+
+  const isBusy = options.hasProcessesUsingPath || hasProcessesUsingPackagePath;
+  const sleepImpl = options.sleep || sleep;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    if (!await isBusy(target, options.platform || process.platform)) return;
+    if (attempt < 3) await sleepImpl(100 * (attempt + 1));
+  }
+  throw formatBusyNeedsForceError(target, holders);
+}
+
 async function resolveBusyConflictAndRetry(operation, context = {}) {
   const {
     packagePath,
@@ -1947,7 +2057,7 @@ async function renameWithBusyRetry(src, dest, options = {}) {
 }
 
 async function rmWithBusyRetry(targetPath, options = {}) {
-  if (!targetPath || !fs.existsSync(targetPath)) return;
+  if (!targetPath || !fs.lstatSync(targetPath, { throwIfNoEntry: false })) return;
   const retries = Number.isInteger(options.retries) ? options.retries : 4;
   const baseDelayMs = Number.isFinite(options.baseDelayMs) ? options.baseDelayMs : 500;
   const sleepImpl = options.sleep || sleep;
@@ -1966,6 +2076,152 @@ async function rmWithBusyRetry(targetPath, options = {}) {
     }
   }
   throw formatBusyRenameError(targetPath, lastError);
+}
+
+function removePackageFromRootManifests(rootDir, packageName) {
+  for (const name of ['package.json', 'package-lock.json']) {
+    const file = path.join(rootDir, name);
+    if (!fs.existsSync(file)) continue;
+    const manifest = readJson(file);
+    let changed = false;
+    for (const field of ['dependencies', 'devDependencies', 'optionalDependencies']) {
+      if (isObject(manifest[field]) && Object.prototype.hasOwnProperty.call(manifest[field], packageName)) {
+        delete manifest[field][packageName];
+        changed = true;
+      }
+    }
+    if (name === 'package-lock.json') {
+      if (isObject(manifest.packages?.[''])) {
+        for (const field of ['dependencies', 'devDependencies', 'optionalDependencies']) {
+          if (isObject(manifest.packages[''][field])
+            && Object.prototype.hasOwnProperty.call(manifest.packages[''][field], packageName)) {
+            delete manifest.packages[''][field][packageName];
+            changed = true;
+          }
+        }
+      }
+      const packageKey = `node_modules/${packageName}`;
+      if (isObject(manifest.packages) && Object.prototype.hasOwnProperty.call(manifest.packages, packageKey)) {
+        delete manifest.packages[packageKey];
+        changed = true;
+      }
+    }
+    if (changed) writeJsonAtomic(file, manifest);
+  }
+}
+
+function assertSubappUninstallComplete(rootDir, entry, paths) {
+  const residuals = paths
+    .filter(target => fs.lstatSync(target, { throwIfNoEntry: false }))
+    .map(target => path.resolve(target));
+  const packageKey = `node_modules/${entry.package}`;
+  for (const name of ['package.json', 'package-lock.json']) {
+    const file = path.join(rootDir, name);
+    if (!fs.existsSync(file)) continue;
+    const manifest = readJson(file);
+    const declared = ['dependencies', 'devDependencies', 'optionalDependencies']
+      .some(field => isObject(manifest[field])
+        && Object.prototype.hasOwnProperty.call(manifest[field], entry.package));
+    const rootDeclared = ['dependencies', 'devDependencies', 'optionalDependencies']
+      .some(field => isObject(manifest.packages?.['']?.[field])
+        && Object.prototype.hasOwnProperty.call(manifest.packages[''][field], entry.package));
+    const packageLocked = isObject(manifest.packages)
+      && Object.prototype.hasOwnProperty.call(manifest.packages, packageKey);
+    if (declared || rootDeclared || packageLocked) residuals.push(path.resolve(file));
+  }
+  if (!residuals.length) return;
+
+  const error = new Error(
+    `Subapp uninstall is incomplete; all installed versions and legacy compatibility files must be removed: ${entry.id}\n`
+      + residuals.join('\n'),
+  );
+  error.code = 'SUBAPP_UNINSTALL_INCOMPLETE';
+  error.residualPaths = residuals;
+  throw error;
+}
+
+function declaredBinNames(packagePath, packageName) {
+  try {
+    const manifest = readJson(path.join(packagePath, 'package.json'));
+    if (typeof manifest.bin === 'string') return [packageName.split('/').pop()];
+    return isObject(manifest.bin) ? Object.keys(manifest.bin) : [];
+  } catch {
+    return [];
+  }
+}
+
+function removeOwnedBinLinks(rootDir, packagePath, packageName, binNames) {
+  const binRoot = path.join(rootDir, 'node_modules', '.bin');
+  const packageNeedles = [
+    path.resolve(packagePath).toLowerCase(),
+    `node_modules/${packageName}`.toLowerCase(),
+    `node_modules\\${packageName.replaceAll('/', '\\')}`.toLowerCase(),
+  ];
+  for (const binName of binNames) {
+    if (!/^[a-z0-9][a-z0-9._-]*$/i.test(binName)) continue;
+    for (const suffix of ['', '.cmd', '.ps1']) {
+      const link = path.join(binRoot, `${binName}${suffix}`);
+      const stat = fs.lstatSync(link, { throwIfNoEntry: false });
+      if (!stat) continue;
+      let owned = false;
+      try {
+        const evidence = stat.isSymbolicLink()
+          ? path.resolve(path.dirname(link), fs.readlinkSync(link)).toLowerCase()
+          : stat.isFile() && stat.size <= 128 * 1024
+            ? fs.readFileSync(link, 'utf8').toLowerCase()
+            : '';
+        owned = packageNeedles.some(needle => evidence.includes(needle));
+      } catch { /* Preserve ambiguous shims owned by another package. */ }
+      if (owned) fs.rmSync(link, { force: true });
+    }
+  }
+}
+
+async function uninstallSubappVersions(rootDir, updateRootDir, entry, options = {}) {
+  const legacyPath = packagePathFor(rootDir, entry.package);
+  const storeKey = versions.storeKeyForPackage(entry.package);
+  const storeRoot = path.join(rootDir, 'store');
+  const versionStoreRoot = path.join(storeRoot, storeKey);
+  const binNames = declaredBinNames(legacyPath, entry.package);
+
+  const preparationLocks = [];
+  const lockDirectory = path.join(storeRoot, '.locks');
+  try {
+    preparationLocks.push(await waitForUpdateLock(path.join(lockDirectory, storeKey)));
+    if (typeof options.forceStopChildToolByCatalogId === 'function') {
+      const stopped = await options.forceStopChildToolByCatalogId(entry.id);
+      if (stopped?.success === false && stopped.reason !== 'not-found') {
+        throw new Error(`Unable to stop the running subapp before uninstalling: ${entry.id}`);
+      }
+    }
+
+    const targets = [legacyPath, versionStoreRoot];
+    for (const target of targets) {
+      const holders = await collectBusyHolders(target, entry, options);
+      if (holders.length) {
+        if (options.forceClose !== true) throw formatBusyNeedsForceError(target, holders);
+        await forceCloseBusyHolders(target, entry, holders, options);
+      }
+      if ((options.platform || process.platform) !== 'win32'
+        && await (options.hasProcessesUsingPath || hasProcessesUsingPackagePath)(target, options.platform || process.platform)) {
+        throw formatBusyNeedsForceError(target, holders);
+      }
+    }
+
+    // The marker is written only when destructive cleanup is about to start. A busy
+    // preflight must leave the existing installation visible and retryable.
+    versions.beginUninstall(rootDir, entry);
+    removeOwnedBinLinks(rootDir, legacyPath, entry.package, binNames);
+    for (const target of targets) await rmWithBusyRetry(target, options);
+
+    const updateCachePath = path.join(updateRootDir, validateId(entry.id));
+    await rmWithBusyRetry(updateCachePath, options);
+    removePackageFromRootManifests(rootDir, entry.package);
+    assertSubappUninstallComplete(rootDir, entry, [...targets, updateCachePath]);
+    versions.finishUninstall(rootDir, entry);
+  } finally {
+    for (const release of preparationLocks.reverse()) release();
+  }
 }
 
 async function renamePackagePathWithForceClose(src, dest, entry, options = {}) {
@@ -2009,350 +2265,48 @@ async function renamePackagePathWithForceClose(src, dest, entry, options = {}) {
   }
 }
 
-async function runNpmWithBusyRetry(npmRunner, args, options = {}, retryOptions = {}) {
-  const retries = Number.isInteger(retryOptions.retries) ? retryOptions.retries : 3;
-  const baseDelayMs = Number.isFinite(retryOptions.baseDelayMs) ? retryOptions.baseDelayMs : 1000;
-  const sleepImpl = retryOptions.sleep || options.sleep || sleep;
-  let lastError;
-  for (let attempt = 1; attempt <= retries + 1; attempt++) {
-    try {
-      return await npmRunner(args, options);
-    } catch (error) {
-      lastError = error;
-      if (attempt <= retries && isBusyRenameError(error)) {
-        console.warn(`[subapp-manager] npm ${args[0]} hit EBUSY, retry ${attempt}/${retries}`);
-        await sleepImpl(baseDelayMs * attempt);
-        continue;
-      }
-      throw isBusyRenameError(error)
-        ? formatBusyRenameError(retryOptions.packagePath, error)
-        : error;
-    }
-  }
-  throw formatBusyRenameError(retryOptions.packagePath, lastError);
-}
-
-async function uninstallInstalledPackage(rootDir, entry, npmRunner, options = {}) {
-  const packagePath = packagePathFor(rootDir, entry.package);
-  const tracker = options.progressTracker;
-  let stagingRoot = null;
-  tracker?.start();
-
-  try {
-    // Windows 上 npm uninstall 会 rename 包目录；若 Runtime/杀毒仍占着文件会 EBUSY。
-    // 先自行挪走目录（带重试），再让 npm 只更新 package.json / lock。
-    if (fs.existsSync(packagePath)) {
-      tracker?.setDownload(40);
-      stagingRoot = fs.mkdtempSync(path.join(rootDir, '.subapp-uninstall-'));
-      await renamePackagePathWithForceClose(
-        packagePath,
-        path.join(stagingRoot, 'package'),
-        entry,
-        { ...options, mutationAction: 'uninstall' },
-      );
-      tracker?.setDownload(70);
-    } else {
-      tracker?.setDownload(70);
-    }
-
-    await runNpmWithBusyRetry(
-      npmRunner,
-      ['uninstall', '--prefix', rootDir, '--no-audit', '--no-fund', entry.package],
-      withProgressOutput(options, tracker),
-      {
-        retries: options.npmBusyRetries,
-        baseDelayMs: options.npmBusyRetryDelayMs,
-        sleep: options.sleep,
-        packagePath,
-      },
-    );
-    tracker?.setExtract(100);
-    tracker?.complete();
-  } finally {
-    if (stagingRoot && fs.existsSync(stagingRoot)) {
-      try {
-        await rmWithBusyRetry(stagingRoot, {
-          retries: options.renameRetries,
-          baseDelayMs: options.renameRetryDelayMs,
-          sleep: options.sleep,
-        });
-      } catch (error) {
-        console.warn('[subapp-manager] failed to cleanup uninstall staging:', error.message || error);
-      }
-    }
-  }
-}
-
-async function replaceInstalledPackage(rootDir, entry, npmRunner, options = {}) {
-  const packagePath = packagePathFor(rootDir, entry.package);
-  const backupRoot = fs.mkdtempSync(path.join(rootDir, '.subapp-update-'));
-  const backupPath = path.join(backupRoot, 'package');
-  const packageJsonPath = path.join(rootDir, 'package.json');
-  const packageLockPath = path.join(rootDir, 'package-lock.json');
-  const packageJsonSnapshot = snapshotFile(packageJsonPath);
-  const packageLockSnapshot = snapshotFile(packageLockPath);
-  const tracker = options.progressTracker;
-  let backedUp = false;
-  tracker?.start();
-
-  try {
-    if (fs.existsSync(packagePath)) {
-      await renamePackagePathWithForceClose(packagePath, backupPath, entry, {
-        ...options,
-        mutationAction: options.mutationAction || 'update',
-      });
-      backedUp = true;
-    }
-
-    await installPackage(rootDir, entry, npmRunner, options);
-    const installedState = readInstalledState(rootDir, entry);
-    if (!installedState.installed || installedState.installedVersion !== entry.version) {
-      throw new Error(
-        `Subapp update verification failed: expected ${entry.version}, got ${installedState.installedVersion || 'missing'}`,
-      );
-    }
-
-    await rmWithBusyRetry(backupRoot, {
-      retries: options.renameRetries,
-      baseDelayMs: options.renameRetryDelayMs,
-      sleep: options.sleep,
-    });
-    tracker?.complete();
-  } catch (error) {
-    if (fs.existsSync(packagePath)) {
-      try {
-        await rmWithBusyRetry(packagePath, {
-          retries: options.renameRetries,
-          baseDelayMs: options.renameRetryDelayMs,
-          sleep: options.sleep,
-        });
-      } catch (cleanupError) {
-        console.warn('[subapp-manager] failed to cleanup package during rollback:', cleanupError.message || cleanupError);
-      }
-    }
-    if (backedUp && fs.existsSync(backupPath)) {
-      fs.mkdirSync(path.dirname(packagePath), { recursive: true });
-      await renameWithBusyRetry(backupPath, packagePath, {
-        retries: options.renameRetries,
-        baseDelayMs: options.renameRetryDelayMs,
-        sleep: options.sleep,
-      });
-    }
-    restoreFile(packageJsonPath, packageJsonSnapshot);
-    restoreFile(packageLockPath, packageLockSnapshot);
-    try {
-      await rmWithBusyRetry(backupRoot, {
-        retries: options.renameRetries,
-        baseDelayMs: options.renameRetryDelayMs,
-        sleep: options.sleep,
-      });
-    } catch (cleanupError) {
-      console.warn('[subapp-manager] failed to cleanup update backup:', cleanupError.message || cleanupError);
-    }
-    throw error;
-  }
-}
-
-function restoreRollbackFile(livePath, rollbackPath, existed) {
-  if (existed && fs.existsSync(rollbackPath)) {
-    fs.copyFileSync(rollbackPath, livePath);
-  } else if (!existed && fs.existsSync(livePath)) {
-    fs.rmSync(livePath, { force: true });
-  }
-}
-
-async function recoverInterruptedActivation(rootDir, updateRootDir, record, options = {}) {
-  const paths = stagedManifestPaths(updateRootDir, record.id, record.version);
-  if (!fs.existsSync(paths.journal)) return false;
-  const journal = readJson(paths.journal);
-  const packagePath = packagePathFor(rootDir, record.packageName);
-  if (fs.existsSync(paths.rollbackPackage)) {
-    if (fs.existsSync(packagePath)) {
-      await rmWithBusyRetry(packagePath, {
-        retries: options.renameRetries,
-        baseDelayMs: options.renameRetryDelayMs,
-        sleep: options.sleep,
-      });
-    }
-    fs.mkdirSync(path.dirname(packagePath), { recursive: true });
-    await renameWithBusyRetry(paths.rollbackPackage, packagePath, {
-      retries: options.renameRetries,
-      baseDelayMs: options.renameRetryDelayMs,
-      sleep: options.sleep,
-    });
-  }
-  restoreRollbackFile(
-    path.join(rootDir, 'package.json'),
-    paths.rollbackPackageJson,
-    journal.packageJsonExisted === true,
-  );
-  restoreRollbackFile(
-    path.join(rootDir, 'package-lock.json'),
-    paths.rollbackPackageLock,
-    journal.packageLockExisted === true,
-  );
-  fs.rmSync(paths.journal, { force: true });
-  fs.rmSync(paths.rollbackPackageJson, { force: true });
-  fs.rmSync(paths.rollbackPackageLock, { force: true });
-  writeJsonAtomic(paths.state, {
-    ...record,
-    state: 'failed',
-    phase: 'install',
-    failedAt: new Date().toISOString(),
-    error: 'A previously interrupted update was rolled back safely',
-  });
-  return true;
-}
-
-function assertCanonicalDependency(rootDir, entry, distribution) {
-  const packageJson = readJson(path.join(rootDir, 'package.json'));
-  const packageLock = readJson(path.join(rootDir, 'package-lock.json'));
-  const lockKey = `node_modules/${entry.package}`;
-  if (packageJson.dependencies?.[entry.package] !== entry.version) {
-    throw new Error(`Installed dependency is not pinned to ${entry.package}@${entry.version}`);
-  }
-  if (packageLock.packages?.['']?.dependencies?.[entry.package] !== entry.version) {
-    throw new Error(`Package lock root is not pinned to ${entry.package}@${entry.version}`);
-  }
-  const locked = packageLock.packages?.[lockKey];
-  if (
-    locked?.version !== entry.version
-    || locked?.resolved !== distribution.tarball
-    || locked?.integrity !== distribution.integrity
-  ) {
-    throw new Error(`Package lock metadata is invalid for ${entry.package}@${entry.version}`);
-  }
-}
-
 async function activateStagedSubappUpdate(rootDir, updateRootDir, entry, npmRunner, options = {}) {
-  const record = readUpdateRecord(updateRootDir, entry);
-  if (!record) throw new Error(`Downloaded update is not available: ${entry.id}`);
-  const paths = verifyStagedAssets(updateRootDir, record);
-  if (record.state === 'failed' && record.phase !== 'install') {
-    throw new Error(record.error || `Downloaded update is not ready: ${entry.id}`);
-  }
-
-  const canActivate = typeof options.canActivateUpdate === 'function'
-    ? await options.canActivateUpdate(entry)
-    : true;
-  if (canActivate === false || canActivate?.ok === false) {
-    const error = new Error(canActivate?.reason || 'Another application window is using subapps');
-    error.code = 'UPDATE_DEFERRED';
-    throw error;
-  }
-
-  const releaseLock = acquireUpdateLock(updateRootDir);
-  if (!releaseLock) {
-    const error = new Error('Another process is installing a subapp update');
-    error.code = 'UPDATE_DEFERRED';
-    throw error;
-  }
-
-  const packagePath = packagePathFor(rootDir, entry.package);
-  const packageJsonPath = path.join(rootDir, 'package.json');
-  const packageLockPath = path.join(rootDir, 'package-lock.json');
-  const tracker = options.progressTracker;
-  let backedUp = false;
-  let journalWritten = false;
-  tracker?.start();
-
-  try {
-    if (await recoverInterruptedActivation(rootDir, updateRootDir, record, options)) {
-      const error = new Error('Interrupted subapp update was rolled back; retry installation');
-      error.code = 'UPDATE_RECOVERED';
-      throw error;
-    }
-
-    const cacheRoot = path.join(updateRootDir, 'npm-cache');
-    await npmRunner(['cache', 'add', paths.package, '--cache', cacheRoot], options);
-
-    const packageJsonSnapshot = snapshotFile(packageJsonPath);
-    const packageLockSnapshot = snapshotFile(packageLockPath);
-    if (packageJsonSnapshot.exists) fs.writeFileSync(paths.rollbackPackageJson, packageJsonSnapshot.contents);
-    if (packageLockSnapshot.exists) fs.writeFileSync(paths.rollbackPackageLock, packageLockSnapshot.contents);
-    writeJsonAtomic(paths.journal, {
-      schemaVersion: UPDATE_SCHEMA_VERSION,
-      id: entry.id,
-      version: entry.version,
-      startedAt: new Date().toISOString(),
-      packageJsonExisted: packageJsonSnapshot.exists,
-      packageLockExisted: packageLockSnapshot.exists,
+  let prepared = readPreparedVersion(rootDir, entry);
+  if (!prepared) {
+    const record = readUpdateRecord(updateRootDir, entry);
+    if (!record) throw new Error(`Downloaded update is not available: ${entry.id}`);
+    const paths = verifyStagedAssets(updateRootDir, record);
+    prepared = await prepareVersionPackage(rootDir, entry, npmRunner, {
+      ...options, tarballPath: paths.package, distribution: record.distribution,
     });
-    journalWritten = true;
-
-    if (fs.existsSync(packagePath)) {
-      await renamePackagePathWithForceClose(packagePath, paths.rollbackPackage, entry, {
-        ...options,
-        mutationAction: 'install-update',
-      });
-      backedUp = true;
+  }
+  const release = options.lockHeld ? () => {} : await waitForUpdateLock(path.join(rootDir, 'store', '.locks'));
+  try {
+    const installed = readInstalledState(rootDir, entry);
+    if (installed.development || installed.localNext) {
+      throw new Error(`Local subapp cannot be updated: ${entry.id}`);
     }
-
-    tracker?.setDownload(100);
-    await runNpmWithBusyRetry(
-      npmRunner,
-      packageActivateFromCacheArgs(rootDir, entry, cacheRoot),
-      withProgressOutput(options, tracker),
-      {
-        retries: options.npmBusyRetries,
-        baseDelayMs: options.npmBusyRetryDelayMs,
-        sleep: options.sleep,
-        packagePath,
-      },
-    );
-    const installedState = readInstalledState(rootDir, entry);
-    if (!installedState.installed || installedState.installedVersion !== entry.version) {
-      throw new Error(
-        `Subapp update verification failed: expected ${entry.version}, got ${installedState.installedVersion || 'missing'}`,
-      );
+    if (installed.installed && semver.valid(installed.installedVersion)
+      && semver.gt(installed.installedVersion, entry.version)) {
+      return { id: entry.id, version: installed.installedVersion, status: 'current' };
     }
-
-    assertCanonicalDependency(rootDir, entry, record.distribution);
-    tracker?.setExtract(100);
-
-    if (backedUp && fs.existsSync(paths.rollbackPackage)) {
-      await rmWithBusyRetry(paths.rollbackPackage, {
-        retries: options.renameRetries,
-        baseDelayMs: options.renameRetryDelayMs,
-        sleep: options.sleep,
-      });
-    }
-    fs.rmSync(paths.journal, { force: true });
-    fs.rmSync(paths.rollbackPackageJson, { force: true });
-    fs.rmSync(paths.rollbackPackageLock, { force: true });
-    journalWritten = false;
-    tracker?.complete();
-    fs.rmSync(paths.directory, { recursive: true, force: true });
+    versions.activate(rootDir, entry, prepared);
+    options.progressTracker?.complete();
     return { id: entry.id, version: entry.version, status: 'installed' };
-  } catch (error) {
-    if (journalWritten) {
-      try {
-        await recoverInterruptedActivation(rootDir, updateRootDir, record, options);
-      } catch (rollbackError) {
-        error.rollbackError = rollbackError;
-      }
-    }
-    if (fs.existsSync(paths.state)) {
-      writeJsonAtomic(paths.state, {
-        ...record,
-        state: 'failed',
-        phase: 'install',
-        failedAt: new Date().toISOString(),
-        error: error.message || String(error),
-      });
-    }
-    throw error;
   } finally {
-    releaseLock();
+    release();
   }
 }
 
 function createSubappManager(options = {}) {
   const rootDir = resolveSubappRoot(options);
   const updateRootDir = resolveSubappUpdateRoot(options);
+  try {
+    subappBinRouter.ensureStableRouter(rootDir);
+  } catch (error) {
+    // Older child packages still resolve their direct MCP entry point. Keep the
+    // host usable if the stable external launcher cannot be refreshed.
+    console.warn('[subapp-manager] failed to install stable bin router:', error.message || error);
+  }
   const updateOperations = new Map();
   const backgroundAttempts = new Set();
   const backgroundDownloads = new Map();
+  const pendingUninstallCounts = new Map();
   let currentIndex = null;
   let currentMeta = null;
   let currentIndexUrl = null;
@@ -2511,26 +2465,44 @@ function createSubappManager(options = {}) {
         : 'cache-first';
     const { index, meta } = await loadIndex(strategy);
     scheduleBackgroundUpdates(index, meta);
-    return createCatalogState(rootDir, index, payload.locale || 'en', {
+    const state = createCatalogState(rootDir, index, payload.locale || 'en', {
       ...meta,
       updateRootDir,
       updateOperations,
     });
+    for (const item of state.apps) {
+      const runningConfig = options.getRunningSubappConfig?.(item.id);
+      if (runningConfig) item.config = runningConfig;
+    }
+    return state;
   }
 
   function updateKey(entry) {
     return `${entry.id}@${entry.version}`;
   }
 
+  function assertNotUninstalling(id, entry = null) {
+    if ((pendingUninstallCounts.get(id) || 0) <= 0
+      && (!entry || !versions.isUninstalling(rootDir, entry))) {
+      return;
+    }
+    const error = new Error(`Subapp uninstall is in progress: ${id}`);
+    error.code = 'SUBAPP_UNINSTALLING';
+    throw error;
+  }
+
   function progressHandler(entry, state, externalHandler) {
     return (progress) => {
       const percent = progress.action === 'download-update'
-        ? clampProgress(progress.downloadProgress)
+        ? clampProgress(progress.phase === 'extract'
+          ? progress.extractProgress
+          : progress.downloadProgress)
         : clampProgress(progress.percent);
       updateOperations.set(updateKey(entry), {
         version: entry.version,
         state,
         progress: percent,
+        phase: progress.phase,
         ...(progress.error ? { error: progress.error } : {}),
       });
       if (typeof externalHandler === 'function') {
@@ -2599,12 +2571,13 @@ function createSubappManager(options = {}) {
       if (
         !installedState.installed
         || installedState.development
+        || installedState.localNext
         || !hasUpdate(installedState.installedVersion, entry.version)
       ) {
         continue;
       }
       const key = updateKey(entry);
-      const status = readSubappUpdateStatus(updateRootDir, entry, installedState);
+      const status = readSubappUpdateStatus(updateRootDir, entry, installedState, null, rootDir);
       const canDownload = status.state === 'available'
         || (status.state === 'failed' && status.ready !== true);
       if (!canDownload || backgroundAttempts.has(key)) continue;
@@ -2625,10 +2598,48 @@ function createSubappManager(options = {}) {
     return next;
   }
 
+  async function prepareLaunch(payload = {}) {
+    const { index } = await loadIndex('cache-first');
+    const entry = index[validateId(payload.id)];
+    if (!entry) throw new Error('Subapp is not present in the catalog');
+    // Only serialize the tiny selection/start handshake, never npm extraction.
+    const release = await waitForUpdateLock(path.join(rootDir, 'store', '.locks'));
+    try {
+      let installed = readInstalledState(rootDir, entry);
+      const runningConfig = options.getRunningSubappConfig?.(entry.id) || null;
+      if (!runningConfig && payload.deferPreparedUpdate !== true
+        && index.dev !== true && !installed.development && !installed.localNext && installed.installed
+        && hasUpdate(installed.installedVersion, entry.version)) {
+        try {
+          const prepared = readPreparedVersion(rootDir, entry);
+          if (prepared) {
+            versions.activate(rootDir, entry, prepared);
+            installed = readInstalledState(rootDir, entry);
+          }
+        } catch (error) {
+          // A failed background update must never prevent launching the last working version.
+          console.warn('[subapp-manager] prepared version deferred:', error.message);
+        }
+      }
+      if (!installed.installed) throw new Error(`Subapp is not installed: ${entry.id}`);
+      return { config: installed.config, release };
+    } catch (error) {
+      release();
+      throw error;
+    }
+  }
+
   async function mutate(action, payload = {}) {
-    return enqueueMutation(async () => {
+    const requestedId = validateId(payload.id);
+    if (action !== 'uninstall') assertNotUninstalling(requestedId);
+    const tracksUninstall = action === 'uninstall';
+    if (tracksUninstall) {
+      pendingUninstallCounts.set(requestedId, (pendingUninstallCounts.get(requestedId) || 0) + 1);
+    }
+    try {
+      return await enqueueMutation(async () => {
       const { index } = await loadIndex('cache-first');
-      const id = validateId(payload.id);
+      const id = requestedId;
       const entry = index[id];
       if (!entry) throw new Error(`Subapp is not present in the remote index: ${id}`);
       if (entry.app.enabled === false && action !== 'uninstall') {
@@ -2656,59 +2667,73 @@ function createSubappManager(options = {}) {
 
       let releaseLock = null;
       try {
-        if (action === 'install-update') {
-          await activateStagedSubappUpdate(
-            rootDir,
-            updateRootDir,
-            entry,
-            options.runNpm || runNpm,
-            mutationOptions,
-          );
-        } else {
-          releaseLock = acquireUpdateLock(updateRootDir);
-          if (!releaseLock) {
-            const lockError = new Error('Another process is changing installed subapps');
-            lockError.code = 'UPDATE_DEFERRED';
-            throw lockError;
-          }
-          if (action === 'uninstall') {
-            await uninstallInstalledPackage(rootDir, entry, options.runNpm || runNpm, mutationOptions);
-          } else if (action === 'reinstall') {
-            if (typeof options.forceStopChildToolByCatalogId === 'function') {
+        if (action === 'uninstall') {
+          const downloads = [...backgroundDownloads.entries()]
+            .filter(([key]) => key.startsWith(`${entry.id}@`))
+            .map(([, operation]) => operation.catch(() => null));
+          await Promise.all(downloads);
+        }
+        const installed = readInstalledState(rootDir, entry);
+        if (installed.development || installed.localNext || index.dev === true) {
+          throw new Error('Local subapps cannot be changed');
+        }
+        if ((action === 'update' || action === 'install-update')
+          && installed.installed && !hasUpdate(installed.installedVersion, entry.version)) {
+          return list({ locale: payload.locale || 'en' });
+        }
+        progressTracker.start();
+        if (action !== 'uninstall' && versions.isUninstalling(rootDir, entry)) {
+          const error = new Error(`Subapp uninstall must be completed before installation: ${entry.id}`);
+          error.code = 'SUBAPP_UNINSTALLING';
+          throw error;
+        }
+        let targetEntry = entry;
+        let prepared;
+        if (action !== 'uninstall') {
+          // Await a concurrent background download so a click never installs the same version twice.
+          const downloading = backgroundDownloads.get(updateKey(entry));
+          if (downloading) await downloading;
+          if (action === 'install-update') {
+            prepared = readPreparedVersion(rootDir, entry);
+            if (!prepared) {
+              const record = readUpdateRecord(updateRootDir, entry);
+              if (!record) throw new Error(`Downloaded update is not available: ${entry.id}`);
+              const staged = verifyStagedAssets(updateRootDir, record);
+              prepared = await prepareVersionPackage(rootDir, entry, options.runNpm || runNpm, {
+                ...mutationOptions, tarballPath: staged.package, distribution: record.distribution,
+              });
+            }
+          } else {
+            const bundle = action === 'install' && !installed.installed && id === BUNDLED_CODER_ID
+              ? readBundledCoderFallback(options) : null;
+            targetEntry = bundle?.entry || entry;
+            if (action === 'reinstall' && typeof options.forceStopChildToolByCatalogId === 'function') {
               const stopResult = await options.forceStopChildToolByCatalogId(entry.id);
               if (stopResult?.success === false && stopResult.reason !== 'not-found') {
                 throw new Error(`Unable to stop the running subapp before reinstalling: ${entry.id}`);
               }
             }
-            await replaceInstalledPackage(rootDir, entry, options.runNpm || runNpm, {
-              ...mutationOptions,
-              mutationAction: 'reinstall',
+            if (action === 'reinstall') {
+              await ensureVersionReplacementIsIdle(rootDir, targetEntry, mutationOptions);
+            }
+            prepared = await prepareVersionPackage(rootDir, targetEntry, options.runNpm || runNpm, {
+              ...mutationOptions, reinstall: action === 'reinstall', bundledCoderFallback: bundle,
             });
-          } else if (action === 'update') {
-            if (entry.update) {
-              throw new Error(`Use installUpdate for staged subapp updates: ${entry.id}`);
-            }
-            await replaceInstalledPackage(rootDir, entry, options.runNpm || runNpm, mutationOptions);
-          } else {
-            progressTracker.start();
-            const bundle = id === BUNDLED_CODER_ID ? readBundledCoderFallback(options) : null;
-            if (bundle) {
-              if (!readInstalledState(rootDir, bundle.entry).installed) {
-                const packagePath = packagePathFor(rootDir, bundle.entry.package);
-                if (fs.lstatSync(packagePath, { throwIfNoEntry: false })?.isSymbolicLink()) {
-                  throw new Error('Cannot replace a development-linked Aily Coder Editor with the bundled package');
-                }
-                await replaceInstalledPackage(rootDir, bundle.entry, options.runNpm || runNpm, {
-                  ...mutationOptions,
-                  bundledCoderFallback: bundle,
-                });
-              }
-            } else {
-              await installPackage(rootDir, entry, options.runNpm || runNpm, mutationOptions);
-            }
-            progressTracker.complete();
           }
         }
+        releaseLock = await waitForUpdateLock(path.join(rootDir, 'store', '.locks'));
+        // A local dev/next selection may have been added while downloading; do not supersede it.
+        const current = readInstalledState(rootDir, entry);
+        if (current.development || current.localNext || readDevelopmentIndexCache(rootDir)) {
+          throw new Error('Local subapps cannot be changed');
+        }
+        if (action === 'uninstall') {
+          await uninstallSubappVersions(rootDir, updateRootDir, entry, mutationOptions);
+        } else if (!current.installed || !semver.valid(current.installedVersion)
+          || semver.gte(targetEntry.version, current.installedVersion)) {
+          versions.activate(rootDir, targetEntry, prepared);
+        }
+        progressTracker.complete();
       } catch (error) {
         if (typeof onProgress === 'function') {
           onProgress({
@@ -2727,15 +2752,23 @@ function createSubappManager(options = {}) {
         updateOperations.delete(updateKey(entry));
       }
       return list({ locale: payload.locale || 'en' });
-    });
+      });
+    } finally {
+      if (tracksUninstall) {
+        const remaining = (pendingUninstallCounts.get(requestedId) || 1) - 1;
+        if (remaining > 0) pendingUninstallCounts.set(requestedId, remaining);
+        else pendingUninstallCounts.delete(requestedId);
+      }
+    }
   }
 
   async function downloadUpdate(payload = {}) {
     const { index } = await loadIndex('cache-first');
-    if (index.dev === true) throw new Error('Development subapps cannot be updated');
+    if (index.dev === true) throw new Error('Local subapps cannot be updated');
     const id = validateId(payload.id);
     const entry = index[id];
     if (!entry) throw new Error(`Subapp is not present in the remote index: ${id}`);
+    assertNotUninstalling(id, entry);
     ensureInstallProject(rootDir);
     await downloadUpdateEntry(entry, payload);
     return list({ locale: payload.locale || 'en' });
@@ -2751,6 +2784,7 @@ function createSubappManager(options = {}) {
     reinstall: (payload) => mutate('reinstall', payload),
     update: (payload) => mutate('update', payload),
     downloadUpdate,
+    prepareLaunch,
     installUpdate: (payload) => mutate('install-update', payload),
     uninstall: (payload) => mutate('uninstall', payload),
   };
@@ -2793,7 +2827,7 @@ function registerSubappManagerHandlers(getMainWindow = () => null, handlerOption
     forceStopChildToolByCatalogId,
     listChildToolHoldersForCatalogId,
     getIndexUrl,
-    canActivateUpdate,
+    getRunningSubappConfig,
   } = handlerOptions;
 
   const sendProgress = (progress) => {
@@ -2816,7 +2850,7 @@ function registerSubappManagerHandlers(getMainWindow = () => null, handlerOption
     platform: process.platform,
     getMainWindow,
     getIndexUrl,
-    canActivateUpdate,
+    getRunningSubappConfig,
     getBusyDialogStrings: () => readSubappBusyDialogStringsFromI18n(),
     forceStopChildToolByCatalogId,
     listChildToolHolders: listChildToolHoldersForCatalogId,
@@ -2831,6 +2865,36 @@ function registerSubappManagerHandlers(getMainWindow = () => null, handlerOption
     }
     return result;
   };
+
+  const launches = new Map();
+  ipcMain.handle('subapp-manager-prepare-launch', async (event, payload = {}) => {
+    const prepared = await defaultManager.prepareLaunch(payload);
+    if (event.sender.isDestroyed()) {
+      prepared.release();
+      throw new Error('Launch owner closed');
+    }
+    const token = randomUUID();
+    const release = () => {
+      if (!launches.has(token)) return;
+      launches.delete(token);
+      event.sender.removeListener('destroyed', release);
+      event.sender.removeListener('render-process-gone', release);
+      event.sender.removeListener('did-start-navigation', onNavigation);
+      prepared.release();
+    };
+    const onNavigation = (_event, _url, inPlace, isMainFrame) => {
+      if (isMainFrame && !inPlace) release();
+    };
+    launches.set(token, { owner: event.sender.id, release });
+    event.sender.once('destroyed', release);
+    event.sender.once('render-process-gone', release);
+    event.sender.on('did-start-navigation', onNavigation);
+    return { config: prepared.config, token };
+  });
+  ipcMain.handle('subapp-manager-finish-launch', (event, token) => {
+    const launch = launches.get(token);
+    if (launch?.owner === event.sender.id) launch.release();
+  });
 
   ipcMain.handle('subapp-manager-list', (_event, payload = {}) => defaultManager.list(payload));
   ipcMain.handle('subapp-manager-install', handleMutation('install'));
@@ -2868,6 +2932,8 @@ module.exports = {
   renameWithBusyRetry,
   resolveBusyConflictAndRetry,
   resolveRunnablePackage,
+  resolveInstalledPackagePath,
+  readInstalledState,
   resolveSubappRoot,
   resolveSubappUpdateRoot,
   resolveUiIndex,
