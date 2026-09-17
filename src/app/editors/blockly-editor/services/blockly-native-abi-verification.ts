@@ -9,6 +9,7 @@ import type { PreparedDataReader } from '@domain/project/project-data/public-api
 import { NativeUiTasks, nativeUiSemanticSnapshot } from './blockly-native-ui-tasks';
 import { captureArduinoGeneratedArtifacts } from './generated-code-artifacts';
 import { absJson } from '../../../integrations/blockly/abs/abs-json';
+import { verifyNativeModelRegistrations } from './blockly-native-model-effects';
 
 /** Complete merged state, including dormant shadows and metadata, not the scratch tree. */
 export async function verifyNativeAbi(native: typeof Blockly, workspace: Blockly.Workspace,
@@ -37,7 +38,7 @@ export async function verifyNativeAbi(native: typeof Blockly, workspace: Blockly
     const artifacts = captureArduinoGeneratedArtifacts(generator);
     assertClean(); capture(); return absJson({ code, artifacts });
   });
-  const code = generate();
+  const code = verifyNativeModelRegistrations(window, generator, request.modelDeclarations ?? [], generate);
   if (uiTasks.hasPending) {
     uiTasks.drain(() => nativeUiSemanticSnapshot(native, workspace));
     if (generate() !== code) throw new Error('Native deferred UI tasks changed generated code or artifacts.');

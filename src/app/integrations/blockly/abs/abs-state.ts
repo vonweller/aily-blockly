@@ -1,6 +1,7 @@
 import type { AbsFieldDefinition, AbsFieldToken } from './abs-field-values';
 import type { AbsProcedureStateContract } from './abs-procedures';
 import type { AbsArgumentDefinition } from './abs-syntax';
+import type { AbsDiagnostic } from './abs-diagnostics';
 
 export const ABS_SCHEMA_HEADER = '# ABS Schema: 2';
 // Projection algorithm identifier, independent of the production wire protocol version.
@@ -102,6 +103,7 @@ export class AbsSyncError extends Error {
     message: string,
     readonly range?: AbsSourceRange,
     readonly blockIds: readonly string[] = [],
+    readonly diagnostic?: AbsDiagnostic,
   ) {
     super(message);
     this.name = 'AbsSyncError';

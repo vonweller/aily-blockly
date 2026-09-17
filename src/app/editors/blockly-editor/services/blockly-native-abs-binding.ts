@@ -4,7 +4,8 @@ import { bindAbsSyntax, type AbsSyntaxOptions } from '../../../integrations/bloc
 import { nativeAbsArgumentOrder } from '../../../integrations/blockly/abs/abs-native-arguments';
 import { parseBlockDefinition } from '../../../integrations/blockly/abs/block-definition.model';
 import { normalizeAbsSerializedField, resolveAbsFieldValue } from '../../../integrations/blockly/abs/abs-field-values';
-import type { AbsSyntaxNode } from '../../../integrations/blockly/abs/abs-state';
+import { AbsSyncError, type AbsSyntaxNode } from '../../../integrations/blockly/abs/abs-state';
+import { serializeAbsFailure } from '../../../integrations/blockly/abs/abs-diagnostics';
 import { captureAbsFieldContract } from '../../../integrations/blockly/abs/abs-runtime-field-contract';
 import type { NativeCandidateWorkspace } from './blockly-native-candidate-workspace';
 import type { AbsNativeBinding, AbsNativeBlock, AbsNativeDefault } from '../../../integrations/blockly/abs/abs-native-binding';
@@ -15,11 +16,13 @@ import { normalizeAbsSerializedWorkspace } from '../../../integrations/blockly/a
 import { absJson } from '../../../integrations/blockly/abs/abs-json';
 import { prepareAbsStructuralSyntax } from '../../../integrations/blockly/abs/abs-structural-syntax';
 import { captureStructuralMutators } from '../components/blockly/plugins/block-plus-minus/src/structural-mutators';
+import { prepareNativeModels } from './blockly-native-model-preparation';
 
 /** Native binding has no library/shape templates. Only the shared grammar knows ABS spelling. */
 export function bindNativeAbs(source: string, execution: NativeCandidateWorkspace, declarations: Map<string, Record<string, any>>,
   identities?: NativeCandidateRequest['identities'], hydrate: <T>(value: T) => T = value => value,
-  hostCalls: NonNullable<NativeCandidateRequest['hostCalls']> = []): () => AbsNativeBinding {
+  hostCalls: NonNullable<NativeCandidateRequest['hostCalls']> = [],
+  modelPreparation?: { generator: Blockly.Generator; requestId: string }): () => AbsNativeBinding {
   // Parse the complete document before executing any block callback.
   const raw = readAbsSyntax(source);
   const structural = captureStructuralMutators();
@@ -28,6 +31,8 @@ export function bindNativeAbs(source: string, execution: NativeCandidateWorkspac
   const hosted = new Map(hostCalls.map(call => [call.start, call]));
   const consumed = new Set<number>();
   const fallbacks: AbsNativeDefault[] = [];
+  const pending: Array<{ block: Blockly.Block; node: AbsSyntaxNode; name: string; token: AbsSyntaxNode['fields'][string] }> = [];
+  let bindingReferences = false;
   const capture = (block: Blockly.Block, seed: AbsNativeBlock['seed']) => captureNativeBlock(execution, declarations, block, seed);
   const options: AbsSyntaxOptions = {
     prepareExtraState: node => {
@@ -51,24 +56,33 @@ export function bindNativeAbs(source: string, execution: NativeCandidateWorkspac
     // preserves its original reason set; final ABI verification checks the real state.
     return block;
   };
-  const setField = (block: Blockly.Block, name: string, token: AbsSyntaxNode['fields'][string]) => {
-    const field = block.getField(name);
-    if (!field) throw new Error(`Native field is unavailable: ${name}.`);
-    // saveState on an unconfigured FieldVariable creates a default model. Resolve
-    // the requested symbol first; do not create then adopt/delete an incidental model.
-    const definition = captureAbsFieldContract(field, field instanceof execution.native.FieldVariable ? undefined : field.saveState());
-    const hydrated = hydrate(token.value);
-    const resolvedToken = absJson(hydrated) === absJson(token.value) ? token
-      : { raw: JSON.stringify(hydrated), value: hydrated, quoted: typeof hydrated === 'string' };
-    const value = normalizeAbsSerializedField(definition.symbol ? execution.models.resolve(token, definition) : resolveAbsFieldValue(resolvedToken, definition), definition);
-    execution.field(block, name, value);
+  const setField = (block: Blockly.Block, node: AbsSyntaxNode, name: string, token: AbsSyntaxNode['fields'][string]) => {
+    try {
+      const field = block.getField(name);
+      if (!field) throw new Error(`Native field is unavailable: ${name}.`);
+      // saveState on an unconfigured FieldVariable creates a default model. Resolve
+      // the requested symbol first; do not create then adopt/delete an incidental model.
+      const definition = captureAbsFieldContract(field, field instanceof execution.native.FieldVariable ? undefined : field.saveState());
+      const hydrated = hydrate(token.value);
+      const resolvedToken = absJson(hydrated) === absJson(token.value) ? token
+        : { raw: JSON.stringify(hydrated), value: hydrated, quoted: typeof hydrated === 'string' };
+      const value = normalizeAbsSerializedField(definition.symbol ? execution.models.resolve(token, definition) : resolveAbsFieldValue(resolvedToken, definition), definition);
+      execution.field(block, name, value);
+    } catch (error) {
+      if (modelPreparation && !bindingReferences && error instanceof AbsSyncError && error.code === 'ABS_SYMBOL_MISSING') {
+        pending.push({ block, node, name, token }); return;
+      }
+      const failure = serializeAbsFailure(error);
+      throw new AbsSyncError(failure.code, failure.message, node.fieldRanges[name] ?? { start: node.start, end: node.end }, [],
+        { ...failure.diagnostic, blockType: block.type, field: name });
+    }
   };
   const materialize = (node: AbsSyntaxNode): Blockly.Block => {
     const existing = blocks.get(node);
     if (existing) return existing;
     // The shared value-input fallback produces literal/variable blocks, never guessed slot names.
     const block = create(node);
-    for (const [name, token] of Object.entries(node.fields)) setField(block, name, token);
+    for (const [name, token] of Object.entries(node.fields)) setField(block, node, name, token);
     return block;
   };
   const syntax = bindAbsSyntax(raw, options, node => {
@@ -88,7 +102,7 @@ export function bindNativeAbs(source: string, execution: NativeCandidateWorkspac
         execution.assertClean();
         return trace && nativeAbsArgumentOrder(execution.observer.readNativeBlockJson(block) ?? declarations.get(node.type) ?? { type: node.type }, trace);
       },
-      field: (name, token) => setField(block, name, token),
+      field: (name, token) => setField(block, node, name, token),
       // Cross-boundary edges are checked by loading the complete merged ABI, not
       // by creating a surrogate model block inside the discovery workspace.
       input: (name, child) => { if (!child || !hosted.has(child.start)) execution.connect(block, name, child ? materialize(child) : null, snapshot => {
@@ -96,6 +110,10 @@ export function bindNativeAbs(source: string, execution: NativeCandidateWorkspac
       }); },
     };
   });
+  const modelDeclarations = modelPreparation ? prepareNativeModels(execution, modelPreparation.generator, blocks,
+    new Set(pending.map(item => item.block)), modelPreparation.requestId) : [];
+  bindingReferences = true;
+  for (const item of pending) setField(item.block, item.node, item.name, item.token);
   if (assigned && assigned.size !== consumed.size || hostCalls.some(call => !consumed.has(call.start))) throw new Error('Native candidate identities or host bindings contain unused calls.');
   structural.assertCurrent();
   return () => {
@@ -128,7 +146,7 @@ export function bindNativeAbs(source: string, execution: NativeCandidateWorkspac
     structural.assertCurrent();
     // Contract getters must not change what was just checked.
     if (absJson(normalizeAbsSerializedWorkspace(execution.result().state)) !== absJson(state)) throw new Error('Native contract getters changed candidate state.');
-    return { source, syntax, instances, ...(hostCalls.length ? { hostCalls: structuredClone(hostCalls) } : {}),
+    return { source, syntax, instances, ...(modelDeclarations.length ? { modelDeclarations } : {}), ...(hostCalls.length ? { hostCalls: structuredClone(hostCalls) } : {}),
       ...(execution.creations.entries.length ? { creations: structuredClone(execution.creations.entries) } : {}),
       ...(defaults.length ? { defaults } : {}) };
   };

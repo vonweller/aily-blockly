@@ -2,6 +2,7 @@ import { AbsIdentityMap, AbsProjection, AbsSyncError } from './abs-state';
 import { absJson, hashAbsText } from './abs-identity-map';
 import { AbsPreparedVariable, AbsVariableCreation, assertAbsVariableCreations, planAbsVariableCreations } from './abs-variable-intents';
 import { assertAbsSourceEdits, type AbsSourceEdits } from './abs-edit-provenance';
+import { assertAbsNativeModelDeclarations, type AbsNativeModelDeclaration } from './abs-native-model-declarations';
 
 /** A byte-bound wire view, not an authority to modify the immutable baseline. */
 export interface AbsGenerationBinding {
@@ -19,7 +20,11 @@ export interface AbsGenerationCandidateRequest extends AbsGenerationRequest {
   createVariables?: AbsVariableCreation[];
   sourceEdits?: AbsSourceEdits;
 }
-export interface AbsGenerationValidation extends AbsGenerationCandidateRequest { workspaceRevision: number; preparedVariables?: AbsPreparedVariable[] }
+export interface AbsGenerationValidation extends AbsGenerationCandidateRequest {
+  workspaceRevision: number;
+  preparedVariables?: AbsPreparedVariable[];
+  preparedModels?: AbsNativeModelDeclaration[];
+}
 
 const hash = (value: unknown) => typeof value === 'string' && /^sha256:[a-f0-9]{64}$/.test(value);
 export function assertGenerationRequest(value: any): asserts value is AbsGenerationRequest & Record<string, any> {
@@ -41,6 +46,7 @@ export function assertGenerationCandidate(value: any): asserts value is AbsGener
 }
 export function assertGenerationValidation(value: any): asserts value is AbsGenerationValidation & Record<string, any> {
   assertGenerationCandidate(value);
+  assertAbsNativeModelDeclarations(value['preparedModels']);
   if (!Number.isSafeInteger((value as any).workspaceRevision) || (value as any).workspaceRevision < 0) {
     throw new AbsSyncError('ABS_REQUEST_INVALID', 'The prepared workspace revision is missing.');
   }

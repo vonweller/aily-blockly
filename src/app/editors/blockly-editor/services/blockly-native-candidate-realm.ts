@@ -1,5 +1,6 @@
 import { NativeCandidateWorkspace } from './blockly-native-candidate-workspace';
 import { bindNativeAbs } from './blockly-native-abs-binding';
+import { serializeAbsFailure } from '../../../integrations/blockly/abs/abs-diagnostics';
 import type { NativeCandidateRequest } from './blockly-native-candidate-protocol';
 import { createNativeStructureObserver } from './blockly-native-structure';
 import { createProjectGenerator, type BlocklyGeneratorMode } from './blockly-generator-factory';
@@ -138,7 +139,9 @@ export function installNativeCandidateRealm(): void {
       const models = new NativeCandidateModels(workspace, request.variables);
       if (!request.verify) models.load();
       const execution = new NativeCandidateWorkspace(native, workspace, observer, assertClean, models, request.creations, declarations);
-      const binding = request.abs !== undefined ? bindNativeAbs(request.abs, execution, declarations, request.identities, values.materialize, request.hostCalls) : undefined;
+      const binding = request.abs !== undefined ? bindNativeAbs(request.abs, execution, declarations, request.identities, values.materialize, request.hostCalls,
+        request.modelRequestId && generator && typeof realm.registerVariableToBlockly === 'function'
+          ? { generator, requestId: request.modelRequestId } : undefined) : undefined;
       if (!request.verify && !binding) for (const operation of request.blocks) execution.create(operation);
       if (!request.verify) {
         execution.initializeViews();
@@ -153,7 +156,7 @@ export function installNativeCandidateRealm(): void {
       send({ ok: true, result });
     } catch (error) {
       try { workspace?.dispose(); } catch { /* The entire independent Realm is discarded by the host. */ }
-      send({ ok: false, error: String(error) });
+      send({ ok: false, error: serializeAbsFailure(error) });
     } finally { tasks.dispose(); uiTasks.dispose(); port.close(); }
   });
 }

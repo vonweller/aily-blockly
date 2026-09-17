@@ -28,6 +28,8 @@ export interface AbsGenerationInput {
   expected: AbsDiskSnapshot;
   /** Exact replaced map retained only for an explicit scope/map rebind. */
   inputMap?: string | null;
+  /** Explicit draft refresh: inputAbs/inputMap are the durable original draft pair. */
+  draftBaseGeneration?: string;
 }
 interface GenerationRecord extends Omit<AbsGenerationInput, 'expected'> {
   schemaVersion: 1;
@@ -81,6 +83,7 @@ export class AbsBaselineStore {
     const savedHash = savedAbi === null ? null : await hashAbsText(absJson(JSON.parse(savedAbi)));
     if (input.projection.map.savedAbiHash !== savedHash) throw new AbsSyncError('ABS_MAP_INVALID', 'Saved ABI hash does not match the prepared save shape.');
     const expected = await this.hashDisk(input.expected);
+    await this.assertDraftArchive({ ...input, expected });
     if (input.inputMap !== undefined && (typeof input.inputMap !== 'string' && input.inputMap !== null
       || await hashNullable(input.inputMap) !== expected.map)) throw new AbsSyncError('ABS_GENERATION_INVALID', 'Recovery map must retain the exact replaced bytes.');
     await this.port.withLock(async storage => {
@@ -104,6 +107,23 @@ export class AbsBaselineStore {
     const projection = (await this.readGeneration(this.port, generation)).record.projection;
     assertCurrentAbsProjection(projection);
     return projection;
+  }
+
+  async readArchivedDraft(generation: string) {
+    const { record } = await this.readGeneration(this.port, generation);
+    if (!record.draftBaseGeneration) throw new AbsSyncError('ABS_DRAFT_ARCHIVE_MISSING', 'This generation is not an archived draft.');
+    return { generation, baseGeneration: record.draftBaseGeneration, abs: record.inputAbs!,
+      hash: record.expected.abs!, bytes: new TextEncoder().encode(record.inputAbs!).byteLength };
+  }
+
+  private async assertDraftArchive(record: Pick<AbsGenerationInput, 'mode' | 'inputAbs' | 'inputMap' | 'draftBaseGeneration' | 'expected'>) {
+    if (record.draftBaseGeneration === undefined) return;
+    absBaselineKey(record.draftBaseGeneration);
+    if (record.mode !== 'export' || typeof record.inputAbs !== 'string' || typeof record.inputMap !== 'string'
+      || await hashAbsText(record.inputAbs) !== record.expected.abs
+      || JSON.parse(record.inputMap).generation !== record.draftBaseGeneration) {
+      throw new AbsSyncError('ABS_GENERATION_INVALID', 'Draft archive must retain the exact source bytes and original generation map.');
+    }
   }
 
   /** The host pointer, not an edited public map, selects the authoritative baseline. */
@@ -288,6 +308,7 @@ export class AbsBaselineStore {
       }
       if (record.inputMap !== undefined && (typeof record.inputMap !== 'string' && record.inputMap !== null
         || await hashNullable(record.inputMap) !== record.expected.map)) throw new Error('Recovery map bytes changed.');
+      await this.assertDraftArchive(record);
     } catch (error) { throw new AbsSyncError('ABS_BASELINE_CORRUPT', String(error)); }
     if (!inspection) this.assertScope(record.projection);
     return { record, pointer: { schemaVersion: 1, generation, hash: await hashAbsText(text) } };

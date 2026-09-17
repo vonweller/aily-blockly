@@ -38,13 +38,13 @@ export async function prepareAbsNativeReconciliation(baseline: AbsProjection, so
       ...(extraState === undefined ? {} : { extraState }) });
   }
   const modelState = structuredClone(baseline.workspace);
+  const modelRequestId = await absDeclarationRequestId(baseline.map.generation, source);
+  assertCurrent();
   prepareAbsVariableCreations(modelState, options.variableCreation);
   // These tentative inputs only unblock shape binding. Scope/identity/model
   // decisions remain with reconcileAbsDraft and replace this table below.
   if (options.declaration) {
-    const requestId = await absDeclarationRequestId(baseline.map.generation, source);
-    assertCurrent();
-    prepareAbsNativeModelInputs(syntax, modelState, options, requestId);
+    prepareAbsNativeModelInputs(syntax, modelState, options, modelRequestId);
   }
   const values = await captureAbsNativeValues(syntax, assertCurrent);
   const run = async (request: Omit<NativeCandidateRequest, 'steps'>) => {
@@ -54,7 +54,7 @@ export async function prepareAbsNativeReconciliation(baseline: AbsProjection, so
     return result;
   };
   const bind = async (identities?: NativeCandidateRequest['identities'], variables = modelState['variables'], creations?: NativeCandidateRequest['creations']) => {
-    const result = await run({ blocks: [], abs: source, values, ...(hostCalls.length ? { hostCalls } : {}),
+    const result = await run({ blocks: [], abs: source, modelRequestId, values, ...(hostCalls.length ? { hostCalls } : {}),
       ...(variables === undefined ? {} : { variables: variables as NativeCandidateRequest['variables'] }), ...(identities ? { identities } : {}),
       ...(creations ? { creations } : {}) });
     if (!result.binding || result.binding.source !== source) throw new AbsSyncError('ABS_NATIVE_BINDING_STALE', 'Native executor did not bind the requested source.');
@@ -74,7 +74,8 @@ export async function prepareAbsNativeReconciliation(baseline: AbsProjection, so
     throw new AbsSyncError('ABS_NATIVE_BINDING_CHANGED', 'Native binding changed when replayed with reconciled identities.');
   }
   if (absJson(binding.creations ?? []) !== absJson(provisional.creations ?? [])
-    || absJson(binding.defaults ?? []) !== absJson(provisional.defaults ?? [])) {
+    || absJson(binding.defaults ?? []) !== absJson(provisional.defaults ?? [])
+    || absJson(binding.modelDeclarations ?? []) !== absJson(provisional.modelDeclarations ?? [])) {
     throw new AbsSyncError('ABS_NATIVE_BINDING_CHANGED', 'Native default ownership, identity or content changed during replay.');
   }
   const draft = await reconcileAbsDraft(baseline, source, { ...options, nativeBinding: binding,
@@ -105,10 +106,13 @@ export async function prepareAbsNativeReconciliation(baseline: AbsProjection, so
   for (const [id, instance] of instances) assertAbsDeclaredBlockShape(hydrated.get(id)!, instance.shape);
   // Check the metadata/shadow merge, native loading and actual generator effects in
   // the disposable realm before the active workspace may execute any callbacks.
+  const preparedModels = (binding.modelDeclarations ?? []).filter(effect =>
+    !(modelState['variables'] as Array<{ id: string }> | undefined)?.some(model => model.id === effect.id));
   const verified = await run({ blocks: [], values: await captureAbsNativeValues(materialized, assertCurrent),
-    verify: { state: materialized, contracts: candidate.contracts } });
+    verify: { state: materialized, contracts: candidate.contracts,
+      ...(binding.modelDeclarations?.length ? { modelDeclarations: binding.modelDeclarations.map(effect => ({ ...effect, ownerId: identities.get(effect.start)! })) } : {}) } });
   assertAbsReadback(materialized, normalizeAbsSerializedWorkspace(verified.state), {
     fieldDefinition: (_type, name, id) => candidate.contracts.fields[id]?.[name],
   });
-  return { candidate, materialized, instances };
+  return { candidate, materialized, instances, preparedModels };
 }

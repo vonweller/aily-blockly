@@ -25,6 +25,23 @@ describe('native ABS position binding', () => {
   const run = (value: NativeCandidateRequest) => evaluateNativeCandidate(value, { assertCurrent: () => {} });
   afterEach(() => expect(document.querySelectorAll('[data-blockly-native-candidate]').length).toBe(0));
 
+  it('transports actionable field options and source locations out of the real isolated realm', async () => {
+    const value = request('native_order(INVALID, 1, int)');
+    await expectAsync(run(value)).toBeRejectedWith(jasmine.objectContaining({
+      code: 'ABS_FIELD_OPTION_INVALID', range: { start: value.abs!.indexOf('INVALID'), end: value.abs!.indexOf('INVALID') + 7 },
+      diagnostic: jasmine.objectContaining({ blockType: 'native_order', field: 'MODE', received: 'INVALID', allowedValues: ['A', 'B'] }),
+    }));
+  });
+
+  it('returns a typed variable correction on the first failed reference binding', async () => {
+    const value = request('sensor_read($sensor)');
+    value.steps = [{ kind: 'definitions', definitions: [{ type: 'sensor_read', message0: '%1',
+      args0: [{ type: 'field_variable', name: 'VAR', variableTypes: ['SENSOR'], defaultType: 'SENSOR' }], output: 'Number' }] }];
+    value.variables = [{ id: 'owned', name: 'sensor', type: '' }];
+    await expectAsync(run(value)).toBeRejectedWith(jasmine.objectContaining({ code: 'ABS_SYMBOL_TYPE_MISMATCH',
+      diagnostic: jasmine.objectContaining({ blockType: 'sensor_read', field: 'VAR', modelName: 'sensor', expectedTypes: ['SENSOR'], actualTypes: [''] }) }));
+  });
+
   it('retains source args order despite visual order and binds each native instance independently', async () => {
     const result = await run(request('native_order(B, math_number(3), int, 8)\nnative_order(A, 4, float)\n'));
     const roots = result.state['blocks'].blocks;

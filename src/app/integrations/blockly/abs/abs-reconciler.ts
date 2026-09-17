@@ -1,6 +1,7 @@
 import { assertNoOversizedInlineValues, collectProjectDataPayloads } from '@domain/project/public-api';
 import { AbsFieldDefinition, normalizeAbsSerializedField, resolveAbsFieldValue } from './abs-field-values';
-import { absJson, fingerprintAbsNodes, indexAbsAbi, indexAbsSyntax, validateAbsProjection } from './abs-identity-map';
+import { serializeAbsFailure } from './abs-diagnostics';
+import { absJson, indexAbsAbi, indexAbsSyntax, validateAbsProjection } from './abs-identity-map';
 import { assertAbsProtectedBlocks } from './abs-import-policy';
 import { AbsSyntaxOptions, parseAbsSyntax } from './abs-syntax';
 import { AbsAbiBlock, AbsAbiWorkspace, AbsProjection, AbsProjectionContracts, AbsSourceRange, AbsSyntaxNode, AbsSyncError, getAbsFieldDefinition } from './abs-state';
@@ -14,7 +15,10 @@ import { absDeclarationRequestId, prepareAbsDeclarationIntents } from './abs-dec
 import type { VariableDeclarationContract } from '../../../editors/blockly-editor/services/blockly-variable-declaration-contract';
 import type { AbsNativeBinding } from './abs-native-binding';
 import { adoptAbsNativeDefaults } from './abs-native-defaults';
-import { traceAbsSourceEdits, type AbsSourceEdits } from './abs-edit-provenance';
+import { adoptAbsNativeModels } from './abs-native-model-declarations';
+import type { AbsSourceEdits } from './abs-edit-provenance';
+import { matchAbsIdentities } from './abs-identity-matcher';
+import { absIdentityPolicy } from './abs-identity-policy';
 
 export interface AbsReconcileOptions extends AbsSyntaxOptions {
   /** Exact text-edit provenance, replayed against the immutable generation. */
@@ -61,8 +65,8 @@ export async function reconcileAbs(
 }
 
 /**
- * Deterministic merge against a host-owned baseline. Ambiguity is a result, not a
- * reason to recreate identities. Persistence/runtime validation live outside it.
+ * Merge against a host-owned baseline. Retain proven identities; rebuild ordinary
+ * unmatched calls atomically. Hidden-state policy and native validation stay separate.
  */
 export async function reconcileAbsDraft(
   baseline: AbsProjection,
@@ -103,128 +107,12 @@ export async function reconcileAbsDraft(
       return hosted ? !!native || hosted.type !== node.type || !options.prepareBlock || !options.hostPrepared?.(node.type)
         : !native || native.type !== node.type;
     }))) throw new AbsSyncError('ABS_NATIVE_BINDING_INVALID', 'Each call requires native evidence or a captured host preparation adapter.');
-  const subtreeFingerprints = new Map<AbsSyntaxNode, string>();
-  for (const roots of [original, edited]) {
-    const entries = indexAbsSyntax(roots);
-    const fingerprints = await fingerprintAbsNodes(entries);
-    entries.forEach(entry => subtreeFingerprints.set(entry.node, fingerprints.get(entry.path)!));
-  }
   const bindings = new Map(baseline.map.nodes.map(binding => [binding.astPath, binding.blockId]));
   const originalIds = new Map(indexAbsSyntax(original).map(entry => [entry.node, bindings.get(entry.path)!]));
   const abiBlocks = indexAbsAbi(baseline.workspace);
-  const matches = new Map<AbsSyntaxNode, AbsSyntaxNode>();
-  const traced = traceAbsSourceEdits(baseline.abs, editedAbs, original, edited, sourceEdits);
-  const used = new Set<AbsSyntaxNode>();
-  const match = (before: AbsSyntaxNode, after: AbsSyntaxNode) => {
-    if (used.has(before) || matches.has(after)) throw new AbsSyncError('ABS_IDENTITY_AMBIGUOUS', 'Identity matched more than once.', after);
-    matches.set(after, before);
-    used.add(before);
-  };
-  const signatureCache = new Map<AbsSyntaxNode, string>();
-  const signature = (node: AbsSyntaxNode): string => {
-    if (!signatureCache.has(node)) {
-      signatureCache.set(node, absJson({
-        type: node.type,
-        fields: Object.fromEntries(Object.entries(node.fields).map(([key, value]) => [key, value.value])),
-        disabled: node.disabled,
-        ...(Object.hasOwn(node, 'extraState') ? { extraState: node.extraState } : {}),
-        inputs: Object.fromEntries(Object.keys(node.inputs).sort().map(name => [name,
-          node.inputs[name] ? subtreeFingerprints.get(node.inputs[name]!) : null,
-        ])),
-      }));
-    }
-    return signatureCache.get(node)!;
-  };
-  const chain = (node: AbsSyntaxNode | undefined | null): AbsSyntaxNode[] => {
-    const result: AbsSyntaxNode[] = [];
-    for (let current = node; current; current = current.next) result.push(current);
-    return result;
-  };
-  const matchGroup = (before: AbsSyntaxNode[], after: AbsSyntaxNode[]) => {
-    // A text edit can retain a call token without retaining any of its values.
-    // Keep ownership scoped: source tracking is not authorization for a move.
-    for (const node of after) {
-      const previous = traced.get(node);
-      if (previous && !before.includes(previous)) throw new AbsSyncError('ABS_IDENTITY_AMBIGUOUS',
-        'Recorded text edits moved a call across owners; an explicit move intent is required.', node, [originalIds.get(previous)!]);
-      if (previous) match(previous, node);
-    }
-    const pendingBefore = before.filter(node => !used.has(node));
-    const pendingAfter = after.filter(node => !matches.has(node));
-    // Identical sequences in an already confirmed owner/input have positional
-    // identity. Changed repeated sequences do not: deleting either is possible.
-    if (pendingBefore.length === pendingAfter.length && pendingBefore.every((node, i) => signature(node) === signature(pendingAfter[i]))) {
-      pendingBefore.forEach((node, i) => match(node, pendingAfter[i]));
-    } else {
-      const group = (nodes: AbsSyntaxNode[], key: (node: AbsSyntaxNode) => string) => {
-        const result = new Map<string, AbsSyntaxNode[]>();
-        nodes.forEach(node => {
-          const value = key(node);
-          const members = result.get(value);
-          if (members) members.push(node);
-          else result.set(value, [node]);
-        });
-        return result;
-      };
-      // Type groups are bounded by confirmed ownership; arbitrary global matching
-      // would attach UI/protection metadata to an unrelated same-type block.
-      const oldTypes = group(pendingBefore, node => node.type);
-      const newTypes = group(pendingAfter, node => node.type);
-      for (const [type, newNodes] of newTypes) {
-        const oldNodes = oldTypes.get(type) ?? [];
-        if (oldNodes.length === 1 && newNodes.length === 1) {
-          match(oldNodes[0], newNodes[0]);
-          continue;
-        }
-        if (!oldNodes.length) continue;
-        const oldSignatures = group(oldNodes, signature);
-        const newSignatures = group(newNodes, signature);
-        for (const [key, nodes] of newSignatures) {
-          const previous = oldSignatures.get(key) ?? [];
-          if (nodes.length === 1 && previous.length === 1) match(previous[0], nodes[0]);
-        }
-        const remainingOld = oldNodes.filter(node => !used.has(node));
-        const remainingNew = newNodes.filter(node => !matches.has(node));
-        if (remainingOld.length === 1 && remainingNew.length === 1) {
-          match(remainingOld[0], remainingNew[0]);
-        } else if (remainingOld.length && remainingNew.length) {
-          throw new AbsSyncError('ABS_IDENTITY_AMBIGUOUS', 'Repeated changed calls lack unambiguous text-edit or content identity evidence.',
-            remainingNew[0], remainingOld.map(node => originalIds.get(node)!));
-        }
-      }
-    }
-    for (const afterNode of after) {
-      const beforeNode = matches.get(afterNode);
-      if (!beforeNode) continue;
-      for (const name of new Set([...Object.keys(beforeNode.inputs), ...Object.keys(afterNode.inputs)])) {
-        matchGroup(chain(beforeNode.inputs[name]), chain(afterNode.inputs[name]));
-      }
-    }
-  };
-  matchGroup(original, edited);
-  // Root-level next is not part of the roots array and needs its own owner group.
-  for (const root of edited) {
-    const before = matches.get(root);
-    if (before) matchGroup(chain(before.next), chain(root.next));
-  }
-
-  // An unmatched same-type node elsewhere might be a move, not a deletion/new
-  // block. Defer cross-owner moves to explicit host operations rather than guess.
-  const oldEntries = indexAbsSyntax(original);
+  const identity = absIdentityPolicy(baseline, originalIds, abiBlocks);
+  const matches = await matchAbsIdentities(baseline.abs, editedAbs, original, edited, sourceEdits, identity.requiresIdentity);
   const newEntries = indexAbsSyntax(edited);
-  const unmatchedByType = new Map<string, AbsSyntaxNode[]>();
-  for (const { node } of oldEntries) {
-    if (used.has(node)) continue;
-    const members = unmatchedByType.get(node.type);
-    if (members) members.push(node);
-    else unmatchedByType.set(node.type, [node]);
-  }
-  for (const { node } of newEntries) {
-    if (!matches.has(node) && unmatchedByType.has(node.type)) {
-      throw new AbsSyncError('ABS_IDENTITY_AMBIGUOUS', 'Potential cross-owner move requires explicit identity.', node,
-        unmatchedByType.get(node.type)!.map(old => originalIds.get(old)!));
-    }
-  }
 
   const contracts = baseline.contracts;
   if (options.declaration) {
@@ -234,6 +122,16 @@ export async function reconcileAbsDraft(
       return old ? abiBlocks.get(originalIds.get(old)!) : undefined;
     }, options.declaration, requestId);
   }
+  for (const effect of options.nativeBinding?.modelDeclarations ?? []) {
+    const owner = newEntries.find(({ node }) => node.start === effect.start && node.type === effect.blockType && !node.disabled)?.node;
+    if (!owner) {
+      throw new AbsSyncError('ABS_MODEL_DECLARATION_UNOWNED', 'A model declaration has no matching active ABS producer.');
+    }
+    if (matches.has(owner) && !(candidate['variables'] as Array<{ id: string }> | undefined)?.some(model => model.id === effect.id)) {
+      throw new AbsSyncError('ABS_MODEL_DECLARATION_RENAME_UNSUPPORTED', 'A retained initializer cannot implicitly introduce a replacement model. Preserve its name/type or use an explicit model operation.', owner);
+    }
+  }
+  adoptAbsNativeModels(candidate, options.nativeBinding?.modelDeclarations);
   const symbols = new AbsSymbols(candidate, baseline.document, baseline.contracts);
   const ids = new Set(abiBlocks.keys());
   const added: string[] = [];
@@ -271,17 +169,20 @@ export async function reconcileAbsDraft(
         const definition = preparedShape?.fields[name] ?? options.fieldDefinition?.(node.type, name, previous?.id)
           ?? (previous ? getAbsFieldDefinition(baseline.contracts, previous.id, name) : undefined);
         if (token.reference && definition?.symbol?.kind !== 'variable') throw new Error('$ references require a variable field.');
-        if (originalToken && absJson(token.value) === absJson(originalToken.value)) continue;
         if (definition) {
           if (!Object.hasOwn(contracts.fields, id)) setJsonMember(contracts.fields, id, {});
           setJsonMember(contracts.fields[id], name, JSON.parse(absJson(definition)));
         }
+        if (originalToken && absJson(token.value) === absJson(originalToken.value)) continue;
         const value = definition?.symbol
           ? symbols.resolve(token, definition.symbol, previous?.fields?.[name])
           : resolveAbsFieldValue(token, definition);
         setJsonMember(block.fields, name, definition?.type === 'field_checkbox' ? normalizeAbsSerializedField(value, definition) : value);
       } catch (error) {
-        throw new AbsSyncError(error instanceof AbsSyncError ? error.code : 'ABS_FIELD_INVALID', `${node.type}.${name}: ${String(error)}`, node, [id]);
+        const failure = serializeAbsFailure(error);
+        throw new AbsSyncError(error instanceof AbsSyncError ? error.code : 'ABS_FIELD_INVALID',
+          `${node.type}.${name}: ${failure.message}`, node.fieldRanges[name] ?? node, [id],
+          { ...failure.diagnostic, blockType: node.type, field: name });
       }
     }
     if (Object.hasOwn(node, 'extraState')) block.extraState = node.extraState;
@@ -330,6 +231,7 @@ export async function reconcileAbsDraft(
   assertAbsProtectedBlocks(baseline.workspace, candidate);
   getAbsProcedureReferences(candidate, baseline.contracts.procedures);
   const afterIds = indexAbsAbi(candidate);
+  identity.assertReferencesPreserved(afterIds);
   // Use the same payload traversal as resource externalization: no second ABI graph walker.
   const literals: AbsLiteralBinding[] = [];
   for (const payload of collectProjectDataPayloads(candidate)) {

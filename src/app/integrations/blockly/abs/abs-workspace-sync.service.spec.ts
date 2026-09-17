@@ -21,6 +21,7 @@ import { withNativeStateLoading } from '../../../editors/blockly-editor/services
 import { observeNativeBlockDefinition } from '../../../editors/blockly-editor/services/blockly-native-structure';
 import { nativeDefaultSource } from './abs-native-defaults.fixture';
 import { nativeDormantSource } from './abs-native-shadows.fixture';
+import { modelDefinitions, modelSource } from './abs-native-models.fixture';
 import '../../../editors/blockly-editor/components/blockly/custom-field/field-u8g2-bitmap';
 
 describe('v2 actual workspace generation coordinator', () => {
@@ -115,6 +116,7 @@ describe('v2 actual workspace generation coordinator', () => {
         return { document: current, revision: revisions.observe(current) };
       },
       getProjectAbiForSave: snapshot => snapshot,
+      setViewState: viewState => { document.pages[0].viewState = viewState; },
       mutateOtherPage: () => { document.pages[1].custom.preserved = false; },
       switchPage: id => {
         document = replaceBlocklyPageWorkspace(document, document.activePageId, nativeState(), () => undefined);
@@ -495,6 +497,66 @@ describe('v2 actual workspace generation coordinator', () => {
     return replay;
   };
 
+  const enableObjectModels = () => {
+    const replay = enableNative();
+    modelDefinitions.forEach(declare);
+    replay.steps.push({ kind: 'definitions', definitions: modelDefinitions }, { kind: 'script', source: modelSource, label: 'generic-object-models' });
+    return replay;
+  };
+
+  it('validates/applies native initializer models atomically, verifies receipt replay and preserves identities after reopen', async () => {
+    enableObjectModels(); const base = await baseline(), before = absJson(nativeState()), files = [...disk];
+    const source = base.source + '\ntest_object_read($sensor)\ntest_object_init("sensor", Sensor)';
+    const committed = (await new AbsBaselineStore(port, scope).loadCommitted())!;
+    const { generationEvidence } = await import('./abs-generation-protocol');
+    const request = { version: 2 as const, requestId: crypto.randomUUID(), base: (await generationEvidence(committed, null)).binding,
+      candidate: { hash: await hashAbsText(source), bytes: new TextEncoder().encode(source).byteLength } };
+    const validation = await service.validateGeneration(source, request);
+    expect(validation.preparedVariables).toBeUndefined();
+    expect(validation.preparedModels!.length).toBe(1);
+    expect(absJson(nativeState())).toBe(before); expect([...disk]).toEqual(files);
+    const changed = structuredClone(validation); changed.preparedModels![0].id = 'forged';
+    await expectAsync(service.applyGeneration(source, base.generation, {}, changed)).toBeRejectedWith(jasmine.objectContaining({ code: 'ABS_MODEL_DECLARATION_CHANGED' }));
+    expect(absJson(nativeState())).toBe(before); expect([...disk]).toEqual(files);
+    await service.applyGeneration(source, base.generation, {}, validation);
+    const model = editor.workspace.getAllVariables()[0];
+    expect(model.getId()).toBe(validation.preparedModels![0].id); expect(model.type).toBe('Sensor');
+    const ids = editor.workspace.getAllBlocks(false).map(block => block.id).sort();
+    editor.restoreProjectWorkspaceSnapshot(JSON.parse(disk.get('project.abi')!));
+    expect(editor.workspace.getAllBlocks(false).map(block => block.id).sort()).toEqual(ids);
+    expect(editor.workspace.getAllVariables()[0].getId()).toBe(model.getId());
+    const saved = [...disk], stateBeforeRename = absJson(nativeState());
+    await expectAsync(service.applyGeneration(disk.get('project.abs')!.replaceAll('sensor', 'renamed'),
+      JSON.parse(disk.get('project.abs.map.json')!).generation)).toBeRejectedWith(jasmine.objectContaining({ code: 'ABS_MODEL_DECLARATION_RENAME_UNSUPPORTED' }));
+    expect([...disk]).toEqual(saved); expect(absJson(nativeState())).toBe(stateBeforeRename);
+    // Models are shared state: removing all uses/producers does not implicitly garbage collect them.
+    await service.applyGeneration(base.source, JSON.parse(disk.get('project.abs.map.json')!).generation);
+    expect(editor.workspace.getAllVariables()[0].getId()).toBe(model.getId());
+  });
+
+  it('rolls back derived models and blocks when code generation fails before save', async () => {
+    enableObjectModels(); const base = await baseline(), before = absJson(nativeState()), files = [...disk];
+    editor.prepareProjectCode.and.rejectWith(new Error('injected generation failure'));
+    await expectAsync(service.applyGeneration(base.source + '\ntest_object_read($sensor)\ntest_object_init("sensor", Sensor)', base.generation)).toBeRejectedWithError(/injected generation failure/);
+    expect(absJson(nativeState())).toBe(before); expect([...disk]).toEqual(files);
+    expect(editor.restoreProjectWorkspaceSnapshot).toHaveBeenCalled();
+  });
+
+  it('prepares an initializer-only candidate even though its JSON shape is statically known', async () => {
+    enableObjectModels(); const base = await baseline();
+    await service.applyGeneration(base.source + '\ntest_object_init("sensor", Sensor)', base.generation);
+    expect(editor.workspace.getAllVariables().map(model => [model.name, model.type])).toEqual([['sensor', 'Sensor']]);
+  });
+
+  it('never accepts caller-provided model preparation evidence as validation authority', async () => {
+    const base = await baseline(), before = absJson(nativeState()), files = [...disk];
+    for (const key of ['preparedModels', 'preparedVariables', 'workspaceRevision']) {
+      await expectAsync(service.validateGeneration(base.source, { [key]: [] } as any)).toBeRejectedWith(jasmine.objectContaining({ code: 'ABS_REQUEST_INVALID' }));
+    }
+    expect(absJson(nativeState())).toBe(before); expect([...disk]).toEqual(files);
+    expect(editor.prepareProjectCode).not.toHaveBeenCalled();
+  });
+
   const enableNativeProcedures = () => {
     const replay = enableNativeVariables();
     replay.steps.push({ kind: 'script', label: 'procedure-generators', source: `
@@ -849,6 +911,216 @@ describe('v2 actual workspace generation coordinator', () => {
     return { tools, exported, source, request };
   };
 
+  const prepareTurn = async (tools: AbsGenerationToolsService, extra = {}) => tools.execute('abs_projection', {
+    version: 2, requestId: crypto.randomUUID(), expectedAbiHash: await hashAbsText(disk.get('project.abi')!),
+    publish: true, reuseCurrent: true, synchronize: true, ...extra,
+  }) as Promise<any>;
+
+  it('synchronizes a manually changed canvas despite an old blocked baseline, then validates the fresh projection', async () => {
+    const { tools, exported, request, source } = await wireBase();
+    roots().setFieldValue('manual user change', 'TEXT');
+    const diagnosis = await inspect(tools);
+    expect(diagnosis.diagnostics.status).toBe('blocked');
+    expect(diagnosis.diagnostics.issues).toContain('ABS_BASELINE_STALE');
+    const oldHash = await hashAbsText(disk.get('project.abi')!);
+    const result = await prepareTurn(tools);
+    expect(result.ok).withContext(JSON.stringify(result)).toBeTrue();
+    expect(result.receipt.synchronized).toBeTrue(); expect(result.receipt.inputAbiHash).toBe(oldHash);
+    expect(result.publication.abiSaved).toBeTrue(); expect(result.requiresReload).toBeFalse();
+    expect(result.receipt.base.abiHash).toBe(await hashAbsText(disk.get('project.abi')!));
+    expect(result.receipt.base.generation).not.toBe(exported.receipt.base.generation);
+    expect(result.abs).toContain('manual user change');
+    expect(roots().isDeletable()).toBeFalse();
+    expect(project.publishPreparedSaveOutputs).toHaveBeenCalledTimes(1);
+    expect((await tools.execute('abs_validate', request, source) as any).code).toBe('ABS_BASELINE_STALE');
+    const candidate = result.abs.replace('manual user change', 'manual user change plus requested fix');
+    const validation: any = await tools.execute('abs_validate', { version: 2, requestId: crypto.randomUUID(),
+      base: result.receipt.base, candidate: { hash: await hashAbsText(candidate), bytes: new TextEncoder().encode(candidate).byteLength } }, candidate);
+    expect(validation.ok).withContext(JSON.stringify(validation)).toBeTrue();
+    const before = [...disk], next = await prepareTurn(tools);
+    expect(next.reused).toBeTrue(); expect([...disk]).toEqual(before);
+    expect(editor.prepareProjectCode).toHaveBeenCalledTimes(1);
+  });
+
+  it('reproduces 67 old blocks becoming 3 empty protected roots without a recovery prerequisite', async () => {
+    editor.workspace.clear();
+    declare({ type: 'abs_turn_root', message0: 'root %1', args0: [{ type: 'input_statement', name: 'BODY' }] });
+    declare({ type: 'abs_turn_statement', message0: 'run', previousStatement: null, nextStatement: null });
+    let chain: any;
+    for (let n = 0; n < 64; n++) chain = { type: 'abs_turn_statement', id: `statement-${n}`, ...(chain ? { next: { block: chain } } : {}) };
+    const empty = [0, 1, 2].map(n => ({ type: 'abs_turn_root', id: `root-${n}`, deletable: false }));
+    Blockly.serialization.workspaces.load({ blocks: { blocks: empty.map((root, n) => n ? root : { ...root, inputs: { BODY: { block: chain } } }) } }, editor.workspace);
+    expect(editor.workspace.getAllBlocks(false).length).toBe(67);
+    const { tools } = await wireBase();
+    Blockly.serialization.workspaces.load({ blocks: { blocks: empty } }, editor.workspace);
+    const diagnosis = await inspect(tools);
+    expect(diagnosis.diagnostics.issues).toContain('ABS_RUNTIME_CONTRACT_STALE');
+    const result = await prepareTurn(tools);
+    expect(result.ok).withContext(JSON.stringify(result)).toBeTrue();
+    expect(result.abs.match(/abs_turn_root\(/g)?.length).toBe(3);
+    expect(result.abs).not.toContain('abs_turn_statement');
+    const saved = composeBlocklyPage(JSON.parse(disk.get('project.abi')!), 'main');
+    expect(saved.blocks.blocks.length).toBe(3);
+    expect(saved.blocks.blocks.every(block => block.deletable === false)).toBeTrue();
+    expect((await inspect(tools)).diagnostics.status).toBe('ready');
+  });
+
+  it('reuses unchanged or viewport-only snapshots without regenerating user-visible C++', async () => {
+    const { tools, exported } = await wireBase();
+    editor.setViewState({ scale: 0.5, scrollX: 20, scrollY: 30 });
+    const before = [...disk], result = await prepareTurn(tools);
+    expect(result.ok).toBeTrue(); expect(result.reused).toBeTrue();
+    expect(result.receipt.base).toEqual(exported.receipt.base); expect([...disk]).toEqual(before);
+    expect(editor.prepareProjectCode).not.toHaveBeenCalled();
+    expect(project.publishPreparedSaveOutputs).not.toHaveBeenCalled();
+  });
+
+  it('refreshes changed runtime contracts without treating a clean projection as a stale draft', async () => {
+    const { tools, exported } = await wireBase(), abi = disk.get('project.abi');
+    (editor.workspace.getBlockById('child').getField('NUM') as Blockly.FieldNumber).setMax(10);
+    expect((await inspect(tools)).diagnostics.issues).toContain('ABS_RUNTIME_CONTRACT_STALE');
+    const result = await prepareTurn(tools);
+    expect(result.ok).withContext(JSON.stringify(result)).toBeTrue();
+    expect(result.receipt.base.generation).not.toBe(exported.receipt.base.generation);
+    expect(disk.get('project.abi')).toBe(abi); expect(editor.prepareProjectCode).not.toHaveBeenCalled();
+    expect((await inspect(tools)).diagnostics.status).toBe('ready');
+  });
+
+  it('accepts an already saved manual change when saved ABI and current canvas agree', async () => {
+    const { tools } = await wireBase(); roots().setFieldValue('manually saved change', 'TEXT');
+    disk.set('project.abi', absJson(editor.captureProjectSnapshot().document));
+    const abi = disk.get('project.abi'), result = await prepareTurn(tools);
+    expect(result.ok).toBeTrue(); expect(result.abs).toContain('manually saved change');
+    expect(result.publication.abiSaved).toBeFalse(); expect(disk.get('project.abi')).toBe(abi);
+    expect(editor.prepareProjectCode).not.toHaveBeenCalled();
+  });
+
+  for (const conflict of ['draft', 'map', 'scope', 'external-abi']) it(`preserves genuine ${conflict} conflicts before turn save`, async () => {
+    const { tools } = await wireBase();
+    roots().setFieldValue('manual change', 'TEXT');
+    if (conflict === 'draft') disk.set('project.abs', disk.get('project.abs')! + '\n# unfinished intent');
+    if (conflict === 'map') disk.set('project.abs.map.json', 'damaged');
+    if (conflict === 'scope') project.currentProjectPath = 'D:/other-project';
+    if (conflict === 'external-abi') disk.set('project.abi', '{"external":true}');
+    const before = [...disk], result = await prepareTurn(tools);
+    expect(result.ok).toBeFalse();
+    expect(result.code).toBe({ draft: 'ABS_SOURCE_CONFLICT', map: 'ABS_MAP_INVALID', scope: 'ABS_SCOPE_INVALID', 'external-abi': 'ABS_DUAL_EDIT_CONFLICT' }[conflict]);
+    expect([...disk]).toEqual(before); expect(editor.prepareProjectCode).not.toHaveBeenCalled();
+  });
+
+  it('initializes absent mirrors from current canvas without legacy replacement authority', async () => {
+    disk.set('project.abi', absJson(editor.captureProjectSnapshot().document));
+    roots().setFieldValue('first turn canvas', 'TEXT');
+    const result = await prepareTurn(new AbsGenerationToolsService(service));
+    expect(result.ok).withContext(JSON.stringify(result)).toBeTrue(); expect(result.abs).toContain('first turn canvas');
+  });
+
+  it('keeps concurrent disk edits instead of saving over them during turn preparation', async () => {
+    const { tools } = await wireBase(), original = disk.get('project.abs');
+    roots().setFieldValue('canvas edit', 'TEXT');
+    editor.prepareProjectCode.and.callFake(async () => { disk.set('project.abi', '{"external":true}'); return null; });
+    const result = await prepareTurn(tools);
+    expect(result.ok).toBeFalse(); expect(disk.get('project.abi')).toBe('{"external":true}');
+    expect(disk.get('project.abs')).toBe(original); expect(disk.has('prepared.json')).toBeFalse();
+  });
+
+  it('captures legitimate synchronous generator model changes before sealing the saved revision', async () => {
+    const { tools } = await wireBase(); roots().setFieldValue('manual change', 'TEXT');
+    editor.prepareProjectCode.and.callFake(async (assertCurrent, lease) => {
+      assertCurrent(); editor.mutateOtherPage(); assertCurrent();
+      return { revision: editor.captureProjectSnapshot(lease).revision, code: null, artifacts: null, blockCodeMapText: null,
+        error: 'diagnostic retained without discarding editable blocks' };
+    });
+    const result = await prepareTurn(tools);
+    expect(result.ok).withContext(JSON.stringify(result)).toBeTrue();
+    expect(result.warnings[0]).toContain('diagnostic retained');
+    expect(JSON.parse(disk.get('project.abi')!).pages[1].custom.preserved).toBeFalse();
+  });
+
+  it('keeps a partial turn publication recoverable and blocks a second preparation', async () => {
+    const { tools } = await wireBase();
+    roots().setFieldValue('manual change', 'TEXT'); failWrite = 'project.abs.map.json';
+    const result = await prepareTurn(tools);
+    expect(result.ok).toBeFalse(); expect(result.requiresReload).toBeTrue();
+    expect(result.publication.abiSaved).toBeTrue(); expect(disk.has('prepared.json')).toBeTrue();
+    const before = [...disk]; expect((await prepareTurn(tools)).ok).toBeFalse(); expect([...disk]).toEqual(before);
+    failWrite = undefined;
+    expect((await service.recoverGeneration())?.status).toBe('COMMITTED');
+  });
+
+  for (const extra of [{ initialize: true }, { publish: false }, { rebind: 'sha256:' + '0'.repeat(64) }, { synchronize: 'yes' }])
+    it(`rejects ambiguous turn synchronization authority ${JSON.stringify(extra)}`, async () => {
+      const { tools } = await wireBase(), before = [...disk];
+      expect((await prepareTurn(tools, extra)).code).toBe('ABS_REQUEST_INVALID'); expect([...disk]).toEqual(before);
+    });
+
+  it('reuses a verified unchanged projection without publishing another baseline or saving ABI', async () => {
+    const { tools, exported } = await wireBase(), files = [...disk];
+    const result: any = await tools.execute('abs_projection', { version: 2, requestId: crypto.randomUUID(),
+      expectedAbiHash: await hashAbsText(disk.get('project.abi')!), reuseCurrent: true });
+    expect(result.ok).withContext(JSON.stringify(result)).toBeTrue();
+    expect(result.reused).toBeTrue(); expect(result.receipt.base).toEqual(exported.receipt.base);
+    expect([...disk]).toEqual(files); expect(editor.prepareProjectCode).not.toHaveBeenCalled();
+  });
+
+  it('refreshes reuse requests after a workspace change and rejects drafts or stale ABI bytes', async () => {
+    const { exported } = await wireBase();
+    roots().setFieldValue('canvas edit', 'TEXT');
+    disk.set('project.abi', absJson(editor.captureProjectSnapshot().document));
+    const next = await service.exportGeneration({ reuseCurrent: true });
+    expect(next.reused).not.toBeTrue(); expect(next.evidence!.binding.generation).not.toBe(exported.receipt.base.generation);
+    expect(next.abs).toContain('canvas edit');
+    disk.set('project.abs', next.abs! + '\n# unapplied draft');
+    const files = [...disk];
+    await expectAsync(service.exportGeneration({ reuseCurrent: true }))
+      .toBeRejectedWith(jasmine.objectContaining({ code: 'ABS_SOURCE_CONFLICT' }));
+    await expectAsync(service.exportGeneration({ reuseCurrent: true, expectedAbiHash: exported.receipt.base.abiHash }))
+      .toBeRejectedWith(jasmine.objectContaining({ code: 'ABS_BASELINE_STALE' }));
+    expect([...disk]).toEqual(files);
+  });
+
+  it('wraps a whole rendered statement sequence in one candidate and retains IDs after native save/reopen', async () => {
+    renderWorkspace();
+    const definitions = [
+      { type: 'abs_move_root', message0: '%1', args0: [{ type: 'input_statement', name: 'BODY' }] },
+      { type: 'abs_move_step', message0: '%1 %2', args0: [{ type: 'field_input', name: 'NAME', text: '' },
+        { type: 'input_value', name: 'VALUE' }], previousStatement: null, nextStatement: null },
+      { type: 'abs_move_if', message0: '%1 %2', args0: [{ type: 'input_value', name: 'IF0' },
+        { type: 'input_statement', name: 'DO0' }], previousStatement: null, nextStatement: null },
+      { type: 'abs_move_number', message0: '%1', args0: [{ type: 'field_number', name: 'NUM', value: 0 }], output: 'Number' },
+    ];
+    definitions.forEach(declare);
+    const owner = editor.workspace.newBlock('abs_move_root', 'move-root'); owner.setDeletable(false);
+    let connection = owner.getInput('BODY').connection;
+    for (const name of ['sample', 'draw', 'delay']) {
+      const block = editor.workspace.newBlock('abs_move_step', name); block.setFieldValue(name, 'NAME'); block.data = name + ':metadata';
+      const number = editor.workspace.newBlock('abs_move_number', name + '-value'); number.setFieldValue(name === 'delay' ? 2000 : 0, 'NUM');
+      block.getInput('VALUE').connection.connect(number.outputConnection);
+      connection.connect(block.previousConnection); connection = block.nextConnection;
+    }
+    const base = await wireBase(), start = base.exported.abs.indexOf('abs_move_root(');
+    expect(start).toBeGreaterThan(-1);
+    const source = base.exported.abs.slice(0, start) + 'abs_move_root()\n    abs_move_if(abs_move_number(2000))\n'
+      + '        abs_move_step("sample", abs_move_number(0))\n        abs_move_step("draw", abs_move_number(0))\n'
+      + 'abs_move_number(0)\n';
+    const request = { ...base.request, candidate: { hash: await hashAbsText(source), bytes: new TextEncoder().encode(source).byteLength } };
+    const files = [...disk], before = nativeState();
+    const validation: any = await base.tools.execute('abs_validate', request, source);
+    expect(validation.ok).withContext(JSON.stringify(validation)).toBeTrue();
+    expect([...disk]).toEqual(files); expect(nativeState()).toEqual(before);
+    const result: any = await base.tools.execute('abs_apply', { version: 2, requestId: request.requestId, validation: validation.receipt }, source);
+    expect(result.ok).withContext(JSON.stringify(result)).toBeTrue();
+    editor.restoreProjectWorkspaceSnapshot(JSON.parse(disk.get('project.abi')!));
+    for (const name of ['sample', 'draw']) {
+      const block = editor.workspace.getBlockById(name);
+      expect(block.data).toBe(name + ':metadata'); expect(block.getInputTargetBlock('VALUE').id).toBe(name + '-value');
+    }
+    expect(editor.workspace.getBlockById('delay')).toBeNull();
+    expect(editor.workspace.getBlockById('delay-value').getParent().type).toBe('abs_move_if');
+    expect(editor.workspace.getBlockById('move-root').isDeletable()).toBeFalse();
+    expect(roots().isDeletable()).toBeFalse();
+  });
+
   it('production wire validates without publishing and applies through the one generation save', async () => {
     const { tools, source, request } = await wireBase(); const original = [...disk];
     const validated: any = await tools.execute('abs_validate', { ...request, abs: source }, source);
@@ -1076,6 +1348,73 @@ describe('v2 actual workspace generation coordinator', () => {
     expect(editor.prepareProjectCode).not.toHaveBeenCalled();
   });
 
+  it('keeps one generation through viewport changes and atomically applies the complete candidate', async () => {
+    const { tools, request, source } = await wireBase();
+    editor.setViewState({ scale: 0.608742884389289, scrollX: 111.590044, scrollY: 22.41985 });
+    const reused = await service.exportGeneration({ reuseCurrent: true });
+    expect(reused.reused).toBeTrue(); expect(reused.evidence!.binding.generation).toBe(request.base.generation);
+    const validated: any = await tools.execute('abs_validate', request, source);
+    expect(validated.ok).withContext(JSON.stringify(validated)).toBeTrue();
+    const view = { scale: 0.5004881397671546, scrollX: 122.726067, scrollY: 60.691987 };
+    editor.setViewState(view);
+    disk.set('project.abs', source);
+    const diagnosis = await inspect(tools);
+    expect(diagnosis.diagnostics.issues).toEqual(['ABS_SOURCE_CONFLICT']);
+    expect(diagnosis.diagnostics.draft.canValidate).toBeTrue();
+    const result: any = await tools.execute('abs_apply', { version: 2, requestId: request.requestId, validation: validated.receipt }, source);
+    expect(result.ok).withContext(JSON.stringify(result)).toBeTrue();
+    expect(roots().getFieldValue('TEXT')).toBe('wire edit');
+    expect(JSON.parse(disk.get('project.abi')!).pages[0].viewState).toEqual(view);
+  });
+
+  for (const failGeneration of [false, true]) it(`rebuilds repeated calls in one real SVG workspace transaction, failure=${failGeneration}`, async () => {
+    renderWorkspace();
+    declare({ type: 'abs_test_program', message0: '%1', args0: [{ type: 'input_statement', name: 'BODY' }] });
+    declare({ type: 'abs_test_draw', message0: 'draw %1', args0: [{ type: 'input_value', name: 'X', check: 'Number' }],
+      previousStatement: null, nextStatement: null });
+    declare({ type: 'abs_test_number', message0: '%1', args0: [{ type: 'field_number', name: 'NUM', value: 0 }], output: 'Number' });
+    const draw = (id, value, next?) => ({ type: 'abs_test_draw', id, inputs: {
+      X: { block: { type: 'abs_test_number', id: id + '-x', fields: { NUM: value } } },
+    }, ...(next ? { next: { block: next } } : {}) });
+    Blockly.serialization.workspaces.load({ blocks: { blocks: [{ type: 'abs_test_program', id: 'protected',
+      deletable: false, inputs: { BODY: { block: draw('one', 1, draw('two', 2)) } } }] } }, editor.workspace);
+    const { tools, exported } = await wireBase();
+    const source = '# ABS Schema: 2\nabs_test_program()\n'
+      + [3, 4, 5].map(n => `    abs_test_draw(abs_test_number(${n}))`).join('\n');
+    const request = { version: 2, requestId: crypto.randomUUID(), base: exported.receipt.base,
+      candidate: { hash: await hashAbsText(source), bytes: new TextEncoder().encode(source).byteLength } };
+    const original = absJson(nativeState()), files = [...disk];
+    const validation: any = await tools.execute('abs_validate', request, source);
+    expect(validation.ok).withContext(JSON.stringify(validation)).toBeTrue();
+    expect(absJson(nativeState())).toBe(original); expect([...disk]).toEqual(files);
+    if (failGeneration) editor.prepareProjectCode.and.rejectWith(new Error('injected generation failure'));
+    const result: any = await tools.execute('abs_apply', { version: 2, requestId: request.requestId, validation: validation.receipt }, source);
+    if (failGeneration) {
+      expect(result.ok).toBeFalse(); expect(absJson(nativeState())).toBe(original); expect([...disk]).toEqual(files);
+    } else {
+      expect(result.ok).withContext(JSON.stringify(result)).toBeTrue();
+      expect(result.publication.status).toBe('COMMITTED');
+      const values = () => editor.workspace.getBlocksByType('abs_test_draw', false)
+        .map(block => Number(block.getInputTargetBlock('X').getFieldValue('NUM'))).sort();
+      expect(values()).toEqual([3, 4, 5]); expect(roots().isDeletable()).toBeFalse();
+      expect(editor.workspace.getBlockById('one')).toBeNull(); expect(editor.workspace.getBlockById('two')).toBeNull();
+      const saved = JSON.parse(disk.get('project.abi')!);
+      Blockly.serialization.workspaces.load(composeBlocklyPage(saved, 'main'), editor.workspace);
+      expect(values()).toEqual([3, 4, 5]); expect(roots().isDeletable()).toBeFalse();
+    }
+  });
+
+  it('clean disk inspection reports actual canvas changes instead of false ready', async () => {
+    const { tools } = await wireBase();
+    editor.setViewState({ scale: 0.5, scrollX: 20, scrollY: 30 });
+    expect((await inspect(tools)).diagnostics.status).toBe('ready');
+    roots().setFieldValue('real program edit', 'TEXT');
+    const diagnosis = await inspect(tools);
+    expect(diagnosis.diagnostics.issues).toContain('ABS_BASELINE_STALE');
+    expect(diagnosis.diagnostics.status).toBe('blocked');
+    expect(diagnosis.diagnostics.refresh).toBeUndefined();
+  });
+
   it('recovery wire inspects and repairs disk without loading or generating blocks', async () => {
     const { tools, request, source } = await wireBase();
     const validated: any = await tools.execute('abs_validate', request, source); failWrite = 'project.abs';
@@ -1094,6 +1433,104 @@ describe('v2 actual workspace generation coordinator', () => {
   });
 
   const inspect = (tools: AbsGenerationToolsService) => tools.execute('abs_recovery', { version: 2, requestId: crypto.randomUUID(), action: 'inspect' }) as Promise<any>;
+  const refreshDraft = (tools: AbsGenerationToolsService, token: string) => tools.execute('abs_recovery', {
+    version: 2, requestId: crypto.randomUUID(), action: 'refresh', token,
+  }) as Promise<any>;
+
+  it('validates an existing draft with a shrinking unused dropdown domain using current options', async () => {
+    let options: [string, string][] = [['first', 'A'], ['unused', 'B']];
+    Blockly.Blocks['abs_dynamic_domain'] = { init() {
+      this.appendDummyInput().appendField(new Blockly.FieldDropdown(() => options), 'PORT');
+    } };
+    registeredTypes.push('abs_dynamic_domain');
+    editor.workspace.newBlock('abs_dynamic_domain', 'port');
+    const { tools, source, request } = await wireBase(); disk.set('project.abs', source);
+    options = [['first', 'A'], ['new', 'C']];
+    const before = [...disk], state = absJson(nativeState());
+    (projectDataRuntime.flushPending as jasmine.Spy).calls.reset();
+    const diagnosis = await inspect(tools);
+    expect(diagnosis.diagnostics.runtime.status).toBe('compatible');
+    expect(diagnosis.diagnostics.draft.canValidate).toBeTrue();
+    expect(projectDataRuntime.flushPending).not.toHaveBeenCalled(); expect([...disk]).toEqual(before);
+    expect((await tools.execute('abs_validate', request, source) as any).ok).toBeTrue();
+    expect(absJson(nativeState())).toBe(state); expect([...disk]).toEqual(before);
+    const removed = source.replace('PORT=A', 'PORT=B'); expect(removed).not.toBe(source);
+    const invalid: any = await tools.execute('abs_validate', { ...request,
+      candidate: { hash: await hashAbsText(removed), bytes: new TextEncoder().encode(removed).byteLength } }, removed);
+    expect(invalid.ok).toBeFalse(); expect(invalid.code).toBe('ABS_FIELD_OPTION_INVALID');
+    expect((await tools.execute('abs_apply', { version: 2, requestId: request.requestId,
+      validation: (await tools.execute('abs_validate', request, source) as any).receipt }, source) as any).ok).toBeTrue();
+    expect(editor.workspace.getBlockById('port').getFieldValue('PORT')).toBe('A');
+  });
+
+  it('inspects and explicitly refreshes a draft with a durable readable archive and unchanged ABI/blocks', async () => {
+    const { tools, source, exported } = await wireBase(); disk.set('project.abs', source + '\n# 中文😀\r\n');
+    const draft = disk.get('project.abs')!, abi = disk.get('project.abi'), state = absJson(nativeState()), before = [...disk];
+    const diagnosis = await inspect(tools);
+    expect(diagnosis.diagnostics.draft.canValidate).toBeTrue(); expect([...disk]).toEqual(before);
+    const result = await refreshDraft(tools, diagnosis.diagnostics.refresh.token);
+    expect(result.ok).withContext(JSON.stringify(result)).toBeTrue();
+    expect(result.abs).toBe(exported.abs); expect(disk.get('project.abs')).toBe(exported.abs);
+    expect(disk.get('project.abi')).toBe(abi); expect(absJson(nativeState())).toBe(state);
+    expect(editor.prepareProjectCode).not.toHaveBeenCalled();
+    const read: any = await tools.execute('abs_recovery', { version: 2, requestId: crypto.randomUUID(),
+      action: 'read_draft', generation: result.draftArchive.generation });
+    expect(read.ok).toBeTrue(); expect(read.draft.abs).toBe(draft);
+    expect(read.draft.baseGeneration).toBe(exported.receipt.base.generation);
+    expect(read.draft.hash).toBe(await hashAbsText(draft)); expect(read.draft.bytes).toBe(new TextEncoder().encode(draft).byteLength);
+    const key = `baselines/${result.draftArchive.generation}.json`, record = JSON.parse(disk.get(key)!);
+    record.inputAbs += 'corrupt'; disk.set(key, absJson(record));
+    expect((await tools.execute('abs_recovery', { version: 2, requestId: crypto.randomUUID(),
+      action: 'read_draft', generation: result.draftArchive.generation }) as any).code).toBe('ABS_BASELINE_CORRUPT');
+  });
+
+  it('reports runtime staleness alongside the source conflict and pins refresh to current runtime', async () => {
+    const { tools, source } = await wireBase(); disk.set('project.abs', source);
+    const field = editor.workspace.getBlockById('child').getField('NUM') as Blockly.FieldNumber;
+    field.setMax(10);
+    const diagnosis = await inspect(tools);
+    expect(diagnosis.diagnostics.issues).toContain('ABS_RUNTIME_CONTRACT_STALE');
+    expect(diagnosis.diagnostics.draft.canValidate).toBeFalse();
+    expect(diagnosis.diagnostics.refresh).toBeDefined();
+    const before = [...disk]; field.setMax(20);
+    expect((await refreshDraft(tools, diagnosis.diagnostics.refresh.token)).code).toBe('ABS_REFRESH_STALE');
+    expect([...disk]).toEqual(before);
+    expect((await refreshDraft(tools, (await inspect(tools)).diagnostics.refresh.token)).ok).toBeTrue();
+  });
+
+  it('rejects stale refresh tokens after draft edits and concurrent canvas edits without writes', async () => {
+    const { tools, source } = await wireBase(); disk.set('project.abs', source);
+    const diagnosis = await inspect(tools), token = diagnosis.diagnostics.refresh.token;
+    disk.set('project.abs', source + '\n# newer'); let before = [...disk];
+    expect((await refreshDraft(tools, token)).code).toBe('ABS_REFRESH_STALE'); expect([...disk]).toEqual(before);
+    disk.set('project.abs', source); roots().setFieldValue('canvas edit', 'TEXT'); before = [...disk];
+    const changed = await inspect(tools);
+    expect(changed.diagnostics.draft.canValidate).toBeFalse(); expect(changed.diagnostics.refresh).toBeUndefined();
+    expect((await refreshDraft(tools, token)).code).toBe('ABS_REFRESH_STALE'); expect([...disk]).toEqual(before);
+  });
+
+  it('retains the draft archive when refresh publication is interrupted, then recovers without ABI save', async () => {
+    const { tools, source } = await wireBase(); disk.set('project.abs', source);
+    const diagnosis = await inspect(tools), abi = disk.get('project.abi'); failWrite = 'project.abs.map.json';
+    const result = await refreshDraft(tools, diagnosis.diagnostics.refresh.token);
+    expect(result.ok).toBeFalse(); expect(result.publication.status).toBe('MIRROR_PENDING');
+    expect((await service.readArchivedDraft(result.draftArchive.generation)).abs).toBe(source);
+    expect((await inspect(tools)).diagnostics.refresh).toBeUndefined(); failWrite = undefined;
+    expect((await service.recoverGeneration()).status).toBe('COMMITTED'); expect(disk.get('project.abi')).toBe(abi);
+    expect((await service.readArchivedDraft(result.draftArchive.generation)).abs).toBe(source);
+  });
+
+  it('never replaces mirrors if durable archive staging or readback fails', async () => {
+    const { tools, source } = await wireBase(); disk.set('project.abs', source);
+    const diagnosis = await inspect(tools), before = [...disk];
+    const stage = spyOn(AbsBaselineStore.prototype, 'stage').and.rejectWith(new Error('archive write failed'));
+    expect((await refreshDraft(tools, diagnosis.diagnostics.refresh.token)).ok).toBeFalse(); expect([...disk]).toEqual(before);
+    stage.and.callThrough();
+    spyOn(AbsBaselineStore.prototype, 'readArchivedDraft').and.rejectWith(new Error('archive readback failed'));
+    expect((await refreshDraft(tools, diagnosis.diagnostics.refresh.token)).ok).toBeFalse();
+    for (const [key, value] of before) expect(disk.get(key)).toBe(value);
+    expect(disk.has('prepared.json')).toBeFalse();
+  });
   const rebind = async (tools: AbsGenerationToolsService, token: string, options = {}) => tools.execute('abs_projection', {
     version: 2, requestId: crypto.randomUUID(), expectedAbiHash: await hashAbsText(disk.get('project.abi')!), rebind: token, ...options,
   }) as Promise<any>;

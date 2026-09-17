@@ -1,4 +1,5 @@
 import { assertSynchronousNativeCandidate } from './blockly-native-candidate-policy';
+import { restoreAbsFailure } from '../../../integrations/blockly/abs/abs-diagnostics';
 import nativeBuild from '../../../../../.generated/blockly-runtime/manifest.json';
 import type { NativeCandidateOptions, NativeCandidateRequest, NativeCandidateResult } from './blockly-native-candidate-protocol';
 
@@ -42,7 +43,7 @@ export async function evaluateNativeCandidate(request: NativeCandidateRequest, o
         try {
           assertCurrent(); abort.signal.throwIfAborted();
           const reply = event.data;
-          if (!reply?.ok) throw new Error(reply?.error || 'Native candidate failed.');
+          if (!reply?.ok) throw restoreAbsFailure(reply?.error || 'Native candidate failed.');
           if (!reply.result?.state || !Array.isArray(reply.result.structures)) throw new Error('Invalid native candidate response.');
           resolve(reply.result);
         } catch (error) { reject(error); }

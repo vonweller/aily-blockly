@@ -2,6 +2,7 @@ import type { BlocklyGeneratorMode } from './blockly-generator-factory';
 import type { AbsHostBoundCall, AbsNativeBinding, AbsNativeCreation } from '../../../integrations/blockly/abs/abs-native-binding';
 import type { AbsAbiWorkspace, AbsProjectionContracts } from '../../../integrations/blockly/abs/abs-state';
 import type { AilyDataRef } from '@domain/project/project-data/public-api';
+import type { AbsNativeModelDeclaration } from '../../../integrations/blockly/abs/abs-native-model-declarations';
 
 /** Data-only boundary. No host objects, functions, paths-to-load or filesystem APIs. */
 export type NativeReplayStep =
@@ -20,6 +21,8 @@ export interface NativeCandidateBlock {
 }
 
 export interface NativeCandidateRequest {
+  /** Internal deterministic namespace, never an Agent model-creation permission. */
+  modelRequestId?: string;
   steps: NativeReplayStep[];
   blocks: NativeCandidateBlock[];
   /** Internal binding. Mutually exclusive with explicit blocks; no new public Agent contract. */
@@ -35,7 +38,8 @@ export interface NativeCandidateRequest {
   /** Already resolved by the host store; no path, filesystem session or service bridge. */
   values?: Array<{ ref: AilyDataRef; value: unknown }>;
   /** Verify the final merged ABI and actual code generation before touching the host. */
-  verify?: { state: AbsAbiWorkspace; contracts: AbsProjectionContracts };
+  verify?: { state: AbsAbiWorkspace; contracts: AbsProjectionContracts;
+    modelDeclarations?: Array<AbsNativeModelDeclaration & { ownerId: string }> };
 }
 
 export interface NativeVariableState { id: string; name: string; type?: string; [key: string]: unknown }

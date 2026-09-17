@@ -23,12 +23,14 @@ export function assertAbsSourceEdits(value: unknown): asserts value is AbsSource
   }
 }
 
-/** Only unchanged call-name tokens carry identity through a recorded text edit. */
-export function traceAbsSourceEdits(before: string, after: string, original: AbsSyntaxNode[], edited: AbsSyntaxNode[],
-  batches?: AbsSourceEdits): ReadonlyMap<AbsSyntaxNode, AbsSyntaxNode> {
+/** Only unchanged call-name tokens carry identity. Diagnostics share the same
+ * exact replay used for matching, not a second heuristic. */
+export function inspectAbsSourceEdits(before: string, after: string, original: AbsSyntaxNode[], edited: AbsSyntaxNode[],
+  batches?: AbsSourceEdits) {
   assertAbsSourceEdits(batches);
   const matches = new Map<AbsSyntaxNode, AbsSyntaxNode>();
-  if (!batches) return matches;
+  const replaced = new Set<AbsSyntaxNode>();
+  if (!batches) return { matches, replaced };
   const anchors = indexAbsSyntax(original).filter(({ node }) => before.slice(node.start, node.start + node.type.length) === node.type)
     .map(({ node }) => ({ node, start: node.start, end: node.start + node.type.length, alive: true }));
   let source = before;
@@ -39,7 +41,7 @@ export function traceAbsSourceEdits(before: string, after: string, original: Abs
       let shift = 0;
       for (const edit of batch) {
         if (edit.end <= anchor.start) shift += edit.text.length - (edit.end - edit.start);
-        else if (edit.start < anchor.end) { anchor.alive = false; break; }
+        else if (edit.start < anchor.end) { anchor.alive = false; replaced.add(anchor.node); break; }
       }
       anchor.start += shift; anchor.end += shift;
     }
@@ -51,5 +53,5 @@ export function traceAbsSourceEdits(before: string, after: string, original: Abs
     const node = anchor.alive && byStart.get(anchor.start);
     if (node && node.type === anchor.node.type) matches.set(node, anchor.node);
   }
-  return matches;
+  return { matches, replaced };
 }

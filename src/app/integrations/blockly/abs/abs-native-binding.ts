@@ -1,6 +1,7 @@
 import type { AbsAbiBlock, AbsSyntaxNode } from './abs-state';
 import type { AbsBlockShapeContract } from './abs-declarative-contracts';
 import type { AbsArgumentDefinition } from './abs-syntax-binding';
+import type { AbsNativeModelDeclaration } from './abs-native-model-declarations';
 
 /** A captured pure host adapter owns this call; native discovery is not its proof. */
 export interface AbsHostBoundCall {
@@ -35,6 +36,7 @@ export interface AbsNativeDefault {
 }
 
 export interface AbsNativeBinding {
+  modelDeclarations?: AbsNativeModelDeclaration[];
   source: string;
   syntax: AbsSyntaxNode[];
   instances: AbsNativeInstance[];

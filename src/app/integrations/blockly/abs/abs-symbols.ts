@@ -72,9 +72,15 @@ export class AbsSymbols {
     return model;
   }
   private uniqueName(name: string, contract: SymbolContract): SymbolModel {
-    const matches = (this.names.get(this.key(contract.kind, name)) ?? []).filter(model => this.allowed(model, contract));
-    if (matches.length !== 1) throw new AbsSyncError(matches.length ? 'ABS_SYMBOL_AMBIGUOUS' : 'ABS_SYMBOL_MISSING',
-      `Cannot uniquely resolve ${contract.kind} ${JSON.stringify(name)}; use an explicit host model operation.`);
+    const named = this.names.get(this.key(contract.kind, name)) ?? [];
+    const matches = named.filter(model => this.allowed(model, contract));
+    if (matches.length !== 1) {
+      const code = matches.length ? 'ABS_SYMBOL_AMBIGUOUS' : named.length ? 'ABS_SYMBOL_TYPE_MISMATCH' : 'ABS_SYMBOL_MISSING';
+      throw new AbsSyncError(code,
+        `Cannot uniquely resolve ${contract.kind} ${JSON.stringify(name)}; expected types: ${JSON.stringify(contract.allowedTypes ?? 'any')}; existing types: ${JSON.stringify(named.map(model => model.type))}.`,
+        undefined, [], { modelName: name, expectedTypes: contract.allowedTypes, actualTypes: named.map(model => model.type),
+          hint: 'References do not declare models. Keep the documented initializer/declaration in this candidate; if it is not automatically prepared, pass documented {name,type} createVariables in the same validate/apply transaction.' });
+    }
     return matches[0];
   }
   private allowed(model: SymbolModel, contract: SymbolContract): boolean {

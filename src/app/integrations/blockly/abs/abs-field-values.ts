@@ -1,4 +1,5 @@
 import { readAbsSingleQuotedToken } from '@shared/public-api';
+import { AbsSyncError } from './abs-state';
 
 /** Field semantics are supplied by definitions/runtime, never guessed from names. */
 export interface AbsFieldDefinition {
@@ -64,7 +65,10 @@ export function resolveAbsFieldValue(token: AbsFieldToken, definition?: AbsField
       const candidates = allowed.filter(option => option === String(value) || option === String(value).toUpperCase());
       if (candidates.length === 1) return candidates[0];
     }
-    throw new Error(`Invalid dropdown value ${JSON.stringify(value)}; allowed: ${JSON.stringify(allowed)}.`);
+    throw new AbsSyncError('ABS_FIELD_OPTION_INVALID',
+      `Invalid dropdown value ${JSON.stringify(value)?.slice(0, 256)}; allowed: ${JSON.stringify(allowed.slice(0, 64))}.`, undefined, [],
+      { received: value as string, allowedValues: allowed,
+        hint: 'Choose an exact allowed value, not a display label or a pin number from another board. Do not guess numeric GPIO mappings.' });
   }
   if (definition.type === 'field_checkbox') {
     if (value === true || value === 'TRUE') return 'TRUE';

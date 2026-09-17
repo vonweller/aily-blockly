@@ -2,6 +2,7 @@ import { createAbsProjection, indexAbsAbi } from './abs-identity-map';
 import { reconcileAbs } from './abs-reconciler';
 import { assertAbsSourceEdits, type AbsSourceEdits } from './abs-edit-provenance';
 import type { AbsAbiWorkspace } from './abs-state';
+import { serializeAbsFailure } from './abs-diagnostics';
 
 describe('batch ABS text-edit identity', () => {
   const project = (workspace: AbsAbiWorkspace) => createAbsProjection(workspace, { document: workspace,
@@ -66,6 +67,43 @@ describe('batch ABS text-edit identity', () => {
       .toBeRejectedWith(jasmine.objectContaining({ code: 'ABS_IDENTITY_AMBIGUOUS' }));
   });
 
+  it('distinguishes missing proof from overwritten tokens with bounded source ranges', async () => {
+    const base = await setup(), source = base.abs.replace('"one"', '"a"').replace('"two"', '"b"');
+    for (const tracked of [false, true]) {
+      try {
+        await reconcileAbs(base, source, tracked ? { sourceEdits: [[{ start: 0, end: base.abs.length, text: source }]] } : {});
+        fail('accepted ambiguous calls');
+      } catch (error) {
+        const wire = serializeAbsFailure(error), identity = wire.diagnostic!.identity!;
+        expect(wire.code).toBe('ABS_IDENTITY_AMBIGUOUS');
+        expect(identity.evidence).toBe(tracked ? 'tracked' : 'missing');
+        expect(identity.batches).toBe(tracked ? 1 : 0);
+        expect(identity.edits).toBe(tracked ? 1 : 0);
+        expect(identity.baselineCount).toBe(2); expect(identity.candidateCount).toBe(2);
+        expect(identity.baselineRanges.map(r => base.abs.slice(r.start, r.end))).toEqual(['thing', 'thing']);
+        expect(identity.candidateRanges.map(r => source.slice(r.start, r.end))).toEqual(['thing', 'thing']);
+        expect(identity.replacedBaselineRanges.length).toBe(tracked ? 2 : 0);
+        expect(wire.diagnostic!.hint).toContain(tracked ? 'replaced baseline call-name' : 'No hash-bound');
+        expect(wire.diagnostic!.hint).toContain('Do not change literals');
+        expect(wire.diagnostic!.hint).toContain('before retrying');
+      }
+    }
+  });
+
+  it('accepts refined batch edits plus a same-type insertion without changing old identities or protection', async () => {
+    const base = await setup();
+    const sourceEdits = [[edit(base.abs, '"one"', '"first changed"'), edit(base.abs, '"two"', '"second changed"'),
+      { start: base.abs.length, end: base.abs.length, text: '\nthing(VALUE="third new")' }]];
+    const result = await reconcileAbs(base, apply(base.abs, sourceEdits), { sourceEdits, newId: () => 'third' });
+    expect(result.added).toEqual(['third']); expect(result.removed).toEqual([]);
+    const blocks = indexAbsAbi(result.workspace);
+    expect(blocks.get('first')!['deletable']).toBeFalse();
+    expect(blocks.get('first')!['data']).toBe('first metadata');
+    expect(blocks.get('second')!['data']).toBe('second metadata');
+    expect(blocks.get('first')!.fields!['VALUE']).toBe('first changed');
+    expect(blocks.get('second')!.fields!['VALUE']).toBe('second changed');
+  });
+
   it('keeps protected deletion forbidden with valid text provenance', async () => {
     const base = await setup(), source = '# ABS Schema: 2\ncontainer()';
     await expectAsync(reconcileAbs(base, source, { sourceEdits: [[{ start: 0, end: base.abs.length, text: source }]] }))
@@ -80,12 +118,14 @@ describe('batch ABS text-edit identity', () => {
     }
   });
 
-  it('does not transfer metadata across parents based on surviving text alone', async () => {
+  it('retains proven call identity when an edit changes its input owner', async () => {
     const base = await project({ blocks: { blocks: [{ type: 'container', id: 'root', inputs: {
       BODY: { block: { type: 'thing', id: 'child', fields: { N: 1 } } },
     } }] } });
     const sourceEdits = [[edit(base.abs, 'BODY=', 'OTHER=')]];
-    await expectAsync(reconcileAbs(base, apply(base.abs, sourceEdits), { sourceEdits }))
-      .toBeRejectedWith(jasmine.objectContaining({ code: 'ABS_IDENTITY_AMBIGUOUS' }));
+    const result = await reconcileAbs(base, apply(base.abs, sourceEdits), { sourceEdits });
+    expect(result.workspace.blocks.blocks[0].inputs!['OTHER'].block!.id).toBe('child');
+    expect(result.added).toEqual([]);
+    expect(result.removed).toEqual([]);
   });
 });

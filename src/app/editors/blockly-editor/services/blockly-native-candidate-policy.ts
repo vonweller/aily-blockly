@@ -4,6 +4,9 @@ import { hasUniqueAbsArguments } from '../../../integrations/blockly/abs/abs-arg
 
 /** Validate the synchronous replay subset without rewriting library source. */
 export function assertSynchronousNativeCandidate(request: NativeCandidateRequest): void {
+  if (request.modelRequestId !== undefined && (request.abs === undefined || !/^[a-zA-Z0-9-]{16,80}$/.test(request.modelRequestId))) {
+    throw new Error('Native model preparation requires an internal ABS request namespace.');
+  }
   if (!Array.isArray(request.steps) || !Array.isArray(request.blocks) || request.blocks.length > 2000
     || JSON.stringify(request).length > 16 * 1024 * 1024) throw new Error('Native candidate exceeds request limits.');
   if (request.abs !== undefined && (typeof request.abs !== 'string' || request.blocks.length)) {
