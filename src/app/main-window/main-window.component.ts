@@ -38,9 +38,8 @@ import { ElectronService } from '@core/platform/public-api';
 import {
   SubappManagerService,
   ChildToolProcessService,
+  RequiredSubappService,
   bootstrapDefaultSubapps,
-  isDefaultSubappActionCompleted,
-  DEFAULT_SUBAPP_STATE_KEY,
   DEFAULT_AILY_CHAT_SUBAPP_TOOL_ID,
 } from '@integration/subapps/public-api';
 import { LoginComponent } from '../components/login/login.component';
@@ -152,6 +151,7 @@ export class MainWindowComponent implements OnDestroy {
     private electronService: ElectronService,
     private appStoreService: AppStoreService,
     private subappManager: SubappManagerService,
+    private requiredSubapps: RequiredSubappService,
     private childToolProcessService: ChildToolProcessService,
     private toolI18n: ToolI18nService,
   ) { }
@@ -302,28 +302,16 @@ export class MainWindowComponent implements OnDestroy {
   private async ensureDefaultSubapps(): Promise<void> {
     if (!this.electronService.isElectron) return;
     try {
+      await this.configService.init();
       await bootstrapDefaultSubapps({
-        isCompleted: (id, action) => isDefaultSubappActionCompleted(this.configService.data, id, action),
-        initialize: () => this.subappManager.initializeForBootstrap(),
+        initialize: async () => {
+          await this.subappManager.initializeForBootstrap();
+          await this.appStoreService.initializeSubappToolbarDefaults();
+        },
         readCatalog: () => this.subappManager.state.apps,
         isAvailable: item => isAppAvailableForApplication(item.only, this.configService.getApplicationName()),
-        install: catalogId => this.subappManager.install(catalogId),
-        isPinned: toolId => this.appStoreService.isAppInZone('header', toolId),
-        pin: toolId => this.appStoreService.addAppToZone('header', toolId),
-        markCompleted: async (id, action) => {
-          const previous = this.configService.data[DEFAULT_SUBAPP_STATE_KEY];
-          this.configService.data[DEFAULT_SUBAPP_STATE_KEY] = {
-            ...previous,
-            [id]: { ...previous?.[id], [action]: Date.now() },
-          };
-          try {
-            await this.configService.save();
-          } catch (error) {
-            this.configService.data[DEFAULT_SUBAPP_STATE_KEY] = previous;
-            throw error;
-          }
-        },
-        onError: (toolId, error) => console.warn(`[Subapp] Default ${toolId} installation failed:`, error),
+        install: async catalogId => { await this.requiredSubapps.ensureInstalled(catalogId); },
+        onError: (toolId, error) => console.warn(`[Subapp] Default ${toolId} startup setup failed:`, error),
       });
     } catch (error) {
       console.warn('[Subapp] Default subapp initialization failed:', error);
