@@ -3,7 +3,11 @@ const { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } = require('
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
-const { collectDependencyLibraryPackages, processLibrariesParallel } = require('./preprocess');
+const {
+    collectDependencyLibraryPackages,
+    prependSdkLibrarySearchPath,
+    processLibrariesParallel,
+} = require('./preprocess');
 
 async function fixture(t) {
     const root = await mkdtemp(path.join(os.tmpdir(), 'aily-blockly-preprocess-'));
@@ -26,6 +30,24 @@ test('Blockly stages a canonical library without additional builder metadata', a
     const { libraries, materialize } = await fixture(t);
     assert.deepEqual(await materialize(), ['AilyEspNow']);
     assert.equal(await readFile(path.join(libraries, 'AilyEspNow', 'AilyEspNow.h'), 'utf8'), '#pragma once');
+});
+
+test('Blockly prepends SDK Arduino libraries while keeping project libraries as overrides', async t => {
+    const { root, libraries } = await fixture(t);
+    const sdkRoot = path.join(root, 'sdk', 'ci13xx_1.0.17');
+    const sdkLibraries = path.join(sdkRoot, 'libraries');
+    await mkdir(path.join(sdkLibraries, 'ChipIntelliAudio'), { recursive: true });
+
+    assert.deepEqual(prependSdkLibrarySearchPath(sdkRoot, [libraries]), [sdkLibraries, libraries]);
+    assert.deepEqual(
+        prependSdkLibrarySearchPath(sdkRoot, [sdkLibraries, libraries]),
+        [sdkLibraries, libraries]
+    );
+});
+
+test('Blockly leaves search paths unchanged when the board SDK has no libraries directory', async t => {
+    const { root, libraries } = await fixture(t);
+    assert.deepEqual(prependSdkLibrarySearchPath(path.join(root, 'sdk', 'without-libraries'), [libraries]), [libraries]);
 });
 
 test('Blockly follows project node_modules links to canonical local libraries outside the project', async t => {
