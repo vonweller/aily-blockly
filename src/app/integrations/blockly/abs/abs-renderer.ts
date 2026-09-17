@@ -18,12 +18,12 @@ export function renderAbs(workspace: AbsAbiWorkspace, contracts: AbsProjectionCo
   const childAt = (block: AbsAbiBlock, name: string) => block.inputs?.[name]?.block ?? block.inputs?.[name]?.shadow;
   const canInline = (block: AbsAbiBlock): boolean => !block.next && Object.entries(block.inputs ?? {}).every(([name]) => {
     if (previousProjectionValidation) return false;
-    const kind = syntax.argumentOrder?.(block.type)?.find(arg => arg.name === name)?.kind;
+    const kind = syntax.argumentOrder?.(block.type, block.extraState, block.fields)?.find(arg => arg.kind !== 'field' && arg.name === name)?.kind;
     const child = childAt(block, name);
     return kind === 'valueInput' && (!child || canInline(child));
   });
   const inlineInput = (block: AbsAbiBlock, name: string) => {
-    const kind = syntax.argumentOrder?.(block.type)?.find(arg => arg.name === name)?.kind;
+    const kind = syntax.argumentOrder?.(block.type, block.extraState, block.fields)?.find(arg => arg.kind !== 'field' && arg.name === name)?.kind;
     const child = childAt(block, name);
     return kind !== 'statementInput' && !!child && canInline(child);
   };
@@ -43,10 +43,10 @@ export function renderAbs(workspace: AbsAbiWorkspace, contracts: AbsProjectionCo
     blockAtPath.set(path, block);
     const inCall = new Set<string>();
     renderedInputs.set(block, inCall);
-    const order = syntax.argumentOrder?.(block.type)?.filter(arg => arg.kind !== 'statementInput');
+    const order = syntax.argumentOrder?.(block.type, block.extraState, block.fields)?.filter(arg => arg.kind !== 'statementInput');
     const positional = order && order.every(arg => arg.kind === 'field'
       ? Object.hasOwn(block.fields ?? {}, arg.name) : !childAt(block, arg.name) || inlineInput(block, arg.name))
-      && Object.keys(block.fields ?? {}).every(name => order.some(arg => arg.name === name));
+      && Object.keys(block.fields ?? {}).every(name => order.some(arg => arg.kind === 'field' && arg.name === name));
     const inputArgument = (name: string) => {
       inCall.add(name);
       return childAt(block, name) ? call(childAt(block, name)!, absInputPath(path, name)) : 'null';
@@ -64,7 +64,7 @@ export function renderAbs(workspace: AbsAbiWorkspace, contracts: AbsProjectionCo
   const render = (block: AbsAbiBlock, path: string, depth: number, chain = false) => {
     const indent = '    '.repeat(depth);
     lines.push(indent + call(block, path));
-    const statements = syntax.argumentOrder?.(block.type)?.filter(arg => arg.kind === 'statementInput');
+    const statements = syntax.argumentOrder?.(block.type, block.extraState, block.fields)?.filter(arg => arg.kind === 'statementInput');
     for (const name of Object.keys(block.inputs ?? {})) {
       const child = childAt(block, name);
       if (renderedInputs.get(block)?.has(name)) continue;

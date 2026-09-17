@@ -5,6 +5,10 @@ import type { DeclarativeBlockSnapshot } from '../../../editors/blockly-editor/s
 import type { AbsProcedureStateContract } from './abs-procedures';
 import type { AbsArgumentDefinition } from './abs-syntax';
 import { parseBlockDefinition } from './block-definition.model';
+import { prepareAbsStructuralShape } from './abs-structural-shape';
+import type { StructuralMutationRecipe } from '../../../editors/blockly-editor/components/blockly/plugins/block-plus-minus/src/structural-mutators';
+import type { BlocklyFieldShapeRule } from '../../../editors/blockly-editor/services/blockly-field-shape-contracts';
+import { prepareAbsFieldShape, resolveAbsFieldShapeAnchors } from './abs-field-shape';
 
 /** Complete persisted shape for a new block. Dynamic adapters must supply the same
  * explicit contract; runtime defaults are not permission to ignore extra state.
@@ -20,6 +24,8 @@ export interface AbsBlockShapeContract {
   /** Exact prepared serializer output, supplied only by a trusted dynamic adapter. */
   extraState?: unknown;
   procedure?: AbsProcedureStateContract;
+  mutation?: StructuralMutationRecipe & { maxCount: number };
+  fieldShape?: readonly BlocklyFieldShapeRule[];
 }
 
 /** Pure, deliberately bounded JSON semantics. Extensions/mutators/custom field
@@ -37,8 +43,9 @@ export function compileAbsDeclarativeContract(json: Record<string, any>, support
     for (const arg of json[key]) {
       if (!arg || typeof arg.type !== 'string') return undefined;
       if (['input_dummy', 'input_end_row', 'field_label', 'field_image'].includes(arg.type)) continue;
-      if (typeof arg.name !== 'string' || !arg.name || names.has(arg.name)) return undefined;
-      names.add(arg.name);
+      const name = `${arg.type.startsWith('input_') ? 'input' : 'field'}:${arg.name}`;
+      if (typeof arg.name !== 'string' || !arg.name || names.has(name)) return undefined;
+      names.add(name);
       if (arg.type === 'input_value' || arg.type === 'input_statement') {
         inputs[arg.name] = arg.type === 'input_value' ? 'value' : 'statement'; continue;
       }
@@ -87,14 +94,32 @@ export function captureAbsDeclarativeContracts(snapshot: DeclarativeBlockSnapsho
   const cache = new Map<string, AbsBlockShapeContract | undefined>();
   return {
     assertCurrent: snapshot.assertCurrent,
-    get: (type: string, extraState?: unknown) => {
+    get: (type: string, extraState?: unknown, fields?: Readonly<Record<string, unknown>>) => {
       snapshot.assertCurrent();
-      if (extraState !== undefined && extraState !== null) return undefined;
-      if (!cache.has(type)) {
-        const json = snapshot.get(type);
-        cache.set(type, json ? compileAbsDeclarativeContract(json, snapshot.supportsUiExtension) : undefined);
+      const json = snapshot.get(type);
+      const recipe = json && typeof json['mutator'] === 'string' ? snapshot.structuralMutator?.(json['mutator']) : undefined;
+      const mutationShape = json && typeof json['mutator'] === 'string' ? snapshot.fieldShape?.(json['mutator']) : undefined;
+      const extensionShapes = new Map<string, readonly BlocklyFieldShapeRule[]>();
+      if (Array.isArray(json?.['extensions'])) for (const name of json!['extensions']) {
+        const rules = typeof name === 'string' ? snapshot.fieldShape?.(name) : undefined;
+        if (rules) extensionShapes.set(name, rules);
       }
-      return cache.get(type);
+      const fieldShape = [...(mutationShape ?? []), ...[...extensionShapes.values()].flat()];
+      if (recipe && fieldShape.length) return undefined; // Composition needs its own proven order/serializer contract.
+      if (!recipe && !fieldShape.length && extraState !== undefined && extraState !== null) return undefined;
+      if (!cache.has(type)) {
+        const declaration = json && { ...json };
+        if (recipe || mutationShape) delete declaration!['mutator'];
+        if (extensionShapes.size) declaration!['extensions'] = declaration!['extensions'].filter(name => !extensionShapes.has(name));
+        cache.set(type, declaration ? compileAbsDeclarativeContract(declaration, snapshot.supportsUiExtension) : undefined);
+      }
+      const base = cache.get(type);
+      if (base && recipe) return prepareAbsStructuralShape(base, recipe, extraState);
+      if (base && fieldShape.length) {
+        const rules = resolveAbsFieldShapeAnchors(json!, base, fieldShape);
+        return rules ? prepareAbsFieldShape(base, rules, fields, extraState) : undefined;
+      }
+      return base;
     },
   };
 }

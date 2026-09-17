@@ -2,8 +2,13 @@ import type { DeclarativeBlockSnapshot } from '../../../editors/blockly-editor/s
 import type { VariableDeclarationContract } from '../../../editors/blockly-editor/services/blockly-variable-declaration-contract';
 import type { AbsBlockShapeContract } from './abs-declarative-contracts';
 import { AbsAbiBlock, AbsAbiWorkspace, AbsSyntaxNode, AbsSyncError } from './abs-state';
-import { indexAbsSyntax } from './abs-identity-map';
+import { hashAbsText, indexAbsSyntax } from './abs-identity-map';
 import { prepareAbsVariableCreations, AbsVariableCreation } from './abs-variable-intents';
+
+/** The static planner and native bootstrap must derive model IDs from the same document identity. */
+export async function absDeclarationRequestId(generation: string, source: string): Promise<string> {
+  return (await hashAbsText(generation + '\n' + source)).slice('sha256:'.length);
+}
 
 /** Shape and generator effect are separate proofs; neither is inferred from a field name. */
 export function captureAbsVariableDeclarations(snapshot: DeclarativeBlockSnapshot, shape: (type: string) => AbsBlockShapeContract | undefined) {

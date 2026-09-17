@@ -78,6 +78,8 @@ export interface AbsProjectionContracts {
   fields: Record<string, Record<string, AbsFieldDefinition>>;
   /** Proven argument order per existing ID; absent/ambiguous types stay named-only. */
   syntax?: Record<string, readonly AbsArgumentDefinition[]>;
+  /** Proven dropdown selectors for instance-specific syntax, not instructions to execute. */
+  selectors?: Record<string, readonly string[]>;
   /** Additional host-owned model tables; Blockly variables use /variables by default. */
   symbolTables?: AbsSymbolTable[];
   procedures?: Record<string, AbsProcedureStateContract>;

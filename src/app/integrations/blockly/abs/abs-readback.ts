@@ -1,5 +1,6 @@
 import { AbsFieldDefinition, normalizeAbsSerializedField } from './abs-field-values';
-import { absJson, indexAbsAbi } from './abs-identity-map';
+import { absJson } from './abs-json';
+import { indexAbsAbi } from './abs-abi-index';
 import { AbsAbiBlock, AbsAbiWorkspace, AbsSyncError } from './abs-state';
 
 export interface AbsReadbackOptions {

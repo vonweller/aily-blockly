@@ -2,6 +2,7 @@ import type { DeclarativeBlockSnapshot } from '../../../editors/blockly-editor/s
 import { AbsAbiBlock, AbsAbiWorkspace, AbsProjectionContracts, AbsSyncError } from './abs-state';
 import { AbsBlockShapeContract, compileAbsDeclarativeContract, assertAbsDeclaredBlockShape } from './abs-declarative-contracts';
 import { absJson } from './abs-identity-map';
+import { customFunctionSyntax } from './abs-custom-function-syntax';
 
 /** Audited custom-function serializer adapter. Models are explicit intents; no live Blockly or library callbacks. */
 export function captureAbsCustomFunctions(snapshot: DeclarativeBlockSnapshot) {
@@ -22,6 +23,11 @@ export function captureAbsCustomFunctions(snapshot: DeclarativeBlockSnapshot) {
   };
   const field = (type: string, key: string) => {
     const descriptor = describe(type);
+    if (descriptor?.protocol.kind === 'definition') {
+      if (descriptor.base.fields[key]) return descriptor.base.fields[key];
+      if (/^PARAM_NAME\d+$/.test(key)) return { type: 'field_input' };
+      if (/^PARAM_TYPE\d+$/.test(key)) return { type: 'field_dropdown', options: descriptor.protocol.parameterTypes.map(value => [null, value] as const) };
+    }
     return descriptor && descriptor.protocol.kind !== 'definition' && key === 'FUNC_NAME'
       ? { type: 'field_variable', symbol: { kind: 'variable' as const, storage: 'variable-state' as const, allowedTypes: ['FUNC'] } } : undefined;
   };
@@ -88,7 +94,8 @@ export function captureAbsCustomFunctions(snapshot: DeclarativeBlockSnapshot) {
       (old?.params ?? []).forEach((param, index) => {
         for (const [prefix, value] of [['PARAM_NAME', param.name], ['PARAM_TYPE', param.type]]) {
           const key = prefix + index;
-          if (Object.hasOwn(block.fields!, key) && block.fields![key] !== value) fail('Edit the parameter signature, not derived fields.');
+          const requested = prefix === 'PARAM_NAME' ? params[index]?.name : params[index]?.type;
+          if (Object.hasOwn(block.fields!, key) && block.fields![key] !== value && block.fields![key] !== requested) fail('Parameter field conflicts with signature.');
           delete block.fields![key];
         }
       });
@@ -117,5 +124,5 @@ export function captureAbsCustomFunctions(snapshot: DeclarativeBlockSnapshot) {
     }
     return shape;
   };
-  return { describe, field, get, prepare, existing };
+  return { describe, field, get, prepare, existing, syntax: (source: string, workspace: AbsAbiWorkspace) => customFunctionSyntax(source, workspace, describe) };
 }

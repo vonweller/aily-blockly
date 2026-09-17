@@ -57,6 +57,9 @@ export function resolveAbsFieldValue(token: AbsFieldToken, definition?: AbsField
   if (definition.type === 'field_dropdown' && Array.isArray(definition.options)) {
     const allowed = definition.options.map(option => option[1]);
     if (allowed.includes(value as never)) return value;
+    // README pin/enumeration literals are often numeric but Blockly persists
+    // string keys. Match the exact lexeme, never a numeric approximation/label.
+    if (!quoted && typeof value === 'number' && allowed.includes(token.raw)) return token.raw;
     if (!quoted && typeof value === 'boolean') {
       const candidates = allowed.filter(option => option === String(value) || option === String(value).toUpperCase());
       if (candidates.length === 1) return candidates[0];

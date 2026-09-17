@@ -46,8 +46,8 @@ export class AbsGenerationToolsService {
       if (typeof source !== 'string' || !source.trim()) throw new AbsSyncError('ABS_REQUEST_INVALID', 'Candidate source is empty.');
       if (operation === 'abs_validate') {
         assertGenerationCandidate(params);
-        const prepared = await this.sync.validateGeneration(source, params);
-        return { ok: true, operation, project: prepared.base.scope.projectKey,
+        const { syntaxAdvice, ...prepared } = await this.sync.validateGeneration(source, params);
+        return { ok: true, operation, project: prepared.base.scope.projectKey, syntaxAdvice,
           receipt: { ...prepared, validation: { ok: true, scope: 'prepared-generation' } } };
       }
       if (operation !== 'abs_apply') throw new AbsSyncError('ABS_REQUEST_INVALID', 'Unknown ABS generation operation.');
@@ -64,6 +64,9 @@ export class AbsGenerationToolsService {
           appliedRevision: result.appliedRevision, validation: { ok: true, scope: 'complete-generation' } } } : {}) };
     } catch (error) {
       return { ok: false, operation, code: (error as any)?.code || 'ABS_GENERATION_FAILED',
+        ...((error as any)?.code === 'ABS_IDENTITY_AMBIGUOUS' ? {
+          recovery: 'Keep the current generation and unapplied draft. Use one edit call with multiple targeted replacements from the generation source so the host can trace call identities, then validate/apply the whole batch. A full rewrite may lack identity evidence. Do not add IDs to ABS, discard the map or force export over the draft.',
+        } : {}),
         message: error instanceof Error ? error.message : String(error) };
     }
   }

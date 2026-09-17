@@ -21,7 +21,7 @@ describe('pure typed custom-function preparation', () => {
   const create = [{ name: 'work', type: 'FUNC' }, { name: 'amount' }];
   const run = async (source = def + '\n' + call, baseline?: Awaited<ReturnType<typeof base>>, variables: any[] | null = baseline ? null : create) => {
     const before = baseline ?? await base();
-    const result = await reconcileAbsDraft(before, '# ABS Schema: 2\n' + source, { fieldDefinition: adapter.field,
+    const result = await reconcileAbsDraft(before, '# ABS Schema: 2\n' + source, { ...adapter.syntax('# ABS Schema: 2\n' + source, before.workspace), fieldDefinition: adapter.field,
       prepareBlock: adapter.prepare, ...(variables ? { variableCreation: { requestId: 'custom-function-test', variables } } : {}) });
     assertAbsRuntimeShapeSupported(before.workspace, result.workspace, result.contracts, adapter.get);
     return result;
@@ -34,6 +34,45 @@ describe('pure typed custom-function preparation', () => {
     const refs = getAbsProcedureReferences(result.workspace, result.contracts.procedures);
     expect(refs.some(ref => ref.statePath === '/extraState/paramVarIds/0')).toBeTrue();
     expect(refs.some(ref => ref.kind === 'procedure' && ref.modelId === definition.id)).toBeTrue();
+  });
+
+  it('accepts README typed positional pairs and forward calls without duplicating @extra signatures', async () => {
+    const result = await run('custom_function_call_return_advance(FUNC_NAME=$work)\ncustom_function_def("work", int, int, "amount")');
+    const [caller, definition] = result.workspace.blocks.blocks;
+    expect((definition.extraState as any).params).toEqual([{ name: 'amount', type: 'int' }]);
+    expect((caller.extraState as any).params).toEqual((definition.extraState as any).params);
+    expect(definition.fields!['PARAM_TYPE0']).toBe('int');
+    const baseline = await base(result.workspace, result.contracts);
+    const changed = await run('custom_function_call_return_advance(FUNC_NAME=$work)\ncustom_function_def("work", int, float, "amount")', baseline);
+    expect(changed.workspace.blocks.blocks[1].id).toBe(definition.id);
+    expect(changed.workspace.blocks.blocks[1].fields!['PARAM_TYPE0']).toBe('float');
+    expect((changed.workspace.blocks.blocks[0].extraState as any).params[0].type).toBe('float');
+  });
+
+  it('keeps the optional return slot after typed pairs and the body implicit for void functions', () => {
+    const options = adapter.syntax('# ABS Schema: 2\ncustom_function_def("work", int, int, "amount", unknown_value())', empty);
+    const order = options.argumentOrder!('custom_function_def', { params: [{ type: 'int', name: 'amount' }] }, { RETURN_TYPE: 'int' });
+    expect(order?.map(arg => arg.name)).toEqual(['FUNC_NAME', 'RETURN_TYPE', 'STACK', 'PARAM_TYPE0', 'PARAM_NAME0', 'RETURN']);
+    expect(options.argumentOrder!('custom_function_def', { params: [] }, { RETURN_TYPE: 'void' })?.map(arg => arg.name)).toEqual(['FUNC_NAME', 'RETURN_TYPE', 'STACK']);
+  });
+
+  it('takes even the function declaration prefix from args order, not field-name assumptions', async () => {
+    const reordered = captureAbsCustomFunctions({ ...snapshot, get: type => type === json.type
+      ? { ...json, args0: [json.args0[1], json.args0[0], json.args0[2]] } : undefined });
+    const source = '# ABS Schema: 2\ncustom_function_def(int, "work", int, "amount")\ncustom_function_call_return_advance(FUNC_NAME=$work)';
+    const result = await reconcileAbsDraft(await base(), source, { ...reordered.syntax(source, empty), fieldDefinition: reordered.field,
+      prepareBlock: reordered.prepare, variableCreation: { requestId: 'reordered-function', variables: create } });
+    expect(result.workspace.blocks.blocks[0].fields!['FUNC_NAME']).toBe('work');
+    expect((result.workspace.blocks.blocks[1].extraState as any).params).toEqual([{ name: 'amount', type: 'int' }]);
+  });
+
+  it('rejects malformed README pairs and does not infer signatures for unknown protocols', async () => {
+    for (const source of ['custom_function_def("work", void, int)', 'custom_function_def("work", int, int, "amount", int, "amount")',
+      'custom_function_def("work", int, float, "amount") @extra:{"params":[{"name":"amount","type":"int"}]}']) {
+      await expectAsync(run(source)).toBeRejected();
+    }
+    const unknown = captureAbsCustomFunctions({ ...snapshot, customFunctions: undefined }).syntax('# ABS Schema: 2\ncustom_function_def("work", int, int, "amount")', empty);
+    expect(unknown.argumentOrder?.('custom_function_def')).toBeUndefined();
   });
   it('preserves identities across repeated edits, type changes and parameter removal without deleting models', async () => {
     const first = await run(), before = await base(first.workspace, first.contracts);

@@ -1,10 +1,11 @@
 import type * as Blockly from 'blockly';
-import { serializeRuntimeFieldContract } from '../../../editors/blockly-editor/services/blockly-runtime-block-metadata';
+import { captureAbsFieldContract } from './abs-runtime-field-contract';
 import { AbsFieldDefinition } from './abs-field-values';
 import { AbsAbiWorkspace, AbsProjectionContracts, AbsSyncError, getAbsFieldDefinition } from './abs-state';
 import { indexAbsAbi } from './abs-identity-map';
 import type { DeclarativeBlockSnapshot } from '../../../editors/blockly-editor/services/blockly-declarative-block-catalog';
 import { captureAbsDeclarativeContracts } from './abs-declarative-contracts';
+import { nativeAbsArgumentOrder } from './abs-native-arguments';
 
 /** Captures existing instances only. No probe blocks, global cache, library edits or Runtime rebuild. */
 export function captureAbsRuntimeContracts(
@@ -22,15 +23,7 @@ export function captureAbsRuntimeContracts(
       for (const field of input.fieldRow) {
         if (!field.name || field.SERIALIZABLE === false) continue;
         try {
-          const runtime = serializeRuntimeFieldContract(field, state.fields?.[field.name]);
-          const { variableTypes, ...definition } = runtime;
-          fields[field.name] = {
-            ...definition,
-            ...(runtime.type === 'field_variable' ? { symbol: {
-              kind: 'variable' as const, storage: 'variable-state' as const,
-              ...(variableTypes ? { allowedTypes: variableTypes } : {}),
-            } } : {}),
-          };
+          fields[field.name] = captureAbsFieldContract(field, state.fields?.[field.name]);
         } catch (error) {
           throw new AbsSyncError('ABS_FIELD_CONTRACT_UNAVAILABLE', `${block.type}.${field.name}: ${String(error)}`, undefined, [block.id]);
         }
@@ -39,10 +32,23 @@ export function captureAbsRuntimeContracts(
     }
     contracts.fields[block.id] = fields;
     // Static JSON provides original args order; visual inputList order is not equivalent.
-    const order = declared?.get(block.type, state.extraState)?.argumentOrder;
+    const shape = declared?.get(block.type, state.extraState, state.fields);
+    const native = definitions?.nativeStructure?.(block);
+    const declaration = definitions?.get(block.type) ?? definitions?.nativeJson?.(block);
+    const order = shape?.argumentOrder ?? (native ? nativeAbsArgumentOrder(declaration ?? { type: block.type }, native) : undefined);
     if (order && Object.keys(fields).every(name => order.some(arg => arg.kind === 'field' && arg.name === name))
       && Object.keys(state.inputs ?? {}).every(name => order.some(arg => arg.kind !== 'field' && arg.name === name))) {
       (contracts.syntax ??= Object.create(null))[block.id] = order;
+      if (shape?.fieldShape) (contracts.selectors ??= Object.create(null))[block.id] = [...new Set(shape.fieldShape.map(rule => rule.field))];
+      else if (!shape && declaration && native) {
+        const selectors = Object.keys(declaration).filter(key => /^args\d+$/.test(key))
+          .sort((a, b) => Number(a.slice(4)) - Number(b.slice(4))).flatMap(key => declaration[key])
+          // A plain enum does not configure native shape. Only validator-bearing
+          // selectors constrain captured variants; reading the callback never runs it.
+          .filter(arg => arg?.type === 'field_dropdown' && fields[arg.name]
+            && block.getField(arg.name)?.getValidator()).map(arg => arg.name);
+        if (selectors.length) (contracts.selectors ??= Object.create(null))[block.id] = selectors;
+      }
     }
   }
   assertCurrent();

@@ -58,11 +58,24 @@ describe('ABS field contracts', () => {
     expect(resolveAbsFieldValue(readAbsFieldToken('001'), { type: 'custom', valueType: 'string' })).toBe('001');
     expect(resolveAbsFieldValue(readAbsFieldToken('[false,1]'), { type: 'field_custom' })).toEqual([false, 1]);
   });
+  it('retains nested project-data state without the deleted legacy field helper', () => {
+    const value = { schemaVersion: 1, frames: { $ailyData: { id: `sha256:${'a'.repeat(64)}` } } };
+    const token = readAbsFieldToken(JSON.stringify(value));
+    expect(resolveAbsFieldValue(token, { type: 'field_custom', valueType: 'json' })).toBe(token.value);
+    expect(token.value).toEqual(value);
+  });
   it('rejects invalid and ambiguous dropdown coercions', () => {
     expect(() => resolveAbsFieldValue(readAbsFieldToken('"FALSE"'), dropdown)).toThrow();
     expect(() => resolveAbsFieldValue(readAbsFieldToken('false'), {
       type: 'field_dropdown', options: [['lower', 'false'], ['upper', 'FALSE']],
     })).toThrow();
+  });
+
+  it('accepts exact numeric dropdown lexemes without approximating other enum keys', () => {
+    const pins = { type: 'field_dropdown', options: [['pin', '18'], ['padded', '018']] as const };
+    expect(resolveAbsFieldValue(readAbsFieldToken('18'), pins)).toBe('18');
+    expect(resolveAbsFieldValue(readAbsFieldToken('"18"'), pins)).toBe('18');
+    for (const source of ['18.0', '1.8e1', '19']) expect(() => resolveAbsFieldValue(readAbsFieldToken(source), pins)).toThrow();
   });
   it('rejects lossy number coercions', () => {
     for (const text of ['1e999', 'null', 'false', '1.5', '11']) {

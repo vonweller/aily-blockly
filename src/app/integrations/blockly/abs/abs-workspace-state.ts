@@ -8,20 +8,28 @@ import { loadAbsWorkspaceInChunks } from './abs-chunk-loader';
 import type { BlocklyProjectDocument } from '../../../editors/blockly-editor/services/blockly-project-model';
 import { AbsBlockShapeContract, assertAbsDeclaredBlockShape } from './abs-declarative-contracts';
 import type { DeclarativeBlockSnapshot } from '../../../editors/blockly-editor/services/blockly-declarative-block-catalog';
+import { orderAbsNativeFields } from './abs-native-field-order';
+import type { AbsNativeInstance } from './abs-native-binding';
+import { withNativeStateLoading } from '../../../editors/blockly-editor/services/blockly-native-state-loading';
 
 export interface AbsWorkspaceLoadOptions { chunk?: boolean; onProgress?: (blocks: number, batches: number) => void }
 
 /** Native serialization boundary; the retained candidate is never passed to library callbacks. */
 export async function loadAbsWorkspaceState(
   state: AbsAbiWorkspace, workspace: Blockly.WorkspaceSvg, options: AbsWorkspaceLoadOptions, assertCurrent: () => void,
+  contracts?: AbsProjectionContracts,
 ): Promise<void> {
   const runtime = window['Blockly'] as typeof Blockly;
   assertCurrent();
   const detached = JSON.parse(absJson(state));
+  orderAbsNativeFields(detached, contracts);
   runtime.Events.disable();
   try {
     if (options.chunk) await loadAbsWorkspaceInChunks(detached, workspace, options.onProgress, assertCurrent);
-    else { runtime.serialization.workspaces.load(detached, workspace); workspace.render?.(); }
+    else {
+      withNativeStateLoading(runtime, workspace, detached, () => runtime.serialization.workspaces.load(detached, workspace));
+      workspace.render?.();
+    }
   } finally { runtime.Events.enable(); }
   assertCurrent();
 }
@@ -46,19 +54,25 @@ export function captureAbsWorkspaceState(workspace: Blockly.Workspace, assertCur
  */
 export function assertAbsRuntimeShapeSupported(
   before: AbsAbiWorkspace, candidate: AbsAbiWorkspace, contracts: AbsProjectionContracts,
-  blockContract?: (type: string, extraState?: unknown) => AbsBlockShapeContract | undefined,
+  blockContract?: (type: string, extraState?: unknown, fields?: Readonly<Record<string, unknown>>) => AbsBlockShapeContract | undefined,
+  nativeInstances?: ReadonlyMap<string, AbsNativeInstance>,
 ): void {
   const previous = indexAbsAbi(before);
+  const shapeFor = (block: AbsAbiWorkspace['blocks']['blocks'][number]) => {
+    const instance = nativeInstances?.get(block.id);
+    if (instance && instance.type !== block.type) throw new AbsSyncError('ABS_NATIVE_BINDING_INVALID', 'Prepared native identity changed type.', undefined, [block.id]);
+    return instance?.shape ?? blockContract?.(block.type, block.extraState, block.fields);
+  };
   // Check known declarative connections without constructing a block. Unknown
   // dynamic connections still have to survive complete native readback.
   const accepts = (child: AbsAbiWorkspace['blocks']['blocks'][number], kind: 'value' | 'statement') => {
-    const shape = blockContract?.(child.type, child.extraState);
+    const shape = shapeFor(child);
     if (shape && !(kind === 'value' ? shape.output : shape.previous)) {
       throw new AbsSyncError('ABS_RUNTIME_SHAPE_UNSUPPORTED', 'Prepared block has an incompatible connection.', undefined, [child.id]);
     }
   };
   for (const [id, block] of indexAbsAbi(candidate)) {
-    const shape = blockContract?.(block.type, block.extraState);
+    const shape = shapeFor(block);
     if (shape) {
       for (const [name, input] of Object.entries(block.inputs ?? {})) {
         if (shape.inputs[name]) for (const child of [input.block, input.shadow]) if (child) accepts(child, shape.inputs[name]);
@@ -68,19 +82,25 @@ export function assertAbsRuntimeShapeSupported(
     const original = previous.get(id);
     const fail = () => { throw new AbsSyncError('ABS_RUNTIME_SHAPE_UNSUPPORTED',
       `${block.type}: New or reshaped blocks require a prepared runtime contract before loading.`, undefined, [id]); };
-    if (shape?.procedure) {
+    if (nativeInstances?.has(id) || shape?.procedure || shape?.mutation || shape?.fieldShape) {
       if (original && original.type !== block.type) fail();
-      assertAbsDeclaredBlockShape(block, shape);
+      assertAbsDeclaredBlockShape(block, shape!);
       continue;
     }
     if (!original) {
-      const contract = blockContract?.(block.type, block.extraState);
+      const contract = shape;
       if (!contract) fail();
       assertAbsDeclaredBlockShape(block, contract!);
       continue;
     }
     if (!original || original.type !== block.type || absJson(original.extraState ?? null) !== absJson(block.extraState ?? null)) fail();
     const oldFields = original.fields ?? {}, fields = block.fields ?? {};
+    if (contracts.selectors?.[id]?.some(name => absJson(oldFields[name] ?? null) !== absJson(fields[name] ?? null))) fail();
+    const knownOrder = contracts.syntax?.[id];
+    if (knownOrder) {
+      const knownInputs = new Set(knownOrder.filter(arg => arg.kind !== 'field').map(arg => arg.name));
+      if (Object.keys(block.inputs ?? {}).some(name => !knownInputs.has(name))) fail();
+    }
     if (absJson(Object.keys(oldFields).sort()) !== absJson(Object.keys(fields).sort())) fail();
     for (const [name, value] of Object.entries(fields)) {
       if (absJson(value) !== absJson(oldFields[name]) && !contracts.fields[id]?.[name]) fail();

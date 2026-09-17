@@ -1,5 +1,6 @@
 import * as Blockly from 'blockly';
 import 'blockly/blocks';
+import '../../../editors/blockly-editor/components/blockly/plugins/block-plus-minus/src/index.js';
 import { AbsWorkspaceSyncService } from './abs-workspace-sync.service';
 import { AbsBaselineStore, AbsSyncStoragePort, AbsSyncStorageAccess } from './abs-baseline-store';
 import { absJson, hashAbsText } from './abs-identity-map';
@@ -8,14 +9,29 @@ import { composeBlocklyPage, replaceBlocklyPageWorkspace } from '../../../editor
 import { BlocklyProjectRevision } from '../../../editors/blockly-editor/services/blockly-project-revision';
 import { BlocklyWorkspaceEditGate } from '../../../editors/blockly-editor/services/blockly-workspace-edit-lease';
 import { _ProjectService } from '../../../editors/blockly-editor/services/project.service';
-import { createAilyProjectDataValue, projectDataRuntime } from '@domain/project/public-api';
+import { createAilyProjectDataValue, materializeGenericProjectDataValues, projectDataRuntime } from '@domain/project/public-api';
 import { SerialOperationQueue } from '@shared/public-api';
 import { BlocklyDeclarativeBlockCatalog } from '../../../editors/blockly-editor/services/blockly-declarative-block-catalog';
 import { AbsGenerationToolsService } from './abs-generation-tools.service';
 import { BlocklyEditorAutomationAdapter } from '../blockly-editor-automation.adapter';
 import { BlocklyGeneratorRuntimeService } from '../../../editors/blockly-editor/services/blockly-generator-runtime.service';
+import { nativeReconciliationDefinition, nativeReconciliationSteps } from './abs-native-reconciliation.fixture';
+import { nativeFieldOrder } from './abs-native-field-order';
+import { withNativeStateLoading } from '../../../editors/blockly-editor/services/blockly-native-state-loading';
+import { observeNativeBlockDefinition } from '../../../editors/blockly-editor/services/blockly-native-structure';
+import { nativeDefaultSource } from './abs-native-defaults.fixture';
+import { nativeDormantSource } from './abs-native-shadows.fixture';
+import '../../../editors/blockly-editor/components/blockly/custom-field/field-u8g2-bitmap';
 
 describe('v2 actual workspace generation coordinator', () => {
+  let originalTimeout: number;
+  beforeAll(() => {
+    originalTimeout = jasmine.DEFAULT_TIMEOUT_INTERVAL;
+    // One coordinator case may validate, apply, reshape and reopen through
+    // several isolated candidates. Keep each product deadline unchanged.
+    jasmine.DEFAULT_TIMEOUT_INTERVAL = 20000;
+  });
+  afterAll(() => { jasmine.DEFAULT_TIMEOUT_INTERVAL = originalTimeout; });
   let service: AbsWorkspaceSyncService, project: _ProjectService, editor: any;
   let disk: Map<string, string>, values: Map<string, any>;
   let port: AbsSyncStoragePort, gate: BlocklyWorkspaceEditGate;
@@ -108,7 +124,10 @@ describe('v2 actual workspace generation coordinator', () => {
       assertWorkspaceSharedChange: jasmine.createSpy('shared'),
       restoreProjectWorkspaceSnapshot: jasmine.createSpy('restore').and.callFake((snapshot, owner) => {
         gate.assertAvailable(owner); document = JSON.parse(absJson(snapshot));
-        Blockly.serialization.workspaces.load(composeBlocklyPage(document, document.activePageId), editor.workspace);
+        const state = composeBlocklyPage(document, document.activePageId);
+        const definitions = editor.captureDeclarativeBlockDefinitions();
+        withNativeStateLoading(Blockly, editor.workspace, state,
+          () => Blockly.serialization.workspaces.load(state, editor.workspace), block => nativeFieldOrder(block, definitions));
       }),
       prepareProjectCode: jasmine.createSpy('prepareCode').and.resolveTo(null),
       markWorkspaceCodeDirty: jasmine.createSpy('dirty'),
@@ -142,6 +161,639 @@ describe('v2 actual workspace generation coordinator', () => {
     editor.workspace.dispose(); container?.remove(); container = undefined;
     delete Blockly.Blocks['abs_sync_root']; window['Blockly'] = oldBlockly; window['fs'] = oldFs;
     for (const type of registeredTypes.splice(0)) delete Blockly.Blocks[type];
+    if (Blockly.Extensions.isRegistered('native_commit_extension')) Blockly.Extensions.unregister('native_commit_extension');
+  });
+
+  const enableNative = () => {
+    Blockly.Extensions.register('native_commit_extension', function() {
+      this.getField('MODE').setValidator(mode => {
+        if (this.getInput('DETAIL')) this.removeInput('DETAIL');
+        if (mode === 'B') this.appendDummyInput('DETAIL').appendField(new Blockly.FieldTextInput('default'), 'DETAIL');
+        return mode;
+      });
+      this.data = 'native:' + this.id;
+    });
+    declare(nativeReconciliationDefinition);
+    const replay = { steps: structuredClone(nativeReconciliationSteps), assertCurrent: jasmine.createSpy('nativeCurrent') };
+    editor.captureNativeReplay = jasmine.createSpy('captureNativeReplay').and.returnValue(replay);
+    return replay;
+  };
+
+  const enableDefaults = (extra = '') => {
+    const replay = enableNative(), source = nativeDefaultSource + extra;
+    new Function('Blockly', 'Arduino', source)(Blockly, { forBlock: {} });
+    for (const type of ['native_default_owner', 'native_default_leaf']) {
+      registeredTypes.push(type); observeNativeBlockDefinition(Blockly.Blocks[type]);
+    }
+    replay.steps.push({ kind: 'script', label: 'owned-default', source });
+  };
+
+  for (const { rendered, chunk } of [{ rendered: false, chunk: false }, { rendered: true, chunk: false }, { rendered: true, chunk: true }]) it(`replaces owned default children through validate/apply/edit/disconnect/reopen (${rendered ? 'rendered' : 'headless'}, chunk=${chunk})`, async () => {
+    enableDefaults();
+    if (rendered) renderWorkspace();
+    const base = await baseline(), before = absJson(nativeState()), files = [...disk];
+    const source = base.source + '\nnative_default_owner(B, math_number(7))\n';
+    const committed = (await new AbsBaselineStore(port, scope).loadCommitted())!;
+    const { generationEvidence } = await import('./abs-generation-protocol');
+    const request = { version: 2 as const, requestId: crypto.randomUUID(), base: (await generationEvidence(committed, null)).binding,
+      candidate: { hash: await hashAbsText(source), bytes: new TextEncoder().encode(source).byteLength } };
+    const validation = await service.validateGeneration(source, request);
+    expect(absJson(nativeState())).toBe(before); expect([...disk]).toEqual(files);
+    expect((await service.applyGeneration(source, base.generation, { chunk }, validation)).publication.status).toBe('COMMITTED');
+    const owner = editor.workspace.getBlocksByType('native_default_owner', false)[0], id = owner.id;
+    const childId = owner.getInputTargetBlock('VALUE').id;
+    expect(owner.getInputTargetBlock('VALUE').getFieldValue('NUM')).toBe(7);
+    expect(editor.workspace.getBlocksByType('native_default_leaf', false).length).toBe(0);
+    const edit = disk.get('project.abs')!.replace(/native_default_owner\(B, math_number\((?:NUM=)?7\)\)/, 'native_default_owner(B, math_number(9))');
+    expect(edit).not.toBe(disk.get('project.abs'));
+    expect((await service.applyGeneration(edit, JSON.parse(disk.get('project.abs.map.json')!).generation, { chunk })).publication.status).toBe('COMMITTED');
+    expect(editor.workspace.getBlockById(childId).getFieldValue('NUM')).toBe(9);
+    const empty = disk.get('project.abs')!.replace(/native_default_owner\(B, math_number\((?:NUM=)?9\)\)/, 'native_default_owner(B, null)');
+    expect((await service.applyGeneration(empty, JSON.parse(disk.get('project.abs.map.json')!).generation, { chunk })).publication.status).toBe('COMMITTED');
+    const saved = disk.get('project.abi')!;
+    editor.restoreProjectWorkspaceSnapshot(JSON.parse(saved));
+    expect(editor.workspace.getBlockById(id).getInputTargetBlock('VALUE')).toBeNull();
+    expect(editor.workspace.getBlocksByType('native_default_leaf', false).length).toBe(0);
+    expect(editor.workspace.getBlockById(childId)).toBeNull();
+    expect(roots().isDeletable()).toBeFalse(); expect(disk.get('project.abi')).toBe(saved);
+  });
+
+  for (const shadow of [false, true]) it(`adopts new omitted defaults, publishes normal ABS, edits and reopens stable IDs (shadow=${shadow})`, async () => {
+    enableDefaults(shadow ? `
+      Blockly.Blocks.native_default_owner.makeDefault = function() {
+        this.getInput('VALUE').connection.setShadowState({ type: 'math_number', fields: { NUM: 5 } });
+      };` : '');
+    renderWorkspace();
+    const base = await baseline();
+    expect((await service.applyGeneration(base.source + '\nnative_default_owner(A)\n', base.generation, { chunk: true })).publication.status).toBe('COMMITTED');
+    const owner = editor.workspace.getBlocksByType('native_default_owner', false)[0], ownerId = owner.id;
+    const child = shadow ? owner.getInputTargetBlock('VALUE') : owner.getInputTargetBlock('VALUE').getInputTargetBlock('CHILD');
+    const childId = child.id;
+    expect(child.getFieldValue('NUM')).toBe(5); expect(child.isShadow()).toBe(shadow);
+    const published = disk.get('project.abs')!;
+    expect(published).toContain('math_number'); expect(published).not.toContain(childId);
+    const edited = published.replace(/math_number\((?:NUM=)?5\)/, 'math_number(8)');
+    expect(edited).not.toBe(published);
+    expect((await service.applyGeneration(edited, JSON.parse(disk.get('project.abs.map.json')!).generation, { chunk: false })).publication.status).toBe('COMMITTED');
+    expect(editor.workspace.getBlockById(childId).getFieldValue('NUM')).toBe(8);
+    const saved = disk.get('project.abi')!;
+    editor.restoreProjectWorkspaceSnapshot(JSON.parse(saved));
+    expect(editor.workspace.getBlockById(childId).getFieldValue('NUM')).toBe(8);
+    expect(editor.workspace.getBlockById(childId).isShadow()).toBe(shadow);
+    expect(editor.workspace.getBlockById(ownerId)).not.toBeNull(); expect(roots().isDeletable()).toBeFalse();
+    if (!shadow) {
+      const latest = disk.get('project.abs')!;
+      const empty = latest.replace(/native_default_owner\(A, native_default_leaf\(math_number\((?:NUM=)?8\)\)\)/, 'native_default_owner(A)');
+      expect(empty).not.toBe(latest);
+      expect((await service.applyGeneration(empty, JSON.parse(disk.get('project.abs.map.json')!).generation)).publication.status).toBe('COMMITTED');
+      expect(editor.workspace.getBlockById(ownerId).getInputTargetBlock('VALUE')).toBeNull();
+      expect(editor.workspace.getBlockById(childId)).toBeNull();
+    }
+  });
+
+  it('persists a covered default shadow and respawns its original identity after save/reopen', async () => {
+    enableDefaults(`Blockly.Blocks.native_default_owner.makeDefault = function() {
+      this.getInput('VALUE').connection.setShadowState({ type: 'math_number', fields: { NUM: 13 } });
+    };`);
+    renderWorkspace();
+    const base = await baseline();
+    expect((await service.applyGeneration(base.source + '\nnative_default_owner(A, math_number(7))\n', base.generation)).publication.status).toBe('COMMITTED');
+    const owner = editor.workspace.getBlocksByType('native_default_owner', false)[0], ownerId = owner.id;
+    const fallbackId = owner.getInput('VALUE').connection.getShadowState().id;
+    expect(fallbackId).toBeTruthy();
+    editor.restoreProjectWorkspaceSnapshot(JSON.parse(disk.get('project.abi')!));
+    const reopened = editor.workspace.getBlockById(ownerId);
+    reopened.getInputTargetBlock('VALUE').dispose(false);
+    const fallback = reopened.getInputTargetBlock('VALUE');
+    expect(fallback.id).toBe(fallbackId); expect(fallback.isShadow()).toBeTrue(); expect(fallback.getFieldValue('NUM')).toBe(13);
+    expect(roots().isDeletable()).toBeFalse();
+  });
+
+  it('externalizes large data in an adopted default through the existing Project Data pipeline', async () => {
+    enableDefaults(`const init = Blockly.Blocks.native_default_leaf.init;
+      Blockly.Blocks.native_default_leaf.init = function() {
+        init.call(this); this.appendDummyInput().appendField(new Blockly.FieldTextInput('x'.repeat(40000)), 'TEXT');
+        this.payload = { numbers: Array(12000).fill(42) };
+        this.saveExtraState = () => this.payload;
+        this.loadExtraState = state => { this.payload = state; };
+      };`);
+    const base = await baseline();
+    expect((await service.applyGeneration(base.source + '\nnative_default_owner(A)\n', base.generation)).publication.status).toBe('COMMITTED');
+    const leaf = editor.workspace.getBlocksByType('native_default_leaf', false)[0], id = leaf.id;
+    expect(leaf.getFieldValue('TEXT')).toBe('x'.repeat(40000));
+    expect(leaf.saveExtraState().numbers.length).toBe(12000);
+    expect(values.size).toBe(2);
+    expect(disk.get('project.abs')).not.toContain('x'.repeat(100));
+    expect(disk.get('project.abi')).not.toContain('x'.repeat(100));
+    const source = disk.get('project.abs')!.replace(/math_number\((?:NUM=)?5\)/, 'math_number(9)');
+    expect((await service.applyGeneration(source, JSON.parse(disk.get('project.abs.map.json')!).generation)).publication.status).toBe('COMMITTED');
+    expect(editor.workspace.getBlockById(id).getFieldValue('TEXT')).toBe('x'.repeat(40000));
+    expect(editor.workspace.getBlockById(id).saveExtraState().numbers).toEqual(Array(12000).fill(42));
+  });
+
+  for (const chunk of [false, true]) it(`validates, commits, edits and reopens nested dormant shadows without exposing hidden data in ABS (chunk=${chunk})`, async () => {
+    enableDefaults(nativeDormantSource + `
+      const init = Blockly.Blocks.native_default_leaf.init;
+      Blockly.Blocks.native_default_leaf.init = function() { init.call(this);
+        this.payload = { text: 'h'.repeat(40000), numbers: Array(12000).fill(42) };
+        this.saveExtraState = () => this.isShadow() ? this.payload : null;
+        this.loadExtraState = state => { if(state) this.payload = state; };
+      };
+    `);
+    renderWorkspace();
+    const base = await baseline(), before = absJson(nativeState()), files = [...disk];
+    const source = base.source + '\nnative_default_owner(A)\n';
+    const committed = (await new AbsBaselineStore(port, scope).loadCommitted())!;
+    const { generationEvidence } = await import('./abs-generation-protocol');
+    const request = { version: 2 as const, requestId: crypto.randomUUID(), base: (await generationEvidence(committed, null)).binding,
+      candidate: { hash: await hashAbsText(source), bytes: new TextEncoder().encode(source).byteLength } };
+    const validation = await service.validateGeneration(source, request);
+    expect(absJson(nativeState())).toBe(before); expect([...disk]).toEqual(files);
+    expect((await service.applyGeneration(source, base.generation, { chunk }, validation)).publication.status).toBe('COMMITTED');
+    const owner = editor.workspace.getBlocksByType('native_default_owner', false)[0], ownerId = owner.id;
+    const fallback = owner.getInput('VALUE').connection.getShadowState(), fallbackId = fallback.id;
+    const real = owner.getInputTargetBlock('VALUE'), realId = real.id;
+    const nestedFallbackId = real.getInput('CHILD').connection.getShadowState().id;
+    expect(fallback.extraState.text.length).toBe(40000); expect(values.size).toBe(1);
+    expect(disk.get('project.abs')).not.toContain('h'.repeat(100));
+    expect(disk.get('project.abs')).not.toContain('$ailyProjectDataValue');
+    expect(disk.get('project.abi')).toContain('$ailyProjectDataValue');
+    const edited = disk.get('project.abs')!.replace(/math_number\((?:NUM=)?5\)/, 'math_number(7)');
+    expect(edited).not.toBe(disk.get('project.abs'));
+    expect((await service.applyGeneration(edited, JSON.parse(disk.get('project.abs.map.json')!).generation, { chunk })).publication.status).toBe('COMMITTED');
+    // The normal open pipeline materializes payloads before the synchronous loader.
+    editor.restoreProjectWorkspaceSnapshot(await materializeGenericProjectDataValues(JSON.parse(disk.get('project.abi')!), {
+      resolve: ref => projectDataRuntime.resolve(ref),
+    }));
+    const loadedOwner = editor.workspace.getBlockById(ownerId), loadedReal = editor.workspace.getBlockById(realId);
+    loadedReal.getInputTargetBlock('CHILD').dispose(false);
+    expect(loadedReal.getInputTargetBlock('CHILD').id).toBe(nestedFallbackId);
+    expect(loadedReal.getInputTargetBlock('CHILD').getFieldValue('NUM')).toBe(11);
+    loadedReal.dispose(false);
+    const visibleFallback = loadedOwner.getInputTargetBlock('VALUE');
+    expect(visibleFallback.id).toBe(fallbackId); expect(visibleFallback.isShadow()).toBeTrue();
+    expect(visibleFallback.getInputTargetBlock('CHILD').getFieldValue('NUM')).toBe(13);
+    expect(visibleFallback.saveExtraState()).toEqual({ text: 'h'.repeat(40000), numbers: Array(12000).fill(42) });
+    expect(roots().isDeletable()).toBeFalse();
+  });
+
+  it('creates a JS-only dynamic block, commits canonical ABI, and reopens without prior instance evidence', async () => {
+    const replay = enableNative();
+    const source = `Blockly.Blocks.native_js_reopen = { init() {
+      this.appendDummyInput('mode').appendField(new Blockly.FieldDropdown([['A', 'A'], ['B', 'B']], mode => {
+        if (this.getInput('detail')) this.removeInput('detail');
+        if (mode === 'B') this.appendDummyInput('detail').appendField(new Blockly.FieldTextInput('default'), 'A_DETAIL');
+        return mode;
+      }), 'Z_MODE');
+    } };
+    Arduino.forBlock.native_js_reopen = block => '// ' + block.getFieldValue('A_DETAIL') + '\\n';`;
+    const register = () => {
+      new Function('Blockly', 'Arduino', source)(Blockly, { forBlock: {} });
+      observeNativeBlockDefinition(Blockly.Blocks['native_js_reopen']);
+    };
+    register(); registeredTypes.push('native_js_reopen');
+    replay.steps.push({ kind: 'script', label: 'js-only-reopen', source });
+    const base = await baseline(), before = absJson(nativeState());
+    const candidate = base.source + '\nnative_js_reopen(B, "preserved")\n';
+    const committed = (await new AbsBaselineStore(port, scope).loadCommitted())!;
+    const { generationEvidence } = await import('./abs-generation-protocol');
+    const request = { version: 2 as const, requestId: crypto.randomUUID(), base: (await generationEvidence(committed, null)).binding,
+      candidate: { hash: await hashAbsText(candidate), bytes: new TextEncoder().encode(candidate).byteLength } };
+    await service.validateGeneration(candidate, request);
+    expect(absJson(nativeState())).toBe(before);
+    expect((await service.applyGeneration(candidate, base.generation)).publication.status).toBe('COMMITTED');
+    const added = editor.workspace.getBlocksByType('native_js_reopen', false)[0], id = added.id;
+    expect(added.getFieldValue('A_DETAIL')).toBe('preserved');
+    const saved = disk.get('project.abi')!;
+    editor.workspace.clear(); catalog.clear(); register();
+    expect(catalog.capture(Blockly.Blocks).get('native_js_reopen')).toBeUndefined();
+    editor.restoreProjectWorkspaceSnapshot(JSON.parse(saved));
+    expect(editor.workspace.getBlockById(id).getFieldValue('A_DETAIL')).toBe('preserved');
+    expect(roots().isDeletable()).toBeFalse();
+    expect(disk.get('project.abi')).toBe(saved);
+  });
+
+  it('creates and reshapes an unknown native extension through the unique validate/apply transaction', async () => {
+    enableNative();
+    const base = await baseline(), before = absJson(nativeState()), diskBefore = [...disk];
+    let source = base.source + '\nnative_commit_shape(B, math_number(7), "detail")\n';
+    const evidence = (await new AbsBaselineStore(port, scope).loadCommitted())!;
+    const { generationEvidence } = await import('./abs-generation-protocol');
+    const request = { version: 2 as const, requestId: crypto.randomUUID(), base: (await generationEvidence(evidence, null)).binding,
+      candidate: { hash: await hashAbsText(source), bytes: new TextEncoder().encode(source).byteLength } };
+    const validated = await service.validateGeneration(source, request);
+    expect(absJson(nativeState())).toBe(before); expect([...disk]).toEqual(diskBefore);
+    expect(editor.prepareProjectCode).not.toHaveBeenCalled();
+    expect((await service.applyGeneration(source, base.generation, {}, validated)).publication.status).toBe('COMMITTED');
+    const added = editor.workspace.getBlocksByType('native_commit_shape', false)[0];
+    const id = added.id;
+    expect(id).not.toContain('abs-candidate-'); expect(added.data).toBe('native:' + id);
+    expect(added.getFieldValue('DETAIL')).toBe('detail');
+    expect(roots().id).toBe('protected'); expect(roots().isDeletable()).toBeFalse();
+    expect(roots().isMovable()).toBeFalse(); expect(roots().data).toBe('opaque');
+    expect(nativeState().blocks.blocks[0].inputs!['VALUE'].shadow!.id).toBe('dormant');
+    expect(editor.prepareProjectCode).toHaveBeenCalledTimes(1);
+    source = disk.get('project.abs')!.replace(/native_commit_shape\(B, math_number\((?:NUM=)?7\), "detail"\)/, 'native_commit_shape(A, math_number(8))');
+    expect(source).not.toBe(disk.get('project.abs')!);
+    const generation = JSON.parse(disk.get('project.abs.map.json')!).generation;
+    expect((await service.applyGeneration(source, generation)).publication.status).toBe('COMMITTED');
+    const changed = editor.workspace.getBlockById(id);
+    expect(changed.getField('DETAIL')).toBeNull(); expect(changed.data).toBe('native:' + id);
+    expect(changed.getInputTargetBlock('VALUE').getFieldValue('NUM')).toBe(8);
+    const persisted = disk.get('project.abi')!;
+    editor.restoreProjectWorkspaceSnapshot(JSON.parse(persisted));
+    expect(editor.workspace.getBlockById(id).getFieldValue('MODE')).toBe('A');
+    expect(roots().isDeletable()).toBeFalse();
+  });
+
+  for (const effect of [
+    `block.workspace.createVariable('unrequested');`,
+    `try { setTimeout(() => {}, 1); } catch {}`,
+    `block.setFieldValue('A', 'MODE');`,
+    `throw Error('generator failed');`,
+  ]) it(`rejects native generator effects before host mutation: ${effect}`, async () => {
+    const replay = enableNative();
+    replay.steps.push({ kind: 'script', label: 'generator-effect', source:
+      `Arduino.forBlock.native_commit_shape = block => { ${effect} return ''; };` });
+    const base = await baseline(), before = absJson(nativeState()), originalDisk = [...disk];
+    const source = base.source + '\nnative_commit_shape(B, math_number(7), "detail")\n';
+    await expectAsync(service.applyGeneration(source, base.generation)).toBeRejected();
+    expect(absJson(nativeState())).toBe(before); expect([...disk]).toEqual(originalDisk);
+    expect(editor.restoreProjectWorkspaceSnapshot).not.toHaveBeenCalled();
+    expect(editor.prepareProjectCode).not.toHaveBeenCalled();
+  });
+
+  it('rejects a replay becoming stale and a disk CAS conflict during native preparation', async () => {
+    const replay = enableNative();
+    const base = await baseline(), before = absJson(nativeState());
+    const source = base.source + '\nnative_commit_shape(B, math_number(7), "detail")\n';
+    let calls = 0;
+    replay.assertCurrent.and.callFake(() => { if (++calls > 8) throw Error('stale native replay'); });
+    await expectAsync(service.applyGeneration(source, base.generation)).toBeRejectedWithError(/stale native replay/);
+    expect(absJson(nativeState())).toBe(before);
+    replay.assertCurrent.and.callFake(() => { disk.set('project.abs', 'external edit'); });
+    await expectAsync(service.applyGeneration(source, base.generation)).toBeRejected();
+    expect(disk.get('project.abs')).toBe('external edit'); expect(absJson(nativeState())).toBe(before);
+    expect(editor.prepareProjectCode).not.toHaveBeenCalled();
+  });
+
+  it('retains disabled reasons and rejects protected deletion before native execution', async () => {
+    enableNative();
+    roots().setDisabledReason(true, 'HOST_POLICY');
+    const base = await baseline();
+    expect(base.source).toContain('@disabled');
+    const source = base.source + '\nnative_commit_shape(A, math_number(7))\n';
+    expect((await service.applyGeneration(source, base.generation)).publication.status).toBe('COMMITTED');
+    expect([...roots().getDisabledReasons()]).toEqual(['HOST_POLICY']);
+    const generation = JSON.parse(disk.get('project.abs.map.json')!).generation;
+    const oldState = absJson(nativeState()), oldDisk = [...disk];
+    editor.captureNativeReplay.calls.reset();
+    await expectAsync(service.applyGeneration('# ABS Schema: 2\n', generation)).toBeRejected();
+    expect(editor.captureNativeReplay).not.toHaveBeenCalled();
+    expect(absJson(nativeState())).toBe(oldState); expect([...disk]).toEqual(oldDisk);
+  });
+
+  it('reshapes a protected native instance without replacing its metadata, child or dormant shadow', async () => {
+    enableNative();
+    const block = editor.workspace.newBlock('native_commit_shape', 'native-protected');
+    block.setFieldValue('B', 'MODE'); block.setFieldValue('old', 'DETAIL');
+    block.setDeletable(false); block.setMovable(false); block.data = 'user-owned metadata';
+    const child = editor.workspace.newBlock('math_number', 'native-value'); child.setFieldValue(9, 'NUM');
+    block.getInput('VALUE').connection.connect(child.outputConnection);
+    block.getInput('VALUE').connection.setShadowState({ type: 'math_number', id: 'native-shadow', fields: { NUM: 4 } });
+    const base = await baseline();
+    const source = base.source.replace(/native_commit_shape\(B, math_number\((?:NUM=)?9\), "old"\)/, 'native_commit_shape(A, math_number(9))');
+    expect(source).not.toBe(base.source);
+    expect((await service.applyGeneration(source, base.generation)).publication.status).toBe('COMMITTED');
+    const changed = editor.workspace.getBlockById('native-protected');
+    expect(changed.isDeletable()).toBeFalse(); expect(changed.isMovable()).toBeFalse();
+    expect(changed.data).toBe('user-owned metadata'); expect(changed.getField('DETAIL')).toBeNull();
+    expect(changed.getInputTargetBlock('VALUE').id).toBe('native-value');
+    expect(changed.getInput('VALUE').connection.getShadowState()).toEqual({ type: 'math_number', id: 'native-shadow', fields: { NUM: 4 } });
+  });
+
+  it('does not promote one prepared native instance to all configurations of the same type', async () => {
+    enableNative();
+    const base = await baseline();
+    const source = base.source + '\nnative_commit_shape(A, math_number(1))\nnative_commit_shape(B, math_number(2), "only B")\n';
+    expect((await service.applyGeneration(source, base.generation)).publication.status).toBe('COMMITTED');
+    const variants = editor.workspace.getBlocksByType('native_commit_shape', false);
+    expect(variants.length).toBe(2);
+    expect(variants.find(block => block.getFieldValue('MODE') === 'A').getField('DETAIL')).toBeNull();
+    expect(variants.find(block => block.getFieldValue('MODE') === 'B').getFieldValue('DETAIL')).toBe('only B');
+    expect(new Set(variants.map(block => block.id)).size).toBe(2);
+    expect(variants.every(block => block.data === 'native:' + block.id)).toBeTrue();
+  });
+
+  const enableNativeVariables = () => {
+    const replay = enableNative();
+    const variable = { type: 'variables_get', message0: '%1', args0: [{ type: 'field_variable', name: 'VAR', variable: 'unused-default' }], output: null };
+    replay.steps.push({ kind: 'definitions', definitions: [variable] });
+    replay.steps.push({ kind: 'script', label: 'variable-generator', source: `
+      Arduino.forBlock.variables_get = block => [block.getField('VAR').getVariable().name, 0];
+    ` });
+    return replay;
+  };
+
+  const enableNativeProcedures = () => {
+    const replay = enableNativeVariables();
+    replay.steps.push({ kind: 'script', label: 'procedure-generators', source: `
+      Arduino.forBlock.procedures_defnoreturn = block => {
+        Arduino.addFunction(block.getFieldValue('NAME'), 'void ' + block.getFieldValue('NAME') + '() {\\n' + Arduino.statementToCode(block, 'STACK') + '}');
+        return '';
+      };
+      Arduino.forBlock.procedures_defreturn = block => {
+        Arduino.addFunction(block.getFieldValue('NAME'), 'int ' + block.getFieldValue('NAME') + '() { return ' + Arduino.valueToCode(block, 'RETURN', 0) + '; }');
+        return '';
+      };
+      // Actual older library handlers use INPUT<n>; the shared adapter must also
+      // run in the independent candidate, without changing its ARG<n> blocks.
+      Arduino.forBlock.procedures_callnoreturn = block => block.getProcedureCall() + '(' + (block.arguments_ || []).map((_, index) => Arduino.valueToCode(block, 'INPUT' + index, 0)).join(',') + ');\\n';
+      Arduino.forBlock.procedures_callreturn = block => [block.getProcedureCall() + '()', 0];
+    ` });
+    return replay;
+  };
+
+  it('prepares procedure parameter identities alongside unknown native blocks, then edits and reopens without new models', async () => {
+    enableNativeProcedures(); editor.workspace.createVariable('amount', '', 'amount-id');
+    const base = await baseline(), before = absJson(nativeState()), files = [...disk];
+    const source = base.source + '\nprocedures_defnoreturn(NAME="work") @extra:{"params":[{"name":"amount"}]}\n'
+      + '    @STACK:\n        native_commit_shape(B, $amount, "inside")\n'
+      + 'procedures_callnoreturn() @extra:{"name":"work","params":["amount"]}\n    @ARG0:\n        math_number(5)\n';
+    const committed = (await new AbsBaselineStore(port, scope).loadCommitted())!;
+    const { generationEvidence } = await import('./abs-generation-protocol');
+    const request = { version: 2 as const, requestId: crypto.randomUUID(), base: (await generationEvidence(committed, null)).binding,
+      candidate: { hash: await hashAbsText(source), bytes: new TextEncoder().encode(source).byteLength } };
+    const validation = await service.validateGeneration(source, request);
+    expect(absJson(nativeState())).toBe(before); expect([...disk]).toEqual(files);
+    await service.applyGeneration(source, base.generation, {}, validation);
+    const definition = editor.workspace.getBlocksByType('procedures_defnoreturn', false)[0];
+    const state = nativeState(), parameter = definition.saveExtraState().params[0];
+    expect(state.blocks.blocks[0].id).toBe(definition.id); // Same shared-first order as project save/reopen.
+    expect(parameter).toEqual({ name: 'amount', id: 'amount-id', argId: 'abs_arg_0' });
+    expect(definition.getInputTargetBlock('STACK').getInputTargetBlock('VALUE').getFieldValue('VAR')).toBe('amount-id');
+    expect(state['variables']).toEqual([{ name: 'amount', id: 'amount-id' }]);
+    const ids = editor.workspace.getAllBlocks(false).map(block => block.id).sort();
+    const next = disk.get('project.abs')!.replace('"inside"', '"edited"');
+    await service.applyGeneration(next, JSON.parse(disk.get('project.abs.map.json')!).generation);
+    expect(editor.workspace.getAllBlocks(false).map(block => block.id).sort()).toEqual(ids);
+    expect(editor.workspace.getBlockById(definition.id).saveExtraState().params[0]).toEqual(parameter);
+    editor.restoreProjectWorkspaceSnapshot(JSON.parse(disk.get('project.abi')!));
+    expect(nativeState()['variables']).toEqual(state['variables']);
+    expect(editor.workspace.getBlockById(definition.id).getInputTargetBlock('STACK').getFieldValue('DETAIL')).toBe('edited');
+    const withoutParam = base.source + '\nprocedures_defnoreturn(NAME="work") @extra:{"params":[]}\n'
+      + '    @STACK:\n        native_commit_shape(B, $amount, "edited")\nprocedures_callnoreturn() @extra:{"name":"work"}\n';
+    await service.applyGeneration(withoutParam, JSON.parse(disk.get('project.abs.map.json')!).generation);
+    expect(editor.workspace.getBlockById(definition.id).getField('abs_arg_0')).toBeNull();
+    expect(nativeState()['variables']).toEqual(state['variables']);
+  });
+
+  it('verifies a host-prepared value call connected to a native parent even when the definition follows the call', async () => {
+    enableNativeProcedures(); const base = await baseline();
+    const source = base.source + '\nnative_commit_shape(B, procedures_callreturn() @extra:{"name":"read"}, "caller")\n'
+      + 'procedures_defreturn(NAME="read")\n    @RETURN:\n        math_number(7)\n';
+    await service.applyGeneration(source, base.generation);
+    const parent = editor.workspace.getBlocksByType('native_commit_shape', false)[0];
+    expect(parent.getInputTargetBlock('VALUE').type).toBe('procedures_callreturn');
+    expect(editor.workspace.getAllVariables()).toEqual([]);
+    expect(editor.workspace.getBlocksByType('procedures_defreturn', false).length).toBe(1);
+  });
+
+  for (const signature of [
+    '{"params":[{"name":"missing"}]}', '{"params":[{"name":"amount","id":"forged"}]}', '{"hidden":true}',
+  ]) it(`rejects invalid prepared procedure intent in a mixed candidate: ${signature}`, async () => {
+    enableNativeProcedures(); editor.workspace.createVariable('amount', '', 'amount-id');
+    const base = await baseline(), before = absJson(nativeState()), files = [...disk];
+    const source = base.source + '\nnative_commit_shape(B, math_number(1), "native")\nprocedures_defnoreturn(NAME="work") @extra:' + signature;
+    await expectAsync(service.applyGeneration(source, base.generation)).toBeRejectedWith(jasmine.objectContaining({ code: 'ABS_PROCEDURE_INVALID' }));
+    expect(absJson(nativeState())).toBe(before); expect([...disk]).toEqual(files);
+    expect(editor.restoreProjectWorkspaceSnapshot).not.toHaveBeenCalled();
+  });
+
+  it('still executes hosted generators and rejects their unowned child blocks before any host mutation', async () => {
+    const replay = enableNativeProcedures();
+    replay.steps.push({ kind: 'script', label: 'unowned-procedure-child', source: `
+      Arduino.forBlock.procedures_defnoreturn = block => { block.workspace.newBlock('math_number'); return ''; };
+    ` });
+    const base = await baseline(), before = absJson(nativeState()), files = [...disk];
+    const source = base.source + '\nnative_commit_shape(B, math_number(1), "native")\nprocedures_defnoreturn(NAME="work")';
+    await expectAsync(service.applyGeneration(source, base.generation)).toBeRejected();
+    expect(absJson(nativeState())).toBe(before); expect([...disk]).toEqual(files);
+    expect(editor.prepareProjectCode).not.toHaveBeenCalled(); expect(editor.restoreProjectWorkspaceSnapshot).not.toHaveBeenCalled();
+  });
+
+  for (const call of ['procedures_callnoreturn() @extra:{"name":"work"}', 'procedures_callreturn() @extra:{"name":"missing"}']) {
+    it(`does not accept an invalid cross-boundary procedure edge: ${call}`, async () => {
+      enableNativeProcedures(); const base = await baseline(), before = absJson(nativeState()), files = [...disk];
+      const source = base.source + '\nnative_commit_shape(B, ' + call + ', "native")\nprocedures_defnoreturn(NAME="work")';
+      await expectAsync(service.applyGeneration(source, base.generation)).toBeRejected();
+      expect(absJson(nativeState())).toBe(before); expect([...disk]).toEqual(files);
+      expect(editor.prepareProjectCode).not.toHaveBeenCalled(); expect(editor.restoreProjectWorkspaceSnapshot).not.toHaveBeenCalled();
+    });
+  }
+
+  it('creates native dynamic blocks using existing variables without changing model identity', async () => {
+    enableNativeVariables();
+    editor.workspace.createVariable('counter', '', 'counter-id');
+    const base = await baseline();
+    const source = base.source + '\nnative_commit_shape(A, $counter)\n';
+    expect((await service.applyGeneration(source, base.generation)).publication.status).toBe('COMMITTED');
+    const created = editor.workspace.getBlocksByType('native_commit_shape', false)[0];
+    expect(created.getInputTargetBlock('VALUE').getFieldValue('VAR')).toBe('counter-id');
+    expect(nativeState()['variables']).toEqual([{ id: 'counter-id', name: 'counter' }]);
+  });
+
+  it('carries explicit variable creation intent into both native binding passes and the same transaction', async () => {
+    enableNativeVariables();
+    const base = await baseline();
+    const source = base.source + '\nnative_commit_shape(A, variables_get($counter))\n';
+    const committed = (await new AbsBaselineStore(port, scope).loadCommitted())!;
+    const { generationEvidence } = await import('./abs-generation-protocol');
+    const request = { version: 2 as const, requestId: crypto.randomUUID(), base: (await generationEvidence(committed, null)).binding,
+      createVariables: [{ name: 'counter' }], candidate: { hash: await hashAbsText(source), bytes: new TextEncoder().encode(source).byteLength } };
+    const validation = await service.validateGeneration(source, request);
+    expect(editor.workspace.getAllVariables().length).toBe(0);
+    expect((await service.applyGeneration(source, base.generation, {}, validation)).publication.status).toBe('COMMITTED');
+    expect(nativeState()['variables']).toEqual([{ id: `abs-variable:${request.requestId}:0`, name: 'counter' }]);
+  });
+
+  const enableNativeDeclarations = () => {
+    const replay = enableNativeVariables();
+    const definitions = [
+      { type: 'native_model_owner', message0: '%1', args0: [{ type: 'input_statement', name: 'BODY' }] },
+      // Deliberately value-before-type, not a hardcoded variable_define argument order.
+      { type: 'native_model_declare', message0: '%1 %2 %3', args0: [
+        { type: 'field_input', name: 'NAME', text: 'unused' }, { type: 'input_value', name: 'VALUE' },
+        { type: 'field_dropdown', name: 'TYPE', options: [['int', 'int'], ['float', 'float']] },
+      ], previousStatement: null, nextStatement: null },
+    ];
+    definitions.forEach(declare);
+    replay.steps.push({ kind: 'definitions', definitions });
+    replay.steps.push({ kind: 'script', label: 'declaration-generator', source: `
+      Arduino.forBlock.native_model_owner = block => Arduino.statementToCode(block, 'BODY');
+      Arduino.forBlock.native_model_declare = block => {
+        block.workspace.createVariable(block.getFieldValue('NAME'), '');
+        return block.getFieldValue('TYPE') + ' ' + block.getFieldValue('NAME') + ' = ' + Arduino.valueToCode(block, 'VALUE', 0) + ';\\n';
+      };
+    ` });
+    // Test-only attestation. Production still verifies loaded source/handler/shape provenance.
+    editor.captureDeclarativeBlockDefinitions = () => ({ ...catalog.capture(Blockly.Blocks), variableDeclarations: {
+      assertCurrent() {}, get: type => type === 'native_model_declare'
+        ? { nameField: 'NAME', nativeType: '', owner: { type: 'native_model_owner', input: 'BODY' } } : undefined,
+    } });
+    return replay;
+  };
+  const nativeDeclaration = 'native_model_declare("counter", math_number(7), int)';
+
+  for (const forward of [true, false]) it(`prepares declaration models before native binding (${forward ? 'forward' : 'backward'} reference), then applies/reopens once`, async () => {
+    enableNativeDeclarations();
+    const base = await baseline(), before = absJson(nativeState()), files = [...disk];
+    const consumer = 'native_commit_shape(B, $counter, "detail")';
+    const body = forward ? [consumer, nativeDeclaration] : [nativeDeclaration, consumer];
+    const source = base.source + '\nnative_model_owner()\n    ' + body.join('\n    ') + '\n';
+    const committed = (await new AbsBaselineStore(port, scope).loadCommitted())!;
+    const { generationEvidence } = await import('./abs-generation-protocol');
+    const request = { version: 2 as const, requestId: crypto.randomUUID(), base: (await generationEvidence(committed, null)).binding,
+      candidate: { hash: await hashAbsText(source), bytes: new TextEncoder().encode(source).byteLength } };
+    const validation = await service.validateGeneration(source, request);
+    expect(absJson(nativeState())).toBe(before); expect([...disk]).toEqual(files);
+    expect(editor.prepareProjectCode).not.toHaveBeenCalled();
+    expect((await service.applyGeneration(source, base.generation, {}, validation)).publication.status).toBe('COMMITTED');
+    const model = editor.workspace.getAllVariables()[0], models = nativeState()['variables'];
+    expect(editor.workspace.getAllVariables().length).toBe(1); expect(model.name).toBe('counter');
+    const block = editor.workspace.getBlocksByType('native_commit_shape', false)[0];
+    expect(block.getInputTargetBlock('VALUE').getFieldValue('VAR')).toBe(model.getId());
+    const ids = editor.workspace.getAllBlocks(false).map(block => block.id).sort();
+    const second = disk.get('project.abs')!.replace('"detail"', '"changed"');
+    expect((await service.applyGeneration(second, JSON.parse(disk.get('project.abs.map.json')!).generation)).publication.status).toBe('COMMITTED');
+    expect(nativeState()['variables']).toEqual(models);
+    expect(editor.workspace.getAllBlocks(false).map(block => block.id).sort()).toEqual(ids);
+    editor.restoreProjectWorkspaceSnapshot(JSON.parse(disk.get('project.abi')!));
+    expect(nativeState()['variables']).toEqual(models);
+    expect(editor.workspace.getBlockById(block.id).getInputTargetBlock('VALUE').getFieldValue('VAR')).toBe(model.getId());
+    expect(roots().isDeletable()).toBeFalse();
+  });
+
+  for (const invalid of [
+    { source: 'native_model_owner()\n    ' + nativeDeclaration + '\n    ' + nativeDeclaration, code: 'ABS_DECLARATION_DUPLICATE' },
+    { source: nativeDeclaration, code: 'ABS_DECLARATION_SCOPE_UNSUPPORTED' },
+  ]) it(`never commits tentative models when authoritative planning rejects ${invalid.code}`, async () => {
+    enableNativeDeclarations();
+    const base = await baseline(), before = absJson(nativeState()), files = [...disk];
+    const source = base.source + '\nnative_commit_shape(A, $counter)\n' + invalid.source;
+    await expectAsync(service.applyGeneration(source, base.generation)).toBeRejectedWith(jasmine.objectContaining({ code: invalid.code }));
+    expect(absJson(nativeState())).toBe(before); expect([...disk]).toEqual(files);
+    expect(editor.prepareProjectCode).not.toHaveBeenCalled(); expect(editor.restoreProjectWorkspaceSnapshot).not.toHaveBeenCalled();
+  });
+
+  it('does not turn a declaration rename or a misspelled reference into model creation in a mixed native edit', async () => {
+    enableNativeDeclarations();
+    const base = await baseline();
+    const source = base.source + '\nnative_model_owner()\n    ' + nativeDeclaration + '\n    native_commit_shape(B, $counter, "detail")';
+    await service.applyGeneration(source, base.generation);
+    const before = absJson(nativeState()), files = [...disk], saved = disk.get('project.abs')!;
+    const generation = JSON.parse(disk.get('project.abs.map.json')!).generation;
+    for (const bad of [saved.replaceAll('counter', 'renamed'), saved.replace('$counter', '$typo')]) {
+      await expectAsync(service.applyGeneration(bad, generation)).toBeRejected();
+      expect(absJson(nativeState())).toBe(before); expect([...disk]).toEqual(files);
+    }
+  });
+
+  it('uses an agreeing explicit model intent once alongside a declaration and native forward reference', async () => {
+    enableNativeDeclarations();
+    const base = await baseline();
+    const source = base.source + '\nnative_commit_shape(B, variables_get($counter), "detail")\nnative_model_owner()\n    ' + nativeDeclaration;
+    const committed = (await new AbsBaselineStore(port, scope).loadCommitted())!;
+    const { generationEvidence } = await import('./abs-generation-protocol');
+    const request = { version: 2 as const, requestId: crypto.randomUUID(), base: (await generationEvidence(committed, null)).binding,
+      createVariables: [{ name: 'counter' }], candidate: { hash: await hashAbsText(source), bytes: new TextEncoder().encode(source).byteLength } };
+    const validation = await service.validateGeneration(source, request);
+    await service.applyGeneration(source, base.generation, {}, validation);
+    expect(nativeState()['variables']).toEqual([{ name: 'counter', id: `abs-variable:${request.requestId}:0` }]);
+  });
+
+  it('does not bootstrap declarations without provenance or adopt an incompatible existing model', async () => {
+    enableNativeDeclarations();
+    const base = await baseline(), before = absJson(nativeState()), files = [...disk];
+    const source = base.source + '\nnative_commit_shape(B, $counter, "detail")\nnative_model_owner()\n    ' + nativeDeclaration;
+    const capture = editor.captureDeclarativeBlockDefinitions;
+    editor.captureDeclarativeBlockDefinitions = () => catalog.capture(Blockly.Blocks);
+    await expectAsync(service.applyGeneration(source, base.generation)).toBeRejected();
+    expect(absJson(nativeState())).toBe(before); expect([...disk]).toEqual(files);
+    editor.captureDeclarativeBlockDefinitions = capture;
+    editor.workspace.createVariable('counter', 'typed', 'existing-typed');
+    const typed = await baseline(), typedBefore = absJson(nativeState()), typedFiles = [...disk];
+    const next = typed.source + '\nnative_commit_shape(B, $counter, "detail")\nnative_model_owner()\n    ' + nativeDeclaration;
+    await expectAsync(service.applyGeneration(next, typed.generation)).toBeRejectedWith(jasmine.objectContaining({ code: 'ABS_DECLARATION_MODEL_CONFLICT' }));
+    expect(absJson(nativeState())).toBe(typedBefore); expect([...disk]).toEqual(typedFiles);
+    expect(editor.prepareProjectCode).not.toHaveBeenCalled();
+  });
+
+  it('hydrates compact large values for native binding and preserves external-only storage through apply/reload', async () => {
+    enableNative();
+    const text = 'native resource payload '.repeat(2200);
+    const ref = await projectDataRuntime.put({ codec: 'utf8-v1', storage: 'raw-v1', value: text });
+    const base = await baseline(), compact = JSON.stringify(createAilyProjectDataValue(ref));
+    const source = base.source + `\nnative_commit_shape(B, math_number(7), ${compact})\n`;
+    expect((await service.applyGeneration(source, base.generation)).publication.status).toBe('COMMITTED');
+    const id = editor.workspace.getBlocksByType('native_commit_shape', false)[0].id;
+    expect(editor.workspace.getBlockById(id).getFieldValue('DETAIL')).toBe(text);
+    expect(disk.get('project.abs')).toContain('$ailyProjectDataValue');
+    expect(disk.get('project.abs')).not.toContain(text); expect(disk.get('project.abi')).not.toContain(text);
+    const generation = JSON.parse(disk.get('project.abs.map.json')!).generation;
+    const next = disk.get('project.abs')!.replace(/math_number\((?:NUM=)?7\)/, 'math_number(8)');
+    expect((await service.applyGeneration(next, generation)).publication.status).toBe('COMMITTED');
+    expect(editor.workspace.getBlockById(id).getFieldValue('DETAIL')).toBe(text);
+    expect(editor.workspace.getBlockById(id).getInputTargetBlock('VALUE').getFieldValue('NUM')).toBe(8);
+    expect(values.get(ref.$ailyData.id)).toBe(text);
+  });
+
+  it('fails native preparation on a missing resource without saving or loading the host workspace', async () => {
+    enableNative();
+    const ref = await projectDataRuntime.put({ codec: 'utf8-v1', storage: 'raw-v1', value: 'missing'.repeat(6000) });
+    values.delete(ref.$ailyData.id);
+    const base = await baseline(), before = absJson(nativeState()), originalDisk = [...disk];
+    const source = base.source + `\nnative_commit_shape(B, null, ${JSON.stringify(createAilyProjectDataValue(ref))})\n`;
+    await expectAsync(service.applyGeneration(source, base.generation)).toBeRejectedWithError(/missing resource/);
+    expect(absJson(nativeState())).toBe(before); expect([...disk]).toEqual(originalDisk);
+    expect(editor.prepareProjectCode).not.toHaveBeenCalled();
+  });
+
+  for (const chunk of [false, true]) it(`preserves binary media through native create/edit/save/reopen (chunk=${chunk})`, async () => {
+    const replay = enableNative();
+    if (chunk) renderWorkspace();
+    const definition = { type: 'native_commit_media', message0: '%1', args0: [
+      { type: 'field_bitmap_u8g2', name: 'DATA', width: 8, height: 1 },
+    ], output: 'Bitmap' };
+    declare(definition);
+    replay.steps.push({ kind: 'definitions', definitions: [definition] }, { kind: 'script', label: 'media-codegen', source: `
+      Arduino.forBlock.native_commit_media = block => {
+        const pixels = block.getFieldValue('DATA');
+        if (pixels[0][0] !== 1 || pixels[0][7] !== 1) throw Error('Binary bytes lost');
+        return ['0', 0];
+      };` });
+    const ref: any = { $ailyData: { schemaVersion: 1, id: 'sha256:' + 'c'.repeat(64), codec: 'u8g2-xbm-v1',
+      logicalType: 'binary', storage: 'raw-v1', rawLength: 1, storedLength: 1 } };
+    values.set(ref.$ailyData.id, new Uint8Array([129]));
+    const field = { schemaVersion: 1, encoding: 'xbm-lsb-row-v1', width: 8, height: 1, bitmap: ref };
+    const base = await baseline(), source = base.source + `\nnative_commit_shape(B, math_number(7), "detail")\nnative_commit_media(${JSON.stringify(field)})\n`;
+    expect((await service.applyGeneration(source, base.generation, { chunk })).publication.status).toBe('COMMITTED');
+    const id = editor.workspace.getBlocksByType('native_commit_media', false)[0].id;
+    expect(editor.workspace.getBlockById(id).getFieldValue('DATA')).toEqual(field);
+    const next = await baseline();
+    expect((await service.applyGeneration(next.source.replace('"detail"', '"edited"'), next.generation, { chunk })).publication.status).toBe('COMMITTED');
+    const state = nativeState(), persisted = JSON.parse(disk.get('project.abi')!);
+    editor.restoreProjectWorkspaceSnapshot(persisted);
+    expect(nativeState()).toEqual(state); expect(roots().isDeletable()).toBeFalse();
+    expect(editor.workspace.getBlockById(id).getFieldValue('DATA')).toEqual(field);
+    expect(values.get(ref.$ailyData.id)).toEqual(new Uint8Array([129]));
+    const again = await baseline(), files = [...disk], before = absJson(nativeState());
+    values.delete(ref.$ailyData.id);
+    // Force native shape discovery; the fixture's fast-path resource port is a stub.
+    const missing = again.source.replace(/native_commit_shape\([^\n]+/, 'native_commit_shape(A, math_number(7))');
+    expect(missing).not.toBe(again.source);
+    await expectAsync(service.applyGeneration(missing, again.generation, { chunk })).toBeRejectedWithError(/missing resource/);
+    expect([...disk]).toEqual(files); expect(absJson(nativeState())).toBe(before);
   });
 
   it('discovers scoped capabilities without storage, generation, block creation or mutation', () => {
@@ -154,6 +806,19 @@ describe('v2 actual workspace generation coordinator', () => {
     expect(service.describeCapabilities({ version: 1, filter: 'unique-library' }).blocks.map(block => block.type)).toEqual(['abs_declared_text']);
     editor.switchPage('other');
     expect(service.describeCapabilities({ version: 1, type: 'abs_declared_text' }).scope.pageId).toBe('other');
+  });
+
+  it('offers native validation only with a current complete replay, without probing blocks', () => {
+    const replay = enableNative(), probe = spyOn(Blockly.Workspace.prototype, 'newBlock').and.callThrough();
+    const describe = () => service.describeCapabilities({ version: 1, type: 'native_commit_shape' }).blocks[0];
+    expect(describe().level).toBe('validate');
+    expect((describe() as any).contract).toBe('native-sync-v1');
+    expect(probe).not.toHaveBeenCalled(); expect(disk.size).toBe(0);
+    replay.steps.push({ kind: 'script', label: 'unsupported', source: 'async function later() {}' });
+    expect(describe().level).toBe('preserve-only');
+    replay.steps.pop(); replay.assertCurrent.and.throwError('stale');
+    expect(describe().level).toBe('preserve-only');
+    expect(service.describeCapabilities({ version: 1, type: 'missing' }).blocks[0].level).toBe('unavailable');
   });
 
   it('rejects malformed capability requests and missing runtime context', () => {
@@ -195,6 +860,60 @@ describe('v2 actual workspace generation coordinator', () => {
     expect(applied.receipt.output.binding.mapHash).toBe(await hashAbsText(disk.get('project.abs.map.json')!));
     expect(editor.prepareProjectCode).toHaveBeenCalledTimes(1); expect(project.publishPreparedSaveOutputs).toHaveBeenCalledTimes(1);
     expect(roots().id).toBe('protected'); expect(roots().isDeletable()).toBeFalse();
+  });
+
+  it('production wire applies repeated same-type edits as one identity-preserving batch', async () => {
+    declare({ type: 'abs_batch_text', message0: '%1', args0: [{ type: 'field_input', name: 'TEXT', text: '' }], output: null });
+    for (const [id, value] of [['batch-a', 'first'], ['batch-b', 'second']]) {
+      const block = editor.workspace.newBlock('abs_batch_text', id);
+      block.setFieldValue(value, 'TEXT'); block.data = id + ':metadata';
+    }
+    const base = await wireBase(), original = base.exported.abs as string;
+    const edits = ['first', 'second'].map(value => {
+      const start = original.indexOf(JSON.stringify(value));
+      return { start, end: start + JSON.stringify(value).length, text: JSON.stringify(value + ' changed') };
+    }).sort((a, b) => a.start - b.start);
+    const source = [...edits].reverse().reduce((text, edit) => text.slice(0, edit.start) + edit.text + text.slice(edit.end), original);
+    const request = { ...base.request, sourceEdits: [edits], candidate: { hash: await hashAbsText(source), bytes: new TextEncoder().encode(source).byteLength } };
+    const before = nativeState(), files = [...disk];
+    const validation: any = await base.tools.execute('abs_validate', request, source);
+    expect(validation.ok).withContext(JSON.stringify(validation)).toBeTrue();
+    expect(nativeState()).toEqual(before); expect([...disk]).toEqual(files);
+    const applied: any = await base.tools.execute('abs_apply', { version: 2, requestId: request.requestId, validation: validation.receipt }, source);
+    expect(applied.ok).withContext(JSON.stringify(applied)).toBeTrue();
+    expect(editor.prepareProjectCode).toHaveBeenCalledTimes(1);
+    for (const [id, value] of [['batch-a', 'first'], ['batch-b', 'second']]) {
+      const block = editor.workspace.getBlockById(id);
+      expect(block.getFieldValue('TEXT')).toBe(value + ' changed'); expect(block.data).toBe(id + ':metadata');
+    }
+    expect(roots().isDeletable()).toBeFalse();
+    const saved = nativeState(); editor.restoreProjectWorkspaceSnapshot(JSON.parse(disk.get('project.abi')!));
+    expect(nativeState()).toEqual(saved);
+  });
+
+  it('creates and reshapes common branch mutators through validate/apply, preserving generation and protected roots', async () => {
+    declare({ type: 'abs_dynamic_number', message0: '%1', args0: [{ type: 'field_number', name: 'NUM', value: 0 }], output: 'Number' });
+    declare({ type: 'abs_dynamic_if', message0: '%1 %2', args0: [{ type: 'input_value', name: 'IF0' },
+      { type: 'input_statement', name: 'DO0' }], mutator: 'controls_if_mutator', previousStatement: null, nextStatement: null });
+    const run = async (base: Awaited<ReturnType<typeof wireBase>>, candidate: string) => {
+      const before = nativeState(), files = [...disk];
+      const binding = { ...base.request, candidate: { hash: await hashAbsText(candidate), bytes: new TextEncoder().encode(candidate).byteLength } };
+      const validation: any = await base.tools.execute('abs_validate', binding, candidate);
+      expect(validation.ok).withContext(JSON.stringify(validation)).toBeTrue();
+      expect(nativeState()).toEqual(before); expect([...disk]).toEqual(files);
+      const result: any = await base.tools.execute('abs_apply', { version: 2, requestId: base.request.requestId, validation: validation.receipt }, candidate);
+      expect(result.ok).withContext(JSON.stringify(result)).toBeTrue();
+    };
+    const first = await wireBase();
+    await run(first, first.source + '\nabs_dynamic_if(abs_dynamic_number(1), abs_dynamic_number(2)) @extra:{"elseIfCount":1,"hasElse":true}');
+    const id = editor.workspace.getBlocksByType('abs_dynamic_if')[0].id;
+    const second = await wireBase();
+    await run(second, second.source.replace('"elseIfCount":1', '"elseIfCount":2'));
+    expect(editor.workspace.getBlockById(id).getInput('IF2')).toBeTruthy();
+    expect(roots().id).toBe('protected'); expect(roots().isDeletable()).toBeFalse();
+    const committed = await new AbsBaselineStore(port, scope).loadCommitted();
+    expect(committed!.abs).toBe(disk.get('project.abs'));
+    expect((committed!.document as any).pages[1].custom).toEqual({ preserved: true });
   });
 
   it('prepares and commits bundled procedure parameters through the normal generation transaction', async () => {
@@ -626,6 +1345,7 @@ describe('v2 actual workspace generation coordinator', () => {
     editor.prepareProjectCode.and.callFake(async () => { roots().setFieldValue('library changed', 'TEXT'); return null; });
     await expectAsync(apply(base)).toBeRejectedWith(jasmine.objectContaining({ code: 'ABS_READBACK_MISMATCH' }));
     expect(absJson(nativeState())).toBe(original); expect(disk.has('project.abi')).toBeFalse(); expect(gate.blocked).toBeFalse();
+    expect(editor.restoreProjectWorkspaceSnapshot.calls.mostRecent().args[2]).toEqual(JSON.parse(original).blocks.blocks.map(block => block.id));
   });
 
   it('does not allow Generator model additions to bypass complete state verification', async () => {

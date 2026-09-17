@@ -1,20 +1,20 @@
 import { readAbsJsonToken, readAbsSingleQuotedToken } from '@shared/public-api';
-import { AbsFieldDefinition, readAbsFieldToken } from './abs-field-values';
+import { readAbsFieldToken } from './abs-field-values';
 import { ABS_SCHEMA_HEADER, AbsSyntaxNode, AbsSyncError } from './abs-state';
-import type { BlockMeta } from './block-definition.model';
+import { bindAbsSyntax, type AbsRawNode, type AbsRawValue, type AbsSyntaxOptions } from './abs-syntax-binding';
+export type { AbsArgumentDefinition, AbsSyntaxOptions } from './abs-syntax-binding';
 
-/** One definition-bound grammar. No block-name guesses, identities or workspace effects. */
-export type AbsArgumentDefinition = BlockMeta['argsOrder'][number];
-export interface AbsSyntaxOptions {
-  /** Complete, unambiguous argument order captured by the host; absent means named-only. */
-  argumentOrder?: (blockType: string) => readonly AbsArgumentDefinition[] | undefined;
-  fieldDefinition?: (blockType: string, fieldName: string) => AbsFieldDefinition | undefined;
-}
-export function parseAbsSyntax(source: string, options: AbsSyntaxOptions = {}): AbsSyntaxNode[] {
+/** The existing grammar, first read without looking up definitions or executing callbacks. */
+export function readAbsSyntax(source: string): AbsRawNode[] {
   if (!source.split(/\r?\n/).some(line => line.trim() === ABS_SCHEMA_HEADER)) {
     throw new AbsSyncError('ABS_SCHEMA_UNSUPPORTED', 'Expected ABS Schema: 2.');
   }
-  return new AbsSyntaxReader(source, options).read();
+  return new AbsSyntaxReader(source).read();
+}
+
+/** Existing callers retain the same API and pure definition-bound semantics. */
+export function parseAbsSyntax(source: string, options: AbsSyntaxOptions = {}): AbsSyntaxNode[] {
+  return bindAbsSyntax(readAbsSyntax(source), options);
 }
 
 class AbsSyntaxReader {
@@ -22,10 +22,10 @@ class AbsSyntaxReader {
   private depth = 0;
   private blockDepth = 0;
   private nodes = 0;
-  constructor(private readonly source: string, private readonly options: AbsSyntaxOptions) {}
+  constructor(private readonly source: string) {}
 
-  read(): AbsSyntaxNode[] {
-    const roots: AbsSyntaxNode[] = [];
+  read(): AbsRawNode[] {
+    const roots: AbsRawNode[] = [];
     while (this.skipLines()) {
       if (this.indent() !== 0) this.fail('Root blocks must not be indented.');
       roots.push(this.block(0));
@@ -33,7 +33,7 @@ class AbsSyntaxReader {
     return roots;
   }
 
-  private block(indent: number): AbsSyntaxNode {
+  private block(indent: number): AbsRawNode {
     if (++this.blockDepth > 128) this.fail('ABS block nesting exceeds parsing limits.');
     this.offset += indent;
     const node = this.expression();
@@ -42,93 +42,66 @@ class AbsSyntaxReader {
       const sectionIndent = this.indent();
       if (sectionIndent !== indent + 4) this.fail('Block bodies use four-space indentation.');
       if (this.source[this.offset + sectionIndent] !== '@') {
-        const slots = this.options.argumentOrder?.(node.type)?.filter(argument => argument.kind === 'statementInput');
-        if (slots?.length !== 1) this.fail('An implicit body requires exactly one known statement input; use @NAME:.');
-        const name = slots[0].name;
-        if (Object.hasOwn(node.inputs, name) || Object.hasOwn(node.fields, name)) this.fail(`Duplicate input ${name}.`);
-        node.inputs[name] = this.chain(sectionIndent, true);
+        node.sections.push({ children: this.chain(sectionIndent) });
         node.end = this.offset;
         continue;
       }
       this.offset += sectionIndent;
       this.expect('@');
       const name = this.argumentName();
-      this.space();
-      this.expect(':');
-      this.space();
-      const argument = this.options.argumentOrder?.(node.type)?.find(argument => argument.name === name);
-      if (argument?.kind === 'field') this.fail(`Argument ${name} is a field, not an input.`);
-      let child: AbsSyntaxNode | null = null;
+      this.space(); this.expect(':'); this.space();
+      const section: AbsRawNode['sections'][number] = { name, children: [] };
       if (this.offset < this.source.length && !/[\r\n#]/.test(this.source[this.offset])) {
-        if (argument?.kind !== 'valueInput') this.fail('An inline section requires a known value input.');
-        child = this.valueInput();
+        section.inline = this.valueInput();
         this.endLine();
       } else {
         this.endLine();
         if (this.skipLines() && this.indent() > sectionIndent) {
           if (this.indent() !== sectionIndent + 4) this.fail('Input bodies use four-space indentation.');
-          child = this.chain(sectionIndent + 4, argument?.kind !== 'valueInput');
+          section.children = this.chain(sectionIndent + 4);
         }
       }
-      if (name === 'next') {
-        if (node.next || !child) this.fail('Duplicate or empty @next.');
-        node.next = child;
-      } else {
-        if (Object.hasOwn(node.inputs, name) || Object.hasOwn(node.fields, name)) this.fail(`Duplicate input ${name}.`);
-        node.inputs[name] = child;
-      }
+      node.sections.push(section);
       node.end = this.offset;
     }
     this.blockDepth--;
     return node;
   }
 
-  private chain(indent: number, statements: boolean): AbsSyntaxNode {
-    const head = this.block(indent);
-    let tail = head;
+  private chain(indent: number): AbsRawNode[] {
+    const children = [this.block(indent)];
     while (this.skipLines() && this.indent() === indent && this.source[this.offset + indent] !== '@') {
-      if (!statements) this.fail('A value input accepts one block, not a statement chain.');
-      if (tail.next) this.fail('A chain cannot have both an explicit and implicit next.');
-      tail.next = this.block(indent);
-      tail = tail.next;
+      children.push(this.block(indent));
     }
-    return head;
+    return children;
   }
 
-  private valueInput(): AbsSyntaxNode | null {
-    if (/^[\w]+\s*\(/.test(this.source.slice(this.offset))) return this.expression();
+  private valueInput(): AbsRawValue {
     const start = this.offset;
-    this.literalEnd();
-    const token = readAbsFieldToken(this.source.slice(start, this.offset));
-    if (token.value === null) return null;
-    if (!token.reference) this.fail('A value input requires a block expression.');
-    const getter = this.options.argumentOrder?.('variables_get');
-    if (getter?.length !== 1 || getter[0].name !== 'VAR' || getter[0].kind !== 'field'
-      || this.options.fieldDefinition?.('variables_get', 'VAR')?.symbol?.kind !== 'variable') {
-      this.fail('Bare variable value input requires the host variables_get contract; use variables_get($name).');
+    if (/^[\w]+\s*\(/.test(this.source.slice(this.offset))) {
+      const child = this.expression();
+      return { child, start, end: this.offset };
     }
+    this.literalEnd();
     if (++this.nodes > 100000) this.fail('ABS structure exceeds parsing limits.');
-    return { type: 'variables_get', fields: { VAR: token }, fieldRanges: { VAR: { start, end: this.offset } },
-      inputs: Object.create(null), disabled: false, start, end: this.offset };
+    return { token: readAbsFieldToken(this.source.slice(start, this.offset)), start, end: this.offset };
   }
 
-  private expression(): AbsSyntaxNode {
+  private expression(): AbsRawNode {
     if (++this.depth > 128 || ++this.nodes > 100000) this.fail('ABS structure exceeds parsing limits.');
-    const node: AbsSyntaxNode = {
-      type: '', fields: Object.create(null), fieldRanges: Object.create(null), inputs: Object.create(null),
+    const node: AbsRawNode = {
+      type: '', parameters: [], sections: [],
       disabled: false, start: this.offset, end: this.offset,
     };
     node.type = this.name();
     this.space();
     this.expect('(');
     this.space(true);
-    const order = this.options.argumentOrder?.(node.type);
-    const positional = order?.filter(argument => argument.kind !== 'statementInput');
-    const argumentsByName = order ? new Map(order.map(argument => [argument.name, argument])) : undefined;
-    let positionalIndex = 0;
+    // Parse values first; @extra follows the call and determines this instance's shape.
+    const parameters = node.parameters;
     let sawNamed = false;
     while (this.source[this.offset] !== ')') {
-      let name: string;
+      let name: string | undefined;
       const quotedName = this.source[this.offset] === '"' ? readAbsJsonToken(this.source, this.offset) : undefined;
       if (/^[A-Za-z_]\w*\s*=/.test(this.source.slice(this.offset))
         || (quotedName && /^\s*=/.test(this.source.slice(quotedName.end)))) {
@@ -139,28 +112,16 @@ class AbsSyntaxReader {
         this.space(true);
       } else {
         if (sawNamed) this.fail('Positional arguments must precede named arguments.');
-        if (!order || argumentsByName!.size !== order.length) this.fail('Positional arguments require a complete, unambiguous definition.');
-        const argument = positional![positionalIndex++];
-        if (!argument) this.fail('No positional field/value input is available; use a named section for statements.');
-        name = argument.name;
       }
-      const argument = argumentsByName?.get(name);
-      if (Object.hasOwn(node.fields, name) || Object.hasOwn(node.inputs, name)) this.fail(`Duplicate argument ${name}.`);
-      if (argument?.kind === 'valueInput') {
-        node.inputs[name] = this.valueInput();
-      } else if (/^[\w]+\s*\(/.test(this.source.slice(this.offset))) {
-        if (argument) this.fail(`Argument ${name} is not a value input.`);
-        node.inputs[name] = this.expression();
+      const start = this.offset;
+      if (/^[\w]+\s*\(/.test(this.source.slice(this.offset))) {
+        const child = this.expression();
+        parameters.push({ name, child, start, end: this.offset });
       } else {
-        const start = this.offset;
         this.literalEnd();
         try {
           const token = readAbsFieldToken(this.source.slice(start, this.offset));
-          if (argument && argument.kind !== 'field') this.fail(`Argument ${name} requires a block input.`);
-          else {
-            node.fields[name] = token;
-            node.fieldRanges[name] = { start, end: this.offset };
-          }
+          parameters.push({ name, token, start, end: this.offset });
         }
         catch (error) { this.fail(String(error)); }
       }

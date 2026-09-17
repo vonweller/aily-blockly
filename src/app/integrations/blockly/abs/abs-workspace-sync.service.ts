@@ -23,6 +23,11 @@ import { captureAbsBundledProcedures } from './abs-bundled-procedures';
 import { describeAbsBlockCapability } from './abs-block-capabilities';
 import { captureAbsCustomFunctions } from './abs-custom-functions';
 import { captureAbsVariableDeclarations } from './abs-declaration-intents';
+import { prepareAbsNativeReconciliation } from './abs-native-reconciliation';
+import type { AbsReconcileOptions } from './abs-reconciler';
+import type { AbsNativeInstance } from './abs-native-binding';
+import { describePreparedAbsSyntax } from './abs-syntax-advice';
+import { assertSynchronousNativeCandidate } from '../../../editors/blockly-editor/services/blockly-native-candidate-policy';
 
 export interface AbsWorkspaceSyncOutcome {
   publication: AbsPublishResult;
@@ -50,11 +55,17 @@ export class AbsWorkspaceSyncService {
       throw new AbsSyncError('ABS_REQUEST_INVALID', 'Invalid ABS capability query.');
     }
     const context = this.context(), runtimeRevision = getActiveProjectGeneratorRevision();
+    let nativeValidation = false;
+    try {
+      const replay = this.editor.captureNativeReplay();
+      assertSynchronousNativeCandidate({ steps: replay.steps, blocks: [] });
+      replay.assertCurrent(); nativeValidation = true;
+    } catch { /* Advice stays conservative when the complete runtime cannot be replayed. */ }
     const filter = (input['filter'] ?? '').toLowerCase();
     const types = input['type'] !== undefined ? [input['type']] : context.definitions.types;
     const blocks = types.map(type => ({ type, library: this.editor.blockTypeToLibMap.get(type)?.name ?? 'host' }))
       .filter(item => !filter || item.type.toLowerCase().includes(filter) || item.library.toLowerCase().includes(filter))
-      .map(item => ({ ...item, ...describeAbsBlockCapability(context.definitions, item.type) }));
+      .map(item => ({ ...item, ...describeAbsBlockCapability(context.definitions, item.type, nativeValidation) }));
     context.assertCurrent();
     return { version: 1, scope: context.scope, runtimeRevision, blocks };
   }
@@ -115,11 +126,12 @@ export class AbsWorkspaceSyncService {
     });
   }
 
-  validateGeneration(source: string, request: AbsGenerationCandidateRequest): Promise<AbsGenerationValidation> {
+  validateGeneration(source: string, request: AbsGenerationCandidateRequest): Promise<AbsGenerationValidation & { syntaxAdvice: ReturnType<typeof describePreparedAbsSyntax> }> {
     request = JSON.parse(absJson(request));
     return this.run(async (context, lease, store) => {
       const prepared = await this.prepareGeneration(context, lease, store, source, request.base.generation, request);
       return { ...request, workspaceRevision: prepared.before.revision,
+        syntaxAdvice: describePreparedAbsSyntax(prepared.candidate.workspace, prepared.candidate.contracts, prepared.candidate.identities),
         ...(request.createVariables ? { preparedVariables: planAbsVariableCreations({ requestId: request.requestId, variables: request.createVariables }) } : {}) };
     });
   }
@@ -129,7 +141,7 @@ export class AbsWorkspaceSyncService {
       const shapes = captureAbsDeclarativeContracts(context.definitions);
       const procedures = captureAbsBundledProcedures(context.definitions);
       const custom = captureAbsCustomFunctions(context.definitions);
-      const blockContract = (type: string, extra?: unknown) => custom.get(type, extra) ?? procedures.get(type, extra) ?? shapes.get(type, extra);
+      const blockContract = (type: string, extra?: unknown, fields?: Readonly<Record<string, unknown>>) => custom.get(type, extra) ?? procedures.get(type, extra) ?? shapes.get(type, extra, fields);
       const expected = await store.captureDisk();
       if (await store.inspectPending()) throw new AbsSyncError('ABS_TRANSACTION_PENDING', 'Recover or explicitly abandon the pending generation first.');
       const baseline = await store.loadCommitted();
@@ -162,18 +174,51 @@ export class AbsWorkspaceSyncService {
         throw new AbsSyncError('ABS_RUNTIME_CONTRACT_STALE', 'Runtime contracts changed since this generation was exported.');
       }
       assertPreparing();
-      const candidate = await prepareAbsReconciliation(baseline, source, assertPreparing, {
+      const functionSyntax = custom.syntax(source, baseline.workspace);
+      const reconcileOptions: AbsReconcileOptions = {
+        sourceEdits: binding?.sourceEdits,
+        prepareExtraState: functionSyntax.prepareExtraState,
         declaration: captureAbsVariableDeclarations(context.definitions, shapes.get),
-        argumentOrder: type => shapes.get(type)?.argumentOrder,
+        argumentOrder: (type, extra, fields) => functionSyntax.argumentOrder?.(type, extra, fields) ?? shapes.get(type, extra, fields)?.argumentOrder,
+        fieldSelectors: type => shapes.get(type)?.fieldShape?.map(rule => rule.field),
         fieldDefinition: (type, name, id) => custom.field(type, name) ?? rollback.fieldDefinition(type, name, id) ?? shapes.get(type)?.fields[name],
         blockContract: shapes.get, prepareBlock: (block, previous, workspace, contracts) => {
           procedures.prepare(block, previous, workspace, contracts); custom.prepare(block, previous, workspace, contracts);
         },
+        hostPrepared: type => !!context.definitions.procedure?.(type) || !!custom.describe(type),
         ...(binding?.createVariables ? { variableCreation: { requestId: binding.requestId, variables: binding.createVariables } } : {}),
-      });
-      const materialized = await candidate.materialize();
+      };
+      let candidate: Awaited<ReturnType<typeof prepareAbsReconciliation>>;
+      let materialized: Awaited<ReturnType<typeof candidate.materialize>>;
+      let instances: ReadonlyMap<string, AbsNativeInstance> | undefined;
+      try {
+        candidate = await prepareAbsReconciliation(baseline, source, assertPreparing, reconcileOptions);
+        materialized = await candidate.materialize();
+        assertPreparing();
+        assertAbsRuntimeShapeSupported(rollback.state, materialized, candidate.contracts, blockContract);
+      } catch (error) {
+        // Native execution can supply missing structure, never relax field/identity,
+        // protection, baseline, resource or transaction errors from the pure path.
+        if (!(error instanceof AbsSyncError) || !['ABS_SYNTAX_INVALID', 'ABS_RUNTIME_SHAPE_UNSUPPORTED'].includes(error.code)
+          || typeof this.editor.captureNativeReplay !== 'function') throw error;
+        assertPreparing();
+        const replay = this.editor.captureNativeReplay();
+        const assertNative = () => { assertPreparing(); replay.assertCurrent(); };
+        const { evaluateNativeCandidate } = await import('../../../editors/blockly-editor/services/blockly-native-candidate');
+        const prepared = await prepareAbsNativeReconciliation(baseline, source, reconcileOptions,
+          request => evaluateNativeCandidate({ ...request, steps: replay.steps }, { assertCurrent: assertNative }), assertNative);
+        ({ candidate, materialized, instances } = prepared);
+      }
       assertPreparing();
-      assertAbsRuntimeShapeSupported(rollback.state, materialized, candidate.contracts, blockContract);
+      // Persistence composes shared definitions before page-local roots. Apply the
+      // same stable partition before loading, so save/page switch/reopen cannot
+      // change the live root order. Only captured/prepared ownership is authority.
+      const sharedRoots = new Set(before.document.sharedModel.procedureBlocks.map(block => block.id));
+      for (const [id, procedure] of Object.entries(candidate.contracts.procedures ?? {})) {
+        if (procedure.role === 'definition') sharedRoots.add(id);
+      }
+      materialized.blocks.blocks.sort((a, b) => Number(!sharedRoots.has(a.id)) - Number(!sharedRoots.has(b.id)));
+      assertAbsRuntimeShapeSupported(rollback.state, materialized, candidate.contracts, blockContract, instances);
       this.editor.assertWorkspaceSharedChange(before.document, materialized, lease);
       await this.assertDisk(store, expected, assertPreparing);
       return { expected, before, rollback, candidate, materialized };
@@ -192,14 +237,14 @@ export class AbsWorkspaceSyncService {
       const restore = () => {
         mutated = false; // Never retry a failed rollback.
         context.assertCurrent(); lease.assertCurrent();
-        this.editor.restoreProjectWorkspaceSnapshot(before.document, lease);
+        this.editor.restoreProjectWorkspaceSnapshot(before.document, lease, rollback.state.blocks.blocks.map(block => block.id));
         context.definitions.customFunctions?.synchronize(context.workspace, rollback.state);
         const restored = captureAbsWorkspaceState(context.workspace, context.assertCurrent, context.definitions);
         assertAbsReadback(rollback.state, restored.state, rollback);
       };
       try {
         mutated = true;
-        await loadAbsWorkspaceState(materialized, context.workspace, options, context.assertCurrent);
+        await loadAbsWorkspaceState(materialized, context.workspace, options, context.assertCurrent, candidate.contracts);
         context.definitions.customFunctions?.synchronize(context.workspace, materialized);
         layoutAbsNewRoots(materialized, candidate.added, context.workspace, context.assertCurrent);
         // Library model registration belongs before complete readback and the save seal.

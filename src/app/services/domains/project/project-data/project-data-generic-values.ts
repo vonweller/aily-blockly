@@ -65,6 +65,14 @@ export async function materializeGenericProjectDataValues<TDocument>(
   document: TDocument, reader: GenericProjectDataReader,
 ): Promise<TDocument> {
   const candidate = cloneProjectDataJson(document);
+  for (const { owner, key, jsonPointer } of collectProjectDataPayloads(candidate)) {
+    setMember(owner, key, await materializeProjectDataPayload(owner[key], reader, jsonPointer));
+  }
+  return candidate;
+}
+
+/** One payload or syntax token; does not infer block graphs inside opaque JSON. */
+export async function materializeProjectDataPayload<T>(payload: T, reader: GenericProjectDataReader, pointer = ''): Promise<T> {
   const visit = async (value: unknown, pointer: string): Promise<unknown> => {
     assertProjectDataEnvelope(value, pointer);
     if (isAilyProjectDataValue(value)) return validateResolvedValue(value, await reader.resolve(value.$ailyProjectDataValue.ref), pointer);
@@ -72,10 +80,7 @@ export async function materializeGenericProjectDataValues<TDocument>(
     for (const [key, member] of Object.entries(value)) setMember(value, key, await visit(member, projectDataChildPointer(pointer, key)));
     return value;
   };
-  for (const { owner, key, jsonPointer } of collectProjectDataPayloads(candidate)) {
-    setMember(owner, key, await visit(owner[key], jsonPointer));
-  }
-  return candidate;
+  return await visit(cloneProjectDataJson(payload), pointer) as T;
 }
 
 /** Dirty-state comparison uses only prepared values; no filesystem/runtime dependencies. */
@@ -83,6 +88,14 @@ export function materializePreparedGenericProjectDataValues<TDocument>(
   document: TDocument, resolvePrepared: (ref: AilyDataRef) => unknown,
 ): TDocument {
   const candidate = cloneProjectDataJson(document);
+  for (const { owner, key, jsonPointer } of collectProjectDataPayloads(candidate)) {
+    setMember(owner, key, materializePreparedProjectDataPayload(owner[key], resolvePrepared, jsonPointer));
+  }
+  return candidate;
+}
+
+/** Synchronous counterpart for a host-prepared, read-only native candidate snapshot. */
+export function materializePreparedProjectDataPayload<T>(payload: T, resolvePrepared: (ref: AilyDataRef) => unknown, pointer = ''): T {
   const visit = (value: unknown, pointer: string): unknown => {
     assertProjectDataEnvelope(value, pointer);
     if (isAilyProjectDataValue(value)) return validateResolvedValue(value, resolvePrepared(value.$ailyProjectDataValue.ref), pointer);
@@ -90,10 +103,7 @@ export function materializePreparedGenericProjectDataValues<TDocument>(
     for (const [key, member] of Object.entries(value)) setMember(value, key, visit(member, projectDataChildPointer(pointer, key)));
     return value;
   };
-  for (const { owner, key, jsonPointer } of collectProjectDataPayloads(candidate)) {
-    setMember(owner, key, visit(owner[key], jsonPointer));
-  }
-  return candidate;
+  return visit(cloneProjectDataJson(payload), pointer) as T;
 }
 
 function validateResolvedValue(envelope: AilyProjectDataValue, value: unknown, pointer: string): unknown {

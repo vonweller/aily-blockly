@@ -15,9 +15,16 @@ const { testVariableGeneration } = require('./project-data-variable-smoke.cjs');
 const { prepareLinkedChatProfile, testLinkedChat } = require('./project-data-linked-chat-smoke.cjs');
 const { testProcedureGeneration } = require('./project-data-procedure-smoke.cjs');
 const { testLlmGeneration } = require('./project-data-llm-smoke.cjs');
+const { testLlmNativeCreation } = require('./project-data-llm-native-smoke.cjs');
 const { testLlmAssets } = require('./project-data-llm-assets-smoke.cjs');
 const { prepareBuildProfile } = require('./project-data-build-profile.cjs');
 const { testLinkedChatDisconnect, testDataAbsContext } = require('./project-data-context-smoke.cjs');
+const { testStructuralGeneration } = require('./project-data-structural-smoke.cjs');
+const { testFieldShapeGeneration } = require('./project-data-field-shape-smoke.cjs');
+const { testNativeInstances } = require('./project-data-native-instance-smoke.cjs');
+const { testNativeCreation } = require('./project-data-native-creation-smoke.cjs');
+const { testNativeCandidateIsolation } = require('./project-data-native-candidate-smoke.cjs');
+const { testRandomLibraries } = require('./project-data-random-library-smoke.cjs');
 
 // Uses the real main.js, full preload, Angular page and installed project libraries.
 // Serve the current development build with the application's own loopback server.
@@ -118,6 +125,61 @@ async function main() {
     assert.equal(errors.length, 0, 'Controlled disconnect must not leak unhandled rejections');
     setPhase('selected-context');
   }
+  if (process.env.AILY_ABS_STRUCTURAL_ONLY === '1') {
+    setPhase('structural-mutators');
+    report.structuralGeneration = await testStructuralGeneration(page, seed, root);
+    assert.equal(hash(fs.readFileSync(path.join(source, 'project.abi'))), originalHash);
+    assert.equal(errors.length, 0, JSON.stringify(errors));
+    record('Actual Agent tools created and reshaped installed dynamic blocks; generated C++, mirrors and protected roots survived reopen; source ABI unchanged');
+    await page.screenshot({ path: path.join(root, 'project-data-page.png'), fullPage: true });
+    report.success = true; return;
+  }
+  if (process.env.AILY_ABS_RANDOM_LIBRARIES_ONLY === '1') {
+    setPhase('random-libraries');
+    report.randomLibraries = await testRandomLibraries(page, seed, root);
+    assert.equal(hash(fs.readFileSync(path.join(source, 'project.abi'))), originalHash);
+    report.success = report.randomLibraries.passed === report.randomLibraries.results.length && errors.length === 0;
+    if (!report.success) process.exitCode = 1;
+    record('Random library audit completed; per-library failures and real LLM-facing tool responses retained');
+    return;
+  }
+  if (process.env.AILY_ABS_NATIVE_CANDIDATE_ONLY === '1') {
+    setPhase('native-candidate');
+    report.nativeCandidate = await testNativeCandidateIsolation(page, seed, root, repo);
+    assert.equal(hash(fs.readFileSync(path.join(source, 'project.abi'))), originalHash);
+    assert.equal(errors.length, 0, JSON.stringify(errors));
+    record('Independent native candidate created dynamic fields; failures, globals and models stayed isolated; host workspace and mirrors unchanged');
+    await page.screenshot({ path: path.join(root, 'project-data-page.png'), fullPage: true });
+    report.success = true; return;
+  }
+  if (process.env.AILY_ABS_NATIVE_CREATION_ONLY === '1') {
+    setPhase('native-creation');
+    report.nativeCreation = await testNativeCreation(page, seed, root);
+    assert.equal(hash(fs.readFileSync(path.join(source, 'project.abi'))), originalHash);
+    assert.equal(errors.length, 0, JSON.stringify(errors));
+    record('Actual Agent created native dynamic blocks, reshaped twice, saved and reopened without pre-seeded instances');
+    await page.screenshot({ path: path.join(root, 'project-data-page.png'), fullPage: true });
+    report.success = true; return;
+  }
+  if (process.env.AILY_ABS_NATIVE_INSTANCES_ONLY === '1') {
+    setPhase('native-instances');
+    report.nativeInstances = await testNativeInstances(page, seed, root);
+    assert.equal(hash(fs.readFileSync(path.join(source, 'project.abi'))), originalHash);
+    assert.equal(errors.length, 0, JSON.stringify(errors));
+    record('Actual Agent edited native DHT/MAX31865 instances without source recipes; state, C++ and mirrors survived reopen');
+    await page.screenshot({ path: path.join(root, 'project-data-page.png'), fullPage: true });
+    report.success = true; return;
+  }
+  if (process.env.AILY_ABS_FIELD_SHAPE_ONLY === '1' || process.env.AILY_ABS_CONDITIONAL_ONLY === '1') {
+    const mode = process.env.AILY_ABS_CONDITIONAL_ONLY === '1' ? 'conditional' : 'field-shape';
+    setPhase(mode);
+    report.fieldShapeGeneration = await testFieldShapeGeneration(page, seed, root, mode);
+    assert.equal(hash(fs.readFileSync(path.join(source, 'project.abi'))), originalHash);
+    assert.equal(errors.length, 0, JSON.stringify(errors));
+    record('Actual Agent tools created UI-extended and field-dependent blocks, removed/restored inputs, generated C++, and preserved ABI/ABS/map and protected roots after reopen; source unchanged');
+    await page.screenshot({ path: path.join(root, 'project-data-page.png'), fullPage: true });
+    report.success = true; return;
+  }
   if (process.env.AILY_ABS_VARIABLE_ONLY === '1') {
     report.variableOnly = true;
     report.variableGeneration = await testVariableGeneration(page, seed, root);
@@ -128,7 +190,8 @@ async function main() {
     report.success = true; return;
   }
   if (process.env.AILY_ABS_LLM_ONLY === '1') {
-    if (process.env.AILY_ABS_LLM_DATA_ONLY === '1') report.llmAssets = await testLlmAssets(page, seed, root, setPhase);
+    if (process.env.AILY_ABS_LLM_NATIVE_ONLY === '1') report.llmNative = await testLlmNativeCreation(page, seed, root, setPhase);
+    else if (process.env.AILY_ABS_LLM_DATA_ONLY === '1') report.llmAssets = await testLlmAssets(page, seed, root, setPhase);
     else report.llmGeneration = await testLlmGeneration(page, seed, root, setPhase);
     report.linkedChat.llmTurnTested = true;
     assert.equal(hash(fs.readFileSync(path.join(source, 'project.abi'))), originalHash);

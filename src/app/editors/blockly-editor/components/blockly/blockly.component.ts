@@ -42,14 +42,15 @@ const BLOCKLY_LOCALES: Record<SupportedLanguageCode, any> = {
 //   ContinuousMetrics,
 // } from './plugins/continuous-toolbox/src/index.js';
 import './plugins/toolbox-search/src/index';
-import './plugins/block-plus-minus/src/index.js';
+import './blockly-native-registrations';
 import './plugins/stable-comment-icon';
 import { type BlockCodeMapping } from './generators/arduino/arduino';
 import { BlocklyService, WorkspaceBlockSearchState } from '../../services/blockly.service';
 import {
   BlocklyGeneratorRuntimeService,
 } from '../../services/blockly-generator-runtime.service';
-import { BitmapUploadResponse, GlobalServiceManager, BitmapUploadService } from '../../services/bitmap-upload.service';
+import { BitmapUploadResponse, BitmapUploadService } from '../../services/bitmap-upload.service';
+import { GlobalServiceManager } from '../../services/bitmap-upload-bridge';
 import {
   projectDataRuntime,
   ProjectService,
@@ -64,24 +65,11 @@ import './renderer/aily-icon';
 import './renderer/aily-thrasos/thrasos';
 import './renderer/aily-zelos/zelos';
 import './custom-category';
-import './custom-field/field-bitmap';
-import './custom-field/field-u8g2-bitmap';
 import { setU8g2AnimationFieldTranslator } from './custom-field/field-u8g2-animation';
 import { setTftEsPiAnimationFieldTranslator } from './custom-field/field-tftespi-animation';
 import { setTftEsPiImageFieldTranslator } from './custom-field/field-tftespi-image';
 import { setAudioFieldTranslator } from './custom-field/field-audio';
 import { registerMediaFieldEditorStyles } from './custom-field/field-media-editor-style';
-import './custom-field/field-image';
-import './custom-field/field-image-preview';
-import './custom-field/field-led-matrix';
-import './custom-field/field-led-matrix-image';
-import './custom-field/field-led-pattern-selector';
-import './custom-field/field-tone';
-import './custom-field/field-multilineinput';
-import './custom-field/field-slider';
-import './custom-field/field-angle180';
-import './custom-field/field-angle';
-import '@blockly/field-colour-hsv-sliders';
 
 import { Multiselect } from './plugins/workspace-multiselect/index.js';
 import { PromptDialogComponent } from './components/prompt-dialog/prompt-dialog.component.js';
@@ -1448,6 +1436,7 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
       mode,
       boardConfig: this.blocklyService.boardConfig,
       getWorkspace: () => this.blocklyService.workspace || null,
+      onBlockDefinition: (source, definition) => this.blocklyService.recordRuntimeBlockDefinition(source, definition),
     });
   }
 

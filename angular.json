@@ -50,6 +50,11 @@
                 "output": "blockly/media"
               },
               {
+                "glob": "native-candidate.js",
+                "input": ".generated/blockly-runtime",
+                "output": "blockly/runtime"
+              },
+              {
                 "glob": "**/*",
                 "input": "node_modules/monaco-editor/min/vs",
                 "output": "/assets/vs"
@@ -175,7 +180,13 @@
             "include": [
               "**/*.spec.ts"
             ],
-            "assets": [],
+            "assets": [
+              {
+                "glob": "native-candidate.js",
+                "input": ".generated/blockly-runtime",
+                "output": "blockly/runtime"
+              }
+            ],
             "styles": [],
             "scripts": []
           },

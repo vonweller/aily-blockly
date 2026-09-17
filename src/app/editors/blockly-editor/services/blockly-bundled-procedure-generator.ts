@@ -6,7 +6,7 @@ const adaptedCall = Symbol('bundled-procedure-call');
 /** The host owns native legacy callers and their ARG<n> inputs. Library-defined
  * callers have independent contracts. The read-only view keeps legacy generators'
  * INPUT<n> reads working without changing blocks, library handlers or naming rules.
- * Install on the active Generator only, after loading a library's code handlers.
+ * Install on the owning realm's Generator after loading library code handlers.
  */
 export function adaptBundledArduinoProcedureCalls(generator: any): void {
   const registration = captureBundledProcedureRegistration(Blockly.Blocks);

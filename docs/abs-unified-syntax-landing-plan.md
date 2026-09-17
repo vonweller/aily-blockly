@@ -2,6 +2,10 @@
 
 > 日期：2026-09-15
 >
+> **当前动态块主线调整**：后续以 [原生配置执行与历史工具复用方案](./abs-native-runtime-execution-plan.md) 为准。第 13–15 节是已交付的有限静态快速路径，不再以增加源码模板/哈希名单作为覆盖新库的主线。ABS 语法、原声明实参顺序、ABI/map 分工及无损提交不变。
+>
+> **当前验收入口**：原生主线第 16.6 节记录真实 LLM 两轮正式编译，第 17 节收敛只读媒体资源与支持边界。旧章节“下一步”保留为历史记录，不作为另一套并行待办。
+>
 > 状态：阶段 A/B/C 的既定核心主线已完成并验收；最终构建、启动断线、选中块上下文及大数据重开证据见第 11 节。任意库动态创建、全部历史字面量兜底及硬件运行不是本次验收范围。第 9、10 节保留为对应批次的历史证据，不代表当前尚未实施。
 >
 > 主线：沿用熟悉的 ABS 表达，复用已经实现的无损同步内核，消除 Agent 的双重规则。
@@ -121,7 +125,7 @@ arduino_loop()
 ### 3.4 字面量及动态形状的有限兼容
 
 - 数字/文本字段保持其真实类型；dropdown 按实际选项绑定，规范输出合法裸标识符，如 `int`、`Serial`、`OUTPUT`，不统一加引号。含空格或不能无歧义表达为裸 token 的选项使用字符串形式；既有 `"int"` 输入可兼容归一为 `int`。`false` 的解释由目标字段决定，不全局改成 `FALSE`，也不把字符串选项错误转为布尔值。
-- 普通 value input 优先使用 `math_number(...)`、`text(...)`、`logic_boolean(...)` 或其它真实值块。历史 `number(n)` 可按固定别名展开成 math_number；其它历史字面量简写只有在目标槽和对应宿主块合同均明确时才展开，否则给出具体写法诊断，不试探执行库代码。
+- 普通 value input 优先使用 `math_number(...)`、`text(...)`、`logic_boolean(...)` 或其它真实值块。第 13 节接通历史 `number(n)`、`var("name")`、裸数字、带引号文本、true/false、HIGH/LOW；只有目标槽和对应宿主块合同明确时才展开，字段字面量不走该路径。不试探执行库代码，也不把未知表达式变成文本。
 - 多分支 `@IF0/@DO0/@ELSE` 的语法可接受不等于任意 mutator 可新建；实际形状准备继续由具名宿主合同负责。现有原生过程/自定义函数合同继续复用。
 - 本轮不承诺恢复所有历史别名、任意动态参数数量、无括号根块或任意库对象创建。旧示例遇到这些边界应一次明确说明，不能让 Agent 轮换括号、引号和变量写法反复试错。
 
@@ -449,3 +453,138 @@ $env:AILY_ABS_LLM_DATA_ONLY='0' # 0: 普通变量两轮；1: 原动画例程两�
 - 共 **669 项专项测试通过**；暂存差异检查通过，未纳入本地登录数据与测试产物。此轮不重跑 LLM 会话及固件编译，相关证据仍为第 10 节，不扩大为全库/全仓库验收。
 
 隔离副本中 pnpm 的依赖一致性检查因非交互环境拒绝自动重装；未启用强制安装或清理依赖，改为直接运行已安装的 Rslib 入口，构建成功。该环境分支不修改依赖锁或应用代码。
+
+## 13. 常用动态结构与历史值简写接通（2026-09-15）
+
+### 13.1 纠正完成范围
+
+前述“核心完成”是已验收场景的结论，不表示旧 ABS 的全部创建能力已经恢复。尤其 controls_if / controls_switch 是当前常用块，不应以“未来任意新库”概括它们缺少新建/变形入口的问题。动态脚本执行和已有配置恢复早已存在；缺口在新链路加载前的结构准备。
+
+### 13.2 实施原则与边界
+
+- 不修改库包；不按库名/块名推测字段；不新建 probe 工作区或第二个 Runtime，不在能力查询和 validate 阶段执行库 init / serializer / generator。
+- 由主程序的结构 mutator 在注册处声明共享的计数、重复输入、可选分支和序列化规则，ABS 只消费该机制。注册身份、mixin 和原始 JSON 定义必须仍属当前项目；同一机制可供不同库和不同块名共用。
+- `structural-mutators.ts` 管理注册来源；`abs-structural-shape.ts` 只准备纯结构配置；声明目录、已有 reconciler、完整原生读回和 CAS 事务继续承担原职责。函数等带共享模型副作用的块不伪装为纯结构块。
+- 接入 controls_if_mutator、switch_case_mutator、dynamic_inputs_mutator、text_join_mutator、new_list_create_with_mutator。配置只接受各机制定义的键、布尔值及 0–1024 的整数计数；超限、未知键、被覆盖注册仍拒绝。没有根据多出的实参猜 mutator 状态。
+- generator 在既有 Realm 中通过标准 `Blockly.defineBlocksWithJsonArray` 注册的 JSON 也进入同一个项目声明目录，保留 boardConfig 已求值结果与真实注册身份；不再仅接收 block.json 文件来源。任意直接编写的 `init()` / 自定义序列化副作用仍不能仅凭类型已注册就宣称可新建。
+
+### 13.3 结构、语法及序列化
+
+- 调用参数先完成词法读取，再依据调用尾部已有的 `@extra` 绑定本实例的结构和原始参数顺序；不从 UI 的 inputList 重排静态参数。同类型不同配置不借用彼此的槽数量，规范导出与 map 使用相同来源。
+- 所有新建和变形先准备完整输入与规范 extraState；实际装载后仍检查全工作区、模型、隐藏 shadow、资源及跨页状态，不以“能显示一个块”代替无损验证。
+- 修复原生 if/switch 恢复中关闭 else/default 未删除对应输入的问题。默认带 else 的定义在显式关闭分支后必须保存 false，不能省略成默认配置，否则关闭重开会恢复旧分支。
+- 历史值简写集中归一为真实值块；字段/变量模型语义不变，不增加另一套 ABS 模式。公开 ABS/Map/Project Data 版本不变，坐标/ID/保护信息不进入 ABS。
+- Agent 能力解析、动态字段指引及唯一语法参考同步识别 structural-mutator-v1；发现能力不等于编译通过。
+
+### 13.4 验收
+
+新增原生 Blockly 用例覆盖五类结构、多实例不同配置、两轮身份保持、分支关闭、非法状态、注册覆盖及生成器内声明采集；正式 validate/apply 用例确认验证不写盘、不改工作区，提交保留受保护入口及另一页。初轮回归发现 ifelse 显式 false 被省略的问题，已修正；最终收尾和真实 Electron 结果记录于本节，不将首次失败记为通过。
+
+真实页首轮夹具错误地要求源工程未安装的列表库，已改为测试实际安装的 if/switch/text_join；五种底层 mutator 仍由原生专项用例覆盖。第二轮暴露布尔简写固定写大写的问题：安装库实际使用小写 true/false。修复为保留布尔 token，复用已有字段解析器按真实 dropdown 选项绑定，不增加另一套取值猜测；大小写唯一选项均接受，歧义或仅 1/0 选项拒绝。
+
+- 收尾额外修复：实例配置比较复用 canonical JSON，不能把对象键重排误判成另一种形状；新增无新建合同的已有实例自导出/自导入用例，仍拒绝配置值实际变化。
+- 最终 ChromeHeadless **539 项通过**，日志 `.tmp-abs-structural-tests-complete.log`；应用 TypeScript、四个 Electron 夹具语法检查和相关差异检查通过。
+- Agent 最终构建及声明生成通过；ABS/工程统计/文件发布 **98 项通过**，日志 `aily-lex-pro/packages/aily-agent/.tmp-abs-structural-agent.log`。
+- 最终页面 development 构建通过，耗时 61.793 秒，日志 `.tmp-abs-structural-build-complete.log`。工作区 es-toolkit 顶层 junction 指向缺失的 1.51.0，而当前 lockfile 和 Mermaid 自身依赖均为已安装的 1.52.0；常规保留链接构建曾因此失败。本次只给构建命令传 `--preserve-symlinks=false`，沿真实依赖路径解析，不修改 junction、依赖、锁文件或 angular.json。该本地依赖问题不计为 ABS 代码修复。
+
+真实验收使用空白板卡模板和源例程已安装依赖的副本，不向用户工程预先插入块/模型。测试通过真实 main/full preload/Angular 页面及 Agent 工具执行；不调用 LLM，不运行固件编译或硬件上传。新工作区代码缓存初始为空，重开代码检查必须通过原 `runWithPreparedProjectCode` 队列实际生成，不能把空缓存当作转换丢失，也不能只跳过代码检查。曾与工作区另一个 portable 构建交叠导致 dist 入口瞬间缺失；不终止外部构建，改用经过源/副本逐文件摘要比对的 6075 文件 Agent 产物副本（依赖只读链接）完成验收。首次独立验收见 `aily-project-data-ui-kzwANo/result.json`，19 块、3 个受保护入口、两轮真实工具编辑、重开状态/代码/三文件完全一致，success=true、errors=[]。
+
+最终源码构建后再次运行通过：[最终 result.json](C:/Users/LENOVO/AppData/Local/Temp/aily-project-data-ui-61Ud2y/result.json)、[真实页面](C:/Users/LENOVO/AppData/Local/Temp/aily-project-data-ui-61Ud2y/project-data-page.png)。两轮实际 Agent 工具耗时 45.492 秒；19 块、3 个保护入口、分支配置、完整序列化状态、C++ 代码及 ABI/ABS/map 文件关闭重开后均一致，success=true、errors=[]。原工程 ABI SHA-256 仍为 `d556530fc57380bf8fab311d13e11f7ba52d3c39a39a67fd03fd24bc1e4de743`；未修改库、原工程或登录配置。
+
+复现入口：等待主程序和 Agent 构建退出，使用 Node 22 运行 `scripts/project-data-electron-smoke.cjs <已安装例程绝对路径>`，设置 `AILY_AGENT_ROOT=<稳定 Agent 产物根目录>`、`AILY_ABS_STRUCTURAL_ONLY=1`，其它 ONLY/断线开关为 0，不设置 `AILY_ABS_AUTH_SOURCE`。若有并行打包，使用摘要确认一致的产物副本；不要在验收过程中替换 dist。测试数据均写入新建临时目录，保留结果供复核。
+
+本批常用纯结构机制和上述有限历史简写已完成。仍未包含任意 JS-only init/共享模型副作用的自动准备、无依据的输入别名或全部历史语法，以及本批新增场景的 LLM 自主会话/固件编译。它们不能被描述成“所有动态块仍未适配”，也不应通过放松完整读回来放行。发布时主程序和 Lex 对应能力/规则应成对交付；真实工具验收不冒称新一轮嵌入式 Chat LLM 验收。
+
+## 14. 剩余动态块：字段驱动结构与 UI 效果分离（2026-09-15）
+
+### 14.1 重新盘点真实缺口
+
+只读扫描当前库仓库得到 43 个库、116 个带 extension/mutator 的 block.json 声明；这是待分类的声明数量，**不是 116 个故障或未适配块**。直接以 `Blockly.Blocks[...]` 定义结构的主要来源是已独立适配的 core-functions，不能继续以“任意新 JS 动态块”概括实际缺口。
+
+本批分开处理两个问题：不改变持久化结构的 UI 扩展不应阻止已有 JSON 结构的新建；下拉值决定输入数量/顺序的块，需要在原生加载前准备对应结构。共享模型、异步创建块和全局配置副作用是不同问题，不混入纯结构许可。
+
+### 14.2 模块职责与实现
+
+| 模块 | 单一职责 |
+| --- | --- |
+| `blockly-field-shape-contracts.ts` | 绑定当前版本原生 mutator 注册身份，声明字段条件、输入及原生冗余序列化属性 |
+| `abs-field-shape.ts` | 纯函数从原声明和字段值生成输入顺序及规范原生状态，不调用库函数 |
+| `blockly-ui-effect-proof.ts` | 有限 AST 效果检查：只读 tooltip 与已审查的公共可见性实现 |
+| 原声明目录/语法/协调器 | 保存证据、逐实参绑定、准备候选，继续使用全量回读和原事务提交 |
+| Agent 原能力入口 | 识别 `field-shape-v1`，描述默认形状与字段条件，不执行另一套转换 |
+
+- 接入 `math_is_divisibleby_mutator`：PROPERTY 为 DIVISIBLE_BY 时追加 DIVISOR；接入 `text_charAt_mutator`：WHERE 为 FROM_START/FROM_END 时追加 AT。规则绑定机制而非块名，同一注册可服务其它声明。
+- 实参仍按声明顺序交错排列；解析 selector 后重新确定后续输入，不推测 INPUT0、不把字段统一移到前面、不按 UI inputList 重排。具名参数只保留为兼容输入，规范导出仍用顺序调用。
+- 同类型不同字段配置分别准备；原不可变 generation 合同记录 selector 字段，避免相互借用形状。公开 ABS Schema 2 / Map Schema 1 / Project Data Schema 1 均不变。
+- 实测当前 Blockly 分支会将这两类 mutator 的 XML 保存到 `extraState`，不能根据上游“字段已足够”的注释忽略实际序列化。主程序按字段推导 `divisor_input` / `at` 的原生布尔值；只接受这两种已审查的冗余格式，未知属性/对象/不透明数据仍拒绝。旧导出的布尔值随字段编辑重新推导，新建无需手写 XML；规范导出保留已有原生 `@extra` 表示，不新增注解。能力信息不暴露内部 XML 配方。
+- tooltip 检查拒绝任意调用、写入、模型操作和遮蔽 block 引用的局部变量；可见性机制需完整 AST 匹配，仅字段/枚举文本可替换，支持直接与判空两种 validator 绑定。库名、扩展名和块名不作为匹配条件。注册身份变化即失效。该检查是有限兼容性分析，不是恶意 JS 沙箱。
+- 复用原 Runtime/注册目录，无探针工作区、二次初始化、库补丁、全局兜底 catch 或第二套 ABS 语言；不清理仍有消费者的历史解析器，也不更改变量引用与模型语义。
+
+### 14.3 本批验证
+
+- ChromeHeadless **547 项通过**，应用 TypeScript 检查及 development 构建通过；最终日志 `.tmp-abs-field-shape-tests-sealed.log`、`.tmp-abs-field-shape-types.log`、`.tmp-abs-field-shape-build-sealed.log`。收尾增加外层箭头函数拒绝（其 `this` 无法证明为当前块），完整回归再次通过。
+- Agent 构建/声明生成及 ABS/工程统计/文件发布 **99 项通过**；日志 `aily-lex-pro/packages/aily-agent/.tmp-abs-field-shape-build-final.log`、`.tmp-abs-field-shape-agent-tests.log`。
+- 新用例包含原生实际加载、同类型多配置、增删输入及身份保持、具名 selector 后置、非法输入/枚举/extra、未知写入、注册被覆盖及无探测断言。初轮发现原生 XML 缺失，修复推导后通过；未弱化回读或移除失败断言。
+- 真实 Electron 验收入口新增 `AILY_ABS_FIELD_SHAPE_ONLY=1`，其它 ONLY/断线开关为 0，不提供登录源；使用 Node 22、最新页面构建和 `AILY_AGENT_ROOT` 指定的稳定 Agent 产物。只写新建临时目录。实际结果见本节后续记录，不以单测替代真实页面验收。
+
+真实工具首轮三轮编辑均成功，但测试夹具误以为库输出 `%`；已按实际 generator 的 `fmod` 修正断言，没有修改库或 C++ 生成规则。重跑完整通过：[result.json](C:/Users/LENOVO/AppData/Local/Temp/aily-project-data-ui-Psk9sK/result.json)，success=true、errors=[]。实际已安装的数学 tooltip 和 Seeed GFX 动画可见性扩展通过能力查询；三轮实际 read/write、abs_validate/apply 从空板新建并移除/恢复条件输入。最终 18 个块、3 个保护入口，同类型两个字符索引配置互不干扰，工作区状态、ID、C++ 及 ABI/ABS/map 字节关闭重开一致。没有调用 LLM、固件编译或上传，动画本身本轮仅验证能力发现，不冒称再次播放动画。
+
+验收 Agent 使用完成构建后的 6075 文件副本，源/副本逐文件 SHA-256 一致，依赖只读链接，避免并行打包替换 dist。原工程 ABI 摘要仍为 `d556530fc57380bf8fab311d13e11f7ba52d3c39a39a67fd03fd24bc1e4de743`。架构扫描无循环，仍报告用户中心既有 4 处深层导入，未改无关模块，也不将全仓架构检查记为通过。
+
+最终源码再次构建后，真实 Electron 复验通过：[最终 result.json](C:/Users/LENOVO/AppData/Local/Temp/aily-project-data-ui-YUkXIY/result.json)、[页面截图](C:/Users/LENOVO/AppData/Local/Temp/aily-project-data-ui-YUkXIY/project-data-page.png)。三轮实际 Agent 工具耗时 61.847 秒，18 块、3 个保护入口，原生动态输入、完整状态/ID/C++ 和 ABI/ABS/map 保存重开均一致，success=true、errors=[]；源码工程摘要不变。最终日志 `.tmp-abs-field-shape-electron-sealed.log`。
+
+### 14.4 明确剩余工作顺序
+
+1. **多 selector 与插入型纯结构（已在第 15 节完成）**：core-text 子串 `text_getSubstring_mutator`（WHERE1/WHERE2、AT1_VALUE/AT2_VALUE）、ESP32 I2C 自定义地址输入。复用字段规则模块，证明加载后的真实注册来源/依赖和序列化；不能仅按函数名许可。
+2. **硬件模型副作用**：DHT/MAX31865 等动态引脚字段与生成器创建模型、serial/I2C/SPI 全局端口配置。需要单独模型/配置意图，不当作 tooltip 或普通字段放行。
+3. **自动子块/有副作用序列化**：AI-vox/Blinker WiFi 的延迟新建 text、R4 动画保存阶段连接整理。需在原事务中明确准备及恢复语义，不增加异步探针或自动重试。
+4. 本批新增组合的 LLM 自主会话、固件编译/硬件执行另验；真实 Agent 工具和 C++ 生成不等同于这些验收。
+
+这些是具名、可复现的机制缺口；已完成的函数、五类计数结构、变量与动画数据闭环不重新列为待办。库仓库及用户原工程持续只读，两端能力/指引随主程序配套交付。
+
+## 15. 库内闭包结构、双 selector 与隐藏 shadow 收敛（2026-09-15）
+
+### 15.1 本批完成范围
+
+- core-text 的双 selector 子串结构：全部 3 × 3 组合，新建、删除/恢复两侧索引、同类型不同配置、声明顺序和身份保持。
+- ESP32 I2C 地址扩展：写入和读取块共用一个条件输入机制；CUSTOM 增加 CUSTOM_ADDRESS，其余选项移除，字段名称、类型名和全局 helper 名可替换而不依赖库名许可。
+- 显式删除动态槽时连同 dormant shadow 删除；未删除的槽继续保留可见及隐藏 shadow。补齐 dormant shadow 导致可见调用参数顺序被误判为歧义的问题。
+- 复用第 14 节 `field-shape-v1` 和既有原生校验/事务，不增加 ABS 注解、map schema、模型意图或第二套转换器。Agent 同步验证双 selector 的交错顺序、锚点方向、重复条件输入和默认输入类型。
+
+### 15.2 原理及职责
+
+库中动态行为的事实来源是**实际注册的函数、mixin 和其依赖**，而不是 block.json 的扩展名称。为此，现有项目 Realm 的 Blockly facade 只对 register/registerMutator 增加观察：先正常完成原注册，再记录能被证明的结构；不替换宿主 Extensions 方法，不再执行一遍 callback，不新建探针工作区。
+
+- `blockly-source-pattern.ts`：共享有限 AST 匹配。只允许模板中显式标记的标识符/字符串替换，重复捕获必须一致；未知语句、调用、写入、serializer 属性不匹配。原 UI 检查删除重复解析函数，复用该解析入口。
+- `blockly-field-shape-proof.ts`：声明两种已审查机制及其条件、字段/输入关系。闭包 mixin 的完整属性描述符、prototype、Realm 全局 helper、HTML 文档创建方法和注册身份需保持；失效则不能继续新建/变形。不声称能静态理解任意 JS。
+- `blockly-field-shape-contracts.ts`：持有按实际回调弱引用关联的证据，并检查所属 Runtime 仍有效。原 bundled mutator 合同仍沿用。
+- `abs-field-shape.ts`：从原 JSON 的 dummy 输入锚点解析 `after`，再纯函数准备各实例的字段条件和原生 XML；不读取活动 inputList 推测调用顺序。锚点缺失、选择器不符、输入名冲突使该声明保持 preserve-only，不污染其它块的能力查询。
+- 原声明目录接收 mutator 和普通 extension 的字段规则；原 reconciler、身份匹配、完整读回和 CAS 提交继续是唯一编辑入口。模型或异步副作用不通过此通道放行。
+- 注册 API 观察保留“读取属性时捕获函数”的正常 JS 语义：库装饰 register 并调用此前保存的方法不会递归或被绕过。新反例还发现原 Runtime journal 只恢复注册项、未恢复 Extensions API 方法；已将该方法表纳入同一个原有 property-surface 恢复机制，避免包装函数携带旧 Realm 泄漏到下一项目。
+
+### 15.3 原生差异与 shadow 修复
+
+子串库使用 HTML `document.createElement('mutation')`，实际 extraState 包含 `xmlns="http://www.w3.org/1999/xhtml"`，不同于 bundled mutator 的无命名空间 XML。已根据实际序列化验证并生成精确命名空间、属性和布尔状态，仍拒绝未知属性；未修改库 serializer。Agent 不接触此内部配方，只保留导出的原生 @extra，或在新建时由宿主推导。
+
+Dormant shadow 属于 ABI 但没有活动实例、字段合同或可编辑 ABS 调用。原类型顺序汇总误把它的“无合同”混入可见实例，导致规范顺序无法确定。现只让已捕获实例参与语法顺序判定，隐藏数据仍进入完整 ABI 索引/验证。已证明的结构变化才能移除整个槽；普通断开连接不能借此删 shadow。新增实测同时验证保留的可见 shadow 身份和被移除的隐藏 fallback。
+
+### 15.4 验证与复现
+
+- 首轮完整 ChromeHeadless **556 项通过**，日志 `.tmp-abs-conditional-tests-sealed.log`；应用类型检查与 development 构建通过。收尾注册装饰器反例暴露上述方法表恢复缺口，修复后的最终测试/构建结果在本节追加，不把中途失败计作通过。
+- Agent 构建与声明生成通过；ABS/工程统计/文件发布 **100 项通过**，日志 `aily-lex-pro/packages/aily-agent/.tmp-abs-conditional-agent-build-final.log`、`.tmp-abs-conditional-agent-tests.log`。
+- 原生测试使用只读库注册片段 fixture，在真实 Runtime 正常执行注册并原生装载：九种组合、重复编辑、库/块/helper/字段改名、未知调用和 XML、缺失锚点、被替换 helper/mixin、宿主注册入口不被修改、无构造探测。
+- Electron 复现：完成两端构建后，Node 22 运行原 `scripts/project-data-electron-smoke.cjs <已安装例程绝对路径>`。设置 `AILY_AGENT_ROOT=<经摘要核验的 Agent 产物根>`、`AILY_ABS_CONDITIONAL_ONLY=1`、`AILY_ABS_CONDITIONAL_LIBRARY=<只读 esp32_i2c 库绝对路径>`，其它 ONLY/断线开关为 0，不设置登录源。I2C 库仅复制到新临时工程；用户原工程、库仓库、登录配置均不写入。
+
+本批固件编译、LLM 自主会话、硬件通信仍需另验，不把能力查询或 C++ 文本生成当作这些验收。
+
+验收过程保留三次失败记录：C 盘的两次运行分别停在 Agent 历史初始化和模块加载，尚未到候选转换；独立导入同一 Agent 目录 18.464 秒通过。C 盘仅余约 4.65 GB，测试输出迁到 D 盘的新隔离目录（不删除原记录，不调整超时）。D 盘首次运行完成候选验证后，在再次验证的宿主发现阶段失败；当时有 Angular 单测构建并行，发现接口的 ping 窗口为 800 ms。这些现象不能据此断言唯一根因，也没有据此修改生产发现策略、重试写操作或放宽回读。最终复验须等两端构建/测试均退出后独立执行。
+
+最终注册 API 恢复修复后，ChromeHeadless **557 项通过**，日志 `.tmp-abs-conditional-tests-closure2.log`；类型检查和 development 构建通过，最终构建日志 `.tmp-abs-conditional-build-closure2.log`。架构检查仍为用户中心既有 4 处深层导入、无循环，没有修改无关模块，不将全仓架构检查记为通过。
+
+等待构建/测试全部退出后，最终真实 Electron 验收通过：[result.json](D:/codes/.tmp-abs-conditional-ui/aily-project-data-ui-wi1bOC/result.json)、[页面截图](D:/codes/.tmp-abs-conditional-ui/aily-project-data-ui-wi1bOC/project-data-page.png)。success=true、errors=[]；实际 Agent 工具三轮耗时 86.839 秒，最终 13 个块、3 个保护入口，两个子串实例的配置互不干扰，自定义地址恢复为 32；完整工作区状态/ID、C++、ABI/ABS/map 字节关闭重开一致。已安装的两个 I2C 类型均通过能力查询，读取块另有原生装载测试；真实生成代码覆盖子串与 I2C 写入，不冒称实际硬件读写。截图中宿主仍有后台 SDK 安装提示，这不是已完成固件编译的证据。
+
+Agent 使用 6075 文件、源/副本逐文件 SHA-256 一致的稳定产物，避免打包交叠；最终日志 `.tmp-abs-conditional-electron-closure.log`。原工程 ABI SHA-256 仍为 `d556530fc57380bf8fab311d13e11f7ba52d3c39a39a67fd03fd24bc1e4de743`，库仓库及登录源未修改。本批没有提交或推送 Git。
+
+### 15.5 后续边界
+
+双 selector 和自定义地址的纯结构缺口已关闭。剩余研发集中在 DHT/MAX31865 等硬件模型、serial/I2C/SPI 全局配置、AI-vox/Blinker 的自动子块、R4 动画保存时连接整理；这些需要模型/配置/连接意图，不应继续增大纯结构匹配器去模拟副作用。已有实例的安全编辑能力与新建/变形能力仍分别报告。

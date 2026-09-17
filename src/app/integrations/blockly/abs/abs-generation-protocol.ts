@@ -1,6 +1,7 @@
 import { AbsIdentityMap, AbsProjection, AbsSyncError } from './abs-state';
 import { absJson, hashAbsText } from './abs-identity-map';
 import { AbsPreparedVariable, AbsVariableCreation, assertAbsVariableCreations, planAbsVariableCreations } from './abs-variable-intents';
+import { assertAbsSourceEdits, type AbsSourceEdits } from './abs-edit-provenance';
 
 /** A byte-bound wire view, not an authority to modify the immutable baseline. */
 export interface AbsGenerationBinding {
@@ -16,6 +17,7 @@ export interface AbsGenerationCandidateRequest extends AbsGenerationRequest {
   base: AbsGenerationBinding;
   candidate: { hash: string; bytes: number };
   createVariables?: AbsVariableCreation[];
+  sourceEdits?: AbsSourceEdits;
 }
 export interface AbsGenerationValidation extends AbsGenerationCandidateRequest { workspaceRevision: number; preparedVariables?: AbsPreparedVariable[] }
 
@@ -28,6 +30,7 @@ export function assertGenerationRequest(value: any): asserts value is AbsGenerat
 export function assertGenerationCandidate(value: any): asserts value is AbsGenerationCandidateRequest & Record<string, any> {
   assertGenerationRequest(value);
   assertAbsVariableCreations(value['createVariables']);
+  assertAbsSourceEdits(value['sourceEdits']);
   const { base, candidate } = value as any;
   if (!base || typeof base.generation !== 'string' || !/^[A-Za-z0-9_-]{1,96}$/.test(base.generation)
     || typeof base.scope?.projectKey !== 'string' || !base.scope.projectKey || typeof base.scope?.pageId !== 'string' || !base.scope.pageId

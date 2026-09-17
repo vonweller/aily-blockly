@@ -7,6 +7,12 @@ const { createHash } = require('node:crypto');
 const { runProcedures, rejectCrossPageSignature } = require('./project-agent-procedures.cjs');
 const { runCapabilities } = require('./project-agent-capabilities.cjs');
 const { runCustomFunctions, rejectCustomCrossPage, rejectCustomRuntimeMutation } = require('./project-agent-custom-functions.cjs');
+const { runStructural } = require('./project-agent-structural.cjs');
+const { runFieldShape } = require('./project-agent-field-shape.cjs');
+const { runConditional } = require('./project-agent-conditional.cjs');
+const { runNativeInstances } = require('./project-agent-native-instances.cjs');
+const { runNativeCreation } = require('./project-agent-native-creation.cjs');
+const { runRandomLibrary } = require('./project-agent-random-libraries.cjs');
 
 // Execute product Agent services over the real authenticated CLI bridge, without an LLM.
 async function run() {
@@ -37,6 +43,12 @@ async function run() {
       : mode === 'procedures' ? await runProcedures(project, load, call, history)
       : mode === 'procedure-cross-page' ? await rejectCrossPageSignature(project, call)
       : mode === 'variables' ? await runVariables(project, load, call, history)
+      : mode === 'structural' ? await runStructural(project, load, call, history)
+      : mode === 'field-shape' ? await runFieldShape(project, load, call, history)
+      : mode === 'conditional' ? await runConditional(project, load, call, history)
+      : mode === 'native-instances' ? await runNativeInstances(project, load, call, history)
+      : mode === 'native-creation' ? await runNativeCreation(project, load, call, history)
+      : mode === 'random-library' ? await runRandomLibrary(project, load, call, history, catalog)
       : mode === 'rebind' ? await runRebind(project, call)
       : mode === 'verify-rebound' ? await verifyRebound(project, call) : await runProjection(project, call);
     const checkpoint = await history.finalize();
@@ -192,9 +204,9 @@ function testAgentHostProjection(project, agentRoot, mode = 'projection') {
       }
       reject(new Error(`Agent host projection test timed out at ${phase}`));
     };
-    // Variable/procedure scenarios perform multiple separate transactions. Bound each
+    // Multi-edit scenarios perform multiple separate transactions. Bound each
     // operation's inactivity, as well as the whole finite scenario, independently.
-    const timeout = setTimeout(stop, ['variables', 'procedures', 'custom-functions'].includes(mode) ? 270000 : mode === 'capabilities' ? 180000 : 90000);
+    const timeout = setTimeout(stop, ['variables', 'procedures', 'custom-functions', 'structural', 'field-shape', 'conditional', 'native-instances', 'native-creation', 'random-library'].includes(mode) ? 270000 : mode === 'capabilities' ? 180000 : 90000);
     let idle = setTimeout(stop, 90000);
     child.on('message', value => {
       if (typeof value.phase === 'string') {

@@ -16,12 +16,14 @@ async function runCustomFunctions(project, load, call, history) {
   const rounds = []; let identity;
   for (let round = 0; round < 3; round++) {
     const exported = await call('abs_export', { initialize: round === 0 }); assert.equal(exported.ok, true, JSON.stringify(exported));
-    const candidate = round === 0 ? exported.abs.replace('arduino_setup()', 'arduino_setup()\n    @ARDUINO_SETUP:\n        custom_function_call_advance(FUNC_NAME="abs_custom")')
-      + '\ncustom_function_def(FUNC_NAME="abs_custom", RETURN_TYPE="int", RETURN=math_number(NUM=1))'
-      : round === 1 ? changeSignature(exported.abs, state => ({ ...state, params: [{ name: 'amount', type: 'int' }] }))
-        .replace('custom_function_call_advance(FUNC_NAME="abs_custom")', 'custom_function_call_advance(FUNC_NAME="abs_custom", INPUT0=math_number(NUM=7))')
-      : changeSignature(exported.abs, state => ({ ...state, params: [{ name: 'amount', type: 'float' }] })).replace('NUM=7', 'NUM=9')
-        .replace('RETURN=math_number(NUM=1)', 'RETURN=variables_get(VAR="amount")');
+    // This isolated blank fixture has only the three board roots and this function.
+    // Exercise the actual README signature, not a parallel named/@extra dialect.
+    const parameter = round === 0 ? '' : `, ${round === 1 ? 'int' : 'float'}, "amount"`;
+    const value = round === 2 ? 'variables_get($amount)' : 'math_number(1)';
+    const argument = round === 0 ? '' : `, INPUT0=math_number(${round === 1 ? 7 : 9})`;
+    const candidate = '# ABS Schema: 2\narduino_global()\narduino_setup()\n'
+      + `    custom_function_call_advance(FUNC_NAME=$abs_custom${argument})\narduino_loop()\n`
+      + `custom_function_def("abs_custom", int${parameter}, ${value})\n`;
     assert.notEqual(candidate, exported.abs);
     const createVariables = round === 0 ? [{ name: 'abs_custom', type: 'FUNC' }] : round === 1 ? [{ name: 'amount' }] : undefined;
     await read.execute('read-custom-' + round, { path: 'project.abs' }, undefined, undefined, {});

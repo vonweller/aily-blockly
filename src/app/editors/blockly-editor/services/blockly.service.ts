@@ -13,6 +13,8 @@ import {
 } from '../components/blockly/generators/arduino/arduino';
 import { AbsBlockContextIndex, truncateAbsContext } from '../../../integrations/blockly/abs/abs-block-context';
 import type { AbsProjection } from '../../../integrations/blockly/abs/abs-state';
+import { nativeFieldOrder } from '../../../integrations/blockly/abs/abs-native-field-order';
+import { withNativeStateLoading } from './blockly-native-state-loading';
 import { BlockSearcher } from '../components/blockly/plugins/toolbox-search/src/block_searcher';
 import {
   dragSelectionWeakMap,
@@ -176,6 +178,10 @@ export class BlocklyService {
   private readonly declarativeBlocks = new BlocklyDeclarativeBlockCatalog();
 
   captureDeclarativeBlockDefinitions() { return this.declarativeBlocks.capture(Blockly.Blocks); }
+
+  /** Host transaction only; keeps replay provenance/session ownership in the runtime. */
+  captureNativeReplay() { return this.generatorRuntime.captureNativeReplay(); }
+  recordRuntimeBlockDefinition(source: Record<string, any>, definition: object) { this.declarativeBlocks.record(source, definition); }
   // 追踪加载的generator脚本和它们注册的函数
   loadedGenerators = new Map<string, Set<string>>(); // filePath -> Set of block types
   // 追踪已加载的库,避免重复加载
@@ -883,7 +889,7 @@ export class BlocklyService {
   }
 
   /** ABS mutates the composed active workspace, not titles/tabs or another page's content. */
-  restoreProjectWorkspaceSnapshot(snapshot: BlocklyProjectDocument, owner?: BlocklyWorkspaceEditLease): void {
+  restoreProjectWorkspaceSnapshot(snapshot: BlocklyProjectDocument, owner?: BlocklyWorkspaceEditLease, rootOrder?: readonly string[]): void {
     this.assertWorkspaceEditAvailable(owner);
     const current = this.getStoredProjectDocument();
     if (snapshot.activePageId !== current.activePageId) {
@@ -893,7 +899,8 @@ export class BlocklyService {
       current, current.activePageId, composeBlocklyPage(snapshot, current.activePageId),
       captureBlocklyRootClassifier(null, Blockly.Blocks),
     );
-    this.loadProjectDocument(restored, false, owner);
+    this.applyProjectDocument(restored, false);
+    this.loadActivePageIntoWorkspace(owner, rootOrder);
   }
 
   assertWorkspaceSharedChange(snapshot: BlocklyProjectDocument, workspace: any, owner?: BlocklyWorkspaceEditLease): void {
@@ -1226,7 +1233,11 @@ export class BlocklyService {
       }
     });
 
-    Blockly.serialization.workspaces.load(workspaceJson, this.workspace);
+    const definitions = this.captureDeclarativeBlockDefinitions();
+    definitions.assertCurrent();
+    withNativeStateLoading(Blockly, this.workspace, workspaceJson,
+      () => Blockly.serialization.workspaces.load(workspaceJson, this.workspace),
+      block => nativeFieldOrder(block, definitions));
     captureCustomFunctionRegistration(Blockly.Blocks)?.prepareSerialization(this.workspace, true);
     this.scheduleWorkspaceRenderAfterLoad();
   }
@@ -1592,6 +1603,7 @@ export class BlocklyService {
       this.registerBlockFieldInputIncrementPolicy(block);
       Blockly.defineBlocksWithJsonArray([block]);
       this.declarativeBlocks.record(block, Blockly.Blocks[block.type]);
+      this.generatorRuntime.recordNativeBlockDefinitions([block], libPackageName);
     }
   }
 
@@ -2657,13 +2669,22 @@ export class BlocklyService {
     });
   }
 
-  private loadActivePageIntoWorkspace(owner?: BlocklyWorkspaceEditLease) {
+  private loadActivePageIntoWorkspace(owner?: BlocklyWorkspaceEditLease, rootOrder?: readonly string[]) {
     const activePage = this.getActivePage();
     if (!activePage || !this.workspace) {
       return;
     }
 
     const workspaceJson = composeBlocklyPage(this.getStoredProjectDocument(), activePage.id);
+    if (rootOrder) {
+      // Document ownership groups shared definitions first. A transaction rollback
+      // must instead reproduce the captured live root order, without dropping roots.
+      const roots = new Map(workspaceJson.blocks.blocks.map(block => [block.id, block]));
+      if (rootOrder.length !== roots.size || new Set(rootOrder).size !== roots.size || rootOrder.some(id => !roots.has(id))) {
+        throw new Error('Workspace snapshot root identities do not match the restore order.');
+      }
+      workspaceJson.blocks.blocks = rootOrder.map(id => roots.get(id));
+    }
     try {
       Blockly.Events.disable();
       this.workspace.clear();

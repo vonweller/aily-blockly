@@ -1,4 +1,6 @@
-import { assertNoOversizedInlineValues, canonicalJsonStringify } from '@domain/project/public-api';
+import { assertNoOversizedInlineValues } from '@domain/project/public-api';
+import { absJson } from './abs-json';
+export { absJson } from './abs-json';
 import { parseAbsSyntax } from './abs-syntax';
 import {
   ABS_PROJECTION_VERSION, AbsAbiWorkspace,
@@ -46,7 +48,6 @@ export async function hashAbsText(text: string): Promise<string> {
   return `sha256:${Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('')}`;
 }
 
-export function absJson(value: unknown): string { return canonicalJsonStringify(value); }
 
 export interface AbsSyntaxEntry { path: string; node: AbsSyntaxNode; parent: string | null; slot: string }
 export function indexAbsSyntax(roots: AbsSyntaxNode[]): AbsSyntaxEntry[] {

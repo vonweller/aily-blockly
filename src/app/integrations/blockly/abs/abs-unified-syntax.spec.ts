@@ -159,6 +159,18 @@ describe('ABS unified definition-order syntax', () => {
     await expectAsync(validateAbsProjection(baseline)).toBeRejected();
   });
 
+  it('preserves an existing instance order when canonical export reorders opaque extraState keys', async () => {
+    const fields = shapes.get('abs_order_decl')!.fields, order = shapes.get('abs_order_decl')!.argumentOrder!;
+    const workspace: AbsAbiWorkspace = { blocks: { blocks: [{ type: 'abs_order_decl', id: 'd',
+      fields: { VAR: 'counter', TYPE: 'int' }, extraState: { z: 1, a: { y: 2, b: 3 } } }] } };
+    const contracts = { fields: { d: fields }, syntax: { d: order } };
+    const syntax = absSyntaxOptions(workspace, contracts);
+    expect(syntax.argumentOrder!('abs_order_decl', { a: { b: 3, y: 2 }, z: 1 })).toEqual(order);
+    expect(syntax.argumentOrder!('abs_order_decl', { a: { b: 3, y: 2 }, z: 2 })).toBeUndefined();
+    const baseline = await project(workspace, contracts);
+    expect((await reconcileAbsDraft(baseline, baseline.abs)).workspace).toEqual(workspace);
+  });
+
   it('does not turn unchanged text into a reference or scan Project Data JSON as variables', async () => {
     const workspace: AbsAbiWorkspace = { blocks: { blocks: [{ type: 'abs_order_decl', id: 'd', fields: { VAR: 'counter', TYPE: 'int' } }] } };
     const baseline = await project(workspace, { fields: { d: shapes.get('abs_order_decl')!.fields }, syntax: { d: shapes.get('abs_order_decl')!.argumentOrder! } });
