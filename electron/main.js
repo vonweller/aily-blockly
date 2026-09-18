@@ -1054,7 +1054,7 @@ async function handleCliBridgeCommand(action, payload) {
             ? 600000
           : operation === 'project_save' && payload?.params?.chunk === true
             ? 140000
-          : operation === 'abs_apply' || operation === 'library_runtime_sync' || operation === 'set_board_config'
+          : operation === 'abs_apply' || operation === 'abs_validate' || operation === 'abs_projection' || operation === 'library_runtime_sync' || operation === 'set_board_config'
             ? 120000
             : operation === 'subapp_agent_call'
               ? 620000

@@ -1,9 +1,9 @@
 import { Subject } from 'rxjs';
-import { getChildToolConfigs, replaceChildToolConfigs, type ChildToolConfig } from '../../../configs/tool.config';
-import { UiService } from '../../core/app-shell/ui.service';
-import { MainUiAutomationService } from '../automation/main-ui-automation.service';
-import { ChildToolHostComponent } from '../../../tools/child-tool-host/child-tool-host.component';
-import { SubappAgentBridgeService } from './subapp-agent-bridge.service';
+import { getChildToolConfigs, replaceChildToolConfigs, type ChildToolConfig } from '../../configs/tool.config';
+import { UiService } from '@core/app-shell/public-api';
+import { MainUiAutomationService } from '@integration/automation/public-api';
+import { ChildToolHostComponent } from './child-tool-host.component';
+import { SubappAgentBridgeService } from '@integration/subapps/public-api';
 
 describe('Extension service UI boundary', () => {
   let previousConfigs: ChildToolConfig[];

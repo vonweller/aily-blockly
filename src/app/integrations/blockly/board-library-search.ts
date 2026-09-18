@@ -269,7 +269,7 @@ export const searchBoardsLibrariesTool = {
             },
             maxResults: {
                 type: 'number',
-                description: '最大返回结果数，默认50'
+                description: '最大返回结果数，默认10，范围1–50'
             }
         },
         required: []
@@ -284,7 +284,10 @@ export const searchBoardsLibrariesTool = {
         },
         configService: ConfigService
     ): Promise<SearchBoardsLibrariesToolResult> => {
-        const { query, type = 'both', maxResults = 50 } = params;
+        const { query, type = 'both', maxResults = 10 } = params;
+        if (!Number.isInteger(maxResults) || maxResults < 1 || maxResults > 50) {
+            return { is_error: true, content: 'maxResults must be an integer between 1 and 50.' };
+        }
         
         // 处理 filters 参数：可能是字符串（LLM 传入的 JSON 字符串）或对象
         let filters: StructuredFilters | undefined = undefined;
@@ -412,6 +415,7 @@ export const searchBoardsLibrariesTool = {
 
             // 按分数排序并限制结果数
             results.sort((a, b) => b.score - a.score);
+            const totalMatches = results.length;
             results = results.slice(0, maxResults);
 
             if (results.length === 0) {
@@ -422,6 +426,7 @@ export const searchBoardsLibrariesTool = {
                 }
                 const toolResult = {
                     is_error: false,
+                    metadata: { totalMatches: 0, returnedCount: 0, truncated: false, results: [], query: queryList, searchType: type },
                     content: `未找到与 "${queryDisplay}" 匹配的结果\n\n搜索范围: ${type === 'both' ? '开发板和库' : type === 'boards' ? '开发板' : '库'}\n${hint}`
                 };
                 return toolResult;
@@ -432,7 +437,7 @@ export const searchBoardsLibrariesTool = {
             const filterDisplay = filters ? `\n筛选条件: ${JSON.stringify(filters, null, 2)}` : '';
             const formatNotice = dataFormat === 'old' && filters ? '\n⚠️ 注意：使用旧格式数据，结构化筛选已转为文本搜索\n' : '';
             
-            let resultContent = `找到 ${results.length} 个匹配项（${queryDisplay}）${filterDisplay}${formatNotice}\n`;
+            let resultContent = `找到 ${totalMatches} 个匹配项，返回 ${results.length} 项（${queryDisplay}）${filterDisplay}${formatNotice}\n`;
             resultContent += `搜索范围: ${type === 'both' ? '开发板和库' : type === 'boards' ? '开发板' : '库'}\n`;
             resultContent += `数据格式: ${dataFormat === 'new' ? '新索引（结构化）' : '旧索引（文本）'}\n\n`;
 
@@ -471,7 +476,9 @@ export const searchBoardsLibrariesTool = {
                 is_error: false,
                 content: resultContent,
                 metadata: {
-                    totalMatches: results.length,
+                    totalMatches,
+                    returnedCount: results.length,
+                    truncated: totalMatches > results.length,
                     query: queryList,
                     filters: filters,
                     searchType: type,
