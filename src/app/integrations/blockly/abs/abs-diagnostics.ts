@@ -33,11 +33,20 @@ export interface AbsFailure {
   diagnostic?: AbsDiagnostic;
 }
 
+export const ABS_PROTECTED_FAILURES = {
+  PROTECTED_BLOCK_MISSING: 'ABS_PROTECTED_BLOCK_MISSING',
+  PROTECTED_BLOCK_TYPE_CHANGED: 'ABS_PROTECTED_BLOCK_TYPE_CHANGED',
+  PROTECTED_BLOCK_UNLOCK: 'ABS_PROTECTED_BLOCK_UNLOCK',
+} as const;
+
 /** Allowlist and bounds apply even to errors thrown by third-party library callbacks. */
 export function serializeAbsFailure(error: unknown): AbsFailure {
   const value = error && typeof error === 'object' ? error as Record<string, any> : {};
-  const code = typeof value['code'] === 'string' && /^ABS_[A-Z0-9_]{1,80}$/.test(value['code'])
-    ? value['code'] : 'ABS_GENERATION_FAILED';
+  const rawCode = value['code'];
+  const code = typeof rawCode === 'string' && Object.hasOwn(ABS_PROTECTED_FAILURES, rawCode)
+    ? ABS_PROTECTED_FAILURES[rawCode as keyof typeof ABS_PROTECTED_FAILURES]
+    : typeof rawCode === 'string' && /^ABS_[A-Z0-9_]{1,80}$/.test(rawCode)
+      ? rawCode : 'ABS_GENERATION_FAILED';
   const message = (typeof value['message'] === 'string' ? value['message'] : String(error)).slice(0, 2000);
   const result: AbsFailure = { code, message };
   const range = value['range'];

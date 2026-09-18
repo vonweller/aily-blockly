@@ -41,7 +41,10 @@ export async function verifyNativeAbi(native: typeof Blockly, workspace: Blockly
   const code = verifyNativeModelRegistrations(window, generator, request.modelDeclarations ?? [], generate);
   if (uiTasks.hasPending) {
     uiTasks.drain(() => nativeUiSemanticSnapshot(native, workspace));
-    if (generate() !== code) throw new Error('Native deferred UI tasks changed generated code or artifacts.');
+    if (generate() !== code) throw Object.assign(new Error('Native deferred UI tasks changed generated code or artifacts.'), {
+      code: 'ABS_NATIVE_EFFECT_UNSUPPORTED', diagnostic: { reason: 'deferred-generator-mutation',
+        hint: 'Generate code and artifacts synchronously. Repair the library generator; project recovery does not fix delayed effects.' },
+    });
   }
   assertClean();
   const state = capture();
