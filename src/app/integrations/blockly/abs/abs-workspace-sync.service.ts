@@ -7,7 +7,7 @@ import { getActiveProjectGenerator, getActiveProjectGeneratorRevision } from '..
 import { projectDataRuntime } from '@domain/project/public-api';
 import { assertAbsContractsCompatible } from './abs-contract-compatibility';
 import { inspectAbsDraft, AbsDraftReadiness } from './abs-draft-readiness';
-import { sameAbsProgram } from './abs-program-state';
+import { retainAbsRootLayout, sameAbsProgram } from './abs-program-state';
 import { AbsBaselineStore, AbsDiskSnapshot, AbsPublishResult, absBaselineKey } from './abs-baseline-store';
 import { openAbsHostStorage } from './abs-host-storage';
 import { absJson, assertAbsBaselineContext, createAbsProjection, hashAbsText } from './abs-identity-map';
@@ -19,6 +19,7 @@ import { assertAbsReadback } from './abs-readback';
 import { AbsWorkspaceLoadOptions, assertAbsProjectEnvelope, assertAbsRuntimeShapeSupported, captureAbsWorkspaceState, loadAbsWorkspaceState } from './abs-workspace-state';
 import { captureAbsDeclarativeContracts } from './abs-declarative-contracts';
 import { layoutAbsNewRoots } from './abs-new-root-layout';
+import { fenceBlocklyWorkspaceBumps } from '../../../editors/blockly-editor/services/blockly-workspace-layout-fence';
 import { AbsGenerationCandidateRequest, AbsGenerationEvidence, AbsGenerationValidation, generationEvidence } from './abs-generation-protocol';
 import { inspectAbsGeneration } from './abs-generation-inspection';
 import { planAbsVariableCreations } from './abs-variable-intents';
@@ -251,7 +252,7 @@ export class AbsWorkspaceSyncService {
       assertAbsBaselineContext(baseline.map, {
         generation, scope: context.scope,
         currentAbiHash: unchanged ? baseline.map.baseAbiHash : await hashAbsText(absJson(compact)),
-        currentPageAbiHash: await hashAbsText(absJson(composeBlocklyPage(compact, context.scope.pageId))),
+        currentPageAbiHash: unchanged ? baseline.map.pageAbiHash : await hashAbsText(absJson(composeBlocklyPage(compact, context.scope.pageId))),
         savedAbiHash: expected.abi === null ? null : await hashAbsText(absJson(JSON.parse(expected.abi))),
       });
       assertAbsContractsCompatible(baseline.contracts, rollback.contracts, rollback.state);
@@ -312,11 +313,15 @@ export class AbsWorkspaceSyncService {
       }
       materialized.blocks.blocks.sort((a, b) => Number(!sharedRoots.has(a.id)) - Number(!sharedRoots.has(b.id)));
       assertAbsRuntimeShapeSupported(rollback.state, materialized, candidate.contracts, blockContract, instances);
-      this.editor.assertWorkspaceSharedChange(before.document, materialized, lease);
       await this.assertDisk(store, expected, assertPreparing);
-      // Retain the latest viewport after potentially long isolated preparation.
+      // Code remains bound to the generation; layout follows the latest editor
+      // snapshot, including moves made since export or during native preparation.
       const current = this.editor.captureProjectSnapshot(lease);
       assertPreparing();
+      const currentWorkspace = composeBlocklyPage(current.document, context.scope.pageId);
+      retainAbsRootLayout(materialized, currentWorkspace);
+      retainAbsRootLayout(rollback.state, currentWorkspace);
+      this.editor.assertWorkspaceSharedChange(current.document, materialized, lease);
       return { expected, before: current, rollback, candidate, materialized, preparedModels };
   }
 
@@ -459,12 +464,14 @@ export class AbsWorkspaceSyncService {
     return this.editor.runProjectOperation(async () => {
       context.assertCurrent();
       const lease = this.editor.acquireWorkspaceEditLease();
+      let releaseLayout = () => undefined;
       try {
+        releaseLayout = fenceBlocklyWorkspaceBumps(context.workspace);
         if (flush) await projectDataRuntime.flushPending();
         context.assertCurrent(); lease.assertCurrent();
         const store = await this.store(context);
         return await operation(context, lease, store);
-      } finally { lease.release(); }
+      } finally { try { releaseLayout(); } finally { lease.release(); } }
     });
   }
 

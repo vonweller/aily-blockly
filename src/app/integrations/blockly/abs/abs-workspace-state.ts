@@ -11,6 +11,7 @@ import type { DeclarativeBlockSnapshot } from '../../../editors/blockly-editor/s
 import { orderAbsNativeFields } from './abs-native-field-order';
 import type { AbsNativeInstance } from './abs-native-binding';
 import { withNativeStateLoading } from '../../../editors/blockly-editor/services/blockly-native-state-loading';
+import { sameAbsProgram } from './abs-program-state';
 
 export interface AbsWorkspaceLoadOptions { chunk?: boolean; onProgress?: (blocks: number, batches: number) => void }
 
@@ -120,7 +121,7 @@ export function assertAbsProjectEnvelope(before: BlocklyProjectDocument, after: 
       return metadata;
     }) };
   };
-  if (absJson(envelope(before)) !== absJson(envelope(after))) {
+  if (!sameAbsProgram(envelope(before), envelope(after))) {
     throw new AbsSyncError('ABS_PROJECT_ENVELOPE_CHANGED', 'Applying ABS changed another page or unrelated project metadata.');
   }
 }
