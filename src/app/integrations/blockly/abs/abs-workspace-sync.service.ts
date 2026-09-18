@@ -109,7 +109,7 @@ export class AbsWorkspaceSyncService {
       }
       context.assertCurrent();
       let snapshot = this.editor.captureProjectSnapshot(lease);
-      let assertCurrent = this.atRevision(context.assertCurrent, lease, snapshot.revision, snapshot.document);
+      let assertCurrent = this.atRevision(context.assertCurrent, lease, snapshot);
       let prepared: PreparedBlocklySave | undefined;
       let generated: PreparedBlocklyCode | null = null;
       if (committed) {
@@ -137,7 +137,7 @@ export class AbsWorkspaceSyncService {
           if (generated && generated.revision !== snapshot.revision) {
             throw new AbsSyncError('ABS_RUNTIME_CAPTURE_CHANGED', 'Prepared code no longer belongs to the current canvas.');
           }
-          assertCurrent = this.atRevision(context.assertCurrent, lease, snapshot.revision);
+          assertCurrent = this.atRevision(context.assertCurrent, lease, snapshot);
           prepared = await this.project.prepareSave(snapshot.document, assertCurrent);
         } else prepared = undefined;
       } else prepared = undefined;
@@ -157,7 +157,7 @@ export class AbsWorkspaceSyncService {
         && committed.map.savedAbiHash === (expected.abi === null ? null : await hashAbsText(absJson(JSON.parse(expected.abi))))) {
         const evidence = await generationEvidence(committed, expected.abi);
         await this.assertDisk(store, expected, assertCurrent);
-        this.editor.publishAbsContext(committed, snapshot.revision, context.assertCurrent);
+        this.editor.publishAbsContext(committed, assertCurrent().revision, context.assertCurrent);
         return { publication: { status: 'COMMITTED', generation: committed.map.generation,
           abiSaved: false, absMirrored: true, mapPublished: true }, requiresReload: false,
           warnings: [], evidence, abs: committed.abs, reused: true };
@@ -198,7 +198,7 @@ export class AbsWorkspaceSyncService {
           catch (error) { warnings.push(`Canvas synchronized; derived outputs were not fully published: ${String(error)}`); }
           assertCurrent();
         }
-        this.editor.publishAbsContext(projection, snapshot.revision, context.assertCurrent);
+        this.editor.publishAbsContext(projection, assertCurrent().revision, context.assertCurrent);
       }
       return { publication, requiresReload, warnings, ...(draftArchive ? { draftArchive } : {}),
         ...(publication.status === 'COMMITTED' ? { evidence, abs: projection.abs } : {}) };
@@ -240,7 +240,7 @@ export class AbsWorkspaceSyncService {
       }
       context.assertCurrent();
       const before = this.editor.captureProjectSnapshot(lease);
-      const assertPreparing = this.atRevision(context.assertCurrent, lease, before.revision, before.document);
+      const assertPreparing = this.atRevision(context.assertCurrent, lease, before);
       const rollback = captureAbsWorkspaceState(context.workspace, context.assertCurrent, context.definitions);
       assertPreparing();
       const compact = await this.compactDocument(before.document, rollback.contracts, assertPreparing);
@@ -352,7 +352,7 @@ export class AbsWorkspaceSyncService {
         const applied = this.editor.captureProjectSnapshot(lease);
         assertAbsProjectEnvelope(before.document, applied.document, context.scope.pageId);
         if (generated && generated.revision !== applied.revision) throw new AbsSyncError('ABS_RUNTIME_CAPTURE_CHANGED', 'Prepared code no longer belongs to the applied revision.');
-        const assertApplied = this.atRevision(context.assertCurrent, lease, applied.revision);
+        const assertApplied = this.atRevision(context.assertCurrent, lease, applied);
         const prepared = await this.project.prepareSave(applied.document, assertApplied);
         const savedCompact = await this.compactDocument(applied.document, actual.contracts, assertApplied);
         const projection = await this.projection(savedCompact, actual.contracts, prepared.abiText, context.scope, assertApplied);
@@ -378,9 +378,9 @@ export class AbsWorkspaceSyncService {
         const warnings: string[] = [];
         try { await this.project.publishPreparedSaveOutputs(context.path, prepared, generated, assertApplied); }
         catch (error) { warnings.push(`Generation committed; derived outputs were not fully published: ${String(error)}`); }
-        assertApplied();
-        this.editor.publishAbsContext(projection, applied.revision, context.assertCurrent);
-        return { publication, appliedRevision: applied.revision, requiresReload: false, warnings, evidence };
+        const published = assertApplied();
+        this.editor.publishAbsContext(projection, published.revision, context.assertCurrent);
+        return { publication, appliedRevision: published.revision, requiresReload: false, warnings, evidence };
       } catch (error) {
         if (mutated && context.isCurrent()) {
           if (commitStarted) {
@@ -424,7 +424,7 @@ export class AbsWorkspaceSyncService {
       return this.run(async (context, lease, store) => {
         const current = await inspectAbsGeneration(store, context.scope);
         const snapshot = this.editor.captureProjectSnapshot(lease);
-        const assertCurrent = this.atRevision(context.assertCurrent, lease, snapshot.revision, snapshot.document);
+        const assertCurrent = this.atRevision(context.assertCurrent, lease, snapshot);
         const runtime = captureAbsWorkspaceState(context.workspace, assertCurrent, context.definitions);
         const diagnostics = await inspectAbsDraft(current, snapshot.document, runtime);
         await this.assertDisk(store, current.disk, assertCurrent);
@@ -490,13 +490,17 @@ export class AbsWorkspaceSyncService {
     context.assertCurrent(); return new AbsBaselineStore(port, context.scope);
   }
 
-  private atRevision(assertContext: () => void, lease: BlocklyWorkspaceEditLease, revision: number, program?: BlocklyProjectDocument) {
+  private atRevision(assertContext: () => void, lease: BlocklyWorkspaceEditLease,
+    snapshot: { revision: number; document: BlocklyProjectDocument }) {
     return () => {
       assertContext(); lease.assertCurrent();
       const current = this.editor.captureProjectSnapshot(lease);
-      if (current.revision !== revision && (!program || !sameAbsProgram(program, current.document))) {
+      // Native rendering may settle the viewport even after the save snapshot is sealed.
+      // Every ABS phase uses the same content guard; persisted bytes remain immutable.
+      if (current.revision !== snapshot.revision && !sameAbsProgram(snapshot.document, current.document)) {
         throw new AbsSyncError('ABS_REVISION_STALE', 'Workspace changed during generation preparation.');
       }
+      return current;
     };
   }
 
