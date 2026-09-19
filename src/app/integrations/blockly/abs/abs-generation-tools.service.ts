@@ -75,8 +75,8 @@ export class AbsGenerationToolsService {
     } catch (error) {
       const failure = serializeAbsFailure(error);
       return { ok: false, operation, ...failure,
-        ...((error as any)?.code === 'ABS_IDENTITY_AMBIGUOUS' ? {
-          recovery: failure.diagnostic?.hint ?? 'Identity evidence is ambiguous. Keep the current generation and unapplied draft. Changing field values or querying block_info cannot repair identity. Do not add IDs to ABS, discard the map or force export over the draft.',
+        ...(failure.diagnostic?.hint ? { recovery: failure.diagnostic.hint } : (error as any)?.code === 'ABS_IDENTITY_AMBIGUOUS' ? {
+          recovery: 'Identity evidence is ambiguous. Keep the current generation and unapplied draft. Changing field values or querying block_info cannot repair identity. Do not add IDs to ABS, discard the map or force export over the draft.',
         } : {}),
         ...(source && failure.range ? { location: {
           line: source.slice(0, failure.range.start).split('\n').length,

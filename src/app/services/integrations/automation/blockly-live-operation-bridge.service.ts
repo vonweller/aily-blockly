@@ -22,6 +22,7 @@ import {
   UploaderService,
 } from '@domain/device/public-api';
 import { AbsGenerationToolsService } from '../../../integrations/blockly/abs/abs-generation-tools.service';
+import { checkAbsDocumentation } from '../../../integrations/blockly/abs/abs-documentation';
 import {
   connectBlocks,
   createBlock,
@@ -33,6 +34,7 @@ import {
 import { searchBoardsLibrariesTool } from '../../../integrations/blockly/board-library-search';
 import { runProjectBuild } from '../../../integrations/blockly/project-build-operation';
 import { getBoardConfig, setBoardConfig } from '../../../integrations/blockly/board-config-operation';
+import { switchProjectBoard } from '../../../integrations/blockly/board-switch-operation';
 import type { EditorOperationEvent } from '../../../integrations/blockly/editor-operation-event';
 import type { HostToolResult } from '../../../integrations/blockly/host-tool-result';
 import {
@@ -53,11 +55,20 @@ type BlocklyLiveOperationPayload = {
   params?: Record<string, any>;
 };
 
+const PROJECT_MUTATIONS = new Set([
+  'abi_add', 'abi_delete', 'abi_connect', 'abi_set_field',
+  'abs_apply', 'abs_projection', 'abs_validate', 'abs_recovery',
+  'library_runtime_sync', 'set_board_config', 'project_save', 'blocks_tidy',
+  'project_build', 'project_upload',
+]);
+
 @Injectable({ providedIn: 'root' })
 export class BlocklyLiveOperationBridgeService {
   private initialized = false;
   private aiWritingDepth = 0;
   private absApplyInProgress = false;
+  private boardSwitchInProgress = false;
+  private mutationSequence = 0;
 
   constructor(
     private readonly configService: ConfigService,
@@ -122,6 +133,19 @@ export class BlocklyLiveOperationBridgeService {
   }
 
   private async execute(payload: BlocklyLiveOperationPayload): Promise<Record<string, any>> {
+    if (!PROJECT_MUTATIONS.has(payload.operation || '')) return this.executeOperation(payload);
+    const projectPath = payload.path || this.projectService.currentProjectPath;
+    if (this.projectService.isProjectTransitionInProgress(projectPath)) {
+      return { ok: false, operation: payload.operation, project: projectPath, reason: 'project_lifecycle_busy',
+        message: '项目正在切换、重载或关闭；本次写入尚未开始，请等待该宿主操作完成。' };
+    }
+    const source = `live-project-mutation:${++this.mutationSequence}`;
+    this.aiOperations.setActive(source, true, { projectPath, blocksProjectLifecycle: true });
+    try { return await this.executeOperation(payload); }
+    finally { this.aiOperations.setActive(source, false); }
+  }
+
+  private async executeOperation(payload: BlocklyLiveOperationPayload): Promise<Record<string, any>> {
     if (payload.operation === 'project_list') return {
       ok: true,
       project: this.projectService.currentProjectPath,
@@ -136,14 +160,18 @@ export class BlocklyLiveOperationBridgeService {
         inProgress: this.absApplyInProgress,
       };
     }
-    if (this.absApplyInProgress) {
+    const inspection = ['project_load_status', 'app_info', 'search_boards_libraries'].includes(payload.operation || '');
+    if (this.boardSwitchInProgress && !inspection) {
+      return { ok: false, reason: 'board_switch_in_progress', message: '开发板正在切换，请等待当前操作完成。' };
+    }
+    if (this.absApplyInProgress && !inspection) {
       return { ok: false, reason: 'abs_apply_in_progress', message: 'ABS 正在导入或保存，请等待本次操作结束。' };
     }
     if (payload.operation === 'project_open') {
       return this.executeProjectOpen(payload.path || '');
     }
     if (payload.operation === 'project_close') {
-      return this.executeProjectClose();
+      return this.executeProjectClose(payload.path);
     }
     if (payload.operation === 'project_load_status') {
       const path = payload.path || this.projectService.currentProjectPath;
@@ -290,6 +318,9 @@ export class BlocklyLiveOperationBridgeService {
       case 'abs_capabilities':
         return { ok: true, operation: 'abs_capabilities', project: this.projectService.currentProjectPath,
           capabilities: this.absGenerationTools.capabilities(payload.params || {}) };
+      case 'abs_check_documentation':
+        return { ok: true, operation: 'abs_check_documentation', project: this.projectService.currentProjectPath,
+          documentation: checkAbsDocumentation(payload.params) };
       case 'block_metadata_snapshot':
         return this.executeBlockMetadataSnapshot();
       case 'library_runtime_sync':
@@ -299,7 +330,9 @@ export class BlocklyLiveOperationBridgeService {
       case 'project_build':
         return this.executeProjectBuild(payload.params || {});
       case 'get_board_config':
-        return getBoardConfig(this.projectService);
+        return getBoardConfig(this.projectService, payload.params?.['section']);
+      case 'board_switch':
+        return this.executeBoardSwitch(payload.params || {});
       case 'set_board_config':
         return setBoardConfig(this.projectService, this.builderService, this.electronService, payload.params || {});
       case 'serial_ports_list':
@@ -378,6 +411,7 @@ export class BlocklyLiveOperationBridgeService {
       'abs_capabilities',
       'block_metadata_snapshot',
       'library_runtime_sync',
+      'board_switch',
       'blocks_tidy',
       'project_save',
     ]).has(String(operation || ''));
@@ -584,13 +618,16 @@ export class BlocklyLiveOperationBridgeService {
     const requestedPackages: unknown = params['packages'];
     if (
       !Array.isArray(requestedPackages)
-      || requestedPackages.length === 0
       || !requestedPackages.every((name) => typeof name === 'string' && isAilyLibraryPackageName(name))
     ) {
       return { ok: false, operation: 'library_runtime_sync', ready: false, message: '请提供有效的库包名数组 packages' };
     }
 
     const packages = [...new Set<string>(requestedPackages)];
+    const removedPackages: unknown = params['removedPackages'] ?? [];
+    if (!Array.isArray(removedPackages) || !removedPackages.every(name => typeof name === 'string' && isAilyLibraryPackageName(name))) {
+      return { ok: false, operation: 'library_runtime_sync', ready: false, message: 'Invalid removedPackages' };
+    }
     const projectPath = this.projectService.currentProjectPath;
     await this.projectService.ensureBlocklyLibraryRuntimeReady(projectPath);
 
@@ -599,11 +636,14 @@ export class BlocklyLiveOperationBridgeService {
     const missingLibraries = packages.filter((name) => !runtime.loadedLibraries.includes(name));
     const missingToolboxLibraries = packages.filter((name) => !runtime.toolboxLibraries.includes(name));
     const failedLibraries = packages.filter((name) => runtime.failedLibraries.includes(name));
+    const remainingRemovedLibraries = removedPackages.filter(name => runtime.loadedLibraries.includes(name) || runtime.toolboxLibraries.includes(name));
     const ready = loadStatus.ready
+      && this.projectService.currentProjectPath === projectPath
       && runtime.active
       && missingLibraries.length === 0
       && missingToolboxLibraries.length === 0
-      && failedLibraries.length === 0;
+      && failedLibraries.length === 0
+      && remainingRemovedLibraries.length === 0;
 
     return {
       ok: ready,
@@ -616,6 +656,8 @@ export class BlocklyLiveOperationBridgeService {
       missingLibraries,
       missingToolboxLibraries,
       failedLibraries,
+      remainingRemovedLibraries,
+      removedPackages,
       ...(!ready ? {
         reason: 'library_runtime_not_ready',
         message: '库文件已同步，但宿主尚未完成目标库和工具箱的加载，请检查库加载错误。',
@@ -631,6 +673,42 @@ export class BlocklyLiveOperationBridgeService {
       project: this.projectService.currentProjectPath,
       ...snapshot,
     };
+  }
+
+  private async executeBoardSwitch(params: Record<string, any>): Promise<Record<string, any>> {
+    this.boardSwitchInProgress = true;
+    this.aiOperations.setActive('live-board-switch', true, { projectPath: this.projectService.currentProjectPath });
+    try {
+      return await this.runBlockWritingOperation(() => switchProjectBoard(params, {
+        currentProject: () => this.projectService.currentProjectPath,
+        readBoard: () => getBoardConfig(this.projectService, 'pins'),
+        resolveBoard: async name => {
+          await this.configService.init();
+          if (!this.configService.boardDict[name]) await this.configService.loadBoardList();
+          const board = this.configService.boardDict[name];
+          return board ? { name, version: board.version || 'latest' } : undefined;
+        },
+        changeBoard: board => this.projectService.changeBoard(board),
+        ensureRuntime: async project => {
+          if (this.projectService.currentProjectPath !== project) throw new Error('Active project changed');
+          // Native changeBoard owns its reload. Once it returns, protect the
+          // tool's remaining runtime synchronization/readback without locking
+          // the native operation out of its own lifecycle.
+          if (this.projectService.isProjectTransitionInProgress(project)) throw new Error('Project lifecycle changed before board runtime synchronization');
+          this.aiOperations.setActive('live-board-switch', true, { projectPath: project, blocksProjectLifecycle: true });
+          const manifest = await this.projectService.getPackageJson();
+          const packages = Object.keys(manifest?.dependencies || {}).filter(isAilyLibraryPackageName);
+          const result = await this.executeLibraryRuntimeSync({ packages });
+          if (!result['ready']) throw new Error(`Board library/toolbox runtime is not ready: ${JSON.stringify({
+            missing: result['missingLibraries'], toolbox: result['missingToolboxLibraries'], failed: result['failedLibraries'],
+          })}`);
+        },
+        isReady: project => this.projectService.getBlocklyProjectLoadStatus(project).ready,
+      }));
+    } finally {
+      this.aiOperations.setActive('live-board-switch', false);
+      this.boardSwitchInProgress = false;
+    }
   }
 
   private emitLiveOperationProgress(operation: string, event: EditorOperationEvent): void {
@@ -1047,32 +1125,28 @@ export class BlocklyLiveOperationBridgeService {
     }
   }
 
-  private async executeProjectClose(): Promise<Record<string, any>> {
+  private async executeProjectClose(requestedPath?: string): Promise<Record<string, any>> {
     const projectPath = this.projectService.currentProjectPath;
     if (!projectPath) {
       return { ok: true, operation: 'project_close', project: null, message: '当前没有打开的项目' };
     }
-
-    const loadStatus = this.projectService.getBlocklyProjectLoadStatus(projectPath);
-    if (loadStatus.ready) {
-      const saved = await this.projectService.save(projectPath);
-      if (!saved.success) {
-        return {
-          ok: false,
-          operation: 'project_close',
-          project: projectPath,
-          reason: 'project_save_failed',
-          message: `关闭项目前保存失败：${saved.error || '未知错误'}`,
-          loadStatus,
-        };
-      }
+    if (requestedPath && this.normalizePath(requestedPath) !== this.normalizePath(projectPath)) {
+      return { ok: false, operation: 'project_close', project: projectPath, reason: 'project_mismatch',
+        message: '目标项目不是当前活动项目，未保存或关闭其他项目。' };
     }
 
-    const closed = await this.projectService.close({ allowDuringChatTool: true });
+    const loadStatus = this.projectService.getBlocklyProjectLoadStatus(projectPath);
+    let closed: boolean;
+    try { closed = await this.projectService.close({ save: true }); }
+    catch (error) {
+      return { ok: false, operation: 'project_close', project: projectPath, reason: 'project_close_failed',
+        code: (error as any)?.code, message: error instanceof Error ? error.message : String(error), loadStatus };
+    }
     return {
       ok: closed === true,
       operation: 'project_close',
-      project: null,
+      project: closed === true ? null : projectPath,
+      ...(closed === true ? {} : { reason: 'project_close_rejected' }),
       message: closed === true ? '项目已关闭，可安全进行离线修复' : '项目关闭被拒绝',
       previousLoadStatus: loadStatus,
     };

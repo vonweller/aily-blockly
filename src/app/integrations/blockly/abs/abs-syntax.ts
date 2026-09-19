@@ -126,7 +126,8 @@ class AbsSyntaxReader {
         catch (error) { this.fail(String(error)); }
       }
       this.space(true);
-      if (this.source[this.offset] !== ',') break;
+      if (this.source[this.offset] === ')') break;
+      if (this.source[this.offset] !== ',') this.argumentSeparator(node.type, parameters[parameters.length - 1]);
       this.offset++;
       this.space(true);
       if (this.source[this.offset] === ')') this.fail('Trailing comma.');
@@ -171,6 +172,15 @@ class AbsSyntaxReader {
       const match = /^[^\s,()@#]+/.exec(this.source.slice(this.offset));
       if (!match) this.fail('Expected a field value.');
       this.offset += match[0].length;
+      // Commas delimit arguments, not horizontal spaces. Accept word-like
+      // enum/text atoms without swallowing a missing separator between numbers,
+      // references, named arguments or nested calls. Newlines remain boundaries.
+      if (/^[\p{L}_][\p{L}\p{N}_]*$/u.test(match[0])) {
+        const rest = /^(?:[ \t]+[\p{L}_][\p{L}\p{N}_]*)+/u.exec(this.source.slice(this.offset));
+        if (rest && /^[ \t]*(?:[,\r\n)@#]|$)/.test(this.source.slice(this.offset + rest[0].length))) {
+          this.offset += rest[0].length;
+        }
+      }
     }
   }
 
@@ -180,6 +190,16 @@ class AbsSyntaxReader {
     const value = JSON.parse(this.source.slice(this.offset, token.end));
     this.offset = token.end;
     return value;
+  }
+
+  /** Explain malformed argument boundaries without guessing a field definition or repairing source. */
+  private argumentSeparator(blockType: string, parameter: AbsRawValue): never {
+    const start = parameter.start;
+    const hint = 'Separate arguments with commas and close the call with ). Quote text containing syntax punctuation; keep nested block calls separate.';
+    throw new AbsSyncError('ABS_SYNTAX_INVALID', `Expected , or ) after an argument in ${blockType}.`,
+      { start: this.offset, end: this.offset + 1 }, [], {
+        blockType, reason: 'argument-separator', received: this.source.slice(start, start + 160), hint,
+      });
   }
 
   private name(): string {

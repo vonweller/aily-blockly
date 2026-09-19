@@ -1,4 +1,5 @@
 import { Injectable } from '@angular/core';
+import { assertAbsProcedureModelIntents } from './abs-procedure-model-intents';
 import { BlocklyService, BlocklyProjectDocument } from '../../../editors/blockly-editor/services/blockly.service';
 import { _ProjectService } from '../../../editors/blockly-editor/services/project.service';
 import { BlocklyWorkspaceEditLease } from '../../../editors/blockly-editor/services/blockly-workspace-edit-lease';
@@ -271,6 +272,10 @@ export class AbsWorkspaceSyncService {
         hostPrepared: type => !!context.definitions.procedure?.(type) || !!custom.describe(type),
         ...(binding?.createVariables ? { variableCreation: { requestId: binding.requestId, variables: binding.createVariables } } : {}),
       };
+      assertAbsProcedureModelIntents(source, binding?.createVariables, reconcileOptions, type => {
+        if (custom.describe(type)?.protocol.kind === 'definition') return { nameField: 'FUNC_NAME', modelType: 'FUNC' };
+        return context.definitions.procedure?.(type)?.role === 'definition' ? {} : undefined;
+      });
       let candidate: Awaited<ReturnType<typeof prepareAbsReconciliation>>;
       let materialized: Awaited<ReturnType<typeof candidate.materialize>>;
       let instances: ReadonlyMap<string, AbsNativeInstance> | undefined;

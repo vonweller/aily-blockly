@@ -6,6 +6,7 @@ import { installProjectDataImageCache } from '@domain/project/project-data/publi
 import type { NativeCandidateBlock, NativeCandidateOptions } from './blockly-native-candidate-protocol';
 import * as Blockly from 'blockly';
 import { adaptBundledArduinoProcedureCalls } from './blockly-bundled-procedure-generator';
+import { adaptArduinoTextLiterals } from './blockly-arduino-text-literals';
 import { registerCustomFunctionContract, clearCustomFunctionRegistration } from './blockly-custom-function-contract';
 import { registerVariableDeclarationContract, clearVariableDeclarationRegistration } from './blockly-variable-declaration-contract';
 import { createProjectGenerator, type BlocklyGeneratorMode, type ProjectGenerator } from './blockly-generator-factory';
@@ -297,6 +298,7 @@ export class BlocklyGeneratorRuntimeService {
 
     activeProjectGeneratorRevision++;
     session.replay.append({ kind: 'script', label: filePath, source });
+    const previousTextHandler = session.generator.forBlock['text'];
     const globalsBefore = new Set(Reflect.ownKeys(session.realmWindow).map(String));
     let scriptError: ErrorEvent | null = null;
     const errorHandler = (event: ErrorEvent) => {
@@ -335,12 +337,17 @@ export class BlocklyGeneratorRuntimeService {
     // Generator scripts now live in the project iframe, so Project Data's
     // legacy-field projection must be installed at this runtime boundary. This
     // keeps read-only libraries working even when callers/loaders evolve.
+    if (session.context.mode === 'arduino' && session.generator.forBlock['text'] !== previousTextHandler) {
+      adaptArduinoTextLiterals(session.generator);
+    }
     wrapProjectDataGeneratorFunctions(session.generator, [
       ...result.arduinoBlockTypes,
       ...result.micropythonBlockTypes,
       ...result.pythonBlockTypes,
     ]);
-    if (session.context.mode === 'arduino') adaptBundledArduinoProcedureCalls(session.generator);
+    if (session.context.mode === 'arduino') {
+      adaptBundledArduinoProcedureCalls(session.generator);
+    }
     if (session.context.mode === 'arduino') result.contractsReady = Promise.all([
       registerCustomFunctionContract(source, session.realmWindow, Blockly.Blocks, session, () => this.session === session && session.active),
       registerVariableDeclarationContract(source, session.realmWindow, session.generator, Blockly.Blocks, session, () => this.session === session && session.active),

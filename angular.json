@@ -194,6 +194,13 @@
             "abs-sync": {
               "tsConfig": "tsconfig.abs-sync.spec.json",
               "include": [
+                "src/app/integrations/blockly/board-config-operation.spec.ts",
+                "src/app/integrations/blockly/board-switch-operation.spec.ts",
+                "src/app/services/domains/project/project-board-switch.spec.ts",
+                "src/app/services/domains/project/project-lifecycle-gate.spec.ts",
+                "src/app/services/domains/project/project-lifecycle-operation.spec.ts",
+                "src/app/editors/blockly-editor/project-board-reload.spec.ts",
+                "src/app/services/domains/project/project-mode.spec.ts",
                 "src/app/integrations/blockly/abs/**/*.spec.ts",
                 "src/app/editors/blockly-editor/services/builder.service.spec.ts",
                 "src/app/editors/blockly-editor/services/blockly-generator-runtime.service.spec.ts",

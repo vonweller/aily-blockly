@@ -1111,7 +1111,7 @@ export class BlocklyEditorComponent implements OnInit, OnDestroy {
 
       this.copyProjectPackageJsonToTemp(projectPath);
       this.message.success(`开发板已切换为 ${addedBoardNames.join(', ')}，正在重新加载项目`, { nzDuration: 3000 });
-      await this.projectService.projectOpen(projectPath, { reason: 'reload' });
+      await this.projectService.reloadAfterBoardSwitch(projectPath);
       this.projectService.boardChangeSubject.next();
       this.projectService.resolveBoardSwitchReload();
     } catch (error) {

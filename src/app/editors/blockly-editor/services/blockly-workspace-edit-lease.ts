@@ -16,6 +16,7 @@ export class BlocklyWorkspaceEditGate {
   private tainted: string | undefined;
   private epoch = 0;
   get blocked(): boolean { return !!this.active || !!this.tainted; }
+  get busy(): boolean { return !!this.active; }
 
   assertAvailable(owner?: BlocklyWorkspaceEditLease): void {
     if (this.tainted) throw new BlocklyEditError('BLOCKLY_WORKSPACE_TAINTED', this.tainted);

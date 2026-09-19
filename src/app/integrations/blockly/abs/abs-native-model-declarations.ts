@@ -1,5 +1,6 @@
 import { AbsAbiWorkspace, AbsSyncError } from './abs-state';
 import { absJson } from './abs-json';
+import { absModelRecovery, availableAbsModelName } from './abs-model-guidance';
 
 /** Host-observed generator effect. start identifies the producer in the byte-bound ABS,
  * not a new ABS annotation and not permission supplied by a consumer field. */
@@ -37,8 +38,10 @@ export function adoptAbsNativeModels(workspace: AbsAbiWorkspace, declarations: A
     const existing = next.find(model => model.id === id || model.name.toLowerCase() === name.toLowerCase());
     if (existing) {
       if (absJson({ id: existing.id, name: existing.name, type: existing.type ?? '' }) !== absJson({ id, name, type })) {
+        const reason = (existing.type ?? '') !== type ? 'type-conflict' : 'identity-conflict';
         throw new AbsSyncError('ABS_MODEL_DECLARATION_CONFLICT', `Initializer ${JSON.stringify(name)} conflicts with an existing model; names, types and identities cannot be implicitly changed.`,
-          undefined, [], { modelName: name, expectedTypes: [type], actualTypes: [existing.type ?? ''] });
+          undefined, [], { blockType: declaration.blockType, modelName: name, expectedTypes: [type], actualTypes: [existing.type ?? ''],
+            reason, hint: absModelRecovery(reason), availableName: availableAbsModelName(name, next.map(model => model.name)) });
       }
     } else next.push({ id, name, type });
   }

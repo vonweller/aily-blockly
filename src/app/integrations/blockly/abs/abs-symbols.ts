@@ -1,6 +1,7 @@
 import { AbsFieldDefinition, AbsFieldToken } from './abs-field-values';
 import { AbsAbiWorkspace, AbsProjectionContracts, AbsSymbolTable, AbsSyncError } from './abs-state';
 import { readAbsStatePath as atPointer } from './abs-state-path';
+import { absModelRecovery, availableAbsModelName } from './abs-model-guidance';
 
 type SymbolContract = NonNullable<AbsFieldDefinition['symbol']>;
 interface SymbolModel { kind: SymbolContract['kind']; id: string; name: string; type: string }
@@ -68,7 +69,13 @@ export class AbsSymbols {
       ? value && typeof value === 'object' && !Array.isArray(value) ? value['id'] : undefined
       : value;
     const model = typeof id === 'string' ? this.ids.get(this.key(contract.kind, id)) : undefined;
-    if (!model || !this.allowed(model, contract)) throw new AbsSyncError('ABS_SYMBOL_MISSING', 'Serialized symbol identity is missing or has an incompatible type.');
+    if (!model || !this.allowed(model, contract)) {
+      throw new AbsSyncError('ABS_SYMBOL_MISSING', 'Serialized symbol identity is missing or has an incompatible type.', undefined, [], {
+        ...(model ? { modelName: model.name, actualTypes: [model.type] } : { actualTypes: [] }), expectedTypes: contract.allowedTypes,
+        reason: 'stored-model-invalid',
+        hint: 'The saved reference has no compatible model. Check the library README initializer and workspace model integrity. Preserve saved identities; report a registration/serialization defect if initialization cannot repair it. Never fabricate models.',
+      });
+    }
     return model;
   }
   private uniqueName(name: string, contract: SymbolContract): SymbolModel {
@@ -76,10 +83,12 @@ export class AbsSymbols {
     const matches = named.filter(model => this.allowed(model, contract));
     if (matches.length !== 1) {
       const code = matches.length ? 'ABS_SYMBOL_AMBIGUOUS' : named.length ? 'ABS_SYMBOL_TYPE_MISMATCH' : 'ABS_SYMBOL_MISSING';
+      const reason = matches.length ? 'ambiguous' : named.length ? 'type-conflict' : 'missing';
       throw new AbsSyncError(code,
         `Cannot uniquely resolve ${contract.kind} ${JSON.stringify(name)}; expected types: ${JSON.stringify(contract.allowedTypes ?? 'any')}; existing types: ${JSON.stringify(named.map(model => model.type))}.`,
         undefined, [], { modelName: name, expectedTypes: contract.allowedTypes, actualTypes: named.map(model => model.type),
-          hint: 'References do not declare models. Keep the documented initializer/declaration in this candidate; if it is not automatically prepared, pass documented {name,type} createVariables in the same validate/apply transaction.' });
+          reason, hint: absModelRecovery(reason),
+          ...(named.length ? { availableName: availableAbsModelName(name, [...this.ids.values()].map(model => model.name)) } : {}) });
     }
     return matches[0];
   }

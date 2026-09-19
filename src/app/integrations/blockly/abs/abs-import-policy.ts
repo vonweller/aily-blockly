@@ -9,9 +9,14 @@ export function assertAbsProtectedBlocks(baseline: AbsAbiWorkspace, candidate: A
   for (const block of before.values()) {
     if (block['deletable'] !== false) continue;
     const next = after.get(block.id);
-    const fail = (code: string) => { throw new AbsSyncError(code, 'Protected block cannot be removed, replaced or unlocked.', undefined, [block.id]); };
-    if (!next) fail('PROTECTED_BLOCK_MISSING');
-    if (next.type !== block.type) fail('PROTECTED_BLOCK_TYPE_CHANGED');
-    if (next['deletable'] !== false) fail('PROTECTED_BLOCK_UNLOCK');
+    const fail = (reason: string) => {
+      throw new AbsSyncError(`ABS_PROTECTED_BLOCK_${reason}`, `Protected block ${block.type} cannot be removed, replaced or unlocked.`, undefined, [block.id], {
+        blockType: block.type, reason: `protected-block-${reason.toLowerCase()}`,
+        hint: `Keep the protected ${block.type} call from the current project.abs in the complete candidate, including its required arguments and parent. A minimal diagnostic must also retain protected blocks; do not reset the baseline or create variable models for this error.`,
+      });
+    };
+    if (!next) fail('MISSING');
+    if (next.type !== block.type) fail('TYPE_CHANGED');
+    if (next['deletable'] !== false) fail('UNLOCK');
   }
 }

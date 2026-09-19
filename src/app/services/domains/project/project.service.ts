@@ -1,4 +1,5 @@
 import { Injectable, Injector } from '@angular/core';
+import { ProjectLifecycleError, ProjectLifecycleGate, type ProjectLifecycleLease } from './project-lifecycle-gate';
 import { BehaviorSubject, Subject } from 'rxjs';
 import {
   AppDataResourceLockService,
@@ -112,6 +113,8 @@ export interface CoderWorkspaceContext {
 interface ProjectOpenOptions {
   reason?: ProjectActivationReason;
   sessionResource?: string | null;
+  /** In-process ownership only; never accepted from IPC/Agent parameters. */
+  lifecycleOwner?: symbol;
 }
 
 interface ProjectCreationOptions {
@@ -504,18 +507,23 @@ export class ProjectService {
     if (this.isSameProjectPath(path, this.currentProjectPath)) throw new Error('请先切换到另一个 Coder 工程，再移除此工程');
     const folder = this.coderProjects.find(item => this.isSameProjectPath(item.path, path));
     if (!folder) return;
-    const group = this.storedCoderWorkspaceFor(folder.path);
-    await window['projectLock']?.release(folder.path);
-    this.coderProjectsSubject.next(this.coderProjects.filter(item => item !== folder));
-    this.coderProjectContexts.delete(this.normalizeProjectPath(path));
-    this.publishCoderProjects();
-    if (group) this.detachCoderProjectFromWorkspace(group, folder.path);
-    else this.publishCoderWorkspaceContext();
+    const lease = this.acquireProjectLifecycle([path]);
+    try {
+      const group = this.storedCoderWorkspaceFor(folder.path);
+      await window['projectLock']?.release(folder.path);
+      this.coderProjectsSubject.next(this.coderProjects.filter(item => item !== folder));
+      this.coderProjectContexts.delete(this.normalizeProjectPath(path));
+      this.publishCoderProjects();
+      if (group) this.detachCoderProjectFromWorkspace(group, folder.path);
+      else this.publishCoderWorkspaceContext();
+    } finally { lease.release(); }
   }
 
   private projectActivationSubject = new Subject<ProjectActivationEvent>();
   projectActivation$ = this.projectActivationSubject.asObservable();
   private projectOpenTask: { path: string; promise: Promise<boolean> } | null = null;
+  private readonly projectLifecycle = new ProjectLifecycleGate();
+  private boardSwitchLifecycle: { projectPath: string; token: symbol } | null = null;
   private loadingBlocklyProjectPath = '';
   private loadedBlocklyProjectPath = '';
   private blocklyProjectLoadFailure: { path: string; error: string } | null = null;
@@ -715,16 +723,15 @@ export class ProjectService {
     return this.injector.get(PROJECT_APPLICATION_PORT);
   }
 
-  private hasBlockingAiOperation(): boolean {
-    return this.application.hasActiveAiOperation(this.currentProjectPath);
+  isProjectTransitionInProgress(projectPath = this.currentProjectPath): boolean {
+    return this.projectLifecycle.hasActive(projectPath);
   }
 
-  private shouldBlockForAiOperation(reason?: ProjectActivationReason): boolean {
-    return !reason?.startsWith('chat-tool-') && this.hasBlockingAiOperation();
-  }
-
-  private warnBlockingAiOperation(): void {
-    this.message.warning('AI 对话正在处理中，请先停止当前请求后再切换或关闭项目。');
+  private acquireProjectLifecycle(paths: string[], owner?: symbol, checkMutation = true): ProjectLifecycleLease {
+    if (checkMutation && paths.some(path => this.application.hasActiveProjectMutation(path))) {
+      throw new ProjectLifecycleError('PROJECT_OPERATION_BUSY', '项目正在写入或执行宿主操作，请等待操作完成后再切换或关闭。会话思考和读取不会锁定项目。');
+    }
+    return this.projectLifecycle.acquire(paths, owner);
   }
 
   private warnConnectionGraphWindowCloseFailure(): void {
@@ -1176,11 +1183,21 @@ export class ProjectService {
       await this.projectOpenTask.promise;
     }
 
+    // Coder activation retains editors; only reload destroys the selected runtime.
+    const reason = options.reason || (this.isSameProjectPath(this.currentProjectPath, projectPath) ? 'reload' : 'open');
+    const coderActivation = this.getProjectMode(projectPath) === 'coder'
+      && reason !== 'reload' && reason !== 'chat-tool-reload';
+    const paths = coderActivation && !this.boardSwitchLifecycle
+      ? [projectPath] : [this.currentProjectPath, projectPath];
+    let lease: ProjectLifecycleLease;
+    try { lease = this.acquireProjectLifecycle(paths, options.lifecycleOwner, !coderActivation); }
+    catch (error) { this.message.warning((error as Error).message); return false; }
     const promise = this.projectOpenInternal(projectPath, options);
     this.projectOpenTask = { path: projectPath, promise };
     try {
       return await promise;
     } finally {
+      lease.release();
       if (this.projectOpenTask?.promise === promise) {
         this.projectOpenTask = null;
       }
@@ -1367,11 +1384,6 @@ export class ProjectService {
       this.projectActivationSubject.next({ path: projectPath, previousPath: previousProjectPath, reason: activationReason, sessionResource: options.sessionResource ?? null });
       await context.syncCurrentBoardConfig();
       return this.router.navigate(['/main/code-editor-pro'], { queryParams: { path: projectPath }, replaceUrl: true });
-    }
-
-    if (this.shouldBlockForAiOperation(activationReason)) {
-      this.warnBlockingAiOperation();
-      return false;
     }
 
     if (this.electronService.isElectron && window['projectLock']) {
@@ -1708,16 +1720,32 @@ export class ProjectService {
     }
   }
 
-  async close(options: { allowDuringChatTool?: boolean } = {}) {
+  async close(options: { save?: boolean } = {}) {
+    const paths = [this.currentProjectPath, ...this.coderProjects.map(project => project.path)].filter(Boolean);
+    if (paths.some(path => this.application.hasActiveProjectMutation(path))) {
+      this.message.warning('项目正在写入或执行宿主操作，请等待完成后再关闭。');
+      return false;
+    }
+    let lease: ProjectLifecycleLease;
+    try { lease = this.projectLifecycle.acquire(['*']); }
+    catch (error) { this.message.warning((error as Error).message); return false; }
+    try {
+      // Tool-triggered close must protect both the save and disposal, without
+      // an await gap in which another project can become active.
+      const path = this.currentProjectPath;
+      if (options.save && path && this.getBlocklyProjectLoadStatus(path).ready) {
+        const saved = await this.save(path);
+        if (!saved.success) throw new ProjectLifecycleError('PROJECT_SAVE_FAILED', `关闭项目前保存失败：${saved.error || '未知错误'}`);
+      }
+      return await this.closeInternal();
+    } finally { lease.release(); }
+  }
+
+  private async closeInternal() {
     if (this.coderOperationsSubject.value.size) {
       this.message.warning('工程正在编译或上传');
       return false;
     }
-    if (!options.allowDuringChatTool && this.shouldBlockForAiOperation()) {
-      this.warnBlockingAiOperation();
-      return false;
-    }
-
     if (this.currentProjectPath && !(await this.application.closeConnectionGraphWindows())) {
       this.warnConnectionGraphWindowCloseFailure();
       return false;
@@ -2218,6 +2246,13 @@ export class ProjectService {
   }
 
   // 获取开发板配置文件board.json
+  private readonly runtimeBoardModules = new WeakMap<object, string>();
+
+  /** Identity of the configuration actually loaded, not a mutable manifest lookup. */
+  getRuntimeBoardModule(): string | undefined {
+    return this.currentBoardConfig && this.runtimeBoardModules.get(this.currentBoardConfig);
+  }
+
   async getBoardJson() {
     const boardModule = await this.getBoardModule();
     if (!boardModule) {
@@ -2227,7 +2262,9 @@ export class ProjectService {
     if (!window['fs'].existsSync(boardJsonPath)) {
       throw new Error('开发板配置文件不存在: ' + boardJsonPath);
     }
-    return JSON.parse(this.electronService.readFile(boardJsonPath));
+    const board = JSON.parse(this.electronService.readFile(boardJsonPath));
+    this.runtimeBoardModules.set(board, boardModule);
+    return board;
   }
 
   /**
@@ -2250,6 +2287,8 @@ export class ProjectService {
   async resolveBoardConfigForRuntime(rawBoardJson?: any): Promise<any> {
     const boardJson = rawBoardJson ?? await this.getBoardJson();
     const resolvedBoardJson = JSON.parse(JSON.stringify(boardJson));
+    const boardModule = this.runtimeBoardModules.get(boardJson);
+    if (boardModule) this.runtimeBoardModules.set(resolvedBoardJson, boardModule);
     const cdcEnabled = await this.isCdcOnBootEnabledForProject(resolvedBoardJson);
     this.application.applyCdcSerialPortOverrides(resolvedBoardJson, cdcEnabled);
     return resolvedBoardJson;
@@ -3057,6 +3096,13 @@ export class ProjectService {
     mode?: string[];
     selectedFramework?: string;
   }) {
+    const projectPath = this.currentProjectPath;
+    const assertCurrentProject = () => {
+      if (!projectPath || this.currentProjectPath !== projectPath) throw new Error('切换开发板期间项目已改变，已停止后续写入');
+    };
+    if (this.isBoardSwitchInProgress || this.boardSwitchReloadWaiter) throw new Error('开发板切换正在进行中');
+    const lifecycle = this.acquireProjectLifecycle([projectPath]);
+    this.boardSwitchLifecycle = { projectPath, token: lifecycle.token };
     this.isBoardSwitchInProgress = true;
     let reloadPromise: Promise<void> | null = null;
     try {
@@ -3065,6 +3111,7 @@ export class ProjectService {
         throw new Error('当前项目路径未设置');
       }
       const currentPackageJson = await this.getPackageJson();
+      assertCurrentProject();
       const currentProjectMode = normalizeProjectMode(currentPackageJson) || 'arduino';
       const isAilyCode = this.isAilyCodeProject();
       const requestedBoardInfo = {
@@ -3085,12 +3132,15 @@ export class ProjectService {
         }
       }
       // 0. 保存当前项目
-      await this.save();
+      const saved = await this.save();
+      if (!saved.success) throw new Error(`切换开发板前保存项目失败：${saved.error || '未确认保存完成'}`);
+      assertCurrentProject();
       this.message.loading(this.translate.instant('PROJECT.SWITCHING_BOARD'), { nzDuration: 5000 });
 
       // 记录开发板使用次数
       this.configService.recordBoardUsage(normalizedBoardInfo.name);
       const currentBoardModule = await this.getBoardModule();
+      assertCurrentProject();
 
       // 1. npm install 安装boardInfo.name@boardInfo.version 到 appDataPath（与 projectNew 一致）
       const appDataPath = window['path'].getAppDataPath();
@@ -3106,12 +3156,14 @@ export class ProjectService {
       await this.appDataResourceLock.runExclusive(`project:switch-board:install-appdata:${newBoardPackage}`, () =>
         this.cmdService.runAsyncChecked(appDataInstallCommand)
       );
+      assertCurrentProject();
 
       // 2. 预安装到当前项目的 node_modules，但不写 package.json；最终 package.json 变更交给 watcher 处理。
       await this.cmdService.runAsyncChecked(
         await this.buildNpmInstallCommand(newBoardPackage, { noSave: true, registry: boardRegistry }),
-        this.currentProjectPath,
+        projectPath,
       );
+      assertCurrentProject();
 
       // 3. 获取新开发板的模板并更新package.json
       console.log('更新项目配置文件...');
@@ -3171,14 +3223,16 @@ export class ProjectService {
         }
 
         // 写入新的package.json
-        const shouldUsePackageJsonWatcher = this.isPackageJsonBoardWatcherActive;
+        // The watcher reacts to added board names, not same-board repair/version updates.
+        const shouldUsePackageJsonWatcher = this.isPackageJsonBoardWatcherActive && currentBoardModule !== normalizedBoardInfo.name;
         reloadPromise = shouldUsePackageJsonWatcher ? this.waitForBoardSwitchReload() : null;
-        this.isBoardSwitchInProgress = false;
-        window['fs'].writeFileSync(`${this.currentProjectPath}/package.json`, JSON.stringify(newPackageJson, null, 2));
+        this.isBoardSwitchInProgress = !shouldUsePackageJsonWatcher;
+        assertCurrentProject();
+        window['fs'].writeFileSync(`${projectPath}/package.json`, JSON.stringify(newPackageJson, null, 2));
         console.log('package.json 更新完成');
 
         if (!shouldUsePackageJsonWatcher) {
-          await this.finishBoardSwitchWithoutPackageWatcher(currentBoardModule, normalizedBoardInfo.name);
+          await this.finishBoardSwitchWithoutPackageWatcher(currentBoardModule, normalizedBoardInfo.name, projectPath);
         }
       } else {
         throw new Error(isAilyCode
@@ -3189,6 +3243,7 @@ export class ProjectService {
       if (reloadPromise) {
         await reloadPromise;
       }
+      assertCurrentProject();
 
       this.application.updateFooterState({ state: 'done', text: this.translate.instant('PROJECT.BOARD_SWITCH_COMPLETE') });
       this.message.success(this.translate.instant('PROJECT.BOARD_SWITCH_SUCCESS'), { nzDuration: 3000 });
@@ -3199,6 +3254,8 @@ export class ProjectService {
       throw error;
     } finally {
       this.isBoardSwitchInProgress = false;
+      this.boardSwitchLifecycle = null;
+      lifecycle.release();
     }
   }
 
@@ -3213,6 +3270,19 @@ export class ProjectService {
 
       this.boardSwitchReloadWaiter = { resolve, reject, timer };
     });
+  }
+
+  /** The board operation may reload only its own project; no chat-name bypass. */
+  async reloadAfterBoardSwitch(projectPath: string): Promise<void> {
+    const owner = this.boardSwitchLifecycle;
+    if (!this.isSameProjectPath(projectPath, this.currentProjectPath)) {
+      throw new ProjectLifecycleError('PROJECT_RELOAD_REJECTED', '切板重载前活动项目已改变；已停止后续操作。');
+    }
+    const opened = await this.projectOpen(projectPath, {
+      reason: 'reload',
+      ...(owner && this.isSameProjectPath(owner.projectPath, projectPath) ? { lifecycleOwner: owner.token } : {}),
+    });
+    if (!opened) throw new ProjectLifecycleError('PROJECT_RELOAD_REJECTED', '切板配置可能已保存，但宿主拒绝了项目重载。不是后台加载中；请检查宿主占用/加载错误，不要 sleep 或重复安装板包。');
   }
 
   /** 通知等待中的 changeBoard：watcher 驱动的项目重载已完成。 */
@@ -3254,21 +3324,23 @@ export class ProjectService {
   }
 
   /** package.json watcher 不活跃时，使用原流程完成旧开发板卸载、temp 同步和项目重载。 */
-  private async finishBoardSwitchWithoutPackageWatcher(currentBoardModule: string | undefined, nextBoardModule: string): Promise<void> {
+  private async finishBoardSwitchWithoutPackageWatcher(currentBoardModule: string | undefined, nextBoardModule: string, projectPath = this.currentProjectPath): Promise<void> {
     if (currentBoardModule && currentBoardModule !== nextBoardModule) {
       console.log('卸载当前开发板模块:', currentBoardModule);
       this.application.updateFooterState({ state: 'doing', text: this.translate.instant('PROJECT.UNINSTALLING_CURRENT_BOARD') });
-      await this.cmdService.runAsyncChecked(`npm uninstall ${currentBoardModule}`, this.currentProjectPath);
+      await this.cmdService.runAsyncChecked(`npm uninstall ${currentBoardModule}`, projectPath);
     }
-
-    await this.copyPackageJsonToTemp(this.currentProjectPath);
+    if (this.currentProjectPath !== projectPath) throw new Error('切换开发板期间项目已改变');
+    await this.copyPackageJsonToTemp(projectPath);
+    if (this.currentProjectPath !== projectPath) throw new Error('切换开发板期间项目已改变');
 
     if (this.isAilyCodeProject()) {
       await this.reinstallAilyCodeDepsAfterBoardSwitch();
     }
+    if (this.currentProjectPath !== projectPath) throw new Error('切换开发板期间项目已改变');
 
     console.log('重新加载项目...');
-    await this.projectOpen(this.currentProjectPath);
+    await this.reloadAfterBoardSwitch(projectPath);
     this.boardChangeSubject.next();
   }
 

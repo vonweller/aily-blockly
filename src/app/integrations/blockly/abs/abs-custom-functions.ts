@@ -73,7 +73,7 @@ export function captureAbsCustomFunctions(snapshot: DeclarativeBlockSnapshot) {
     const variables: any[] = Array.isArray(workspace['variables']) ? workspace['variables'] : [];
     const models = variables.filter(model => model.type === 'FUNC' && (definition ? model.name === block.fields?.['FUNC_NAME']
       : model.id === (block.fields?.['FUNC_NAME'] as any)?.id));
-    if (models.length !== 1 || !name(models[0].name)) fail('Function requires one explicit FUNC model; use createVariables.');
+    if (models.length !== 1 || !name(models[0].name)) fail('Function requires a model owned by its definition. Check the documented function definition and signature.');
     const model = models[0];
     if (!previous && state.funcVarId !== undefined || state.funcVarId !== undefined && state.funcVarId !== model.id
       || old?.funcVarId && old.funcVarId !== model.id) fail('Function model identity cannot be supplied or retargeted.');
@@ -83,7 +83,7 @@ export function captureAbsCustomFunctions(snapshot: DeclarativeBlockSnapshot) {
       const ids = params.map((param: any) => {
         if (!record(param, ['name', 'type'])) fail('Parameter accepts name/type only.');
         const matches = variables.filter(model => model.name === param.name && (model.type ?? '') === '');
-        if (matches.length !== 1) fail('Each parameter requires one declared native variable; use createVariables.');
+        if (matches.length !== 1) fail('Each parameter requires a model owned by the function parameter declaration. Check the documented function signature.');
         return matches[0].id;
       });
       if (!previous && (state.paramVarIds !== undefined || state.nextParamVarSeq !== undefined)

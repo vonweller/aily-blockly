@@ -132,7 +132,7 @@ arduino_loop()
   it('still refuses protected deletion and disabled-state changes during reparenting', async () => {
     const base = await baseline();
     await expectAsync(reconcileAbs(base, source('arduino_global()\narduino_loop()')))
-      .toBeRejectedWith(jasmine.objectContaining({ code: 'PROTECTED_BLOCK_MISSING' }));
+      .toBeRejectedWith(jasmine.objectContaining({ code: 'ABS_PROTECTED_BLOCK_MISSING' }));
     const disabled = await project([{ type: 'step', id: 'step', disabled: true }]);
     const start = disabled.abs.indexOf('step');
     const after = source('wrapper()\n    @BODY:\n        step()');

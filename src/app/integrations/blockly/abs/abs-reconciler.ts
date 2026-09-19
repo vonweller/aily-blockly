@@ -19,6 +19,7 @@ import { adoptAbsNativeModels } from './abs-native-model-declarations';
 import type { AbsSourceEdits } from './abs-edit-provenance';
 import { matchAbsIdentities } from './abs-identity-matcher';
 import { absIdentityPolicy } from './abs-identity-policy';
+import { retireEmptyProjectModels } from './abs-empty-project-models';
 
 export interface AbsReconcileOptions extends AbsSyntaxOptions {
   /** Exact text-edit provenance, replayed against the immutable generation. */
@@ -81,6 +82,7 @@ export async function reconcileAbsDraft(
   if (nativeBinding && nativeBinding.source !== editedAbs) throw new AbsSyncError('ABS_NATIVE_BINDING_STALE', 'Native binding belongs to different ABS bytes.');
   await validateAbsProjection(baseline);
   const candidate: AbsAbiWorkspace = JSON.parse(absJson(baseline.workspace));
+  if (editedAbs !== baseline.abs) retireEmptyProjectModels(baseline, candidate, editedAbs);
   prepareAbsVariableCreations(candidate, variableCreation);
   if (editedAbs === baseline.abs && !sourceEdits) {
     return { workspace: candidate, literals: [], identities: [], contracts: baseline.contracts,

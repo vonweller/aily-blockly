@@ -54,6 +54,32 @@ describe('native ABS position binding', () => {
     expect(roots[1].inputs.MORE).toBeUndefined();
   });
 
+  it('accepts bare multiword dropdown values with the same native validation as quoted values', async () => {
+    const value = request('native_order(A, 1, unsigned long)');
+    const definitions = structuredClone([definition, number]);
+    (definitions[0].args0[2] as any).options.push(['long', 'unsigned long']);
+    value.steps[1] = { kind: 'definitions', definitions };
+    const bare = await run(value);
+    expect(bare.state['blocks'].blocks[0].fields.TYPE).toBe('unsigned long');
+    value.abs = value.abs!.replace('unsigned long', '"unsigned long"');
+    expect((await run(value)).state['blocks'].blocks[0].fields.TYPE).toBe('unsigned long');
+    value.abs = value.abs!.replace('"unsigned long"', 'unsigned unknown');
+    await expectAsync(run(value)).toBeRejectedWith(jasmine.objectContaining({ code: 'ABS_FIELD_OPTION_INVALID' }));
+  });
+
+  it('reports all typed-reference collisions with unoccupied suggestions in one isolated pass', async () => {
+    const value = request('sensor_read($sensor)\nsensor_read($probe)');
+    value.steps = [{ kind: 'definitions', definitions: [{ type: 'sensor_read', message0: '%1',
+      args0: [{ type: 'field_variable', name: 'VAR', variableTypes: ['SENSOR'], defaultType: 'SENSOR' }], output: 'Number' }] }];
+    value.variables = [{ id: 'a', name: 'sensor', type: '' }, { id: 'b', name: 'probe', type: 'OLD' },
+      { id: 'c', name: 'SENSOR_2', type: '' }];
+    await expectAsync(run(value)).toBeRejectedWith(jasmine.objectContaining({ code: 'ABS_SYMBOL_TYPE_MISMATCH',
+      diagnostic: jasmine.objectContaining({ conflicts: [
+        jasmine.objectContaining({ modelName: 'sensor', availableName: 'sensor_3', actualTypes: [''] }),
+        jasmine.objectContaining({ modelName: 'probe', availableName: 'probe_2', actualTypes: ['OLD'] }),
+      ] }) }));
+  });
+
   it('connects statement sections and next chains through the native checker', async () => {
     const value = request('native_order(A, null, int)\n    @next:\n        native_order(A, 2, float)\n        native_order(B, 3, int, null)\n');
     const result = await run(value), root = result.state['blocks'].blocks[0];
@@ -135,7 +161,20 @@ describe('native ABS position binding', () => {
       const init = Blockly.Blocks.native_order.init;
       Blockly.Blocks.native_order.init = function() { init.call(this); this.getInput('VALUE').setCheck('String'); };
     ` });
-    await expectAsync(run(value)).toBeRejectedWithError(/Incompatible native connection/);
+    await expectAsync(run(value)).toBeRejectedWith(jasmine.objectContaining({
+      code: 'ABS_CONNECTION_INCOMPATIBLE',
+      range: { start: value.abs!.indexOf('math_number'), end: value.abs!.indexOf('math_number') + 'math_number(1)'.length },
+      diagnostic: jasmine.objectContaining({ blockType: 'math_number', parentBlockType: 'native_order', field: 'VALUE',
+        expectedTypes: ['String'], actualTypes: ['Number'] }),
+    }));
+  });
+
+  it('explains that a hat block cannot be nested in a next chain', async () => {
+    const value = request('native_order(A, 1, int)\n    @next:\n        event_hat()');
+    value.steps.push({ kind: 'definitions', definitions: [{ type: 'event_hat', message0: 'event', args0: [] }] });
+    await expectAsync(run(value)).toBeRejectedWith(jasmine.objectContaining({ code: 'ABS_CONNECTION_INCOMPATIBLE',
+      diagnostic: jasmine.objectContaining({ blockType: 'event_hat', parentBlockType: 'native_order', field: 'next',
+        reason: 'missing-previous-connection', hint: jasmine.stringMatching(/top level/) }) }));
   });
 
   it('rejects a later field callback discarding an already requested child', async () => {

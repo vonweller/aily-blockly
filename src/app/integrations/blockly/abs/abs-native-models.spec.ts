@@ -10,6 +10,40 @@ describe('native initializer model preparation', () => {
   const run = (value: NativeCandidateRequest) => evaluateNativeCandidate(value, { assertCurrent: () => {} });
   afterEach(() => expect(document.querySelectorAll('[data-blockly-native-candidate]').length).toBe(0));
 
+  it('accepts the local-library scaffold declaration pattern and typed consumers in one ABS batch', async () => {
+    const value = request('scaffold_read($output)\nscaffold_begin("output")');
+    value.steps = [{ kind: 'context', mode: 'arduino' }, {
+      kind: 'definitions', definitions: [
+        { type: 'scaffold_begin', message0: '%1', args0: [{ type: 'field_input', name: 'NAME', text: 'device' }],
+          previousStatement: null, nextStatement: null },
+        { type: 'scaffold_read', message0: '%1', args0: [
+          { type: 'field_variable', name: 'VAR', variableTypes: ['ExampleDevice'], defaultType: 'ExampleDevice' },
+        ], output: 'Number' },
+      ],
+    }, { kind: 'script', label: 'local-library-scaffold', source: `
+      function registerVariableToBlockly(name, type) {
+        const workspace = Blockly.getMainWorkspace();
+        if (!workspace.getVariable(name)) workspace.createVariable(name, type);
+      }
+      Arduino.forBlock["scaffold_begin"] = function (block, generator) {
+        registerVariableToBlockly(block.getFieldValue("NAME"), "ExampleDevice");
+        return block.getFieldValue("NAME") + '.begin();\\n';
+      };
+      Arduino.forBlock["scaffold_read"] = function (block, generator) {
+        return [block.getField('VAR').getVariable().name + '.read()', 0];
+      };
+    ` }];
+    const result = await run(value), declaration = result.binding!.modelDeclarations![0];
+    expect(declaration).toEqual(jasmine.objectContaining({ name: 'output', type: 'ExampleDevice', blockType: 'scaffold_begin' }));
+    expect(result.state['variables']).toEqual([{ id: declaration.id, name: 'output', type: 'ExampleDevice' }]);
+    const state = normalizeAbsSerializedWorkspace(result.state);
+    const contracts = { fields: Object.fromEntries(result.binding!.instances.map(item => [item.id, item.shape.fields])) };
+    await run({ blocks: [], steps: value.steps, verify: { state, contracts,
+      modelDeclarations: [{ ...declaration, ownerId: result.binding!.instances.find(item => item.start === declaration.start)!.id }] } });
+    await expectAsync(run({ ...value, abs: '# ABS Schema: 2\nscaffold_read($undeclared)' }))
+      .toBeRejectedWith(jasmine.objectContaining({ code: 'ABS_SYMBOL_MISSING' }));
+  });
+
   it('runs the installed DHT full generator and binds README syntax without manually creating DHT models', async () => {
     const value = request('dht_read_temperature($sensor)\ndht_init("sensor", DHT11, 2)');
     value.steps = [{ kind: 'context', mode: 'arduino', boardConfig: { digitalPins: [['D2', '2']], i2c: [['Wire', 'Wire']] } },

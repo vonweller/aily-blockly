@@ -1046,6 +1046,8 @@ async function handleCliBridgeCommand(action, payload) {
         ? 620000
         : operation === 'project_upload'
           ? 920000
+        : operation === 'board_switch'
+          ? 420000
         : operation === 'project_create'
           ? 300000
           : operation === 'project_open'

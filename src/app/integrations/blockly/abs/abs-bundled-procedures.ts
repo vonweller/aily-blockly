@@ -73,7 +73,7 @@ export function captureAbsBundledProcedures(snapshot: DeclarativeBlockSnapshot) 
       const params = (state.params ?? []).map((param: any) => {
         if (!record(param, ['name', 'id', 'argId']) || !name(param.name)) fail('Invalid procedure parameter.', block.id);
         const matches = variables.filter(model => model.name === param.name && (model.type ?? '') === '');
-        if (matches.length !== 1) fail(`Parameter ${param.name} requires one declared native variable; use createVariables.`, block.id);
+        if (matches.length !== 1) fail(`Parameter ${param.name} requires one model owned by the function parameter declaration. Check the documented procedure signature and its supported parameter contract.`, block.id);
         const model = matches[0], old = oldParams.find(value => value.id === model.id && value.name === param.name);
         let argId = old?.argId;
         if (!argId) {

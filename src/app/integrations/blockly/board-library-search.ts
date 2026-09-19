@@ -269,7 +269,7 @@ export const searchBoardsLibrariesTool = {
             },
             maxResults: {
                 type: 'number',
-                description: '最大返回结果数，默认10，范围1–50'
+                description: '最大返回结果数，默认50，范围1–50'
             }
         },
         required: []
@@ -284,7 +284,7 @@ export const searchBoardsLibrariesTool = {
         },
         configService: ConfigService
     ): Promise<SearchBoardsLibrariesToolResult> => {
-        const { query, type = 'both', maxResults = 10 } = params;
+        const { query, type = 'both', maxResults = 50 } = params;
         if (!Number.isInteger(maxResults) || maxResults < 1 || maxResults > 50) {
             return { is_error: true, content: 'maxResults must be an integer between 1 and 50.' };
         }

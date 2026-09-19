@@ -14,6 +14,7 @@ import { prepareAbsNativeModelInputs } from './abs-native-model-inputs';
 import { absDeclarationRequestId } from './abs-declaration-intents';
 import { walkAbsRawSyntax } from './abs-syntax-binding';
 import { absSyntaxOptions } from './abs-syntax-contracts';
+import { retireEmptyProjectModels } from './abs-empty-project-models';
 
 export type AbsNativeExecutor = (request: Omit<NativeCandidateRequest, 'steps'>) => Promise<NativeCandidateResult>;
 
@@ -38,6 +39,7 @@ export async function prepareAbsNativeReconciliation(baseline: AbsProjection, so
       ...(extraState === undefined ? {} : { extraState }) });
   }
   const modelState = structuredClone(baseline.workspace);
+  if (source !== baseline.abs) retireEmptyProjectModels(baseline, modelState, source);
   const modelRequestId = await absDeclarationRequestId(baseline.map.generation, source);
   assertCurrent();
   prepareAbsVariableCreations(modelState, options.variableCreation);
