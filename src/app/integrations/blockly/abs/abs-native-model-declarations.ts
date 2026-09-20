@@ -10,6 +10,8 @@ export interface AbsNativeModelDeclaration {
   id: string;
   name: string;
   type: string;
+  /** A core language construct owns a lexical counter, not a library helper. */
+  kind?: 'loop';
 }
 
 export function assertAbsNativeModelDeclarations(value: unknown): asserts value is AbsNativeModelDeclaration[] | undefined {
@@ -17,7 +19,8 @@ export function assertAbsNativeModelDeclarations(value: unknown): asserts value 
   const text = (item: unknown, empty = false) => typeof item === 'string' && (empty || !!item)
     && item.length <= 256 && item === item.trim() && !/[\u0000-\u001f\u007f]/.test(item);
   if (!Array.isArray(value) || !value.length || value.length > 128 || value.some(item => !item
-    || Object.keys(item).some(key => !['start', 'blockType', 'id', 'name', 'type'].includes(key))
+    || Object.keys(item).some(key => !['start', 'blockType', 'id', 'name', 'type', 'kind'].includes(key))
+    || item.kind !== undefined && item.kind !== 'loop'
     || !Number.isSafeInteger(item.start) || item.start < 0 || !text(item.blockType)
     || !text(item.id) || !text(item.name) || !text(item.type, true))
     || new Set(value.map(item => item.id)).size !== value.length

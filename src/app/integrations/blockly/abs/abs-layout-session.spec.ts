@@ -44,8 +44,12 @@ describe('first complete layout candidate from the reported 18-minute session', 
       .map(name => ({ id: 'model-' + name, name, type: name === 'dht' ? 'DHT' : '' })) };
     const baseline = await createAbsProjection(workspace, { document: workspace, contracts,
       generation: 'layout-session', baselineRef: 'layout-session', scope: { projectKey: 'test', pageId: 'main' }, savedAbiHash: null });
-    expect(baseline.abs).toBe(layoutSource);
-    let edited = baseline.abs;
+    const originalAbs = baseline.abs;
+    expect(originalAbs).toContain('controls_if()\n        @IF0: logic_compare(');
+    expect(indexAbsSyntax(parseAbsSyntax(originalAbs, syntax)).length).toBe(indexAbsAbi(workspace).size);
+    // Replay the recorded agent draft in its original positional spelling; it
+    // must still reconcile against today's paired-section canonical export.
+    let edited = layoutSource;
     for (const edit of layoutEdits) {
       expect(edited.split(edit.oldText).length).toBe(2);
       edited = edited.replace(edit.oldText, edit.newText);
@@ -61,6 +65,6 @@ describe('first complete layout candidate from the reported 18-minute session', 
     expect(result.retained).toEqual(jasmine.arrayContaining(roots.map(root => root.id)));
     expect(result.added.length).toBeGreaterThan(0);
     expect(indexAbsSyntax(parseAbsSyntax(edited, syntax)).length).toBe(blocks.length);
-    expect(baseline.abs).toBe(layoutSource); // The immutable base is not a temporary reduced program.
+    expect(baseline.abs).toBe(originalAbs); // The immutable base is not a temporary reduced program.
   });
 });

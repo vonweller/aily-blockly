@@ -103,7 +103,7 @@ async function buildAbsProjection(workspace: AbsAbiWorkspace, context: AbsProjec
     if (group) group.push(reference); else procedureReferences.set(reference.blockId, [reference]);
   }
   const previous = projectionVersion === 'abs-v2.preview.3';
-  const { abs, blockAtPath, symbolAtPath } = renderAbs(snapshot, contracts, symbols, previous);
+  const { abs, blockAtPath, symbolAtPath } = renderAbs(snapshot, contracts, symbols, projectionVersion);
   const entries = indexAbsSyntax(parseAbsSyntax(abs, previous ? {} : absSyntaxOptions(snapshot, contracts)));
   const fingerprints = await fingerprintAbsNodes(entries);
   const [baseAbiHash, pageAbiHash, baseAbsHash, contractsHash] = await Promise.all([
@@ -140,7 +140,7 @@ export function assertCurrentAbsProjection(baseline: AbsProjection): void {
 
 export async function validateAbsProjection(baseline: AbsProjection, allowPreviousForRecovery = false): Promise<void> {
   const version = baseline.map.projectionVersion;
-  if (version !== ABS_PROJECTION_VERSION && version !== 'abs-v2.preview.3') {
+  if (![ABS_PROJECTION_VERSION, 'abs-v2.preview.3', 'abs-v2.preview.4'].includes(version)) {
     throw new AbsSyncError('ABS_PROJECTION_UNSUPPORTED', 'Unsupported immutable projection version.');
   }
   if (!allowPreviousForRecovery) assertCurrentAbsProjection(baseline);

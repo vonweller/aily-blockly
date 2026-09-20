@@ -22,6 +22,7 @@ export interface AbsFieldToken {
   value: unknown;
   quoted: boolean;
   reference?: 'variable';
+  omitted?: true;
 }
 
 export function readAbsFieldToken(raw: string): AbsFieldToken {
@@ -52,6 +53,9 @@ export function readAbsFieldToken(raw: string): AbsFieldToken {
 }
 
 export function resolveAbsFieldValue(token: AbsFieldToken, definition?: AbsFieldDefinition): unknown {
+  if (token.omitted && !(definition?.type === 'field_dropdown' && definition.options?.some(option => option[1] === ''))) {
+    throw new Error('An omitted argument is only valid for a dropdown with an empty option.');
+  }
   const { value, quoted } = token;
   if (token.reference) throw new Error('A variable reference requires a variable field or a value input. Quote literal text.');
   if (!definition) return value;

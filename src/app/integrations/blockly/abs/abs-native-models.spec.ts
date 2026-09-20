@@ -10,6 +10,56 @@ describe('native initializer model preparation', () => {
   const run = (value: NativeCandidateRequest) => evaluateNativeCandidate(value, { assertCurrent: () => {} });
   afterEach(() => expect(document.querySelectorAll('[data-blockly-native-candidate]').length).toBe(0));
 
+  it('resolves dependent initializers to a fixed point without inventing missing or cyclic models', async () => {
+    const value = request('test_object_init("a", Sensor)\ndependent_init("b", test_object_read($a))\ndependent_init("c", test_object_read($b))\ntest_object_read($c)');
+    value.steps.push({ kind: 'definitions', definitions: [{ type: 'dependent_init', message0: '%1 %2', args0: [
+      { type: 'field_input', name: 'NAME', text: 'device' }, { type: 'input_value', name: 'VALUE' },
+    ], previousStatement: null, nextStatement: null }] }, { kind: 'script', label: 'dependent-producer', source: `
+      Arduino.forBlock.dependent_init = (block, generator) => {
+        const value = generator.valueToCode(block, 'VALUE', 0);
+        if (!value) throw new Error('Initializer must not execute before its input is ready');
+        registerVariableToBlockly(block.getFieldValue('NAME'), 'Sensor');
+        return '';
+      };
+    ` });
+    const result = await run(value);
+    expect(result.binding!.modelDeclarations!.map(item => item.name)).toEqual(['a', 'b', 'c']);
+    const contracts = { fields: Object.fromEntries(result.binding!.instances.map(item => [item.id, item.shape.fields])) };
+    await run({ blocks: [], steps: value.steps, verify: { state: normalizeAbsSerializedWorkspace(result.state), contracts,
+      modelDeclarations: result.binding!.modelDeclarations!.map(effect => ({ ...effect,
+        ownerId: result.binding!.instances.find(item => item.start === effect.start)!.id })) } });
+    for (const source of ['dependent_init("b", test_object_read($missing))',
+      'dependent_init("a", test_object_read($b))\ndependent_init("b", test_object_read($a))']) {
+      await expectAsync(run({ ...value, abs: '# ABS Schema: 2\n' + source }))
+        .toBeRejectedWith(jasmine.objectContaining({ code: 'ABS_SYMBOL_MISSING' }));
+    }
+  });
+
+  it('owns fresh core loop counters without granting model creation to ordinary consumers', async () => {
+    const value = request('controls_for($i, null, null, null)\ncontrols_for($i, null, null, null)');
+    value.steps = [{ kind: 'context', mode: 'arduino' }, { kind: 'definitions', definitions: [{
+      type: 'controls_for', message0: '%1 %2 %3 %4 %5', args0: [
+        { type: 'field_variable', name: 'VAR' }, ...['FROM', 'TO', 'BY'].map(name => ({ type: 'input_value', name })),
+        { type: 'input_statement', name: 'DO' },
+      ], previousStatement: null, nextStatement: null,
+    }] }, { kind: 'script', label: 'core-loop', source: 'Arduino.forBlock.controls_for = () => "";' }];
+    const result = await run(value), effect = result.binding!.modelDeclarations![0];
+    expect(effect).toEqual(jasmine.objectContaining({ kind: 'loop', name: 'i', type: '' }));
+    expect(result.state['variables'].length).toBe(1);
+    const replay = await run({ ...value, variables: result.state['variables'],
+      identities: result.binding!.instances.map(item => ({ start: item.start, id: 'owned-' + item.start })), creations: [] });
+    expect(replay.binding!.modelDeclarations).toEqual(result.binding!.modelDeclarations);
+    const verify = { state: normalizeAbsSerializedWorkspace(result.state),
+      contracts: { fields: Object.fromEntries(result.binding!.instances.map(item => [item.id, item.shape.fields])) },
+      modelDeclarations: [{ ...effect, ownerId: result.binding!.instances.find(item => item.start === effect.start)!.id }] };
+    await run({ blocks: [], steps: value.steps, verify });
+    await expectAsync(run({ ...value, abs: '# ABS Schema: 2\ncontrols_for($i, null, null, null) @disabled' }))
+      .toBeRejectedWith(jasmine.objectContaining({ code: 'ABS_SYMBOL_MISSING' }));
+    verify.modelDeclarations[0].name = 'other';
+    await expectAsync(run({ blocks: [], steps: value.steps, verify }))
+      .toBeRejectedWith(jasmine.objectContaining({ code: 'ABS_MODEL_DECLARATION_CHANGED' }));
+  });
+
   it('accepts the local-library scaffold declaration pattern and typed consumers in one ABS batch', async () => {
     const value = request('scaffold_read($output)\nscaffold_begin("output")');
     value.steps = [{ kind: 'context', mode: 'arduino' }, {

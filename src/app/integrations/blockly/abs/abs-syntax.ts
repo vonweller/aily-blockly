@@ -22,6 +22,8 @@ class AbsSyntaxReader {
   private depth = 0;
   private blockDepth = 0;
   private nodes = 0;
+  private indentWidth?: number;
+  private indentCharacter?: string;
   constructor(private readonly source: string) {}
 
   read(): AbsRawNode[] {
@@ -40,7 +42,7 @@ class AbsSyntaxReader {
     this.endLine();
     while (this.skipLines() && this.indent() > indent) {
       const sectionIndent = this.indent();
-      if (sectionIndent !== indent + 4) this.fail('Block bodies use four-space indentation.');
+      this.childIndent(indent, sectionIndent);
       if (this.source[this.offset + sectionIndent] !== '@') {
         node.sections.push({ children: this.chain(sectionIndent) });
         node.end = this.offset;
@@ -57,8 +59,8 @@ class AbsSyntaxReader {
       } else {
         this.endLine();
         if (this.skipLines() && this.indent() > sectionIndent) {
-          if (this.indent() !== sectionIndent + 4) this.fail('Input bodies use four-space indentation.');
-          section.children = this.chain(sectionIndent + 4);
+          this.childIndent(sectionIndent, this.indent());
+          section.children = this.chain(this.indent());
         }
       }
       node.sections.push(section);
@@ -95,6 +97,9 @@ class AbsSyntaxReader {
     };
     node.type = this.name();
     this.space();
+    if (this.source[this.offset] !== '(') {
+      node.omittedParentheses = true; node.end = this.offset; this.depth--; return node;
+    }
     this.expect('(');
     this.space(true);
     // Parse values first; @extra follows the call and determines this instance's shape.
@@ -114,7 +119,9 @@ class AbsSyntaxReader {
         if (sawNamed) this.fail('Positional arguments must precede named arguments.');
       }
       const start = this.offset;
-      if (/^[\w]+\s*\(/.test(this.source.slice(this.offset))) {
+      if (this.source[this.offset] === ',' && name === undefined) {
+        parameters.push({ token: { raw: '', value: '', quoted: false, omitted: true }, start, end: start });
+      } else if (/^[\w]+\s*\(/.test(this.source.slice(this.offset))) {
         const child = this.expression();
         parameters.push({ name, child, start, end: this.offset });
       } else {
@@ -130,7 +137,6 @@ class AbsSyntaxReader {
       if (this.source[this.offset] !== ',') this.argumentSeparator(node.type, parameters[parameters.length - 1]);
       this.offset++;
       this.space(true);
-      if (this.source[this.offset] === ')') this.fail('Trailing comma.');
     }
     this.expect(')');
     this.space();
@@ -235,8 +241,15 @@ class AbsSyntaxReader {
   }
   private indent(): number {
     const indent = /^[ \t]*/.exec(this.source.slice(this.offset))![0];
-    if (indent.includes('\t')) this.fail('Use spaces for block indentation.');
+    if (indent) {
+      this.indentCharacter ??= indent[0];
+      if ([...indent].some(char => char !== this.indentCharacter)) this.fail('Do not mix tabs and spaces for block indentation.');
+    }
     return indent.length;
+  }
+  private childIndent(parent: number, child: number): void {
+    this.indentWidth ??= child - parent;
+    if (child !== parent + this.indentWidth) this.fail('Use one consistent indentation step for block bodies.');
   }
   private fail(message: string): never {
     throw new AbsSyncError('ABS_SYNTAX_INVALID', message, { start: this.offset, end: this.offset + 1 });

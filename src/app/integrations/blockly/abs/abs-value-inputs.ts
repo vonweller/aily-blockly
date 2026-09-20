@@ -4,7 +4,12 @@ import { AbsSourceRange, AbsSyntaxNode, AbsSyncError } from './abs-state';
 
 /** Compatibility spelling only. A field literal never passes through this function. */
 export function expandAbsValueInput(token: AbsFieldToken, range: AbsSourceRange, options: AbsSyntaxOptions): AbsSyntaxNode | null {
+  if (token.omitted) throw new AbsSyncError('ABS_SYNTAX_INVALID', 'An empty value argument is ambiguous; use null for an unconnected input.', range);
   if (token.value === null) return null;
+  if (!token.quoted && !token.reference && typeof token.value === 'string' && /^[A-Za-z_]\w*$/.test(token.value)
+    && options.argumentOrder?.(token.value)?.length === 0) {
+    return { type: token.value, fields: {}, fieldRanges: {}, inputs: Object.create(null), disabled: false, start: range.start, end: range.end };
+  }
   let type: string, name: string, value = token;
   if (token.reference) { type = 'variables_get'; name = 'VAR'; }
   else if (typeof token.value === 'number') { type = 'math_number'; name = 'NUM'; }
