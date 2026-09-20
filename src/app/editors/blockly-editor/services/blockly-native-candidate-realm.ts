@@ -26,7 +26,7 @@ export function installNativeCandidateRealm(): void {
     consumed = true;
     const port = event.ports[0], send = port.postMessage.bind(port);
     const request = event.data;
-    const errors: string[] = [];
+    const errors: Error[] = [];
     let workspace: any;
     let phase = 'initialization';
     let registering = true;
@@ -34,7 +34,10 @@ export function installNativeCandidateRealm(): void {
     const uiTasks = new NativeUiTasks();
     const deny = (name: string) => () => {
       const message = `Native candidate does not support ${name}. Phase: ${phase}`;
-      errors.push(message); tasks.fail(new Error(message)); throw new Error(message);
+      const error = Object.assign(new Error(message), { code: 'ABS_NATIVE_EFFECT_UNSUPPORTED', diagnostic: {
+        reason: name, hint: `Use synchronous generator APIs. Phase: ${phase}. Repair library compatibility; do not retry unchanged ABS or recover the project.`,
+      } });
+      errors.push(error); tasks.fail(error); throw error;
     };
     // Sticky errors: a library catching a rejected side effect cannot make it supported.
     Object.defineProperty(realm, 'setTimeout', { configurable: false, writable: false, value: (callback: unknown, delay?: number, ...args: unknown[]) => {
@@ -56,10 +59,10 @@ export function installNativeCandidateRealm(): void {
     }
     Object.defineProperty(Promise.prototype, 'then', { value: deny('Promise continuations'), configurable: false, writable: false });
     realm.projectService = new Proxy(Object.create(null), { get: (_target, name) => deny(`projectService.${String(name)}`)() });
-    const onError = (event: ErrorEvent) => { errors.push(event.message); tasks.fail(new Error(event.message)); event.preventDefault(); };
+    const onError = (event: ErrorEvent) => { const error = event.error instanceof Error ? event.error : new Error(event.message); errors.push(error); tasks.fail(error); event.preventDefault(); };
     window.addEventListener('error', onError);
     window.addEventListener('unhandledrejection', event => { tasks.fail(event.reason); event.preventDefault(); });
-    const assertClean = () => { if (errors.length) throw new Error(errors[0]); tasks.assertClean(); uiTasks.assertClean(); };
+    const assertClean = () => { if (errors.length) throw errors[0]; tasks.assertClean(); uiTasks.assertClean(); };
     // Registration is replay input. A configuration/generator callback cannot add
     // another registry effect and silently promote it to transaction-owned state.
     const assertRegistration = () => { if (!registering) deny('block registration after replay')(); };
@@ -82,14 +85,14 @@ export function installNativeCandidateRealm(): void {
       const values = nativeCandidateValues(request.values);
       const readPrepared = (ref: unknown) => {
         try { return values.get(ref); }
-        catch (error) { errors.push(String(error)); tasks.fail(error); throw error; }
+        catch (error) { errors.push(error instanceof Error ? error : new Error(String(error))); tasks.fail(error); throw error; }
       };
       Object.defineProperty(realm, 'ailyProjectData', { configurable: false, writable: false, value: Object.freeze({
         isDataRef: isAilyDataRef, getPrepared: readPrepared,
         getPreparedFieldPayload: (block: any, name: string) => {
           try {
             return readPrepared(projectDataFieldReference(block?.getFieldValue?.(name), name));
-          } catch (error) { errors.push(String(error)); tasks.fail(error); throw error; }
+          } catch (error) { errors.push(error instanceof Error ? error : new Error(String(error))); tasks.fail(error); throw error; }
         },
       }) });
       values.assertReferences(request.verify?.state ?? request.abs ?? request.blocks);
@@ -139,6 +142,17 @@ export function installNativeCandidateRealm(): void {
       if (workspace.getAllBlocks(false).length || workspace.getAllVariables().length) throw new Error('Native registration created workspace state.');
       registering = false;
       if (generator) wrapProjectDataGeneratorFunctions(generator, Object.keys(generator.forBlock), readPrepared);
+      if (generator) for (const [blockType, handler] of Object.entries(generator.forBlock)) {
+        generator.forBlock[blockType] = function (...args) {
+          try { const value = handler.apply(this, args); assertClean(); return value; }
+          catch (error) {
+            if ((error as any)?.code === 'ABS_NATIVE_EFFECT_UNSUPPORTED') {
+              (error as any).diagnostic.blockType ??= blockType;
+            }
+            throw error;
+          }
+        };
+      }
       phase = request.verify ? 'final ABI verification' : request.abs !== undefined ? 'ABS binding' : 'explicit block configuration';
       const models = new NativeCandidateModels(workspace, request.variables);
       if (!request.verify) models.load();

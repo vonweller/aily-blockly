@@ -35,6 +35,26 @@ describe('ABS actionable diagnostic contract', () => {
     expect(JSON.stringify(result)).not.toContain('private-root');
     expect(result.receipt).toBeUndefined();
   });
+  it('identifies the protected root across the wire without exposing private IDs', () => {
+    const root = { type: 'arduino_global', id: 'private-root', deletable: false };
+    for (const [blocks, code] of [
+      [[], 'ABS_PROTECTED_BLOCK_MISSING'],
+      [[{ ...root, type: 'arduino_loop' }], 'ABS_PROTECTED_BLOCK_TYPE_CHANGED'],
+      [[{ ...root, deletable: true }], 'ABS_PROTECTED_BLOCK_UNLOCK'],
+    ] as const) {
+      try {
+        assertAbsProtectedBlocks({ blocks: { blocks: [root] } }, { blocks: { blocks: [...blocks] } });
+        fail('accepted protected root mutation');
+      } catch (error) {
+        const wire = serializeAbsFailure(error);
+        expect(wire.code).toBe(code);
+        expect(wire.diagnostic!.blockType).toBe('arduino_global');
+        expect(wire.diagnostic!.hint).toContain('including empty roots');
+        expect(JSON.stringify(wire)).not.toContain('private-root');
+      }
+    }
+    expect(() => assertAbsProtectedBlocks({ blocks: { blocks: [root] } }, { blocks: { blocks: [root] } })).not.toThrow();
+  });
   it('preserves the identity reason and specific recovery guidance through the wire boundary', async () => {
     const sync = { exportGeneration: async () => {
       throw new AbsSyncError('ABS_IDENTITY_AMBIGUOUS', 'Identity is ambiguous', { start: 4, end: 8 }, [], {

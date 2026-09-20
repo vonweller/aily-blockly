@@ -12,7 +12,7 @@ export function assertAbsProtectedBlocks(baseline: AbsAbiWorkspace, candidate: A
     const fail = (reason: string) => {
       throw new AbsSyncError(`ABS_PROTECTED_BLOCK_${reason}`, `Protected block ${block.type} cannot be removed, replaced or unlocked.`, undefined, [block.id], {
         blockType: block.type, reason: `protected-block-${reason.toLowerCase()}`,
-        hint: `Keep the protected ${block.type} call from the current project.abs in the complete candidate, including its required arguments and parent. A minimal diagnostic must also retain protected blocks; do not reset the baseline or create variable models for this error.`,
+        hint: `Keep the protected ${block.type} call from project.abs with its arguments and parent, including empty roots in minimal diagnostics. Repair the candidate; do not reset the baseline, recover the project or create variable models for this error.`,
       });
     };
     if (!next) fail('MISSING');
