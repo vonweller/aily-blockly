@@ -83,6 +83,7 @@ describe('blank project variable retirement', () => {
       }, () => {});
     expect(requests.length).toBe(3);
     expect(requests[0].variables).toEqual([]);
+    expect(prepared.candidate.retiredModels).toEqual(['old']);
     expect(requests[2].verify).toBeDefined();
     expect(prepared.materialized['variables']).toEqual([jasmine.objectContaining({ name: 'device', type: 'Sensor' })]);
     expect((prepared.materialized['variables'] as any[])[0].id).not.toBe('old');

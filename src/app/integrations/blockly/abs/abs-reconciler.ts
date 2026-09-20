@@ -48,6 +48,8 @@ export interface AbsReconcileResult {
 export interface AbsLiteralBinding extends AbsSourceRange { jsonPointer: string }
 /** Unprepared payloads: may contain large inline values. Never load/save this draft directly. */
 export interface AbsReconcileDraft extends AbsReconcileResult {
+  /** Host-owned removal evidence, not a caller-supplied model deletion intent. */
+  retiredModels?: string[];
   identities: Array<{ start: number; id: string }>;
   literals: AbsLiteralBinding[];
   /** Newly adopted native defaults have no source literals, including nested payloads. */
@@ -60,7 +62,7 @@ export interface AbsReconcileDraft extends AbsReconcileResult {
 export async function reconcileAbs(
   baseline: AbsProjection, editedAbs: string, options: AbsReconcileOptions = {},
 ): Promise<AbsReconcileResult> {
-  const { literals, implicitBlockIds, contracts, identities, ...result } = await reconcileAbsDraft(baseline, editedAbs, options);
+  const { literals, implicitBlockIds, retiredModels, contracts, identities, ...result } = await reconcileAbsDraft(baseline, editedAbs, options);
   assertNoOversizedInlineValues(result.workspace);
   return result;
 }
@@ -82,7 +84,7 @@ export async function reconcileAbsDraft(
   if (nativeBinding && nativeBinding.source !== editedAbs) throw new AbsSyncError('ABS_NATIVE_BINDING_STALE', 'Native binding belongs to different ABS bytes.');
   await validateAbsProjection(baseline);
   const candidate: AbsAbiWorkspace = JSON.parse(absJson(baseline.workspace));
-  if (editedAbs !== baseline.abs) retireEmptyProjectModels(baseline, candidate, editedAbs);
+  const retiredModels = editedAbs !== baseline.abs ? retireEmptyProjectModels(baseline, candidate, editedAbs) : [];
   prepareAbsVariableCreations(candidate, variableCreation);
   if (editedAbs === baseline.abs && !sourceEdits) {
     return { workspace: candidate, literals: [], identities: [], contracts: baseline.contracts,
@@ -242,7 +244,7 @@ export async function reconcileAbsDraft(
       : payload.key === 'extraState' ? node?.extraRange : undefined;
     if (range) literals.push({ ...range, jsonPointer: payload.jsonPointer });
   }
-  return { workspace: candidate, literals, ...(defaultIds.size ? { implicitBlockIds: [...defaultIds] } : {}), contracts, identities: [...sources].map(([id, node]) => ({ start: node.start, id })),
+  return { workspace: candidate, literals, ...(retiredModels.length ? { retiredModels } : {}), ...(defaultIds.size ? { implicitBlockIds: [...defaultIds] } : {}), contracts, identities: [...sources].map(([id, node]) => ({ start: node.start, id })),
     added, retained, removed: [...abiBlocks.keys()].filter(id => !afterIds.has(id)) };
 }
 

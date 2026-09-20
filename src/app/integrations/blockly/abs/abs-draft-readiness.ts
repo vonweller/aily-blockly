@@ -12,6 +12,8 @@ export interface AbsDraftReadiness {
   baseline?: AbsGenerationEvidence;
   runtime?: ReturnType<typeof compareAbsContracts>;
   refresh?: { token: string };
+  /** Semantic comparison, not an authorization to discard either version. */
+  workspace?: { changedFromBaseline: boolean; savedChangedFromBaseline: boolean; matchesSaved: boolean };
 }
 
 /** Read-only readiness, not candidate validation. Resolve resources without creating
@@ -30,10 +32,18 @@ export async function inspectAbsDraft(inspection: Inspection, document: unknown,
       await materializeGenericProjectDataValues(baseline.document, resolve));
   const sameSaved = inspection.disk.abi !== null
     && await hashAbsText(absJson(JSON.parse(inspection.disk.abi))) === baseline.map.savedAbiHash;
+  if (inspection.disk.abi !== null) {
+    const saved = JSON.parse(inspection.disk.abi);
+    const same = async (a: unknown, b: unknown) => sameAbsProgram(a, b)
+      || sameAbsProgram(await materializeGenericProjectDataValues(a, resolve), await materializeGenericProjectDataValues(b, resolve));
+    diagnostics.workspace = { changedFromBaseline: !sameDocument,
+      savedChangedFromBaseline: !await same(saved, baseline.document), matchesSaved: await same(document, saved) };
+  }
   const runtimeStatus = compareAbsContracts(baseline.contracts, runtime.contracts, runtime.state);
   diagnostics.runtime = runtimeStatus;
   diagnostics.issues = [...diagnostics.issues,
     ...(!sameDocument || !sameSaved ? ['ABS_BASELINE_STALE'] : []),
+    ...(diagnostics.workspace?.savedChangedFromBaseline && !diagnostics.workspace.matchesSaved ? ['ABS_DUAL_EDIT_CONFLICT'] : []),
     ...(runtimeStatus.status === 'incompatible' ? ['ABS_RUNTIME_CONTRACT_STALE'] : [])];
   diagnostics.status = diagnostics.issues.length ? 'blocked' : 'ready';
   if (draft && sameDocument && sameSaved) {

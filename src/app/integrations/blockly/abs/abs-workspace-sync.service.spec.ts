@@ -552,7 +552,7 @@ describe('v2 actual workspace generation coordinator', () => {
 
   it('never accepts caller-provided model preparation evidence as validation authority', async () => {
     const base = await baseline(), before = absJson(nativeState()), files = [...disk];
-    for (const key of ['preparedModels', 'preparedVariables', 'workspaceRevision']) {
+    for (const key of ['preparedModels', 'preparedVariables', 'retiredModels', 'workspaceRevision']) {
       await expectAsync(service.validateGeneration(base.source, { [key]: [] } as any)).toBeRejectedWith(jasmine.objectContaining({ code: 'ABS_REQUEST_INVALID' }));
     }
     expect(absJson(nativeState())).toBe(before); expect([...disk]).toEqual(files);
@@ -945,6 +945,58 @@ describe('v2 actual workspace generation coordinator', () => {
     version: 2, requestId: crypto.randomUUID(), expectedAbiHash: await hashAbsText(disk.get('project.abi')!),
     publish: true, reuseCurrent: true, synchronize: true, ...extra,
   }) as Promise<any>;
+
+  it('wire receipts bind blank-project retirement through native validation, apply and saved readback', async () => {
+    const replay = enableObjectModels();
+    const definitions = ['arduino_global', 'arduino_setup', 'arduino_loop'].map(type => ({ type, message0: type }));
+    definitions.forEach(declare);
+    replay.steps.push({ kind: 'definitions', definitions }, { kind: 'script', label: 'empty-roots',
+      source: definitions.map(({ type }) => `Arduino.forBlock.${type} = () => '';`).join('\n') });
+    editor.restoreProjectWorkspaceSnapshot({ schemaVersion: 3, activePageId: 'main', openedPageIds: ['main'],
+      pages: [{ id: 'main', title: 'Main', content: { blocks: { blocks: definitions.map(({ type }) => ({ type, id: type, deletable: false })) } } }],
+      sharedModel: { procedureBlocks: [], variables: [{ id: 'old-sensor', name: 'sensor', type: 'OldDriver' }] } });
+    const { tools, exported } = await wireBase();
+    const source = exported.abs + '\ntest_object_init("sensor", Sensor)\ntest_object_read($sensor)';
+    const request = { version: 2, requestId: crypto.randomUUID(), base: exported.receipt.base,
+      candidate: { hash: await hashAbsText(source), bytes: new TextEncoder().encode(source).byteLength } };
+    const files = [...disk], original = absJson(nativeState());
+    const validated: any = await tools.execute('abs_validate', request, source);
+    expect(validated.ok).withContext(JSON.stringify(validated)).toBeTrue();
+    expect(validated.receipt.retiredModels).toEqual(['old-sensor']);
+    expect(validated.receipt.preparedModels[0].name).toBe('sensor');
+    expect(validated.receipt.preparedModels[0].id).not.toBe('old-sensor');
+    expect([...disk]).toEqual(files); expect(absJson(nativeState())).toBe(original);
+    for (const retired of [undefined, ['forged']]) {
+      const validation = { ...validated.receipt, retiredModels: retired };
+      if (retired === undefined) delete validation.retiredModels;
+      const failed: any = await tools.execute('abs_apply', { version: 2, requestId: request.requestId, validation }, source);
+      expect(failed.code).withContext(JSON.stringify(failed)).toBe('ABS_MODEL_DECLARATION_CHANGED');
+      expect([...disk]).toEqual(files); expect(absJson(nativeState())).toBe(original);
+    }
+    const applied: any = await tools.execute('abs_apply', { version: 2, requestId: request.requestId, validation: validated.receipt }, source);
+    expect(applied.ok).withContext(JSON.stringify(applied)).toBeTrue();
+    expect(applied.receipt.retiredModels).toEqual(['old-sensor']);
+    const saved = JSON.parse(disk.get('project.abi')!);
+    expect(saved.sharedModel.variables).toEqual([jasmine.objectContaining({ id: validated.receipt.preparedModels[0].id, name: 'sensor', type: 'Sensor' })]);
+    editor.restoreProjectWorkspaceSnapshot(saved);
+    expect(editor.workspace.getAllVariables().map(model => model.getId())).toEqual([validated.receipt.preparedModels[0].id]);
+  });
+
+  for (const canvasChanged of [false, true]) it(`diagnoses external disk edits without guessing authority; canvasChanged=${canvasChanged}`, async () => {
+    const { tools } = await wireBase();
+    const saved = JSON.parse(disk.get('project.abi')!);
+    saved.pages[0].content.blocks.blocks[0].fields.TEXT = 'external edit';
+    disk.set('project.abi', absJson(saved));
+    if (canvasChanged) roots().setFieldValue('unsaved canvas edit', 'TEXT');
+    const files = [...disk], state = absJson(nativeState());
+    const result = await inspect(tools);
+    expect(result.ok).toBeTrue();
+    expect(result.diagnostics.workspace).toEqual({ changedFromBaseline: canvasChanged, savedChangedFromBaseline: true, matchesSaved: false });
+    expect(result.diagnostics.issues).toContain('ABS_DUAL_EDIT_CONFLICT');
+    expect(result.diagnostics.refresh).toBeUndefined();
+    expect([...disk]).toEqual(files); expect(absJson(nativeState())).toBe(state);
+    expect(editor.prepareProjectCode).not.toHaveBeenCalled();
+  });
 
   it('synchronizes a manually changed canvas despite an old blocked baseline, then validates the fresh projection', async () => {
     const { tools, exported, request, source } = await wireBase();
