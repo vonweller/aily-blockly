@@ -257,5 +257,8 @@
   },
   "overrides": {
     "blockly": "npm:aily-project-blockly@^1.0.2"
+  },
+  "allowScripts": {
+    "electron": true
   }
 }
