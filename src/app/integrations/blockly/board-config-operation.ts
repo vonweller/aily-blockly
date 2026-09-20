@@ -99,6 +99,7 @@ export async function setBoardConfig(
   builderService: BuilderService,
   electronService: ElectronService,
   input: Record<string, unknown>,
+  preprocess?: (project: string) => Promise<unknown>,
 ): Promise<Record<string, unknown>> {
   const project = projectService.currentProjectPath;
   const board = projectService.currentBoardConfig;
@@ -175,7 +176,10 @@ export async function setBoardConfig(
     }
 
     const requiresFile = customPartition['requires_file'] === true;
-    if (!requiresFile) builderService.triggerPreprocess('config-changed');
+    if (!requiresFile) {
+      if (preprocess) await preprocess(project);
+      else builderService.triggerPreprocess('config-changed');
+    }
 
     return {
       ...result,

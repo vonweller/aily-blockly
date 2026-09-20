@@ -46,7 +46,7 @@ export async function switchProjectBoard(input: Record<string, unknown>, port: B
         guidance: 'Resolve boardState/host load diagnostics. Do not sleep or repeatedly reinstall/switch the same board as a readiness workaround.' };
     }
     return { ...base, ok: true, changed, ready: true, previousBoard, boardPackage: currentBoard,
-      guidance: 'Board template options were reset when switching. Existing blocks and user libraries are retained; verify their compatibility before editing/building.' };
+      guidance: 'Board template options were reset when switching. Existing project source and user libraries are retained; verify their compatibility before editing/building.' };
   } catch (error) {
     const code = (error as any)?.code;
     return { ...base, ok: false, changed: changed ? true : changeAttempted ? null : false,
