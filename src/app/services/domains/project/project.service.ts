@@ -10,6 +10,7 @@ import {
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { Router } from '@angular/router';
 import { generateDateString } from '../../../func/func';
+import { sha256Hex } from '../../../utils/crypto.utils';
 import { ConfigService } from '@core/preferences/public-api';
 import type { IMenuItem } from '../../../configs/menu.config';
 import type { NewProjectData } from '../../../types/project-new';
@@ -1259,7 +1260,21 @@ export class ProjectService {
     }
   }
 
-  /** Keep Agent save/build/tidy/upload away from a partially rebuilt workspace. */
+  /** Read-only check for operations that must retain their validated runtime. */
+  async getBlocklyLibraryRuntimeFingerprint(projectPath = this.currentProjectPath): Promise<string | null> {
+    if (!projectPath || !this.isSameProjectPath(projectPath, this.currentProjectPath)
+      || this.blocklyLibraryRuntimeRebuildTask?.path === projectPath) {
+      return null;
+    }
+
+    const packageJsonPath = window['path'].join(projectPath, 'package.json');
+    const packageContent = window['fs'].readFileSync(packageJsonPath, 'utf8');
+    const signature = this.getBlocklyLibraryRuntimeSignature(projectPath, packageContent);
+
+    return this.blocklyLibraryRuntimeSignatures.get(projectPath) === signature ? sha256Hex(signature) : null;
+  }
+
+  /** Synchronize installed library content before starting a new operation. */
   async ensureBlocklyLibraryRuntimeReady(projectPath = this.currentProjectPath): Promise<void> {
     if (!projectPath || !this.isSameProjectPath(projectPath, this.currentProjectPath)) {
       return;

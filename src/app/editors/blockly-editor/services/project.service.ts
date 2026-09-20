@@ -75,14 +75,19 @@ export class _ProjectService {
     memoryHash: string;
     diskHash: string;
     changed: boolean;
+
+    usedLibraries: string[];
   }> {
     const context = this.captureSaveContext(this.currentProjectPath);
     context.assertCurrent();
     await projectDataRuntime.flushPending(); context.assertCurrent();
-    const revision = this.blocklyService.captureProjectSnapshot().revision;
+
+    const { document, revision } = this.blocklyService.captureProjectSnapshot();
     const path = `${this.currentProjectPath}/project.abi`;
     const diskText = window['fs'].readFileSync(path, 'utf8');
-    const memory = canonicalJsonStringify(this.blocklyService.normalizeProjectAbi(this.blocklyService.getProjectAbiForSave()));
+    const memory = canonicalJsonStringify(this.blocklyService.normalizeProjectAbi(this.blocklyService.getProjectAbiForSave(document)));
+    const usedLibraries = Object.keys(this.blocklyService.getProjectUsedLibraryManifest(undefined, document));
+
     const assertCurrent = () => {
       context.assertCurrent();
       if (this.blocklyService.captureProjectSnapshot().revision !== revision || window['fs'].readFileSync(path, 'utf8') !== diskText) {
@@ -107,6 +112,7 @@ export class _ProjectService {
       memoryHash,
       diskHash,
       changed: memoryHash !== diskHash,
+      usedLibraries,
     };
   }
 

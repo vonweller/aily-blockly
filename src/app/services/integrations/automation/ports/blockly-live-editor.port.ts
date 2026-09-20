@@ -7,6 +7,7 @@ export interface BlocklyProjectRevisionSnapshot {
   memoryHash: string;
   diskHash: string;
   changed: boolean;
+  usedLibraries: string[];
 }
 
 export interface BlocklyRuntimeMetadataSnapshot {

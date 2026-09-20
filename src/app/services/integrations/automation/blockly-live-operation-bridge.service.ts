@@ -581,15 +581,39 @@ export class BlocklyLiveOperationBridgeService {
     return source;
   }
 
-  private executeAbsProjection(params: Record<string, any>) {
+  private async executeAbsProjection(params: Record<string, any>) {
+    await this.projectService.ensureBlocklyLibraryRuntimeReady();
+
     return this.absGenerationTools.execute('abs_projection', params);
   }
 
-  private executeAbsCandidateValidation(params: Record<string, any>) {
-    return this.absGenerationTools.execute('abs_validate', params, this.readAbsSource(params));
+  private async executeAbsCandidateValidation(params: Record<string, any>) {
+    const source = this.readAbsSource(params);
+
+    await this.projectService.ensureBlocklyLibraryRuntimeReady();
+
+    const libraryRuntimeFingerprint = await this.projectService.getBlocklyLibraryRuntimeFingerprint();
+
+    if (!libraryRuntimeFingerprint) return this.absRuntimeChanged('abs_validate');
+
+    const result = await this.absGenerationTools.execute('abs_validate', params, source);
+
+    if (!result.ok) return result;
+
+    if (libraryRuntimeFingerprint !== await this.projectService.getBlocklyLibraryRuntimeFingerprint()) {
+      return this.absRuntimeChanged('abs_validate');
+    }
+
+    return { ...result, receipt: { ...(result as any).receipt, libraryRuntimeFingerprint } };
   }
 
   private async executeAbsApply(params: Record<string, any>) {
+    const fingerprint = await this.projectService.getBlocklyLibraryRuntimeFingerprint();
+
+    if (!fingerprint || params['validation']?.libraryRuntimeFingerprint !== fingerprint) {
+      return this.absRuntimeChanged('abs_apply');
+    }
+
     const source = this.readAbsSource(params);
     const operationId = `abs-apply:${Date.now().toString(36)}`;
     const progress = (phase: 'started' | 'progress' | 'completed' | 'failed', detail?: string) => this.emitLiveOperationProgress('abs_apply', {
@@ -601,6 +625,18 @@ export class BlocklyLiveOperationBridgeService {
       (blocks, batches) => progress('progress', `已装载 ${blocks} 个块，完成 ${batches} 批`)));
     progress(result.ok ? 'completed' : 'failed', result.ok ? 'ABS 已完成身份合并、完整读回及同代保存' : (result as any).message);
     return result; // The coordinator already saved ABI and prepared outputs. Never save or generate twice.
+  }
+
+  private absRuntimeChanged(operation: 'abs_validate' | 'abs_apply') {
+    return {
+      ok: false,
+      operation,
+      project: this.projectService.currentProjectPath,
+      code: 'ABS_RUNTIME_CONTRACT_STALE',
+      ...(operation === 'abs_apply' ? { publication: { status: 'NOT_COMMITTED' } } : {}),
+      message: 'Library runtime content does not match the validation receipt; ABS was not applied.',
+      recovery: 'Retain the candidate. Synchronize the library runtime and validate against the current generation before applying. Do not replay the old validation receipt.',
+    };
   }
 
   private executeBlockMetadataSnapshot(): Record<string, any> {

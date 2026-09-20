@@ -10,6 +10,7 @@ describe('saved ABI revision resource resolution', () => {
     window['fs'] = { readFileSync: () => disk };
     service = new _ProjectService({ workspace: {}, getActivePageId: () => 'main',
       captureProjectSnapshot: () => ({ revision }), getProjectAbiForSave: () => ({ field: 'payload' }),
+      getProjectUsedLibraryManifest: () => ({}),
       normalizeProjectAbi: value => value } as any, {} as any, {} as any);
     service.currentProjectPath = 'D:/project';
     spyOn(projectDataRuntime, 'getSessionToken').and.callFake(() => session);
