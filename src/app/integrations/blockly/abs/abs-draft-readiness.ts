@@ -12,7 +12,8 @@ export interface AbsDraftReadiness {
   baseline?: AbsGenerationEvidence;
   runtime?: ReturnType<typeof compareAbsContracts>;
   refresh?: { token: string };
-  /** Semantic comparison, not an authorization to discard either version. */
+  /** Canvas uses its live baseline; savedChangedFromBaseline uses the saved ABI
+   * hash, not the normalized live document. Neither grants overwrite authority. */
   workspace?: { changedFromBaseline: boolean; savedChangedFromBaseline: boolean; matchesSaved: boolean };
 }
 
@@ -37,7 +38,7 @@ export async function inspectAbsDraft(inspection: Inspection, document: unknown,
     const same = async (a: unknown, b: unknown) => sameAbsProgram(a, b)
       || sameAbsProgram(await materializeGenericProjectDataValues(a, resolve), await materializeGenericProjectDataValues(b, resolve));
     diagnostics.workspace = { changedFromBaseline: !sameDocument,
-      savedChangedFromBaseline: !await same(saved, baseline.document), matchesSaved: await same(document, saved) };
+      savedChangedFromBaseline: !sameSaved, matchesSaved: await same(document, saved) };
   }
   const runtimeStatus = compareAbsContracts(baseline.contracts, runtime.contracts, runtime.state);
   diagnostics.runtime = runtimeStatus;

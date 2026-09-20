@@ -13,7 +13,16 @@ export interface AbsDiagnostic {
   hint?: string;
   reason?: string;
   identity?: AbsIdentityDiagnostic;
+  resource?: AbsResourceDiagnostic;
   truncated?: boolean;
+}
+
+/** Host runtime asset evidence, never response bodies or URL credentials. */
+export interface AbsResourceDiagnostic {
+  url: string;
+  status?: number;
+  expectedHash?: string;
+  actualHash?: string;
 }
 
 export interface AbsModelConflict {
@@ -63,6 +72,20 @@ export function serializeAbsFailure(error: unknown): AbsFailure {
   const text = (value: string) => { if (value.length > 256) truncated = true; return value.slice(0, 256); };
   for (const key of ['blockType', 'parentBlockType', 'field', 'modelName', 'availableName', 'hint', 'reason'] as const) {
     if (typeof input[key] === 'string') diagnostic[key] = text(input[key]);
+  }
+  if (typeof input.resource?.url === 'string' && input.resource.url.length <= 2048) {
+    try {
+      const url = new URL(input.resource.url);
+      if (['http:', 'https:', 'file:'].includes(url.protocol)) {
+        url.username = ''; url.password = ''; url.search = ''; url.hash = '';
+        const resource: AbsResourceDiagnostic = { url: url.href };
+        if (Number.isInteger(input.resource.status) && input.resource.status >= 0 && input.resource.status <= 599) resource.status = input.resource.status;
+        for (const key of ['expectedHash', 'actualHash'] as const) {
+          if (typeof input.resource[key] === 'string' && /^[a-f0-9]{64}$/.test(input.resource[key])) resource[key] = input.resource[key];
+        }
+        diagnostic.resource = resource;
+      }
+    } catch { /* Reject malformed, oversized or executable resource URLs. */ }
   }
   if (Array.isArray(input.conflicts)) {
     if (input.conflicts.length > 16) truncated = true;
