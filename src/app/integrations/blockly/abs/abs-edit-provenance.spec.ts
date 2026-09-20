@@ -107,7 +107,7 @@ describe('batch ABS text-edit identity', () => {
   it('keeps protected deletion forbidden with valid text provenance', async () => {
     const base = await setup(), source = '# ABS Schema: 2\ncontainer()';
     await expectAsync(reconcileAbs(base, source, { sourceEdits: [[{ start: 0, end: base.abs.length, text: source }]] }))
-      .toBeRejectedWith(jasmine.objectContaining({ code: 'PROTECTED_BLOCK_MISSING' }));
+      .toBeRejectedWith(jasmine.objectContaining({ code: 'ABS_PROTECTED_BLOCK_MISSING' }));
   });
 
   it('bounds malformed, overlapping and excessive histories', () => {

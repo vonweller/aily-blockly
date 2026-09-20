@@ -1118,6 +1118,7 @@ export class BlocklyService {
   }
 
   isWorkspaceEditBlocked(): boolean { return this.workspaceEditGate.blocked; }
+  isWorkspaceEditInProgress(): boolean { return this.workspaceEditGate.busy; }
 
   acquireWorkspaceEditLease(): BlocklyWorkspaceEditLease {
     const lease = this.workspaceEditGate.acquire();

@@ -6,8 +6,35 @@ import { AbsGenerationToolsService } from './abs-generation-tools.service';
 import { createAbsProjection } from './abs-identity-map';
 import { reconcileAbs } from './abs-reconciler';
 import { assertAbsProtectedBlocks } from './abs-import-policy';
+import { parseAbsSyntax } from './abs-syntax';
 
 describe('ABS actionable diagnostic contract', () => {
+  it('explains duplicate positional/section assignments without guessing or dropping either value', () => {
+    try {
+      parseAbsSyntax('# ABS Schema: 2\narbitrary_branch(math_number(0))\n    @COND: math_number(1)', {
+        argumentOrder: type => type === 'arbitrary_branch' ? [{ kind: 'valueInput', name: 'COND' }] : [{ kind: 'field', name: 'NUM' }],
+      }); fail('accepted duplicate input');
+    } catch (error) {
+      const wire = serializeAbsFailure(error);
+      expect(wire.code).toBe('ABS_SYNTAX_INVALID');
+      expect(wire.diagnostic).toEqual(jasmine.objectContaining({ blockType: 'arbitrary_branch', field: 'COND', reason: 'duplicate-input' }));
+      expect(wire.diagnostic!.hint).toContain('not both');
+    }
+  });
+  it('preserves protected-root errors through the actual tool boundary without leaking private IDs', async () => {
+    const sync = { exportGeneration: async () => assertAbsProtectedBlocks(
+      { blocks: { blocks: [{ type: 'arduino_global', id: 'private-root', deletable: false }] } },
+      { blocks: { blocks: [] } }) };
+    const result: any = await new AbsGenerationToolsService(sync as any).execute('abs_projection', {
+      version: 2, requestId: 'protected-root-request', expectedAbiHash: 'sha256:' + 'a'.repeat(64),
+    }, 'arduino_setup()');
+    expect(result.ok).toBeFalse();
+    expect(result.code).toBe('ABS_PROTECTED_BLOCK_MISSING');
+    expect(result.diagnostic.blockType).toBe('arduino_global');
+    expect(result.recovery).toContain('Keep the protected arduino_global');
+    expect(JSON.stringify(result)).not.toContain('private-root');
+    expect(result.receipt).toBeUndefined();
+  });
   it('identifies the protected root across the wire without exposing private IDs', () => {
     const root = { type: 'arduino_global', id: 'private-root', deletable: false };
     for (const [blocks, code] of [
@@ -131,8 +158,19 @@ describe('ABS actionable diagnostic contract', () => {
         const wire = serializeAbsFailure(error);
         expect(wire.code).toBe(code);
         expect(wire.diagnostic).toEqual(jasmine.objectContaining({ modelName: name, expectedTypes: ['SENSOR'], actualTypes }));
+        expect(wire.diagnostic!.hint).not.toMatch(/createVariables|registerVariableToBlockly/);
+        expect(wire.diagnostic!.hint).toContain(name === 'missing' ? 'README' : 'distinct name');
       }
     }
     expect(models).toEqual([{ id: 'id', name: 'sensor', type: '' }]);
+  });
+
+  it('bounds batched conflicts and keeps only actionable names/types, not opaque callback data', () => {
+    const wire = serializeAbsFailure({ diagnostic: { conflicts: Array(20).fill({ modelName: 'sensor', availableName: 'sensor_2',
+      actualTypes: ['OLD', { bad: true }], expectedTypes: ['NEW'], privateState: 'secret' }) } });
+    expect(wire.diagnostic!.conflicts!.length).toBe(16);
+    expect(wire.diagnostic!.conflicts![0]).toEqual({ modelName: 'sensor', availableName: 'sensor_2', actualTypes: ['OLD'], expectedTypes: ['NEW'] });
+    expect(wire.diagnostic!.truncated).toBeTrue();
+    expect(JSON.stringify(wire)).not.toContain('secret');
   });
 });

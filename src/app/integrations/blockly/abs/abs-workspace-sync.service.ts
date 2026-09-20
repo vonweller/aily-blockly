@@ -1,4 +1,5 @@
 import { Injectable } from '@angular/core';
+import { assertAbsProcedureModelIntents } from './abs-procedure-model-intents';
 import { BlocklyService, BlocklyProjectDocument } from '../../../editors/blockly-editor/services/blockly.service';
 import { _ProjectService } from '../../../editors/blockly-editor/services/project.service';
 import { BlocklyWorkspaceEditLease } from '../../../editors/blockly-editor/services/blockly-workspace-edit-lease';
@@ -120,7 +121,8 @@ export class AbsWorkspaceSyncService {
           // become the baseline for a different in-memory document.
           prepared = await this.project.prepareSave(snapshot.document, assertCurrent);
           if (await hashAbsText(absJson(JSON.parse(prepared.abiText))) !== diskHash) {
-            throw new AbsSyncError('ABS_DUAL_EDIT_CONFLICT', 'Saved ABI and workspace diverged; reconcile the external edit before exporting a new generation.');
+            throw new AbsSyncError('ABS_DUAL_EDIT_CONFLICT', 'Saved ABI and workspace diverged; reconcile the external edit before exporting a new generation.', undefined, undefined,
+              { hint: 'Call project_recover action=inspect once for disk/canvas comparison. Do not retry save/export/apply or refresh without a token; preserve both versions until the intended source is established.' });
           }
         }
         assertCurrent();
@@ -207,7 +209,7 @@ export class AbsWorkspaceSyncService {
   }
 
   validateGeneration(source: string, request: AbsGenerationCandidateRequest): Promise<AbsGenerationValidation & { syntaxAdvice: ReturnType<typeof describePreparedAbsSyntax> }> {
-    if (['preparedModels', 'preparedVariables', 'workspaceRevision'].some(key => Object.hasOwn(request, key))) {
+    if (['preparedModels', 'preparedVariables', 'retiredModels', 'workspaceRevision'].some(key => Object.hasOwn(request, key))) {
       return Promise.reject(new AbsSyncError('ABS_REQUEST_INVALID', 'Preparation evidence is host output, not candidate input.'));
     }
     request = JSON.parse(absJson(request));
@@ -215,6 +217,7 @@ export class AbsWorkspaceSyncService {
       const prepared = await this.prepareGeneration(context, lease, store, source, request.base.generation, request);
       return { ...request, workspaceRevision: prepared.before.revision,
         ...(prepared.preparedModels.length ? { preparedModels: prepared.preparedModels } : {}),
+        ...(prepared.candidate.retiredModels.length ? { retiredModels: prepared.candidate.retiredModels } : {}),
         syntaxAdvice: describePreparedAbsSyntax(prepared.candidate.workspace, prepared.candidate.contracts, prepared.candidate.identities),
         ...(request.createVariables ? { preparedVariables: planAbsVariableCreations({ requestId: request.requestId, variables: request.createVariables }) } : {}) };
     });
@@ -271,6 +274,10 @@ export class AbsWorkspaceSyncService {
         hostPrepared: type => !!context.definitions.procedure?.(type) || !!custom.describe(type),
         ...(binding?.createVariables ? { variableCreation: { requestId: binding.requestId, variables: binding.createVariables } } : {}),
       };
+      assertAbsProcedureModelIntents(source, binding?.createVariables, reconcileOptions, type => {
+        if (custom.describe(type)?.protocol.kind === 'definition') return { nameField: 'FUNC_NAME', modelType: 'FUNC' };
+        return context.definitions.procedure?.(type)?.role === 'definition' ? {} : undefined;
+      });
       let candidate: Awaited<ReturnType<typeof prepareAbsReconciliation>>;
       let materialized: Awaited<ReturnType<typeof candidate.materialize>>;
       let instances: ReadonlyMap<string, AbsNativeInstance> | undefined;
@@ -302,6 +309,9 @@ export class AbsWorkspaceSyncService {
       }
       if (binding && 'workspaceRevision' in binding && absJson(binding.preparedModels ?? []) !== absJson(preparedModels)) {
         throw new AbsSyncError('ABS_MODEL_DECLARATION_CHANGED', 'Native model preparation changed after validation. Validate the same candidate again.');
+      }
+      if (binding && 'workspaceRevision' in binding && absJson(binding.retiredModels ?? []) !== absJson(candidate.retiredModels)) {
+        throw new AbsSyncError('ABS_MODEL_DECLARATION_CHANGED', 'Retired model evidence changed after validation. Validate the same candidate again.');
       }
       assertPreparing();
       // Persistence composes shared definitions before page-local roots. Apply the

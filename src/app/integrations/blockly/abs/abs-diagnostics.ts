@@ -1,16 +1,28 @@
 /** Data-only diagnostics shared by the isolated runtime and tool boundary. No Blockly dependency. */
 export interface AbsDiagnostic {
   blockType?: string;
+  parentBlockType?: string;
   field?: string;
   received?: string | number | boolean | null;
   allowedValues?: readonly (string | number | boolean)[];
   expectedTypes?: readonly string[];
   actualTypes?: readonly string[];
   modelName?: string;
+  availableName?: string;
+  conflicts?: AbsModelConflict[];
   hint?: string;
   reason?: string;
   identity?: AbsIdentityDiagnostic;
   truncated?: boolean;
+}
+
+export interface AbsModelConflict {
+  blockType?: string;
+  field?: string;
+  modelName?: string;
+  availableName?: string;
+  expectedTypes?: readonly string[];
+  actualTypes?: readonly string[];
 }
 
 export interface AbsIdentityDiagnostic {
@@ -33,20 +45,11 @@ export interface AbsFailure {
   diagnostic?: AbsDiagnostic;
 }
 
-export const ABS_PROTECTED_FAILURES = {
-  PROTECTED_BLOCK_MISSING: 'ABS_PROTECTED_BLOCK_MISSING',
-  PROTECTED_BLOCK_TYPE_CHANGED: 'ABS_PROTECTED_BLOCK_TYPE_CHANGED',
-  PROTECTED_BLOCK_UNLOCK: 'ABS_PROTECTED_BLOCK_UNLOCK',
-} as const;
-
 /** Allowlist and bounds apply even to errors thrown by third-party library callbacks. */
 export function serializeAbsFailure(error: unknown): AbsFailure {
   const value = error && typeof error === 'object' ? error as Record<string, any> : {};
-  const rawCode = value['code'];
-  const code = typeof rawCode === 'string' && Object.hasOwn(ABS_PROTECTED_FAILURES, rawCode)
-    ? ABS_PROTECTED_FAILURES[rawCode as keyof typeof ABS_PROTECTED_FAILURES]
-    : typeof rawCode === 'string' && /^ABS_[A-Z0-9_]{1,80}$/.test(rawCode)
-      ? rawCode : 'ABS_GENERATION_FAILED';
+  const code = typeof value['code'] === 'string' && /^ABS_[A-Z0-9_]{1,80}$/.test(value['code'])
+    ? value['code'] : 'ABS_GENERATION_FAILED';
   const message = (typeof value['message'] === 'string' ? value['message'] : String(error)).slice(0, 2000);
   const result: AbsFailure = { code, message };
   const range = value['range'];
@@ -58,8 +61,22 @@ export function serializeAbsFailure(error: unknown): AbsFailure {
   const diagnostic: AbsDiagnostic = {};
   let truncated = input.truncated === true;
   const text = (value: string) => { if (value.length > 256) truncated = true; return value.slice(0, 256); };
-  for (const key of ['blockType', 'field', 'modelName', 'hint', 'reason'] as const) {
+  for (const key of ['blockType', 'parentBlockType', 'field', 'modelName', 'availableName', 'hint', 'reason'] as const) {
     if (typeof input[key] === 'string') diagnostic[key] = text(input[key]);
+  }
+  if (Array.isArray(input.conflicts)) {
+    if (input.conflicts.length > 16) truncated = true;
+    diagnostic.conflicts = input.conflicts.slice(0, 16).filter(item => item && typeof item === 'object').map(item => {
+      const conflict: AbsModelConflict = {};
+      for (const key of ['blockType', 'field', 'modelName', 'availableName'] as const) {
+        if (typeof item[key] === 'string') conflict[key] = text(item[key]);
+      }
+      for (const key of ['expectedTypes', 'actualTypes'] as const) if (Array.isArray(item[key])) {
+        if (item[key].length > 16) truncated = true;
+        conflict[key] = item[key].slice(0, 16).filter(value => typeof value === 'string').map(text);
+      }
+      return conflict;
+    });
   }
   const primitive = (value: unknown): value is string | number | boolean => typeof value === 'string'
     || typeof value === 'boolean' || typeof value === 'number' && Number.isFinite(value);

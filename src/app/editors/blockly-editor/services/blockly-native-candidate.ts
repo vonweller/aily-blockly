@@ -2,9 +2,36 @@ import { assertSynchronousNativeCandidate } from './blockly-native-candidate-pol
 import { restoreAbsFailure } from '../../../integrations/blockly/abs/abs-diagnostics';
 import nativeBuild from '../../../../../.generated/blockly-runtime/manifest.json';
 import type { NativeCandidateOptions, NativeCandidateRequest, NativeCandidateResult } from './blockly-native-candidate-protocol';
+import { assertNativeGenerationStable } from './blockly-native-generation-evidence';
 
 /** Disposable state isolation, not an adversarial JavaScript CPU/security sandbox. */
 export async function evaluateNativeCandidate(request: NativeCandidateRequest, options: NativeCandidateOptions): Promise<NativeCandidateResult> {
+  const detached = structuredClone(request);
+  if (!detached.verify) return evaluateNativeCandidatePass(detached, options);
+  const timeoutMs = options.timeoutMs ?? 10000;
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > 60000) throw new Error('Invalid native candidate timeout.');
+  const deadline = Date.now() + timeoutMs;
+  const pass = (uiPhase: 'before-ui' | 'settled') => {
+    options.signal?.throwIfAborted(); options.assertCurrent();
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error('Native candidate timed out.');
+    return evaluateNativeCandidatePass({ ...detached, verify: { ...detached.verify!, uiPhase } }, { ...options, timeoutMs: remaining });
+  };
+  // Library handlers may keep counters on the generator, in closures or globals.
+  // Each pass replays into its own realm and generates once; no guessed reset list.
+  const before = await pass('before-ui');
+  if (!before.generationEvidence) throw new Error('Native generation evidence is missing.');
+  let result = before;
+  if (before.generationEvidence.deferredUi) {
+    result = await pass('settled');
+    if (!result.generationEvidence) throw new Error('Native generation evidence is missing.');
+    assertNativeGenerationStable(before.generationEvidence, result.generationEvidence);
+  }
+  const { generationEvidence: _evidence, ...verified } = result;
+  return verified;
+}
+
+async function evaluateNativeCandidatePass(request: NativeCandidateRequest, options: NativeCandidateOptions): Promise<NativeCandidateResult> {
   const assertCurrent = () => { options.signal?.throwIfAborted(); options.assertCurrent(); };
   assertCurrent();
   // Snapshot before the first await: callers cannot change the request during asset loading.

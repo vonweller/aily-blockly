@@ -24,6 +24,8 @@ export interface AbsGenerationValidation extends AbsGenerationCandidateRequest {
   workspaceRevision: number;
   preparedVariables?: AbsPreparedVariable[];
   preparedModels?: AbsNativeModelDeclaration[];
+  /** Exact baseline IDs retired by host policy before preparing new models. */
+  retiredModels?: string[];
 }
 
 const hash = (value: unknown) => typeof value === 'string' && /^sha256:[a-f0-9]{64}$/.test(value);
@@ -47,6 +49,11 @@ export function assertGenerationCandidate(value: any): asserts value is AbsGener
 export function assertGenerationValidation(value: any): asserts value is AbsGenerationValidation & Record<string, any> {
   assertGenerationCandidate(value);
   assertAbsNativeModelDeclarations(value['preparedModels']);
+  const retired = value['retiredModels'];
+  if (retired !== undefined && (!Array.isArray(retired) || !retired.length
+    || retired.some(id => typeof id !== 'string' || !id.length) || new Set(retired).size !== retired.length)) {
+    throw new AbsSyncError('ABS_REQUEST_INVALID', 'Invalid retired model evidence.');
+  }
   if (!Number.isSafeInteger((value as any).workspaceRevision) || (value as any).workspaceRevision < 0) {
     throw new AbsSyncError('ABS_REQUEST_INVALID', 'The prepared workspace revision is missing.');
   }

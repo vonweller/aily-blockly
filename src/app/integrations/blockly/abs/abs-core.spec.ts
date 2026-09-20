@@ -142,7 +142,7 @@ describe('ABS identity projection and baseline merge', () => {
   });
   it('rejects deletion of a protected descendant before returning a candidate', async () => {
     const baseline = await project(workspace({ type: 'parent', id: 'p', inputs: { VALUE: { block: { ...block('child'), deletable: false } } } }));
-    await expectAsync(reconcileAbs(baseline, source(''))).toBeRejectedWith(jasmine.objectContaining({ code: 'PROTECTED_BLOCK_MISSING' }));
+    await expectAsync(reconcileAbs(baseline, source(''))).toBeRejectedWith(jasmine.objectContaining({ code: 'ABS_PROTECTED_BLOCK_MISSING' }));
   });
   it('allows ordinary statements under a protected container to be removed', async () => {
     const baseline = await project(workspace({ type: 'parent', id: 'p', deletable: false, inputs: { BODY: { block: block('child') } } }));

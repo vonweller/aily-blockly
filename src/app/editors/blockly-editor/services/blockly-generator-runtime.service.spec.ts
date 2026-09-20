@@ -32,6 +32,18 @@ describe('BlocklyGeneratorRuntimeService', () => {
     });
   }
 
+  it('encodes legacy text before Project Data wrapping without adding wrappers on unrelated library loads', () => {
+    activateRuntime();
+    service.loadGenerator('legacy-text/generator.js', `Arduino.forBlock.text = block => ['"' + block.getFieldValue('TEXT') + '"', 0];`);
+    const generator: any = service.getActiveGenerator()!, handler = generator.forBlock['text'];
+    const block = { getFieldValue: () => '{"city":"成都"}', type: 'text', getField: () => undefined };
+    expect(handler(block as any, generator)).toEqual(['"{\\"city\\":\\"成都\\"}"', 0]);
+    service.loadGenerator('unrelated/generator.js', `Arduino.forBlock.other = () => '';`);
+    expect(generator.forBlock['text']).toBe(handler);
+    service.loadGenerator('replacement/generator.js', `Arduino.forBlock.text = block => [Arduino.quote_(block.getFieldValue('TEXT')), 0];`);
+    expect(generator.forBlock['text'](block as any, generator)).toEqual(['"{\\"city\\":\\"成都\\"}"', 0]);
+  });
+
   it('captures declarations registered by generator scripts in the same project runtime, without probing instances', () => {
     const catalog = new BlocklyDeclarativeBlockCatalog();
     service.activate({ mode: 'arduino', boardConfig: { label: 'configured' }, getWorkspace: () => null,

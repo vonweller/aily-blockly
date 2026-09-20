@@ -9,7 +9,7 @@ import { NativeShadowEvidence, type NativeShadowSnapshot } from './blockly-nativ
 import { captureNativeBlock } from './blockly-native-instance';
 import { normalizeAbsSerializedWorkspace } from '../../../integrations/blockly/abs/abs-serialized-workspace';
 import { indexAbsAbi } from '../../../integrations/blockly/abs/abs-abi-index';
-import type { AbsAbiBlock } from '../../../integrations/blockly/abs/abs-state';
+import { AbsSyncError, type AbsAbiBlock } from '../../../integrations/blockly/abs/abs-state';
 import { absJson } from '../../../integrations/blockly/abs/abs-json';
 import { initializeNativeCandidateBlock } from './blockly-native-graphics';
 
@@ -125,7 +125,17 @@ export class NativeCandidateWorkspace {
     if (targets.has(name)) throw new Error(`Duplicate native input ${name}.`);
     targets.set(name, child?.id ?? null); this.connections.set(block, targets);
     const other = child && (connection.type === this.native.ConnectionType.INPUT_VALUE ? child.outputConnection : child.previousConnection);
-    if (child && (!other || !this.workspace.connectionChecker.canConnect(connection, other, false))) throw new Error(`Incompatible native connection: ${name}.`);
+    if (child && (!other || !this.workspace.connectionChecker.canConnect(connection, other, false))) {
+      const valueInput = connection.type === this.native.ConnectionType.INPUT_VALUE;
+      const topLevel = !child.previousConnection && !child.outputConnection;
+      throw new AbsSyncError('ABS_CONNECTION_INCOMPATIBLE', `Incompatible native connection: ${block.type}.${name} cannot accept ${child.type}.`, undefined, [], {
+        blockType: child.type, parentBlockType: block.type, field: name,
+        expectedTypes: connection.getCheck() ?? [], actualTypes: other?.getCheck() ?? [],
+        reason: !other ? (valueInput ? 'missing-output-connection' : 'missing-previous-connection') : 'connection-check-failed',
+        hint: topLevel ? `${child.type} has no previous/output connection. Place this hat/root block at the top level, not inside a statement chain.`
+          : `Use a compatible ${valueInput ? 'value block with an output connection' : 'statement block with a previous connection'} in ${block.type}.${name}. Changing variable models or the ABS baseline cannot repair a connection.`,
+      });
+    }
     const owns = (item: Blockly.Block) => this.createdBy.get(item) === block.id && !this.requested.has(item.id);
     const root = connection.targetBlock();
     let preserve = false;

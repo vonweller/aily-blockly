@@ -4,6 +4,7 @@ import type { AbsBlockShapeContract } from './abs-declarative-contracts';
 import { AbsAbiBlock, AbsAbiWorkspace, AbsSyntaxNode, AbsSyncError } from './abs-state';
 import { hashAbsText, indexAbsSyntax } from './abs-identity-map';
 import { prepareAbsVariableCreations, AbsVariableCreation } from './abs-variable-intents';
+import { absModelRecovery, availableAbsModelName } from './abs-model-guidance';
 
 /** The static planner and native bootstrap must derive model IDs from the same document identity. */
 export async function absDeclarationRequestId(generation: string, source: string): Promise<string> {
@@ -61,11 +62,17 @@ export function prepareAbsDeclarationIntents(
     const models = variables.filter(model => typeof model.name === 'string' && model.name.toLowerCase() === key);
     if (models.length) {
       if (models.length !== 1 || models[0].name !== name || (models[0].type ?? '') !== effect.nativeType) {
-        fail('ABS_DECLARATION_MODEL_CONFLICT', `Declaration ${JSON.stringify(name)} conflicts with an existing native model.`);
+        const reason = models.some(model => (model.type ?? '') !== effect.nativeType) ? 'type-conflict' : 'identity-conflict';
+        throw new AbsSyncError('ABS_DECLARATION_MODEL_CONFLICT', `Declaration ${JSON.stringify(name)} conflicts with an existing native model.`, node, [], {
+          blockType: node.type, modelName: name as string, expectedTypes: [effect.nativeType], actualTypes: models.map(model => model.type ?? ''),
+          reason, hint: absModelRecovery(reason), availableName: availableAbsModelName(name as string, variables.map(model => model.name)),
+        });
       }
       continue; // Reuse existing identity, including an agreeing explicit transition intent.
     }
-    if (before) fail('ABS_DECLARATION_MODEL_MISSING', 'An existing declaration lost its native model; repair it explicitly before editing.');
+    if (before) throw new AbsSyncError('ABS_DECLARATION_MODEL_MISSING', 'An existing declaration lost its native model.', node, [], {
+      blockType: node.type, modelName: name as string, expectedTypes: [effect.nativeType], reason: 'missing', hint: absModelRecovery('missing'),
+    });
     additions.push({ name: name as string, type: effect.nativeType });
   }
   if (additions.length) prepareAbsVariableCreations(workspace, { requestId, variables: additions });

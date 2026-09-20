@@ -9,6 +9,7 @@ import type { Generator } from 'blockly';
 import { NativeCandidateModels } from './blockly-native-models';
 import { nativeCandidateValues } from './blockly-native-values';
 import { adaptBundledArduinoProcedureCalls } from './blockly-bundled-procedure-generator';
+import { adaptArduinoTextLiterals } from './blockly-arduino-text-literals';
 import { NativeRegistrationTasks } from './blockly-native-registration-tasks';
 import { NativeUiTasks, nativeUiSemanticSnapshot } from './blockly-native-ui-tasks';
 import { createNativeCandidateGraphics } from './blockly-native-graphics';
@@ -112,7 +113,10 @@ export function installNativeCandidateRealm(): void {
           const script = document.createElement('script');
           script.textContent = step.source;
           document.head.appendChild(script); script.remove();
-          if (mode === 'arduino') adaptBundledArduinoProcedureCalls(generator);
+          if (mode === 'arduino') {
+            adaptBundledArduinoProcedureCalls(generator);
+            adaptArduinoTextLiterals(generator);
+          }
         } else if (step.kind === 'definitions') {
           for (const definition of step.definitions) registerProjectDataBlockDefinition(definition, step.libraryName);
           native.defineBlocksWithJsonArray(step.definitions);

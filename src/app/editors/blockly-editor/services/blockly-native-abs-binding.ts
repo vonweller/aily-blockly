@@ -33,6 +33,7 @@ export function bindNativeAbs(source: string, execution: NativeCandidateWorkspac
   const fallbacks: AbsNativeDefault[] = [];
   const pending: Array<{ block: Blockly.Block; node: AbsSyntaxNode; name: string; token: AbsSyntaxNode['fields'][string] }> = [];
   let bindingReferences = false;
+  const conflicts: AbsSyncError[] = [];
   const capture = (block: Blockly.Block, seed: AbsNativeBlock['seed']) => captureNativeBlock(execution, declarations, block, seed);
   const options: AbsSyntaxOptions = {
     prepareExtraState: node => {
@@ -73,8 +74,10 @@ export function bindNativeAbs(source: string, execution: NativeCandidateWorkspac
         pending.push({ block, node, name, token }); return;
       }
       const failure = serializeAbsFailure(error);
-      throw new AbsSyncError(failure.code, failure.message, node.fieldRanges[name] ?? { start: node.start, end: node.end }, [],
+      const located = new AbsSyncError(failure.code, failure.message, node.fieldRanges[name] ?? { start: node.start, end: node.end }, [],
         { ...failure.diagnostic, blockType: block.type, field: name });
+      if (!bindingReferences && failure.code === 'ABS_SYMBOL_TYPE_MISMATCH') { conflicts.push(located); return; }
+      throw located;
     }
   };
   const materialize = (node: AbsSyntaxNode): Blockly.Block => {
@@ -105,11 +108,26 @@ export function bindNativeAbs(source: string, execution: NativeCandidateWorkspac
       field: (name, token) => setField(block, node, name, token),
       // Cross-boundary edges are checked by loading the complete merged ABI, not
       // by creating a surrogate model block inside the discovery workspace.
-      input: (name, child) => { if (!child || !hosted.has(child.start)) execution.connect(block, name, child ? materialize(child) : null, snapshot => {
-        fallbacks.push({ owner: node.start, input: name, state: { shadow: snapshot.state }, instances: snapshot.instances, fallback: true });
-      }); },
+      input: (name, child) => {
+        if (child && hosted.has(child.start)) return;
+        try {
+          execution.connect(block, name, child ? materialize(child) : null, snapshot => {
+            fallbacks.push({ owner: node.start, input: name, state: { shadow: snapshot.state }, instances: snapshot.instances, fallback: true });
+          });
+        } catch (error) {
+          const failure = serializeAbsFailure(error), location = child ?? node;
+          throw new AbsSyncError(failure.code, failure.message, failure.range ?? { start: location.start, end: location.end }, [], failure.diagnostic);
+        }
+      },
     };
   });
+  // Collect known type conflicts across the candidate before invoking generators.
+  // The disposable workspace is discarded; no invalid reference is serialized/applied.
+  if (conflicts.length) {
+    const first = conflicts[0];
+    const distinct = [...new Map(conflicts.map(error => [JSON.stringify(error.diagnostic), error.diagnostic!])).values()];
+    throw new AbsSyncError(first.code, first.message, first.range, [], { ...first.diagnostic, conflicts: distinct });
+  }
   const modelDeclarations = modelPreparation ? prepareNativeModels(execution, modelPreparation.generator, blocks,
     new Set(pending.map(item => item.block)), modelPreparation.requestId) : [];
   bindingReferences = true;

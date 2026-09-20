@@ -3,6 +3,7 @@ import type { AbsHostBoundCall, AbsNativeBinding, AbsNativeCreation } from '../.
 import type { AbsAbiWorkspace, AbsProjectionContracts } from '../../../integrations/blockly/abs/abs-state';
 import type { AilyDataRef } from '@domain/project/project-data/public-api';
 import type { AbsNativeModelDeclaration } from '../../../integrations/blockly/abs/abs-native-model-declarations';
+import type { NativeGenerationEvidence } from './blockly-native-generation-evidence';
 
 /** Data-only boundary. No host objects, functions, paths-to-load or filesystem APIs. */
 export type NativeReplayStep =
@@ -39,12 +40,16 @@ export interface NativeCandidateRequest {
   values?: Array<{ ref: AilyDataRef; value: unknown }>;
   /** Verify the final merged ABI and actual code generation before touching the host. */
   verify?: { state: AbsAbiWorkspace; contracts: AbsProjectionContracts;
+    /** Internal pass selection; the host evaluator always owns both passes. */
+    uiPhase?: 'before-ui' | 'settled';
     modelDeclarations?: Array<AbsNativeModelDeclaration & { ownerId: string }> };
 }
 
 export interface NativeVariableState { id: string; name: string; type?: string; [key: string]: unknown }
 
 export interface NativeCandidateResult {
+  /** Internal evidence, consumed and removed by the host evaluator. */
+  generationEvidence?: NativeGenerationEvidence;
   /** Native evidence, not by itself a prepared/validated ABS commit capability. */
   state: Record<string, any>;
   structures: Array<{ id: string; type: string; rows: Array<{

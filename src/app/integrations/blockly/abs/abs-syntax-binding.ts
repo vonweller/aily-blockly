@@ -56,7 +56,10 @@ export function bindAbsSyntax(raw: readonly AbsRawNode[], options: AbsSyntaxOpti
       if (node.next || !child) fail(node, 'Duplicate or empty @next.');
       node.next = child;
     } else {
-      if (Object.hasOwn(node.inputs, name)) fail(node, `Duplicate input ${name}.`);
+      if (Object.hasOwn(node.inputs, name)) throw new AbsSyncError('ABS_SYNTAX_INVALID', `Duplicate input ${name}.`, node, [], {
+        blockType: node.type, field: name, reason: 'duplicate-input',
+        hint: `Input ${name} is already assigned. Supply it once: either in the call's positional/named arguments or in @${name}:, not both. Replace the existing argument rather than adding a second assignment.`,
+      });
       node.inputs[name] = child;
     }
     bindings.get(node)?.input?.(name, child);

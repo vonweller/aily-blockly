@@ -30,7 +30,7 @@ export async function prepareAbsReconciledResources(source: string, draft: AbsRe
   assertCurrent();
   return {
     workspace: resources.document, abs, inputAbs: source, retained: draft.retained, added: draft.added, removed: draft.removed,
-    contracts: draft.contracts, identities: draft.identities,
+    contracts: draft.contracts, identities: draft.identities, retiredModels: draft.retiredModels ?? [],
     externalized: resources.externalized,
     materialize: resources.materialize,
   };

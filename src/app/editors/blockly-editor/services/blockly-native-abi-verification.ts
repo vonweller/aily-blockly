@@ -8,7 +8,6 @@ import { prepareNativeProjectDataFields } from '@domain/project/project-data/pub
 import type { PreparedDataReader } from '@domain/project/project-data/public-api';
 import { NativeUiTasks, nativeUiSemanticSnapshot } from './blockly-native-ui-tasks';
 import { captureArduinoGeneratedArtifacts } from './generated-code-artifacts';
-import { absJson } from '../../../integrations/blockly/abs/abs-json';
 import { verifyNativeModelRegistrations } from './blockly-native-model-effects';
 
 /** Complete merged state, including dormant shadows and metadata, not the scratch tree. */
@@ -32,23 +31,18 @@ export async function verifyNativeAbi(native: typeof Blockly, workspace: Blockly
   capture();
   await prepareNativeProjectDataFields(workspace, readPrepared, assertClean);
   capture(); // Preparation cannot change serialized fields, blocks or models.
+  const deferredUi = uiTasks.hasPending;
+  if (request.uiPhase !== 'before-ui') uiTasks.drain(() => nativeUiSemanticSnapshot(native, workspace));
   const generate = () => uiTasks.withoutScheduling(() => {
     const code = generator.workspaceToCode(workspace);
     if (typeof code !== 'string') throw new Error('Native generator did not complete synchronously.');
     const artifacts = captureArduinoGeneratedArtifacts(generator);
-    assertClean(); capture(); return absJson({ code, artifacts });
+    assertClean(); capture(); return { code, artifacts, deferredUi };
   });
-  const code = verifyNativeModelRegistrations(window, generator, request.modelDeclarations ?? [], generate);
-  if (uiTasks.hasPending) {
-    uiTasks.drain(() => nativeUiSemanticSnapshot(native, workspace));
-    if (generate() !== code) throw Object.assign(new Error('Native deferred UI tasks changed generated code or artifacts.'), {
-      code: 'ABS_NATIVE_EFFECT_UNSUPPORTED', diagnostic: { reason: 'deferred-generator-mutation',
-        hint: 'Generate code and artifacts synchronously. Repair the library generator; project recovery does not fix delayed effects.' },
-    });
-  }
+  const generationEvidence = verifyNativeModelRegistrations(window, generator, request.modelDeclarations ?? [], generate);
   assertClean();
   const state = capture();
   // Serialization/getters must not hide a deferred synchronous change on the first read.
   capture();
-  return { state, structures: [] };
+  return { state, structures: [], generationEvidence };
 }
