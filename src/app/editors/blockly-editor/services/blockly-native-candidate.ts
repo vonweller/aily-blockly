@@ -3,6 +3,7 @@ import { restoreAbsFailure } from '../../../integrations/blockly/abs/abs-diagnos
 import nativeBuild from '../../../../../.generated/blockly-runtime/manifest.json';
 import type { NativeCandidateOptions, NativeCandidateRequest, NativeCandidateResult } from './blockly-native-candidate-protocol';
 import { assertNativeGenerationStable } from './blockly-native-generation-evidence';
+import { loadNativeRuntimeAsset } from './blockly-native-runtime-asset';
 
 /** Disposable state isolation, not an adversarial JavaScript CPU/security sandbox. */
 export async function evaluateNativeCandidate(request: NativeCandidateRequest, options: NativeCandidateOptions): Promise<NativeCandidateResult> {
@@ -45,14 +46,8 @@ async function evaluateNativeCandidatePass(request: NativeCandidateRequest, opti
   const timer = setTimeout(() => abort.abort(new Error('Native candidate timed out.')), timeoutMs);
   let frame: HTMLIFrameElement | undefined, channel: MessageChannel | undefined;
   try {
-    const response = await fetch(new URL('blockly/runtime/native-candidate.js', document.baseURI), { signal: abort.signal, credentials: 'omit' });
-    if (!response.ok) throw new Error('Bundled native candidate runtime could not be loaded. Run the Angular build through npm run ng.');
-    const bytes = await response.arrayBuffer();
-    const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
-    if (Array.from(digest, byte => byte.toString(16).padStart(2, '0')).join('') !== nativeBuild.sha256) {
-      throw new Error('Native candidate asset does not match the host build. Rebuild/reload the application.');
-    }
-    const source = new TextDecoder().decode(bytes); assertCurrent(); abort.signal.throwIfAborted();
+    const source = await loadNativeRuntimeAsset(document.baseURI, nativeBuild.sha256, abort.signal);
+    assertCurrent(); abort.signal.throwIfAborted();
     frame = document.createElement('iframe');
     // Keep real SVG geometry available; display:none makes native measurements invalid.
     frame.style.cssText = 'position:fixed;left:-11000px;top:0;width:1024px;height:768px;border:0;pointer-events:none;';

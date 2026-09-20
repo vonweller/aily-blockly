@@ -9,6 +9,33 @@ import { assertAbsProtectedBlocks } from './abs-import-policy';
 import { parseAbsSyntax } from './abs-syntax';
 
 describe('ABS actionable diagnostic contract', () => {
+  it('sanitizes runtime resource evidence without losing build hashes or status', () => {
+    const wire = serializeAbsFailure({ diagnostic: { resource: {
+      url: 'https://user:secret@localhost:4200/blockly/runtime/native-candidate.js?token=secret#secret',
+      status: 404, expectedHash: 'a'.repeat(64), actualHash: 'b'.repeat(64), body: 'private response',
+    } } });
+    expect(wire.diagnostic!.resource).toEqual({ url: 'https://localhost:4200/blockly/runtime/native-candidate.js',
+      status: 404, expectedHash: 'a'.repeat(64), actualHash: 'b'.repeat(64) });
+    expect(JSON.stringify(wire)).not.toMatch(/secret|private response/);
+    for (const url of ['javascript:alert(1)', 'broken', 'https://' + 'a'.repeat(2050)]) {
+      expect(serializeAbsFailure({ diagnostic: { resource: { url } } }).diagnostic).toBeUndefined();
+    }
+    expect(serializeAbsFailure({ diagnostic: { resource: { url: 'http://localhost/', status: -1,
+      expectedHash: 'invalid', actualHash: {} } } }).diagnostic!.resource).toEqual({ url: 'http://localhost/' });
+  });
+
+  it('preserves resource failure evidence through the tool boundary without a success receipt', async () => {
+    const resource = { url: 'http://localhost/blockly/runtime/native-candidate.js', status: 404, expectedHash: 'a'.repeat(64) };
+    const sync = { exportGeneration: async () => { throw new AbsSyncError('ABS_NATIVE_ASSET_UNAVAILABLE',
+      'Cannot load runtime', undefined, [], { reason: 'http-status', resource, hint: 'Repair the host asset service; retain ABS.' }); } };
+    const result: any = await new AbsGenerationToolsService(sync as any).execute('abs_projection', {
+      version: 2, requestId: 'native-asset-diagnostic-request', expectedAbiHash: 'sha256:' + 'a'.repeat(64),
+    });
+    expect(result.ok).toBeFalse(); expect(result.receipt).toBeUndefined();
+    expect(result.diagnostic.resource).toEqual(resource);
+    expect(result.recovery).toBe('Repair the host asset service; retain ABS.');
+  });
+
   it('explains duplicate positional/section assignments without guessing or dropping either value', () => {
     try {
       parseAbsSyntax('# ABS Schema: 2\narbitrary_branch(math_number(0))\n    @COND: math_number(1)', {

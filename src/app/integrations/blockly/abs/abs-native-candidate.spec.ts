@@ -15,6 +15,14 @@ describe('independent native candidate Realm', () => {
   const run = (request: NativeCandidateRequest) => evaluateNativeCandidate(request, { assertCurrent: () => {} });
   afterEach(() => expect(document.querySelectorAll('[data-blockly-native-candidate]').length).toBe(0));
 
+  it('fails asset loading before constructing a candidate realm', async () => {
+    spyOn(window, 'fetch').and.rejectWith(new TypeError('Failed to fetch'));
+    const create = spyOn(document, 'createElement').and.callThrough();
+    try { await run(candidate()); fail('accepted missing asset'); }
+    catch (error) { expect(error.code).toBe('ABS_NATIVE_ASSET_UNAVAILABLE'); }
+    expect(create.calls.allArgs().some(args => args[0] === 'iframe')).toBeFalse();
+  });
+
   it('rejects a stale or altered candidate asset before evaluating any code', async () => {
     spyOn(window, 'fetch').and.resolveTo(new Response('window.alteredCandidateRan = true;'));
     await expectAsync(run(candidate())).toBeRejectedWithError(/does not match the host build/);

@@ -941,6 +941,23 @@ describe('v2 actual workspace generation coordinator', () => {
     return { tools, exported, source, request };
   };
 
+  it('keeps candidate, mirrors and live blocks intact when native asset loading fails', async () => {
+    enableNative();
+    const { tools, exported } = await wireBase();
+    const source = exported.abs + '\nnative_commit_shape(B, math_number(7), "detail")';
+    const request = { version: 2, requestId: crypto.randomUUID(), base: exported.receipt.base,
+      candidate: { hash: await hashAbsText(source), bytes: new TextEncoder().encode(source).byteLength } };
+    const files = [...disk], state = absJson(nativeState());
+    const fetch = spyOn(window, 'fetch').and.rejectWith(new TypeError('Failed to fetch'));
+    const result: any = await tools.execute('abs_validate', request, source);
+    expect(result.code).withContext(JSON.stringify(result)).toBe('ABS_NATIVE_ASSET_UNAVAILABLE');
+    expect(result.diagnostic.resource.url).toContain('/blockly/runtime/native-candidate.js');
+    expect(result.receipt).toBeUndefined(); expect(fetch).toHaveBeenCalledTimes(1);
+    expect([...disk]).toEqual(files); expect(absJson(nativeState())).toBe(state);
+    expect(editor.prepareProjectCode).not.toHaveBeenCalled();
+    expect(await service.inspectRecovery()).toBeNull(); expect(gate.blocked).toBeFalse();
+  });
+
   const prepareTurn = async (tools: AbsGenerationToolsService, extra = {}) => tools.execute('abs_projection', {
     version: 2, requestId: crypto.randomUUID(), expectedAbiHash: await hashAbsText(disk.get('project.abi')!),
     publish: true, reuseCurrent: true, synchronize: true, ...extra,
@@ -980,6 +997,35 @@ describe('v2 actual workspace generation coordinator', () => {
     expect(saved.sharedModel.variables).toEqual([jasmine.objectContaining({ id: validated.receipt.preparedModels[0].id, name: 'sensor', type: 'Sensor' })]);
     editor.restoreProjectWorkspaceSnapshot(saved);
     expect(editor.workspace.getAllVariables().map(model => model.getId())).toEqual([validated.receipt.preparedModels[0].id]);
+  });
+
+  for (const draft of [false, true]) it(`does not mistake load normalization for an external disk edit; draft=${draft}`, async () => {
+    const saved = structuredClone(editor.captureProjectSnapshot().document);
+    delete saved.sharedModel;
+    disk.set('project.abi', absJson(saved));
+    const tools = new AbsGenerationToolsService(service);
+    const exported: any = await tools.execute('abs_projection', { version: 2, requestId: crypto.randomUUID(),
+      expectedAbiHash: await hashAbsText(disk.get('project.abi')!) });
+    expect(exported.ok).withContext(JSON.stringify(exported)).toBeTrue();
+    if (draft) disk.set('project.abs', exported.abs + '\n# unfinished intent');
+    const files = [...disk], state = absJson(nativeState());
+    const result = await inspect(tools);
+    expect(result.ok).toBeTrue();
+    expect(result.diagnostics.workspace).toEqual({ changedFromBaseline: false, savedChangedFromBaseline: false, matchesSaved: false });
+    expect(result.diagnostics.issues).toEqual(draft ? ['ABS_SOURCE_CONFLICT'] : []);
+    if (draft) expect(result.diagnostics.draft.canValidate).toBeTrue();
+    else expect(result.diagnostics.status).toBe('ready');
+    expect([...disk]).toEqual(files); expect(absJson(nativeState())).toBe(state);
+    expect(editor.prepareProjectCode).not.toHaveBeenCalled();
+  });
+
+  it('does not mistake ABI JSON formatting for an external program edit', async () => {
+    const { tools } = await wireBase();
+    disk.set('project.abi', JSON.stringify(JSON.parse(disk.get('project.abi')!), null, 2));
+    const files = [...disk], result = await inspect(tools);
+    expect(result.diagnostics.status).toBe('ready');
+    expect(result.diagnostics.workspace.savedChangedFromBaseline).toBeFalse();
+    expect([...disk]).toEqual(files);
   });
 
   for (const canvasChanged of [false, true]) it(`diagnoses external disk edits without guessing authority; canvasChanged=${canvasChanged}`, async () => {
