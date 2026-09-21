@@ -200,10 +200,13 @@ export function allocatePartitions(draft: PartitionDraft): { rows: PartitionRow[
   const appSize = draft.appMode === 'remaining'
     ? Math.floor((draft.flashBytes - cursor - dumpSize - fixedStorage) / slots / APP_ALIGNMENT) * APP_ALIGNMENT
     : draft.appBytes;
-  if (!Number.isSafeInteger(appSize) || appSize <= 0 || appSize % APP_ALIGNMENT) errors.push('单份程序空间必须大于 0，并按 64 KiB 对齐。');
+  if (!Number.isSafeInteger(appSize) || appSize <= 0 || appSize % SECTOR) errors.push('单份程序空间必须大于 0，并按 4 KiB 对齐。');
   add(draft.ota ? (x ? 'ota_0' : 'app0') : 'factory', 'app', draft.ota ? 'ota_0' : 'factory', cursor, appSize);
   cursor += appSize;
-  if (draft.ota) { add(x ? 'ota_1' : 'app1', 'app', 'ota_1', cursor, appSize); cursor += appSize; }
+  if (draft.ota) {
+    cursor = alignUp(cursor, APP_ALIGNMENT);
+    add(x ? 'ota_1' : 'app1', 'app', 'ota_1', cursor, appSize); cursor += appSize;
+  }
   if (draft.storage) {
     const dataSize = draft.storageMode === 'remaining' ? Math.floor((draft.flashBytes - cursor - dumpSize) / SECTOR) * SECTOR : draft.storageBytes;
     if (dataSize < SECTOR) errors.push(`存储空间不足，还需要 ${formatBytes(SECTOR - dataSize)}。请调整程序大小或在线更新选项。`);
