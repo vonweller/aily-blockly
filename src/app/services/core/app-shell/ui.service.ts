@@ -113,6 +113,37 @@ export class UiService {
           } catch (error) {
             data = { success: false, error: error instanceof Error ? error.message : String(error) };
           }
+        } else if (message.data?.action === 'partition-manager-ports') {
+          try {
+            const [{ SerialService }, { listPartitionSerialPorts }] = await Promise.all([
+              import('@domain/device/public-api'),
+              import('../../../windows/partition-manager/partition-device-host'),
+            ]);
+            data = { success: true, ...await listPartitionSerialPorts(this.injector.get(SerialService)) };
+          } catch (error) {
+            data = { success: false, error: error instanceof Error ? error.message : String(error) };
+          }
+        } else if (message.data?.action === 'partition-manager-read-device') {
+          try {
+            const [{ ProjectService }, { SerialService }, { SubappResourceLifecycleService }, { readConnectedDevicePartitions }] = await Promise.all([
+              import('@domain/project/public-api'),
+              import('@domain/device/public-api'),
+              import('@integration/subapps/public-api'),
+              import('../../../windows/partition-manager/partition-device-host'),
+            ]);
+            const project = this.injector.get(ProjectService);
+            if (!message.data.projectPath || project.currentProjectPath !== message.data.projectPath) throw new Error('当前项目已切换，请重新打开分区管理器。');
+            const device = await readConnectedDevicePartitions(
+              this.injector.get(SerialService), this, this.injector.get(SubappResourceLifecycleService),
+              () => project.currentProjectPath !== message.data.projectPath
+                || ![ProcessState.IDLE, ProcessState.ERROR].includes(this.injector.get(WorkflowService).currentState)
+                || !!project.getCoderOperation(project.currentProjectPath),
+              message.data.port,
+            );
+            data = { success: true, device };
+          } catch (error) {
+            data = { success: false, error: error instanceof Error ? error.message : String(error) };
+          }
         } else if (message.data?.action === 'get-auth-state') {
           const initializationState = this.authService.getAuthInitializationState();
           if (initializationState === 'idle' || initializationState === 'checking') {

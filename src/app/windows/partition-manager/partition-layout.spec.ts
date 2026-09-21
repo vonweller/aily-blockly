@@ -1,5 +1,5 @@
 import {
-  allocatePartitions, createPreset, inferDraft, KIB, MIB, parseBytes, parsePartitionCsv,
+  allocatePartitions, createPreset, inferDraft, KIB, MIB, parseBytes, parsePartitionCsv, SECTOR,
   serializePartitions, validatePartitions, type PartitionPreset,
 } from './partition-layout';
 
@@ -56,6 +56,23 @@ describe('ESP32 partition layouts', () => {
     result = validatePartitions(allocatePartitions(draft).rows, draft.flashBytes);
     expect(result.appLimit).toBe(8128 * KIB);
     expect(result.freeBytes).toBe(0);
+  });
+
+  it('allows 4 KiB program sizes while aligning OTA slot addresses to 64 KiB', () => {
+    const draft = createPreset('iot', 8 * MIB);
+    draft.appMode = 'fixed'; draft.appBytes = 3 * MIB + SECTOR;
+    const generated = allocatePartitions(draft);
+    const result = validatePartitions(generated.rows, draft.flashBytes);
+    expect(generated.errors).toEqual([]); expect(result.errors).toEqual([]);
+    const apps = result.partitions.filter(partition => partition.typeId === 0);
+    expect(apps.map(app => app.sizeBytes)).toEqual([3 * MIB + SECTOR, 3 * MIB + SECTOR]);
+    expect(apps.map(app => app.offsetBytes)).toEqual([0x10000, 0x320000]);
+    expect(result.partitions.at(-1)!.offsetBytes).toBe(0x621000);
+    expect(result.usedBytes).toBe(8 * MIB);
+    expect(inferDraft(generated.rows, draft.flashBytes)?.appBytes).toBe(draft.appBytes);
+    draft.ota = false;
+    const single = validatePartitions(allocatePartitions(draft).rows, draft.flashBytes);
+    expect(single.errors).toEqual([]); expect(single.partitions.at(-1)!.offsetBytes).toBe(0x311000);
   });
 
   it('aligns app addresses after a larger NVS and reserves crash logs', () => {
