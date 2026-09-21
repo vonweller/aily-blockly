@@ -19,13 +19,6 @@ import {
   resolvePlatformPackageEntries,
 } from '../../../utils/platform-packages.utils';
 
-import {
-  PlatformPackageRef,
-  readPlatformManifestFromAppData,
-  readPlatformRefFromProjectPackage,
-  runtimeDependenciesToBoardDependencies,
-} from '../../../utils/platform-runtime.utils';
-
 import { BlocklyLibraryPackageService } from './blockly-library-package.service';
 import { ConfigService } from '@core/preferences/public-api';
 
@@ -373,7 +366,7 @@ export class NpmService {
 
   /**
    * Aily Code 切换开发板后：与打开新 Coder 工程一致，
-   * 执行工程目录 npm install，并安装主板 boardDependencies + platform runtimeDependencies。
+   * 执行工程目录 npm install，并安装主板 boardDependencies。
    */
   async reinstallDepsForAilyCodeBoardSwitch(projectPath: string): Promise<boolean> {
     if (!this.isAilyCodeProjectRoot(projectPath)) {
@@ -444,8 +437,6 @@ export class NpmService {
           await this.installBoardDependencies(boardPackageJson, false, true);
         }
       }
-
-      await this.installPlatformPackageForAilyCodeProject({ force: true });
 
       if (installStateStarted && this.application.currentProcessState === "INSTALLING") {
         this.application.finishInstall(true);
@@ -519,9 +510,8 @@ export class NpmService {
         const projectPackageJson = await this.prjService.getPackageJson() || {};
         const boardDependencies: Record<string, string> = boardPackageJson.boardDependencies || {};
         const boardPlatformDepsReady = await this.areBoardPlatformDepsReady(boardDependencies);
-        const isAilyCodeProject = this.isAilyCodeProjectRoot(this.prjService.currentProjectPath);
 
-        if (!boardPlatformDepsReady || isAilyCodeProject) {
+        if (!boardPlatformDepsReady) {
           this.isInstalling = true;
           installStateStarted = this.application.startInstall();
         }
@@ -537,10 +527,6 @@ export class NpmService {
           await this.installBoardDependencies(boardPackageJson, false, true);
         } else {
           console.log('[installBoardDeps] 平台依赖已就绪，跳过安装状态');
-        }
-
-        if (isAilyCodeProject) {
-          await this.installPlatformPackageForAilyCodeProject();
         }
 
         try {
@@ -574,104 +560,6 @@ export class NpmService {
 
   private isAilyCodeProjectRoot(projectPath: string): boolean {
     return this.prjService.isAilyCodeProject(projectPath);
-  }
-
-  /**
-   * Aily Code：将 frameworkPlatforms.platform 对应 npm 包安装到 AppData，
-   * 再按 platform.json 的 runtimeDependencies 安装 sdk / compiler / tool（与 Blockly 一致）。
-   */
-  async installPlatformPackageForAilyCodeProject(options?: { force?: boolean }): Promise<void> {
-    const projectPath = this.prjService.currentProjectPath;
-
-    if (!projectPath || !this.isAilyCodeProjectRoot(projectPath)) {
-      return;
-    }
-
-    const platformRef = readPlatformRefFromProjectPackage(projectPath);
-
-    if (!platformRef?.packageName) {
-      console.log('[installPlatformPackageForAilyCodeProject] 未配置 platform，跳过');
-
-      return;
-    }
-
-    await this.ensurePlatformNpmPackageInstalled(platformRef);
-
-    const manifest = readPlatformManifestFromAppData(platformRef.packageName);
-
-    if (!manifest?.runtimeDependencies?.length) {
-      console.log('[installPlatformPackageForAilyCodeProject] platform.json 无 runtimeDependencies，跳过');
-
-      return;
-    }
-
-    const boardDependencies = runtimeDependenciesToBoardDependencies(manifest.runtimeDependencies);
-
-    if (Object.keys(boardDependencies).length === 0) {
-      return;
-    }
-
-    await this.installBoardDependencies({
-      name: manifest.id || platformRef.packageName,
-      version: manifest.version || platformRef.version || '',
-      boardDependencies,
-    }, false, options?.force === true);
-
-    try {
-      const [projectPackageJson, boardPackageJson] = await Promise.all([
-        this.prjService.getPackageJson(),
-        this.prjService.getBoardPackageJson(),
-      ]);
-
-      await this.recordGlobalDependencyUsage(projectPackageJson || {}, boardPackageJson || {});
-    } catch (error) {
-      console.warn('Failed to record installed platform dependency resources:', error);
-    }
-  }
-
-  /** 安装 platform npm 包到 AppData（与 boardDependencies 包相同 prefix） */
-  private async ensurePlatformNpmPackageInstalled(platformRef: PlatformPackageRef): Promise<void> {
-    const appDataPath = window['path'].getAppDataPath();
-    const packageName = String(platformRef.packageName ?? '').trim();
-
-    if (!packageName) {
-      return;
-    }
-
-    const declaredVersion = String(platformRef.version ?? '').trim();
-    const depPath = `${appDataPath}/node_modules/${packageName}`;
-    const depPathPackageJson = `${depPath}/package.json`;
-
-    if (window['path'].isExists(depPathPackageJson)) {
-      try {
-        const installed = JSON.parse(window['fs'].readFileSync(depPathPackageJson, 'utf8'));
-
-        if (!declaredVersion || this.depVersionSatisfiesDecl(installed.version, declaredVersion)) {
-          if (window['path'].isExists(`${depPath}/platform.json`)) {
-            console.log(`[ensurePlatformNpmPackageInstalled] ${packageName} 已安装，跳过`);
-
-            return;
-          }
-        }
-      } catch {
-        /* 继续安装 */
-      }
-    }
-
-    this.application.updateNotice({
-      title: this.translate.instant('NPM.INSTALLING_TITLE'),
-      text: this.translate.instant('NPM.INSTALLING', { name: packageName }),
-      state: 'doing',
-      showProgress: false,
-      setTimeout: 300000,
-    });
-
-    const installSpec = declaredVersion ? `${packageName}@${declaredVersion}` : packageName;
-    const npmCmd = `npm install ${installSpec} --save-exact --prefix "${appDataPath}"`;
-
-    await this.appDataResourceLock.runExclusive(`npm:install-platform:${packageName}`, () =>
-      window['npm'].run({ cmd: npmCmd }),
-    );
   }
 
   async removeGlobalDependencies(unusedDays: 30 | 90 | null): Promise<GlobalDependencyRemovalResult> {
@@ -797,25 +685,19 @@ export class NpmService {
     const appDataPath = window['path'].getAppDataPath();
     const bases = await this.getPlatformPathBases();
     const resourceBasePaths = [bases.sdkBase, bases.compilersBase, bases.toolsBase];
-    const effectiveBoardDependencies = await this.prjService.getEffectiveBoardDependencies();
+    const boardDependencies = await this.prjService.getBoardDependencies();
 
     const usedNames = new Set<string>([
       ...this.getDependencyNames(projectPackageJson),
-      ...Object.keys(effectiveBoardDependencies || {})
+      ...Object.keys(boardDependencies || {})
     ]);
 
     if (typeof boardPackageJson?.name === 'string' && boardPackageJson.name) {
       usedNames.add(boardPackageJson.name);
     }
 
-    const platformRef = readPlatformRefFromProjectPackage(this.prjService.currentProjectPath);
-
-    if (platformRef?.packageName) {
-      usedNames.add(platformRef.packageName);
-    }
-
     const usedResourceKeys = this.getResourceKeysForBoardDependencies(
-      effectiveBoardDependencies || {},
+      boardDependencies || {},
       bases,
     );
 

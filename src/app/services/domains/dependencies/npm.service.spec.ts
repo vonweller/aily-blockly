@@ -67,7 +67,7 @@ describe('NpmService Coder dependency sources', () => {
 });
 
 describe('NpmService installBoardDeps', () => {
-  function createService(boardPlatformDepsReady: boolean) {
+  function createService(boardPlatformDepsReady: boolean, coder = false) {
     const service = Object.create(NpmService.prototype) as any;
     const application = {
       currentProcessState: 'IDLE',
@@ -92,10 +92,9 @@ describe('NpmService installBoardDeps', () => {
     };
     service.application = application;
     service.areBoardPlatformDepsReady = jasmine.createSpy('areBoardPlatformDepsReady').and.resolveTo(boardPlatformDepsReady);
-    service.isAilyCodeProjectRoot = jasmine.createSpy('isAilyCodeProjectRoot').and.returnValue(false);
+    service.isAilyCodeProjectRoot = jasmine.createSpy('isAilyCodeProjectRoot').and.returnValue(coder);
     service.recordGlobalDependencyUsage = jasmine.createSpy('recordGlobalDependencyUsage').and.resolveTo();
     service.installBoardDependencies = jasmine.createSpy('installBoardDependencies').and.resolveTo();
-    service.installPlatformPackageForAilyCodeProject = jasmine.createSpy('installPlatformPackageForAilyCodeProject').and.resolveTo();
 
     return { service, application };
   }
@@ -126,5 +125,27 @@ describe('NpmService installBoardDeps', () => {
     );
     expect(application.finishInstall).toHaveBeenCalledOnceWith(true);
     expect(service.isInstalling).toBeFalse();
+  });
+
+  it('keeps Coder ready without starting an install when its board dependencies are present', async () => {
+    const { service, application } = createService(true, true);
+
+    await service.installBoardDeps();
+
+    expect(application.startInstall).not.toHaveBeenCalled();
+    expect(service.installBoardDependencies).not.toHaveBeenCalled();
+    expect(service.recordGlobalDependencyUsage).toHaveBeenCalledTimes(2);
+    expect(service.isInstalling).toBeFalse();
+  });
+
+  it('installs missing Coder board dependencies through the shared installer', async () => {
+    const { service, application } = createService(false, true);
+
+    await service.installBoardDeps();
+
+    expect(service.installBoardDependencies).toHaveBeenCalledOnceWith(
+      { boardDependencies: { '@aily-project/sdk-test': '1.0.0' } }, false, true,
+    );
+    expect(application.finishInstall).toHaveBeenCalledOnceWith(true);
   });
 });

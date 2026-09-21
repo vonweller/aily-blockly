@@ -17,10 +17,6 @@ import type { NewProjectData } from '../../../types/project-new';
 import { TranslateService } from '@ngx-translate/core';
 import { NzModalRef, NzModalService } from 'ng-zorro-antd/modal';
 import {
-  readPlatformRefFromProjectPackage,
-  resolveEffectiveBoardDependencies,
-} from '../../../utils/platform-runtime.utils';
-import {
   PROJECT_APPLICATION_PORT,
   type ProjectApplicationPort,
 } from './ports/project-application.port';
@@ -2243,18 +2239,11 @@ export class ProjectService {
     return JSON.parse(this.electronService.readFile(boardPackageJsonPath));
   }
 
-  /**
-   * Aily Code：合并主板 boardDependencies 与 platform.json runtimeDependencies，
-   * 供 SDK 路径解析、Platform Packages 树与编译链使用。
-   */
-  async getEffectiveBoardDependencies(): Promise<Record<string, string>> {
+  /** 主板包声明的 SDK、编译器和工具依赖，供配置、编辑器与构建使用。 */
+  async getBoardDependencies(): Promise<Record<string, string>> {
     try {
       const boardPackageJson = await this.getBoardPackageJson();
-      const platformRef = readPlatformRefFromProjectPackage(this.currentProjectPath);
-      return resolveEffectiveBoardDependencies(
-        boardPackageJson?.boardDependencies,
-        platformRef?.packageName,
-      );
+      return { ...(boardPackageJson?.boardDependencies || {}) };
     } catch {
       return {};
     }
@@ -2516,7 +2505,7 @@ export class ProjectService {
   // 获取开发板 SDK 路径
   async getSdkPath() {
     try {
-      const boardDependencies = await this.getEffectiveBoardDependencies();
+      const boardDependencies = await this.getBoardDependencies();
       if (!boardDependencies || Object.keys(boardDependencies).length === 0) {
         throw new Error('未找到开发板 SDK 路径');
       }
