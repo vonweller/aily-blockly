@@ -674,7 +674,11 @@ export class NpmService {
     );
   }
 
-  async removeGlobalDependencies(unusedDays: 30 | 90 | null): Promise<GlobalDependencyRemovalResult> {
+  async removeGlobalDependencies(
+    unusedDays: 30 | 90 | null,
+    onProgress?: (percent: number) => void,
+  ): Promise<GlobalDependencyRemovalResult> {
+    onProgress?.(0);
     const appDataPath = window['path'].getAppDataPath();
     const bases = await this.getPlatformPathBases();
     const resourceBasePaths = [bases.sdkBase, bases.compilersBase, bases.toolsBase];
@@ -706,6 +710,13 @@ export class NpmService {
         .filter((key) => usage.resources[key] <= cutoff);
 
       let resourcePaths: string[] = [];
+      onProgress?.(10);
+      let completedScripts = 0;
+      let completedResources = 0;
+      const onResourceRemoved = () => {
+        completedResources++;
+        onProgress?.(40 + 40 * Math.min(1, completedResources / Math.max(1, resourceKeysToRemove.length)));
+      };
 
       if (packagesToRemove.length > 0) {
         const invalidPackageName = packagesToRemove.find((name) => !this.isValidNpmPackageName(name));
@@ -719,8 +730,10 @@ export class NpmService {
         // before npm removes the package directory that contains those scripts.
         for (const packageName of packagesToRemove) {
           await this.runDeclaredUninstallScript(appDataPath, packageName);
+          onProgress?.(10 + 30 * ++completedScripts / packagesToRemove.length);
         }
       }
+      onProgress?.(40);
 
       if (unusedDays === null) {
         resourcePaths = await clearGlobalDependencyResourceDirectories({
@@ -728,6 +741,7 @@ export class NpmService {
           resourceBasePaths,
           pathApi: window['path'],
           fsApi: window['fsp'],
+          onResourceRemoved,
         });
       } else if (resourceKeysToRemove.length > 0) {
         resourcePaths = await clearGlobalDependencyResources({
@@ -736,14 +750,17 @@ export class NpmService {
           resourceKeys: resourceKeysToRemove,
           pathApi: window['path'],
           fsApi: window['fsp'],
+          onResourceRemoved,
         });
       }
+      onProgress?.(80);
 
       if (packagesToRemove.length > 0) {
         const cmd = `npm uninstall ${packagesToRemove.join(' ')} --prefix "${appDataPath}"`;
 
         await window['npm'].run({ cmd });
       }
+      onProgress?.(90);
 
       const remainingNames = new Set(this.getDeclaredGlobalDependencyNames(appDataPath));
 
@@ -770,6 +787,7 @@ export class NpmService {
 
       this.writeGlobalDependencyUsage(appDataPath, usage);
 
+      onProgress?.(100);
       return { packageNames: packagesToRemove, resourcePaths };
     });
   }
