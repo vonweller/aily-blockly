@@ -7,6 +7,7 @@ import { TerminalService } from '../../../tools/terminal/terminal.service';
 import { Router } from '@angular/router';
 import { FeedbackDialogComponent } from '../../../components/feedback-dialog/feedback-dialog.component';
 import { NzModalService } from 'ng-zorro-antd/modal';
+import { NzMessageService } from 'ng-zorro-antd/message';
 import { ProjectSettingDialogComponent } from '../../../components/project-setting-dialog/project-setting-dialog.component';
 import {
   AuthService,
@@ -27,6 +28,7 @@ import {
   DEFAULT_AILY_CHAT_SUBAPP_TOOL_ID,
 } from '@integration/subapps/public-api';
 import { closeConnectionGraphSubWindows } from './project-window-lifecycle';
+import { ProcessState, WorkflowService } from './workflow.service';
 
 @Injectable({
   providedIn: 'root',
@@ -93,7 +95,25 @@ export class UiService {
         if (message.data?.action === 'open-project') return;
         // console.log('window-receive', message);
         let data;
-        if (message.data?.action === 'get-auth-state') {
+        if (message.data?.action === 'partition-manager-load' || message.data?.action === 'partition-manager-save') {
+          try {
+            const [{ ProjectService }, { BuilderService }, { handlePartitionManagerRequest }] = await Promise.all([
+              import('@domain/project/public-api'),
+              import('@domain/build/public-api'),
+              import('../../../windows/partition-manager/partition-manager-host'),
+            ]);
+            const project = this.injector.get(ProjectService);
+            data = await handlePartitionManagerRequest(project, this.injector.get(BuilderService), message.data, () =>
+              ![ProcessState.IDLE, ProcessState.ERROR].includes(this.injector.get(WorkflowService).currentState)
+              || !!project.getCoderOperation(project.currentProjectPath),
+            );
+            if (message.data.action === 'partition-manager-save' && data.success) {
+              this.injector.get(NzMessageService).success(data.warning || '分区方案已保存。请重新编译，再通过有线烧录使分区变化生效。', { nzDuration: 6000 });
+            }
+          } catch (error) {
+            data = { success: false, error: error instanceof Error ? error.message : String(error) };
+          }
+        } else if (message.data?.action === 'get-auth-state') {
           const initializationState = this.authService.getAuthInitializationState();
           if (initializationState === 'idle' || initializationState === 'checking') {
             await this.authService.initializeAuth();

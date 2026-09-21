@@ -229,10 +229,27 @@ export class SubappAgentBridgeService implements OnDestroy {
         undefined,
         sessionId,
         { workspaceRoot, developmentMode: 'coder' },
-      ) as { ok?: boolean; ready?: boolean };
-      if (result?.ok !== true || result.ready !== true) {
+      ) as { ok?: boolean; ready?: boolean; sourceReady?: boolean; dependencyIssues?: Array<{ name: string; constraint?: string; requiredBy: string; reason: string }> };
+      // Opening/installing a project prepares sources before its SDK may exist.
+      // Missing Arduino dependencies must remain repairable from that project;
+      // library install/search expose the separate full readiness report.
+      if (result?.ok !== true || (result.sourceReady !== true && result.ready !== true)) {
+        if (result?.dependencyIssues?.length) {
+          throw new SubappRpcError('Coder 库依赖尚未完整：' + result.dependencyIssues.map(issue =>
+            `${issue.requiredBy} → ${issue.name}${issue.constraint ? ` (${issue.constraint})` : ''}: ${issue.reason}`).join('; '),
+          'CODER_LIBRARY_DEPENDENCIES_INCOMPLETE', { dependencyIssues: result.dependencyIssues });
+        }
         throw new Error('Coder dependency library sources are not ready');
       }
+    } catch (error) {
+      if (error instanceof SubappRpcError && error.code === 'SUBAPP_TOOL_METHOD_NOT_FOUND') {
+        throw new SubappRpcError(
+          '当前运行的 Aily Coder 编辑器版本不支持依赖库准备。请更新 Aily Coder 编辑器；如果已更新，请保存工程并重新启动 Aily Coder 后重试。\n' + error.message,
+          'CODER_RUNTIME_UPDATE_REQUIRED',
+          error.details,
+        );
+      }
+      throw error;
     } finally {
       await this.releaseSession(sessionId);
     }

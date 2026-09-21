@@ -14,17 +14,11 @@ import { NzMessageService } from 'ng-zorro-antd/message';
 import { NoticeService, ActionState, ActionService, WorkflowService, ProcessState } from '@core/app-shell/public-api';
 import { ProjectService, ProjectDebugConfigurationService } from '@domain/project/public-api';
 import { ConfigService } from '@core/preferences/public-api';
-import {
-  normalizeArduinoGeneratedCode,
-  type BlockCodeMapping,
-} from '../components/blockly/generators/arduino/arduino';
-import {
-  runWithPreparedActiveProjectGenerator,
-} from './blockly-generator-runtime.service';
+import { type BlockCodeMapping } from '../components/blockly/generators/arduino/arduino';
 
 import { BlocklyService } from './blockly.service';
 
-import { writeArduinoGeneratedArtifacts } from './generated-code-artifacts';
+import { writePreparedArduinoGeneratedArtifacts } from './generated-code-artifacts';
 import { CompileValidationService, type BuildCheckpoint } from '@domain/build/public-api';
 import { NpmService } from '@domain/dependencies/public-api';
 import { debounceTime } from 'rxjs/operators';
@@ -214,38 +208,21 @@ export class _BuilderService {
   private async generateWorkspaceCodeForPreprocess(
     workspace: unknown,
     detail?: string,
+    forceGenerate = false,
   ): Promise<string> {
-    // Code-generation events publish the exact workspace revision before they
-    // trigger preprocessing. Reuse it to avoid generating the same workspace
-    // synchronously again on the renderer thread.
-    const reusableCode = this.blocklyService.getReusableGeneratedCode();
-    if (reusableCode !== null) {
-      return reusableCode;
-    }
-
     await this.waitForOneIdleBoundary();
     const projectPath = this.projectService.currentProjectPath;
-    const projectDocument = this.blocklyService.getProjectDocument();
-    const generated = await this.runBuilderPreprocessPhase(
+    return this.runBuilderPreprocessPhase(
       'workspace_to_code',
-      () => runWithPreparedActiveProjectGenerator(
-        workspace as any,
-        (generator) => ({
-          code: normalizeArduinoGeneratedCode(generator.workspaceToCode(workspace as any)),
-          generator,
-        }),
-        projectDocument,
-      ),
+      () => this.blocklyService.runWithPreparedProjectCode(async (prepared, assertCurrent) => {
+        if (workspace !== this.blocklyService.workspace || projectPath !== this.projectService.currentProjectPath) throw new Error('Build project changed.');
+        await writePreparedArduinoGeneratedArtifacts(projectPath, prepared.artifacts);
+        assertCurrent();
+        this.blocklyService.publishGeneratedCode(prepared.code);
+        return prepared.code;
+      }, forceGenerate),
       detail,
     );
-    await writeArduinoGeneratedArtifacts(
-      projectPath,
-      generated.generator,
-    );
-    // The workspace can become dirty while the dependency debounce is pending.
-    // Cache this fallback generation for the remaining preprocess/build flow.
-    this.blocklyService.publishGeneratedCode(generated.code);
-    return generated.code;
   }
 
   /**
@@ -270,40 +247,21 @@ export class _BuilderService {
   }> {
     await this.waitForOneIdleBoundary();
     const projectPath = this.projectService.currentProjectPath;
-    const projectDocument = this.blocklyService.getProjectDocument();
-    const generated = await this.runBuilderPreprocessPhase(
+    return this.runBuilderPreprocessPhase(
       'workspace_to_code',
-      () => runWithPreparedActiveProjectGenerator(
-        workspace as any,
-        (generator) => {
-          if (checkpoint) checkpoint.inputCapturedAt = Date.now();
-          const code = normalizeArduinoGeneratedCode(generator.workspaceToCode(workspace as any));
-          const activeGenerator = generator as {
-            blockCodeMap?: Map<string, BlockCodeMapping>;
-          };
-          const blockCodeMap = activeGenerator.blockCodeMap
-            ?? new Map<string, BlockCodeMapping>();
-          return {
-            code,
-            blockSourceMappings: this.createBlockSourceMappings(
-              blockCodeMap,
-              workspace,
-            ),
-            generator,
-          };
-        },
-        projectDocument,
-      ),
+      () => this.blocklyService.runWithPreparedProjectCode(async (prepared, assertCurrent) => {
+        if (workspace !== this.blocklyService.workspace || projectPath !== this.projectService.currentProjectPath) throw new Error('Build project changed.');
+        // The prepared revision is guarded for the entire publication, including
+        // artifact writes; record the code/map snapshot before that async I/O.
+        if (checkpoint) checkpoint.inputCapturedAt = Date.now();
+        await writePreparedArduinoGeneratedArtifacts(projectPath, prepared.artifacts);
+        assertCurrent();
+        return { code: prepared.code, blockSourceMappings: this.createBlockSourceMappings(
+          new Map(prepared.blockCodeMapText ? JSON.parse(prepared.blockCodeMapText) : []), workspace,
+        ) };
+      }),
       detail,
     );
-    await writeArduinoGeneratedArtifacts(
-      projectPath,
-      generated.generator,
-    );
-    return {
-      code: generated.code,
-      blockSourceMappings: generated.blockSourceMappings,
-    };
   }
 
   private appendPreprocessErrorOutput(value: unknown): void {
@@ -1103,7 +1061,15 @@ export class _BuilderService {
     const tempPath = this.electronService.pathJoin(currentProjectPath, '.temp');
     
     // 生成代码
-    const code = await this.generateWorkspaceCodeForPreprocess(this.blocklyService.workspace, 'sync_preprocess');
+    // A synchronous preprocess is the build's recovery boundary. Generate from
+    // the live workspace even when a renderer cache claims to be current: a
+    // programmatic workspace replacement can intentionally suppress Blockly
+    // events, and older callers may therefore have left that cache stale.
+    const code = await this.generateWorkspaceCodeForPreprocess(
+      this.blocklyService.workspace,
+      'sync_preprocess',
+      true,
+    );
     this.lastCode = code; // 保存代码用于后续 hash 计算
 
     // 构建配置对象

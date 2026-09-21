@@ -5,6 +5,7 @@ const { spawn, exec, execFileSync } = require('child_process');
 const os = require('os');
 const ailyCodeProject = require('./aily-code-project');
 const platformRuntime = require('./platform-runtime');
+const targetCompileContext = require('./target-compile-context');
 
 const LIBRARY_CACHE_SCHEMA_VERSION = 2;
 const CODER_LOCAL_LIBRARY_RECEIPT = '.aily-coder-local-library.json';
@@ -118,7 +119,15 @@ async function main() {
         throw new Error(`未找到板子包文件: ${boardPackageJsonPath}`);
     }
     const boardPackageJson = JSON.parse(fs.readFileSync(boardPackageJsonPath, 'utf8'));
+    const testContextInputs = targetCompileContext.captureInputs([
+        projectPackageJsonPath, boardJsonPath, boardPackageJsonPath,
+    ]);
     const platformRef = platformRuntime.readPlatformRefFromProjectPackage(currentProjectPath);
+    const platformManifestPath = platformRef?.packageName
+        ? path.join(appDataPath, 'node_modules', platformRef.packageName, 'platform.json') : null;
+    if (platformManifestPath && fs.existsSync(platformManifestPath)) {
+        testContextInputs.push(...targetCompileContext.captureInputs([platformManifestPath]));
+    }
     const boardDependencies = platformRuntime.resolveEffectiveBoardDependencies(
         boardPackageJson.boardDependencies,
         appDataPath,
@@ -155,7 +164,8 @@ async function main() {
         // and are searched last so they override npm packages with the same headers.
         const libsPath = collectDependencyLibraryPackages(
             dependencies,
-            currentProjectPath
+            currentProjectPath,
+            isAilyCode
         );
         logger.log(`开始处理 ${libsPath.length} 个库文件`);
         let copiedLibraries = [];
@@ -247,6 +257,9 @@ async function main() {
         // 6. 配置路径和参数
         const fullCompilerPath = path.join(compilerPath, compiler);
         const fullSdkPath = path.join(sdkPath, sdk);
+        if (!isAilyCode) {
+            librarySearchPaths = prependSdkLibrarySearchPath(fullSdkPath, librarySearchPaths);
+        }
         
         // 7. 获取编译命令
         let compilerParam = boardJson.compilerParam;
@@ -388,6 +401,11 @@ async function main() {
             });
         });
 
+        try {
+            targetCompileContext.publishTargetCompileContext(preprocessCachePath, currentProjectPath, testContextInputs);
+        } catch (error) {
+            logger.warn('无法写入 C++ 测试上下文:', error.message);
+        }
         // logger.log('预处理完成');
         process.exit(0);
 
@@ -511,13 +529,14 @@ function isCompilableLibraryPackage(packageName) {
         && !packageName.startsWith('@aily-project/lib-core');
 }
 
-function collectLibraryPackages(projectDependencies, currentProjectPath) {
+function collectLibraryPackages(projectDependencies, currentProjectPath, requireProjectOwnedPackages = false) {
     const libraries = [];
     const visited = new Set();
+    const projectPath = path.resolve(currentProjectPath);
     const realProjectPath = fs.realpathSync(currentProjectPath);
     const pending = Object.keys(projectDependencies || {}).map(packageName => ({
         packageName,
-        packagePath: path.join(currentProjectPath, 'node_modules', packageName),
+        packagePath: path.join(projectPath, 'node_modules', packageName),
     }));
 
     for (let index = 0; index < pending.length; index++) {
@@ -531,11 +550,19 @@ function collectLibraryPackages(projectDependencies, currentProjectPath) {
         } catch {
             continue;
         }
-        if (!isPathWithin(realProjectPath, realPackagePath) || visited.has(realPackagePath)) {
+        // Coder package roots are compiler inputs, so keep its real paths inside
+        // the project. Blockly keeps its established npm-link/junction behavior:
+        // the project-owned node_modules entry may resolve to a canonical local
+        // library outside the project and is staged into .temp/libraries.
+        if ((requireProjectOwnedPackages && !isPathWithin(realProjectPath, realPackagePath))
+            || visited.has(realPackagePath)) {
             continue;
         }
         visited.add(realPackagePath);
-        libraries.push({ packageName, packagePath: realPackagePath });
+        libraries.push({
+            packageName,
+            packagePath: requireProjectOwnedPackages ? realPackagePath : packagePath
+        });
 
         const packageJsonPath = path.join(realPackagePath, 'package.json');
         if (!fs.existsSync(packageJsonPath)) {
@@ -554,8 +581,8 @@ function collectLibraryPackages(projectDependencies, currentProjectPath) {
         Object.keys(packageJson.dependencies || {}).forEach(dependencyName => {
             if (!isCompilableLibraryPackage(dependencyName)) return;
             const dependencyPath = resolveLibraryDependencyPath(
-                realPackagePath,
-                realProjectPath,
+                packagePath,
+                projectPath,
                 dependencyName
             );
             if (dependencyPath) {
@@ -578,8 +605,8 @@ function resolveLibraryDependencyPath(parentPackagePath, projectRoot, dependency
     return null;
 }
 
-function collectDependencyLibraryPackages(projectDependencies, currentProjectPath) {
-    return collectLibraryPackages(projectDependencies, currentProjectPath);
+function collectDependencyLibraryPackages(projectDependencies, currentProjectPath, isAilyCode = false) {
+    return collectLibraryPackages(projectDependencies, currentProjectPath, isAilyCode);
 }
 
 /**
@@ -616,6 +643,26 @@ function collectWorkspaceLibraries(librariesPath) {
             sourcePath: path.join(librariesPath, entry.name)
         }))
         .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+/**
+ * Board SDKs may ship Arduino-compatible libraries beside their core and
+ * variants. aily-builder does not discover that directory from --sdk-path,
+ * so pass it explicitly. Keep it first: later project/package roots retain
+ * their existing override precedence.
+ */
+function prependSdkLibrarySearchPath(fullSdkPath, librarySearchPaths) {
+    const current = Array.isArray(librarySearchPaths) ? librarySearchPaths : [];
+    const sdkLibrariesPath = path.join(fullSdkPath, 'libraries');
+    if (!fs.existsSync(sdkLibrariesPath) || !fs.statSync(sdkLibrariesPath).isDirectory()) {
+        return current;
+    }
+
+    const sdkRoot = path.resolve(sdkLibrariesPath);
+    return [
+        sdkLibrariesPath,
+        ...current.filter(searchPath => path.resolve(searchPath) !== sdkRoot)
+    ];
 }
 
 /**
@@ -1082,5 +1129,6 @@ module.exports = {
     normalizeExtractedSourceDirectory,
     processComponentLibraries,
     processLibrariesParallel,
+    prependSdkLibrarySearchPath,
     resolveCoderLibrarySearchPaths,
 };

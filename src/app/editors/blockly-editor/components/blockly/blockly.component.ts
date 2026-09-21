@@ -1,5 +1,6 @@
-import { AfterViewInit, ChangeDetectorRef, Component, ElementRef, EventEmitter, Input, OnDestroy, OnInit, Output, ViewChild, effect } from '@angular/core';
+import { AfterViewInit, ChangeDetectorRef, Component, ElementRef, EventEmitter, Input, NgZone, OnDestroy, OnInit, Output, ViewChild, effect } from '@angular/core';
 import * as Blockly from 'blockly';
+import { WorkspaceCodeChangeTracker, WorkspaceCodeEvent } from '../../utils/blockly-performance';
 import { Subject, combineLatest } from 'rxjs';
 
 import { debounceTime, takeUntil, map, distinctUntilChanged, pairwise, startWith } from 'rxjs/operators';
@@ -42,18 +43,15 @@ const BLOCKLY_LOCALES: Record<SupportedLanguageCode, any> = {
 //   ContinuousMetrics,
 // } from './plugins/continuous-toolbox/src/index.js';
 import './plugins/toolbox-search/src/index';
-import './plugins/block-plus-minus/src/index.js';
+import './blockly-native-registrations';
 import './plugins/stable-comment-icon';
-import {
-  normalizeArduinoGeneratedCode,
-  type BlockCodeMapping,
-} from './generators/arduino/arduino';
+import { type BlockCodeMapping } from './generators/arduino/arduino';
 import { BlocklyService, WorkspaceBlockSearchState } from '../../services/blockly.service';
 import {
   BlocklyGeneratorRuntimeService,
-  runWithPreparedActiveProjectGenerator,
 } from '../../services/blockly-generator-runtime.service';
-import { BitmapUploadResponse, GlobalServiceManager, BitmapUploadService } from '../../services/bitmap-upload.service';
+import { BitmapUploadResponse, BitmapUploadService } from '../../services/bitmap-upload.service';
+import { GlobalServiceManager } from '../../services/bitmap-upload-bridge';
 import {
   projectDataRuntime,
   ProjectService,
@@ -68,24 +66,11 @@ import './renderer/aily-icon';
 import './renderer/aily-thrasos/thrasos';
 import './renderer/aily-zelos/zelos';
 import './custom-category';
-import './custom-field/field-bitmap';
-import './custom-field/field-u8g2-bitmap';
 import { setU8g2AnimationFieldTranslator } from './custom-field/field-u8g2-animation';
 import { setTftEsPiAnimationFieldTranslator } from './custom-field/field-tftespi-animation';
 import { setTftEsPiImageFieldTranslator } from './custom-field/field-tftespi-image';
 import { setAudioFieldTranslator } from './custom-field/field-audio';
 import { registerMediaFieldEditorStyles } from './custom-field/field-media-editor-style';
-import './custom-field/field-image';
-import './custom-field/field-image-preview';
-import './custom-field/field-led-matrix';
-import './custom-field/field-led-matrix-image';
-import './custom-field/field-led-pattern-selector';
-import './custom-field/field-tone';
-import './custom-field/field-multilineinput';
-import './custom-field/field-slider';
-import './custom-field/field-angle180';
-import './custom-field/field-angle';
-import '@blockly/field-colour-hsv-sliders';
 
 import { Multiselect } from './plugins/workspace-multiselect/index.js';
 import { PromptDialogComponent } from './components/prompt-dialog/prompt-dialog.component.js';
@@ -110,10 +95,10 @@ import { BlocklyToolboxPaneComponent } from './components/blockly-toolbox-pane/b
 import { BlocklyWorkspacePagesComponent } from './components/blockly-workspace-pages/blockly-workspace-pages.component';
 import { BlocklyConfirmDialogComponent } from './components/confirm-dialog/confirm-dialog.component';
 import { CodeViewerIpcService } from '../../services/code-viewer-ipc.service';
-import { writeArduinoGeneratedArtifacts } from '../../services/generated-code-artifacts';
+import { writePreparedArduinoGeneratedArtifacts } from '../../services/generated-code-artifacts';
 import { AilyChatDemandSessionService } from '@integration/simulator/public-api';
 
-type BlocklyWorkspaceEvent = { type?: string } | null | undefined;
+type BlocklyWorkspaceEvent = WorkspaceCodeEvent | null | undefined;
 
 const PROJECT_BREAKPOINT_CONTEXT_MENU_IDS = [
   'ailyProjectBreakpointAddOrRebind',
@@ -307,6 +292,7 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
 
   // RxJS debounce optimization
   private codeGenerationSubject = new Subject<void>();
+  private forceNextCodeGeneration = false;
   private minimapSyncSubject = new Subject<void>();
   private destroy$ = new Subject<void>();
   private resizeObserver: ResizeObserver | null = null;
@@ -324,6 +310,7 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
     'var_delete',
     'var_rename',
   ]);
+  private readonly codeChangeTracker = new WorkspaceCodeChangeTracker();
   private readonly minimapSyncEventTypes = new Set([
     'finished_loading',
     'create',
@@ -474,6 +461,7 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
     private noticeService: NoticeService,
     private translateService: TranslateService,
     private cdr: ChangeDetectorRef,
+    private ngZone: NgZone,
     private cmdService: CmdService,
     private projectService: ProjectService,
     private electronService: ElectronService,
@@ -826,8 +814,10 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
       this.options.grid.colour = blocklyGridColourForUiTheme(currentTheme);
 
       applyWindowsBlocklyScrollbarThickness(this.platformService.isWindows());
-      this.workspace = Blockly.inject(this.workspacePaneComponent.blocklyHostElement, this.options);
-      this.workspacePaneComponent.blocklyHostElement.addEventListener('pointerdown', this.onWorkspacePointerDownBound, true);
+      this.ngZone.runOutsideAngular(() => {
+        this.workspace = Blockly.inject(this.workspacePaneComponent.blocklyHostElement, this.options);
+        this.workspacePaneComponent.blocklyHostElement.addEventListener('pointerdown', this.onWorkspacePointerDownBound, true);
+      });
       this.workspace.updateToolbox(this.toolbox);
       this.registerExternalToolboxDeleteArea();
       this.blocklyService.hydrateWorkspaceFromProjectState();
@@ -836,8 +826,10 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
       this.applyFlyoutAutoClose();
       this.setupFlyoutPinControl(0);
 
-      const multiselectPlugin = new Multiselect(this.workspace);
-      multiselectPlugin.init(this.options);
+      this.ngZone.runOutsideAngular(() => {
+        const multiselectPlugin = new Multiselect(this.workspace);
+        multiselectPlugin.init(this.options);
+      });
       this.registerBlockExplainContextMenu();
       this.registerProjectBreakpointContextMenus();
 
@@ -994,7 +986,6 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
 
     setTimeout(() => {
       Blockly.svgResize(this.workspace);
-      this.workspace.render();
       this.queueProjectBreakpointMarkerSync();
       this.queueDebugExecutionMarkerSync();
       this.blocklyService.syncToolboxFacadeWithWorkspace();
@@ -1451,6 +1442,7 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
       mode,
       boardConfig: this.blocklyService.boardConfig,
       getWorkspace: () => this.blocklyService.workspace || null,
+      onBlockDefinition: (source, definition) => this.blocklyService.recordRuntimeBlockDefinition(source, definition),
     });
   }
 
@@ -2200,6 +2192,7 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
       return;
     }
 
+    if (forceGenerate) this.forceNextCodeGeneration = true;
     this.requestCodeGeneration();
   }
 
@@ -2214,11 +2207,7 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   private shouldGenerateCodeForEvent(event?: BlocklyWorkspaceEvent): boolean {
-    if (!event?.type) {
-      return true;
-    }
-
-    return this.codeGenerationEventTypes.has(event.type);
+    return !!this.workspace && this.codeChangeTracker.affectsCode(event, this.workspace);
   }
 
   private requestMinimapSync(event?: BlocklyWorkspaceEvent): void {
@@ -2308,49 +2297,45 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
     ).subscribe(async () => {
       try {
         const projectPath = this.projectService.currentProjectPath;
-        const projectDocument = this.blocklyService.getProjectDocument();
-        const generated = await runWithPreparedActiveProjectGenerator(
-          this.workspace,
-          (generator) => {
-            const activeBlockCodeMap = (
-              generator as { blockCodeMap?: Map<string, BlockCodeMapping> }
-            ).blockCodeMap;
-            return {
-              code: normalizeArduinoGeneratedCode(generator.workspaceToCode(this.workspace)),
-              generator,
-              blockCodeMap: activeBlockCodeMap ? new Map(activeBlockCodeMap) : null,
-            };
-          },
-          projectDocument,
-        );
-        const { code, generator } = generated;
-        const blockCodeMap = generated.blockCodeMap ?? new Map<string, BlockCodeMapping>();
-        await writeArduinoGeneratedArtifacts(projectPath, generator);
-        this.blocklyService.publishGeneratedCode(code);
-        void this.projectDebugConfigurationService.updateWorkspaceGeneratedCode(
-          projectPath,
-          code,
-        );
-        // 发布 block-to-code 映射
-        if (generated.blockCodeMap) {
-          this.blocklyService.blockCodeMapSubject.next(blockCodeMap);
-          this.blocklyService.absBlockLineMap.next(new Map());
-        }
+        const workspace = this.workspace;
+        const force = this.forceNextCodeGeneration;
+        this.forceNextCodeGeneration = false;
+        const assertContext = () => {
+          if (this.destroy$.isStopped || projectPath !== this.projectService.currentProjectPath || workspace !== this.blocklyService.workspace) {
+            throw new Error('Blockly page changed before code publication.');
+          }
+        };
+        await this.blocklyService.runWithPreparedProjectCode(async (generated, assertCurrent) => {
+          assertContext();
+          await writePreparedArduinoGeneratedArtifacts(projectPath, generated.artifacts);
+          assertContext(); assertCurrent();
+          const code = generated.code;
+          this.blocklyService.publishGeneratedCode(code);
+          const blockCodeMap = new Map<string, BlockCodeMapping>(generated.blockCodeMapText ? JSON.parse(generated.blockCodeMapText) : []);
+          void this.projectDebugConfigurationService.updateWorkspaceGeneratedCode(
+            projectPath,
+            code,
+          );
+          // 发布 block-to-code 映射
+          if (generated.blockCodeMapText !== null) {
+            this.blocklyService.blockCodeMapSubject.next(blockCodeMap);
+          }
 
-        this.codeViewerIpcService.publishCodeState(
-          code,
-          blockCodeMap,
-          this.blocklyService.selectedBlockSubject.value,
-          this.blocklyService.selectedBlockIdsSubject.value,
-        );
+          this.codeViewerIpcService.publishCodeState(
+            code,
+            blockCodeMap,
+            this.blocklyService.selectedBlockSubject.value,
+            this.blocklyService.selectedBlockIdsSubject.value,
+          );
 
-        // Extract #include and #define, check for changes
-        const currentDependencies = this.extractDependencies(code);
-        if (currentDependencies !== this.previousDependencies) {
-          // console.log('currentDependencies: ', currentDependencies);
-          this.blocklyService.dependencySubject.next(currentDependencies);
-          this.previousDependencies = currentDependencies;
-        }
+          // Extract #include and #define, check for changes
+          const currentDependencies = this.extractDependencies(code);
+          if (currentDependencies !== this.previousDependencies) {
+            // console.log('currentDependencies: ', currentDependencies);
+            this.blocklyService.dependencySubject.next(currentDependencies);
+            this.previousDependencies = currentDependencies;
+          }
+        }, force);
       } catch (error) {
         console.error('Code generation error:', error);
         // 当代码生成失败时，输出更多诊断信息帮助定位缺失的生成器
