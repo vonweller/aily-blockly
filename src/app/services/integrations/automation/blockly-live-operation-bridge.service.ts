@@ -1270,6 +1270,8 @@ export class BlocklyLiveOperationBridgeService {
         type: params['type'],
         filters: params['filters'],
         maxResults: params['maxResults'],
+        offset: params['offset'],
+        detail: params['detail'],
       },
       this.configService,
     );
