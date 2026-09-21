@@ -2355,15 +2355,16 @@ export class ProjectService {
     return parts[parts.length - 1] || null;
   }
 
-  private async getRawBoardsTxtConfig(boardName: string): Promise<Record<string, string> | null> {
+  private async getRawBoardsTxtConfig(boardName: string, optionalSdk = false): Promise<Record<string, string> | null> {
     try {
-      const sdkPath = await this.getSdkPath();
+      const sdkPath = await this.getSdkPath({ optional: optionalSdk });
       if (!sdkPath) {
         return null;
       }
 
       const boardsFilePath = `${sdkPath}/boards.txt`;
       if (!window['fs'].existsSync(boardsFilePath)) {
+        if (optionalSdk) console.warn('[ProjectService] SDK configuration is not ready:', boardsFilePath);
         return null;
       }
 
@@ -2503,7 +2504,7 @@ export class ProjectService {
   }
 
   // 获取开发板 SDK 路径
-  async getSdkPath() {
+  async getSdkPath(options: { optional?: boolean } = {}) {
     try {
       const boardDependencies = await this.getBoardDependencies();
       if (!boardDependencies || Object.keys(boardDependencies).length === 0) {
@@ -2520,6 +2521,10 @@ export class ProjectService {
       const appDataPath = window['path'].getAppDataPath()
       const sdkLibPath = this.electronService.pathJoin(appDataPath, 'sdk', `${sdkFileName}`);
       if (!window['fs'].existsSync(sdkLibPath)) {
+        if (options.optional) {
+          console.warn('[ProjectService] SDK is not ready:', sdkLibPath);
+          return '';
+        }
         throw new Error('SDK 库路径不存在: ' + sdkLibPath);
       }
 
@@ -2698,7 +2703,7 @@ export class ProjectService {
 
   /** Build the current board's configuration menu from its root menu.json. */
   async getBoardConfigMenu(options: { persistDefaults?: boolean } = {}): Promise<IMenuItem[]> {
-    const persistDefaults = options.persistDefaults !== false;
+    let persistDefaults = options.persistDefaults !== false;
     const menu = this.cloneCurrentBoardMenuConfig();
     if (menu.length === 0) {
       return [];
@@ -2715,7 +2720,11 @@ export class ProjectService {
     }
 
     const boardName = this.getBoardNameFromBoardJson(this.currentBoardConfig);
-    const boardConfig = boardName ? await this.getRawBoardsTxtConfig(boardName) : null;
+    const boardDependencies = await this.getBoardDependencies();
+    const hasSdk = Object.keys(boardDependencies).some(name => name.startsWith('@aily-project/sdk-'));
+    const boardConfig = boardName && hasSdk ? await this.getRawBoardsTxtConfig(boardName, true) : null;
+    const sdkUnavailable = hasSdk && !boardConfig;
+    persistDefaults = persistDefaults && !sdkUnavailable;
     const pinConfigDefaults: IMenuItem[] = [];
     let packageJsonChanged = false;
 
@@ -2725,6 +2734,10 @@ export class ProjectService {
       }
 
       let children = Array.isArray(menuItem.children) ? menuItem.children : [];
+      if (sdkUnavailable && children.length === 0) {
+        menuItem.disabled = true;
+        menuItem.tooltip = this.translate.instant('PROJECT.SDK_CONFIG_NOT_READY');
+      }
       if (boardConfig) {
         const extractedOptions = this.extractMenuOptions(boardConfig, menuItem.key);
         if (extractedOptions.length > 0) {
@@ -2757,7 +2770,7 @@ export class ProjectService {
 
       // boards.txt treats the first option as the effective default. Keep the
       // menu aligned with that behavior when the project has no matching value.
-      if (!hasSelectedChild && children.length > 0) {
+      if (!sdkUnavailable && !hasSelectedChild && children.length > 0) {
         children[0].check = true;
       }
 
@@ -2786,6 +2799,15 @@ export class ProjectService {
       for (const pinConfig of pinConfigDefaults) {
         await this.syncBoardPinConfig(pinConfig);
       }
+    }
+
+    if (sdkUnavailable) {
+      menu.unshift({
+        name: 'PROJECT.SDK_CONFIG_NOT_READY',
+        tooltip: this.translate.instant('PROJECT.SDK_CONFIG_NOT_READY'),
+        icon: 'fa-light fa-triangle-exclamation',
+        disabled: true,
+      });
     }
 
     return menu;
