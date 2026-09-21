@@ -18,6 +18,7 @@ export interface AbsRawNode {
   parameters: Array<AbsRawValue & { name?: string }>;
   sections: Array<{ name?: string; inline?: AbsRawValue; children: AbsRawNode[] }>;
   disabled: boolean;
+  omittedParentheses?: true;
   extraState?: unknown;
   extraRange?: { start: number; end: number };
   start: number;
@@ -87,6 +88,10 @@ export function bindAbsSyntax(raw: readonly AbsRawNode[], options: AbsSyntaxOpti
     }
     const alias = ({ number: 'math_number', var: 'variables_get' } as Record<string, string>)[node.type];
     if (alias && !options.argumentOrder?.(node.type) && options.argumentOrder?.(alias)) node.type = alias;
+    if (raw.omittedParentheses) {
+      const args = options.argumentOrder?.(node.type);
+      if (!args || args.some(arg => arg.kind !== 'statementInput')) fail(raw, 'Only a known argument-free block may omit parentheses.');
+    }
     const binding = createBinding?.(node);
     if (binding) bindings.set(node, binding);
     const current = { ...options, ...binding };
@@ -129,14 +134,21 @@ export function bindAbsSyntax(raw: readonly AbsRawNode[], options: AbsSyntaxOpti
     for (const section of raw.sections) {
       if (section.name === undefined) {
         const slots = order()?.filter(argument => argument.kind === 'statementInput');
-        if (slots?.length !== 1) fail(node, 'An implicit body requires exactly one known statement input; use @NAME:.');
-        connect(node, slots![0].name, chain(section.children, true));
+        const slot = slots?.length === 1 ? slots[0] : ['controls_if', 'controls_ifelse'].includes(node.type)
+          ? slots?.find(slot => slot.name === 'DO0') : undefined;
+        if (!slot) fail(node, 'An implicit body requires exactly one known statement input; use @NAME:.');
+        connect(node, slot!.name, chain(section.children, true));
       } else {
-        const matches = order()?.filter(argument => argument.name === section.name);
+        const args = order();
+        const exact = args?.filter(argument => argument.name === section.name);
+        const folded = args?.filter(argument => argument.name.toLowerCase() === section.name!.toLowerCase());
+        const name = exact?.length || !folded?.length || new Set(folded.map(arg => arg.name)).size !== 1
+          ? section.name : folded[0].name;
+        const matches = args?.filter(argument => argument.name === name);
         const argument = matches?.find(argument => argument.kind !== 'field') ?? matches?.[0];
         if (argument?.kind === 'field') fail(node, `Argument ${section.name} is a field, not an input.`);
         if (section.inline && argument?.kind !== 'valueInput') fail(node, 'An inline section requires a known value input.');
-        connect(node, section.name, section.inline ? value(section.inline) : chain(section.children, argument?.kind !== 'valueInput'));
+        connect(node, name, section.inline ? value(section.inline) : chain(section.children, argument?.kind !== 'valueInput'));
       }
     }
     return node;

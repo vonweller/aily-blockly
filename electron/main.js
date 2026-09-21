@@ -35,7 +35,9 @@ const { mergeConfigChanges } = require("./config-persistence");
 const { resolveAilyAppDataPath } = require("./appdata-path");
 const { registerSafeStorageIpc } = require("./safe-storage-ipc");
 const {
+  createDevelopmentProtocolArgs,
   normalizeBuildProduct,
+  resolveBuildProduct,
   getProductAuthConfig,
   isProductProtocolUrl,
 } = require('./build-product');
@@ -82,7 +84,11 @@ function getPackagedBuildProduct() {
 }
 
 function getBuildProduct() {
-  return normalizeBuildProduct(process.env.AILY_BUILD_PRODUCT || getPackagedBuildProduct());
+  return resolveBuildProduct({
+    environment: process.env,
+    packagedProduct: getPackagedBuildProduct(),
+    argv: process.argv,
+  });
 }
 
 function applyAppIdentity(product) {
@@ -448,7 +454,11 @@ if (serve) {
 for (const protocol of PROTOCOLS) {
   if (process.defaultApp) {
     if (process.argv.length >= 2) {
-      app.setAsDefaultProtocolClient(protocol, process.execPath, [path.resolve(process.argv[1])]);
+      app.setAsDefaultProtocolClient(protocol, process.execPath, createDevelopmentProtocolArgs({
+        appEntry: path.resolve(process.argv[1]),
+        product: getBuildProduct(),
+        serve,
+      }));
     }
   } else {
     app.setAsDefaultProtocolClient(protocol);

@@ -54,6 +54,26 @@ describe('board switch project persistence', () => {
     expect(window['fs'].writeFileSync).not.toHaveBeenCalled();
     expect(service.isBoardSwitchInProgress).toBeFalse();
   });
+  it('native Coder switching retains the declared entry and user libraries without rewriting source', async () => {
+    const service: any = fixture();
+    window['path'].isExists = () => true;
+    service.isAilyCodeProject = () => true;
+    service.getPackageJson = async () => ({ name: 'coder-project', type: 'coder', entry: 'firmware/app.cpp',
+      dependencies: { '@aily-project/board-old': '1', '@aily-project/lib-user': '2' } });
+    for (const method of ['applyAilyCodeBoardToPackageManifest', 'filterAilyCodeUserPreservedDeps', 'normalizeAilyCodeBoardDepRange']) {
+      service[method] = (ProjectService.prototype as any)[method];
+    }
+    await ProjectService.prototype.changeBoard.call(service, { name: target, version: '1' });
+    const writes = window['fs'].writeFileSync.calls.allArgs();
+    expect(writes.length).toBe(1);
+    expect(writes[0][0]).toBe('/project/package.json');
+    const manifest = JSON.parse(writes[0][1]);
+    expect(manifest.type).toBe('coder'); expect(manifest.entry).toBe('firmware/app.cpp');
+    expect(manifest.dependencies[target]).toBe('^1');
+    expect(manifest.dependencies['@aily-project/lib-user']).toBe('2');
+    expect(manifest.dependencies['@aily-project/board-old']).toBeUndefined();
+    expect(service.finishBoardSwitchWithoutPackageWatcher).toHaveBeenCalledTimes(1);
+  });
   it('aborts manifest writes if the project changes during local install', async () => {
     const service = fixture(); let count = 0;
     service.cmdService.runAsyncChecked.and.callFake(async () => { if (++count === 2) service.currentProjectPath = '/other'; });

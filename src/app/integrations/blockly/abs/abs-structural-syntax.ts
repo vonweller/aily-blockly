@@ -21,7 +21,7 @@ export function prepareAbsStructuralSyntax(node: AbsRawNode, recipe: StructuralM
   const fail = (message: string): never => { throw new AbsSyncError('ABS_SYNTAX_INVALID', message, node); };
   const index = (name: string): number | undefined => {
     for (const input of recipe.repeated) {
-      if (!name.startsWith(input.prefix)) continue;
+      if (!name.toLowerCase().startsWith(input.prefix.toLowerCase())) continue;
       const suffix = name.slice(input.prefix.length);
       if (!/^(0|[1-9]\d*)$/.test(suffix)) continue;
       const number = Number(suffix);
@@ -44,6 +44,6 @@ export function prepareAbsStructuralSyntax(node: AbsRawNode, recipe: StructuralM
   const count = used.size ? Math.max(...used) + 1 : 0;
   if (count > 1024 || used.size !== count) fail('Repeated inputs must be contiguous; use explicit @extra to preserve empty slots.');
   const declaredOptional = !!recipe.optional && arguments_.some(arg => arg.name === recipe.optional!.input);
-  const enabled = recipe.optional ? declaredOptional || names.includes(recipe.optional.input) : undefined;
+  const enabled = recipe.optional ? declaredOptional || names.some(name => name?.toLowerCase() === recipe.optional!.input.toLowerCase()) : undefined;
   return structuralExtraState(recipe, count, enabled, declaredOptional);
 }

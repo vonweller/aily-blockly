@@ -1875,7 +1875,7 @@ describe('v2 actual workspace generation coordinator', () => {
     expect(plain.code).toBe('ABS_PROJECTION_UPGRADE_REQUIRED');
     const upgraded = await rebind(tools, diagnosis.diagnostics.rebind.token);
     expect(upgraded.ok).withContext(JSON.stringify(upgraded)).toBeTrue();
-    expect(JSON.parse(disk.get('project.abs.map.json')!).projectionVersion).toBe('abs-v2.preview.4');
+    expect(JSON.parse(disk.get('project.abs.map.json')!).projectionVersion).toBe('abs-v2.preview.5');
     expect(disk.get(key)).toBe(originalRecord); expect(disk.get('project.abi')).toBe(originalAbi);
     expect(absJson(nativeState())).toBe(originalState); expect(editor.prepareProjectCode).not.toHaveBeenCalled();
     expect((await inspect(tools)).diagnostics.status).toBe('ready');

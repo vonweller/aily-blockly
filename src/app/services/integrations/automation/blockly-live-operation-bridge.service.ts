@@ -246,7 +246,7 @@ export class BlocklyLiveOperationBridgeService {
     const requestedProject = this.normalizePath(payload.path);
     const currentProject = this.normalizePath(this.projectService.currentProjectPath);
     if (!currentProject) {
-      return { ok: false, message: '当前主程序未打开 Blockly 项目' };
+      return { ok: false, message: '当前主程序未打开项目' };
     }
     if (requestedProject && requestedProject !== currentProject) {
       return {
@@ -257,15 +257,9 @@ export class BlocklyLiveOperationBridgeService {
     }
 
     if (payload.operation !== 'project_reload') {
-      const loadStatus = this.projectService.getBlocklyProjectLoadStatus(
-        this.projectService.currentProjectPath,
-      );
-      const isBlocklyProject = this.electronService.exists(
-        this.electronService.pathJoin(this.projectService.currentProjectPath, 'project.abi'),
-      );
-      const editorReady = isBlocklyProject
-        ? loadStatus.ready
-        : loadStatus.state === 'loaded' && !loadStatus.error;
+      const isBlocklyProject = this.projectService.getProjectMode(this.projectService.currentProjectPath) !== 'coder';
+      const loadStatus = this.getProjectRuntimeStatus(this.projectService.currentProjectPath);
+      const editorReady = loadStatus.ready;
       if (!isBlocklyProject && this.isBlocklyWorkspaceOperation(payload.operation)) {
         return {
           ok: false,
@@ -290,6 +284,11 @@ export class BlocklyLiveOperationBridgeService {
             ? '请先关闭项目，在离线状态修复 project.abs/project.abi 或依赖，再重新打开；只有 loadStatus.ready=true 后才能继续。'
             : '请等待 Coder 工程完成加载；若持续失败，请重新打开工程并检查 package.json 与源码入口。',
         };
+      }
+      if (!isBlocklyProject && ['board_switch', 'set_board_config'].includes(payload.operation || '') &&
+        this.coderRuntime.getSession(this.projectService.currentProjectPath).busy) {
+        return { ok: false, operation: payload.operation, reason: 'project_operation_busy',
+          message: '当前 Coder 工程正在编译或上传，配置尚未修改；请等待该操作结束。' };
       }
     }
 
@@ -334,7 +333,9 @@ export class BlocklyLiveOperationBridgeService {
       case 'board_switch':
         return this.executeBoardSwitch(payload.params || {});
       case 'set_board_config':
-        return setBoardConfig(this.projectService, this.builderService, this.electronService, payload.params || {});
+        return setBoardConfig(this.projectService, this.builderService, this.electronService, payload.params || {},
+          this.projectService.getProjectMode(this.projectService.currentProjectPath) === 'coder'
+            ? project => this.coderRuntime.build(project, { preprocessOnly: true }) : undefined);
       case 'serial_ports_list':
         return this.executeSerialPortsList(payload.params || {});
       case 'project_upload':
@@ -411,7 +412,6 @@ export class BlocklyLiveOperationBridgeService {
       'abs_capabilities',
       'block_metadata_snapshot',
       'library_runtime_sync',
-      'board_switch',
       'blocks_tidy',
       'project_save',
     ]).has(String(operation || ''));
@@ -712,10 +712,14 @@ export class BlocklyLiveOperationBridgeService {
   }
 
   private async executeBoardSwitch(params: Record<string, any>): Promise<Record<string, any>> {
+    const developmentMode = this.projectService.getProjectMode(this.projectService.currentProjectPath) === 'coder' ? 'coder' : 'blockly';
+    if (params['developmentMode'] && params['developmentMode'] !== developmentMode) {
+      return { ok: false, changed: false, operation: 'board_switch', reason: 'project_mode_mismatch', developmentMode };
+    }
     this.boardSwitchInProgress = true;
     this.aiOperations.setActive('live-board-switch', true, { projectPath: this.projectService.currentProjectPath });
     try {
-      return await this.runBlockWritingOperation(() => switchProjectBoard(params, {
+      const operation = () => switchProjectBoard(params, {
         currentProject: () => this.projectService.currentProjectPath,
         readBoard: () => getBoardConfig(this.projectService, 'pins'),
         resolveBoard: async name => {
@@ -732,6 +736,11 @@ export class BlocklyLiveOperationBridgeService {
           // the native operation out of its own lifecycle.
           if (this.projectService.isProjectTransitionInProgress(project)) throw new Error('Project lifecycle changed before board runtime synchronization');
           this.aiOperations.setActive('live-board-switch', true, { projectPath: project, blocksProjectLifecycle: true });
+          if (developmentMode === 'coder') {
+            if (!await this.waitForCoderEditor(project)) throw new Error('Coder editor reload did not become ready');
+            if (!await this.coderRuntime.getSession(project).project.syncCurrentBoardConfig()) throw new Error('Coder board configuration did not synchronize');
+            return;
+          }
           const manifest = await this.projectService.getPackageJson();
           const packages = Object.keys(manifest?.dependencies || {}).filter(isAilyLibraryPackageName);
           const result = await this.executeLibraryRuntimeSync({ packages });
@@ -739,12 +748,29 @@ export class BlocklyLiveOperationBridgeService {
             missing: result['missingLibraries'], toolbox: result['missingToolboxLibraries'], failed: result['failedLibraries'],
           })}`);
         },
-        isReady: project => this.projectService.getBlocklyProjectLoadStatus(project).ready,
-      }));
+        isReady: project => this.getProjectRuntimeStatus(project).ready,
+      });
+      const result = developmentMode === 'coder' ? await operation() : await this.runBlockWritingOperation(operation);
+      return { ...result, developmentMode };
     } finally {
       this.aiOperations.setActive('live-board-switch', false);
       this.boardSwitchInProgress = false;
     }
+  }
+
+  private getProjectRuntimeStatus(project: string): { ready: boolean; state: string; error?: string } {
+    if (this.projectService.getProjectMode(project) !== 'coder') return this.projectService.getBlocklyProjectLoadStatus(project);
+    const opened = this.projectService.coderProjects.some(item => this.normalizePath(item.path) === this.normalizePath(project));
+    const ready = opened && this.coderRuntime.getSession(project).editorReady;
+    return { ready, state: ready ? 'loaded' : opened ? 'loading' : 'default' };
+  }
+
+  private async waitForCoderEditor(project: string): Promise<boolean> {
+    const deadline = Date.now() + 30_000;
+    while (this.projectService.currentProjectPath === project && !this.getProjectRuntimeStatus(project).ready && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    return this.projectService.currentProjectPath === project && this.getProjectRuntimeStatus(project).ready;
   }
 
   private emitLiveOperationProgress(operation: string, event: EditorOperationEvent): void {
@@ -1196,11 +1222,7 @@ export class BlocklyLiveOperationBridgeService {
     try {
       const opened = await this.projectService.projectOpen(projectPath, { reason: 'chat-tool-reload' });
       if (opened && this.projectService.getProjectMode(projectPath) === 'coder') {
-        const deadline = Date.now() + 30_000;
-        while (!this.coderRuntime.getSession(projectPath).editorReady && Date.now() < deadline) {
-          await new Promise(resolve => setTimeout(resolve, 100));
-        }
-        const ready = this.coderRuntime.getSession(projectPath).editorReady;
+        const ready = await this.waitForCoderEditor(projectPath);
         return { ok: ready, operation: 'project_reload', project: projectPath,
           message: ready ? '项目已从磁盘重新加载' : '项目编辑器重新加载超时',
           loadStatus: { project: projectPath, state: ready ? 'loaded' : 'loading', ready } };
@@ -1248,6 +1270,8 @@ export class BlocklyLiveOperationBridgeService {
         type: params['type'],
         filters: params['filters'],
         maxResults: params['maxResults'],
+        offset: params['offset'],
+        detail: params['detail'],
       },
       this.configService,
     );

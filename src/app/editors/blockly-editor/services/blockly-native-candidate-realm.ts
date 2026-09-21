@@ -158,7 +158,7 @@ export function installNativeCandidateRealm(): void {
       if (!request.verify) models.load();
       const execution = new NativeCandidateWorkspace(native, workspace, observer, assertClean, models, request.creations, declarations);
       const binding = request.abs !== undefined ? bindNativeAbs(request.abs, execution, declarations, request.identities, values.materialize, request.hostCalls,
-        request.modelRequestId && generator && typeof realm.registerVariableToBlockly === 'function'
+        request.modelRequestId && generator
           ? { generator, requestId: request.modelRequestId } : undefined) : undefined;
       if (!request.verify && !binding) for (const operation of request.blocks) execution.create(operation);
       if (!request.verify) {

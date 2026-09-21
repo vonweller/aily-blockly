@@ -25,7 +25,7 @@
           "builder": "@angular-devkit/build-angular:application",
           "options": {
             "outputPath": "dist/aily-blockly",
-            "preserveSymlinks": true,
+            "preserveSymlinks": false,
             "index": "src/index.html",
             "browser": "src/main.ts",
             "polyfills": [
@@ -175,7 +175,7 @@
               "zone.js/testing"
             ],
             "inlineStyleLanguage": "scss",
-            "preserveSymlinks": true,
+            "preserveSymlinks": false,
             "builderMode": "application",
             "include": [
               "**/*.spec.ts"
@@ -196,6 +196,7 @@
               "include": [
                 "src/app/integrations/blockly/board-config-operation.spec.ts",
                 "src/app/integrations/blockly/board-switch-operation.spec.ts",
+                "src/app/integrations/blockly/project-mode-tool-routing.spec.ts",
                 "src/app/services/domains/project/project-board-switch.spec.ts",
                 "src/app/services/domains/project/project-lifecycle-gate.spec.ts",
                 "src/app/services/domains/project/project-lifecycle-operation.spec.ts",

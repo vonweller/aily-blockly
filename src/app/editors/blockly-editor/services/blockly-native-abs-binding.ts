@@ -128,9 +128,21 @@ export function bindNativeAbs(source: string, execution: NativeCandidateWorkspac
     const distinct = [...new Map(conflicts.map(error => [JSON.stringify(error.diagnostic), error.diagnostic!])).values()];
     throw new AbsSyncError(first.code, first.message, first.range, [], { ...first.diagnostic, conflicts: distinct });
   }
-  const modelDeclarations = modelPreparation ? prepareNativeModels(execution, modelPreparation.generator, blocks,
-    new Set(pending.map(item => item.block)), modelPreparation.requestId) : [];
   bindingReferences = true;
+  const resolvePending = () => {
+    for (let index = pending.length - 1; index >= 0; index--) {
+      const item = pending[index];
+      try {
+        setField(item.block, item.node, item.name, item.token);
+        pending.splice(index, 1);
+      } catch (error) {
+        if (!(error instanceof AbsSyncError) || error.code !== 'ABS_SYMBOL_MISSING') throw error;
+      }
+    }
+    return new Set(pending.map(item => item.block));
+  };
+  const modelDeclarations = modelPreparation ? prepareNativeModels(execution, modelPreparation.generator, blocks,
+    resolvePending, modelPreparation.requestId) : [];
   for (const item of pending) setField(item.block, item.node, item.name, item.token);
   if (assigned && assigned.size !== consumed.size || hostCalls.some(call => !consumed.has(call.start))) throw new Error('Native candidate identities or host bindings contain unused calls.');
   structural.assertCurrent();

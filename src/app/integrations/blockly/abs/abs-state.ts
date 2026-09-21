@@ -5,7 +5,7 @@ import type { AbsDiagnostic } from './abs-diagnostics';
 
 export const ABS_SCHEMA_HEADER = '# ABS Schema: 2';
 // Projection algorithm identifier, independent of the production wire protocol version.
-export const ABS_PROJECTION_VERSION = 'abs-v2.preview.4';
+export const ABS_PROJECTION_VERSION = 'abs-v2.preview.5';
 
 export interface AbsSourceRange { start: number; end: number }
 export interface AbsSyntaxNode extends AbsSourceRange {

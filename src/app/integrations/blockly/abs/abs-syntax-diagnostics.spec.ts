@@ -39,7 +39,7 @@ describe('ABS argument boundary diagnostics', () => {
       'device(\n  fast,\n  math_number(0)\n)', "device('fast mode')"]) {
       expect(() => readAbsSyntax(header + body)).not.toThrow();
     }
-    expect(failure('device(1,)').message).toBe('Trailing comma.');
+    expect(readAbsSyntax(header + 'device(1,)')[0].parameters.length).toBe(1);
   });
 
   it('returns line, column, context and recovery through the tool boundary without a success receipt', async () => {
