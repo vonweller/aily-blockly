@@ -1,4 +1,4 @@
-/** Byte-based layout rules shared by the window and the main-window save handler. */
+/** Byte-based layout rules for validating partition child-app requests in the host. */
 export const KIB = 1024;
 export const MIB = 1024 * KIB;
 export const APP_ALIGNMENT = 64 * KIB;
@@ -41,12 +41,6 @@ export interface PartitionDraft {
   storageMode: 'fixed' | 'remaining';
   nvsBytes: number;
   coredump: boolean;
-}
-export interface PartitionSegment {
-  name: string;
-  bytes: number;
-  kind: 'app' | 'ota' | 'data' | 'system' | 'free';
-  offset: number;
 }
 
 const DATA_SUBTYPES: Record<string, number> = {
@@ -214,22 +208,6 @@ export function allocatePartitions(draft: PartitionDraft): { rows: PartitionRow[
   }
   if (draft.coredump) add('coredump', 'data', 'coredump', cursor, dumpSize);
   return { rows, errors };
-}
-
-export function layoutSegments(layout: PartitionLayout, flashBytes: number): PartitionSegment[] {
-  if (layout.errors.length || flashBytes <= 0) return [];
-  const result: PartitionSegment[] = [];
-  let cursor = 0;
-  let appIndex = 0;
-  for (const p of [...layout.partitions].sort((a, b) => a.offsetBytes - b.offsetBytes)) {
-    if (p.offsetBytes > cursor) result.push({ name: '系统与对齐', bytes: p.offsetBytes - cursor, kind: 'system', offset: cursor });
-    const isStorage = p.typeId === 1 && [0x81, 0x82, 0x83].includes(p.subtypeId);
-    const kind = p.typeId === 0 ? (appIndex++ === 0 ? 'app' : 'ota') : isStorage ? 'data' : 'system';
-    result.push({ name: p.name, bytes: p.sizeBytes, kind, offset: p.offsetBytes });
-    cursor = p.offsetBytes + p.sizeBytes;
-  }
-  if (cursor < flashBytes) result.push({ name: '未分配', bytes: flashBytes - cursor, kind: 'free', offset: cursor });
-  return result;
 }
 
 /** Only map a CSV back to simple controls if regenerating it loses no semantic fields. */

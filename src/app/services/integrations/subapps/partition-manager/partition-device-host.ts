@@ -1,9 +1,14 @@
 import type { SerialService } from '@domain/device/public-api';
-import type { UiService } from '@core/app-shell/public-api';
+import type { Observable } from 'rxjs';
 import type { SubappResourceLifecycleService } from '@integration/subapps/public-api';
 import { readDevicePartitions, type PartitionSerialPort } from './partition-device';
 
 let reading = false;
+
+interface PartitionDeviceSignals {
+  actionSubject: Observable<unknown>;
+  sendToolSignal(signal: string, payload?: unknown): void;
+}
 
 export async function listPartitionSerialPorts(serial: Pick<SerialService, 'currentPort' | 'getSerialPorts'>) {
   const ports: PartitionSerialPort[] = (await serial.getSerialPorts())
@@ -14,7 +19,7 @@ export async function listPartitionSerialPorts(serial: Pick<SerialService, 'curr
 
 export async function readConnectedDevicePartitions(
   serial: Pick<SerialService, 'currentPort' | 'getSerialPorts'>,
-  ui: Pick<UiService, 'actionSubject' | 'sendToolSignal'>,
+  ui: PartitionDeviceSignals,
   resources: Pick<SubappResourceLifecycleService, 'handleSignal'>,
   isBusy: () => boolean,
   requestedPort = String(serial.currentPort || ''),

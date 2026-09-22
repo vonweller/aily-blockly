@@ -78,7 +78,7 @@ export class UiService {
   }
 
 
-  /** Shared authority for the legacy window and the partition child app. */
+  /** Project and device authority for the partition child app. */
   async partitionManagerRequest(request: any): Promise<any> {
     const actions = ['partition-manager-load', 'partition-manager-save', 'partition-manager-ports', 'partition-manager-read-device'];
     if (!actions.includes(request?.action)) return { success: false, error: '未知分区操作。' };
@@ -92,7 +92,7 @@ export class UiService {
         const [{ ProjectService }, { BuilderService }, { handlePartitionManagerRequest }] = await Promise.all([
           import('@domain/project/public-api'),
           import('@domain/build/public-api'),
-          import('../../../windows/partition-manager/partition-manager-host'),
+          import('@integration/subapps/partition-manager/public-api'),
         ]);
         const project = this.injector.get(ProjectService);
         data = await handlePartitionManagerRequest(project, this.injector.get(BuilderService), request, () =>
@@ -109,7 +109,7 @@ export class UiService {
       try {
         const [{ SerialService }, { listPartitionSerialPorts }] = await Promise.all([
           import('@domain/device/public-api'),
-          import('../../../windows/partition-manager/partition-device-host'),
+          import('@integration/subapps/partition-manager/public-api'),
         ]);
         data = { success: true, ...await listPartitionSerialPorts(this.injector.get(SerialService)) };
       } catch (error) {
@@ -121,7 +121,7 @@ export class UiService {
           import('@domain/project/public-api'),
           import('@domain/device/public-api'),
           import('@integration/subapps/public-api'),
-          import('../../../windows/partition-manager/partition-device-host'),
+          import('@integration/subapps/partition-manager/public-api'),
         ]);
         const project = this.injector.get(ProjectService);
         if (!request.projectPath || project.currentProjectPath !== request.projectPath) throw new Error('当前项目已切换，请重新打开分区管理器。');
