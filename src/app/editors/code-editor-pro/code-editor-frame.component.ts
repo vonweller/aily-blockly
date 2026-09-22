@@ -1179,11 +1179,11 @@ export class CodeEditorFrameComponent implements OnInit, OnDestroy, AfterViewIni
     }
   }
 
-  /** 从当前工程有效平台依赖（主板 + platform runtimeDependencies）解析全局 sdk/tools 目录 */
+  /** 从当前主板包的依赖声明解析全局 sdk/tools 目录。 */
   private async loadPlatformPackagesForEmbed() {
     try {
       return await resolvePlatformPackagesForCurrentProject(async () => {
-        return this.projectService.getEffectiveBoardDependencies();
+        return this.projectService.getBoardDependencies();
       });
     } catch (e) {
       console.warn('[CodeEditorPro] loadPlatformPackagesForEmbed', e);
