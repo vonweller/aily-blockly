@@ -896,23 +896,23 @@ export class AuthService {
 
   private async getAuthQuotaInfoSnapshot(token: string): Promise<AuthQuotaInfoSnapshot | null> {
     return new Promise((resolve, reject) => {
-      this.http.get<CommonResponse>(API.authQuotaInfo, {
+      this.http.get<unknown>(API.authCreditSnapshot, {
         headers: { Authorization: `Bearer ${token}` }
       }).pipe(
         timeout(this.authQuotaRequestTimeoutMs),
       ).subscribe({
         next: (response) => {
-          if (response.status !== 200 || !response.data) {
-            resolve(null);
-            return;
-          }
-
-          const snapshot = normalizeAuthQuotaInfoSnapshotPayload(response.data, { source: 'token' });
-          if (!snapshot?.creditSnapshot) {
+          // /credits/me returns the ledger directly. Accept the common envelope
+          // too for gateways that wrap successful service responses.
+          const payload = isRecord(response) && response['status'] === 200
+            ? response['data']
+            : response;
+          const creditSnapshot = normalizeAuthCreditSnapshot(payload);
+          if (!creditSnapshot) {
             reject(new Error('Invalid Credit quota snapshot'));
             return;
           }
-          resolve(snapshot);
+          resolve({ source: 'token', creditSnapshot });
         },
         error: (error) => reject(error),
       });
@@ -1972,7 +1972,8 @@ export function normalizeAuthQuotaInfoSnapshotPayload(
   },
 ): AuthQuotaInfoSnapshot | undefined {
   const detailRecord = isRecord(value) ? value : undefined;
-  if (detailRecord?.['unit'] === 'credits') {
+  if (detailRecord?.['unit'] === 'credits'
+    || (detailRecord && ('available_micros' in detailRecord || 'reserved_micros' in detailRecord))) {
     const creditSnapshot = normalizeAuthCreditSnapshot(detailRecord);
     return creditSnapshot ? { source: options?.source ?? 'token', creditSnapshot } : undefined;
   }
