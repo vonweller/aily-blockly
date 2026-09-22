@@ -96,6 +96,14 @@ describe('Coder build metadata', () => {
     expect(await metadata.updateCodeHash(root)).toBe(hash);
   });
 
+  it('ignores retired platform metadata while still hashing board dependency changes', async () => {
+    const hash = await metadata.updateCodeHash(root);
+    writeManifest({ ...readManifest(), platform: '@aily-project/platform-unused', platformVersion: '9.0.0' });
+    expect(await metadata.updateCodeHash(root)).toBe(hash);
+    writeManifest({ ...readManifest(), dependencies: { '@aily-project/board-test': '2.0.0' } });
+    expect(await metadata.updateCodeHash(root)).not.toBe(hash);
+  });
+
   it('hashes legacy custom partitions at their build destination before preprocessing copies them', async () => {
     writeManifest({ ...readManifest(), projectConfig: { PartitionScheme: 'custom' } });
     files.set(`${root}/partitions.csv`, 'partition contents');

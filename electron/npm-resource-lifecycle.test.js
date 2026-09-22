@@ -61,6 +61,22 @@ test('owner destruction keeps active install protected and suppresses retries', 
   assert.equal(f.children.length, 1); assert.equal(f.timers.length, 0); assert.equal(f.state.releases, 1);
 });
 
+for (const end of ['navigate', 'crash']) test(`npm owner ${end} cancels retries but waits for the active installer`, async () => {
+  const f = fixture(), pending = f.run();
+  const rejected = assert.rejects(pending, /CANCELLED/);
+  let drained = false;
+  const waiting = f.api.waitForOwnerNpmRequests(f.owner).then(() => { drained = true; });
+  if (end === 'navigate') f.owner.emit('did-start-navigation', {}, 'file:///reload', false, true);
+  else f.owner.emit('render-process-gone', {});
+  await tick();
+  assert.equal(drained, false); assert.equal(f.state.releases, 0);
+  busy(f.children[0]); await rejected; await waiting;
+  assert.equal(f.children.length, 1); assert.equal(f.timers.length, 0); assert.equal(f.state.releases, 1);
+  for (const event of ['did-start-navigation', 'render-process-gone', 'destroyed']) {
+    assert.equal(f.owner.listenerCount(event), 0);
+  }
+});
+
 test('cancelling during a retry wait kills no reused PID and starts no further process', async () => {
   const f = fixture(), pending = f.run();
   const rejected = assert.rejects(pending, /CANCELLED/);

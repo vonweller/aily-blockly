@@ -3,7 +3,7 @@ import { ElectronService } from '@core/platform/public-api';
 import { patchBuildMetadata } from '../../../utils/build-publication.utils';
 
 const BUILD_MANIFEST_FIELDS = [
-  'type', 'entry', 'framework', 'devmode', 'platform', 'platformVersion',
+  'type', 'entry', 'framework', 'devmode',
   'dependencies', 'devDependencies', 'boardDependencies', 'projectConfig', 'macros', 'MACROS',
 ];
 const GENERATED_SKETCH_FILES = new Set([

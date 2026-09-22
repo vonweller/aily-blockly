@@ -8,14 +8,17 @@ const vm = require('node:vm');
 const { createRequire } = require('node:module');
 const { EventEmitter } = require('node:events');
 
-function fixture(t) {
+function fixture(t, ownerWork = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aily-appdata-lease-'));
   const handlers = new Map(), localRequire = createRequire(__filename);
   const module = { exports: {} };
   const electron = { ipcMain: { handle: (name, fn) => handlers.set(name, fn) },
     app: { getPath: () => root, getVersion: () => 'test' } };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'appdata-resource-lock.js'), 'utf8'), {
-    require: name => name === 'electron' ? electron : localRequire(name), module, exports: module.exports,
+    require: name => name === 'electron' ? electron
+      : name === './npm' ? { waitForOwnerNpmRequests: ownerWork.npm || (() => Promise.resolve()) }
+      : name === './cmd' ? { waitForOwnerCmdNpmProcesses: ownerWork.cmd || (() => Promise.resolve()) }
+      : localRequire(name), module, exports: module.exports,
     process: { pid: process.pid, execPath: process.execPath, env: { AILY_APPDATA_PATH: root }, kill: process.kill.bind(process) },
     console: { info() {}, warn() {} }, setTimeout,
   }, { filename: 'appdata-resource-lock.js' });
@@ -67,12 +70,14 @@ test('only the reader owner can release or hand off a live lock', async t => {
   assert.throws(() => f.api.retainAppDataResourceLock(writer.token, f.a.id, 'read'), /NOT_OWNED/);
 });
 
-for (const end of ['release', 'destroy']) test(`command borrowers survive renderer ${end}; writer waits for the last borrower`, async t => {
+for (const end of ['release', 'destroy', 'navigate', 'crash']) test(`command borrowers survive renderer ${end}; writer waits for the last borrower`, async t => {
   const f = fixture(t), reader = await f.acquire(f.a, 'read', 'build');
   const first = f.api.retainAppDataResourceLock(reader.token, f.a.id, 'read');
   const second = f.api.retainAppDataResourceLock(reader.token, f.a.id, 'read');
   if (end === 'release') assert.equal(f.call(f.a, 'release', { token: reader.token }).retainedByCommand, true);
-  else f.a.destroy();
+  else if (end === 'destroy') f.a.destroy();
+  else if (end === 'navigate') f.a.emit('did-start-navigation', {}, 'file:///reloaded', false, true);
+  else f.a.emit('render-process-gone', {});
   assert.throws(() => f.api.retainAppDataResourceLock(reader.token, f.a.id, 'read'), /NOT_OWNED/);
   let entered = false;
   const writer = f.acquire(f.b, 'write', 'install').then(r => { entered = true; return r; });
@@ -91,6 +96,41 @@ test('destroyed queued owner leaves neither pending requests nor listeners', asy
   assert.equal((await pending).ok, false);
   assert.equal(f.call(f.b, 'cancel', { requestId: 'queued' }).cancelled, false);
   assert.equal(f.b.listenerCount('destroyed'), 0);
+});
+
+test('reload revokes lending immediately and waits for both legacy npm work and command borrowers', async t => {
+  let finishNpm, finishCmd;
+  const f = fixture(t, {
+    npm: () => new Promise(resolve => { finishNpm = resolve; }),
+    cmd: () => new Promise(resolve => { finishCmd = resolve; }),
+  });
+  const writer = await f.acquire(f.a, 'write', 'install');
+  const borrower = f.api.retainAppDataResourceLock(writer.token, f.a.id, 'write');
+  f.a.emit('did-start-navigation', {}, 'file:///reload', false, true);
+  assert.throws(() => borrower.assertOwnerActive(), /CANCELLED/);
+  assert.throws(() => f.api.retainAppDataResourceLock(writer.token, f.a.id, 'write'), /NOT_OWNED/);
+  borrower.release();
+  assert.equal(f.call(f.a, 'release', { token: writer.token }).retainedByCommand, true);
+  finishNpm(); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(fs.existsSync(writer.lockPath), true);
+  finishCmd(); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(fs.existsSync(writer.lockPath), false);
+  for (const event of ['did-start-navigation', 'render-process-gone', 'destroyed']) {
+    assert.equal(f.a.listenerCount(event), 0);
+  }
+  assert.equal((await f.acquire(f.a, 'write', 'reloaded')).ok, true);
+});
+
+test('in-page and subframe navigation do not invalidate an active owner', async t => {
+  const f = fixture(t), reader = await f.acquire(f.a, 'read', 'reader');
+  f.a.emit('did-start-navigation', {}, 'file:///page#hash', true, true);
+  f.a.emit('did-start-navigation', {}, 'file:///child', false, false);
+  const borrower = f.api.retainAppDataResourceLock(reader.token, f.a.id, 'read');
+  borrower.assertOwnerActive(); borrower.release();
+  f.call(f.a, 'release', { token: reader.token });
+  for (const event of ['did-start-navigation', 'render-process-gone', 'destroyed']) {
+    assert.equal(f.a.listenerCount(event), 0);
+  }
 });
 
 test('cancelling a writer waiting for readers removes only its own writer intent', async t => {

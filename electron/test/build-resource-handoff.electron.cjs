@@ -81,10 +81,10 @@ app.whenReady().then(async () => {
     const node = process.env.AILY_TEST_NODE_EXE;
     assert.ok(node && fs.existsSync(node), 'Pass a real Node executable in AILY_TEST_NODE_EXE');
     const installScript = path.resolve(__dirname, 'fixtures/install-resource-process.cjs');
-    for (const transport of ['npm', 'cmd']) {
+    for (const transport of ['npm', 'cmd']) for (const end of ['destroy', 'reload']) {
       const owner = await window(), lease = await acquire(owner, 'write', `${transport}-install`);
       assert.equal(lease.writerCommandHandoff, true);
-      const pids = path.join(root, `${transport}-install-pids.json`);
+      const pids = path.join(root, `${transport}-${end}-install-pids.json`);
       const request = transport === 'npm'
         ? { cmd: `"${node}" "${installScript}" hold "${pids}"`, appDataResourceToken: lease.token }
         : { command: node, args: [installScript, 'hold', pids], shellProfile: false,
@@ -95,13 +95,18 @@ app.whenReady().then(async () => {
       const running = invoke(owner, `${transport}-run`, request).catch(() => undefined);
       await waitFor(() => fs.existsSync(pids));
       assert.equal((await release(owner, lease.token)).retainedByCommand, true);
-      owner.destroy(); assert.equal(fs.existsSync(lease.lockPath), true); checks++;
+      if (end === 'destroy') owner.destroy();
+      else {
+        await owner.loadURL('data:text/html,<title>Reloaded resource owner</title>');
+        assert.throws(() => locks.retainAppDataResourceLock(lease.token, owner.webContents.id, 'write'), /NOT_OWNED/);
+      }
+      assert.equal(fs.existsSync(lease.lockPath), true); checks++;
       let acquired = false;
       const waiting = acquire(b, 'read', `${transport}-waiting-build`).then(r => { acquired = true; return r; });
       await delay(650); assert.equal(acquired, false); checks++;
       assert.equal(transport === 'npm' ? await npm.killAllNpmProcesses() : await cmd.killCmdProcess('install-writer'), true);
       for (const pid of JSON.parse(fs.readFileSync(pids))) assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
-      assert.equal(fs.existsSync(lease.lockPath), false); checks++;
+      await waitFor(() => !fs.existsSync(lease.lockPath)); checks++;
       const read = await waiting; assert.equal(read.ok, true); await release(b, read.token);
       // Destroyed renderer invocations may never resolve in Electron; they do
       // not own process cleanup. The main inventory above is authoritative.

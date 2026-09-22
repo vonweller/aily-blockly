@@ -5,6 +5,13 @@ const { killRegisteredProcessTree } = require('./process-tree');
 const { retainAppDataResourceLock } = require('./appdata-resource-lock');
 
 const activeNpmProcesses = new Map();
+const activeNpmRequests = new Set();
+
+function waitForOwnerNpmRequests(owner) {
+    return Promise.all(Array.from(activeNpmRequests)
+        .filter(request => request.owner === owner)
+        .map(request => request.finished));
+}
 
 function ensureForegroundScripts(cmd) {
     if (!/^npm(\.cmd)?\s+(install|i)\b/i.test(cmd)) {
@@ -62,6 +69,7 @@ function isBusyRenameError(text) {
 
 function extractNpmErrorValue(text, key) {
     const match = text.match(new RegExp(`^npm error ${key}\\s+(.+)$`, 'im'));
+
     return match ? match[1].trim() : '';
 }
 
@@ -76,6 +84,7 @@ function formatNpmError(stderr, code) {
     if (isBusyRenameError(stderr)) {
         const targetPath = extractNpmErrorValue(stderr, 'path');
         const detail = targetPath ? `\n被占用目录: ${targetPath}` : '';
+
         return `npm 安装失败：目标目录正在被占用，无法替换安装包。请关闭正在使用该工具链的编译/烧录/终端任务，稍后重试。${detail}`;
     }
 
@@ -84,8 +93,10 @@ function formatNpmError(stderr, code) {
 
 function createNpmError(stderr, code) {
     const error = new Error(formatNpmError(stderr, code));
+
     error.isBusyRename = isBusyRenameError(stderr);
     error.busyRenameDetails = extractBusyRenameDetails(stderr);
+
     return error;
 }
 
@@ -112,6 +123,7 @@ function getProgressMergeKey(sourceId, line) {
 
 function logNpmOutput(type, output, mainWindow, sourceId) {
     const lines = output.split(/\r\n|\n|\r/g).map(line => line.trim()).filter(Boolean);
+
     for (const line of lines) {
         if (isNoisyNpmLogLine(line)) {
             continue;
@@ -123,15 +135,18 @@ function logNpmOutput(type, output, mainWindow, sourceId) {
 
         const message = line.length > 2000 ? `${line.slice(0, 2000)}...` : line;
         const mergeKey = getProgressMergeKey(sourceId, message);
+
         if (type === 'stderr') {
             if (!mergeKey) {
                 console.error(`[NPM] stderr: ${message}`);
             }
+
             sendRendererLog(mainWindow, message, 'error', mergeKey);
         } else {
             if (!mergeKey) {
                 console.log(`[NPM] stdout: ${message}`);
             }
+
             sendRendererLog(mainWindow, message, 'doing', mergeKey);
         }
     }
@@ -145,6 +160,7 @@ function runNpmCommand(entry, option, mainWindow) {
             windowsHide: true,
             env: process.env,
         });
+
         const shouldLogOutput = shouldLogStreamingOutput(cmd);
         entry.process = child;
         entry.closed = false;
@@ -154,7 +170,9 @@ function runNpmCommand(entry, option, mainWindow) {
 
         child.stdout.on('data', (data) => {
             const output = data.toString();
+
             stdout += output;
+
             if (shouldLogOutput) {
                 logNpmOutput('stdout', output, mainWindow, sourceId);
             }
@@ -162,7 +180,9 @@ function runNpmCommand(entry, option, mainWindow) {
 
         child.stderr.on('data', (data) => {
             const output = data.toString();
+
             stderr += output;
+
             if (shouldLogOutput) {
                 logNpmOutput('stderr', output, mainWindow, sourceId);
             }
@@ -189,8 +209,10 @@ function runNpmCommand(entry, option, mainWindow) {
                 if (option?.ignoreErr) {
                     return resolve(false);
                 }
+
                 return reject(createNpmError(stderr, code));
             }
+
             if (stderr && !stdout) {
                 return reject(createNpmError(stderr, code));
             }
@@ -236,15 +258,28 @@ function registerNpmHandlers(mainWindow) {
         const entry = { sourceId, cmd, startedAt: Date.now(), resourceLease, closed: true,
             retryAbort: new AbortController(), cancelled: false, stopRequested: false };
         activeNpmProcesses.set(sourceId, entry);
+        const owner = event.sender;
+        let finish;
+        const request = { owner, finished: new Promise(resolve => { finish = resolve; }) };
+        activeNpmRequests.add(request);
         const onDestroyed = () => { entry.cancelled = true; entry.retryAbort.abort(); };
-        event.sender.once('destroyed', onDestroyed);
+        const onNavigation = (_event, _url, isInPlace, isMainFrame) => {
+            if (isMainFrame && !isInPlace) onDestroyed();
+        };
+        owner.on('did-start-navigation', onNavigation);
+        owner.on('render-process-gone', onDestroyed);
+        owner.on('destroyed', onDestroyed);
         try {
             return await runNpmWithRetries(entry, option, mainWindow);
         } finally {
-            event.sender.removeListener('destroyed', onDestroyed);
+            owner.removeListener('did-start-navigation', onNavigation);
+            owner.removeListener('render-process-gone', onDestroyed);
+            owner.removeListener('destroyed', onDestroyed);
             // During cancellation only the process-tree confirmation may
             // release the lease; parent close can precede descendant exit.
             if (!entry.stopRequested && !entry.terminationUnconfirmed) releaseNpmEntry(entry);
+            activeNpmRequests.delete(request);
+            finish();
         }
     });
 }
@@ -287,6 +322,7 @@ function getActiveNpmProcesses() {
 
 async function killAllNpmProcesses() {
     const entries = Array.from(activeNpmProcesses.entries());
+
     console.info('[PROC_TRACE][NPM_KILL_ALL]', { count: entries.length, processes: getActiveNpmProcesses() });
     const results = await Promise.all(entries.map(([, entry]) => stopNpmEntry(entry)));
     return results.every(Boolean);
@@ -296,4 +332,5 @@ module.exports = {
     registerNpmHandlers,
     killAllNpmProcesses,
     getActiveNpmProcesses,
+    waitForOwnerNpmRequests,
 };

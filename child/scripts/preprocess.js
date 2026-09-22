@@ -4,7 +4,6 @@ const crypto = require('crypto');
 const { spawn, exec, execFileSync } = require('child_process');
 const os = require('os');
 const ailyCodeProject = require('./aily-code-project');
-const platformRuntime = require('./platform-runtime');
 const targetCompileContext = require('./target-compile-context');
 const { prepareCompileSource } = require('./compile-source');
 const { createLibrarySourceFingerprint, createLibraryProjectionRecorder, writeLibraryProjections } = require('./library-source-evidence');
@@ -142,17 +141,7 @@ async function preprocessProject(config, workspace) {
     const testContextInputs = targetCompileContext.captureInputs([
         projectPackageJsonPath, boardJsonPath, boardPackageJsonPath,
     ]);
-    const platformRef = platformRuntime.readPlatformRefFromProjectPackage(currentProjectPath);
-    const platformManifestPath = platformRef?.packageName
-        ? path.join(appDataPath, 'node_modules', platformRef.packageName, 'platform.json') : null;
-    if (platformManifestPath && fs.existsSync(platformManifestPath)) {
-        testContextInputs.push(...targetCompileContext.captureInputs([platformManifestPath]));
-    }
-    const boardDependencies = platformRuntime.resolveEffectiveBoardDependencies(
-        boardPackageJson.boardDependencies,
-        appDataPath,
-        platformRef?.packageName,
-    );
+    const boardDependencies = boardPackageJson.boardDependencies || {};
 
     // 缓存文件路径
     const cacheFilePath = path.join(tempPath, 'library-cache.json');

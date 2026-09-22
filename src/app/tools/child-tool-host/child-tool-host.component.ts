@@ -1119,6 +1119,10 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       messenger,
       methods: {
         getHostContext: () => this.createHostContext(),
+        partitionManagerRequest: (request: any) => {
+          if (this.resolvedToolId !== 'ffs-manager-child') return { success: false, error: '分区项目接口仅供分区管理子应用使用。' };
+          return this.ngZone.run(() => this.uiService.partitionManagerRequest(request));
+        },
         setDevelopmentMode: (payload: { mode?: string } = {}) => {
           return this.ngZone.run(() => this.setChatDevelopmentMode(payload));
         },
