@@ -1893,6 +1893,9 @@ export class HeaderComponent implements OnInit, OnDestroy {
       const projectPath = this.projectService.currentProjectPath;
       if (!projectPath || subItem.disabled) return;
       this.closePortList();
+      if (this.uiService.openToolWindow('ffs-manager-child', {
+        title: 'ESP32 分区管理器', width: 920, height: 820, minWidth: 680, minHeight: 560,
+      })) return;
       this.uiService.openWindow({
         path: `partition-manager?project=${encodeURIComponent(projectPath)}`,
         title: 'ESP32 分区管理器',
