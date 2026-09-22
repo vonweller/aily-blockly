@@ -1024,8 +1024,8 @@ export class ProjectService {
       });
 
       this.application.updateFooterState({ state: 'doing', text: this.translate.instant('PROJECT.CREATING_PROJECT') });
-      const npmInstallResult = await this.appDataResourceLock.runExclusive(`project:new:install-board:${boardPackage}`, () =>
-        this.cmdService.runAsync(installCommand)
+      const npmInstallResult = await this.appDataResourceLock.runExclusive(`project:new:install-board:${boardPackage}`, appDataResourceToken =>
+        this.cmdService.runAsync(installCommand, undefined, true, false, { appDataResourceToken, appDataResourceMode: 'write' })
       );
       if (npmInstallResult.code !== 0) {
         throw new Error(npmInstallResult.stderr || npmInstallResult.stdout || `npm install failed with exit code ${npmInstallResult.code}`);
@@ -1398,6 +1398,13 @@ export class ProjectService {
       this.electronService.setTitle(`${this.configService.getApplicationName()} - ${context.currentPackageData.name}`);
       this.projectActivationSubject.next({ path: projectPath, previousPath: previousProjectPath, reason: activationReason, sessionResource: options.sessionResource ?? null });
       await context.syncCurrentBoardConfig();
+      // The retained Coder frame reloads from projectActivation$, independently
+      // of navigation. Angular skips an already-active URL with `false`; that
+      // is not a refused project reload. A different route must still navigate.
+      const targetRoute = this.router.createUrlTree(['/main/code-editor-pro'], { queryParams: { path: projectPath } });
+      if (this.router.isActive(targetRoute, { paths: 'exact', queryParams: 'exact', fragment: 'ignored', matrixParams: 'ignored' })) {
+        return true;
+      }
       return this.router.navigate(['/main/code-editor-pro'], { queryParams: { path: projectPath }, replaceUrl: true });
     }
 
@@ -3168,8 +3175,8 @@ export class ProjectService {
         prefixPath: appDataPath,
         registry: boardRegistry,
       });
-      await this.appDataResourceLock.runExclusive(`project:switch-board:install-appdata:${newBoardPackage}`, () =>
-        this.cmdService.runAsyncChecked(appDataInstallCommand)
+      await this.appDataResourceLock.runExclusive(`project:switch-board:install-appdata:${newBoardPackage}`, appDataResourceToken =>
+        this.cmdService.runAsyncChecked(appDataInstallCommand, undefined, true, false, { appDataResourceToken, appDataResourceMode: 'write' })
       );
       assertCurrentProject();
 

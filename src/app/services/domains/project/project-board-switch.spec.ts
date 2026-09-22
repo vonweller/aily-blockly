@@ -30,7 +30,7 @@ describe('board switch project persistence', () => {
       buildNpmPackageSpec: (name: string) => name,
       application: { updateFooterState: () => {} },
       buildNpmInstallCommand: async () => 'install-board',
-      appDataResourceLock: { runExclusive: async (_key: string, task: () => Promise<void>) => task() },
+      appDataResourceLock: { runExclusive: async (_key: string, task: (token: string) => Promise<void>) => task('writer-token') },
       cmdService: { runAsyncChecked: jasmine.createSpy('npm').and.resolveTo() },
       finishBoardSwitchWithoutPackageWatcher: jasmine.createSpy('reload').and.resolveTo(),
       rejectBoardSwitchReload: () => {}, waitForBoardSwitchReload: jasmine.createSpy('waiter').and.resolveTo(),
@@ -39,6 +39,9 @@ describe('board switch project persistence', () => {
   it('preserves user library dependencies and uses target template metadata in the same project', async () => {
     const service = fixture();
     await ProjectService.prototype.changeBoard.call(service, { name: target, version: '1' });
+    expect(service.cmdService.runAsyncChecked.calls.first().args).toEqual([
+      'install-board', undefined, true, false, { appDataResourceToken: 'writer-token', appDataResourceMode: 'write' },
+    ]);
     const [path, content] = window['fs'].writeFileSync.calls.mostRecent().args;
     expect(path).toBe('/project/package.json');
     const manifest = JSON.parse(content);
@@ -145,5 +148,47 @@ describe('board switch project persistence', () => {
     expect(service.boardChangeSubject.next).not.toHaveBeenCalled();
     expect(service.message.success).not.toHaveBeenCalled();
     expect(service.projectLifecycle.hasActive('/project')).toBeFalse();
+  });
+
+  function coderRouteFixture(routeActive: boolean, navigated = true) {
+    const context = { currentPackageData: { name: 'fixture' }, syncCurrentBoardConfig: jasmine.createSpy('sync').and.resolveTo() };
+    const service: any = {
+      currentProjectPath: '/project', coderProjects: [{ path: '/project' }],
+      isSameProjectPath: (a: string, b: string) => a === b,
+      ensureProjectModeAllowed: async () => true, getProjectMode: () => 'coder', getCoderOperation: () => undefined,
+      electronService: { exists: () => true, setTitle: () => {} },
+      configService: { getApplicationName: () => 'Coder' },
+      application: { dispatchProjectSave: jasmine.createSpy('save').and.resolveTo({ success: true }) },
+      getCoderProjectContext: () => context, publishCoderProjectContext: jasmine.createSpy('publish'),
+      projectActivationSubject: { next: jasmine.createSpy('activate') },
+      router: { createUrlTree: jasmine.createSpy('target').and.returnValue('coder-target'),
+        isActive: jasmine.createSpy('isActive').and.returnValue(routeActive),
+        navigate: jasmine.createSpy('navigate').and.resolveTo(navigated) },
+    };
+    return { service, context, open: () => (ProjectService.prototype as any).projectOpenInternal.call(service, '/project', { reason: 'reload' }) };
+  }
+
+  it('reloads a retained Coder frame without treating skipped same-URL navigation as rejection', async () => {
+    const { service, context, open } = coderRouteFixture(true);
+    expect(await open()).toBeTrue();
+    expect(service.application.dispatchProjectSave).toHaveBeenCalledOnceWith('/project', 15000);
+    expect(service.projectActivationSubject.next).toHaveBeenCalledOnceWith({ path: '/project', previousPath: '/project', reason: 'reload', sessionResource: null });
+    expect(context.syncCurrentBoardConfig).toHaveBeenCalledTimes(1);
+    expect(service.router.isActive).toHaveBeenCalledWith('coder-target', { paths: 'exact', queryParams: 'exact', fragment: 'ignored', matrixParams: 'ignored' });
+    expect(service.router.navigate).not.toHaveBeenCalled();
+  });
+
+  it('still requires successful navigation when the requested Coder route is not active', async () => {
+    const { service, open } = coderRouteFixture(false, false);
+    expect(await open()).toBeFalse();
+    expect(service.router.navigate).toHaveBeenCalledOnceWith(['/main/code-editor-pro'], { queryParams: { path: '/project' }, replaceUrl: true });
+  });
+
+  it('does not publish a reload or navigate when saving the retained Coder editor fails', async () => {
+    const { service, open } = coderRouteFixture(true);
+    service.application.dispatchProjectSave.and.resolveTo({ success: false, error: 'unsaved source' });
+    await expectAsync(open()).toBeRejectedWithError('unsaved source');
+    expect(service.projectActivationSubject.next).not.toHaveBeenCalled();
+    expect(service.router.isActive).not.toHaveBeenCalled();
   });
 });

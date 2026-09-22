@@ -222,6 +222,12 @@ export class BlocklyLiveOperationBridgeService {
     if (payload.operation === 'child_app_window_arrange') {
       return this.mainUiAutomationService.arrangeChildAppWindows(payload.params || {});
     }
+    if (payload.operation === 'subapp_agent_owner') {
+      return this.subappAgentBridgeService.manageOwnerLease(payload.params || {});
+    }
+    if (payload.operation === 'subapp_agent_release') {
+      return this.subappAgentBridgeService.releaseSession(String(payload.params?.['sessionId'] || '').trim());
+    }
     if (payload.operation === 'subapp_agent_call') {
       const params = payload.params || {};
       const agentContext = params['context'] && typeof params['context'] === 'object'
@@ -229,6 +235,7 @@ export class BlocklyLiveOperationBridgeService {
         : {};
       return this.subappAgentBridgeService.execute(params, undefined, {
         sessionId: String(params['sessionId'] || '').trim(),
+        ownerLeaseId: String(params['ownerLeaseId'] || '').trim(),
         toolCallId: String(params['requestId'] || '').trim(),
         workspaceRoot: String(agentContext['workspaceRoot'] || '').trim(),
         developmentMode: agentContext['developmentMode'] === 'coder' ? 'coder' : 'blockly',

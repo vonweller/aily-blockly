@@ -12,6 +12,7 @@ import {
 } from '@domain/project/public-api';
 import { sha256Hex } from '../../../utils/crypto.utils';
 import { writePreparedArduinoGeneratedArtifacts } from './generated-code-artifacts';
+import { patchBuildMetadata } from '../../../utils/build-publication.utils';
 import type { PreparedBlocklyCode } from './prepared-project-code';
 import { PreparedBlocklySave, prepareBlocklySave, commitPreparedBlocklySave } from './prepared-project-save';
 
@@ -245,10 +246,7 @@ export class _ProjectService {
     if (this.electronService?.calculateHash) {
       const codeHash = await this.electronService.calculateHash(generated.code);
       assertCurrent();
-      const packageJsonPath = `${path}/package.json`;
-      const packageJson = JSON.parse(window['fs'].readFileSync(packageJsonPath, 'utf8'));
-      packageJson.codeHash = codeHash;
-      window['fs'].writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2));
+      patchBuildMetadata(path, { codeHash });
     }
   }
 

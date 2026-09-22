@@ -2,6 +2,7 @@ import type * as Blockly from 'blockly';
 import { normalizeArduinoGeneratedCode, type BlockCodeMapping } from '../components/blockly/generators/arduino/arduino';
 import { runWithPreparedActiveProjectGenerator, type ProjectGenerator } from './blockly-generator-runtime.service';
 import { captureArduinoGeneratedArtifacts } from './generated-code-artifacts';
+import { canonicalJsonStringify } from '@domain/project/public-api';
 
 export interface BlocklyCodeScope {
   readonly workspace: Blockly.Workspace;
@@ -19,6 +20,7 @@ export interface PreparedBlocklyCode {
   readonly code: string | null;
   readonly artifacts: ReturnType<typeof captureArduinoGeneratedArtifacts>;
   readonly blockCodeMapText: string | null;
+  readonly sourceWorkspace?: Readonly<{ documentText: string; revision: number; runtimeRevision: number; pageId: string }>;
   readonly error?: string;
 }
 
@@ -53,9 +55,11 @@ export class BlocklyProjectCodePreparation {
         result = Object.freeze({ code: null, artifacts: null, blockCodeMapText: null,
           error: error instanceof Error ? error.message : String(error) });
       }
-      const { document: _document, ...stamp } = capture();
+      const { document, ...stamp } = capture();
       if (!sameContext(before, stamp)) throw new Error('Project runtime changed during code preparation.');
-      return { stamp, result: Object.freeze({ ...result, revision: stamp.revision }) };
+      return { stamp, result: Object.freeze({ ...result, revision: stamp.revision,
+        ...(result.code !== null ? { sourceWorkspace: Object.freeze({ documentText: canonicalJsonStringify(document),
+          revision: stamp.revision, runtimeRevision: stamp.runtimeRevision, pageId: stamp.pageId }) } : {}) }) };
     }, before.document);
     // Only the synchronous Generator phase may contribute model changes, not async continuations.
     if (!sameRevision(prepared.stamp, capture())) throw new Error('Project changed after code preparation.');

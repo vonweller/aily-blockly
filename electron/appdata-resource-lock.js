@@ -14,6 +14,7 @@ const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
 const RETRY_INTERVAL_MS = 500;
 
 const heldLocks = new Map();
+const pendingRequests = new Map();
 let handlersRegistered = false;
 
 function getAppDataPath() {
@@ -104,8 +105,11 @@ function removeStaleLock(lockPath, holder, reason) {
 
 function isLockAlive(lockPath) {
   const holder = readLock(lockPath);
-  if (!holder || isLockStaleAfterReboot(holder) || !isPidAlive(Number(holder.pid))) {
-    removeStaleLock(lockPath, holder, !holder ? 'unreadable' : isLockStaleAfterReboot(holder) ? 'after-reboot' : 'dead-pid');
+  // A creator may have reserved the file but not finished writing its payload.
+  // Unreadable is busy, never permission to unlink another process's lock.
+  if (!holder) return { unverified: true };
+  if (isLockStaleAfterReboot(holder) || (!holder.commandBorrowed && !isPidAlive(Number(holder.pid)))) {
+    removeStaleLock(lockPath, holder, isLockStaleAfterReboot(holder) ? 'after-reboot' : 'dead-pid');
     return null;
   }
   return holder;
@@ -331,6 +335,10 @@ function releaseAppDataResourceLock(token) {
     return { ok: true, alreadyReleased: true };
   }
 
+  // A renderer leaving its scope (or being destroyed) does not stop its build.
+  lock.releaseRequested = true;
+  if (lock.borrowers > 0) return { ok: true, retainedByCommand: true };
+
   if (lock.ownerWebContents && lock.onOwnerDestroyed && !lock.ownerWebContents.isDestroyed()) {
     lock.ownerWebContents.removeListener('destroyed', lock.onOwnerDestroyed);
   }
@@ -362,6 +370,32 @@ function releaseAppDataResourceLock(token) {
   return { ok: true };
 }
 
+/** Only main may lend a live lease to a command from its owning renderer.
+ * Reuse the granted lock; reacquiring here can deadlock behind our own lease.
+ */
+function retainAppDataResourceLock(token, ownerWebContentsId, mode) {
+  const lock = heldLocks.get(token);
+  const holder = lock && readLock(lock.lockPath);
+  if (!['read', 'write'].includes(mode) || !lock || lock.mode !== mode || lock.releaseRequested
+      || !Number.isSafeInteger(ownerWebContentsId) || lock.ownerWebContentsId !== ownerWebContentsId
+      || holder?.token !== token || holder?.pid !== process.pid) {
+    throw new Error('APPDATA_RESOURCE_LOCK_NOT_OWNED');
+  }
+  // A dead main PID cannot certify that command descendants also stopped.
+  // After a host crash, keep handed-off leases until explicit recovery/reboot.
+  if (!holder.commandBorrowed) fs.writeFileSync(lock.lockPath, JSON.stringify({ ...holder, commandBorrowed: true }));
+  lock.borrowers = (lock.borrowers || 0) + 1;
+  let released = false;
+  return { assertOwnerActive() {
+    if (lock.releaseRequested || released) throw new Error('APPDATA_RESOURCE_LOCK_CANCELLED');
+  }, release() {
+    if (released) return;
+    released = true;
+    lock.borrowers--;
+    if (lock.releaseRequested && lock.borrowers === 0) releaseAppDataResourceLock(token);
+  } };
+}
+
 function releaseAllAppDataResourceLocks() {
   for (const token of Array.from(heldLocks.keys())) {
     releaseAppDataResourceLock(token);
@@ -377,6 +411,13 @@ function registerAppDataResourceLockHandlers() {
 
   ipcMain.handle('appdata-resource-lock-acquire', async (event, data = {}) => {
     const ownerWebContents = event.sender;
+    const requestId = data.requestId;
+    const key = requestId === undefined ? undefined : `${ownerWebContents.id}:${requestId}`;
+    if (key && (typeof requestId !== 'string' || !/^[a-zA-Z0-9-]{1,80}$/.test(requestId) || pendingRequests.has(key))) {
+      return { ok: false, error: 'APPDATA_RESOURCE_LOCK_INVALID_REQUEST' };
+    }
+    const request = { cancelled: false };
+    if (key) pendingRequests.set(key, request);
     let ownerDestroyed = ownerWebContents.isDestroyed();
     const markOwnerDestroyed = () => {
       ownerDestroyed = true;
@@ -386,20 +427,24 @@ function registerAppDataResourceLockHandlers() {
       ownerWebContents.once('destroyed', markOwnerDestroyed);
     }
 
-    const result = await acquireAppDataResourceLock(
+    let result;
+    try { result = await acquireAppDataResourceLock(
       data.label || 'unknown',
       data.mode || 'write',
       data.timeoutMs || DEFAULT_TIMEOUT_MS,
       {
         ownerWebContentsId: ownerWebContents.id,
-        isCancelled: () => ownerDestroyed || ownerWebContents.isDestroyed()
+        isCancelled: () => request.cancelled || ownerDestroyed || ownerWebContents.isDestroyed()
       }
-    );
-
-    if (!ownerWebContents.isDestroyed()) {
-      ownerWebContents.removeListener('destroyed', markOwnerDestroyed);
+    ); } finally {
+      if (key) pendingRequests.delete(key);
+      if (!ownerWebContents.isDestroyed()) ownerWebContents.removeListener('destroyed', markOwnerDestroyed);
     }
 
+    if (request.cancelled) {
+      if (result.ok) releaseAppDataResourceLock(result.token);
+      return { ok: false, error: 'APPDATA_RESOURCE_LOCK_CANCELLED' };
+    }
     if (!result.ok) {
       return result;
     }
@@ -425,10 +470,18 @@ function registerAppDataResourceLockHandlers() {
       ownerWebContents.once('destroyed', releaseOnOwnerDestroyed);
     }
 
-    return result;
+    return { ...result, commandHandoff: true, writerCommandHandoff: true };
   });
 
-  ipcMain.handle('appdata-resource-lock-release', (_event, data = {}) => {
+  ipcMain.handle('appdata-resource-lock-cancel', (event, data = {}) => {
+    const request = pendingRequests.get(`${event.sender.id}:${data.requestId}`);
+    if (request) request.cancelled = true;
+    return { ok: true, cancelled: !!request };
+  });
+
+  ipcMain.handle('appdata-resource-lock-release', (event, data = {}) => {
+    const lock = heldLocks.get(data.token);
+    if (lock && lock.ownerWebContentsId !== event.sender.id) return { ok: false, error: 'APPDATA_RESOURCE_LOCK_NOT_OWNED' };
     return releaseAppDataResourceLock(data.token);
   });
 }
@@ -445,7 +498,27 @@ async function withAppDataResourceLock(scope, operation) {
   });
 }
 
+/** Native consumer scope on the SAME reader/writer protocol as compile/npm.
+ * A command borrows this lease; scope exit never releases a running command.
+ * Not registered as IPC and never creates a second lock namespace/queue.
+ */
+async function withAppDataReadLease(ownerWebContentsId, { signal, timeoutMs }, operation) {
+  if (!Number.isSafeInteger(ownerWebContentsId)) throw new TypeError('A native reader requires a window owner.');
+  return lockScope.run(LOCK_ROOT, async () => {
+    const lock = await acquireAppDataResourceLock('build-input-verification', 'read', timeoutMs, {
+      ownerWebContentsId, isCancelled: () => signal.aborted,
+    });
+    if (!lock.ok) throw signal.reason || Object.assign(new Error(lock.error), { code: lock.error });
+    try {
+      signal.throwIfAborted();
+      return await operation({ borrow: () => retainAppDataResourceLock(lock.token, ownerWebContentsId, 'read') });
+    } finally { releaseAppDataResourceLock(lock.token); }
+  });
+}
+
 module.exports = {
+  withAppDataReadLease,
+  retainAppDataResourceLock,
   withAppDataResourceLock,
   registerAppDataResourceLockHandlers,
   releaseAllAppDataResourceLocks,

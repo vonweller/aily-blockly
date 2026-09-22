@@ -91,6 +91,8 @@ describe('prepared project code boundary', () => {
     expect(capture().revision).toBeGreaterThan(before);
     expect(workspace.getAllVariables().length).toBe(1);
     expect(result.code).toBe('prepared code');
+    expect(result.sourceWorkspace.revision).toBe(capture().revision);
+    expect(result.sourceWorkspace.documentText).toContain('device');
     expect(await preparation.prepare(capture)).toBe(result);
     expect(generator.workspaceToCode).toHaveBeenCalledTimes(1);
   });
@@ -105,6 +107,10 @@ describe('prepared project code boundary', () => {
     expect(result.artifacts[0].content).toBe('original header');
     expect(JSON.parse(result.blockCodeMapText)[0][1].codeSnippet).toBe('original');
     expect(Object.isFrozen(result)).toBeTrue(); expect(Object.isFrozen(result.artifacts[0])).toBeTrue();
+    const capturedText = result.sourceWorkspace.documentText;
+    workspace.createVariable('later edit');
+    expect(result.sourceWorkspace.documentText).toBe(capturedText);
+    expect(result.sourceWorkspace.documentText).not.toContain('later edit');
   });
 
   it('rejects changes during the resource await before executing any generator', async () => {
@@ -169,29 +175,30 @@ describe('prepared project code boundary', () => {
     expect(result.error).toContain('synchronous');
   });
 
-  it('publishes captured headers under src without touching a later generator result or user header', async () => {
-    const oldFs = window['fs']; const oldPath = window['path'];
-    const disk = new Map<string, string>([['D:/project/src/user.h', 'user'], ['D:/project/src/objects_old-abcdef12.h', 'old']]);
-    const dirs = new Set<string>();
-    window['path'] = { join: (...parts: string[]) => parts.join('/') };
-    window['fs'] = {
-      existsSync: path => dirs.has(path) || disk.has(path),
-      mkdirSync: path => dirs.add(path), readdirSync: () => ['user.h', 'objects_old-abcdef12.h'],
-      readFileSync: path => disk.get(path), writeFileSync: (path, value) => disk.set(path, value),
-      renameSync: (from, to) => { disk.set(to, disk.get(from)); disk.delete(from); }, unlinkSync: path => disk.delete(path),
-    };
+  it('publishes the captured headers and sketch through one protected host call', async () => {
+    const oldBuilder = window['builder'];
+    const publish = jasmine.createSpy('publishArduinoGeneratedCode');
+    window['builder'] = { publishArduinoGeneratedCode: publish };
     try {
       const artifact = { fileName: 'variables_data-12345678.h', content: 'prepared header', sourceTag: 'data' };
       const source = { getGeneratedArtifacts: jasmine.createSpy().and.returnValue([artifact]) };
       const captured = captureArduinoGeneratedArtifacts(source);
       artifact.content = 'later output'; source.getGeneratedArtifacts.and.throwError('runtime disposed');
-      await writePreparedArduinoGeneratedArtifacts('D:/project', captured);
-      expect(dirs.has('D:/project/src')).toBeTrue();
-      expect(disk.get('D:/project/src/variables_data-12345678.h')).toBe('prepared header');
-      expect(disk.get('D:/project/src/user.h')).toBe('user');
-      expect(disk.has('D:/project/src/objects_old-abcdef12.h')).toBeFalse();
+      await writePreparedArduinoGeneratedArtifacts('D:/project', captured, 'prepared sketch');
+      expect(publish).toHaveBeenCalledOnceWith('D:/project', {
+        artifacts: [{ fileName: 'variables_data-12345678.h', content: 'prepared header', sourceTag: 'data' }],
+        sketchCode: 'prepared sketch',
+      });
       expect(source.getGeneratedArtifacts).toHaveBeenCalledTimes(1);
-    } finally { window['fs'] = oldFs; window['path'] = oldPath; }
+    } finally { window['builder'] = oldBuilder; }
+  });
+
+  it('does not silently bypass protection when the preload is old', async () => {
+    const oldBuilder = window['builder']; window['builder'] = {};
+    try {
+      await expectAsync(writePreparedArduinoGeneratedArtifacts('D:/project', [])).toBeRejectedWithError(/restart the host/);
+      await expectAsync(writePreparedArduinoGeneratedArtifacts('D:/project', null)).toBeResolved();
+    } finally { window['builder'] = oldBuilder; }
   });
 
   it('rejects artifact paths outside the generated header namespace and skips unsupported runtimes', () => {

@@ -40,6 +40,7 @@ import { MainUiAutomationService, AiOperationRegistryService } from '@integratio
 import { NoticeService, UiService } from '@core/app-shell/public-api';
 import { ProjectService, type CoderWorkspaceContext } from '@domain/project/public-api';
 import { SubappActivityDockComponent } from '../../components/subapp-activity-dock/subapp-activity-dock.component';
+import { ChildToolNativeObserverComponent } from '../child-tool-native-observer/child-tool-native-observer.component';
 import {
   type ChildAuthStateSnapshot,
   normalizeChildAuthStateSnapshot,
@@ -96,6 +97,7 @@ interface ChatResourcePickerRequest {
     SubWindowComponent,
     ToolContainerComponent,
     SubappActivityDockComponent,
+    ChildToolNativeObserverComponent,
   ],
   templateUrl: './child-tool-host.component.html',
   styleUrl: './child-tool-host.component.scss'
@@ -109,6 +111,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   titleKey = '';
   routePath = '';
   hostStatus: HostStatus = 'idle';
+  get isNativeObserver(): boolean { return this.config?.runtime?.observer === true; }
   iframeSrc: SafeResourceUrl | null = null;
   frameLoaded = false;
   errorMessage = '';
@@ -469,6 +472,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   restart(): Promise<Record<string, unknown>> {
+    if (this.isNativeObserver) return Promise.resolve({ ok: false, message: 'An observer cannot restart the execution Runtime.' });
     if (this.restartTask) {
       return this.restartTask;
     }
@@ -729,7 +733,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       && catalogItemAtOpen.updateStatus.state !== 'ready'
       && catalogItemAtOpen.updateStatus.ready !== true;
     this.runtimeSubscription?.unsubscribe();
-    this.runtimeSubscription = this.processService.observeRuntime(config.id).subscribe(snapshot => {
+    this.runtimeSubscription = this.isNativeObserver ? null : this.processService.observeRuntime(config.id).subscribe(snapshot => {
       this.handleRuntimeSnapshot(snapshot);
     });
     this.childVersion = config.version || '';
@@ -738,6 +742,12 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     this.routePath = config.routePath || `/child-tool/${config.id}`;
     this.currentUrl = this.router.url;
     this.registerHostController();
+
+    if (this.isNativeObserver) {
+      this.hostStatus = 'ready'; this.frameLoaded = false;
+      await this.toolI18n.load(config.id);
+      return; // Observation never acquires a process lease or starts a Runtime.
+    }
 
     await Promise.all([
       this.initializeStandaloneProjectContext(),
@@ -1206,6 +1216,11 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       });
   }
 
+  onNativeObserverError(message: string): void {
+    this.handleChildError(message);
+    this.cdr.markForCheck();
+  }
+
   private handleChildError(error: any): void {
     const message = this.stringifyHostMessageValue(error?.message ?? error) || `${this.resolvedToolId} child error`;
     const detail = this.stringifyHostMessageValue(error?.detail ?? error?.stack ?? error?.message ?? error) || message;
@@ -1569,6 +1584,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   private async runChildBeforeClose(reason: ChildLifecycleReason, strict: boolean): Promise<boolean> {
+    if (this.isNativeObserver) return true; // No process/resource lease belongs to this view.
     const beforeClose = this.remoteApi?.beforeClose;
     if (typeof beforeClose !== 'function') {
       return !strict;
