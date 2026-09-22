@@ -44,6 +44,7 @@ const BLOCKLY_LOCALES: Record<SupportedLanguageCode, any> = {
 // } from './plugins/continuous-toolbox/src/index.js';
 import './plugins/toolbox-search/src/index';
 import './blockly-native-registrations';
+import { registerProjectBlockPaster } from '../../services/blockly-copy-identities';
 import './plugins/stable-comment-icon';
 import { BlocklyService, WorkspaceBlockSearchState } from '../../services/blockly.service';
 import {
@@ -270,6 +271,7 @@ class ExternalToolboxDeleteArea extends Blockly.DeleteArea {
   styleUrl: './blockly.component.scss',
 })
 export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
+  private releaseProjectBlockPaster?: () => void;
   @ViewChild(BlocklyWorkspacePagesComponent, { static: true }) workspacePaneComponent!: BlocklyWorkspacePagesComponent;
   @ViewChild('workspaceSearchInput') private workspaceSearchInputRef?: ElementRef<HTMLInputElement>;
   @ViewChild('layoutElement', { static: true }) private layoutElementRef!: ElementRef<HTMLDivElement>;
@@ -553,6 +555,7 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.releaseProjectBlockPaster?.();
     document.removeEventListener('keydown', this.onDocumentKeyDownBound, true);
     this.closeWorkspaceBlockSearch();
     this.removeFlyoutPinControl();
@@ -827,6 +830,7 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
       this.workspace.updateToolbox(this.toolbox);
       this.registerExternalToolboxDeleteArea();
       this.blocklyService.hydrateWorkspaceFromProjectState();
+      this.releaseProjectBlockPaster = registerProjectBlockPaster(this.workspace, () => this.blocklyService.getProjectDocument());
       this.blocklyService.syncToolboxFacadeWithWorkspace();
       // 根据配置决定 flyout 拖出 block 后是否自动关闭（配置重载时会通过 configReloaded$ 实时应用）
       this.applyFlyoutAutoClose();

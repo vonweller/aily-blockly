@@ -240,9 +240,12 @@ export class _ProjectService {
       return;
     }
     assertCurrent();
+    // Save/ABS publication owns this exact prepared snapshot too. Updating only
+    // codeSubject leaves the IPC viewer/map on the previous generation until a
+    // later UI debounce happens to regenerate. Disk contention must not hide it.
+    this.blocklyService.publishPreparedCodeView(generated.code, generated.blockCodeMapText);
     await writePreparedArduinoGeneratedArtifacts(path, generated.artifacts);
     assertCurrent();
-    this.blocklyService.publishGeneratedCode(generated.code);
     if (this.electronService?.calculateHash) {
       const codeHash = await this.electronService.calculateHash(generated.code);
       assertCurrent();
