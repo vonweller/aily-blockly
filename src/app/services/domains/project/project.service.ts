@@ -45,7 +45,6 @@ import {
   copyCoderArduinoTemplate,
   isCoderProjectPackage,
   resolveCoderProjectCreationTemplate,
-  resolveCoderTemplatePath,
 } from './coder/coder-project-template';
 import {
   RecentProject,
@@ -3209,14 +3208,16 @@ export class ProjectService {
         'node_modules',
         normalizedBoardInfo.name,
       );
+      // Coder switching follows the same compatibility rule as project creation:
+      // prefer template_arduino (including its legacy spelling), but fall back to
+      // the shared template when the board package has no Coder-specific template.
+      // Existing sketch sources are intentionally preserved during a board switch.
       const templatePath = isAilyCode
-        ? resolveCoderTemplatePath(boardPackagePath, window['path'])
+        ? resolveCoderProjectCreationTemplate(boardPackagePath, window['path']).templatePath
         : window['path'].join(boardPackagePath, 'template');
       const templatePackageJsonPath = `${templatePath}${separator}package.json`;
-      const templateSourcePath = `${templatePath}${separator}project.aci`;
 
-      if (window['fs'].existsSync(templatePackageJsonPath)
-        && (!isAilyCode || window['fs'].existsSync(templateSourcePath))) {
+      if (window['fs'].existsSync(templatePackageJsonPath)) {
         // 读取模板package.json
         const templatePackageJson = JSON.parse(window['fs'].readFileSync(templatePackageJsonPath, 'utf8'));
 
@@ -3269,7 +3270,7 @@ export class ProjectService {
         }
       } else {
         throw new Error(isAilyCode
-          ? '未找到新开发板的 template_arduino/package.json 或 project.aci，无法更新 Coder 项目配置'
+          ? '未找到新开发板可用的 template_arduino/package.json 或 template/package.json，无法更新 Coder 项目配置'
           : '未找到新开发板的 template/package.json，无法更新项目配置');
       }
 

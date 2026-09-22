@@ -77,6 +77,49 @@ describe('board switch project persistence', () => {
     expect(manifest.dependencies['@aily-project/board-old']).toBeUndefined();
     expect(service.finishBoardSwitchWithoutPackageWatcher).toHaveBeenCalledTimes(1);
   });
+  it('lets Coder switch to a board that only provides the shared template', async () => {
+    const service: any = fixture();
+    window['path'].isExists = (value: string) => value.endsWith('/template');
+    window['fs'].readFileSync = jasmine.createSpy('read').and.returnValue(JSON.stringify({
+      board: 'Shared Template Board', dependencies: { [target]: '1', '@aily-project/lib-core': '1' },
+    }));
+    service.isAilyCodeProject = () => true;
+    service.getPackageJson = async () => ({ name: 'coder-project', type: 'coder', entry: 'src/main.cpp',
+      dependencies: { '@aily-project/board-old': '1', '@aily-project/lib-user': '2' } });
+    for (const method of ['applyAilyCodeBoardToPackageManifest', 'filterAilyCodeUserPreservedDeps', 'normalizeAilyCodeBoardDepRange']) {
+      service[method] = (ProjectService.prototype as any)[method];
+    }
+
+    await ProjectService.prototype.changeBoard.call(service, { name: target, version: '1' });
+
+    expect(window['fs'].readFileSync).toHaveBeenCalledWith(
+      '/app/node_modules/@aily-project/board-new/template/package.json',
+      'utf8',
+    );
+    const manifest = JSON.parse(window['fs'].writeFileSync.calls.mostRecent().args[1]);
+    expect(manifest.type).toBe('coder');
+    expect(manifest.board).toBe('Shared Template Board');
+    expect(manifest.dependencies[target]).toBe('^1');
+    expect(manifest.dependencies['@aily-project/lib-user']).toBe('2');
+    expect(service.finishBoardSwitchWithoutPackageWatcher).toHaveBeenCalledTimes(1);
+  });
+  it('does not require a source template when switching an existing Coder project', async () => {
+    const service: any = fixture();
+    window['path'].isExists = (value: string) => value.endsWith('/template_arduino');
+    window['fs'].existsSync = (value: string) => !value.endsWith('/project.aci');
+    service.isAilyCodeProject = () => true;
+    service.getPackageJson = async () => ({ name: 'coder-project', type: 'coder', entry: 'firmware/app.cpp',
+      dependencies: { '@aily-project/board-old': '1' } });
+    for (const method of ['applyAilyCodeBoardToPackageManifest', 'filterAilyCodeUserPreservedDeps', 'normalizeAilyCodeBoardDepRange']) {
+      service[method] = (ProjectService.prototype as any)[method];
+    }
+
+    await ProjectService.prototype.changeBoard.call(service, { name: target, version: '1' });
+
+    const writes = window['fs'].writeFileSync.calls.allArgs();
+    expect(writes.length).toBe(1);
+    expect(JSON.parse(writes[0][1]).entry).toBe('firmware/app.cpp');
+  });
   it('aborts manifest writes if the project changes during local install', async () => {
     const service = fixture(); let count = 0;
     service.cmdService.runAsyncChecked.and.callFake(async () => { if (++count === 2) service.currentProjectPath = '/other'; });
