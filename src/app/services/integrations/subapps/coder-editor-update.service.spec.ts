@@ -100,6 +100,28 @@ describe('CoderEditorUpdateService', () => {
     expect(state.actionable).toBeTrue();
   });
 
+  it('shows the Aily Chat-style restart action when a prepared update is newer than the running Runtime', () => {
+    const item = catalogItem({
+      installedVersion: '0.1.13',
+      availableVersion: '0.1.14',
+      updateAvailable: true,
+      updateStatus: { state: 'ready', targetVersion: '0.1.14', ready: true },
+    });
+    const state = resolveCoderEditorUpdateState(item, {
+      toolId: item.toolId,
+      version: '0.1.13',
+      state: 'ready',
+      running: true,
+      refCount: 1,
+      hostInfo: null,
+      updatedAt: 1,
+    }, false, null);
+
+    expect(state.state).toBe('restart-required');
+    expect(state.visible).toBeTrue();
+    expect(state.actionable).toBeTrue();
+  });
+
   it('downloads and installs a discovered Coder Editor update before first launch', async () => {
     const item = catalogItem({
       updateStatus: { state: 'available', targetVersion: '0.1.14', ready: false },
@@ -122,10 +144,22 @@ describe('CoderEditorUpdateService', () => {
     const h = createHarness();
     const order: string[] = [];
     h.process.forceStop.and.callFake(async () => { order.push('stop'); });
-    h.manager.installUpdate.and.callFake(async () => { order.push('install'); });
+    h.manager.installUpdate.and.callFake(async () => {
+      order.push('install');
+      const installed = catalogItem({
+        ...h.stateSubject.value.apps[0],
+        installedVersion: '0.1.14',
+        updateAvailable: false,
+        updateStatus: { state: 'current', targetVersion: '0.1.14' },
+      });
+      h.stateSubject.next({ ...h.stateSubject.value, apps: [installed] });
+    });
     h.service.registerClient({
       prepareForUpdate: async () => { order.push('save-a'); },
-      reloadAfterUpdate: async () => { order.push('reload-a'); },
+      reloadAfterUpdate: async () => {
+        order.push('reload-a');
+        h.runtime.version = '0.1.14';
+      },
     });
     h.service.registerClient({
       prepareForUpdate: async () => { order.push('save-b'); },
@@ -140,5 +174,24 @@ describe('CoderEditorUpdateService', () => {
     expect(order.slice(4).sort()).toEqual(['reload-a', 'reload-b']);
     expect(h.process.forceStop).toHaveBeenCalledOnceWith('aily-coder-editor');
     expect(h.manager.installUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not report success when the reloaded Runtime is still on the old version', async () => {
+    const h = createHarness();
+    h.manager.installUpdate.and.callFake(async () => {
+      const installed = catalogItem({
+        ...h.stateSubject.value.apps[0],
+        installedVersion: '0.1.14',
+        updateAvailable: false,
+        updateStatus: { state: 'current', targetVersion: '0.1.14' },
+      });
+      h.stateSubject.next({ ...h.stateSubject.value, apps: [installed] });
+    });
+    h.service.registerClient({
+      prepareForUpdate: async () => undefined,
+      reloadAfterUpdate: async () => undefined,
+    });
+
+    await expectAsync(h.service.updateAndRestart()).toBeRejectedWithError(/运行版本校验失败/);
   });
 });

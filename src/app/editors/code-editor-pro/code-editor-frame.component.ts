@@ -850,7 +850,9 @@ export class CodeEditorFrameComponent implements OnInit, OnDestroy, AfterViewIni
 
   private async updateAndRestartCoderEditor(): Promise<void> {
     if (this.childToolProcess.getRuntimeSnapshot(AILY_CODER_EDITOR_SUBAPP_ID).running) {
-      const confirmed = await this.confirmCoderEditorUpdateRestart();
+      const confirmed = await this.confirmCoderEditorUpdateRestart(
+        this.coderEditorUpdateState.state === 'restart-required',
+      );
       if (!confirmed) return;
     }
     try {
@@ -868,19 +870,26 @@ export class CodeEditorFrameComponent implements OnInit, OnDestroy, AfterViewIni
     }
   }
 
-  private confirmCoderEditorUpdateRestart(): Promise<boolean> {
+  private confirmCoderEditorUpdateRestart(restartFlow: boolean): Promise<boolean> {
     const name = 'Aily Coder Editor';
     return new Promise((resolve) => {
       this.modal.confirm({
         nzClassName: 'subapp-service-confirm-modal',
-        nzTitle: this.translate.instant('APP_STORE.BUSY_TITLE'),
-        nzContent: this.translate.instant('APP_STORE.BUSY_MESSAGE', {
-          name,
-          action: this.translate.instant('APP_STORE.INSTALL_UPDATE'),
-        }),
-        nzOkText: this.translate.instant('APP_STORE.FORCE_CLOSE_CONTINUE'),
+        nzTitle: this.translate.instant(
+          restartFlow ? 'APP_STORE.RESTART_CONFIRM' : 'APP_STORE.BUSY_TITLE',
+          { name },
+        ),
+        nzContent: restartFlow
+          ? this.translate.instant('APP_STORE.RESTART_HINT', { name })
+          : this.translate.instant('APP_STORE.BUSY_MESSAGE', {
+              name,
+              action: this.translate.instant('APP_STORE.INSTALL_UPDATE'),
+            }),
+        nzOkText: this.translate.instant(
+          restartFlow ? 'APP_STORE.CONFIRM_RESTART' : 'APP_STORE.FORCE_CLOSE_CONTINUE',
+        ),
         nzCancelText: this.translate.instant('APP_STORE.CANCEL'),
-        nzOkDanger: true,
+        nzOkDanger: !restartFlow,
         nzMaskClosable: false,
         nzOnOk: () => resolve(true),
         nzOnCancel: () => resolve(false),

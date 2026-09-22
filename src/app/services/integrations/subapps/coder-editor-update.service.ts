@@ -61,9 +61,13 @@ export function resolveCoderEditorUpdateState(
   const installedVersion = version(item.installedVersion);
   const availableVersion = version(item.availableVersion);
   const runningVersion = runtime.running ? version(runtime.version) : '';
+  const preparedVersion = item.updateStatus.ready === true || item.updateStatus.state === 'ready'
+    ? availableVersion
+    : '';
   const restartRequired = !!runningVersion
-    && !!installedVersion
-    && runningVersion !== installedVersion;
+    && (preparedVersion
+      ? runningVersion !== preparedVersion
+      : !!installedVersion && runningVersion !== installedVersion);
   const matchingProgress = progress?.id === item.id ? progress : null;
   const progressBusy = matchingProgress != null
     && matchingProgress.phase !== 'complete'
@@ -73,7 +77,7 @@ export function resolveCoderEditorUpdateState(
     || item.updateStatus.state === 'downloading'
     || item.updateStatus.state === 'installing'
     || (item.updateStatus.state === 'available' && !!item.updatePolicy);
-  const state = restartRequired && item.updateStatus.state === 'current'
+  const state = restartRequired
     ? 'restart-required'
     : item.updateStatus.state;
   const actionable = !busy && (
@@ -185,7 +189,9 @@ export class CoderEditorUpdateService {
 
   private async performInteractiveUpdate(): Promise<boolean> {
     this.operationBusySubject.next(true);
+    const clients = [...this.clients];
     let runtimeStopped = false;
+    let updateCompleted = false;
     try {
       await this.subappManager.initialize();
       let item = this.findItem();
@@ -199,25 +205,50 @@ export class CoderEditorUpdateService {
         && version(runtime.version) !== version(item.installedVersion);
       if (!restartRequired && !this.hasInstallableUpdate(item)) return false;
 
-      await Promise.all([...this.clients].map(client => client.prepareForUpdate()));
+      await Promise.all(clients.map(client => client.prepareForUpdate()));
       await this.childToolProcess.forceStop(AILY_CODER_EDITOR_SUBAPP_ID);
       runtimeStopped = true;
 
       if (this.hasInstallableUpdate(item)) {
         await this.installAvailableUpdate(item, true);
       }
+      updateCompleted = true;
       return true;
     } finally {
+      let reloadError: unknown;
       if (runtimeStopped) {
         const results = await Promise.allSettled(
-          [...this.clients].map(client => client.reloadAfterUpdate()),
+          clients.map(client => client.reloadAfterUpdate()),
         );
         const failed = results.find(result => result.status === 'rejected');
-        if (failed?.status === 'rejected') {
+        if (clients.length === 0) {
+          try {
+            await this.childToolProcess.restart(AILY_CODER_EDITOR_SUBAPP_ID);
+          } catch (error) {
+            reloadError = error;
+          }
+        }
+        if (failed?.status === 'rejected' && !updateCompleted) {
           console.warn('[Subapp] An Aily Coder Editor surface failed to reload after update:', failed.reason);
+        }
+        if (updateCompleted && failed?.status === 'rejected') {
+          reloadError = failed.reason || new Error('Aily Coder Editor 更新后重载失败');
+        }
+        if (updateCompleted && !reloadError) {
+          const expectedVersion = version(this.findItem()?.installedVersion);
+          const runtime = this.childToolProcess.getRuntimeSnapshot(AILY_CODER_EDITOR_SUBAPP_ID);
+          if (!runtime.running || (expectedVersion && version(runtime.version) !== expectedVersion)) {
+            reloadError = new Error(
+              `Aily Coder Editor 运行版本校验失败：应为 ${expectedVersion || '已安装版本'}，实际为 ${version(runtime.version) || '未运行'}`,
+            );
+          }
+        }
+        if (!updateCompleted && reloadError) {
+          console.warn('[Subapp] Aily Coder Editor failed to recover its previous Runtime:', reloadError);
         }
       }
       this.operationBusySubject.next(false);
+      if (updateCompleted && reloadError) throw reloadError;
     }
   }
 
