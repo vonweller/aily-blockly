@@ -224,7 +224,7 @@ export class _BuilderService {
         if (workspace !== this.blocklyService.workspace || projectPath !== this.projectService.currentProjectPath) throw new Error('Build project changed.');
         await writePreparedArduinoGeneratedArtifacts(projectPath, prepared.artifacts, writeSketch ? prepared.code : undefined);
         assertCurrent();
-        this.blocklyService.publishGeneratedCode(prepared.code);
+        this.blocklyService.publishPreparedCodeView(prepared.code, prepared.blockCodeMapText ?? null);
         return prepared.code;
       }, forceGenerate),
       detail,
@@ -264,6 +264,7 @@ export class _BuilderService {
         if (checkpoint) checkpoint.inputCapturedAt = Date.now();
         await writePreparedArduinoGeneratedArtifacts(projectPath, prepared.artifacts);
         assertCurrent();
+        this.blocklyService.publishPreparedCodeView(prepared.code, prepared.blockCodeMapText ?? null);
         const runtimeRevision = getActiveProjectGeneratorRevision();
         const dataSession = projectDataRuntime.getSessionToken(), pageId = this.blocklyService.getActivePageId();
         // Unlike the callback's owner-bound assertion, this guard can be used

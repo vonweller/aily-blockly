@@ -125,6 +125,15 @@ export interface BlocklyDebugExecutionMarkerState {
   blockId: string;
 }
 
+interface CodeViewerPublisher {
+  publishCodeState(
+    code: string,
+    blockCodeMap: Map<string, BlockCodeMapping>,
+    selectedBlockId: string | null,
+    selectedBlockIds: readonly string[],
+  ): void;
+}
+
 @Injectable({
   providedIn: 'root'
 })
@@ -359,6 +368,26 @@ export class BlocklyService {
     this.codeSubject.next(normalizedCode);
   }
 
+  /**
+   * Publish the live code view from an already prepared snapshot.
+   * Disk publication is separate: a busy build lease must not hide this code.
+   */
+  registerCodeViewerPublisher(publisher: CodeViewerPublisher): () => void {
+    this.codeViewerPublisher = publisher;
+    this.flushCodeViewer();
+    return () => {
+      if (this.codeViewerPublisher === publisher) this.codeViewerPublisher = null;
+    };
+  }
+
+  publishPreparedCodeView(code: string, blockCodeMapText: string | null): void {
+    this.publishGeneratedCode(code);
+    if (blockCodeMapText !== null) {
+      this.blockCodeMapSubject.next(new Map<string, BlockCodeMapping>(JSON.parse(blockCodeMapText)));
+    }
+    this.flushCodeViewer();
+  }
+
   getGeneratedCode(): string {
     return this.latestGeneratedCode || this.codeSubject.value || '';
   }
@@ -373,6 +402,18 @@ export class BlocklyService {
 
   requestCodeViewerRefresh(forceGenerate = false): void {
     this.codeViewerRefreshRequestSubject.next(forceGenerate);
+  }
+
+  private codeViewerPublisher: CodeViewerPublisher | null = null;
+
+  private flushCodeViewer(): void {
+    if (!this.codeViewerPublisher || this.generatedCodeRevision !== this.workspaceCodeRevision) return;
+    this.codeViewerPublisher.publishCodeState(
+      this.latestGeneratedCode,
+      this.blockCodeMapSubject.value,
+      this.selectedBlockSubject.value,
+      this.selectedBlockIdsSubject.value,
+    );
   }
 
   private overlayChaffObserver: MutationObserver | null = null;

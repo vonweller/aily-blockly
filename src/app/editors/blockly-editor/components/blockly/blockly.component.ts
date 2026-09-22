@@ -45,7 +45,6 @@ const BLOCKLY_LOCALES: Record<SupportedLanguageCode, any> = {
 import './plugins/toolbox-search/src/index';
 import './blockly-native-registrations';
 import './plugins/stable-comment-icon';
-import { type BlockCodeMapping } from './generators/arduino/arduino';
 import { BlocklyService, WorkspaceBlockSearchState } from '../../services/blockly.service';
 import {
   BlocklyGeneratorRuntimeService,
@@ -95,7 +94,7 @@ import { BlocklyToolboxPaneComponent } from './components/blockly-toolbox-pane/b
 import { BlocklyWorkspacePagesComponent } from './components/blockly-workspace-pages/blockly-workspace-pages.component';
 import { BlocklyConfirmDialogComponent } from './components/confirm-dialog/confirm-dialog.component';
 import { CodeViewerIpcService } from '../../services/code-viewer-ipc.service';
-import { writePreparedArduinoGeneratedArtifacts } from '../../services/generated-code-artifacts';
+import { isBuildWorkspaceBusyError, writePreparedArduinoGeneratedArtifacts } from '../../services/generated-code-artifacts';
 import { AilyChatDemandSessionService } from '@integration/simulator/public-api';
 
 type BlocklyWorkspaceEvent = WorkspaceCodeEvent | null | undefined;
@@ -293,6 +292,9 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
   // RxJS debounce optimization
   private codeGenerationSubject = new Subject<void>();
   private forceNextCodeGeneration = false;
+  private generatedArtifactRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  private generatedArtifactRetryToken = 0;
+  private unregisterCodeViewerPublisher: (() => void) | null = null;
   private minimapSyncSubject = new Subject<void>();
   private destroy$ = new Subject<void>();
   private resizeObserver: ResizeObserver | null = null;
@@ -512,6 +514,7 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
     this.initLanguage();
     this.initDevMode();
     this.initBlocklyDialogs();
+    this.unregisterCodeViewerPublisher = this.blocklyService.registerCodeViewerPublisher(this.codeViewerIpcService);
     this.initCodeGenerationDebounce();
     this.initMinimapSyncDebounce();
     this.initCodeViewerRefreshRequests();
@@ -562,6 +565,9 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
     this.workspacePaneComponent?.blocklyHostElement?.removeEventListener('pointerdown', this.onWorkspacePointerDownBound, true);
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
+    this.unregisterCodeViewerPublisher?.();
+    this.unregisterCodeViewerPublisher = null;
+    this.clearGeneratedArtifactRetry();
     // 清理 RxJS 订阅
     this.destroy$.next();
     this.destroy$.complete();
@@ -2307,26 +2313,22 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
         };
         await this.blocklyService.runWithPreparedProjectCode(async (generated, assertCurrent) => {
           assertContext();
-          await writePreparedArduinoGeneratedArtifacts(projectPath, generated.artifacts);
-          assertContext(); assertCurrent();
           const code = generated.code;
-          this.blocklyService.publishGeneratedCode(code);
-          const blockCodeMap = new Map<string, BlockCodeMapping>(generated.blockCodeMapText ? JSON.parse(generated.blockCodeMapText) : []);
-          void this.projectDebugConfigurationService.updateWorkspaceGeneratedCode(
-            projectPath,
-            code,
-          );
-          // 发布 block-to-code 映射
-          if (generated.blockCodeMapText !== null) {
-            this.blocklyService.blockCodeMapSubject.next(blockCodeMap);
+          // Show the snapshot before disk publication. A live compile lease must not blank the viewer.
+          this.blocklyService.publishPreparedCodeView(code, generated.blockCodeMapText);
+          void this.projectDebugConfigurationService.updateWorkspaceGeneratedCode(projectPath, code);
+          try {
+            await writePreparedArduinoGeneratedArtifacts(projectPath, generated.artifacts);
+            this.clearGeneratedArtifactRetry();
+          } catch (error) {
+            if (!isBuildWorkspaceBusyError(error)) throw error;
+            this.scheduleGeneratedArtifactRetry(
+              projectPath,
+              generated.artifacts,
+              this.blocklyService.getWorkspaceContentRevision(),
+            );
           }
-
-          this.codeViewerIpcService.publishCodeState(
-            code,
-            blockCodeMap,
-            this.blocklyService.selectedBlockSubject.value,
-            this.blocklyService.selectedBlockIdsSubject.value,
-          );
+          assertContext(); assertCurrent();
 
           // Extract #include and #define, check for changes
           const currentDependencies = this.extractDependencies(code);
@@ -2356,6 +2358,46 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
         }
       }
     });
+  }
+
+  private clearGeneratedArtifactRetry(): void {
+    this.generatedArtifactRetryToken += 1;
+    if (this.generatedArtifactRetryTimer) {
+      clearTimeout(this.generatedArtifactRetryTimer);
+      this.generatedArtifactRetryTimer = null;
+    }
+  }
+
+  /** Retry only the disk write. The code view was already published from memory. */
+  private scheduleGeneratedArtifactRetry(
+    projectPath: string,
+    artifacts: Parameters<typeof writePreparedArduinoGeneratedArtifacts>[1],
+    revision: number,
+  ): void {
+    const token = ++this.generatedArtifactRetryToken;
+    if (this.generatedArtifactRetryTimer) {
+      clearTimeout(this.generatedArtifactRetryTimer);
+      this.generatedArtifactRetryTimer = null;
+    }
+    const startedAt = Date.now();
+    const attempt = async () => {
+      if (token !== this.generatedArtifactRetryToken || this.destroy$.isStopped) return;
+      if (
+        projectPath !== this.projectService.currentProjectPath
+        || revision !== this.blocklyService.getWorkspaceContentRevision()
+      ) return;
+      try {
+        await writePreparedArduinoGeneratedArtifacts(projectPath, artifacts);
+      } catch (error) {
+        if (token !== this.generatedArtifactRetryToken) return;
+        if (isBuildWorkspaceBusyError(error) && Date.now() - startedAt < 180000) {
+          this.generatedArtifactRetryTimer = setTimeout(() => void attempt(), 1000);
+          return;
+        }
+        console.error('Code generation error:', error);
+      }
+    };
+    this.generatedArtifactRetryTimer = setTimeout(() => void attempt(), 1000);
   }
 
   /**

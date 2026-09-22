@@ -3,7 +3,7 @@ import { projectDataRuntime } from '@domain/project/public-api';
 import { BlocklyGeneratorRuntimeService, getActiveProjectGenerator, getActiveProjectGeneratorRevision } from '../../../editors/blockly-editor/services/blockly-generator-runtime.service';
 import { BlocklyProjectCodePreparation } from '../../../editors/blockly-editor/services/prepared-project-code';
 import { BlocklyProjectRevision } from '../../../editors/blockly-editor/services/blockly-project-revision';
-import { captureArduinoGeneratedArtifacts, writePreparedArduinoGeneratedArtifacts } from '../../../editors/blockly-editor/services/generated-code-artifacts';
+import { captureArduinoGeneratedArtifacts, isBuildWorkspaceBusyError, writePreparedArduinoGeneratedArtifacts } from '../../../editors/blockly-editor/services/generated-code-artifacts';
 import { BlocklyService } from '../../../editors/blockly-editor/services/blockly.service';
 import { BlocklyWorkspaceEditGate } from '../../../editors/blockly-editor/services/blockly-workspace-edit-lease';
 import { SerialOperationQueue } from '@shared/public-api';
@@ -199,6 +199,12 @@ describe('prepared project code boundary', () => {
       await expectAsync(writePreparedArduinoGeneratedArtifacts('D:/project', [])).toBeRejectedWithError(/restart the host/);
       await expectAsync(writePreparedArduinoGeneratedArtifacts('D:/project', null)).toBeResolved();
     } finally { window['builder'] = oldBuilder; }
+  });
+
+  it('recognizes a busy build lease without treating other publication failures as retryable', () => {
+    expect(isBuildWorkspaceBusyError(Object.assign(new Error('BUILD_WORKSPACE_BUSY: busy'), { code: 'BUILD_WORKSPACE_BUSY' }))).toBeTrue();
+    expect(isBuildWorkspaceBusyError(new Error('BUILD_WORKSPACE_BUSY: Another host build/preprocess owns this project.'))).toBeTrue();
+    expect(isBuildWorkspaceBusyError(new Error('BUILD_PUBLICATION_INVALID: Invalid generated code.'))).toBeFalse();
   });
 
   it('rejects artifact paths outside the generated header namespace and skips unsupported runtimes', () => {

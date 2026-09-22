@@ -34,6 +34,15 @@ export function captureArduinoGeneratedArtifacts(generator: unknown): readonly A
  * Artifact emission is an Arduino capability, so non-Arduino generators are a
  * deliberate no-op instead of falling back to the old global generator.
  */
+/** True when another host build/preprocess/publish still owns the project workspace. */
+export function isBuildWorkspaceBusyError(error: unknown): boolean {
+  const code = error && typeof error === 'object' && 'code' in error
+    ? String((error as { code?: unknown }).code ?? '')
+    : '';
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  return code === 'BUILD_WORKSPACE_BUSY' || message.startsWith('BUILD_WORKSPACE_BUSY:');
+}
+
 export async function writePreparedArduinoGeneratedArtifacts(
   projectPath: string | null | undefined,
   artifacts: readonly ArduinoGeneratedArtifact[] | null,

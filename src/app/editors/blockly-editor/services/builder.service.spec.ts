@@ -1,4 +1,5 @@
 import { _BuilderService } from './builder.service';
+import { BlocklyService } from './blockly.service';
 import { ProcessState } from '@core/app-shell/public-api';
 import {
   type BlockCodeMapping,
@@ -184,6 +185,7 @@ describe('BuilderService background preprocess ownership', () => {
     service.blocklyService.isWorkspaceEditBlocked = () => false;
     service.blocklyService.getProjectPersistenceRevision = () => 1;
     service.blocklyService.getActivePageId = () => 'main';
+    service.blocklyService.publishPreparedCodeView = jasmine.createSpy('publishPreparedCodeView');
     service.blocklyService.runWithPreparedProjectCode = operation => operation(prepared, () => undefined);
 
     const checkpoint: { inputCapturedAt?: number } = {};
@@ -210,6 +212,7 @@ describe('BuilderService background preprocess ownership', () => {
     service.blocklyService.getProjectPersistenceRevision = () => 1;
     service.projectService.currentProjectPath = 'D:/another-project';
     expect(snapshot.assertFresh).toThrowError(/BUILD_SOURCE_STALE/);
+    expect(service.blocklyService.publishPreparedCodeView).toHaveBeenCalledWith(prepared.code, prepared.blockCodeMapText);
     expect(snapshot.blockSourceMappings).toEqual([{
       blockId: 'statement-block',
       executionRole: 'statement',
@@ -230,7 +233,7 @@ describe('BuilderService background preprocess ownership', () => {
     const prepare = jasmine.createSpy('prepare').and.callFake(operation => operation(prepared, assertCurrent));
     service.blocklyService = {
       workspace, runWithPreparedProjectCode: prepare,
-      publishGeneratedCode: jasmine.createSpy('publish'),
+      publishPreparedCodeView: jasmine.createSpy('publishPreparedCodeView'),
       getReusableGeneratedCode: () => { throw new Error('Code-only cache cannot publish artifacts.'); },
     };
     service.projectService = { currentProjectPath: 'D:/project' };
@@ -240,8 +243,58 @@ describe('BuilderService background preprocess ownership', () => {
     expect(await service.generateWorkspaceCodeForPreprocess(workspace, 'spec', true)).toBe(prepared.code);
     expect(prepare.calls.mostRecent().args[1]).toBeTrue();
     expect(assertCurrent).toHaveBeenCalled();
-    expect(service.blocklyService.publishGeneratedCode).toHaveBeenCalledWith(prepared.code);
+    expect(service.blocklyService.publishPreparedCodeView).toHaveBeenCalledWith(prepared.code, null);
     await service.generateWorkspaceCodeForPreprocess(workspace, 'spec');
     expect(prepare.calls.mostRecent().args[1]).toBeFalse();
+  });
+});
+
+describe('BlocklyService prepared code view', () => {
+  function viewService() {
+    const service = Object.create(BlocklyService.prototype) as any;
+    service.workspaceCodeRevision = 4;
+    service.generatedCodeRevision = -1;
+    service.latestGeneratedCode = '';
+    service.codeSubject = { next: jasmine.createSpy('code') };
+    service.blockCodeMapSubject = {
+      value: new Map([['previous', { blockId: 'previous' }]]),
+      next: jasmine.createSpy('map').and.callFake((value: Map<string, unknown>) => {
+        service.blockCodeMapSubject.value = value;
+      }),
+    };
+    service.selectedBlockSubject = { value: 'selected' };
+    service.selectedBlockIdsSubject = { value: ['selected'] };
+    service.codeViewerPublisher = null;
+    return service;
+  }
+
+  it('publishes a prepared snapshot to the code viewer without taking a build lease', () => {
+    const service = viewService();
+    const publishCodeState = jasmine.createSpy('publishCodeState');
+    service.codeViewerPublisher = { publishCodeState };
+    const mapText = JSON.stringify([['selected', { blockId: 'selected' }]]);
+
+    service.publishPreparedCodeView('void setup() {}', mapText);
+
+    expect(service.codeSubject.next).toHaveBeenCalledOnceWith('void setup() {}');
+    expect(service.blockCodeMapSubject.value.get('selected')).toEqual({ blockId: 'selected' });
+    expect(publishCodeState).toHaveBeenCalledOnceWith(
+      'void setup() {}',
+      service.blockCodeMapSubject.value,
+      'selected',
+      ['selected'],
+    );
+  });
+
+  it('keeps the previous block map when a runtime has no map and flushes after the viewer subscribes', () => {
+    const service = viewService();
+    const previous = service.blockCodeMapSubject.value;
+
+    service.publishPreparedCodeView('void loop() {}', null);
+    expect(service.blockCodeMapSubject.next).not.toHaveBeenCalled();
+
+    const publishCodeState = jasmine.createSpy('publishCodeState');
+    service.registerCodeViewerPublisher({ publishCodeState });
+    expect(publishCodeState).toHaveBeenCalledOnceWith('void loop() {}', previous, 'selected', ['selected']);
   });
 });
