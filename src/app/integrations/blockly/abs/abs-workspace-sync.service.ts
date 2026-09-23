@@ -415,6 +415,9 @@ export class AbsWorkspaceSyncService {
         if (context.isCurrent()) {
           this.editor.markWorkspaceCodeDirty();
           runtime.Events.setGroup(group); runtime.Events.setRecordUndo(recordUndo);
+          // Native loading suppressed change events. Refresh the final canvas,
+          // including a restored snapshot on failure, once its edit lease ends.
+          this.editor.requestWorkspaceVisualRefresh();
         }
       }
     });

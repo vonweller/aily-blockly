@@ -27,6 +27,8 @@ export interface PreparedBlocklyCode {
 }
 
 type CodeStamp = Omit<BlocklyCodeScope, 'document'>;
+/** Expected when interactive edits supersede an asynchronous preview request. */
+export class BlocklyCodePreparationInvalidatedError extends Error {}
 const sameContext = (a: CodeStamp, b: CodeStamp) => a.workspace === b.workspace && a.generator === b.generator
   && a.runtimeRevision === b.runtimeRevision && a.dataSession === b.dataSession && a.pageId === b.pageId;
 const sameRevision = (a: CodeStamp, b: CodeStamp) => sameContext(a, b) && a.revision === b.revision;
@@ -43,7 +45,7 @@ export class BlocklyProjectCodePreparation {
     if (!force && this.entry && sameRevision(before, this.entry.stamp)) return this.entry.result;
     this.clear();
     const prepared = await runWithPreparedActiveProjectGenerator(before.workspace, generator => {
-      if (!sameRevision(before, capture())) throw new Error('Project changed before code preparation.');
+      if (!sameRevision(before, capture())) throw new BlocklyCodePreparationInvalidatedError('Project changed before code preparation.');
       let result: Omit<PreparedBlocklyCode, 'revision'>;
       try {
         const rawCode = generator.workspaceToCode(before.workspace);
@@ -65,7 +67,7 @@ export class BlocklyProjectCodePreparation {
           revision: stamp.revision, runtimeRevision: stamp.runtimeRevision, pageId: stamp.pageId }) } : {}) }) };
     }, before.document);
     // Only the synchronous Generator phase may contribute model changes, not async continuations.
-    if (!sameRevision(prepared.stamp, capture())) throw new Error('Project changed after code preparation.');
+    if (!sameRevision(prepared.stamp, capture())) throw new BlocklyCodePreparationInvalidatedError('Project changed after code preparation.');
     this.entry = prepared;
     return prepared.result;
   }

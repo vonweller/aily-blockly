@@ -1,6 +1,10 @@
 import { AfterViewInit, ChangeDetectorRef, Component, ElementRef, EventEmitter, Input, NgZone, OnDestroy, OnInit, Output, ViewChild, effect } from '@angular/core';
 import * as Blockly from 'blockly';
-import { WorkspaceCodeChangeTracker, WorkspaceCodeEvent } from '../../utils/blockly-performance';
+import {
+  WorkspaceCodeChangeTracker,
+  WorkspaceCodeEvent,
+  isBlocklyWorkspaceInteracting,
+} from '../../utils/blockly-performance';
 import { Subject, combineLatest } from 'rxjs';
 
 import { debounceTime, takeUntil, map, distinctUntilChanged, pairwise, startWith } from 'rxjs/operators';
@@ -293,6 +297,7 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
 
   // RxJS debounce optimization
   private codeGenerationSubject = new Subject<void>();
+  private backgroundCodeGenerationInProgress = false;
   private forceNextCodeGeneration = false;
   private generatedArtifactRetryTimer: ReturnType<typeof setTimeout> | null = null;
   private generatedArtifactRetryToken = 0;
@@ -2181,10 +2186,24 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
    * 工作区变更时（含 AI 批量修改）同步更新 Minimap，避免小地图不刷新
    */
   private initMinimapSyncDebounce(): void {
+    this.blocklyService.workspaceVisualRefreshRequested$
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(workspace => {
+        if (workspace === this.workspace) this.requestMinimapSync();
+      });
     this.minimapSyncSubject.pipe(
       debounceTime(500),
       takeUntil(this.destroy$)
-    ).subscribe(() => this.syncMinimap());
+    ).subscribe(() => {
+      // Recheck at execution time: a second drag/editor may have opened while
+      // this request was waiting. Only pending work retries, with no idle timer.
+      if (this.workspace && (this.blocklyService.isWorkspaceEditBlocked()
+        || isBlocklyWorkspaceInteracting(this.workspace))) {
+        this.minimapSyncSubject.next();
+        return;
+      }
+      this.syncMinimap();
+    });
   }
 
   private initCodeViewerRefreshRequests(): void {
@@ -2228,7 +2247,7 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   private requestMinimapSync(event?: BlocklyWorkspaceEvent): void {
-    if (!this.shouldSyncMinimapForEvent(event)) {
+    if (!this.minimap || !this.workspace || !this.shouldSyncMinimapForEvent(event)) {
       return;
     }
 
@@ -2264,7 +2283,6 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
     }
 
     this.minimapSyncInProgress = true;
-    const wasEnabled = Blockly.Events.isEnabled();
     let renderPromise: Promise<unknown> | null = null;
     try {
       Blockly.Events.disable();
@@ -2283,7 +2301,8 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
     } catch (e) {
       console.warn('[Blockly] Minimap sync failed:', e);
     } finally {
-      if (wasEnabled) Blockly.Events.enable();
+      // Events.disable is a nesting counter; release exactly our own level.
+      Blockly.Events.enable();
     }
 
     if (renderPromise) {
@@ -2312,6 +2331,12 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
       debounceTime(500),
       takeUntil(this.destroy$)
     ).subscribe(async () => {
+      if (!this.workspace || this.destroy$.isStopped) return;
+      if (this.backgroundCodeGenerationInProgress || isBlocklyWorkspaceInteracting(this.workspace)) {
+        this.codeGenerationSubject.next();
+        return;
+      }
+      this.backgroundCodeGenerationInProgress = true;
       try {
         const projectPath = this.projectService.currentProjectPath;
         const workspace = this.workspace;
@@ -2322,7 +2347,7 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
             throw new Error('Blockly page changed before code publication.');
           }
         };
-        await this.blocklyService.runWithPreparedProjectCode(async (generated, assertCurrent) => {
+        const published = await this.blocklyService.runWithBackgroundProjectCode(async (generated, assertCurrent) => {
           assertContext();
           const code = generated.code;
           // Show the snapshot before disk publication. A live compile lease must not blank the viewer.
@@ -2348,7 +2373,13 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
             this.blocklyService.dependencySubject.next(currentDependencies);
             this.previousDependencies = currentDependencies;
           }
-        }, force);
+        }, () => this.destroy$.isStopped || workspace !== this.workspace
+          || isBlocklyWorkspaceInteracting(workspace), force);
+        if (!published && !this.destroy$.isStopped && workspace === this.workspace
+          && projectPath === this.projectService.currentProjectPath) {
+          this.forceNextCodeGeneration ||= force;
+          this.codeGenerationSubject.next();
+        }
       } catch (error) {
         console.error('Code generation error:', error);
         // 当代码生成失败时，输出更多诊断信息帮助定位缺失的生成器
@@ -2367,6 +2398,8 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
             }
           } catch (_) { /* ignore diagnostic errors */ }
         }
+      } finally {
+        this.backgroundCodeGenerationInProgress = false;
       }
     });
   }
