@@ -1,8 +1,13 @@
-import { AuthService, normalizeAuthCreditSnapshot, normalizeAuthQuotaInfoSnapshotPayload,
+import { AuthService, normalizeAuthCreditSnapshot, normalizeCreditLedgerSnapshot, normalizeAuthQuotaInfoSnapshotPayload,
   resolveAuthQuotaInfoSnapshotOverride, type AuthSnapshot } from '@core/auth/public-api';
 import { buildChildAuthStateSnapshot } from '../child-tool-host/child-auth-state';
 import { formatCreditQuota, isProCreditPlan } from './credit-display';
-import { TestBed, ComponentFixture } from '@angular/core/testing';
+import { ApplicationRef } from '@angular/core';
+import { TestBed, ComponentFixture, fakeAsync, flushMicrotasks, tick } from '@angular/core/testing';
+import { provideHttpClient, withInterceptors } from '@angular/common/http';
+import { provideHttpClientTesting, HttpTestingController } from '@angular/common/http/testing';
+import { API, getServerUrl, setServerUrl } from '../../configs/api.config';
+import { authInterceptor } from '../../interceptors/auth.interceptor';
 import { BehaviorSubject, of } from 'rxjs';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { NzMessageService } from 'ng-zorro-antd/message';
@@ -11,7 +16,6 @@ import { UiService } from '@core/app-shell/public-api';
 import { ToolI18nService } from '@core/preferences/public-api';
 import { ChildAppSafetyService } from '@integration/subapps/public-api';
 import { UserCenterComponent } from './user-center.component';
-import { API } from '../../configs/api.config';
 
 const payload = {
   unit: 'credits',
@@ -57,7 +61,7 @@ describe('Credit quota contract', () => {
   });
 
   it('allows absent optional ledger fields without inventing values', () => {
-    expect(normalizeAuthCreditSnapshot({ available_micros: 1, reserved_micros: 0 })).toEqual({
+    expect(normalizeCreditLedgerSnapshot({ available_micros: 1, reserved_micros: 0 })).toEqual({
       available_micros: 1, reserved_micros: 0,
       included_granted_micros: null, next_reset_at: null, subscription_plan: null,
     });
@@ -73,10 +77,10 @@ describe('Credit quota contract', () => {
       service.http = { get: jasmine.createSpy().and.returnValue(of(response)) };
       service.authQuotaRequestTimeoutMs = 8000;
       const snapshot = await service.getAuthQuotaInfoSnapshot('test-current-account-token');
-      expect(service.http.get).toHaveBeenCalledOnceWith(API.authCreditSnapshot, {
+      expect(service.http.get).toHaveBeenCalledOnceWith(API.creditSnapshot, {
         headers: { Authorization: 'Bearer test-current-account-token' },
       });
-      expect(API.authCreditSnapshot).toMatch(/\/api\/v1\/credits\/me$/);
+      expect(API.creditSnapshot).toMatch(/\/api\/v1\/credits\/me$/);
       expect(snapshot).toEqual({ source: 'token', creditSnapshot: normalizeAuthCreditSnapshot(payload) });
     });
   }
@@ -88,13 +92,29 @@ describe('Credit quota contract', () => {
     } }) };
     service.authQuotaRequestTimeoutMs = 8000;
     await expectAsync(service.getAuthQuotaInfoSnapshot('test-current-account-token'))
-      .toBeRejectedWithError('Invalid Credit quota snapshot');
+      .toBeRejectedWithError(/Invalid Credit snapshot from \/api\/v1\/credits\/me/);
   });
 
   it('does not relabel an old count snapshot as Credits', () => {
     expect(normalizeAuthCreditSnapshot({
       quota_snapshots: { premium_interactions: { entitlement: 30, remaining: 22, percent_remaining: 73.33 } },
     })).toBeUndefined();
+  });
+
+  it('accepts the unwrapped ledger response only through its explicit endpoint adapter', () => {
+    expect(normalizeCreditLedgerSnapshot(ledgerPayload)).toEqual(normalizeAuthCreditSnapshot(payload));
+    expect(normalizeAuthCreditSnapshot(ledgerPayload)).toBeUndefined();
+    expect(normalizeCreditLedgerSnapshot({ status: 200, data: ledgerPayload })).toBeUndefined();
+    expect(normalizeCreditLedgerSnapshot({ ...ledgerPayload, unit: 'interactions' })).toBeUndefined();
+    expect(normalizeCreditLedgerSnapshot({ quota_snapshots: {} })).toBeUndefined();
+  });
+
+  it('allows omitted nullable schema fields but still requires both ledger amounts', () => {
+    expect(normalizeCreditLedgerSnapshot({ available_micros: 0, reserved_micros: 0 })).toEqual({
+      available_micros: 0, reserved_micros: 0,
+      included_granted_micros: null, subscription_plan: null, next_reset_at: null,
+    });
+    expect(normalizeCreditLedgerSnapshot({ available_micros: 0 })).toBeUndefined();
   });
 
   for (const [field, value] of [
@@ -105,6 +125,7 @@ describe('Credit quota contract', () => {
   ]) {
     it(`rejects invalid ${field}: ${String(value)}`, () => {
       expect(normalizeAuthCreditSnapshot({ ...payload, [field as string]: value })).toBeUndefined();
+      expect(normalizeCreditLedgerSnapshot({ ...ledgerPayload, [field as string]: value })).toBeUndefined();
     });
   }
 
@@ -188,6 +209,217 @@ describe('Credit quota contract', () => {
     expect(child.user?.id).toBe('a');
     expect(child.quotaSnapshot).toBeUndefined();
   });
+});
+
+describe('Auth Credit HTTP contract and refresh lifecycle', () => {
+  let service: AuthService;
+  let http: HttpTestingController;
+  let warnings: jasmine.Spy;
+  let previousServer: string;
+  const user = { id: 'account-a', quota: { total_token: 30, used_token: 8, remaining_token: 22 } };
+
+  beforeEach(fakeAsync(() => {
+    previousServer = getServerUrl();
+    setServerUrl('https://auth-contract.example');
+    TestBed.configureTestingModule({ providers: [
+      provideHttpClient(withInterceptors([authInterceptor])), provideHttpClientTesting(),
+      { provide: ElectronService, useValue: { isElectron: false } },
+    ] });
+    spyOn(TestBed.inject(ApplicationRef), 'tick').and.stub();
+    service = TestBed.inject(AuthService);
+    spyOn(service, 'getToken2').and.resolveTo('test-token');
+    warnings = spyOn(console, 'warn');
+    http = TestBed.inject(HttpTestingController);
+    tick();
+  }));
+
+  afterEach(() => {
+    http.verify();
+    setServerUrl(previousServer);
+  });
+
+  function beginRefresh(profile = user) {
+    const operation = service.refreshCurrentUser();
+    flushMicrotasks();
+    const me = http.expectOne(API.me);
+    expect(me.request.headers.get('Authorization')).toBe('Bearer test-token');
+    me.flush({ status: 200, data: profile });
+    flushMicrotasks();
+    return operation;
+  }
+
+  it('uses /credits/me directly even when /auth/me still contains legacy counts', fakeAsync(() => {
+    beginRefresh();
+    const credits = http.expectOne('https://auth-contract.example/api/v1/credits/me');
+    expect(credits.request.headers.get('Authorization')).toBe('Bearer test-token');
+    credits.flush(ledgerPayload);
+    flushMicrotasks();
+    expect(service.currentUser?.id).toBe('account-a');
+    expect(service.getAuthSnapshot()?.quotaInfoSnapshot?.creditSnapshot)
+      .toEqual(normalizeCreditLedgerSnapshot(ledgerPayload));
+    tick(20000);
+    http.expectNone(request => request.url.endsWith('/quota-info'));
+    expect(warnings).not.toHaveBeenCalled();
+  }));
+
+  it('accepts a gateway success envelope without scheduling a retry', fakeAsync(() => {
+    beginRefresh();
+    http.expectOne(API.creditSnapshot).flush({ status: 200, data: ledgerPayload });
+    flushMicrotasks();
+    expect(service.getAuthSnapshot()?.quotaInfoSnapshot?.creditSnapshot)
+      .toEqual(normalizeCreditLedgerSnapshot(ledgerPayload));
+    tick(20000);
+    http.expectNone(API.creditSnapshot);
+    expect(warnings).not.toHaveBeenCalled();
+  }));
+
+  for (const endpoint of ['profile', 'credit']) {
+    it(`allows the real auth interceptor to refresh an expired token during ${endpoint} loading`, fakeAsync(() => {
+      const storedToken = localStorage.getItem('aily_auth_token');
+      const storedRefresh = localStorage.getItem('aily_refresh_token');
+      try {
+        spyOn(service, 'refreshAuthToken').and.callFake(async () => {
+          await service.saveToken2('rotated-token', 'rotated-refresh', 'test-refresh');
+          (service.getToken2 as jasmine.Spy).and.resolveTo('rotated-token');
+          return true;
+        });
+        localStorage.setItem('aily_refresh_token', 'test-refresh');
+        if (endpoint === 'profile') {
+          void service.refreshCurrentUser();
+          flushMicrotasks();
+          http.expectOne(API.me).flush({ errorCode: 'AUTH_TOKEN_EXPIRED' }, { status: 401, statusText: 'Expired' });
+          flushMicrotasks();
+          http.expectOne(API.me).flush({ status: 200, data: user });
+          flushMicrotasks();
+        } else {
+          beginRefresh();
+          http.expectOne(API.creditSnapshot).flush({ errorCode: 'AUTH_TOKEN_EXPIRED' }, { status: 401, statusText: 'Expired' });
+          flushMicrotasks();
+        }
+        const credits = http.expectOne(API.creditSnapshot);
+        expect(credits.request.headers.get('Authorization')).toBe('Bearer rotated-token');
+        credits.flush(ledgerPayload);
+        flushMicrotasks();
+        expect(service.getAuthSnapshot()?.quotaInfoSnapshot?.creditSnapshot?.available_micros).toBe(29_993_290);
+        expect(service.refreshAuthToken).toHaveBeenCalledTimes(1);
+        tick(20000);
+      } finally {
+        if (storedToken === null) localStorage.removeItem('aily_auth_token');
+        else localStorage.setItem('aily_auth_token', storedToken);
+        if (storedRefresh === null) localStorage.removeItem('aily_refresh_token');
+        else localStorage.setItem('aily_refresh_token', storedRefresh);
+      }
+    }));
+  }
+
+  for (const invalid of [
+    { quota_snapshots: { premium_interactions: { remaining: 22 } } },
+    { status: 500, data: ledgerPayload },
+    { status: 200, data: { ...ledgerPayload, available_micros: '30' } },
+    { ...ledgerPayload, available_micros: '30' },
+  ]) {
+    it('keeps the user signed in and never retries an invalid Credit contract', fakeAsync(() => {
+      void service.initializeAuth();
+      flushMicrotasks();
+      http.expectOne(API.me).flush({ status: 200, data: user });
+      flushMicrotasks();
+      http.expectOne(API.creditSnapshot).flush(invalid);
+      flushMicrotasks();
+      expect(service.getAuthInitializationState()).toBe('authenticated');
+      expect(service.getAuthSnapshot()?.quotaInfoSnapshot?.creditSnapshot).toBeUndefined();
+      tick(20000);
+      http.expectNone(API.creditSnapshot);
+      expect(warnings).toHaveBeenCalledTimes(1);
+      expect(String(warnings.calls.mostRecent().args[1])).toContain('/api/v1/credits/me');
+    }));
+  }
+
+  for (const status of [401, 403, 404]) {
+    it(`does not retry HTTP ${status}`, fakeAsync(() => {
+      beginRefresh();
+      http.expectOne(API.creditSnapshot).flush({}, { status, statusText: 'Unavailable' });
+      flushMicrotasks();
+      tick(20000);
+      http.expectNone(API.creditSnapshot);
+      expect(warnings).toHaveBeenCalledTimes(1);
+    }));
+  }
+
+  it('retries transient failures only twice with backoff, without an immediate duplicate request', fakeAsync(() => {
+    beginRefresh();
+    http.expectOne(API.creditSnapshot).flush({}, { status: 503, statusText: 'Unavailable' });
+    flushMicrotasks();
+    http.expectNone(API.creditSnapshot);
+    tick(1000);
+    http.expectOne(API.creditSnapshot).flush({}, { status: 503, statusText: 'Unavailable' });
+    flushMicrotasks();
+    tick(5000);
+    http.expectOne(API.creditSnapshot).flush({}, { status: 503, statusText: 'Unavailable' });
+    flushMicrotasks();
+    tick(20000);
+    http.expectNone(API.creditSnapshot);
+    expect(warnings).toHaveBeenCalledTimes(3);
+  }));
+
+  it('recovers after a transport timeout', fakeAsync(() => {
+    beginRefresh();
+    const pending = http.expectOne(API.creditSnapshot);
+    tick(8000);
+    expect(pending.cancelled).toBeTrue();
+    tick(1000);
+    http.expectOne(API.creditSnapshot).flush(ledgerPayload);
+    flushMicrotasks();
+    expect(service.getAuthSnapshot()?.quotaInfoSnapshot?.creditSnapshot?.available_micros).toBe(29_993_290);
+    tick(20000);
+  }));
+
+  it('stops retrying when a background request returns a malformed schema', fakeAsync(() => {
+    beginRefresh();
+    http.expectOne(API.creditSnapshot).error(new ProgressEvent('error'));
+    flushMicrotasks();
+    tick(1000);
+    http.expectOne(API.creditSnapshot).flush({ quota_snapshots: {} });
+    flushMicrotasks();
+    tick(20000);
+    http.expectNone(API.creditSnapshot);
+    expect(warnings).toHaveBeenCalledTimes(2);
+  }));
+
+  it('preserves confirmed same-account Credits but never copies them to another account', fakeAsync(() => {
+    beginRefresh();
+    http.expectOne(API.creditSnapshot).flush(ledgerPayload);
+    flushMicrotasks();
+    beginRefresh();
+    http.expectOne(API.creditSnapshot).flush({ quota_snapshots: {} });
+    flushMicrotasks();
+    expect(service.getAuthSnapshot()?.quotaInfoSnapshot?.creditSnapshot?.available_micros).toBe(29_993_290);
+    beginRefresh({ ...user, id: 'account-b' });
+    http.expectOne(API.creditSnapshot).flush({ quota_snapshots: {} });
+    flushMicrotasks();
+    expect(service.currentUser?.id).toBe('account-b');
+    expect(service.getAuthSnapshot()?.quotaInfoSnapshot?.creditSnapshot).toBeUndefined();
+    tick(20000);
+  }));
+
+  it('does not publish an in-flight balance after the auth session is invalidated', fakeAsync(() => {
+    beginRefresh();
+    const pending = http.expectOne(API.creditSnapshot);
+    service.requestSessionInvalidation('AUTH_TOKEN_INVALID', 'http-401');
+    pending.flush(ledgerPayload);
+    flushMicrotasks();
+    expect(service.currentUser).toBeNull();
+    expect(service.getAuthSnapshot()).toBeNull();
+    tick(20000);
+  }));
+
+  it('cancels scheduled refreshes on session invalidation', fakeAsync(() => {
+    beginRefresh();
+    http.expectOne(API.creditSnapshot).flush({}, { status: 503, statusText: 'Unavailable' });
+    flushMicrotasks();
+    service.requestSessionInvalidation('AUTH_TOKEN_INVALID', 'http-401');
+    tick(20000);
+    http.expectNone(API.creditSnapshot);
+  }));
 });
 
 describe('User center Credit rendering', () => {

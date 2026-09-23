@@ -60,7 +60,7 @@ import {
 } from './project-root-path';
 import { detectProjectMode, getProjectApplicationName, type ProjectMode } from './project-mode';
 import { deriveProjectPackageName } from './project-package-name';
-import { ProjectBlockFieldUpdates, updateProjectBlockFields } from './project-block-field-updates';
+import { ProjectBlockFieldUpdates } from './project-block-field-updates';
 
 interface ProjectPackageData {
   name: string;
@@ -1123,8 +1123,7 @@ export class ProjectService {
     const originalContent = window['fs'].readFileSync(abiPath, 'utf8');
     const abi = JSON.parse(originalContent);
 
-    const updated = fieldUpdates === undefined ? { document: abi, changed: false } : updateProjectBlockFields(abi, fieldUpdates);
-    const result = await normalizeProjectDataDocument({ projectPath, document: updated.document, sourceChanged: updated.changed, originalContent, materialize: false },
+    const result = await normalizeProjectDataDocument({ projectPath, document: abi, fieldUpdates, originalContent, materialize: false },
       this.createProjectDataStore(projectPath), assertCurrent);
     this.reportProjectDataNormalization(projectPath, result);
   }
@@ -1165,6 +1164,9 @@ export class ProjectService {
   private reportProjectDataNormalization(projectPath: string,
     result: Awaited<ReturnType<typeof normalizeProjectDataDocument>>): void {
     if (result.publication && result.migration.documentChanged) this.logProjectDataMigration(projectPath, result.migration);
+    if (result.publication && result.identityMigration.length) {
+      console.info(`[ProjectImport] Migrated ${result.identityMigration.length} legacy hidden shadow identities; original ABI retained in Project Data backups.`, result.identityMigration);
+    }
     for (const warning of result.publication?.warnings ?? []) console.warn('[ProjectData] Publication cleanup:', warning);
   }
 

@@ -11,7 +11,7 @@ const { tmpdir } = require("os");
 const nodeFsp = require("node:fs/promises");
 const { calculateDirectoryStats } = require("./directory-stats");
 const { createSafeStorageBridge } = require("./safe-storage-bridge");
-const { replaceProjectText, PROJECT_FILE_PUBLICATION_VERSION } = require("./project-file-writer");
+const { replaceProjectText, PROJECT_FILE_PUBLICATION_VERSION, PROJECT_SHADOW_IDENTITY_MIGRATION_VERSION } = require("./project-file-writer");
 const { openProjectSyncStorageBridge, PROJECT_SYNC_STORAGE_VERSION } = require("./project-sync-storage");
 const { copyProjectDirectory, importProjectDirectory } = require("./project-file-copy");
 const { publishArduinoGeneratedCode, patchBuildMetadata, captureBuildSource } = require('./build-workspace-publication');
@@ -634,6 +634,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
   fs: {
     projectFilePublicationVersion: PROJECT_FILE_PUBLICATION_VERSION,
+    projectShadowIdentityMigrationVersion: PROJECT_SHADOW_IDENTITY_MIGRATION_VERSION,
     replaceProjectText: (request, assertCurrent) => replaceProjectText(request, assertCurrent),
     projectSyncStorageVersion: PROJECT_SYNC_STORAGE_VERSION,
     openProjectSyncStorage: (projectPath, assertCurrent) => openProjectSyncStorageBridge(projectPath, assertCurrent),
