@@ -3,6 +3,7 @@ import { normalizeArduinoGeneratedCode, type BlockCodeMapping } from '../compone
 import { runWithPreparedActiveProjectGenerator, type ProjectGenerator } from './blockly-generator-runtime.service';
 import { captureArduinoGeneratedArtifacts } from './generated-code-artifacts';
 import { canonicalJsonStringify } from '@domain/project/public-api';
+import { captureGeneratorProjectEffects, type GeneratorMacroEffect } from './generator-project-effects';
 
 export interface BlocklyCodeScope {
   readonly workspace: Blockly.Workspace;
@@ -22,6 +23,7 @@ export interface PreparedBlocklyCode {
   readonly blockCodeMapText: string | null;
   readonly sourceWorkspace?: Readonly<{ documentText: string; revision: number; runtimeRevision: number; pageId: string }>;
   readonly error?: string;
+  readonly projectMacros?: readonly GeneratorMacroEffect[];
 }
 
 type CodeStamp = Omit<BlocklyCodeScope, 'document'>;
@@ -51,6 +53,7 @@ export class BlocklyProjectCodePreparation {
         const code = normalizeArduinoGeneratedCode(rawCode);
         const map = (generator as { blockCodeMap?: Map<string, BlockCodeMapping> }).blockCodeMap;
         result = Object.freeze({ code, artifacts: captureArduinoGeneratedArtifacts(generator),
+          projectMacros: captureGeneratorProjectEffects(generator, before.workspace),
           blockCodeMapText: map ? JSON.stringify([...map]) : null });
       } catch (error) {
         // Saving editable Blockly does not require compilable code. Never publish partial outputs.
