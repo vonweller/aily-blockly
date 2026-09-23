@@ -955,6 +955,13 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
         this.requestMinimapSync(event);
         this.refreshWorkspaceBlockSearchForEvent(event);
 
+        // Libraries and the project document finish loading asynchronously after
+        // Blockly.inject(). Re-measure the final grid instead of leaving the SVG
+        // with its pre-load dimensions (which can also cover the external toolbox).
+        if (event.type === Blockly.Events.FINISHED_LOADING) {
+          this.scheduleWorkspaceResize();
+        }
+
         if (event.type === Blockly.Events.TOOLBOX_ITEM_SELECT) {
           this.blocklyService.syncToolboxFacadeWithWorkspace();
         }
