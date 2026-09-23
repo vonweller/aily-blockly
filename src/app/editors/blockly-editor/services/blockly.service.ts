@@ -38,7 +38,7 @@ import {
 import { captureBlocklyRootClassifier } from './blockly-root-role';
 import { captureCustomFunctionRegistration } from './blockly-custom-function-contract';
 import { BlocklyProjectRevision } from './blockly-project-revision';
-import { BlocklyProjectCodePreparation, type PreparedBlocklyCode } from './prepared-project-code';
+import { BlocklyCodePreparationInvalidatedError, BlocklyProjectCodePreparation, type PreparedBlocklyCode } from './prepared-project-code';
 import { BlocklyWorkspaceEditGate, BlocklyWorkspaceEditLease, fenceBlocklyWorkspaceInput } from './blockly-workspace-edit-lease';
 import { assertAbsProjectSharedChange } from '../../../integrations/blockly/abs/abs-project-references';
 import { AbsReferenceContractCache } from '../../../integrations/blockly/abs/abs-reference-contract-cache';
@@ -1116,7 +1116,7 @@ export class BlocklyService {
     }, force);
   }
 
-  /** UI/build consumers share the queue and may only publish the prepared revision. */
+  /** Explicit build/save consumers own edits and may only publish the prepared revision. */
   runWithPreparedProjectCode<T>(
     operation: (prepared: PreparedBlocklyCode & { code: string }, assertCurrent: () => void) => Promise<T> | T,
     force = false,
@@ -1147,6 +1147,60 @@ export class BlocklyService {
         assertCurrent();
         return result;
       } finally { lease.release(); }
+    });
+  }
+
+  /**
+   * Background preview is an optimistic reader, not an exclusive workspace edit.
+   * Keep it in the project queue to serialize against saves/ABS, but leave input,
+   * gestures and popups alone during resource preparation and artifact IO.
+   * Recheck interaction and revision after every asynchronous boundary; the
+   * caller reschedules false results. Generator model registration is synchronous.
+   */
+  runWithBackgroundProjectCode(
+    operation: (prepared: PreparedBlocklyCode & { code: string }, assertCurrent: () => void) => Promise<void> | void,
+    isInteracting: () => boolean,
+    force = false,
+  ): Promise<boolean> {
+    const workspace = this.workspace, pageId = this.getActivePageId();
+    const generator = getActiveProjectGenerator(), session = projectDataRuntime.getSessionToken();
+    const runtimeRevision = getActiveProjectGeneratorRevision();
+    const assertContext = () => {
+      if (workspace !== this.workspace || pageId !== this.getActivePageId()
+        || generator !== getActiveProjectGenerator() || session !== projectDataRuntime.getSessionToken()
+        || runtimeRevision !== getActiveProjectGeneratorRevision() || isInteracting()) {
+        throw new BlocklyCodePreparationInvalidatedError('Background code refresh was superseded by an interaction or context change.');
+      }
+    };
+    return this.runProjectOperation(async () => {
+      try {
+        const capture = () => {
+          assertContext();
+          return { ...this.captureProjectSnapshot(), workspace, generator, dataSession: session,
+            runtimeRevision, pageId };
+        };
+        const prepared = await this.projectCodePreparation.prepare(capture, force);
+        if (!prepared || prepared.code === null) throw new Error(prepared?.error ?? 'Blockly generator runtime is not active');
+        const assertCurrent = () => {
+          assertContext();
+          if (prepared.revision !== this.captureProjectSnapshot().revision) {
+            throw new BlocklyCodePreparationInvalidatedError('Project changed before background code publication.');
+          }
+        };
+        assertCurrent();
+        await operation(prepared as PreparedBlocklyCode & { code: string }, assertCurrent);
+        assertCurrent();
+        return true;
+      } catch (error) {
+        if (error instanceof BlocklyCodePreparationInvalidatedError) return false;
+        // The generator realm can be replaced during resource preparation,
+        // before our next capture callback gets a chance to check its identity.
+        try { assertContext(); } catch (contextError) {
+          if (contextError instanceof BlocklyCodePreparationInvalidatedError) return false;
+          throw contextError;
+        }
+        throw error;
+      }
     });
   }
 
