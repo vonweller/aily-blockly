@@ -134,6 +134,7 @@ describe('v2 actual workspace generation coordinator', () => {
       }),
       prepareProjectCode: jasmine.createSpy('prepareCode').and.resolveTo(null),
       markWorkspaceCodeDirty: jasmine.createSpy('dirty'),
+      requestWorkspaceVisualRefresh: jasmine.createSpy('visualRefresh'),
       publishAbsContext: jasmine.createSpy('publishAbsContext'),
       describeCommittedAbsSyntax: jasmine.createSpy('describeCommittedAbsSyntax').and.returnValue(undefined),
     };
@@ -2052,6 +2053,7 @@ describe('v2 actual workspace generation coordinator', () => {
     await expectAsync(apply(base)).toBeRejectedWith(jasmine.objectContaining({ code: 'ABS_READBACK_MISMATCH' }));
     expect(absJson(nativeState())).toBe(original); expect(disk.has('project.abi')).toBeFalse(); expect(gate.blocked).toBeFalse();
     expect(editor.restoreProjectWorkspaceSnapshot.calls.mostRecent().args[2]).toEqual(JSON.parse(original).blocks.blocks.map(block => block.id));
+    expect(editor.requestWorkspaceVisualRefresh).toHaveBeenCalledTimes(1);
   });
 
   it('does not allow Generator model additions to bypass complete state verification', async () => {
@@ -2127,6 +2129,7 @@ describe('v2 actual workspace generation coordinator', () => {
     const result = await apply(base);
     expect(result.publication.status).toBe('COMMITTED'); expect(result.warnings.length).toBe(1);
     expect(roots().getFieldValue('TEXT')).toBe('after'); expect(gate.blocked).toBeFalse();
+    expect(editor.requestWorkspaceVisualRefresh).toHaveBeenCalledTimes(1);
   });
 
   it('queued work is bound to its original page/project/runtime, not a later activation', async () => {

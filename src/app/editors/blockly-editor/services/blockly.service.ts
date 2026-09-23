@@ -216,6 +216,9 @@ export class BlocklyService {
   private generatedCodeRevision = -1;
   private latestGeneratedCode = '';
   private codeViewerRefreshRequestSubject = new Subject<boolean>();
+  private workspaceVisualRefreshRequestSubject = new Subject<Blockly.WorkspaceSvg>();
+  /** Bulk imports suppress Blockly events; visual consumers still need the final workspace. */
+  readonly workspaceVisualRefreshRequested$ = this.workspaceVisualRefreshRequestSubject.asObservable();
 
   // ==================== Block-to-Code 映射系统 ====================
   /** 当前选中的 block id（主选中块，供代码查看器等使用） */
@@ -402,6 +405,10 @@ export class BlocklyService {
 
   requestCodeViewerRefresh(forceGenerate = false): void {
     this.codeViewerRefreshRequestSubject.next(forceGenerate);
+  }
+
+  requestWorkspaceVisualRefresh(): void {
+    if (this.workspace) this.workspaceVisualRefreshRequestSubject.next(this.workspace);
   }
 
   private codeViewerPublisher: CodeViewerPublisher | null = null;
@@ -2864,6 +2871,7 @@ export class BlocklyService {
     this.persistActiveWorkspaceToState(owner);
     this.mountExternalToolbox();
     this.loadLibraryFinishedLoadingSubject.next();
+    this.requestWorkspaceVisualRefresh();
   }
 
   private restoreWorkspaceViewState(viewState?: BlocklyWorkspaceViewState) {

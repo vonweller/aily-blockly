@@ -2186,6 +2186,11 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
    * 工作区变更时（含 AI 批量修改）同步更新 Minimap，避免小地图不刷新
    */
   private initMinimapSyncDebounce(): void {
+    this.blocklyService.workspaceVisualRefreshRequested$
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(workspace => {
+        if (workspace === this.workspace) this.requestMinimapSync();
+      });
     this.minimapSyncSubject.pipe(
       debounceTime(500),
       takeUntil(this.destroy$)
@@ -2242,7 +2247,7 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   private requestMinimapSync(event?: BlocklyWorkspaceEvent): void {
-    if (!this.shouldSyncMinimapForEvent(event)) {
+    if (!this.minimap || !this.workspace || !this.shouldSyncMinimapForEvent(event)) {
       return;
     }
 
@@ -2278,7 +2283,6 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
     }
 
     this.minimapSyncInProgress = true;
-    const wasEnabled = Blockly.Events.isEnabled();
     let renderPromise: Promise<unknown> | null = null;
     try {
       Blockly.Events.disable();
@@ -2297,7 +2301,8 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
     } catch (e) {
       console.warn('[Blockly] Minimap sync failed:', e);
     } finally {
-      if (wasEnabled) Blockly.Events.enable();
+      // Events.disable is a nesting counter; release exactly our own level.
+      Blockly.Events.enable();
     }
 
     if (renderPromise) {
