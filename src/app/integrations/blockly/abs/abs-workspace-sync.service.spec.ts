@@ -139,7 +139,9 @@ describe('v2 actual workspace generation coordinator', () => {
     };
     Blockly.serialization.workspaces.load(seed(), editor.workspace);
     project = new _ProjectService(editor, {} as any, {} as any); project.currentProjectPath = scope.projectKey;
-    spyOn(project, 'publishPreparedSaveOutputs').and.resolveTo();
+    spyOn(project, 'publishPreparedSaveOutputs').and.callFake(async (_path, _prepared, _generated, guard) => {
+      expect(guard()).toBeUndefined();
+    });
     spyOn(projectDataRuntime, 'flushPending').and.resolveTo();
     spyOn(projectDataRuntime, 'prepareValue').and.resolveTo();
     spyOn(projectDataRuntime, 'getStore').and.returnValue({ collectReferences: () => [], validateReferences: async () => ({ valid: true, issues: [] }) } as any);

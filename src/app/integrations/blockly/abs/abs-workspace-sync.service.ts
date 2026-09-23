@@ -197,7 +197,7 @@ export class AbsWorkspaceSyncService {
       if (publication.status === 'COMMITTED') {
         assertCurrent();
         if (prepared) {
-          try { await this.project.publishPreparedSaveOutputs(context.path, prepared, generated, assertCurrent); }
+          try { await this.project.publishPreparedSaveOutputs(context.path, prepared, generated, () => { assertCurrent(); }); }
           catch (error) { warnings.push(`Canvas synchronized; derived outputs were not fully published: ${String(error)}`); }
           assertCurrent();
         }
@@ -391,7 +391,7 @@ export class AbsWorkspaceSyncService {
         }
         assertApplied();
         const warnings: string[] = [];
-        try { await this.project.publishPreparedSaveOutputs(context.path, prepared, generated, assertApplied); }
+        try { await this.project.publishPreparedSaveOutputs(context.path, prepared, generated, () => { assertApplied(); }); }
         catch (error) { warnings.push(`Generation committed; derived outputs were not fully published: ${String(error)}`); }
         const published = assertApplied();
         this.editor.publishAbsContext(projection, published.revision, context.assertCurrent);
