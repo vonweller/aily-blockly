@@ -16,14 +16,8 @@ import { NoticeService, ActionState, ActionService, WorkflowService, ProcessStat
 import { NzModalService } from "ng-zorro-antd/modal";
 import { CmdOutput, CmdService, LogService, AppDataResourceLockService } from '@core/platform/public-api';
 import { NpmService } from "@domain/dependencies/public-api";
-import {
-  normalizeArduinoGeneratedCode,
-} from "../components/blockly/generators/arduino/arduino";
-import {
-  runWithPreparedActiveProjectGenerator,
-} from './blockly-generator-runtime.service';
 import { BlocklyService } from "./blockly.service";
-import { writeArduinoGeneratedArtifacts } from './generated-code-artifacts';
+import { writePreparedArduinoGeneratedArtifacts } from './generated-code-artifacts';
 import { appendProjectLog, type ProjectLogLevel } from '../../../utils/project-log.utils';
 
 interface NetworkOtaUploadTarget {
@@ -110,6 +104,9 @@ export class _UploaderService {
     /Writing\s+at\s+0x[0-9a-f]+\.\.\.\s+\(\d+\s*%\)/i,
     // Wrote and verified address 0x08001700 (79.31%)
     /Wrote\s+and\s+verified\s+address\s+0x[0-9a-f]+\s+\((\d+(?:\.\d+)?)%\)/i,
+    // stc-cli (STC32): Writing...  50% (93440/186880 bytes)
+    // 限定完整写入格式，避免将其他工具的普通百分比日志识别为上传进度。
+    /^Writing\.\.\.\s+(\d+(?:\.\d+)?)\s*%\s+\(\d+\/\d+\s+bytes\)$/i,
     // 或者只是数字+百分号（例如：[====>    ] 70%）
     /\b(\d+(?:\.\d+)?)%\b/,
     // 70% 13/18
@@ -424,22 +421,12 @@ export class _UploaderService {
             this.coderBuildActive = false;
           }
         } else {
-          const projectDocument = this.blocklyService.getProjectDocument();
-          const generated = await runWithPreparedActiveProjectGenerator(
-            this.blocklyService.workspace,
-            (generator) => ({
-              code: normalizeArduinoGeneratedCode(
-                generator.workspaceToCode(this.blocklyService.workspace),
-              ),
-              generator,
-            }),
-            projectDocument,
-          );
-          const { code, generator } = generated;
-          await writeArduinoGeneratedArtifacts(
-            projectPath,
-            generator,
-          );
+          const code = await this.blocklyService.runWithPreparedProjectCode(async (prepared, assertCurrent) => {
+            if (projectPath !== this.projectService.currentProjectPath) throw new Error('Upload project changed.');
+            await writePreparedArduinoGeneratedArtifacts(projectPath, prepared.artifacts);
+            assertCurrent();
+            return prepared.code;
+          });
           buildPath = await this.projectService.getBuildPath();
           const needsBuild = !this._builderService.passed ||
                             code !== this._builderService.lastCode ||

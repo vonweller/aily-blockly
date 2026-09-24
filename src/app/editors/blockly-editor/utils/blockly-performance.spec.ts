@@ -1,9 +1,11 @@
 import * as Blockly from 'blockly';
-import { installBlocklyVariableComparator, WorkspaceCodeChangeTracker } from './blockly-performance';
+import {
+  installBlocklyVariableComparator,
+  WorkspaceCodeChangeTracker,
+  isBlocklyWorkspaceInteracting,
+} from './blockly-performance';
 import { ArduinoGenerator } from '../components/blockly/generators/arduino/arduino';
-import { findOversizedInlineValues } from '../../../services/domains/project/project-data/project-data-policy';
-import { ProjectDataStore } from '../../../services/domains/project/project-data/project-data-store';
-import { ProjectDataFileSystem } from '../../../services/domains/project/project-data/project-data-file-system';
+import { findOversizedInlineValues, ProjectDataStore, type ProjectDataFileSystem } from '@domain/project/public-api';
 
 describe('large Blockly workspaces', () => {
   let workspace: Blockly.Workspace;
@@ -103,12 +105,39 @@ describe('large Blockly workspaces', () => {
     topBlocks.and.callThrough();
   });
 
+  it('defers for pointer gestures, editors, dropdowns and focused text including IME pauses', () => {
+    const widget = spyOn(Blockly.WidgetDiv, 'isVisible').and.returnValue(false);
+    const dropdown = spyOn(Blockly.DropDownDiv, 'isVisible').and.returnValue(false);
+    const target = { currentGesture_: null, isDragging: () => false,
+      getInjectionDiv: () => document.body } as any;
+    expect(isBlocklyWorkspaceInteracting(target)).toBeFalse();
+    target.currentGesture_ = {};
+    expect(isBlocklyWorkspaceInteracting(target)).toBeTrue();
+    target.currentGesture_ = null;
+    widget.and.returnValue(true);
+    expect(isBlocklyWorkspaceInteracting(target)).toBeTrue();
+    widget.and.returnValue(false); dropdown.and.returnValue(true);
+    expect(isBlocklyWorkspaceInteracting(target)).toBeTrue();
+    dropdown.and.returnValue(false);
+    for (const tag of ['input', 'textarea', 'select', 'div']) {
+      const input = document.createElement(tag);
+      if (tag === 'div') input.contentEditable = 'true';
+      document.body.append(input);
+      try {
+        input.focus();
+        expect(isBlocklyWorkspaceInteracting(target)).withContext(tag).toBeTrue();
+        input.blur();
+        expect(isBlocklyWorkspaceInteracting(target)).withContext(`${tag} blurred`).toBeFalse();
+      } finally { input.remove(); }
+    }
+  });
+
   it('scans deeply nested data without overflowing and keeps diagnostic paths and reference validation', () => {
     const ref = { $ailyData: { schemaVersion: 1, id: `sha256:${'a'.repeat(64)}`, logicalType: 'text', codec: 'utf8-v1', storage: 'raw-v1', rawLength: 1, storedLength: 1 } } as const;
     // No IO is required to traverse/validate metadata.
     const store = new ProjectDataStore({} as ProjectDataFileSystem);
     let document: any = { id: 'leaf', type: 'test', fields: { TEXT: 'oversized' } };
-    for (let index = 0; index < 12000; index++) document = { next: { block: document } };
+    for (let index = 0; index < 12000; index++) document = { type: 'test', next: { block: document } };
     const diagnostics = findOversizedInlineValues(document, 3);
     expect(diagnostics.length).toBe(1);
     expect(diagnostics[0].blockId).toBe('leaf');

@@ -29,6 +29,7 @@ import { ConfigService } from '@core/preferences/public-api';
 import { AuthService } from '@core/auth/public-api';
 import { AppItem } from '../../../configs/tool.config';
 import { AppStoreService } from '../../../tools/app-store/app-store.service';
+import { RequiredSubappService } from '@integration/subapps/public-api';
 import { Subscription } from 'rxjs';
 import { BlocklyService } from '../../../editors/blockly-editor/services/blockly.service';
 import {
@@ -82,6 +83,7 @@ interface NetworkOtaTarget {
 export class HeaderComponent implements OnInit, OnDestroy {
   private readonly coderRuntime = inject(CoderProjectRuntimeService);
   private readonly coderPersistence = inject(CodeEditorProProjectService);
+  private readonly requiredSubapps = inject(RequiredSubappService);
   private readonly coderHeaderButtons = new Map<string, IMenuItem[]>();
 
   headerBtns: IMenuItem[] = HEADER_BTNS;
@@ -112,6 +114,10 @@ export class HeaderComponent implements OnInit, OnDestroy {
   private networkOtaScanStreamId: string | null = null;
   private unsaveDialogOpen = false; // 标记未保存对话框是否已打开
   private selectDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private openingPartitionManager = false;
+  private destroyed = false;
+  private partitionInstallSubscription?: Subscription;
+  private partitionInstallMessageId?: string;
   private unregisterHeaderMenuAutomation: (() => void) | null = null;
   private connectorStateSubscription?: Subscription;
 
@@ -1416,6 +1422,8 @@ export class HeaderComponent implements OnInit, OnDestroy {
   }
 
   ngOnDestroy() {
+    this.destroyed = true;
+    this.clearPartitionInstallNotice();
     document.removeEventListener('pointerdown', this.onProjectTitleOutsidePointerDown, true);
     this.unregisterHeaderMenuAutomation?.();
     this.unregisterHeaderMenuAutomation = null;
@@ -1881,101 +1889,44 @@ export class HeaderComponent implements OnInit, OnDestroy {
       && String(subItem.data || '').toLowerCase() === 'custom';
   }
 
-  private getCustomPartitionPaths(): { srcDir: string; requiredFilePath: string; legacyFilePath: string } | null {
-    const projectRoot = this.projectService.currentProjectPath;
-    if (!projectRoot) {
-      return null;
+  private clearPartitionInstallNotice(): void {
+    this.partitionInstallSubscription?.unsubscribe();
+    this.partitionInstallSubscription = undefined;
+    if (this.partitionInstallMessageId) {
+      this.message.remove(this.partitionInstallMessageId);
+      this.partitionInstallMessageId = undefined;
     }
-    const pathApi = window['path'];
-    const sourceRoot = this.projectService.isAilyCodeProject(projectRoot)
-      ? pathApi.join(projectRoot, 'sketch', 'src')
-      : pathApi.join(projectRoot, 'src');
-    return {
-      srcDir: sourceRoot,
-      requiredFilePath: pathApi.join(sourceRoot, 'partitions.csv'),
-      legacyFilePath: pathApi.join(projectRoot, 'partitions.csv'),
-    };
   }
 
-  private fileExists(filePath: string): boolean {
+  private async openPartitionManager(): Promise<void> {
+    const projectPath = this.projectService.currentProjectPath;
+    if (!projectPath || this.openingPartitionManager || this.destroyed) return;
+    this.openingPartitionManager = true;
+    this.closePortList();
     try {
-      return window['fs']?.existsSync?.(filePath) === true;
-    } catch {
-      return false;
-    }
-  }
-
-  private normalizeComparablePath(filePath: string): string {
-    return String(filePath || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
-  }
-
-  private copyPartitionFile(sourcePath: string, targetPath: string, srcDir: string): void {
-    if (!this.fileExists(srcDir)) {
-      window['fs'].mkdirSync(srcDir, { recursive: true });
-    }
-    if (this.normalizeComparablePath(sourcePath) === this.normalizeComparablePath(targetPath)) {
-      return;
-    }
-    window['fs'].copySync(sourcePath, targetPath);
-  }
-
-  private async selectCustomPartitionFile(defaultPath: string): Promise<string> {
-    const dialog = (window as any).dialog;
-    if (dialog?.selectFiles) {
-      const result = await dialog.selectFiles({
-        title: '选择 ESP32 分区文件',
-        defaultPath,
-        properties: ['openFile'],
-        filters: [
-          { name: 'CSV', extensions: ['csv'] },
-          { name: 'All Files', extensions: ['*'] },
-        ],
+      this.partitionInstallSubscription = this.requiredSubapps.observe('ffs-manager-child').subscribe(state => {
+        if (!state.installing || this.partitionInstallMessageId) return;
+        this.partitionInstallMessageId = this.message.loading(
+          '正在安装 ESP32 分区管理器…',
+          { nzDuration: 0 },
+        ).messageId;
       });
-      return result?.canceled ? '' : String(result?.filePaths?.[0] || '');
-    }
-
-    return await window['ipcRenderer'].invoke('select-file', {
-      title: '选择 ESP32 分区文件',
-      path: defaultPath,
-    });
-  }
-
-  private async ensureCustomPartitionFileForUserSelection(): Promise<{ ready: boolean; changed: boolean }> {
-    const paths = this.getCustomPartitionPaths();
-    if (!paths) {
-      this.message.error('当前没有打开的项目，无法设置自定义分区');
-      return { ready: false, changed: false };
-    }
-
-    if (this.fileExists(paths.requiredFilePath)) {
-      return { ready: true, changed: false };
-    }
-
-    if (this.fileExists(paths.legacyFilePath)) {
-      try {
-        this.copyPartitionFile(paths.legacyFilePath, paths.requiredFilePath, paths.srcDir);
-        this.message.info(`已将分区文件迁移到 ${paths.requiredFilePath}`);
-        return { ready: true, changed: true };
-      } catch (error) {
-        console.warn('迁移分区文件失败:', error);
-        this.message.error(`迁移分区文件失败，请手动放置到 ${paths.requiredFilePath}`);
-        return { ready: false, changed: false };
+      await this.requiredSubapps.ensureInstalled('ffs-manager-child');
+      // Installation can finish after the user has left the original project/window.
+      if (this.destroyed || this.projectService.currentProjectPath !== projectPath) return;
+      if (!this.uiService.openToolWindow('ffs-manager-child', {
+        title: 'ESP32 分区管理器', width: 920, height: 820, minWidth: 680, minHeight: 560,
+      })) {
+        throw new Error('子应用入口不可用');
       }
-    }
-
-    const selectedFilePath = await this.selectCustomPartitionFile(paths.srcDir);
-    if (!selectedFilePath) {
-      this.message.warning('未选择分区文件，已取消自定义分区设置');
-      return { ready: false, changed: false };
-    }
-
-    try {
-      this.copyPartitionFile(selectedFilePath, paths.requiredFilePath, paths.srcDir);
-      return { ready: true, changed: true };
     } catch (error) {
-      console.warn('复制分区文件失败:', error);
-      this.message.error(`复制分区文件失败，请手动放置到 ${paths.requiredFilePath}`);
-      return { ready: false, changed: false };
+      if (!this.destroyed && this.projectService.currentProjectPath === projectPath) {
+        const detail = error instanceof Error ? error.message : String(error);
+        this.message.error(`无法打开 ESP32 分区管理器：${detail}。请再次点击“自定义分区”重试。`, { nzDuration: 6000 });
+      }
+    } finally {
+      this.clearPartitionInstallNotice();
+      this.openingPartitionManager = false;
     }
   }
 
@@ -1986,21 +1937,18 @@ export class HeaderComponent implements OnInit, OnDestroy {
       clearTimeout(this.selectDebounceTimer);
     }
 
+    if (this.isCustomPartitionSubItem(subItem)) {
+      this.selectDebounceTimer = null;
+      if (!subItem.disabled) await this.openPartitionManager();
+      return;
+    }
+
     this.selectDebounceTimer = setTimeout(async () => {
       this.selectDebounceTimer = null;
 
-      let customPartitionChanged = false;
-      if (this.isCustomPartitionSubItem(subItem)) {
-        const partitionResult = await this.ensureCustomPartitionFileForUserSelection();
-        if (!partitionResult.ready) {
-          return;
-        }
-        customPartitionChanged = partitionResult.changed;
-      }
-
       const configChanged = await persistBoardConfigSelection(this.projectService, subItem);
       const shouldRunEffects = shouldRunBoardConfigSelectionEffects(
-        configChanged || customPartitionChanged,
+        configChanged,
         subItem,
       );
       if (!shouldRunEffects) {
@@ -2024,7 +1972,7 @@ export class HeaderComponent implements OnInit, OnDestroy {
         await this.uploaderService.flashSoftdevice(subItem.data, this.serialService.currentPort);
       }
 
-      if (configChanged || customPartitionChanged) {
+      if (configChanged) {
         this.builderService.triggerPreprocess('config-changed');
       }
     }, 500);
