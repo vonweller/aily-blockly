@@ -6,6 +6,7 @@ const {
     getCmdProcessMessagePortInfo,
     killCmdProcess,
     onCmdProcessMessage,
+    onCmdProcessExit,
     sendCmdProcessMessage,
 } = require('./cmd');
 const { killRegisteredProcessTree } = require('./process-tree');
@@ -19,6 +20,7 @@ const {
     classifyRegistration: classifyChildToolSessionRegistration,
     electMessageControllerOwner: electChildToolMessageControllerOwner,
     ownerCount: childToolOwnerCount,
+    hasOwnerId: childToolHasOwnerId,
     releaseOwner: releaseChildToolOwner,
     releaseOwnerFromSessions: releaseChildToolOwnerFromSessions,
     setMessageControllerOwner: setChildToolMessageControllerOwner,
@@ -26,11 +28,7 @@ const {
 const {
     stopChildToolSessionProcess: stopChildToolSessionProcessWithDependencies,
 } = require('./child-tool-session-process');
-const {
-    AILY_HOST_AUTH_CHANNEL,
-    normalizeAilyHostAuthResult,
-    parseAilyHostAuthRequest,
-} = require('./aily-host-auth-process-bridge');
+const { AilyHostAuthRelay } = require('./aily-host-auth-relay');
 const {
     BUILTIN_SUB_WINDOW_MINIMUM_SIZE,
     CHILD_WINDOW_LAYOUTS,
@@ -40,8 +38,12 @@ const {
     resolveChildWindowClass,
     resolveChildWindowMinimumSize,
 } = require('./child-window-layout');
+const {
+    attachMacWindowCloseBridge,
+    authorizeRendererWindowClose,
+    shouldUseNativeMacFrame,
+} = require('./mac-window-controls');
 const { exec, execSync } = require('child_process');
-const { randomUUID } = require('crypto');
 const path = require('path');
 const fs = require('fs');
 
@@ -56,15 +58,19 @@ const CHILD_TOOL_RELEASE_GRACE_MS = 15000;
 const CHILD_TOOL_PENDING_MESSAGE_LIMIT = 16;
 const CHILD_TOOL_PENDING_STREAM_LIMIT = 16;
 const CHILD_TOOL_PENDING_TOTAL_BYTES = 1024 * 1024;
-const AILY_HOST_AUTH_REQUEST_TIMEOUT_MS = 15000;
-const AILY_HOST_AUTH_MAX_PENDING_REQUESTS = 128;
 
 /** @type {Map<string, { hostInfo: any, streamId: string, messagePort: any, owners: Map<string, any>, releaseTimer: NodeJS.Timeout | null }>} */
 const childToolSessions = new Map();
+const { SubappOwnerSupervisor, registerSubappOwnerSupervisor } = require('./subapp-owner-supervisor');
+const subappOwnerSupervisor = new SubappOwnerSupervisor({
+    resolveRuntime: (toolId, ownerId) => {
+        const runtime = childToolSessions.get(toolId);
+        return runtime && childToolHasOwnerId(runtime, ownerId) ? runtime : null;
+    },
+});
 const childToolOwnerCleanupRegistrations = new Set();
 const pendingChildToolProcessMessages = new Map();
-const pendingAilyHostAuthRequests = new Map();
-let ailyHostAuthMainWindow = null;
+let ailyHostAuthRelay = null;
 const SUB_WINDOW_DARK_BACKGROUND_COLOR = '#2b2d30';
 const SUB_WINDOW_LIGHT_BACKGROUND_COLOR = '#e8e8e8';
 
@@ -118,6 +124,12 @@ function readSubWindowMinimumSize(win) {
 let applicationIsQuitting = false;
 app.once('before-quit', () => {
     applicationIsQuitting = true;
+    // Notify every renderer in this host before main.js terminates its child processes.
+    for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
+            win.webContents.send('child-tool-host-shutdown');
+        }
+    }
 });
 
 function isDevServeSubWindow() {
@@ -185,13 +197,33 @@ function cancelChildToolRelease(session) {
 }
 
 async function stopChildToolSessionProcess(session) {
-    return await stopChildToolSessionProcessWithDependencies(session, {
-        fetchImpl: typeof fetch === 'function' ? fetch : undefined,
-        getActiveProcesses: getActiveCmdProcesses,
-        isPidAlive,
-        killProcessTree: killRegisteredProcessTree,
-        killStream: killCmdProcess,
-    });
+    if (!session) return false;
+    session.stopping = true;
+    try {
+        if (session.nativeStop) {
+            try { await session.nativeStop(); }
+            catch (error) {
+                console.warn('[ChildToolSession] Native cleanup remains unconfirmed', { streamId: session.streamId, code: error.code || 'SUBAPP_STOP_UNCONFIRMED' });
+                return false;
+            }
+            handleChildToolProcessExit({ streamId: session.streamId, code: 0, signal: null, expected: true });
+            return true;
+        }
+        const stopped = await stopChildToolSessionProcessWithDependencies(session, {
+            fetchImpl: typeof fetch === 'function' ? fetch : undefined,
+            getActiveProcesses: getActiveCmdProcesses,
+            isPidAlive,
+            killProcessTree: killRegisteredProcessTree,
+            killStream: killCmdProcess,
+        });
+        // Windows may confirm termination before Node delivers the close event.
+        if (stopped) {
+            handleChildToolProcessExit({ streamId: session.streamId, code: null, signal: null, expected: true });
+        }
+        return stopped;
+    } finally {
+        session.stopping = false;
+    }
 }
 
 function deliverChildToolProcessMessage(toolId, session, message) {
@@ -232,86 +264,13 @@ function routeChildToolProcessMessage(event) {
     const sessionEntry = Array.from(childToolSessions.entries())
         .find(([, session]) => session.streamId === streamId);
     if (sessionEntry) {
-        if (relayAilyHostAuthRequest(sessionEntry[0], sessionEntry[1], event.message)) {
+        if (ailyHostAuthRelay?.handle(sessionEntry[0], sessionEntry[1].streamId, event.message)) {
             return;
         }
         deliverChildToolProcessMessage(sessionEntry[0], sessionEntry[1], event.message);
         return;
     }
     bufferPendingChildToolProcessMessage(streamId, event);
-}
-
-function relayAilyHostAuthRequest(toolId, session, message) {
-    const parsed = parseAilyHostAuthRequest(toolId, message);
-    if (!parsed.handled) return false;
-    if (!parsed.valid) {
-        void sendAilyHostAuthProcessResponse(session.streamId, parsed.requestId, parsed.result);
-        return true;
-    }
-
-    if (
-        !ailyHostAuthMainWindow
-        || ailyHostAuthMainWindow.isDestroyed()
-        || ailyHostAuthMainWindow.webContents.isDestroyed()
-    ) {
-        void sendAilyHostAuthProcessResponse(session.streamId, parsed.requestId, {
-            ok: false,
-            errorCode: 'HOST_AUTH_UNAVAILABLE',
-            message: 'The main-window authentication service is unavailable',
-        });
-        return true;
-    }
-
-    while (pendingAilyHostAuthRequests.size >= AILY_HOST_AUTH_MAX_PENDING_REQUESTS) {
-        const oldestRelayId = pendingAilyHostAuthRequests.keys().next().value;
-        completeAilyHostAuthRequest(oldestRelayId, {
-            ok: false,
-            errorCode: 'HOST_AUTH_BUSY',
-            message: 'The host authentication bridge is busy',
-        });
-    }
-
-    const relayId = randomUUID();
-    const timer = setTimeout(() => {
-        completeAilyHostAuthRequest(relayId, {
-            ok: false,
-            errorCode: 'HOST_AUTH_TIMEOUT',
-            message: 'The host authentication request timed out',
-        });
-    }, AILY_HOST_AUTH_REQUEST_TIMEOUT_MS);
-    pendingAilyHostAuthRequests.set(relayId, {
-        streamId: session.streamId,
-        requestId: parsed.requestId,
-        timer,
-    });
-
-    ailyHostAuthMainWindow.webContents.send('child-tool-host-auth-request', {
-        relayId,
-        operation: parsed.operation,
-        ...(parsed.rejectedGeneration !== undefined
-            ? { rejectedGeneration: parsed.rejectedGeneration }
-            : {}),
-    });
-    return true;
-}
-
-function completeAilyHostAuthRequest(relayId, rawResult) {
-    const pending = pendingAilyHostAuthRequests.get(relayId);
-    if (!pending) return false;
-    clearTimeout(pending.timer);
-    pendingAilyHostAuthRequests.delete(relayId);
-    const result = normalizeAilyHostAuthResult(rawResult);
-    void sendAilyHostAuthProcessResponse(pending.streamId, pending.requestId, result);
-    return true;
-}
-
-function sendAilyHostAuthProcessResponse(streamId, requestId, result) {
-    return sendCmdProcessMessage(streamId, {
-        channel: AILY_HOST_AUTH_CHANNEL,
-        type: 'response',
-        requestId,
-        result,
-    });
 }
 
 function bufferPendingChildToolProcessMessage(streamId, event) {
@@ -354,6 +313,23 @@ function flushPendingChildToolProcessMessages(toolId, session) {
 }
 
 onCmdProcessMessage(routeChildToolProcessMessage);
+onCmdProcessExit(handleChildToolProcessExit);
+
+function handleChildToolProcessExit(event) {
+    pendingChildToolProcessMessages.delete(event.streamId);
+    ailyHostAuthRelay?.releaseProcess(event.streamId);
+    for (const [toolId, session] of childToolSessions) {
+        if (session.streamId !== event.streamId || session.exit) continue;
+        session.exit = {
+            code: event.code,
+            signal: event.signal,
+            expected: event.expected || session.stopping === true || applicationIsQuitting,
+        };
+        cancelChildToolRelease(session);
+        console.info('[ChildToolSession] Runtime exited', { toolId, streamId: event.streamId, ...session.exit });
+        broadcastChildToolSessionStateChanged();
+    }
+}
 
 function scheduleChildToolRelease(toolId, session) {
     if (!session || session.releaseTimer) {
@@ -387,10 +363,13 @@ function scheduleChildToolRelease(toolId, session) {
             toolId,
             streamId: session.streamId,
         });
-        void stopChildToolSessionProcess(session).finally(() => {
+        void stopChildToolSessionProcess(session).then(stopped => {
+            if (!stopped || childToolSessions.get(toolId) !== session) return;
             pendingChildToolProcessMessages.delete(session.streamId);
             childToolSessions.delete(toolId);
             broadcastChildToolSessionStateChanged();
+        }).catch(() => {
+            console.warn('[ChildToolSession] Release failed; Runtime registration retained', { toolId, streamId: session.streamId });
         });
     }, CHILD_TOOL_RELEASE_GRACE_MS);
 }
@@ -459,6 +438,10 @@ function trackChildToolSessionOwner(webContents) {
         return ownerId;
     }
     childToolOwnerCleanupRegistrations.add(ownerId);
+    webContents.on('render-process-gone', () => releaseChildToolSessionsForOwner(ownerId));
+    webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
+        if (isMainFrame && !isInPlace) releaseChildToolSessionsForOwner(ownerId);
+    });
     webContents.once('destroyed', () => {
         childToolOwnerCleanupRegistrations.delete(ownerId);
         releaseChildToolSessionsForOwner(ownerId);
@@ -479,24 +462,34 @@ async function restartChildToolSession(toolId) {
         return { success: false, reason: 'process-still-running' };
     }
     pendingChildToolProcessMessages.delete(session.streamId);
-    childToolSessions.delete(normalizedToolId);
+    if (childToolSessions.get(normalizedToolId) === session) childToolSessions.delete(normalizedToolId);
     return { success: true };
 }
 
-function resolveChildToolIdsForCatalogId(catalogId) {
+function resolveChildToolIdsForCatalogId(catalogId, includeDependencies = false) {
     const id = sanitizeChildToolId(catalogId);
     if (!id) return [];
+    const dependants = includeDependencies ? [...childToolSessions.entries()]
+        .filter(([, session]) => session.nativePackageDependencies?.includes(id)).map(([toolId]) => toolId) : [];
     try {
         const { TOOL_ID_ALIASES } = require('./subapp-manager');
         const aliased = TOOL_ID_ALIASES[id];
-        return Array.from(new Set([id, aliased].filter(Boolean)));
+        return Array.from(new Set([id, aliased, ...dependants].filter(Boolean)));
     } catch (_) {
-        return [id];
+        return [id, ...dependants];
     }
 }
 
+function getRunningSubappConfig(catalogId) {
+    for (const toolId of resolveChildToolIdsForCatalogId(catalogId)) {
+        const session = childToolSessions.get(toolId);
+        if (session?.hostInfo?.runtimeConfig) return session.hostInfo.runtimeConfig;
+    }
+    return null;
+}
+
 function listChildToolHoldersForCatalogId(catalogId) {
-    const toolIds = resolveChildToolIdsForCatalogId(catalogId);
+    const toolIds = resolveChildToolIdsForCatalogId(catalogId, true);
     const holders = [];
     for (const toolId of toolIds) {
         const session = childToolSessions.get(toolId);
@@ -515,7 +508,7 @@ function listChildToolHoldersForCatalogId(catalogId) {
 }
 
 async function forceStopChildToolByCatalogId(catalogId) {
-    const toolIds = resolveChildToolIdsForCatalogId(catalogId);
+    const toolIds = resolveChildToolIdsForCatalogId(catalogId, true);
     let stopped = false;
     let failed = false;
     for (const toolId of toolIds) {
@@ -530,7 +523,7 @@ async function forceStopChildToolByCatalogId(catalogId) {
         if (session.streamId) {
             pendingChildToolProcessMessages.delete(session.streamId);
         }
-        childToolSessions.delete(toolId);
+        if (childToolSessions.get(toolId) === session) childToolSessions.delete(toolId);
         stopped = true;
     }
     if (stopped) {
@@ -543,7 +536,7 @@ async function forceStopChildToolByCatalogId(catalogId) {
 }
 
 function isChildToolSessionAlive(session) {
-    if (!session) {
+    if (!session || session.exit) {
         return false;
     }
     if (session.streamId && getActiveCmdProcesses().some(processInfo => processInfo.streamId === session.streamId)) {
@@ -558,13 +551,14 @@ function listChildToolSessions() {
     );
     return Array.from(childToolSessions.entries()).map(([toolId, session]) => {
         const processInfo = session?.streamId ? activeProcesses.get(session.streamId) : null;
-        const running = !!processInfo || isPidAlive(session?.hostInfo?.pid);
+        const running = !session.exit && (!!processInfo || isPidAlive(session?.hostInfo?.pid));
         return {
             toolId,
             streamId: session?.streamId || '',
             hostInfo: session?.hostInfo || null,
             refCount: childToolOwnerCount(session),
             running,
+            ...(session.exit ? { exit: session.exit } : {}),
             pid: processInfo?.pid ?? session?.hostInfo?.pid,
             command: processInfo?.command || '',
             cwd: processInfo?.cwd || '',
@@ -605,13 +599,14 @@ function pushPooledSubWindow(loadBasePage) {
     }
     try {
         const win = new BrowserWindow({
-            frame: false,
+            frame: shouldUseNativeMacFrame(),
             show: false,
             opacity: 0,
             backgroundColor: getSubWindowBackgroundColor(),
             skipTaskbar: true,
             autoHideMenuBar: true,
             thickFrame: true,
+            closable: true,
             titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
             alwaysOnTop: false,
             width: 800,
@@ -814,25 +809,36 @@ function terminateAilyProcess() {
 }
 
 function registerWindowHandlers(mainWindow, options = {}) {
-    ailyHostAuthMainWindow = mainWindow;
+    registerSubappOwnerSupervisor(ipcMain, subappOwnerSupervisor);
+    const authRelay = new AilyHostAuthRelay({
+        sendToRenderer: payload => mainWindow.webContents.send('child-tool-host-auth-request', payload),
+        sendToProcess: sendCmdProcessMessage,
+    });
+    ailyHostAuthRelay = authRelay;
     const resolveRendererUrl = typeof options.resolveRendererUrl === 'function'
         ? options.resolveRendererUrl
         : null;
-    ipcMain.on('child-tool-host-auth-response', (event, payload = {}) => {
+    const onAuthResponse = (event, payload = {}) => {
         if (event.sender !== mainWindow.webContents) return;
         const relayId = typeof payload.relayId === 'string' ? payload.relayId.trim() : '';
         if (!relayId) return;
-        completeAilyHostAuthRequest(relayId, payload.result);
+        authRelay.complete(relayId, payload.result);
+    };
+    const onAuthReady = (event, payload = {}) => {
+        if (event.sender === mainWindow.webContents
+            && payload.generation > 0
+            && payload.generation === options.getRendererGeneration?.()) authRelay.rendererReady();
+    };
+    ipcMain.on('child-tool-host-auth-response', onAuthResponse);
+    ipcMain.on('renderer-ready', onAuthReady);
+    mainWindow.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
+        if (isMainFrame && !isInPlace) authRelay.rendererUnavailable();
     });
+    mainWindow.webContents.on('render-process-gone', () => authRelay.rendererUnavailable());
     mainWindow.once('closed', () => {
-        if (ailyHostAuthMainWindow === mainWindow) ailyHostAuthMainWindow = null;
-        for (const relayId of Array.from(pendingAilyHostAuthRequests.keys())) {
-            completeAilyHostAuthRequest(relayId, {
-                ok: false,
-                errorCode: 'HOST_AUTH_UNAVAILABLE',
-                message: 'The main-window authentication service is unavailable',
-            });
-        }
+        ipcMain.removeListener('child-tool-host-auth-response', onAuthResponse);
+        ipcMain.removeListener('renderer-ready', onAuthReady);
+        authRelay.close();
     });
 
     // 添加一个映射来存储已打开的窗�?
@@ -1322,6 +1328,15 @@ function registerWindowHandlers(mainWindow, options = {}) {
      */
     const attachSubWindowLifecycleListeners = (subWindow, windowUrl) => {
         subWindow.on('focus', () => moveFocusedWindowToTop(subWindow));
+        attachMacWindowCloseBridge(
+            subWindow,
+            () => {
+                if (!subWindow.isDestroyed() && !subWindow.webContents.isDestroyed()) {
+                    subWindow.webContents.send('window-close-request');
+                }
+            },
+            { isQuitting: () => applicationIsQuitting },
+        );
 
         subWindow.on('enter-full-screen', () => {
             try {
@@ -1396,13 +1411,14 @@ function registerWindowHandlers(mainWindow, options = {}) {
         let win;
         try {
             win = new BrowserWindow({
-                frame: false,
+                frame: shouldUseNativeMacFrame(),
                 show: false,
                 opacity: 0,
                 backgroundColor: getSubWindowBackgroundColor(),
                 skipTaskbar: true,
                 autoHideMenuBar: true,
                 thickFrame: true,
+                closable: true,
                 titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
                 alwaysOnTop: false,
                 width: 700,
@@ -1693,12 +1709,13 @@ function registerWindowHandlers(mainWindow, options = {}) {
 
         if (!subWindow) {
             subWindow = new BrowserWindow({
-                frame: false,
+                frame: shouldUseNativeMacFrame(),
                 show: false,
                 opacity: 0,
                 backgroundColor: getSubWindowBackgroundColor(),
                 autoHideMenuBar: true,
                 thickFrame: true,
+                closable: true,
                 titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
                 alwaysOnTop,
                 width,
@@ -1964,7 +1981,7 @@ function registerWindowHandlers(mainWindow, options = {}) {
             return { success: false, reason: 'process-still-running' };
         }
         pendingChildToolProcessMessages.delete(session.streamId);
-        childToolSessions.delete(normalizedToolId);
+        if (childToolSessions.get(normalizedToolId) === session) childToolSessions.delete(normalizedToolId);
         notifyChildToolSessionStateChanged();
         return { success: true };
     });
@@ -1996,6 +2013,7 @@ function registerWindowHandlers(mainWindow, options = {}) {
             // Attempt to terminate any residual helper processes on exit.
             terminateAilyProcess();
         } else {
+            authorizeRendererWindowClose(senderWindow);
             senderWindow.close();
         }
     });
@@ -2198,4 +2216,28 @@ module.exports = {
     registerWindowHandlers,
     forceStopChildToolByCatalogId,
     listChildToolHoldersForCatalogId,
+    getRunningSubappConfig,
+    nativeSubappRegistry: {
+        supervisor: subappOwnerSupervisor,
+        register(sender, { toolId, streamId, publicInfo, stop, packageDependencies = [] }) {
+            const processInfo = getActiveCmdProcesses().find(info => info.streamId === streamId);
+            if (sender.isDestroyed() || !processInfo || processInfo.pid !== publicInfo.pid || typeof stop !== 'function') {
+                throw new Error('Native Runtime must belong to a live supervised process.');
+            }
+            const existing = childToolSessions.get(toolId);
+            if (existing && isChildToolSessionAlive(existing)) throw new Error('Native Runtime is already registered.');
+            cancelChildToolRelease(existing);
+            // Native launch dependencies participate in the existing installer
+            // holders/stop protocol without pretending to be a second UI runtime.
+            const nativePackageDependencies = [...new Set(packageDependencies.map(sanitizeChildToolId).filter(Boolean))];
+            const session = { streamId, hostInfo: publicInfo, nativeOwnerControl: true, nativeStop: stop, nativePackageDependencies,
+                owners: new Map(), releaseTimer: null };
+            acquireChildToolOwner(session, trackChildToolSessionOwner(sender), 'native-runtime');
+            childToolSessions.set(toolId, session); broadcastChildToolSessionStateChanged();
+            return () => {
+                if (childToolSessions.get(toolId) !== session) return;
+                cancelChildToolRelease(session); childToolSessions.delete(toolId); broadcastChildToolSessionStateChanged();
+            };
+        },
+    },
 };

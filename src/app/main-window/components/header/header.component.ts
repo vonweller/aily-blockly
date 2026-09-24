@@ -1,5 +1,7 @@
+import { CodeEditorProProjectService } from '../../../editors/code-editor-pro/services/code-editor-pro-project.service';
+import { CoderProjectRuntimeService } from '../../../integrations/coder/coder-project-runtime.service';
 import { CommonModule } from '@angular/common';
-import { ChangeDetectorRef, Component, ElementRef, isDevMode, NgZone, OnDestroy, OnInit, ViewChild, viewChild } from '@angular/core';
+import { ChangeDetectorRef, Component, ElementRef, isDevMode, NgZone, OnDestroy, OnInit, ViewChild, viewChild, inject } from '@angular/core';
 import { HEADER_BTNS, HEADER_BTNS_LINUX, HEADER_MENU, IMenuItem } from '../../../configs/menu.config';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { FormsModule } from '@angular/forms';
@@ -23,10 +25,11 @@ import { UnsaveDialogComponent } from '../unsave-dialog/unsave-dialog.component'
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { Router } from '@angular/router';
 import { ElectronService, PlatformService, CmdOutput, CmdService } from '@core/platform/public-api';
-import { ConfigService, ToolI18nService } from '@core/preferences/public-api';
+import { ConfigService } from '@core/preferences/public-api';
 import { AuthService } from '@core/auth/public-api';
 import { AppItem } from '../../../configs/tool.config';
 import { AppStoreService } from '../../../tools/app-store/app-store.service';
+import { RequiredSubappService } from '@integration/subapps/public-api';
 import { Subscription } from 'rxjs';
 import { BlocklyService } from '../../../editors/blockly-editor/services/blockly.service';
 import {
@@ -78,6 +81,11 @@ interface NetworkOtaTarget {
   styleUrl: './header.component.scss',
 })
 export class HeaderComponent implements OnInit, OnDestroy {
+  private readonly coderRuntime = inject(CoderProjectRuntimeService);
+  private readonly coderPersistence = inject(CodeEditorProProjectService);
+  private readonly requiredSubapps = inject(RequiredSubappService);
+  private readonly coderHeaderButtons = new Map<string, IMenuItem[]>();
+
   headerBtns: IMenuItem[] = HEADER_BTNS;
   headerMenu = HEADER_MENU;
   headerApps: AppItem[] = [];
@@ -106,6 +114,10 @@ export class HeaderComponent implements OnInit, OnDestroy {
   private networkOtaScanStreamId: string | null = null;
   private unsaveDialogOpen = false; // 标记未保存对话框是否已打开
   private selectDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private openingPartitionManager = false;
+  private destroyed = false;
+  private partitionInstallSubscription?: Subscription;
+  private partitionInstallMessageId?: string;
   private unregisterHeaderMenuAutomation: (() => void) | null = null;
   private connectorStateSubscription?: Subscription;
 
@@ -123,6 +135,87 @@ export class HeaderComponent implements OnInit, OnDestroy {
     return this.projectService.currentPackageData || { path: '', name: '' };
   }
 
+  get projectTitle(): string {
+    const applicationName = this.configService.getApplicationName();
+    return this.projectService.currentProjectPath
+      ? this.projectData.nickname || this.projectData.name || applicationName
+      : applicationName;
+  }
+
+  @ViewChild('projectTitleInput') projectTitleInput?: ElementRef<HTMLInputElement>;
+  isEditingProjectTitle = false;
+  isSavingProjectTitle = false;
+  private editingProjectPath = '';
+
+  get canEditProjectTitle(): boolean {
+    return !!this.projectService.currentProjectPath && !this.isSavingProjectTitle;
+  }
+
+  startEditingProjectTitle(): void {
+    if (!this.canEditProjectTitle || this.isEditingProjectTitle) return;
+
+    this.editingProjectPath = this.projectService.currentProjectPath;
+    this.isEditingProjectTitle = true;
+    this.cd.detectChanges();
+    const input = this.projectTitleInput?.nativeElement;
+    if (input) {
+      input.focus({ preventScroll: true });
+      input.setSelectionRange(input.value.length, input.value.length);
+    }
+  }
+
+  onProjectTitleKeydown(event: KeyboardEvent): void {
+    event.stopPropagation();
+    if (event.isComposing || event.keyCode === 229) return;
+
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      void this.saveProjectTitle((event.target as HTMLInputElement).value);
+    } else if (event.key === 'Escape' && !this.isSavingProjectTitle) {
+      event.preventDefault();
+      this.isEditingProjectTitle = false;
+    }
+  }
+
+  private readonly onProjectTitleOutsidePointerDown = (event: PointerEvent): void => {
+    const input = this.projectTitleInput?.nativeElement;
+    if (this.isEditingProjectTitle && input && event.target !== input) {
+      this.ngZone.run(() => void this.saveProjectTitle(input.value));
+    }
+  };
+
+  async saveProjectTitle(value: string): Promise<void> {
+    if (!this.isEditingProjectTitle || this.isSavingProjectTitle) return;
+
+    const nickname = value.trim();
+    const projectPath = this.editingProjectPath;
+    if (!projectPath || projectPath !== this.projectService.currentProjectPath
+      || !nickname || nickname === this.projectTitle) {
+      this.isEditingProjectTitle = false;
+      return;
+    }
+
+    this.isSavingProjectTitle = true;
+    try {
+      // 只提交昵称，让服务合并磁盘上的最新配置并同步 .temp 快照。
+      await this.projectService.setPackageJson({ nickname });
+      if (projectPath === this.projectService.currentProjectPath) {
+        this.projectService.addRecentlyProject({
+          name: this.projectData.name,
+          path: projectPath,
+          nickname,
+        });
+      }
+      this.isEditingProjectTitle = false;
+    } catch (error) {
+      console.error('保存项目名称失败:', error);
+      this.message.error(this.translate.instant('PROJECT_SETTING_DIALOG.ERROR_SAVE_FAILED'));
+    } finally {
+      this.isSavingProjectTitle = false;
+      this.cd.markForCheck();
+    }
+  }
+
   get openToolList() {
     return this.uiService.openToolList;
   }
@@ -137,8 +230,23 @@ export class HeaderComponent implements OnInit, OnDestroy {
   }
 
   private loadHeaderButtons(): void {
-    this.headerBtns = this.isPythonProject ? HEADER_BTNS_LINUX : HEADER_BTNS;
+    const template = this.isPythonProject ? HEADER_BTNS_LINUX : HEADER_BTNS;
+    const path = this.projectService.currentProjectPath;
+    if (this.projectService.getProjectMode(path) === 'coder') {
+      if (!this.coderHeaderButtons.has(path)) this.coderHeaderButtons.set(path, template.map(item => ({ ...item })));
+      this.headerBtns = this.coderHeaderButtons.get(path)!;
+      this.syncCoderActionStates();
+    } else this.headerBtns = template;
     this.initShortcutMap();
+  }
+
+  private syncCoderActionStates(): void {
+    if (this.projectService.getProjectMode(this.projectService.currentProjectPath) !== 'coder') return;
+    const state = this.coderRuntime.getState(this.projectService.currentProjectPath);
+    for (const item of this.headerBtns) {
+      if (item.action === 'compile') item.state = this.projectService.getCoderOperation(this.projectService.currentProjectPath)?.kind === 'build' ? 'doing' : state.build;
+      if (item.action === 'play' || item.action === 'upload') item.state = state.upload;
+    }
   }
 
   get linuxBoardConnectors(): LinuxBoardConnector[] {
@@ -207,7 +315,6 @@ export class HeaderComponent implements OnInit, OnDestroy {
     private uploaderBleService: UploaderBleService,
     private ngZone: NgZone,
     private appStoreService: AppStoreService,
-    private toolI18n: ToolI18nService,
     private cmdService: CmdService,
     private blocklyService: BlocklyService,
     private uiAutomationRegistry: UiAutomationRegistryService,
@@ -217,8 +324,11 @@ export class HeaderComponent implements OnInit, OnDestroy {
   }
 
   ngOnInit(): void {
+    // Blockly 会阻止事件冒泡及默认的焦点切换，必须在捕获阶段处理外部点击。
+    this.ngZone.runOutsideAngular(() => {
+      document.addEventListener('pointerdown', this.onProjectTitleOutsidePointerDown, true);
+    });
     this.loadHeaderButtons();
-    void this.toolI18n.load('serial-monitor');
 
     this.unregisterHeaderMenuAutomation = this.uiAutomationRegistry.registerMenuProvider('header', {
       list: (options) => this.createHeaderMenuAutomationSnapshot(options).items,
@@ -287,6 +397,7 @@ export class HeaderComponent implements OnInit, OnDestroy {
       }
     }
 
+    this.coderRuntime.states$.subscribe(() => { this.syncCoderActionStates(); this.cd.markForCheck(); });
     this.projectService.stateSubject.subscribe((state) => {
       if (state == 'loaded' || state == 'saved') {
         this.loadHeaderButtons();
@@ -966,7 +1077,7 @@ export class HeaderComponent implements OnInit, OnDestroy {
   }
 
   onClick(item, event = null) {
-    this.process(item, event);
+    this.process(item, event, event?.isTrusted ? 'manual' : 'system');
   }
 
   isOpenTool(btn) {
@@ -980,7 +1091,7 @@ export class HeaderComponent implements OnInit, OnDestroy {
 
   onMenuClick(item) {
     if (item.disabled) return;
-    this.process(item);
+    this.process(item, null, 'manual');
     this.closeMenu();
   }
 
@@ -993,6 +1104,14 @@ export class HeaderComponent implements OnInit, OnDestroy {
   }
 
   async selectSaveAsFolder() {
+    const sourcePath = this.projectService.currentProjectPath;
+    if (this.projectService.getProjectMode(sourcePath) === 'coder') {
+      return window['ipcRenderer'].invoke('select-folder-saveAs', {
+        path: window['path'].dirname(sourcePath),
+        suggestedName: window['path'].basename(sourcePath) + '_new',
+        returnEmptyOnCancel: true,
+      });
+    }
     const folderPath = await window['ipcRenderer'].invoke('select-folder-saveAs', {
       path: this.projectData.path,
       suggestedName: this.projectData.name + '_new',
@@ -1008,10 +1127,49 @@ export class HeaderComponent implements OnInit, OnDestroy {
     }
   }
 
+  private coderProjectsAdding = false;
+
+  private async addCoderProjects(): Promise<void> {
+    if (this.coderProjectsAdding || this.projectService.getProjectMode(this.projectService.currentProjectPath) !== 'coder') return;
+    this.coderProjectsAdding = true;
+    try {
+      const selection = await window['ipcRenderer'].invoke('dialog-select-files', {
+        title: this.translate.instant('MENU.PROJECT_ADD'),
+        defaultPath: window['path'].dirname(this.projectService.currentProjectPath),
+        properties: ['openDirectory', 'multiSelections'],
+      });
+      for (const path of selection?.filePaths || []) await this.projectService.addCoderProject(path);
+    } catch (error) {
+      this.message.error(error instanceof Error ? error.message : String(error));
+    } finally {
+      this.coderProjectsAdding = false;
+    }
+  }
+
   updateSubscription: any = null;
   private workspaceImageExporting = false;
+  private coderProjectSavingAs = false;
 
-  async process(item: IMenuItem, event = null) {
+  private async saveCoderProjectAs(): Promise<void> {
+    if (this.coderProjectSavingAs) return;
+    this.coderProjectSavingAs = true;
+    const sourcePath = this.projectService.currentProjectPath;
+    try {
+      const path = await this.selectSaveAsFolder();
+      if (!path) return;
+      if (this.projectService.currentProjectPath !== sourcePath) {
+        throw new Error('当前项目已切换，请重新执行另存为');
+      }
+      await this.projectService.saveAs(path);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      this.message.error(`另存为失败：${detail}`);
+    } finally {
+      this.coderProjectSavingAs = false;
+    }
+  }
+
+  async process(item: IMenuItem, event = null, source: 'manual' | 'ai' | 'system' = 'system') {
     switch (item.action) {
       case 'project-new':
         if (this.isLoaded()) { // 只在已加载项目时检查
@@ -1027,10 +1185,17 @@ export class HeaderComponent implements OnInit, OnDestroy {
         }
         this.openProject();
         break;
+      case 'project-add':
+        await this.addCoderProjects();
+        break;
       case 'project-save':
         this.projectService.save();
         break;
       case 'project-save-as':
+        if (this.projectService.getProjectMode(this.projectService.currentProjectPath) === 'coder') {
+          await this.saveCoderProjectAs();
+          break;
+        }
         const path = await this.selectSaveAsFolder();
         if (path) {
           await this.projectService.saveAs(path);
@@ -1064,7 +1229,7 @@ export class HeaderComponent implements OnInit, OnDestroy {
       case 'compile':
         if (item.state === 'doing') return;
         item.state = 'doing';
-        this.builderService.build().then(result => {
+        this.builderService.build(undefined, { source }).then(result => {
           item.state = result.state || 'done';
         }).catch(err => {
           // console.log("编译未完成: ", JSON.stringify(err));
@@ -1257,6 +1422,9 @@ export class HeaderComponent implements OnInit, OnDestroy {
   }
 
   ngOnDestroy() {
+    this.destroyed = true;
+    this.clearPartitionInstallNotice();
+    document.removeEventListener('pointerdown', this.onProjectTitleOutsidePointerDown, true);
     this.unregisterHeaderMenuAutomation?.();
     this.unregisterHeaderMenuAutomation = null;
     this.appStoreSubscription?.unsubscribe();
@@ -1400,7 +1568,7 @@ export class HeaderComponent implements OnInit, OnDestroy {
 
           // 执行对应的操作
           if (menuItem.action) {
-            this.process(menuItem);
+            this.process(menuItem, event, event.isTrusted ? 'manual' : 'system');
           }
         }
       }
@@ -1445,6 +1613,8 @@ export class HeaderComponent implements OnInit, OnDestroy {
   }
 
   async checkUnsavedChanges(action: 'close' | 'open' | 'new'): Promise<boolean> {
+    // Coder activation retains each iframe, including its unsaved editor buffers.
+    if (action !== 'close' && this.projectService.getProjectMode(this.projectService.currentProjectPath) === 'coder') return true;
     // 检查项目是否有未保存的更改
     if (!await this.projectService.hasUnsavedChanges()) {
       return true;
@@ -1484,8 +1654,14 @@ export class HeaderComponent implements OnInit, OnDestroy {
         switch (result.result) {
           case 'save':
             // 保存项目并继续
-            await this.projectService.save();
-            resolve(true);
+            try {
+              if (this.projectService.getProjectMode(this.projectService.currentProjectPath) === 'coder') await this.coderPersistence.saveAllOpenProjects();
+              else await this.projectService.save();
+              resolve(true);
+            } catch (error) {
+              this.message.error(error instanceof Error ? error.message : String(error));
+              resolve(false);
+            }
             break;
           case 'continue':
             // 不保存，但继续操作
@@ -1713,101 +1889,44 @@ export class HeaderComponent implements OnInit, OnDestroy {
       && String(subItem.data || '').toLowerCase() === 'custom';
   }
 
-  private getCustomPartitionPaths(): { srcDir: string; requiredFilePath: string; legacyFilePath: string } | null {
-    const projectRoot = this.projectService.currentProjectPath;
-    if (!projectRoot) {
-      return null;
+  private clearPartitionInstallNotice(): void {
+    this.partitionInstallSubscription?.unsubscribe();
+    this.partitionInstallSubscription = undefined;
+    if (this.partitionInstallMessageId) {
+      this.message.remove(this.partitionInstallMessageId);
+      this.partitionInstallMessageId = undefined;
     }
-    const pathApi = window['path'];
-    const sourceRoot = this.projectService.isAilyCodeProject(projectRoot)
-      ? pathApi.join(projectRoot, 'sketch', 'src')
-      : pathApi.join(projectRoot, 'src');
-    return {
-      srcDir: sourceRoot,
-      requiredFilePath: pathApi.join(sourceRoot, 'partitions.csv'),
-      legacyFilePath: pathApi.join(projectRoot, 'partitions.csv'),
-    };
   }
 
-  private fileExists(filePath: string): boolean {
+  private async openPartitionManager(): Promise<void> {
+    const projectPath = this.projectService.currentProjectPath;
+    if (!projectPath || this.openingPartitionManager || this.destroyed) return;
+    this.openingPartitionManager = true;
+    this.closePortList();
     try {
-      return window['fs']?.existsSync?.(filePath) === true;
-    } catch {
-      return false;
-    }
-  }
-
-  private normalizeComparablePath(filePath: string): string {
-    return String(filePath || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
-  }
-
-  private copyPartitionFile(sourcePath: string, targetPath: string, srcDir: string): void {
-    if (!this.fileExists(srcDir)) {
-      window['fs'].mkdirSync(srcDir, { recursive: true });
-    }
-    if (this.normalizeComparablePath(sourcePath) === this.normalizeComparablePath(targetPath)) {
-      return;
-    }
-    window['fs'].copySync(sourcePath, targetPath);
-  }
-
-  private async selectCustomPartitionFile(defaultPath: string): Promise<string> {
-    const dialog = (window as any).dialog;
-    if (dialog?.selectFiles) {
-      const result = await dialog.selectFiles({
-        title: '选择 ESP32 分区文件',
-        defaultPath,
-        properties: ['openFile'],
-        filters: [
-          { name: 'CSV', extensions: ['csv'] },
-          { name: 'All Files', extensions: ['*'] },
-        ],
+      this.partitionInstallSubscription = this.requiredSubapps.observe('ffs-manager-child').subscribe(state => {
+        if (!state.installing || this.partitionInstallMessageId) return;
+        this.partitionInstallMessageId = this.message.loading(
+          '正在安装 ESP32 分区管理器…',
+          { nzDuration: 0 },
+        ).messageId;
       });
-      return result?.canceled ? '' : String(result?.filePaths?.[0] || '');
-    }
-
-    return await window['ipcRenderer'].invoke('select-file', {
-      title: '选择 ESP32 分区文件',
-      path: defaultPath,
-    });
-  }
-
-  private async ensureCustomPartitionFileForUserSelection(): Promise<{ ready: boolean; changed: boolean }> {
-    const paths = this.getCustomPartitionPaths();
-    if (!paths) {
-      this.message.error('当前没有打开的项目，无法设置自定义分区');
-      return { ready: false, changed: false };
-    }
-
-    if (this.fileExists(paths.requiredFilePath)) {
-      return { ready: true, changed: false };
-    }
-
-    if (this.fileExists(paths.legacyFilePath)) {
-      try {
-        this.copyPartitionFile(paths.legacyFilePath, paths.requiredFilePath, paths.srcDir);
-        this.message.info(`已将分区文件迁移到 ${paths.requiredFilePath}`);
-        return { ready: true, changed: true };
-      } catch (error) {
-        console.warn('迁移分区文件失败:', error);
-        this.message.error(`迁移分区文件失败，请手动放置到 ${paths.requiredFilePath}`);
-        return { ready: false, changed: false };
+      await this.requiredSubapps.ensureInstalled('ffs-manager-child');
+      // Installation can finish after the user has left the original project/window.
+      if (this.destroyed || this.projectService.currentProjectPath !== projectPath) return;
+      if (!this.uiService.openToolWindow('ffs-manager-child', {
+        title: 'ESP32 分区管理器', width: 920, height: 820, minWidth: 680, minHeight: 560,
+      })) {
+        throw new Error('子应用入口不可用');
       }
-    }
-
-    const selectedFilePath = await this.selectCustomPartitionFile(paths.srcDir);
-    if (!selectedFilePath) {
-      this.message.warning('未选择分区文件，已取消自定义分区设置');
-      return { ready: false, changed: false };
-    }
-
-    try {
-      this.copyPartitionFile(selectedFilePath, paths.requiredFilePath, paths.srcDir);
-      return { ready: true, changed: true };
     } catch (error) {
-      console.warn('复制分区文件失败:', error);
-      this.message.error(`复制分区文件失败，请手动放置到 ${paths.requiredFilePath}`);
-      return { ready: false, changed: false };
+      if (!this.destroyed && this.projectService.currentProjectPath === projectPath) {
+        const detail = error instanceof Error ? error.message : String(error);
+        this.message.error(`无法打开 ESP32 分区管理器：${detail}。请再次点击“自定义分区”重试。`, { nzDuration: 6000 });
+      }
+    } finally {
+      this.clearPartitionInstallNotice();
+      this.openingPartitionManager = false;
     }
   }
 
@@ -1818,21 +1937,18 @@ export class HeaderComponent implements OnInit, OnDestroy {
       clearTimeout(this.selectDebounceTimer);
     }
 
+    if (this.isCustomPartitionSubItem(subItem)) {
+      this.selectDebounceTimer = null;
+      if (!subItem.disabled) await this.openPartitionManager();
+      return;
+    }
+
     this.selectDebounceTimer = setTimeout(async () => {
       this.selectDebounceTimer = null;
 
-      let customPartitionChanged = false;
-      if (this.isCustomPartitionSubItem(subItem)) {
-        const partitionResult = await this.ensureCustomPartitionFileForUserSelection();
-        if (!partitionResult.ready) {
-          return;
-        }
-        customPartitionChanged = partitionResult.changed;
-      }
-
       const configChanged = await persistBoardConfigSelection(this.projectService, subItem);
       const shouldRunEffects = shouldRunBoardConfigSelectionEffects(
-        configChanged || customPartitionChanged,
+        configChanged,
         subItem,
       );
       if (!shouldRunEffects) {
@@ -1856,7 +1972,7 @@ export class HeaderComponent implements OnInit, OnDestroy {
         await this.uploaderService.flashSoftdevice(subItem.data, this.serialService.currentPort);
       }
 
-      if (configChanged || customPartitionChanged) {
+      if (configChanged) {
         this.builderService.triggerPreprocess('config-changed');
       }
     }, 500);

@@ -45,6 +45,26 @@
               <div class="item development-mode-item">
                 <div>{{ 'SETTINGS.FIELDS.DEVELOPMENT_MODE_PREFERENCE' | translate }}:</div>
                 <div class="development-mode-buttons" [class.has-coder]="coderEnabled">
+                  @if (coderProduct) {
+                  <span class="coder-mode-option" nz-tooltip
+                    [nzTooltipTitle]="coderDependencyState.installed
+                      ? null
+                      : ('SETTINGS.FIELDS.CODER_EXTENSION_HINT' | translate)">
+                    <button class="development-mode-button coder-mode-button single-mode-button"
+                      nz-button nzSize="small" nzType="primary" type="button" aria-pressed="true"
+                      (click)="onDevelopmentModePreferenceChange('coder')">
+                      @if (coderDependencyState.installing) {
+                      <i class="fa-light fa-spinner-third fa-spin"></i>
+                      <span>{{ coderDependencyState.percent }}%</span>
+                      }
+                      {{ 'PROJECT_NEW.BOARD.MODE_CODER' | translate }}
+                    </button>
+                    @if (!coderDependencyState.installed) {
+                    <span class="coder-install-dot"
+                      [attr.aria-label]="'SETTINGS.FIELDS.CODER_EXTENSION_HINT' | translate"></span>
+                    }
+                  </span>
+                  } @else {
                   <button
                     class="development-mode-button blockly-mode-button"
                     nz-button
@@ -74,6 +94,7 @@
                     }
                   </span>
                   }
+                  }
                 </div>
               </div>
             </div>
@@ -95,6 +116,7 @@
           </div>
 
           <!-- Blockly 设置 -->
+          @if (!coderProduct) {
           <div id="SETTINGS.SECTIONS.BLOCKLY" class="section">
             <h2 class="section-title">{{ 'SETTINGS.SECTIONS.BLOCKLY' | translate }}</h2>
             <div class="right-inner">
@@ -117,6 +139,7 @@
               </div> -->
             </div>
           </div>
+          }
 
           <!-- 编译设置 -->
           <!-- <div id="SETTINGS.SECTIONS.COMPILATION" class="section">
@@ -342,3 +365,30 @@
     </div>
   </div>
 </app-sub-window>
+
+<ng-template #cleanupDialogTemplate>
+  @if (cleanupDialog; as dialog) {
+  <app-base-dialog
+    [title]="dialog.title | translate"
+    [showCloseButton]="dialog.phase !== 'running'"
+    [showFooter]="dialog.phase !== 'running'"
+    [buttons]="cleanupDialogButtons"
+    (closeDialog)="onCleanupDialogAction('close')"
+    (buttonClick)="onCleanupDialogAction($event)">
+    <div class="cleanup-status" role="status" aria-live="polite">
+      @if (dialog.phase === 'running') {
+      <i class="fa-light fa-spinner-third fa-spin" aria-hidden="true"></i>
+      }
+      <span>{{ dialog.text | translate }}</span>
+    </div>
+    @if (dialog.phase !== 'confirm') {
+    <nz-progress
+      [nzPercent]="dialog.percent"
+      [nzStatus]="dialog.phase === 'error' ? 'exception' : dialog.phase === 'success' ? 'success' : 'active'"
+      [nzFormat]="cleanupPercentFormat"
+      [attr.aria-label]="dialog.title | translate">
+    </nz-progress>
+    }
+  </app-base-dialog>
+  }
+</ng-template>

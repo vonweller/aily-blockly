@@ -28,7 +28,6 @@
         "IMAGE_EXPORT_FAILED": "تعذر تصدير صورة مساحة العمل",
         "DEBUG": "تصحيح الأخطاء",
         "TERMINAL": "الطرفية",
-        "TOOL_SERIAL": "أداة المنفذ التسلسلي",
         "MQTT_DEBUGGER": "MQTT Debugger",
         "NETWORK_DEBUGGER": "Network Debugger",
         "AI": "الذكاء الاصطناعي",
@@ -146,6 +145,7 @@
     "GUIDE": {
         "START": "البدء",
         "RECENTLY": "مؤخرًا",
+        "UNMERGE_CODER_WORKSPACE": "إلغاء دمج مساحة العمل متعددة المشاريع",
         "USER_GROUP": "مجتمع المستخدمين",
         "USER_GROUP_DESC": "انضم إلى المجتمع للتواصل مع فريق التطوير والمستخدمين الآخرين",
         "AI_APP_CENTER": "مركز تطبيقات الذكاء الاصطناعي",
@@ -341,9 +341,14 @@
         "FIELDS": {
             "PROJECT_FOLDER": "مجلد المشروع",
             "LANGUAGE": "اللغة",
+            "DEVELOPMENT_MODE_PREFERENCE": "وضع التطوير الافتراضي",
+            "CODER_EXTENSION_HINT": "يتطلب Coder إضافة محرر برمجي إضافية. عند اختيار Coder، يتم تنزيلها وتثبيتها تلقائيًا.",
+            "CODER_EXTENSION_INSTALLED": "تم تثبيت إضافة Coder",
+            "CODER_EXTENSION_INSTALL_FAILED": "فشل تثبيت إضافة Coder",
             "UI_THEME": "مظهر واجهة المستخدم",
             "BLOCKLY_THEME": "مظهر Blockly",
             "BLOCKLY_MINIMAP": "خريطة Blockly المصغرة",
+            "FLYOUT_AUTO_CLOSE": "إغلاق صندوق الأدوات تلقائيًا",
             "COMPILATION_OPTIONS": "خيارات التجميع",
             "REGION": "منطقة الخدمة",
             "RESOURCE_SOURCE": "مصدر الموارد",
@@ -762,6 +767,7 @@
         "CANCEL": "إلغاء"
     },
     "LOGIN": {
+        "EDU_LOGIN": "تسجيل الدخول إلى EDU",
         "HEADER": "سجل الدخول لاستخدام خدماتنا",
         "PHONE": "الهاتف",
         "BENEFITS_TITLE": "بعد تسجيل الدخول، يمكنك:",
@@ -869,6 +875,16 @@
             "NEXT": "التالي",
             "DONE": "تم"
         }
+    },
+    "CODER_SUBAPP_INSTALL": {
+        "TITLE": "جارٍ تجهيز Aily Coder Editor",
+        "INSTALLING": "جارٍ تنزيل المحرر وتثبيته ({{percent}}%)",
+        "FAILED": "لم يكتمل تثبيت المحرر. تحقق من الشبكة ثم أعد المحاولة.",
+        "RETRY": "إعادة محاولة التثبيت",
+        "REINSTALL": "إعادة تثبيت المحرر",
+        "REINSTALL_TITLE": "هل تريد إعادة تثبيت Aily Coder Editor؟",
+        "REINSTALL_HINT": "سيؤدي ذلك إلى إغلاق خدمة المحرر الحالية وتنزيل حزمة جديدة. احفظ ملفات المشروع أولاً. ستتم استعادة أي نسخة مثبتة حالياً إذا فشلت العملية.",
+        "REINSTALL_CONFIRM": "إعادة التثبيت"
     },
     "NPM": {
         "INSTALLING": "جاري تثبيت {{name}}...",
@@ -1012,12 +1028,21 @@
         }
     },
     "PLAYGROUND": {
+        "HOME": "الصفحة الرئيسية",
         "LOADING_EXAMPLE": "جاري تحميل المثال...",
         "EXAMPLE_LOAD_SUCCESS": "تم تحميل المثال بنجاح",
         "EXAMPLE_LOAD_FAILED": "فشل تحميل المثال",
         "NO_TUTORIAL_PROVIDED": "لم يقدم مؤلف المكتبة أي دليل تعليمي"
     },
     "PROJECT": {
+      "MODE_UNKNOWN": "نوع المشروع غير معروف. اختر مشروع Aily Blockly أو Aily Coder صالحًا.",
+      "MODE_CREATE_RESTRICTED": "لا يمكن لوضع {{application}} الحالي إنشاء هذا النوع من المشاريع. استخدم {{targetApplication}}.",
+      "MODE_MISMATCH_TITLE": "وضع المشروع غير متوافق",
+      "MODE_OPEN_OTHER": "يتطلب هذا المشروع {{application}} المثبت بالفعل. هل تريد فتحه في نافذة جديدة من ذلك التطبيق؟ سيبقى المشروع الحالي دون تغيير.",
+      "MODE_DOWNLOAD_OTHER": "يتطلب هذا المشروع {{application}}. لم يتم العثور على تثبيت. قم بتنزيله وتثبيته من الموقع الرسمي لفتح المشروع.",
+      "MODE_OPEN_BUTTON": "فتح باستخدام {{application}}",
+      "MODE_DOWNLOAD_BUTTON": "التنزيل من الموقع الرسمي",
+      "MODE_LAUNCH_FAILED": "تعذر بدء {{application}}. افتحه يدويًا أو ثبّت أحدث إصدار من الموقع الرسمي.",
         "CANNOT_OPEN_PROJECT": "تعذر فتح المشروع: ",
         "CREATING_PROJECT": "جاري إنشاء المشروع...",
         "PROJECT_CREATED": "تم إنشاء المشروع بنجاح",
@@ -1040,6 +1065,12 @@
         "LOCK_ACQUIRE_FAILED": "Could not acquire project lock. Please try again."
     },
     "LIBRARY_PUBLISH": {
+        "SUBMIT_FAILED": "فشل النشر: {{error}}",
+        "NETWORK_ERROR": "فشل الاتصال بالشبكة. تحقق من الاتصال وحالة الإرسال في مركز المستخدم قبل إعادة المحاولة.",
+        "SERVICE_ERROR": "الخدمة غير متاحة مؤقتًا. تحقق من حالة الإرسال في مركز المستخدم لاحقًا.",
+        "GITHUB_AUTH_TIMEOUT": "انتهت مهلة تفويض GitHub. أعد النشر وأكمل التفويض.",
+        "LOCAL_SAVE_FAILED": "تم قبول الإرسال، لكن تعذر حفظ البيانات المحلية: {{error}}. تحقق من الملفات المحلية؛ لا حاجة للنشر مرة أخرى.",
+        "PACKAGE_NAME_UNAVAILABLE": "اسم المكتبة {{name}} مستخدم بالفعل بواسطة مستخدم آخر. غيّر الاسم قبل النشر.",
         "RELOAD_TITLE": "إعادة تحميل المشروع الحالي",
         "RELOAD_RENAMED": "تمت إعادة تسمية المكتبة المحلية من {{previousName}} إلى {{nextName}}.",
         "RELOAD_UPDATED": "تم تحديث معلومات المكتبة المحلية.",

@@ -1,4 +1,10 @@
 {
+  "CODER_TABS": {
+    "PROJECTS": "工程",
+    "CLOSE": "关闭工程",
+    "BUILDING": "正在编译",
+    "UPLOADING": "正在上传"
+  },
     "CLOUD_SPACE_ERRORS": {
         "PUBLISH_FAILED": "项目公开失败",
         "WORKSPACE_PROJECT_NOT_FOUND": "项目不存在",
@@ -11,6 +17,7 @@
         "PROJECT_NEW": "新建项目",
         "PROJECT_NEW_AILY_CODE": "新建 Aily Code 项目",
         "PROJECT_OPEN": "打开项目",
+        "PROJECT_ADD": "添加项目工程",
         "RECENT_PROJECTS": "最近的项目",
         "RECENT_PROJECTS_EMPTY": "暂无最近打开的项目",
         "PROJECT_SAVE": "保存项目",
@@ -29,7 +36,6 @@
         "IMAGE_EXPORT_FAILED": "导出工作区图片失败",
         "DEBUG": "调试",
         "TERMINAL": "终端",
-        "TOOL_SERIAL": "串口工具",
         "AI": "AI",
         "AI_NEW": "AI (Beta)",
         "MODEL_STORE": "模型商店",
@@ -181,6 +187,7 @@
     "GUIDE": {
         "START": "开始",
         "RECENTLY": "最近",
+        "UNMERGE_CODER_WORKSPACE": "解除多工程合并",
         "USER_GROUP": "用户社区",
         "USER_GROUP_DESC": "加入社区，与开发团队和其他用户交流",
         "AI_APP_CENTER": "AI应用中心",
@@ -875,6 +882,7 @@
         "CANCEL": "取消"
     },
     "LOGIN": {
+        "EDU_LOGIN": "EDU 登录",
         "HEADER": "登录后即可使用我们的服务",
         "PHONE": "手机号",
         "EMAIL": "邮箱",
@@ -1004,6 +1012,16 @@
         "FAILED": "无法打开代码工作区",
         "TIMEOUT": "代码工作区启动超时，请重试",
         "RETRY": "重新尝试"
+    },
+    "CODER_SUBAPP_INSTALL": {
+        "TITLE": "正在准备 Aily Coder Editor",
+        "INSTALLING": "正在下载并安装编辑器（{{percent}}%）",
+        "FAILED": "编辑器安装未完成，请检查网络后重试。",
+        "RETRY": "重试安装",
+        "REINSTALL": "重新安装编辑器",
+        "REINSTALL_TITLE": "重新安装 Aily Coder Editor？",
+        "REINSTALL_HINT": "这会关闭当前编辑器服务并重新下载安装包。请先确认项目文件已经保存；若存在旧安装，安装失败时会自动恢复。",
+        "REINSTALL_CONFIRM": "重新安装"
     },
     "NPM": {
         "INSTALLING": "正在安装{{name}}...",
@@ -1147,18 +1165,28 @@
         }
     },
     "PLAYGROUND": {
+        "HOME": "返回主页面",
         "LOADING_EXAMPLE": "正在加载示例...",
         "EXAMPLE_LOAD_SUCCESS": "示例加载完成",
         "EXAMPLE_LOAD_FAILED": "示例加载失败",
         "NO_TUTORIAL_PROVIDED": "库作者未提供教程"
     },
     "PROJECT": {
+      "MODE_UNKNOWN": "无法识别项目类型，请选择有效的 Aily Blockly 或 Aily Coder 项目。",
+      "MODE_CREATE_RESTRICTED": "当前 {{application}} 模式不能创建此类项目，请使用 {{targetApplication}} 创建。",
+      "MODE_MISMATCH_TITLE": "项目模式不匹配",
+      "MODE_OPEN_OTHER": "此项目需要使用 {{application}} 打开。已检测到安装，是否在该软件的新窗口中打开？当前项目将保持不变。",
+      "MODE_DOWNLOAD_OTHER": "此项目需要使用 {{application}} 打开。未检测到安装，请前往官网下载并安装后打开此项目。",
+      "MODE_OPEN_BUTTON": "使用 {{application}} 打开",
+      "MODE_DOWNLOAD_BUTTON": "前往官网下载",
+      "MODE_LAUNCH_FAILED": "无法启动 {{application}}，请手动打开该软件，或从官网下载并安装最新版本。",
         "CANNOT_OPEN_PROJECT": "无法打开项目: ",
         "CREATING_PROJECT": "正在创建项目...",
         "PROJECT_CREATED": "项目创建成功",
         "CREATE_FAILED": "项目创建失败",
         "PATH_NOT_EXIST": "项目路径不存在，请重新选择项目",
         "SWITCHING_BOARD_CONFIG": "正在切换开发板配置...",
+        "SDK_CONFIG_NOT_READY": "SDK 尚未就绪，部分开发板配置暂不可用",
         "BOARD_SWITCH_COMPLETE": "开发板切换完成",
         "BOARD_SWITCH_SUCCESS": "开发板切换成功",
         "SWITCHING_BOARD": "正在切换开发板...",
@@ -1182,6 +1210,12 @@
         "CANCEL": "取消"
     },
     "LIBRARY_PUBLISH": {
+        "SUBMIT_FAILED": "发布失败：{{error}}",
+        "NETWORK_ERROR": "网络连接失败，请检查网络，并到用户中心确认提交状态后再重试。",
+        "SERVICE_ERROR": "服务暂时不可用，请稍后到用户中心确认提交状态。",
+        "GITHUB_AUTH_TIMEOUT": "GitHub 授权等待超时，请重新发布并完成授权。",
+        "LOCAL_SAVE_FAILED": "库提交已受理，但本地信息保存失败：{{error}}。请检查本地文件，无需重复发布。",
+        "PACKAGE_NAME_UNAVAILABLE": "库名 {{name}} 已被其他用户发布或占用，请修改库名后再发布。",
         "RELOAD_TITLE": "重新加载当前项目",
         "RELOAD_RENAMED": "本地库已从 {{previousName}} 重命名为 {{nextName}}。",
         "RELOAD_UPDATED": "本地库信息已更新。",

@@ -180,6 +180,13 @@ export interface ConnectionGraphData {
   description: string;
   components: ConnectionComponent[];
   connections: ConnectionDef[];
+  /** 连线图窗口的用户设置；组件配置仍在打开时从 pinmap 重建 */
+  theme?: 'light' | 'dark';
+  edit?: boolean;
+  animation?: boolean;
+  autoRoutingMode?: boolean;
+  connectionTypeCheck?: boolean;
+  autoSave?: boolean;
 }
 
 /** 传递给 iframe 子页面的完整数据包 */
@@ -192,9 +199,12 @@ export interface ConnectionGraphPayload {
   connections: ConnectionDef[];
   /** 主题 */
   theme?: 'light' | 'dark';
-  /** 是否启用子页面自动布线（仅用于传输，不持久化） */
+  edit?: boolean;
+  animation?: boolean;
+  /** 是否启用子页面自动布线 */
   autoRoutingMode?: boolean;
-  /** 是否启用子页面自动保存（仅用于传输，不持久化） */
+  connectionTypeCheck?: boolean;
+  /** 是否启用子页面自动保存 */
   autoSave?: boolean;
 }
 
@@ -512,9 +522,20 @@ export class ConnectionGraphService {
             console.log('[ConnectionGraphService] 收到子窗口保存请求');
             const messageId = data?.messageId;
             let success = false;
-            if (data && data.components && data.connections) {
-              const { messageId: _m, ...toSave } = data;
-              success = this.saveConnectionGraphSilent(toSave);
+            if (Array.isArray(data?.components) && Array.isArray(data?.connections)) {
+              const existing = this.getConnectionGraph();
+              success = this.saveConnectionGraphSilent({
+                version: existing?.version || '1.0.0',
+                description: existing?.description || '',
+                components: data.components,
+                connections: data.connections,
+                theme: data.theme === 'light' || data.theme === 'dark' ? data.theme : existing?.theme,
+                edit: typeof data.edit === 'boolean' ? data.edit : existing?.edit,
+                animation: typeof data.animation === 'boolean' ? data.animation : existing?.animation,
+                autoRoutingMode: typeof data.autoRoutingMode === 'boolean' ? data.autoRoutingMode : existing?.autoRoutingMode,
+                connectionTypeCheck: typeof data.connectionTypeCheck === 'boolean' ? data.connectionTypeCheck : existing?.connectionTypeCheck,
+                autoSave: typeof data.autoSave === 'boolean' ? data.autoSave : existing?.autoSave,
+              });
             }
             if (window['ipcRenderer']) {
               window['ipcRenderer'].send('iframe-message-connection-graph', {

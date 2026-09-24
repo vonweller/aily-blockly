@@ -14,9 +14,10 @@ import {
   validateConnectionGraphTool,
   type ConnectionGraphInvocationContext,
 } from '../../../integrations/schematic/connection-graph-operations';
-import { ThemeService } from '@core/preferences/public-api';
+import { ConfigService, ThemeService } from '@core/preferences/public-api';
 import { TranslateService } from '@ngx-translate/core';
 import { AuthService } from '@core/auth/public-api';
+import { getToolWebUrl } from '../../../configs/api.config';
 import {
   AUTOMATION_UI_PORT,
   type AutomationUiPort,
@@ -49,6 +50,7 @@ export class SchematicMcpRuntimeService {
     private readonly authService: AuthService,
     @Inject(SCHEMATIC_PRESENTATION_PORT)
     private readonly presentation: SchematicPresentationPort,
+    private readonly configService: ConfigService,
   ) {}
 
   async invoke(method: string, args: Record<string, unknown>): Promise<unknown> {
@@ -109,7 +111,7 @@ export class SchematicMcpRuntimeService {
       return projectValidation;
     }
     if (!this.electronService.isElectron) {
-      return { ok: false, error: '架构图仅支持在 Aily Blockly 桌面端查看' };
+      return { ok: false, error: `架构图仅支持在 ${this.configService.getApplicationName()} 桌面端查看` };
     }
 
     const archPath = this.electronService.pathJoin(this.projectService.currentProjectPath, 'arch.md');
@@ -137,7 +139,7 @@ export class SchematicMcpRuntimeService {
       return projectValidation;
     }
     if (!this.electronService.isElectron) {
-      return { ok: false, error: '电路连接仅支持在 Aily Blockly 桌面端查看' };
+      return { ok: false, error: `电路连接仅支持在 ${this.configService.getApplicationName()} 桌面端查看` };
     }
 
     try {
@@ -280,7 +282,7 @@ export class SchematicMcpRuntimeService {
   }
 
   private buildCircuitWindowUrl(): string {
-    return `https://tool.aily.pro/connection-graph?type=json&theme=${this.themeService.theme()}&lang=${this.translate.currentLang}`;
+    return `${getToolWebUrl()}/connection-graph?type=json&theme=${this.themeService.theme()}&lang=${this.translate.currentLang}`;
   }
 
   private buildCircuitWindowPath(windowUrl = this.buildCircuitWindowUrl()): string {

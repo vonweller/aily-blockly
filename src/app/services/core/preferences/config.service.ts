@@ -4,7 +4,6 @@ import { lastValueFrom, ReplaySubject, Subject, timeout } from 'rxjs';
 import { ElectronService } from '@core/platform/public-api';
 import { API, setServerUrl, setRegistryUrl, setToolWebUrl } from '../../../configs/api.config';
 import { calculateSimilarity, extractKeywords } from '../../../utils/fuzzy-search.utils';
-import { mapCoderBoardIndexToBoardList, type CoderBoardIndexEntry } from '../../../utils/coder-board.mapper';
 import { normalizeLanguageCode } from '../../../utils/language-code';
 import {
   appendScopedNpmRegistry,
@@ -76,6 +75,7 @@ export class ConfigService {
   private persistedDataSnapshot: AppConfig | any | null = null;
   private configSaveQueue: Promise<void> = Promise.resolve();
   private mergedConfigIpcAvailable: boolean | null = null;
+  private runtimeBuildProduct: 'blockly' | 'coder' = 'blockly';
   
   // 测试用：模拟慢速加载（毫秒），设为0禁用
   private readonly SIMULATE_SLOW_LOADING = 0; // 改为2000可以看到loading效果
@@ -169,10 +169,32 @@ export class ConfigService {
   }
 
   isCoderEnabled(): boolean {
-    return this.data?.coder?.enabled === true;
+    return this.isCoderProduct() || this.data?.coder?.enabled === true;
+  }
+
+  /** 当前启动/构建产品是否为独立 Aily Coder；该状态不读写用户配置。 */
+  isCoderProduct(): boolean {
+    return this.runtimeBuildProduct === 'coder';
+  }
+
+  getApplicationName(): string {
+    return this.isCoderProduct() ? 'aily coder' : 'aily blockly';
+  }
+
+  getApplicationLogoSrc(theme: 'light' | 'dark' = 'dark'): string {
+    // Coder 共用透明字标，由显示位置按主题着色，避免两套字形偏移。
+    if (this.isCoderProduct()) return 'imgs/logo-coder.png';
+    return theme === 'light' ? 'imgs/logo-light.webp' : 'imgs/logo.webp';
+  }
+
+  getDefaultProjectImageSrc(): string {
+    return this.isCoderProduct() ? 'imgs/subject-coder.png' : 'imgs/subject.webp';
   }
 
   getDevelopmentModePreference(): DevelopmentModePreference {
+    if (this.isCoderProduct()) {
+      return 'coder';
+    }
     if (!this.isCoderEnabled()) {
       return 'blockly';
     }
@@ -184,6 +206,10 @@ export class ConfigService {
     source: DevelopmentModePreferenceSource = 'settings',
     options: { save?: boolean } = {},
   ): Promise<DevelopmentModePreference> {
+    if (this.isCoderProduct()) {
+      return 'coder';
+    }
+
     const normalized = this.isCoderEnabled()
       ? this.normalizeDevelopmentModePreference(preference)
       : 'blockly';
@@ -206,6 +232,20 @@ export class ConfigService {
     }
 
     return normalized;
+  }
+
+  async markDevelopmentModePreferencePrompted(options: { save?: boolean } = {}): Promise<void> {
+    this.data.developmentModePreferencePromptedAt = Date.now();
+    if (options.save !== false) {
+      await this.save();
+    }
+  }
+
+  shouldPromptDevelopmentModePreference(): boolean {
+    if (this.isCoderProduct() || !this.isCoderEnabled()) {
+      return false;
+    }
+    return !this.data?.developmentModePreferenceSource && !this.data?.developmentModePreferencePromptedAt;
   }
 
   getPreferredChatAgentRuntimeMode(): 'coder' | 'blockly' {
@@ -243,6 +283,9 @@ export class ConfigService {
 
     ipcRenderer.on('setting-changed', (_event: unknown, message: any) => {
       if (message?.action !== DEVELOPMENT_MODE_SETTING_CHANGED_ACTION) {
+        return;
+      }
+      if (this.isCoderProduct()) {
         return;
       }
 
@@ -307,6 +350,8 @@ export class ConfigService {
     const defaultData = this.data;
     const defaultRegions = defaultData?.regions || {};
     const userRegions = userConfData?.regions || {};
+    const defaultCoder = defaultData?.coder || {};
+    const userCoder = userConfData?.coder || {};
     const mergedRegions = Object.fromEntries(
       [...new Set([...Object.keys(defaultRegions), ...Object.keys(userRegions)])]
         .map((regionKey) => [
@@ -324,23 +369,27 @@ export class ConfigService {
         ...(defaultData?.linux || {}),
         ...(userConfData?.linux || {}),
       },
+      coder: {
+        ...defaultCoder,
+        ...userCoder,
+      },
       regions: mergedRegions,
     };
     this.data.selectedLanguage = normalizeLanguageCode(this.data.selectedLanguage);
-    this.data.developmentModePreference = this.isCoderEnabled()
-      ? this.normalizeDevelopmentModePreference(this.data.developmentModePreference)
-      : 'blockly';
     this.data.build_flavor = this.normalizeBuildFlavor(this.data.build_flavor);
     this.data.official_region = this.resolveOfficialRegionKey();
 
     // 使用主进程已确定的 region 与官方 region 覆盖配置
     if (this.electronService.isElectron) {
       try {
-        const [region, officialRegion, buildFlavor] = await Promise.all([
+        const [region, officialRegion, buildFlavor, buildProduct] = await Promise.all([
           this.electronService.electron.ipcRenderer.invoke('env-get', 'AILY_REGION'),
           this.electronService.electron.ipcRenderer.invoke('env-get', 'AILY_OFFICIAL_REGION'),
-          this.electronService.electron.ipcRenderer.invoke('env-get', 'AILY_BUILD_FLAVOR')
+          this.electronService.electron.ipcRenderer.invoke('env-get', 'AILY_BUILD_FLAVOR'),
+          this.electronService.electron.ipcRenderer.invoke('env-get', 'AILY_BUILD_PRODUCT'),
         ]);
+
+        this.runtimeBuildProduct = buildProduct === 'coder' ? 'coder' : 'blockly';
 
         this.data.build_flavor = this.normalizeBuildFlavor(buildFlavor || this.data.build_flavor);
         this.data.official_region = officialRegion || this.resolveOfficialRegionKey();
@@ -358,6 +407,10 @@ export class ConfigService {
       this.applyRegionRuntimeConfig(this.data.region || this.resolveOfficialRegionKey());
     }
 
+    if (!this.isCoderProduct()) {
+      this.data.developmentModePreference = this.getDevelopmentModePreference();
+    }
+
     await this.applyResourceSourceRuntimeSelection();
 
     // 添加当前系统类型到data中
@@ -371,7 +424,6 @@ export class ConfigService {
     this.boardListLoadPromise = this.loadAndCacheBoardList(configFilePath);
     this.loadAndCacheLibraryList(configFilePath);
     this.loadAndCacheTagList(configFilePath);
-    this.loadAndCacheCoderBoardIndex(configFilePath);
     // ]);
 
     // 注意：boardIndex 和 libraryIndex（新格式索引）延迟到 AI 组件加载时再加载
@@ -1065,129 +1117,6 @@ export class ConfigService {
     await this.init();
     await this.boardListLoadPromise;
     return [...this.boardList];
-  }
-
-  /** Coder 新建项目使用的开发板索引（由 coder_board_index.json 映射而来） */
-  coderBoardList: any[] = [];
-
-  private async loadAndCacheCoderBoardIndex(configFilePath: string): Promise<void> {
-    const localPath = `${configFilePath}/coder_board_index.json`;
-
-    try {
-      if (this.electronService.exists(localPath)) {
-        const entries = this.parseCoderBoardIndexEntries(this.electronService.readFile(localPath));
-        this.coderBoardList = mapCoderBoardIndexToBoardList(entries);
-        const remoteEntries = await this.loadCoderBoardIndexEntries();
-        if (remoteEntries.length > 0) {
-          this.coderBoardList = mapCoderBoardIndexToBoardList(remoteEntries);
-          this.writeCoderBoardIndexCache(localPath, remoteEntries);
-        }
-      } else {
-        const remoteEntries = await this.fetchCoderBoardIndexEntriesOrThrow();
-        this.coderBoardList = mapCoderBoardIndexToBoardList(remoteEntries);
-        this.writeCoderBoardIndexCache(localPath, remoteEntries);
-      }
-    } catch (error) {
-      console.error('[ConfigService] coder_board_index.json 加载失败，尝试从线上恢复:', error);
-      await this.reloadCoderBoardIndexFromRemote(localPath, error);
-    }
-
-    console.log(`[ConfigService] coderBoardList 加载完成，共 ${this.coderBoardList.length} 个开发板`);
-  }
-
-  private parseCoderBoardIndexEntries(raw: string): CoderBoardIndexEntry[] {
-    return this.parseArrayPayload(raw, 'coder_board_index.json 格式无效', 'boards') as CoderBoardIndexEntry[];
-  }
-
-  private writeCoderBoardIndexCache(localPath: string, entries: CoderBoardIndexEntry[]): void {
-    this.electronService.writeFile(localPath, JSON.stringify({ boards: entries }));
-  }
-
-  /** Coder 开发板索引固定走 regions.cn.resource，不走 resource_sources 镜像链 */
-  private getCoderBoardResourceUrl(): string {
-    return this.normalizeResourceSourceUrl(this.data?.regions?.cn?.resource || '');
-  }
-
-  private async fetchCoderBoardIndexEntriesOrThrow(): Promise<CoderBoardIndexEntry[]> {
-    const resourceUrl = this.getCoderBoardResourceUrl();
-    if (!resourceUrl) {
-      throw new Error('未配置 Coder 开发板资源地址 (regions.cn.resource)');
-    }
-
-    const response: any = await lastValueFrom(
-      this.http.get(`${resourceUrl}/coder_board_index.json`, {
-        responseType: 'json',
-      }).pipe(timeout(ConfigService.RESOURCE_REQUEST_TIMEOUT_MS)),
-    );
-
-    if (Array.isArray(response)) {
-      return response as CoderBoardIndexEntry[];
-    }
-    if (response && Array.isArray(response.boards)) {
-      return response.boards as CoderBoardIndexEntry[];
-    }
-
-    throw new Error('线上 coder_board_index.json 格式无效');
-  }
-
-  private async reloadCoderBoardIndexFromRemote(localPath: string, originalError: unknown): Promise<void> {
-    try {
-      const latestEntries = await this.fetchCoderBoardIndexEntriesOrThrow();
-      this.coderBoardList = mapCoderBoardIndexToBoardList(latestEntries);
-      this.writeCoderBoardIndexCache(localPath, latestEntries);
-      console.log('[ConfigService] 已使用线上最新 coder_board_index.json 覆盖本地缓存');
-    } catch (remoteError) {
-      this.coderBoardList = [];
-      const message = this.buildReloadFailureMessage(
-        'Coder 开发板列表',
-        'coder_board_index.json',
-        remoteError,
-        originalError
-      );
-      console.error('[ConfigService] 从线上恢复 coder_board_index.json 失败:', remoteError);
-      this.emitDedupedError('coder-board-list', message);
-    }
-  }
-
-  async loadCoderBoardIndexEntries(): Promise<CoderBoardIndexEntry[]> {
-    try {
-      return await this.fetchCoderBoardIndexEntriesOrThrow();
-    } catch (error) {
-      console.error('Failed to load coder board index:', error);
-      return [];
-    }
-  }
-
-  /** Aily Code 新建向导：返回已映射、按使用次数排序的开发板列表 */
-  getCoderBoardList(): any[] {
-    if (!this.coderBoardList?.length) {
-      return [];
-    }
-    return this.sortBoardsByUsage([...this.coderBoardList]);
-  }
-
-  /**
-   * Aily Code 切换开发板弹窗：优先内存缓存（coder_board_index.json），并过滤尚未支持的板卡。
-   */
-  getCoderBoardListForSelector(): any[] {
-    if (!this.coderBoardList?.length) {
-      return [];
-    }
-    const list = this.coderBoardList.filter((board) => board.state !== 'todo');
-    return this.sortBoardsByUsage([...list]);
-  }
-
-  /** 线上刷新 Coder 开发板索引并返回选择器列表 */
-  async loadCoderBoardList(): Promise<any[]> {
-    try {
-      const entries = await this.loadCoderBoardIndexEntries();
-      if (entries.length > 0) {
-        this.coderBoardList = mapCoderBoardIndexToBoardList(entries);
-      }
-    } catch (error) {
-      console.error('Failed to load coder board list:', error);
-    }
-    return this.getCoderBoardListForSelector();
   }
 
   libraryList = [];
@@ -2120,11 +2049,23 @@ interface AppConfig {
     enabled?: boolean;
   };
 
-  /** 串口监视器快速发送列表 */
-  quickSendList?: Array<{ name: string, type: "signal" | "text" | "hex", data: string }>;
-
   /** 最近打开的项目列表 */
-  recentlyProjects?: Array<{ name: string, path: string, nickname?: string }>;
+  recentlyProjects?: Array<{
+    name: string;
+    path: string;
+    nickname?: string;
+    coderWorkspaceId?: string;
+    coderProjects?: Array<{ path: string; name: string }>;
+  }>;
+
+  /** Coder logical workspaces survive tab/project closure without moving source directories. */
+  coderWorkspaceGroups?: Array<{
+    id: string;
+    root: string;
+    name: string;
+    projects: Array<{ path: string; name: string }>;
+    activeProject: string;
+  }>;
 
   /** 当前选择的语言 */
   selectedLanguage?: string;
@@ -2144,19 +2085,4 @@ interface AppConfig {
   /** AI聊天当前自定义智能体目标 */
   aiChatCustomAgentTarget?: string;
 
-  /** 串口监视器配置 */
-  serialMonitor?: {
-    /** 上次选择的串口 */
-    port?: string;
-    /** 上次选择的波特率 */
-    baudRate?: string;
-    /** 数据位 */
-    dataBits?: string;
-    /** 停止位 */
-    stopBits?: string;
-    /** 校验位 */
-    parity?: string;
-    /** 流控制 */
-    flowControl?: string;
-  };
 }

@@ -8,7 +8,6 @@ import { NzTabsModule } from 'ng-zorro-antd/tabs';
 import { TerminalComponent } from '../tools/terminal/terminal.component';
 import { LogComponent } from '../tools/log/log.component';
 import { UiService, UpdateService, OnboardingService } from '@core/app-shell/public-api';
-import { SerialMonitorComponent } from '../tools/serial-monitor/serial-monitor.component';
 import { ChildToolHostComponent } from '../tools/child-tool-host/child-tool-host.component';
 import { CodeViewerComponent } from '../editors/blockly-editor/tools/code-viewer/code-viewer.component';
 import { ProjectService } from '@domain/project/public-api';
@@ -19,14 +18,14 @@ import { AppStoreService } from '../tools/app-store/app-store.service';
 import { NzModalModule, NzModalRef, NzModalService } from 'ng-zorro-antd/modal';
 import { NpmService } from '@domain/dependencies/public-api';
 import { NavigationEnd, Router, RouterModule } from '@angular/router';
-import { distinctUntilChanged, filter, merge, Subscription, take } from 'rxjs';
+import { combineLatest, distinctUntilChanged, filter, merge, Subscription, take } from 'rxjs';
 import { ConfigService, ToolI18nService } from '@core/preferences/public-api';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { CloudSpaceComponent } from '../tools/cloud-space/cloud-space.component';
 import { UserCenterComponent } from '../tools/user-center/user-center.component';
 import { OnboardingComponent } from '../components/onboarding/onboarding.component';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
-import { isChildTool } from '../configs/tool.config';
+import { isChildTool, isAppAvailableForApplication } from '../configs/tool.config';
 import {
   AuthService,
   type AuthSessionInvalidationRequest,
@@ -39,14 +38,16 @@ import { ElectronService } from '@core/platform/public-api';
 import {
   SubappManagerService,
   ChildToolProcessService,
-  bootstrapDefaultAilyChatSubapp,
-  DEFAULT_AILY_CHAT_SUBAPP_BOOTSTRAP_KEY,
+  CoderEditorUpdateService,
+  RequiredSubappService,
+  bootstrapDefaultSubapps,
   DEFAULT_AILY_CHAT_SUBAPP_TOOL_ID,
 } from '@integration/subapps/public-api';
 import { LoginComponent } from '../components/login/login.component';
 import { LibManagerToolComponent } from '../tools/lib-manager-tool/lib-manager-tool.component';
 import { SimulatorSubappHostComponent } from '../tools/simulator/simulator-subapp-host.component';
 import { buildChildAuthStateSnapshot } from '../tools/child-tool-host/child-auth-state';
+import { CoderSubappInstallNoticeComponent } from '../components/coder-subapp-install-notice/coder-subapp-install-notice.component';
 
 const RIGHT_SIDER_WIDTH_STORAGE_KEY = 'aily-main-window.right-sider-width';
 const RIGHT_SIDER_DEFAULT_WIDTH = 450;
@@ -64,7 +65,6 @@ const RIGHT_SIDER_MAX_WIDTH = 800;
     NzTabsModule,
     TerminalComponent,
     LogComponent,
-    SerialMonitorComponent,
     ChildToolHostComponent,
     CodeViewerComponent,
     SimplebarAngularModule,
@@ -78,6 +78,7 @@ const RIGHT_SIDER_MAX_WIDTH = 800;
     TranslateModule,
     LibManagerToolComponent,
     SimulatorSubappHostComponent,
+    CoderSubappInstallNoticeComponent,
   ],
   templateUrl: './main-window.component.html',
   styleUrl: './main-window.component.scss',
@@ -96,7 +97,9 @@ export class MainWindowComponent implements OnDestroy {
   }
 
   get openToolList() {
-    return this.uiService.openToolList;
+    // Focus changes the z-index, not DOM order: moving an iframe reloads its document
+    // and invalidates in-flight child lifecycle calls (including prepareUpdate).
+    return [...this.uiService.openToolList].sort();
   }
 
   isChildTool(toolId: string): boolean {
@@ -149,6 +152,8 @@ export class MainWindowComponent implements OnDestroy {
     private electronService: ElectronService,
     private appStoreService: AppStoreService,
     private subappManager: SubappManagerService,
+    private requiredSubapps: RequiredSubappService,
+    private coderEditorUpdates: CoderEditorUpdateService,
     private childToolProcessService: ChildToolProcessService,
     private toolI18n: ToolI18nService,
   ) { }
@@ -177,9 +182,13 @@ export class MainWindowComponent implements OnDestroy {
     ]);
     this.uiService.init();
     this.projectService.init();
-    this.projectContextSubscription = this.projectService.currentProjectPath$.subscribe(workspace => {
+    this.projectContextSubscription = combineLatest([
+      this.projectService.currentProjectPath$,
+      this.projectService.coderWorkspace$,
+    ]).subscribe(([workspace, coderWorkspace]) => {
       window['ipcRenderer']?.send?.('host-project-context-changed', {
-        workspace: workspace || null
+        workspace: workspace || null,
+        coderWorkspace,
       });
     });
     this.updateService.init();
@@ -188,7 +197,7 @@ export class MainWindowComponent implements OnDestroy {
     this.setupExampleListListener();
     void this.electronService.sendRendererReady();
     void this.initializeAuthAndPromptIfNeeded();
-    void this.ensureDefaultAilyChatSubapp();
+    void this.ensureDefaultSubapps();
     // 重置 footer 状态
     this.uiService.updateFooterState({ text: '', timeout: 0 });
 
@@ -292,23 +301,27 @@ export class MainWindowComponent implements OnDestroy {
     );
   }
 
-  private async ensureDefaultAilyChatSubapp(): Promise<void> {
+  private async ensureDefaultSubapps(): Promise<void> {
+    if (!this.electronService.isElectron) return;
     try {
-      await bootstrapDefaultAilyChatSubapp({
-        completed: !!this.configService.data?.[DEFAULT_AILY_CHAT_SUBAPP_BOOTSTRAP_KEY],
-        initialize: () => this.subappManager.initialize(),
-        readCatalog: () => this.subappManager.state.apps,
-        install: catalogId => this.subappManager.install(catalogId),
-        isPinned: () => this.appStoreService.isAppInZone('header', DEFAULT_AILY_CHAT_SUBAPP_TOOL_ID),
-        pin: () => this.appStoreService.addAppToZone('header', DEFAULT_AILY_CHAT_SUBAPP_TOOL_ID),
-        markCompleted: async () => {
-          this.configService.data[DEFAULT_AILY_CHAT_SUBAPP_BOOTSTRAP_KEY] = Date.now();
-          await this.configService.save();
+      await this.configService.init();
+      await bootstrapDefaultSubapps({
+        initialize: async () => {
+          await this.subappManager.initializeForBootstrap();
+          await this.appStoreService.initializeSubappToolbarDefaults();
         },
+        readCatalog: () => this.subappManager.state.apps,
+        isAvailable: item => isAppAvailableForApplication(item.only, this.configService.getApplicationName()),
+        install: async catalogId => { await this.requiredSubapps.ensureInstalled(catalogId); },
+        onError: (toolId, error) => console.warn(`[Subapp] Default ${toolId} startup setup failed:`, error),
       });
-      this.scheduleAilyChatPrewarm();
+      if (this.configService.isCoderProduct()) {
+        await this.coderEditorUpdates.ensureUpdatedBeforeLaunch();
+      }
     } catch (error) {
-      console.warn('[Subapp] Default Aily Chat installation failed:', error);
+      console.warn('[Subapp] Default subapp initialization failed:', error);
+    } finally {
+      this.scheduleAilyChatPrewarm();
     }
   }
 

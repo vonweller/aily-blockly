@@ -118,6 +118,10 @@ export class ProjectNewComponent implements OnDestroy {
     return this.configService.isCoderEnabled();
   }
 
+  get coderProduct(): boolean {
+    return this.configService.isCoderProduct();
+  }
+
   // 获取已定义的品牌列表（排除'all'和'other'）
   private getDefinedBrands(): string[] {
     return BRAND_LIST
@@ -173,6 +177,8 @@ export class ProjectNewComponent implements OnDestroy {
       this.coderEnabled,
       undefined,
       this.configService.getPreferredChatAgentRuntimeMode(),
+      'blockly',
+      this.coderProduct,
     );
     this.syncActiveBoardList();
     this.applyRecommendedProjectName();
@@ -218,6 +224,9 @@ export class ProjectNewComponent implements OnDestroy {
     this.selectedProjectCategory = resolveInitialProjectCategory(
       this.coderEnabled,
       this.selectedProjectCategory,
+      undefined,
+      'blockly',
+      this.coderProduct,
     );
     this.applyRecommendedProjectName();
     this.refreshBoardListForCurrentFilters();
@@ -789,9 +798,6 @@ export class ProjectNewComponent implements OnDestroy {
   }
 }
 
-
-/** Coder 新建项目可选的 framework 值（来自 coder_board_index.json） */
-export type CoderFramework = string;
 
 export interface BoardInfo {
   "name": string, // 开发板在仓库中的名称开发板名称

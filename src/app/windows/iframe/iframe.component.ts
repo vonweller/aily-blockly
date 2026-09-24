@@ -43,6 +43,7 @@ export type ConnectionGraphIpcType =
 
 const IFRAME_CHANNEL_CONNECTION_GRAPH = 'iframe-message-connection-graph';
 const CONNECTION_GRAPH_PENPAL_TIMEOUT_MS = 20_000;
+const CONNECTION_GRAPH_DATA_TIMEOUT_MS = 5_000;
 
 export interface IframeModalData {
   /** 要加载的 iframe URL */
@@ -71,6 +72,8 @@ export class IframeComponent implements OnInit, OnDestroy {
 
   // Penpal 连接
   private penpalConnection: Connection | null = null;
+  private penpalConnectionGeneration = 0;
+  private currentIframeElement: HTMLIFrameElement | null = null;
   private remoteApi: any = null;
 
   // IPC 初始化数据清理函数
@@ -97,6 +100,12 @@ export class IframeComponent implements OnInit, OnDestroy {
   private noticeSubscription: Subscription | null = null;
   /** 待响应的保存请求：messageId -> resolve */
   private pendingSaveResolvers = new Map<string, (result: { success: boolean }) => void>();
+  /** 首次打开只接收宿主快照，不允许 iframe 将渲染结果回写为用户编辑 */
+  private connectionGraphInitialSyncInProgress = false;
+  /** 当前 iframe 是否已经完成首次宿主快照加载 */
+  private connectionGraphInitialDataPushed = false;
+  /** SchematicAgent 执行期间由 Agent 独占连线图写入，忽略网页端过期的自动保存 */
+  private schematicGenerationInProgress = false;
 
   constructor(
     @Optional() @Inject(NZ_MODAL_DATA) public data: IframeModalData | null,
@@ -157,19 +166,28 @@ export class IframeComponent implements OnInit, OnDestroy {
   /**
    * 统一应用 URL：设置 iframeSrc、allowedOrigins、isConnectionGraphWindow
    */
-  private applyUrl(url: string): void {
-    this.currentIframeUrl = url;
-    this.iframeSrc = this.sanitizer.bypassSecurityTrustResourceUrl(url);
+  private applyUrl(url?: string): void {
+    const nextUrl = typeof url === 'string' ? url.trim() : '';
+    if (!nextUrl) return;
+    if (nextUrl === this.currentIframeUrl && this.iframeSrc) return;
+
+    if (this.currentIframeUrl && nextUrl !== this.currentIframeUrl) {
+      this.disposePenpalConnection();
+      this.currentIframeElement = null;
+    }
+
+    this.currentIframeUrl = nextUrl;
+    this.iframeSrc = this.sanitizer.bypassSecurityTrustResourceUrl(nextUrl);
     try {
-      this.allowedOrigins = [new URL(url).origin];
+      this.allowedOrigins = [new URL(nextUrl).origin];
     } catch {
       this.allowedOrigins = ['*'];
     }
-    if (url.includes('connection-graph')) {
+    if (nextUrl.includes('connection-graph')) {
       this.isConnectionGraphWindow = true;
       this.startConnectionGraphIpcListener();
     }
-    if (url.includes('component-viewer')) {
+    if (nextUrl.includes('component-viewer')) {
       this.isComponentViewerWindow = true;
     }
   }
@@ -193,6 +211,10 @@ export class IframeComponent implements OnInit, OnDestroy {
     }
 
     this.iframeData = initData.data !== undefined ? initData.data : initData;
+
+    if (this.isConnectionGraphWindow && this.remoteApi) {
+      void this.initializeConnectionGraphData();
+    }
   }
 
   /**
@@ -205,14 +227,12 @@ export class IframeComponent implements OnInit, OnDestroy {
       return;
     }
 
-    // 销毁旧连接，避免连接残留
-    if (this.penpalConnection) {
-      this.penpalConnection.destroy();
-      this.penpalConnection = null;
-      this.remoteApi = null;
-    }
+    this.currentIframeElement = iframe;
+    this.disposePenpalConnection();
+    this.connectionGraphInitialSyncInProgress = false;
+    this.connectionGraphInitialDataPushed = false;
 
-    this.startPenpalConnection(iframe);
+    void this.startPenpalConnection(iframe);
   }
 
   /**
@@ -221,6 +241,9 @@ export class IframeComponent implements OnInit, OnDestroy {
   private async startPenpalConnection(
     iframe: HTMLIFrameElement,
   ): Promise<void> {
+    const generation = ++this.penpalConnectionGeneration;
+    let connection: Connection | null = null;
+
     try {
       const messenger = new WindowMessenger({
         remoteWindow: iframe.contentWindow!,
@@ -228,16 +251,16 @@ export class IframeComponent implements OnInit, OnDestroy {
       });
 
       // 父窗口暴露给子页面的方法
-      this.penpalConnection = connect({
+      connection = connect({
         messenger,
         ...(this.isConnectionGraphWindow
           ? { timeout: CONNECTION_GRAPH_PENPAL_TIMEOUT_MS }
           : {}),
         methods: {
-          initedComponentViewer: () => {
-            this.pushDataToRemote();
-          },
           initedGraph: () => {
+            // 子页面的 Penpal 就绪通知；首次数据由连接建立后的恢复流程推送。
+          },
+          initedComponentViewer: () => {
             this.pushDataToRemote();
           },
           generateGraphData: () => {
@@ -256,34 +279,27 @@ export class IframeComponent implements OnInit, OnDestroy {
             this.onSyncToCode();
           },
           saveGraphData: async (data) => {
+            if (this.connectionGraphInitialSyncInProgress) {
+              return { success: true };
+            }
+
             this.iframeData = data;
             return this.sendSaveGraphData(this.iframeData);
           },
           // 子页面调用此方法通过 IPC 实时获取连线图 payload（type: get-graph-data）
-          getGraphData: () => {
-            if (!this.electronService.isElectron || !window['ipcRenderer']) {
-              return Promise.resolve(this.iframeData ?? null);
-            }
-            const messageId = Date.now() + '-' + Math.random().toString(36).slice(2);
-            return new Promise<unknown>((resolve) => {
-              const timeoutId = setTimeout(() => {
-                // window['ipcRenderer'].removeListener(IFRAME_CHANNEL_CONNECTION_GRAPH, listener);
-                resolve(this.iframeData ?? null);
-              }, 5000);
-              const listener = (_event: unknown, p: { type?: string; data?: { messageId?: string; payload?: unknown } }) => {
-                if (p?.type === 'set-graph-data' && p?.data?.messageId === messageId) {
-                  clearTimeout(timeoutId);
-                  // window['ipcRenderer'].removeListener(IFRAME_CHANNEL_CONNECTION_GRAPH, listener);
-                  resolve(p.data?.payload ?? this.iframeData ?? null);
-                }
-              };
-              window['ipcRenderer'].on(IFRAME_CHANNEL_CONNECTION_GRAPH, listener);
-              this.sendToMain('get-graph-data', { messageId });
-            });
+          getGraphData: async () => {
+            const result = await this.requestConnectionGraphData();
+            return result.received
+              ? result.payload ?? this.iframeData ?? null
+              : this.iframeData ?? null;
           },
           // 子页面编辑连线后回调此方法，持久化更新
           onConnectionsChanged: (connections: any) => {
             try {
+              if (this.connectionGraphInitialSyncInProgress) {
+                return;
+              }
+
               if (connections && Array.isArray(connections)) {
                 // 获取当前 payload 数据（包含 componentConfigs, components, connections）
                 const currentPayload = this.iframeData as any;
@@ -344,8 +360,13 @@ export class IframeComponent implements OnInit, OnDestroy {
           },
         },
       });
+      this.penpalConnection = connection;
 
-      const remote = await this.penpalConnection.promise;
+      const remote = await connection.promise;
+      if (!this.isCurrentPenpalConnection(connection, generation)) {
+        connection.destroy();
+        return;
+      }
       this.remoteApi = remote;
 
       if (this.isConnectionGraphWindow) {
@@ -359,16 +380,24 @@ export class IframeComponent implements OnInit, OnDestroy {
       this.connectionGraphService.setIframeApi(remote);
 
       // 订阅连线图工具的进度通知，转发到 noticeService
-      this.noticeSubscription = this.connectionGraphService.noticeUpdate$.subscribe((opts) => {
-        this.ngZone.run(() => this.noticeService.update(opts));
-      });
+      if (!this.noticeSubscription) {
+        this.noticeSubscription = this.connectionGraphService.noticeUpdate$.subscribe((opts) => {
+          this.ngZone.run(() => this.noticeService.update(opts));
+        });
+      }
 
-      // 连接成功，结束 loading
-      this.isLoading = false;
-      this.showEmptyState = false;
-
-      if (this.isConnectionGraphWindow && this.iframeData !== undefined) {
-        await this.pushDataToRemote();
+      if (this.isConnectionGraphWindow) {
+        if (this.iframeData === undefined) {
+          // 整个子窗口刷新后 preload 的一次性 initData 已丢失，从主窗口重新读取当前项目。
+          await this.restoreConnectionGraphData(connection, generation);
+        } else {
+          this.isLoading = false;
+          this.showEmptyState = false;
+          await this.initializeConnectionGraphData();
+        }
+      } else {
+        this.isLoading = false;
+        this.showEmptyState = false;
       }
 
       // TODO:如果是 component-viewer 窗口，立即推送数据给子页面，新版本为web主动调用，这里临时多推送一次，待web更新后可删除
@@ -378,6 +407,17 @@ export class IframeComponent implements OnInit, OnDestroy {
         }, 10);
       }
     } catch (error) {
+      if (
+        generation !== this.penpalConnectionGeneration ||
+        (connection && this.penpalConnection !== connection)
+      ) {
+        return;
+      }
+
+      connection?.destroy();
+      this.penpalConnection = null;
+      this.remoteApi = null;
+      this.connectionGraphService.clearIframeApi();
       console.error('Penpal 连接失败:', error);
       // 连接失败时降级：使用 postMessage 发送数据
       this.isLoading = false;
@@ -385,18 +425,134 @@ export class IframeComponent implements OnInit, OnDestroy {
     }
   }
 
+  private isCurrentPenpalConnection(
+    connection: Connection,
+    generation: number,
+  ): boolean {
+    return (
+      generation === this.penpalConnectionGeneration &&
+      this.penpalConnection === connection
+    );
+  }
+
+  /** 子窗口刷新时向主窗口读取当前项目的持久化连线图。 */
+  private async restoreConnectionGraphData(
+    connection: Connection,
+    generation: number,
+  ): Promise<void> {
+    this.ngZone.run(() => {
+      this.isLoading = true;
+      this.showEmptyState = false;
+    });
+
+    const result = await this.requestConnectionGraphData();
+    if (!this.isCurrentPenpalConnection(connection, generation)) return;
+
+    if (this.iframeData === undefined && result.received) {
+      this.iframeData = result.payload;
+    }
+    if (this.iframeData === undefined) {
+      this.ngZone.run(() => {
+        this.isLoading = false;
+        this.showEmptyState = true;
+      });
+      return;
+    }
+
+    // receiveData 会计算可见画布的缩放，推送前先显示 iframe。
+    this.ngZone.run(() => {
+      this.isLoading = false;
+      this.showEmptyState = false;
+    });
+    await this.initializeConnectionGraphData();
+  }
+
+  retryConnectionGraphLoad(): void {
+    if (this.penpalConnection && this.remoteApi) {
+      void this.restoreConnectionGraphData(
+        this.penpalConnection,
+        this.penpalConnectionGeneration,
+      );
+    }
+  }
+
+  private ensurePenpalConnection(): void {
+    if (
+      this.remoteApi ||
+      this.penpalConnection ||
+      !this.currentIframeElement?.contentWindow
+    ) {
+      return;
+    }
+
+    void this.startPenpalConnection(this.currentIframeElement);
+  }
+
+  private disposePenpalConnection(): void {
+    this.penpalConnectionGeneration += 1;
+    this.penpalConnection?.destroy();
+    this.penpalConnection = null;
+    this.remoteApi = null;
+    this.connectionGraphService.clearIframeApi();
+  }
+
   /**
    * 向主窗口发送 connection-graph IPC 消息（规范：iframe-message-connection-graph）
    */
-  private sendToMain(type: ConnectionGraphIpcType, data?: unknown): void {
-    if (!this.electronService.isElectron || !window['ipcRenderer']) return;
+  private sendToMain(type: ConnectionGraphIpcType, data?: unknown): boolean {
+    if (!this.electronService.isElectron || !window['ipcRenderer']) return false;
     window['ipcRenderer'].send(IFRAME_CHANNEL_CONNECTION_GRAPH, { type, data });
+    return true;
+  }
+
+  /** 请求主窗口的最新 payload，并在响应或超时后移除本次 IPC 监听。 */
+  private requestConnectionGraphData(): Promise<{ received: boolean; payload: unknown }> {
+    const ipcRenderer = window['ipcRenderer'];
+    if (!this.electronService.isElectron || !ipcRenderer) {
+      return Promise.resolve({ received: false, payload: null });
+    }
+
+    const messageId = Date.now() + '-' + Math.random().toString(36).slice(2);
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (received: boolean, payload: unknown): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutId);
+        cleanup();
+        this.ngZone.run(() => resolve({ received, payload }));
+      };
+      const listener = (
+        _event: unknown,
+        response: { type?: string; data?: { messageId?: string; payload?: unknown } },
+      ): void => {
+        if (response?.type === 'set-graph-data' && response.data?.messageId === messageId) {
+          finish(true, response.data.payload ?? null);
+        }
+      };
+      const timeoutId = setTimeout(
+        () => finish(false, null),
+        CONNECTION_GRAPH_DATA_TIMEOUT_MS,
+      );
+
+      const cleanup = ipcRenderer.on(IFRAME_CHANNEL_CONNECTION_GRAPH, listener);
+      if (!this.sendToMain('get-graph-data', { messageId })) {
+        finish(false, null);
+      }
+    });
   }
 
   /**
    * 发送保存请求并等待主窗口返回结果
    */
   private sendSaveGraphData(data: unknown): Promise<{ success: boolean }> {
+    if (
+      this.connectionGraphInitialSyncInProgress ||
+      this.schematicGenerationInProgress
+    ) {
+      return Promise.resolve({ success: true });
+    }
+
     if (!this.electronService.isElectron || !window['ipcRenderer']) {
       return Promise.resolve({ success: false });
     }
@@ -431,6 +587,52 @@ export class IframeComponent implements OnInit, OnDestroy {
     } catch (error) {
       console.warn('推送数据给子页面失败:', error);
       return false;
+    }
+  }
+
+  /**
+   * 首次打开只把宿主快照加载到画布，并记录画布规范化后的连线作为后续编辑基线。
+   */
+  private async initializeConnectionGraphData(): Promise<void> {
+    if (
+      this.connectionGraphInitialDataPushed ||
+      this.connectionGraphInitialSyncInProgress ||
+      !this.remoteApi ||
+      this.iframeData === undefined
+    ) {
+      return;
+    }
+
+    this.connectionGraphInitialSyncInProgress = true;
+
+    try {
+      const applied = await this.pushDataToRemote();
+      if (!applied) {
+        return;
+      }
+      this.connectionGraphInitialDataPushed = true;
+
+      if (typeof this.remoteApi?.['getConnections'] !== 'function') {
+        return;
+      }
+
+      const connections = await this.remoteApi['getConnections']();
+      const currentPayload = this.iframeData;
+      if (
+        !Array.isArray(connections) ||
+        !currentPayload ||
+        typeof currentPayload !== 'object' ||
+        Array.isArray(currentPayload)
+      ) {
+        return;
+      }
+
+      this.iframeData = {
+        ...currentPayload,
+        connections,
+      };
+    } finally {
+      this.connectionGraphInitialSyncInProgress = false;
     }
   }
 
@@ -489,12 +691,15 @@ export class IframeComponent implements OnInit, OnDestroy {
         case 'connection-graph-ready-request': {
           const request = data as { requestId?: string; url?: string } | undefined;
           if (!request?.url || request.url === this.currentIframeUrl) {
+            const ready = !!this.remoteApi
+              && typeof this.remoteApi['receiveData'] === 'function';
+            if (!ready) {
+              this.ensurePenpalConnection();
+            }
             this.sendToMain('connection-graph-ready', {
               requestId: request?.requestId,
               url: this.currentIframeUrl,
-              ready:
-                !!this.remoteApi
-                && typeof this.remoteApi['receiveData'] === 'function',
+              ready,
             });
           }
           break;
@@ -514,6 +719,10 @@ export class IframeComponent implements OnInit, OnDestroy {
         }
         case 'notice-update': {
           if (data) {
+            const notice = data as { state?: string };
+            if (notice.state === 'done' || notice.state === 'error') {
+              this.endSchematicGeneration();
+            }
             this.ngZone.run(() => this.noticeService.update(data as any));
           }
           break;
@@ -521,12 +730,9 @@ export class IframeComponent implements OnInit, OnDestroy {
       }
     };
 
-    window['ipcRenderer'].on(IFRAME_CHANNEL_CONNECTION_GRAPH, handler);
+    const cleanup = window['ipcRenderer'].on(IFRAME_CHANNEL_CONNECTION_GRAPH, handler);
     this.connectionGraphIpcCleanup = () => {
-      window['ipcRenderer']?.removeListener?.(
-        IFRAME_CHANNEL_CONNECTION_GRAPH,
-        handler,
-      );
+      cleanup?.();
     };
   }
 
@@ -540,11 +746,8 @@ export class IframeComponent implements OnInit, OnDestroy {
       this.connectionGraphIpcCleanup = null;
     }
     // 清除 ConnectionGraphService 中的 iframe API 引用
-    this.connectionGraphService.clearIframeApi();
-    if (this.penpalConnection) {
-      this.penpalConnection.destroy();
-      this.penpalConnection = null;
-    }
+    this.currentIframeElement = null;
+    this.disposePenpalConnection();
     if (this.initDataCleanup) {
       this.initDataCleanup();
       this.initDataCleanup = null;
@@ -614,11 +817,37 @@ export class IframeComponent implements OnInit, OnDestroy {
    * 直接请求新版 Runtime 创建需求 session 并执行 SchematicAgent。
    */
   private generateSchematic(prompt: string, revealSession = false): void {
+    this.beginSchematicGeneration();
+
     if (this.embedded) {
-      void this.ailyChatDemandSession.generateSchematic(prompt, { revealSession });
+      void this.ailyChatDemandSession
+        .generateSchematic(prompt, { revealSession })
+        .finally(() => this.endSchematicGeneration());
     } else {
-      this.sendToMain('generate-graph-data', { prompt, revealSession });
+      const sent = this.sendToMain('generate-graph-data', {
+        prompt,
+        revealSession,
+      });
+      if (!sent) {
+        this.endSchematicGeneration();
+      }
     }
+  }
+
+  /**
+   * 进入 Agent 生成事务，并将此前仍在等待的网页自动保存标记为已被新事务接管。
+   */
+  private beginSchematicGeneration(): void {
+    this.schematicGenerationInProgress = true;
+
+    for (const resolve of [...this.pendingSaveResolvers.values()]) {
+      resolve({ success: true });
+    }
+  }
+
+  /** 退出 Agent 生成事务，恢复网页端正常保存。 */
+  private endSchematicGeneration(): void {
+    this.schematicGenerationInProgress = false;
   }
 
   /**
@@ -631,7 +860,10 @@ export class IframeComponent implements OnInit, OnDestroy {
       state: 'doing',
       showProgress: false,
     });
-    this.generateSchematic('请根据当前项目的引脚配置和组件信息，重新生成连线图方案。');
+    this.generateSchematic(
+      '请根据当前项目的引脚配置和组件信息，重新生成连线图方案。',
+      true,
+    );
   }
 
   /**

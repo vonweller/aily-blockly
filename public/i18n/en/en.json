@@ -1,4 +1,10 @@
 {
+  "CODER_TABS": {
+    "PROJECTS": "Projects",
+    "CLOSE": "Close Project",
+    "BUILDING": "Building",
+    "UPLOADING": "Uploading"
+  },
     "CLOUD_SPACE_ERRORS": {
         "PUBLISH_FAILED": "Failed to publish project",
         "WORKSPACE_PROJECT_NOT_FOUND": "Project not found",
@@ -11,6 +17,7 @@
         "PROJECT_NEW": "New Project",
         "PROJECT_NEW_AILY_CODE": "New Aily Code Project",
         "PROJECT_OPEN": "Open Project",
+        "PROJECT_ADD": "Add Project",
         "RECENT_PROJECTS": "Recent Projects",
         "RECENT_PROJECTS_EMPTY": "No recent projects",
         "PROJECT_SAVE": "Save Project",
@@ -29,7 +36,6 @@
         "IMAGE_EXPORT_FAILED": "Failed to export workspace image",
         "DEBUG": "Debug",
         "TERMINAL": "Terminal",
-        "TOOL_SERIAL": "Serial Tool",
         "MQTT_DEBUGGER": "MQTT Debugger",
         "NETWORK_DEBUGGER": "Network Debugger",
         "AI": "AI",
@@ -185,6 +191,7 @@
     "GUIDE": {
         "START": "Start",
         "RECENTLY": "Recent",
+        "UNMERGE_CODER_WORKSPACE": "Unmerge multi-project workspace",
         "USER_GROUP": "User Community",
         "USER_GROUP_DESC": "Join the community to connect with the development team and other users",
         "AI_APP_CENTER": "AI App Center",
@@ -879,6 +886,7 @@
         "CANCEL": "Cancel"
     },
     "LOGIN": {
+        "EDU_LOGIN": "EDU login",
         "HEADER": "Log in to use our services",
         "PHONE": "Phone",
         "EMAIL": "Email",
@@ -1008,6 +1016,16 @@
         "FAILED": "Unable to open the code workspace",
         "TIMEOUT": "The code workspace took too long to start. Please try again.",
         "RETRY": "Try again"
+    },
+    "CODER_SUBAPP_INSTALL": {
+        "TITLE": "Preparing Aily Coder Editor",
+        "INSTALLING": "Downloading and installing the editor ({{percent}}%)",
+        "FAILED": "Editor installation did not finish. Check the network and try again.",
+        "RETRY": "Retry installation",
+        "REINSTALL": "Reinstall editor",
+        "REINSTALL_TITLE": "Reinstall Aily Coder Editor?",
+        "REINSTALL_HINT": "This closes the current editor service and downloads a fresh package. Save project files first. Any existing installation is restored if reinstallation fails.",
+        "REINSTALL_CONFIRM": "Reinstall"
     },
     "NPM": {
         "INSTALLING": "Installing {{name}}...",
@@ -1151,18 +1169,28 @@
         }
     },
     "PLAYGROUND": {
+        "HOME": "Home",
         "LOADING_EXAMPLE": "Loading example...",
         "EXAMPLE_LOAD_SUCCESS": "Example loaded successfully",
         "EXAMPLE_LOAD_FAILED": "Failed to load example",
         "NO_TUTORIAL_PROVIDED": "No tutorial provided by the library author"
     },
     "PROJECT": {
+      "MODE_UNKNOWN": "Unknown project type. Select a valid Aily Blockly or Aily Coder project.",
+      "MODE_CREATE_RESTRICTED": "The current {{application}} mode cannot create this project type. Use {{targetApplication}} instead.",
+      "MODE_MISMATCH_TITLE": "Project mode mismatch",
+      "MODE_OPEN_OTHER": "This project requires {{application}}, which is installed. Open it in a new window of that application? Your current project will remain unchanged.",
+      "MODE_DOWNLOAD_OTHER": "This project requires {{application}}. No installation was found. Download and install it from the official website to open this project.",
+      "MODE_OPEN_BUTTON": "Open with {{application}}",
+      "MODE_DOWNLOAD_BUTTON": "Download from official website",
+      "MODE_LAUNCH_FAILED": "Unable to start {{application}}. Open it manually, or download and install the latest version from the official website.",
         "CANNOT_OPEN_PROJECT": "Cannot open project: ",
         "CREATING_PROJECT": "Creating project...",
         "PROJECT_CREATED": "Project created successfully",
         "CREATE_FAILED": "Project creation failed",
         "PATH_NOT_EXIST": "Project path does not exist, please select another project",
         "SWITCHING_BOARD_CONFIG": "Switching board configuration...",
+        "SDK_CONFIG_NOT_READY": "SDK is not ready. Some board settings are temporarily unavailable.",
         "BOARD_SWITCH_COMPLETE": "Board switch complete",
         "BOARD_SWITCH_SUCCESS": "Board switched successfully",
         "SWITCHING_BOARD": "Switching board...",
@@ -1186,6 +1214,12 @@
         "CANCEL": "Cancel"
     },
     "LIBRARY_PUBLISH": {
+        "SUBMIT_FAILED": "Publishing failed: {{error}}",
+        "NETWORK_ERROR": "Network connection failed. Check your connection and the submission status in User Center before retrying.",
+        "SERVICE_ERROR": "The service is temporarily unavailable. Check the submission status in User Center later.",
+        "GITHUB_AUTH_TIMEOUT": "GitHub authorization timed out. Publish again and complete authorization.",
+        "LOCAL_SAVE_FAILED": "The submission was accepted, but local metadata could not be saved: {{error}}. Check the local files; you do not need to publish again.",
+        "PACKAGE_NAME_UNAVAILABLE": "The library name {{name}} is already used by another user. Change the name before publishing.",
         "RELOAD_TITLE": "Reload current project",
         "RELOAD_RENAMED": "The local library was renamed from {{previousName}} to {{nextName}}.",
         "RELOAD_UPDATED": "The local library information has been updated.",
