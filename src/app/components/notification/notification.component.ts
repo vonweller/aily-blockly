@@ -1,4 +1,4 @@
-import { ChangeDetectorRef, Component, ElementRef } from '@angular/core';
+import { ChangeDetectorRef, Component } from '@angular/core';
 import { NzProgressModule } from 'ng-zorro-antd/progress';
 import { CommonModule } from '@angular/common';
 import { NoticeOptions, NoticeService, UiService } from '@core/app-shell/public-api';
@@ -26,12 +26,9 @@ export class NotificationComponent {
   animationFrameId: number; // 动画帧ID
   animationDuration = 300; // 动画持续时间（毫秒）
 
-  tempWidth = 250;
-
   constructor(
     private noticeService: NoticeService,
     private cd: ChangeDetectorRef,
-    private elementRef: ElementRef,
     private uiService: UiService
   ) { }
 
@@ -60,10 +57,8 @@ export class NotificationComponent {
           this.close();
         }, this.data.setTimeout);
       }
-      // 先按最小宽度渲染，再根据最长的单行内容扩展，最大不超过 450px。
-      this.tempWidth = 250;
-      this.cd.detectChanges();
-      this.tempWidth = this.getAdaptiveWidth();
+      // Intrinsic CSS sizing keeps progress updates from forcing repeated
+      // synchronous layouts of the entire (potentially very large) workspace.
       this.cd.detectChanges();
     });
   }
@@ -135,38 +130,6 @@ export class NotificationComponent {
   easeOutQuad(t: number): number {
     return t * (2 - t);
   }
-
-  // 根据标题、正文和按钮的单行内容宽度计算通知框宽度。
-  private getAdaptiveWidth(): number {
-    const notificationBox = this.elementRef.nativeElement.querySelector('.notification-box') as HTMLElement | null;
-    const textBox = this.elementRef.nativeElement.querySelector('.text-box') as HTMLElement | null;
-    if (!notificationBox || !textBox) return 250;
-
-    const contentElements = Array.from(textBox.querySelectorAll<HTMLElement>('.title, .text, .btns'));
-    const contentWidth = contentElements.reduce(
-      (width, element) => Math.max(width, this.getIntrinsicWidth(element)),
-      0
-    );
-    const boxWidth = parseFloat(getComputedStyle(notificationBox).width);
-    const fixedWidth = boxWidth - textBox.getBoundingClientRect().width;
-
-    // 额外预留 2px，避免字体小数像素取整导致在最大宽度前提前出现省略号。
-    return Math.min(450, Math.max(250, Math.ceil(fixedWidth + contentWidth + 2)));
-  }
-
-  private getIntrinsicWidth(element: HTMLElement): number {
-    const previousWidth = element.style.width;
-    const previousMaxWidth = element.style.maxWidth;
-
-    element.style.width = 'max-content';
-    element.style.maxWidth = 'none';
-    const width = element.getBoundingClientRect().width;
-
-    element.style.width = previousWidth;
-    element.style.maxWidth = previousMaxWidth;
-    return width;
-  }
-
 
   stop() {
     this.data.stop();

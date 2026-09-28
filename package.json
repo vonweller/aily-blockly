@@ -170,7 +170,10 @@
     "validate:e2e:simulator-debug": "node ./scripts/validate-simulator-debug-e2e-report.mjs",
     "setup:external-tools": "node scripts/prepare-child-resources.js",
     "setup:local-builder": "node scripts/use-local-builder.mjs",
-    "setup:local-connector": "node scripts/use-local-connector.mjs"
+    "setup:local-connector": "node scripts/use-local-connector.mjs",
+    "perf:blockly:prepare": "node scripts/prepare-blockly-performance.cjs",
+    "perf:blockly:serve": "node scripts/serve-blockly-performance.cjs",
+    "perf:blockly:test": "playwright test -c e2e/performance.config.ts"
   },
   "private": true,
   "dependencies": {

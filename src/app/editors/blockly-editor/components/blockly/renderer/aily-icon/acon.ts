@@ -169,14 +169,12 @@ export class AilyIcon extends Blockly.icons.Icon {
    * 加载状态配置
    */
   loadState(state: Partial<AilyIconState> | string): void {
-    if (typeof state === 'string') {
-      this.state = { ...this.state, src: state };
-    } else {
-      this.state = { ...this.state, ...state };
-    }
-    if (!this.state.color) {
-      this.state.color = 'white';
-    }
+    const next = {...this.state, ...(typeof state === 'string' ? {src: state} : state)};
+    if (!next.color) next.color = 'white';
+    // RenderInfo is constructed on every block render. Reusing an unchanged
+    // icon avoids tearing down/recreating thousands of foreignObject subtrees.
+    if ((Object.keys(next) as Array<keyof AilyIconState>).every(key => next[key] === this.state[key])) return;
+    this.state = next;
 
     if (this.svgRoot) {
       this.svgRoot.innerHTML = '';
@@ -205,7 +203,9 @@ export class AilyIcon extends Blockly.icons.Icon {
  * 这样可以通过 block.addIcon() 或 XML 序列化使用
  */
 export function registerAilyIcon(): void {
-  Blockly.icons.registry.register(AILY_ICON_TYPE, AilyIcon);
+  if (!Blockly.registry.hasItem(Blockly.registry.Type.ICON, AILY_ICON_TYPE.toString())) {
+    Blockly.icons.registry.register(AILY_ICON_TYPE, AilyIcon);
+  }
 }
 
 /**
@@ -218,10 +218,7 @@ export function addAilyIconToBlock(
   block: BlockSvg,
   state?: Partial<AilyIconState> | string
 ): AilyIcon {
-  try {
-    Blockly.icons.registry.register(AILY_ICON_TYPE, AilyIcon);
-  } catch (e) {
-  }
+  registerAilyIcon();
   const existingIcon = block.getIcon(AILY_ICON_TYPE);
   if (existingIcon instanceof AilyIcon) {
     if (state) {
