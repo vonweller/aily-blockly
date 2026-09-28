@@ -14,7 +14,7 @@ import { BuilderService } from '@domain/build/public-api';
 import { MainUiAutomationService } from './main-ui-automation.service';
 import { AiOperationRegistryService } from './ai-operation-registry.service';
 import { SubappAgentBridgeService } from '@integration/subapps/public-api';
-import { isAilyLibraryPackageName } from '@shared/public-api';
+import { isAilyLibraryPackageName, isAilyScopedPackageName } from '@shared/public-api';
 import {
   selectSerialPort,
   SerialService,
@@ -1187,7 +1187,7 @@ export class BlocklyLiveOperationBridgeService {
     if (!normalized) {
       return normalized;
     }
-    if (normalized.startsWith('@aily-project/')) {
+    if (isAilyScopedPackageName(normalized)) {
       return normalized;
     }
     if (normalized.startsWith('board-')) {
