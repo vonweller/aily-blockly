@@ -38,8 +38,15 @@ const packed = JSON.parse(runNpm(['pack', dist, '--pack-destination', vendor, '-
   cwd: root, encoding: 'utf8',
 }));
 const filename = path.basename(packed[0].filename);
-runNpm(['install', '--ignore-scripts', '--no-audit', '--no-fund', '--save-exact', `blockly@file:vendor/${filename}`], {
+const usingPnpm = process.env.npm_config_user_agent?.startsWith('pnpm/');
+// Keep both lockfiles usable without replacing a pnpm node_modules layout.
+runNpm(['install', ...(usingPnpm ? ['--package-lock-only'] : []), '--ignore-scripts', '--no-audit', '--no-fund', '--save-exact', `blockly@file:vendor/${filename}`], {
   cwd: root, stdio: 'inherit',
 });
+if (usingPnpm) {
+  execFileSync(process.execPath, [npmCli, 'add', '--ignore-scripts', '--save-exact', `blockly@file:vendor/${filename}`], {
+    cwd: root, stdio: 'inherit',
+  });
+}
 console.log(`Installed ${manifest.name}@${manifest.version}; integrity: ${packed[0].integrity}`);
 console.log('Next: npm run test:unit:ci, then the isolated Electron regression suite.');

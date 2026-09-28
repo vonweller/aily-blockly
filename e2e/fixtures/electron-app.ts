@@ -1,7 +1,7 @@
 import { test as base, _electron, expect, type ElectronApplication, type Page } from '@playwright/test';
 import { spawnSync } from 'node:child_process';
 import { constants, existsSync } from 'node:fs';
-import { cp, mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -44,6 +44,12 @@ export async function launchAilyElectron(options: {
 
   let app: ElectronApplication;
   try {
+    const minimap = options.environment?.['AILY_E2E_MINIMAP'] || process.env['AILY_E2E_MINIMAP'];
+    if (minimap === '1' || minimap === '0') {
+      const config = JSON.parse(await readFile(path.join(ROOT, 'electron/config/config.json'), 'utf8'));
+      config.blockly.minimap = minimap === '1';
+      await writeFile(path.join(userDataDir, 'config.json'), JSON.stringify(config));
+    }
     // Optional read-only toolchain seed for offline compile verification. Copy
     // only installed packages/binaries into this test's disposable appdata;
     // never copy accounts, auth, projects, .npmrc, locks or subapp activations.

@@ -38,7 +38,7 @@ async function openReady(win: Page, project: string) {
 test.describe('Blockly v13 extended regression', () => {
   test.skip(!SOURCE, 'Requires an installed disposable Blockly fixture source.');
 
-  test('commits and cancels native number edits, and edits custom slider and multiline fields', async ({electronApp, upgradedProject}) => {
+  test('commits and cancels native number edits, and edits custom slider and multiline fields', async ({electronApp, upgradedProject}, testInfo) => {
     const win = await getMainWindow(electronApp);
     const errors: string[] = [];
     win.on('pageerror', error => errors.push(error.message));
@@ -62,6 +62,8 @@ test.describe('Blockly v13 extended regression', () => {
     await expect(numberInput).toBeHidden();
     await expect.poll(() => win.evaluate(id => (window as any).blocklyWorkspace.getUndoStack()
       .some((event: any) => event.blockId === id && event.element === 'field' && event.name === 'NUM' && event.newValue === 1234), target.id)).toBe(true);
+    await testInfo.attach('native-number-undo-stack', {body: JSON.stringify(await win.evaluate(() =>
+      (window as any).blocklyWorkspace.getUndoStack().map((event: any) => event.toJson()))), contentType: 'application/json'});
     await win.evaluate(() => (window as any).blocklyWorkspace.undo(false));
     await expect.poll(number).toBe(target.before);
     await win.evaluate(() => (window as any).blocklyWorkspace.undo(true));

@@ -410,9 +410,18 @@
     right: 16px;
     top: 16px;
     transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+    touch-action: none;
+    cursor: crosshair;
+    contain: layout paint;
+
+    &:focus-visible {
+        outline: 2px solid var(--ant-primary-color, #4096ff);
+        outline-offset: 2px;
+    }
 
     .blocklySvg {
-        background-color: var(--aily-blockly-minimap-bg) !important;
+        // The SVG is the viewport overlay; the overview canvas sits below it.
+        background-color: transparent !important;
     }
 
     .blocklyMainBackground {

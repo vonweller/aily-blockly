@@ -175,11 +175,15 @@ test.describe('Blockly v13 production renderer contracts', () => {
     });
     const readMirror = () => win.evaluate(() => {
       const realm = (document.querySelector('iframe[data-blockly-generator-runtime]') as HTMLIFrameElement).contentWindow as any;
-      const mini = realm.Blockly.common.getAllWorkspaces().find((ws: any) => ws.getInjectionDiv?.()?.closest('.blockly-minimap'));
-      return mini ? {count: mini.getAllBlocks(false).length,
-        values: mini.getAllBlocks(false).filter((b: any) => b.type === 'math_number').map((b: any) => b.getFieldValue('NUM'))} : null;
+      const mini = document.querySelector('.blockly-minimap[data-minimap-ready="true"]');
+      if (!mini) return null;
+      const sources = [...mini.querySelectorAll('[data-minimap-source]')];
+      return {count: sources.reduce((sum, source) => sum + source.querySelectorAll('.blocklyPath').length, 0),
+        values: sources.flatMap(source => [...source.querySelectorAll('text')].map(text => Number(text.textContent))),
+        duplicateWorkspaces: realm.Blockly.common.getAllWorkspaces().filter((ws: any) =>
+          ws.getInjectionDiv?.()?.closest('.blockly-minimap')).length};
     });
-    await expect.poll(readMirror).toMatchObject({count, values: expect.arrayContaining([8193])});
+    await expect.poll(readMirror).toMatchObject({count, values: expect.arrayContaining([8193]), duplicateWorkspaces: 0});
     await win.evaluate(() => (window as any).blocklyWorkspace.getBlockById('minimap_probe').setFieldValue(8194, 'NUM'));
     await expect.poll(readMirror).toMatchObject({count, values: expect.arrayContaining([8194])});
     const before = await win.evaluate(() => ({x: (window as any).blocklyWorkspace.scrollX, y: (window as any).blocklyWorkspace.scrollY}));
@@ -187,6 +191,10 @@ test.describe('Blockly v13 production renderer contracts', () => {
     if (!bounds) throw new Error('Minimap has no rendered bounds');
     await win.mouse.click(bounds.x + bounds.width * 0.8, bounds.y + bounds.height * 0.8);
     await expect.poll(() => win.evaluate(() => ({x: (window as any).blocklyWorkspace.scrollX, y: (window as any).blocklyWorkspace.scrollY}))).not.toEqual(before);
+    const clicked = await win.evaluate(() => (window as any).blocklyWorkspace.scrollY);
+    await win.locator('.blockly-minimap').press('ArrowDown');
+    await expect.poll(() => win.evaluate(() => (window as any).blocklyWorkspace.scrollY)).not.toBe(clicked);
+    await expect(win.locator('.blockly-minimap .blockly-focus-region')).toHaveAttribute('width', /[0-9]/);
     await win.screenshot({path: testInfo.outputPath('minimap-pan.png')});
     await win.evaluate(() => (window as any).blocklyWorkspace.getBlockById('minimap_probe').dispose(false));
     await expect.poll(readMirror).toMatchObject({count: count - 1});
