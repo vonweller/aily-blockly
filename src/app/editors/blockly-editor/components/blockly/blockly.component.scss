@@ -9,6 +9,8 @@
     grid-template-columns: 180px minmax(0, 1fr);
     height: 100%;
     min-height: 0;
+    overflow: hidden;
+    isolation: isolate;
 }
 
 .toolbox-pane,
@@ -19,10 +21,17 @@
 
 .toolbox-pane {
     position: relative;
+    z-index: 1;
+    overflow: hidden;
+    // Keep fixed library menus viewport-relative and able to extend over the
+    // workspace. Paint containment would offset and clip them to this pane.
+    background: var(--aily-bg-tertiary);
 }
 
 .workspace-pane {
     position: relative;
+    z-index: 0;
+    overflow: hidden;
 }
 
 .workspace-search {

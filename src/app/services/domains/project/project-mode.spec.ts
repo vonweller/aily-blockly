@@ -17,6 +17,7 @@ describe('project mode boundaries', () => {
       getApplicationName: () => 'Aily',
       save: jasmine.createSpy('save').and.resolveTo(),
     };
+    service.stopProjectCommands = jasmine.createSpy('stopProjectCommands').and.resolveTo();
     service.coderOperations = new Map();
     service.coderOperationsSubject = new BehaviorSubject(new Map());
     service.coderOperationSubject = new BehaviorSubject(null);
@@ -30,7 +31,7 @@ describe('project mode boundaries', () => {
     service.translate = { instant: (key: string) => key };
     spyOn(service, 'getProjectMode').and.callFake((path: string) => path.includes('code') ? 'coder' : path.includes('blocks') ? 'blockly' : null);
     service.getCoderProjectContext = () => ({ currentPackageData: { name: 'Code' }, stateSubject: new BehaviorSubject('loaded'), syncCurrentBoardConfig: async () => true });
-    spyOn(service, 'shouldBlockForAiOperation').and.returnValue(false);
+    spyOn(service, 'acquireProjectLifecycle').and.returnValue({ token: Symbol(), release: () => {} });
     return service;
   }
 
@@ -62,7 +63,12 @@ describe('project mode boundaries', () => {
       const service = createService(mode);
       const originalIpc = window['ipcRenderer'];
       window['ipcRenderer'] = { invoke: jasmine.createSpy('invoke').and.resolveTo() };
-      service.routerService = { url: '/main/guide', navigate: jasmine.createSpy('navigate').and.resolveTo(true) };
+      service.routerService = {
+        url: '/main/guide',
+        createUrlTree: jasmine.createSpy('createUrlTree').and.returnValue({}),
+        isActive: jasmine.createSpy('isActive').and.returnValue(false),
+        navigate: jasmine.createSpy('navigate').and.resolveTo(true),
+      };
       Object.defineProperty(service, 'application', { value: { closeConnectionGraphWindows: async () => true } });
       spyOn(service, 'waitForProjectOpenCompletion').and.resolveTo();
       try {

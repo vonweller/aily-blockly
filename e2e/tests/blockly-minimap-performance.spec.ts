@@ -131,8 +131,9 @@ test('large workspace worker overview preserves navigation, stack dragging, code
     const pointer = await win.evaluate(id => {
       const block = (window as any).blocklyWorkspace.getBlockById(id);
       const rect = block.pathObject.svgPath.getBoundingClientRect();
-      const point = {x: rect.x + 8, y: rect.y + 20};
-      if (document.elementFromPoint(point.x, point.y)?.closest('g.blocklyDraggable') !== block.getSvgRoot()) {
+      const point = [[8, 20], [4, 24], [5, 30], [40, 8]].map(([x, y]) => ({x: rect.x + x, y: rect.y + y}))
+        .find(p => document.elementFromPoint(p.x, p.y) === block.pathObject.svgPath);
+      if (!point) {
         throw new Error('Stack drag hit test did not reach its SVG');
       }
       (window as any).__minimapPerf.stage = 'drag';

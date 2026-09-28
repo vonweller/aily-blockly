@@ -14,16 +14,9 @@ import { _BuilderService } from "./builder.service";
 import { BuilderService as HostBuilderService } from "@domain/build/public-api";
 import { NoticeService, ActionState, ActionService, WorkflowService, ProcessState } from '@core/app-shell/public-api';
 import { NzModalService } from "ng-zorro-antd/modal";
-import { CmdOutput, CmdService, LogService, AppDataResourceLockService } from '@core/platform/public-api';
+import { CmdOutput, CmdService, LogService } from '@core/platform/public-api';
 import { NpmService } from "@domain/dependencies/public-api";
-import {
-  normalizeArduinoGeneratedCode,
-} from "../components/blockly/generators/arduino/arduino";
-import {
-  runWithPreparedActiveProjectGenerator,
-} from './blockly-generator-runtime.service';
 import { BlocklyService } from "./blockly.service";
-import { writeArduinoGeneratedArtifacts } from './generated-code-artifacts';
 import { appendProjectLog, type ProjectLogLevel } from '../../../utils/project-log.utils';
 
 interface NetworkOtaUploadTarget {
@@ -79,8 +72,7 @@ export class _UploaderService {
     private actionService: ActionService,
     private blocklyService: BlocklyService,
     private workflowService: WorkflowService,
-    private uploaderBleService: UploaderBleService,
-    private appDataResourceLock: AppDataResourceLockService
+    private uploaderBleService: UploaderBleService
   ) { }
 
   uploadInProgress = false;
@@ -110,6 +102,9 @@ export class _UploaderService {
     /Writing\s+at\s+0x[0-9a-f]+\.\.\.\s+\(\d+\s*%\)/i,
     // Wrote and verified address 0x08001700 (79.31%)
     /Wrote\s+and\s+verified\s+address\s+0x[0-9a-f]+\s+\((\d+(?:\.\d+)?)%\)/i,
+    // stc-cli (STC32): Writing...  50% (93440/186880 bytes)
+    // 限定完整写入格式，避免将其他工具的普通百分比日志识别为上传进度。
+    /^Writing\.\.\.\s+(\d+(?:\.\d+)?)\s*%\s+\(\d+\/\d+\s+bytes\)$/i,
     // 或者只是数字+百分号（例如：[====>    ] 70%）
     /\b(\d+(?:\.\d+)?)%\b/,
     // 70% 13/18
@@ -424,36 +419,35 @@ export class _UploaderService {
             this.coderBuildActive = false;
           }
         } else {
-          const projectDocument = this.blocklyService.getProjectDocument();
-          const generated = await runWithPreparedActiveProjectGenerator(
-            this.blocklyService.workspace,
-            (generator) => ({
-              code: normalizeArduinoGeneratedCode(
-                generator.workspaceToCode(this.blocklyService.workspace),
-              ),
-              generator,
-            }),
-            projectDocument,
-          );
-          const { code, generator } = generated;
-          await writeArduinoGeneratedArtifacts(
-            projectPath,
-            generator,
-          );
+          this._builderService.isUploading = true;
+          if (this._builderService.isPreprocessing()) {
+            this.safeUpdateNotice({
+              title: this.translate.instant('BLOCKLY_EDITOR.BUILD.PREPARING_TITLE'),
+              text: this.translate.instant('BLOCKLY_EDITOR.BUILD.PRECOMPILE_RUNNING'),
+              state: 'doing', setTimeout: 0, stop: () => this.cancel(),
+            });
+          }
+          await this._builderService.waitForUploadPreprocess(() => this.cancelled);
+          if (this.cancelled || projectPath !== this.projectService.currentProjectPath) throw new Error('Upload project changed or cancelled.');
           buildPath = await this.projectService.getBuildPath();
-          const needsBuild = !this._builderService.passed ||
-                            code !== this._builderService.lastCode ||
-                            this.projectService.currentProjectPath !== this._builderService.currentProjectPath ||
-                            window['fs'].existsSync(buildPath) === false;
+          const needsBuild = !await this._builderService.canReuseBuildForUpload(() => this.cancelled);
+          if (this.cancelled || projectPath !== this.projectService.currentProjectPath) throw new Error('Upload project changed or cancelled.');
 
           // 如果需要编译，先执行编译
           if (needsBuild) {
             try {
               const buildResult = await this._builderService.build();
               console.log("build result:", buildResult);
+              // The editor may have changed while the compiler was running.
+              // Never upload that older firmware automatically after a build.
+              if (window['builder']?.canReuseBlocklyUpload
+                && !await this._builderService.canReuseBuildForUpload(() => this.cancelled)) {
+                throw new Error('BUILD_SOURCE_STALE: Project inputs or firmware changed during compilation; build again before upload.');
+              }
               // 编译成功，继续上传流程
             } catch (error) {
               this.uploadInProgress = false; // 重置状态
+              this._builderService.isUploading = false;
               // 检查编译是否被取消
               if (this._builderService.cancelled || this.cancelled) {
                 this.noticeService.update({
@@ -679,16 +673,20 @@ export class _UploaderService {
         }
 
         let bufferData = '';
-        void this.appDataResourceLock.runShared('upload:run', () => new Promise<void>((releaseUploadLock) => {
+        await new Promise<void>((completeCommand) => {
+        if (currentProjectPath !== this.projectService.currentProjectPath
+          || this.projectService.isProjectTransitionInProgress(currentProjectPath)) {
+          throw new Error('Upload cancelled: project is closing or has changed.');
+        }
         if (this.cancelled) {
-          releaseUploadLock();
+          completeCommand();
           return;
         }
 
         this.cmdService.spawn(
           'node',
           [uploadScriptPath, configFilePath],
-          { shellProfile: false },
+          { shellProfile: false, cwd: currentProjectPath },
           false,
         ).subscribe({
           next: async (output: CmdOutput) => {
@@ -938,7 +936,7 @@ export class _UploaderService {
           },
           error: (error: any) => {
             if (syntheticProgressTimer) { clearInterval(syntheticProgressTimer); syntheticProgressTimer = null; }
-            releaseUploadLock();
+            completeCommand();
             console.log("上传命令错误:", error);
             this.uploadInProgress = false; // 确保重置上传状态
             this._builderService.isUploading = false;
@@ -954,7 +952,7 @@ export class _UploaderService {
           },
           complete: () => {
             if (syntheticProgressTimer) { clearInterval(syntheticProgressTimer); syntheticProgressTimer = null; }
-            releaseUploadLock();
+            completeCommand();
             console.log("上传命令完成，cancelled:", this.cancelled, "isErrored:", this.isErrored, "uploadCompleted:", this.uploadCompleted, "processExitCode:", this.processExitCode);
             
             // 确保 uploadInProgress 在所有情况下都被重置
@@ -1053,9 +1051,17 @@ export class _UploaderService {
             }
           }
         });
-        }));
+        }).finally(() => {
+          if (syntheticProgressTimer) clearInterval(syntheticProgressTimer);
+        });
       } catch (error) {
+        this.uploadInProgress = false;
         this._builderService.isUploading = false; // 确保在异常情况下设置为false
+        if (this.cancelled) {
+          this.uploadPromiseReject = null;
+          reject({ state: 'warn', text: this.uploadT('CANCELLED') });
+          return;
+        }
         const fullErrorMessage = (error?.error || error?.stack || error?.message || String(error)).toString();
         this.handleUploadError(error.message || this.uploadT('FAILED_TITLE'), this.uploadT('FAILED_TITLE'), fullErrorMessage);
         this.workflowService.finishUpload(false, error.message || 'Upload failed');
@@ -1253,13 +1259,17 @@ export class _UploaderService {
         this.logNetworkOtaUpload(trimmedLine);
       };
 
-      void this.appDataResourceLock.runShared('upload:network-ota', () => new Promise<void>((releaseUploadLock) => {
+      try {
+        if (currentProjectPath !== this.projectService.currentProjectPath
+          || this.projectService.isProjectTransitionInProgress(currentProjectPath)) {
+          throw new Error('Upload cancelled: project is closing or has changed.');
+        }
         if (this.cancelled) {
-          releaseUploadLock();
+          reject({ state: 'warn', text: this.networkT('CANCELLED') });
           return;
         }
 
-        this.cmdService.run(uploadCmd, null, false).subscribe({
+        this.cmdService.run(uploadCmd, currentProjectPath, false, false).subscribe({
           next: (output: CmdOutput) => {
             this.streamId = output.streamId;
 
@@ -1301,7 +1311,6 @@ export class _UploaderService {
             }
           },
           error: (error: any) => {
-            releaseUploadLock();
             this.uploadInProgress = false;
             this._builderService.isUploading = false;
             const fullErrorMessage = (error?.error || error?.stack || error?.message || String(error)).toString();
@@ -1310,7 +1319,6 @@ export class _UploaderService {
             reject({ state: 'error', text: error.message || this.networkT('UPLOAD_FAILED_FALLBACK') });
           },
           complete: () => {
-            releaseUploadLock();
             if (bufferData.trim()) {
               handleLine(bufferData);
               bufferData = '';
@@ -1368,7 +1376,12 @@ export class _UploaderService {
             reject({ state: 'error', text: message });
           }
         });
-      }));
+      } catch (error) {
+        this.uploadInProgress = false;
+        this._builderService.isUploading = false;
+        this.workflowService.finishUpload(false, error.message);
+        reject({ state: 'error', text: error.message });
+      }
     });
   }
 
@@ -1734,8 +1747,12 @@ export class _UploaderService {
         let lastProgress = 0;
         let currentStage = '';
 
-        void this.appDataResourceLock.runShared('upload:softdevice', () => new Promise<void>((releaseUploadLock) => {
-        this.cmdService.run(uploadCmd, null, false).subscribe({
+        try {
+        if (currentProjectPath !== this.projectService.currentProjectPath
+          || this.projectService.isProjectTransitionInProgress(currentProjectPath)) {
+          throw new Error('Upload cancelled: project is closing or has changed.');
+        }
+        this.cmdService.run(uploadCmd, currentProjectPath, false, false).subscribe({
           next: (output: CmdOutput) => {
             if (output.type === 'close') {
               if ((output.code ?? 0) !== 0 || output.signal) {
@@ -1844,7 +1861,6 @@ export class _UploaderService {
           },
           error: (error: any) => {
             console.error('Softdevice 烧录错误:', error);
-            releaseUploadLock();
             this.noticeService.update({
               title: errorTitle,
               text: this.uploadT('SOFTDEVICE_FLASH_FAILED_WITH_MESSAGE', { message: error.message || error }),
@@ -1855,7 +1871,6 @@ export class _UploaderService {
           },
           complete: () => {
             console.log('Softdevice 烧录命令执行完成, hasError:', hasError, 'uploadCompleted:', uploadCompleted);
-            releaseUploadLock();
             if (hasError) {
               this.noticeService.update({
                 title: errorTitle,
@@ -1875,7 +1890,9 @@ export class _UploaderService {
             }
           }
         });
-        }));
+        } catch (error) {
+          resolve({ success: false, message: error.message });
+        }
       });
     } catch (error: any) {
       console.error('烧录 softdevice 失败:', error);

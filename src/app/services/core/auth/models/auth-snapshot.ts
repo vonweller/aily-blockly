@@ -1,3 +1,5 @@
+import type { AuthCreditSnapshot } from './auth-credit-snapshot';
+
 /** Token-free host-owned account state shared with installed child applications. */
 export interface AuthQuotaSummary {
   readonly totalToken: number;
@@ -18,6 +20,7 @@ export interface AuthQuotaInfoSnapshotItem {
 
 export interface AuthQuotaInfoSnapshot {
   readonly source: 'auth-me' | 'token';
+  readonly creditSnapshot?: AuthCreditSnapshot;
   readonly quotaResetDate?: string;
   readonly quotaSnapshots?: Readonly<Record<string, AuthQuotaInfoSnapshotItem>>;
   readonly limitedUserQuotas?: Readonly<Record<string, number>>;
@@ -30,6 +33,8 @@ export interface AuthInvitationInfo {
 }
 
 export interface AuthUserInfo {
+  readonly education_student?: boolean;
+  readonly education_teacher?: boolean;
   readonly id?: string;
   readonly email?: string;
   readonly phone?: string;

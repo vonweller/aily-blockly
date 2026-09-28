@@ -34,8 +34,11 @@ const {
 const { mergeConfigChanges } = require("./config-persistence");
 const { resolveAilyAppDataPath } = require("./appdata-path");
 const { registerSafeStorageIpc } = require("./safe-storage-ipc");
+const { refreshApplicationMenu } = require('./application-menu');
 const {
+  createDevelopmentProtocolArgs,
   normalizeBuildProduct,
+  resolveBuildProduct,
   getProductAuthConfig,
   isProductProtocolUrl,
 } = require('./build-product');
@@ -82,7 +85,11 @@ function getPackagedBuildProduct() {
 }
 
 function getBuildProduct() {
-  return normalizeBuildProduct(process.env.AILY_BUILD_PRODUCT || getPackagedBuildProduct());
+  return resolveBuildProduct({
+    environment: process.env,
+    packagedProduct: getPackagedBuildProduct(),
+    argv: process.argv,
+  });
 }
 
 function applyAppIdentity(product) {
@@ -448,7 +455,11 @@ if (serve) {
 for (const protocol of PROTOCOLS) {
   if (process.defaultApp) {
     if (process.argv.length >= 2) {
-      app.setAsDefaultProtocolClient(protocol, process.execPath, [path.resolve(process.argv[1])]);
+      app.setAsDefaultProtocolClient(protocol, process.execPath, createDevelopmentProtocolArgs({
+        appEntry: path.resolve(process.argv[1]),
+        product: getBuildProduct(),
+        serve,
+      }));
     }
   } else {
     app.setAsDefaultProtocolClient(protocol);
@@ -769,10 +780,12 @@ const {
   forceStopChildToolByCatalogId,
   listChildToolHoldersForCatalogId,
   getRunningSubappConfig,
+  nativeSubappRegistry,
 } = require("./window");
-const { registerNpmHandlers, killAllNpmProcesses, getActiveNpmProcesses } = require("./npm");
+const { registerNpmHandlers, killAllNpmProcesses, killOwnerProjectNpmProcesses, getActiveNpmProcesses, beginNpmShutdown } = require("./npm");
+const { cancelProjectTaskScope } = require('./project-task-scope');
 const { registerUpdaterHandlers } = require("./updater");
-const { registerCmdHandlers, killAllCmdProcesses, getActiveCmdProcesses } = require("./cmd");
+const { registerCmdHandlers, killAllCmdProcesses, killOwnerProjectCmdProcesses, getActiveCmdProcesses, beginCommandShutdown } = require("./cmd");
 const { registerAilyServicesStreamHandlers, cancelAllAilyServicesStreams, getActiveAilyServicesStreams } = require("./aily-services-stream");
 const {
   executeWebviewFetch,
@@ -782,7 +795,11 @@ const {
   wakeWebviewBridge,
 } = require("./webview-bridge");
 const { registerMCPHandlers } = require("./mcp");
-const { registerAppDataResourceLockHandlers, releaseAllAppDataResourceLocks, withAppDataResourceLock } = require("./appdata-resource-lock");
+const { withAuthCredentialsLock, beginAuthCredentialsShutdown, releaseAllAuthCredentialsLocks } = require('./auth-credentials-lock');
+const { registerAppDataResourceCleanupHandlers } = require('./appdata-resource-cleanup');
+const { createBuildDeliveryAuthority } = require('./build-delivery-authority');
+let buildDeliveryAuthority;
+let simulatorDebugPreviewRegistered = false;
 // debug模块
 const { initLogger, registerLoggerHandlers } = require("./logger");
 // tools
@@ -919,6 +936,7 @@ function requestMainWindow(channel, responseChannel, payload, timeoutMs = 12000,
 
     const listener = (event, message) => {
       if (!isCurrentMainRenderer(event.sender)
+        || event.senderFrame !== mainWindow.webContents.mainFrame
         || rendererGeneration !== requestGeneration
         || readyRendererGeneration !== requestGeneration
         || !message
@@ -1040,12 +1058,16 @@ async function handleCliBridgeCommand(action, payload) {
         'child_app_window_set_bounds',
         'child_app_window_arrange',
         'subapp_agent_call',
+        'subapp_agent_release',
+        'subapp_agent_owner',
       ]);
       if (!dir && !projectOptionalOperations.has(operation)) return { ok: false, message: '当前没有打开的项目,且未提供 path' };
       const liveOperationTimeoutMs = operation === 'project_build'
         ? 620000
         : operation === 'project_upload'
           ? 920000
+        : operation === 'board_switch'
+          ? 420000
         : operation === 'project_create'
           ? 300000
           : operation === 'project_open'
@@ -1054,9 +1076,9 @@ async function handleCliBridgeCommand(action, payload) {
             ? 600000
           : operation === 'project_save' && payload?.params?.chunk === true
             ? 140000
-          : operation === 'abs_apply' || operation === 'library_runtime_sync' || operation === 'set_board_config'
+          : operation === 'abs_apply' || operation === 'abs_validate' || operation === 'abs_projection' || operation === 'library_runtime_sync' || operation === 'set_board_config'
             ? 120000
-            : operation === 'subapp_agent_call'
+            : operation === 'subapp_agent_call' || operation === 'subapp_agent_release' || operation === 'subapp_agent_owner'
               ? 620000
               : operation === 'child_app_control'
               || operation === 'child_app_open'
@@ -2016,11 +2038,10 @@ function loadEnv() {
     console.error("initLogger error: ", error);
   }
 
-  registerAppDataResourceLockHandlers();
+  registerAppDataResourceCleanupHandlers();
   const authStore = require('./auth-store').createAuthStore(
     process.env.AILY_APPDATA_PATH,
-    buildProduct,
-    (operation) => withAppDataResourceLock(`auth-${buildProduct}`, operation),
+    withAuthCredentialsLock,
   );
   // loadEnv runs again when macOS recreates the main window.
   for (const operation of ['read', 'write', 'clear']) {
@@ -2028,7 +2049,7 @@ function loadEnv() {
   }
   ipcMain.handle('auth-credentials-read', () => authStore.read());
   ipcMain.handle('auth-credentials-write', (_event, record, expectedRefreshToken) => authStore.write(record, expectedRefreshToken));
-  ipcMain.handle('auth-credentials-clear', () => authStore.clear());
+  ipcMain.handle('auth-credentials-clear', (_event, expectedAccessToken) => authStore.clear(expectedAccessToken));
 
   // 检测并读取appdata_path目录下是否有config.json文件
   const userConfigPath = path.join(process.env.AILY_APPDATA_PATH, "config.json");
@@ -2593,9 +2614,48 @@ function createWindow() {
   registerWindowHandlers(mainWindow, {
     resolveRendererUrl: resolveAppRendererUrl,
     getRendererGeneration: () => rendererGeneration,
+    canCloseMainWindow: () => hasProcessCleanupCompleted,
   });
   registerNpmHandlers(mainWindow);
-  registerCmdHandlers(mainWindow);
+  if (!buildDeliveryAuthority) {
+    const deliveryChildRoot = process.env.AILY_CHILD_PATH || path.join(__dirname, '..', 'child');
+    buildDeliveryAuthority = createBuildDeliveryAuthority({
+      childRoot: deliveryChildRoot,
+      getOwner: () => isCurrentRendererGenerationReady() ? { sender: mainWindow.webContents, generation: rendererGeneration } : null,
+      querySource: projectPath => requestMainWindow('build-source-query', 'build-source-query:response', { projectPath }, 5000),
+    });
+    ipcMain.handle('build-delivery-query', (event, request) => {
+      if (!isCurrentMainRenderer(event.sender) || event.senderFrame !== event.sender.mainFrame) throw new Error('Build delivery query requires the current main frame.');
+      return buildDeliveryAuthority.query(event.sender, request);
+    });
+  }
+  // Debugger consumes a selected artifact, independent of build provenance.
+  // Runtime/executable paths remain native configuration, not renderer input.
+  if (!simulatorDebugPreviewRegistered) {
+    const { createBuildDebugPreview, resolvePreviewConfiguration, registerBuildDebugPreview } = require('./build-debug-preview');
+    const { createDebugMonitorPresenter } = require('./simulator-debug-monitor');
+    const { registerNativeObserver } = require('./subapp-native-observer');
+    const presenter = createDebugMonitorPresenter(BrowserWindow, { ipcMain });
+    registerNativeObserver(ipcMain, { presenter, isRenderer: sender => {
+      if (isCurrentMainRenderer(sender)) return true;
+      // Only the host's own standalone observer route, never child iframes or URLs.
+      if (!sender || sender.isDestroyed() || !BrowserWindow.fromWebContents(sender)) return false;
+      try {
+        const source = new URL(sender.getURL()), host = new URL(mainWindow.webContents.getURL());
+        return source.origin === host.origin && source.pathname === host.pathname
+          && /^#\/child-tool\/simulator-debugger(?:\?|$)/.test(source.hash);
+      } catch { return false; }
+    } });
+    const preview = createBuildDebugPreview({ registry: nativeSubappRegistry,
+      present: presenter,
+      configuration: () => resolvePreviewConfiguration({ childRoot: process.env.AILY_CHILD_PATH || path.join(__dirname, '..', 'child'),
+        appData: resolveAilyAppDataPath(), runtimeManifestPath: process.env.AILY_SIMDEBUG_RUNTIME_MANIFEST,
+        resourcesPath: app.isPackaged ? process.resourcesPath : undefined }) });
+    registerBuildDebugPreview(ipcMain, { isCurrentRenderer: isCurrentMainRenderer, preview,
+      previewEnabled: process.env.AILY_SIMDEBUG_PREVIEW === '1' });
+    simulatorDebugPreviewRegistered = true;
+  }
+  registerCmdHandlers(mainWindow, { buildDeliveryAuthority });
   registerAilyServicesStreamHandlers(mainWindow);
   registerWebviewBridgeHandlers();
   if (!webviewDebuggerSurfaceHandlersRegistered) {
@@ -2900,6 +2960,8 @@ app.on("ready", async () => {
     ensureRosettaIfNeededOnDarwin();
     loadEnv();
     applyAppIdentity(process.env.AILY_BUILD_PRODUCT);
+    // Run after Electron's ready listeners have installed the default native menu.
+    setImmediate(() => refreshApplicationMenu({ app, Menu }));
   } catch (error) {
     console.error("loadEnv error: ", error);
   }
@@ -3029,7 +3091,7 @@ app.on("window-all-closed", () => {
   }
 });
 
-function cleanupRegisteredChildProcesses() {
+async function cleanupRegisteredChildProcesses() {
   console.info('[PROC_TRACE][APP_CLEANUP_START]', {
     cmd: getActiveCmdProcesses(),
     npm: getActiveNpmProcesses(),
@@ -3037,7 +3099,11 @@ function cleanupRegisteredChildProcesses() {
     ailyServicesStreams: getActiveAilyServicesStreams()
   });
 
-  return Promise.allSettled([
+  beginCommandShutdown();
+  beginNpmShutdown();
+  beginAuthCredentialsShutdown();
+
+  await Promise.allSettled([
     killAllCmdProcesses(),
     killAllNpmProcesses(),
     killAllTerminals(),
@@ -3046,9 +3112,8 @@ function cleanupRegisteredChildProcesses() {
     simulatorGateway.stop(),
     simulatorSubappHost.defaultHost.stop(),
     packagedRendererServer.close(),
-  ]).then((results) => {
-    // console.info('[PROC_TRACE][APP_CLEANUP_DONE]', { results });
-  });
+  ]);
+  releaseAllAuthCredentialsLocks();
 }
 
 app.on("before-quit", (event) => {
@@ -3081,7 +3146,7 @@ app.on("will-quit", () => {
     ailyServicesStreams: getActiveAilyServicesStreams()
   });
 
-  releaseAllAppDataResourceLocks();
+  releaseAllAuthCredentialsLocks();
 
   if (heldProjectLockNormalized) {
     try {
@@ -3185,6 +3250,21 @@ ipcMain.handle("select-folder", async (event, data) => {
 });
 
 // 跨版本项目占用：尝试获取 / 释放锁、前置其他进程窗口
+ipcMain.handle('project-commands-stop', async (event, data) => {
+  if (!isCurrentMainRenderer(event.sender) || event.senderFrame !== mainWindow.webContents.mainFrame
+      || typeof data?.projectPath !== 'string' || !path.isAbsolute(data.projectPath)) {
+    return { ok: false, error: 'Invalid project close owner.' };
+  }
+  let scope;
+  try { scope = cancelProjectTaskScope(event.sender, data); }
+  catch { return { ok: false, error: 'Invalid project task scope.' }; }
+  const stopped = await Promise.all([
+    killOwnerProjectCmdProcesses(event.sender, scope.projectPath, scope.projectSessionId),
+    killOwnerProjectNpmProcesses(event.sender, scope.projectPath, scope.projectSessionId),
+  ]);
+  return { ok: stopped.every(Boolean) };
+});
+
 ipcMain.handle("project-lock-try", (event, data) => {
   const { projectPath, force } = data || {};
   const r = projectLock.tryAcquireLock(projectPath, { force: !!force });

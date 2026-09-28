@@ -6,6 +6,9 @@ const os = require('os');
 const path = require('path');
 const { isWin32, isDarwin, isLinux } = require('./platform');
 const { killRegisteredProcessTree } = require('./process-tree');
+const { assertProjectTaskActive, matchesProjectTask } = require('./project-task-scope');
+const { createBuildWorkspaceSupervisor } = require('./build-workspace-supervisor');
+let commandShutdown = false;
 const {
   normalizeProcessMessage,
   normalizeProcessMessagePortConfig,
@@ -18,18 +21,23 @@ function summarizeArgs(args = []) {
 function uniqueNonEmpty(items) {
   const seen = new Set();
   const result = [];
+
   for (const item of items) {
     if (!item || typeof item !== 'string') {
       continue;
     }
+
     const normalized = item.trim();
     const key = normalized.toLowerCase();
+
     if (!normalized || seen.has(key)) {
       continue;
     }
+
     seen.add(key);
     result.push(normalized);
   }
+
   return result;
 }
 
@@ -39,7 +47,9 @@ function normalizeWindowsPathValue(value) {
   }
 
   let normalized = value.trim().replace(/\//g, '\\');
+
   normalized = normalized.replace(/^([a-zA-Z]):(?!\\)/, '$1:\\');
+
   return normalized;
 }
 
@@ -53,13 +63,16 @@ function getWindowsRootsFromPath() {
   }
 
   const roots = [];
+
   for (const entry of getProcessPathValue().split(path.delimiter)) {
     const normalized = normalizeWindowsPathValue(entry);
     const match = normalized.match(/^([a-zA-Z]:\\Windows)(?:\\System32(?:\\WindowsPowerShell\\v1\.0)?|\\Sysnative)?$/i);
+
     if (match) {
       roots.push(match[1]);
     }
   }
+
   return roots;
 }
 
@@ -100,6 +113,7 @@ function getWindowsShellCandidates() {
     ...getWindowsRootsFromPath(),
     'C:\\Windows'
   ]);
+
   const programFilesRoots = uniqueNonEmpty([
     normalizeWindowsPathValue(process.env.ProgramFiles),
     normalizeWindowsPathValue(process.env['ProgramFiles(x86)']),
@@ -114,6 +128,7 @@ function getWindowsShellCandidates() {
       source: `${root}\\System32`,
       path: path.join(root, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
     });
+
     candidates.push({
       kind: 'powershell',
       source: `${root}\\Sysnative`,
@@ -141,6 +156,7 @@ function getWindowsShellCandidates() {
       source: `${root}\\System32`,
       path: path.join(root, 'System32', 'cmd.exe')
     });
+
     candidates.push({
       kind: 'cmd',
       source: `${root}\\Sysnative`,
@@ -149,6 +165,7 @@ function getWindowsShellCandidates() {
   }
 
   const seen = new Set();
+
   return candidates
     .filter(candidate => candidate.path && typeof candidate.path === 'string')
     .map(candidate => ({
@@ -157,10 +174,13 @@ function getWindowsShellCandidates() {
     }))
     .filter(candidate => {
       const key = `${candidate.kind}:${candidate.path.toLowerCase()}`;
+
       if (seen.has(key)) {
         return false;
       }
+
       seen.add(key);
+
       return true;
     })
     .map(candidate => ({
@@ -180,35 +200,45 @@ const POWERSHELL_COMMANDS = new Set([
 
 function getWindowsShellPreference(command) {
   const lowerCommand = String(command || '').replace(/^"|"$/g, '').trim().toLowerCase();
+
   if (!lowerCommand) {
     return 'powershell';
   }
+
   if (lowerCommand === 'node' || lowerCommand === 'node.exe') {
     return 'cmd';
   }
+
   if (lowerCommand.endsWith('.cmd') || lowerCommand.endsWith('.bat')) {
     return 'cmd';
   }
+
   if (POWERSHELL_COMMANDS.has(lowerCommand)) {
     return 'powershell';
   }
+
   return 'powershell';
 }
 
 function resolveWindowsShell(preference = 'powershell') {
   const candidates = getWindowsShellCandidates();
+
   const preferredKinds = preference === 'cmd'
     ? ['cmd', 'powershell']
     : ['powershell', 'cmd'];
+
   const shell = candidates.find(candidate => preferredKinds.includes(candidate.kind) && candidate.exists);
 
   if (!shell) {
     const diagnostics = windowsShellDiagnostics(candidates);
+
     const error = new Error(
       `无法启动 Windows shell：未找到可用的 PowerShell 或 cmd.exe。` +
       `请检查 SystemRoot/windir/ComSpec 环境变量或系统文件是否完整。`
     );
+
     error.shellDiagnostics = diagnostics;
+
     throw error;
   }
 
@@ -222,14 +252,17 @@ function resolveWindowsShell(preference = 'powershell') {
 function formatSpawnError(error, entry) {
   const baseMessage = error?.message || String(error);
   const shellDiagnostics = entry?.shellDiagnostics || error?.shellDiagnostics;
+
   if (!isWin32 || !shellDiagnostics) {
     return baseMessage;
   }
 
   const diagnostics = shellDiagnostics;
+
   const candidateLines = diagnostics.candidates
     .map(candidate => `${candidate.exists ? 'OK' : 'MISS'} ${candidate.kind} ${candidate.path} (${candidate.source})`)
     .join('\n');
+
   const envLines = [
     `SystemRoot=${diagnostics.env.SystemRoot}`,
     `windir=${diagnostics.env.windir}`,
@@ -243,6 +276,7 @@ function formatSpawnError(error, entry) {
 
 function buildCommandEnv(extraEnv = {}) {
   const env = { ...process.env, ...extraEnv };
+
   if (isWin32) {
     const systemRoot = normalizeWindowsPathValue(env.SystemRoot || env.windir || 'C:\\Windows');
     env.SystemRoot = systemRoot;
@@ -250,13 +284,17 @@ function buildCommandEnv(extraEnv = {}) {
     env.ComSpec = normalizeWindowsPathValue(env.ComSpec || path.join(systemRoot, 'System32', 'cmd.exe'));
     env.PATH = env.PATH || env.Path || getProcessPathValue();
   }
+
   if (isDarwin) {
     const zdotdir = path.join(os.tmpdir(), 'aily-blockly-zsh');
+
     try {
       fs.mkdirSync(zdotdir, { recursive: true });
     } catch (_) {}
+
     env.ZDOTDIR = zdotdir;
   }
+
   return env;
 }
 
@@ -313,6 +351,7 @@ function getProgressMergeKey(sourceId, line) {
 
 function logCommandOutput(streamId, type, output, targetWebContents) {
   const lines = output.split(/\r\n|\n|\r/g).map(line => line.trim()).filter(Boolean);
+
   for (const line of lines) {
     if (isNoisyNpmLogLine(line)) {
       continue;
@@ -320,15 +359,18 @@ function logCommandOutput(streamId, type, output, targetWebContents) {
 
     const message = line.length > 2000 ? `${line.slice(0, 2000)}...` : line;
     const mergeKey = getProgressMergeKey(streamId, message);
+
     if (type === 'stderr') {
       if (!mergeKey) {
         console.error(`[CMD][${streamId}] stderr: ${message}`);
       }
+
       sendRendererLog(targetWebContents, message, 'error', mergeKey);
     } else {
       if (!mergeKey) {
         console.log(`[CMD][${streamId}] stdout: ${message}`);
       }
+
       sendRendererLog(targetWebContents, message, 'doing', mergeKey);
     }
   }
@@ -337,12 +379,14 @@ function logCommandOutput(streamId, type, output, targetWebContents) {
 class CommandManager {
   constructor() {
     this.processes = new Map(); // 存储进程
+    this.pendingCommands = new Map();
     this.processMessageListeners = new Set();
     this.processExitListeners = new Set();
   }
 
   // 执行命令并返回流式数据
   executeCommand(options) {
+    if (commandShutdown) throw new Error('COMMAND_SHUTDOWN_IN_PROGRESS');
     let {
       command,
       args = [],
@@ -352,14 +396,16 @@ class CommandManager {
       shellProfile = true,
       messagePort: rawMessagePort,
     } = options;
+    if (this.processes.has(streamId)) throw new Error('Command stream is already registered.');
     const messagePort = normalizeProcessMessagePortConfig(rawMessagePort);
-    
     // 根据平台选择正确的 shell
     let shell;
     let shellKind = 'default';
     let shellDiagnostics;
+
     if (isWin32) {
       const resolvedShell = resolveWindowsShell(getWindowsShellPreference(command));
+
       shell = resolvedShell.shell;
       shellKind = resolvedShell.kind;
       shellDiagnostics = resolvedShell.diagnostics;
@@ -388,6 +434,7 @@ class CommandManager {
       // 同时也避开了 PowerShell 执行策略 (ExecutionPolicy) 的干扰
       if (command.endsWith('.cmd') || command.endsWith('.bat')) {
         const resolvedShell = resolveWindowsShell('cmd');
+
         shell = resolvedShell.shell;
         shellKind = resolvedShell.kind;
         shellDiagnostics = resolvedShell.diagnostics;
@@ -399,10 +446,12 @@ class CommandManager {
       shellKind = 'direct';
       shellDiagnostics = undefined;
     }
+
     if (messagePort) {
       if (command.endsWith('.cmd') || command.endsWith('.bat')) {
         throw new Error('Process message ports require a directly spawned executable.');
       }
+
       shell = false;
       shellKind = 'direct-node-ipc';
       shellDiagnostics = undefined;
@@ -412,8 +461,10 @@ class CommandManager {
     const isNpmCmd = command === 'npm' || command === 'npm.cmd';
     const isInstallCmd = args.includes('install') || args.includes('i');
     const shouldLogOutput = isNpmCmd && isInstallCmd;
+
     if (isNpmCmd && isInstallCmd) {
       const hasForegroundScripts = args.some(arg => arg === '--foreground-scripts' || arg.startsWith('--foreground-scripts='));
+
       if (!hasForegroundScripts) {
         args = [...args, '--foreground-scripts'];
       }
@@ -426,11 +477,13 @@ class CommandManager {
         if (arg.includes(' ') && !arg.startsWith('"') && !arg.startsWith("'")) {
           return `"${arg}"`;
         }
+
         return arg;
       });
     }
 
     const fullCommand = args.length > 0 ? `${command} ${args.join(' ')}` : command;
+
     console.log(`[CMD] 执行命令: ${fullCommand}`);
     console.log(`[CMD] 工作目录: ${cwd || process.cwd()}`);
     console.log(`[CMD] Shell: ${shell}`);
@@ -441,17 +494,19 @@ class CommandManager {
     const childStdio = messagePort
       ? ['pipe', 'pipe', 'pipe', 'ipc']
       : ['pipe', 'pipe', 'pipe'];
+    const buildWorkspace = createBuildWorkspaceSupervisor(options.buildWorkspace);
+    const commandEnv = buildCommandEnv({ ...env, ...buildWorkspace?.environment });
     const child = isWin32NpmFamily
       ? spawn(fullCommand, {
           cwd: cwd || process.cwd(),
-          env: buildCommandEnv(env),
+          env: commandEnv,
           shell: true,
           windowsHide: true,
           stdio: childStdio,
         })
       : spawn(command, args, {
           cwd: cwd || process.cwd(),
-          env: buildCommandEnv(env),
+          env: commandEnv,
           shell: shell,
           windowsHide: true,
           stdio: childStdio,
@@ -467,12 +522,33 @@ class CommandManager {
       shellKind,
       shellDiagnostics,
       messagePort,
+      buildWorkspace,
+      buildWorkspacePath: options.buildWorkspace,
       startedAt,
+      ownerWebContents: options.ownerWebContents,
+      projectPath: options.projectPath,
+      projectSessionId: options.projectSessionId,
       stopRequested: false,
     };
+
     this.processes.set(streamId, entry);
+
     child.once('close', (code, signal) => {
-      if (this.processes.get(streamId) === entry) this.processes.delete(streamId);
+      entry.closed = true;
+      // During cancellation, wait for the tree result before forgetting the
+      // command. Interrupted build markers still require confirmed cleanup.
+      const safeExit = !child.pid || (Number.isInteger(code) && !signal);
+      entry.completedNormally = safeExit;
+      if (entry.terminationConfirmed || (!entry.stopRequested && !entry.terminationUnconfirmed
+          && (!entry.projectSessionId || safeExit) && (!entry.buildWorkspace
+          || (safeExit && entry.buildWorkspace.canReleaseResources())))) {
+        entry.terminationConfirmed = true;
+        this.releaseCommandResources(streamId, entry);
+      } else {
+        console.warn('[PROC_TRACE][CMD_RESOURCE_RETAINED]', {
+          streamId, pid: child.pid, reason: entry.stopRequested ? 'termination-pending' : 'termination-unconfirmed',
+        });
+      }
       for (const listener of this.processExitListeners) {
         try {
           listener({ streamId, pid: child.pid, code, signal, expected: entry.stopRequested });
@@ -481,6 +557,7 @@ class CommandManager {
         }
       }
     });
+
     if (messagePort) {
       child.on('message', (message) => {
         try {
@@ -488,6 +565,7 @@ class CommandManager {
             message,
             messagePort.maxMessageBytes,
           );
+
           this.notifyProcessMessage({
             streamId,
             message: normalized.message,
@@ -502,6 +580,7 @@ class CommandManager {
         }
       });
     }
+
     console.info('[PROC_TRACE][CMD_SPAWN]', {
       streamId,
       pid: child.pid,
@@ -528,23 +607,88 @@ class CommandManager {
 
   // 终止进程
   async killProcess(streamId) {
+    const pending = this.pendingCommands.get(streamId);
+    if (pending) {
+      pending.cancelled = true;
+      return true;
+    }
     const entry = this.processes.get(streamId);
-    if (entry?.process) {
+    // A normal close may have already finished between the caller's snapshot
+    // and this request. Cleanup is idempotent.
+    if (!entry) return true;
+    if (entry.stopPromise) return entry.stopPromise;
+    // Interrupted protected builds may stay registered after parent close.
+    // That PID may now belong to someone else; only explicit recovery can
+    // resolve unconfirmed ownership. Confirmed stops may retry file cleanup.
+    if (entry.closed && !entry.terminationConfirmed) return false;
+    if (entry.process) {
       console.info('[PROC_TRACE][CMD_KILL]', {
         streamId,
         pid: entry.process.pid,
-        command: entry.command
+        command: entry.command,
+        cleanupOnly: !!entry.terminationConfirmed,
       });
+
       entry.stopRequested = true;
-      const stopped = await killRegisteredProcessTree(entry.process.pid, `cmd:${streamId}`);
-      if (!stopped && this.processes.get(streamId) === entry) {
-        entry.stopRequested = false;
-        return false;
-      }
-      if (this.processes.get(streamId) === entry) this.processes.delete(streamId);
-      return true;
+      entry.stopPromise = (async () => {
+        try {
+          if (!entry.terminationConfirmed) {
+            const stopped = await killRegisteredProcessTree(entry.process.pid, `cmd:${streamId}`);
+            // A failed taskkill can race a supervised build's normal finish.
+            // Its own marker cleanup confirms completion; parent close alone
+            // cannot establish that installer/compiler descendants stopped.
+            const completedBuild = entry.closed && entry.completedNormally
+              && entry.buildWorkspace?.canReleaseResources();
+            if (!stopped && !completedBuild) {
+              if (entry.projectSessionId) entry.terminationUnconfirmed = true;
+              console.warn('[PROC_TRACE][CMD_RESOURCE_RETAINED]', {
+                streamId, pid: entry.process.pid, reason: 'termination-failed',
+              });
+              return false;
+            }
+            entry.terminationConfirmed = true;
+            entry.workspaceCleanupPending = !!entry.buildWorkspace;
+          }
+          this.releaseCommandResources(streamId, entry);
+          return true;
+        } catch (error) {
+          console.warn('[PROC_TRACE][CMD_RESOURCE_RETAINED]', {
+            streamId, pid: entry.process.pid, reason: 'cleanup-failed', error: error.message,
+          });
+          return false;
+        } finally {
+          if (!entry.terminationConfirmed) {
+            entry.stopRequested = false;
+            if (entry.closed && !entry.buildWorkspace && !entry.projectSessionId) this.releaseCommandResources(streamId, entry);
+          }
+        }
+      })().finally(() => { entry.stopPromise = undefined; });
+      return entry.stopPromise;
     }
+
     return false;
+  }
+
+  releaseCommandResources(streamId, entry) {
+    if (entry.workspaceCleanupPending) {
+      try {
+        entry.buildWorkspace.releaseAfterTermination(true);
+        entry.workspaceCleanupPending = !entry.buildWorkspace.canReleaseResources();
+      } catch (error) {
+        console.warn('[BUILD_WORKSPACE] Stopped command cleanup pending:', error.message);
+      }
+    }
+    if (!entry.workspaceCleanupPending) {
+      clearTimeout(entry.cleanupTimer);
+      if (this.processes.get(streamId) === entry) this.processes.delete(streamId);
+    } else if (!entry.cleanupTimer && (entry.cleanupAttempts || 0) < 3) {
+      entry.cleanupTimer = setTimeout(() => {
+        entry.cleanupTimer = undefined;
+        entry.cleanupAttempts = (entry.cleanupAttempts || 0) + 1;
+        this.releaseCommandResources(streamId, entry);
+      }, 250);
+      entry.cleanupTimer.unref?.();
+    }
   }
 
   // 获取进程
@@ -565,12 +709,14 @@ class CommandManager {
 
   getProcessMessagePortInfo(streamId) {
     const messagePort = this.processes.get(streamId)?.messagePort;
+
     return messagePort ? { ...messagePort } : null;
   }
 
   async sendProcessMessage(streamId, message) {
     const entry = this.processes.get(streamId);
     const child = entry?.process;
+
     if (!entry?.messagePort || !child || !child.connected || typeof child.send !== 'function') {
       return {
         success: false,
@@ -578,7 +724,9 @@ class CommandManager {
         streamId,
       };
     }
+
     let normalized;
+
     try {
       normalized = normalizeProcessMessage(
         message,
@@ -592,6 +740,7 @@ class CommandManager {
         streamId,
       };
     }
+
     return await new Promise((resolve) => {
       child.send(normalized.message, (error) => {
         if (error) {
@@ -601,8 +750,10 @@ class CommandManager {
             error: error.message,
             streamId,
           });
+
           return;
         }
+
         resolve({
           success: true,
           streamId,
@@ -616,7 +767,9 @@ class CommandManager {
     if (typeof listener !== 'function') {
       throw new TypeError('Process message listener must be a function.');
     }
+
     this.processMessageListeners.add(listener);
+
     return () => this.processMessageListeners.delete(listener);
   }
 
@@ -624,7 +777,9 @@ class CommandManager {
     if (typeof listener !== 'function') {
       throw new TypeError('Process exit listener must be a function.');
     }
+
     this.processExitListeners.add(listener);
+
     return () => this.processExitListeners.delete(listener);
   }
 
@@ -642,39 +797,81 @@ class CommandManager {
   }
 
   async killAllProcesses() {
-    const entries = Array.from(this.processes.entries());
+    const entries = [...this.processes, ...this.pendingCommands];
+
     console.info('[PROC_TRACE][CMD_KILL_ALL]', { count: entries.length, processes: this.getActiveProcessSummaries() });
-    await Promise.all(entries.map(([streamId]) => this.killProcess(streamId)));
+    const stopped = await Promise.all(entries.map(([streamId]) => this.killProcess(streamId)));
+    return stopped.every(Boolean);
+  }
+
+  async killOwnerProjectProcesses(owner, projectPath, projectSessionId) {
+    if (typeof projectPath !== 'string' || !path.isAbsolute(projectPath)) return false;
+    const entries = [...this.processes, ...this.pendingCommands]
+      .filter(([, entry]) => matchesProjectTask(entry, owner, projectPath, projectSessionId));
+    const stopped = await Promise.all(entries.map(([streamId]) => this.killProcess(streamId)));
+    return stopped.every(Boolean);
   }
 
     /**
    * 杀掉所有指定名称的进程
    * @param {string} processName - 要杀掉的进程名称，例如 'node.exe'
    */
+
   killProcessByName(processName) {
     console.warn('[PROC_TRACE][CMD_KILL_BY_NAME_BLOCKED]', { processName });
+
     return false;
   }
 }
 
 const commandManager = new CommandManager();
 
-function registerCmdHandlers(mainWindow) {
+function registerCmdHandlers(mainWindow, { buildDeliveryAuthority } = {}) {
   // 执行命令
   ipcMain.handle('cmd-run', async (event, options) => {
     const streamId = options.streamId || `cmd_${Date.now()}_${Math.random()}`;
     const senderWindow = event.sender; // 获取发送请求的窗口
+    let delivery;
+    const pending = { ownerWebContents: senderWindow, cwd: options.cwd || process.cwd(),
+      buildWorkspacePath: options.buildWorkspace, projectPath: options.projectPath,
+      projectSessionId: options.projectSessionId, cancelled: false };
 
     try {
-      const result = commandManager.executeCommand({ ...options, streamId });
+      if (commandShutdown) throw new Error('COMMAND_SHUTDOWN_IN_PROGRESS');
+      assertProjectTaskActive(senderWindow, options);
+      if (commandManager.pendingCommands.has(streamId) || commandManager.processes.has(streamId)) {
+        throw new Error('Command stream is already registered.');
+      }
+      commandManager.pendingCommands.set(streamId, pending);
+      if (options.buildWorkspace) buildDeliveryAuthority?.invalidate(options.buildWorkspace);
+      if (options.buildDeliveryRequest !== undefined) {
+        if (!buildDeliveryAuthority || event.senderFrame !== senderWindow.mainFrame) throw new Error('Build delivery authority unavailable; restart the host.');
+        delivery = await buildDeliveryAuthority.begin(senderWindow, options);
+      }
+      if (pending.cancelled) throw new Error('COMMAND_CANCELLED_BEFORE_LAUNCH');
+      if (senderWindow.isDestroyed()) throw new Error('Command owner was destroyed before launch.');
+      assertProjectTaskActive(senderWindow, options);
+      const result = commandManager.executeCommand({ ...options, streamId, ownerWebContents: senderWindow,
+        ...(delivery ? { messagePort: { transport: 'node-ipc-v1', maxMessageBytes: 4096 } } : {}),
+      });
       const process = result.process;
+      if (delivery) {
+        process.on('message', message => {
+          try { delivery.onMessage(normalizeProcessMessage(message, 4096).message); }
+          catch { delivery.abandon(); }
+        });
+        process.once('close', (code, signal) => delivery.onExit(code, signal,
+          result.stopRequested || commandManager.getProcess(streamId) !== undefined));
+      }
       // console.log(options);
       // 监听标准输出
       process.stdout.on('data', (data) => {
         const output = data.toString();
+
         if (result.shouldLogOutput) {
           logCommandOutput(streamId, 'stdout', output, senderWindow);
         }
+
         if (options.forwardStdout !== false) {
           sendCmdData(senderWindow, `cmd-data-${streamId}`, {
             type: 'stdout',
@@ -687,9 +884,11 @@ function registerCmdHandlers(mainWindow) {
       // 监听错误输出
       process.stderr.on('data', (data) => {
         const output = data.toString();
+
         if (result.shouldLogOutput) {
           logCommandOutput(streamId, 'stderr', output, senderWindow);
         }
+
         sendCmdData(senderWindow, `cmd-data-${streamId}`, {
           type: 'stderr',
           data: output,
@@ -700,6 +899,7 @@ function registerCmdHandlers(mainWindow) {
       // 监听进程关闭
       process.on('close', (code, signal) => {
         console.log(`[CMD][${streamId}] close, code: ${code}, signal: ${signal}`);
+
         console.info('[PROC_TRACE][CMD_CLOSE]', {
           streamId,
           pid: process.pid,
@@ -707,6 +907,7 @@ function registerCmdHandlers(mainWindow) {
           signal,
           durationMs: Date.now() - result.startedAt
         });
+
         sendCmdData(senderWindow, `cmd-data-${streamId}`, {
           type: 'close',
           code,
@@ -720,7 +921,9 @@ function registerCmdHandlers(mainWindow) {
       process.on('error', (error) => {
         const entry = commandManager.processes.get(streamId);
         const formattedError = formatSpawnError(error, entry);
+
         console.error(`[CMD][${streamId}] error: ${formattedError}`);
+
         console.error('[PROC_TRACE][CMD_ERROR]', {
           streamId,
           pid: process.pid,
@@ -730,6 +933,7 @@ function registerCmdHandlers(mainWindow) {
           shellKind: entry?.shellKind,
           durationMs: entry ? Date.now() - entry.startedAt : undefined
         });
+
         sendCmdData(senderWindow, `cmd-data-${streamId}`, {
           type: 'error',
           error: formattedError,
@@ -740,52 +944,67 @@ function registerCmdHandlers(mainWindow) {
       return {
         success: true,
         streamId,
-        pid: result.pid
+        pid: result.pid,
+        ...(delivery ? { buildDeliveryHandle: delivery.handle } : {})
       };
-
     } catch (error) {
+      delivery?.abandon();
       const formattedError = formatSpawnError(error);
+
       console.error('[PROC_TRACE][CMD_START_ERROR]', {
         streamId,
         error: formattedError
       });
+
       return {
         success: false,
         error: formattedError,
         streamId
       };
+    } finally {
+      if (commandManager.pendingCommands.get(streamId) === pending) commandManager.pendingCommands.delete(streamId);
     }
   });
 
   // 终止命令
   ipcMain.handle('cmd-kill', async (event, { streamId }) => {
     const success = await commandManager.killProcess(streamId);
+
     return { success, streamId };
   });
 
   // 终止指定名称的进程
   ipcMain.handle('cmd-kill-by-name', async (event, { processName }) => {
     console.warn('[PROC_TRACE][CMD_KILL_BY_NAME_BLOCKED]', { processName });
+
     return { success: false, error: 'Killing processes by name is disabled. Use a registered streamId instead.' };
   });
 
   // 向进程发送输入
   ipcMain.handle('cmd-input', async (event, { streamId, input }) => {
     const process = commandManager.getProcess(streamId);
+
     if (process && process.stdin) {
       process.stdin.write(input);
+
       return { success: true };
     }
+
     return { success: false, error: 'Process not found or stdin not available' };
   });
 }
 
 module.exports = {
   CommandManager,
+  // Native consumers share shutdown and termination with IPC commands.
+  executeCmdCommand: (options) => commandManager.executeCommand(options),
+  getCmdProcess: (streamId) => commandManager.getProcess(streamId),
   registerCmdHandlers,
   getCmdProcessMessagePortInfo: (streamId) => commandManager.getProcessMessagePortInfo(streamId),
   killCmdProcess: (streamId) => commandManager.killProcess(streamId),
   killAllCmdProcesses: () => commandManager.killAllProcesses(),
+  killOwnerProjectCmdProcesses: (owner, projectPath, projectSessionId) => commandManager.killOwnerProjectProcesses(owner, projectPath, projectSessionId),
+  beginCommandShutdown: () => { commandShutdown = true; },
   getActiveCmdProcesses: () => commandManager.getActiveProcessSummaries(),
   onCmdProcessMessage: (listener) => commandManager.onProcessMessage(listener),
   onCmdProcessExit: (listener) => commandManager.onProcessExit(listener),

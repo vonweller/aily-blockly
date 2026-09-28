@@ -40,6 +40,7 @@ import { MainUiAutomationService, AiOperationRegistryService } from '@integratio
 import { NoticeService, UiService } from '@core/app-shell/public-api';
 import { ProjectService, type CoderWorkspaceContext } from '@domain/project/public-api';
 import { SubappActivityDockComponent } from '../../components/subapp-activity-dock/subapp-activity-dock.component';
+import { ChildToolNativeObserverComponent } from '../child-tool-native-observer/child-tool-native-observer.component';
 import {
   type ChildAuthStateSnapshot,
   normalizeChildAuthStateSnapshot,
@@ -96,6 +97,7 @@ interface ChatResourcePickerRequest {
     SubWindowComponent,
     ToolContainerComponent,
     SubappActivityDockComponent,
+    ChildToolNativeObserverComponent,
   ],
   templateUrl: './child-tool-host.component.html',
   styleUrl: './child-tool-host.component.scss'
@@ -109,6 +111,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   titleKey = '';
   routePath = '';
   hostStatus: HostStatus = 'idle';
+  get isNativeObserver(): boolean { return this.config?.runtime?.observer === true; }
   iframeSrc: SafeResourceUrl | null = null;
   frameLoaded = false;
   errorMessage = '';
@@ -469,6 +472,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   restart(): Promise<Record<string, unknown>> {
+    if (this.isNativeObserver) return Promise.resolve({ ok: false, message: 'An observer cannot restart the execution Runtime.' });
     if (this.restartTask) {
       return this.restartTask;
     }
@@ -729,7 +733,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       && catalogItemAtOpen.updateStatus.state !== 'ready'
       && catalogItemAtOpen.updateStatus.ready !== true;
     this.runtimeSubscription?.unsubscribe();
-    this.runtimeSubscription = this.processService.observeRuntime(config.id).subscribe(snapshot => {
+    this.runtimeSubscription = this.isNativeObserver ? null : this.processService.observeRuntime(config.id).subscribe(snapshot => {
       this.handleRuntimeSnapshot(snapshot);
     });
     this.childVersion = config.version || '';
@@ -738,6 +742,12 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     this.routePath = config.routePath || `/child-tool/${config.id}`;
     this.currentUrl = this.router.url;
     this.registerHostController();
+
+    if (this.isNativeObserver) {
+      this.hostStatus = 'ready'; this.frameLoaded = false;
+      await this.toolI18n.load(config.id);
+      return; // Observation never acquires a process lease or starts a Runtime.
+    }
 
     await Promise.all([
       this.initializeStandaloneProjectContext(),
@@ -1109,6 +1119,10 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       messenger,
       methods: {
         getHostContext: () => this.createHostContext(),
+        partitionManagerRequest: (request: any) => {
+          if (this.resolvedToolId !== 'ffs-manager-child') return { success: false, error: '分区项目接口仅供分区管理子应用使用。' };
+          return this.ngZone.run(() => this.uiService.partitionManagerRequest(request));
+        },
         setDevelopmentMode: (payload: { mode?: string } = {}) => {
           return this.ngZone.run(() => this.setChatDevelopmentMode(payload));
         },
@@ -1204,6 +1218,11 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
           this.clearChildReadyTimer();
         });
       });
+  }
+
+  onNativeObserverError(message: string): void {
+    this.handleChildError(message);
+    this.cdr.markForCheck();
   }
 
   private handleChildError(error: any): void {
@@ -1569,6 +1588,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   private async runChildBeforeClose(reason: ChildLifecycleReason, strict: boolean): Promise<boolean> {
+    if (this.isNativeObserver) return true; // No process/resource lease belongs to this view.
     const beforeClose = this.remoteApi?.beforeClose;
     if (typeof beforeClose !== 'function') {
       return !strict;
@@ -1808,7 +1828,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
         resourcePicker: isAilyChat
           && typeof (window as any).dialog?.selectFiles === 'function',
         childAppMenu: isAilyChat,
-        clipboardWrite: isAilyChat,
+        clipboardWrite: true,
         openFile: isAilyChat
           && typeof (window as any).electronAPI?.shell?.showItemInFolder === 'function',
         blockSelectionContext: isAilyChat,
@@ -1953,11 +1973,11 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     return { ok: true, sessionId: sessionId || null };
   }
 
-  private setSubappSurfaceState(payload: {
+  private async setSubappSurfaceState(payload: {
     sessionId?: string;
     toolId?: string;
     surfaceState?: 'collapsed' | 'expanded';
-  } = {}): Record<string, unknown> {
+  } = {}): Promise<Record<string, unknown>> {
     if (!this.isAilyChatTool()) {
       return { ok: false, message: 'Subapp Dock controls are only available to Aily Chat' };
     }
@@ -1970,6 +1990,21 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     }
     if (surfaceState !== 'collapsed' && surfaceState !== 'expanded') {
       return { ok: false, message: 'Subapp Dock surface state is invalid' };
+    }
+
+    const current = this.subappActivityService.getActivity(sessionId, toolId);
+    if (!current) {
+      return { ok: false, message: 'Subapp activity is unavailable for the active chat session' };
+    }
+    const config = getChildToolConfig(toolId);
+    const surface = current.presentation?.surface || 'compact';
+    if (surfaceState === 'expanded' && !config?.runtime?.observer && !config?.ui?.surfaces?.[surface]?.entry) {
+      // A window-only subapp remains usable from the activity bar without
+      // mounting a Dock iframe for an undeclared surface.
+      const opened = await this.mainUiAutomation.openChildApp({ toolId, mode: 'embedded' });
+      if (opened['ok'] !== true) return opened;
+      this.subappActivityService.setSurfaceState(sessionId, toolId, 'collapsed');
+      return { ok: true, sessionId, toolId, surfaceState: 'collapsed' };
     }
 
     const activity = this.subappActivityService.setSurfaceState(sessionId, toolId, surfaceState);
@@ -2111,9 +2146,6 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   private async writeClipboardText(payload: { text?: string }): Promise<Record<string, unknown>> {
-    if (!this.isAilyChatTool()) {
-      return { ok: false, message: 'Clipboard access is only available to Aily Chat' };
-    }
     const text = typeof payload?.text === 'string' ? payload.text : '';
     if (!text) {
       return { ok: false, message: 'Clipboard text is empty' };

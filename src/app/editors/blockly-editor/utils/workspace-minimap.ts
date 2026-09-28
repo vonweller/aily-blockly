@@ -1,5 +1,6 @@
 import * as Blockly from 'blockly';
 import { drawMinimapShape, prepareMinimapCanvas, type MinimapScene, type MinimapShape } from './minimap-scene';
+import {isBlocklyWorkspaceInteracting} from './blockly-performance';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const CONTENT_EVENTS = new Set([
@@ -35,8 +36,10 @@ export class WorkspaceMinimap {
   private scene: MinimapScene | null = null;
   private sceneVersion = 0;
   private captureFrame: number | null = null;
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(private readonly workspace: Blockly.WorkspaceSvg) {
+  constructor(private readonly workspace: Blockly.WorkspaceSvg,
+    private readonly editBlocked: () => boolean = () => false) {
     this.wrapper.className = 'blockly-minimap';
     this.wrapper.dataset['minimapMode'] = 'svg-snapshot';
     this.wrapper.tabIndex = 0;
@@ -88,6 +91,7 @@ export class WorkspaceMinimap {
     this.workspace.removeChangeListener(this.onViewportChange);
     this.resizeObserver.disconnect();
     if (this.captureFrame !== null) cancelAnimationFrame(this.captureFrame);
+    if (this.retryTimer !== null) clearTimeout(this.retryTimer);
     this.worker?.terminate();
     this.wrapper.removeEventListener('pointerdown', this.onPointerDown);
     this.wrapper.removeEventListener('pointermove', this.onPointerMove);
@@ -105,7 +109,16 @@ export class WorkspaceMinimap {
   private update(): void {
     this.frame = null;
     if (this.disposed) return;
-    if (this.contentDirty) {
+    const deferContent = this.contentDirty && (this.editBlocked() || isBlocklyWorkspaceInteracting(this.workspace));
+    if (deferContent && this.retryTimer === null) {
+      // Retry only pending work, not an idle polling loop. Viewport navigation
+      // below stays live while a drag, field editor or AI transaction is active.
+      this.retryTimer = setTimeout(() => {
+        this.retryTimer = null;
+        this.requestSync({type: 'viewport_change'});
+      }, 100);
+    }
+    if (this.contentDirty && !deferContent) {
       this.contentDirty = false;
       const overview = this.workspace.getAllBlocks(false).length > 300;
       this.wrapper.dataset['minimapMode'] = overview ? 'canvas-worker' : 'svg-snapshot';

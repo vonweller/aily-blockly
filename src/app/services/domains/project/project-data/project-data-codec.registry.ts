@@ -12,7 +12,9 @@ export interface ProjectDataCodec<TValue = unknown> {
 }
 
 const DEFAULT_MAX_RAW_LENGTH = 128 * 1024 * 1024;
-const MAX_CANONICAL_JSON_DEPTH = 256;
+// Blockly next-block chains add two JSON levels per block. Keep the input
+// bounded while accepting long, valid workspaces published by older clients.
+const MAX_CANONICAL_JSON_DEPTH = 512;
 const MAX_CANONICAL_JSON_NODES = 2_000_000;
 
 export class ProjectDataCodecRegistry {
@@ -171,11 +173,13 @@ export function canonicalJsonStringify(value: unknown): string {
       if (active.has(current)) {
         throw new ProjectDataError('corrupt', `Circular JSON object at ${path}.`);
       }
-      if (Object.getPrototypeOf(current) !== Object.prototype) {
+      const prototype = Object.getPrototypeOf(current);
+      // Blockly serializers also produce data-only dictionaries with no prototype.
+      if (prototype !== null && prototype !== Object.prototype) {
         throw new ProjectDataError('corrupt', `Unsupported JSON object at ${path}.`);
       }
       active.add(current);
-      const normalized: Record<string, unknown> = {};
+      const normalized: Record<string, unknown> = Object.create(null);
       for (const key of Object.keys(current as Record<string, unknown>).sort()) {
         const member = (current as Record<string, unknown>)[key];
         normalized[key] = normalizeJsonMember(

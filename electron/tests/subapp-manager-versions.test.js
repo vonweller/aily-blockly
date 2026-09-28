@@ -11,6 +11,7 @@ const {
   packagePathFor,
   prepareNpmSpawn,
   readInstalledState,
+  validateIndex,
 } = require('../subapp-manager');
 const { npmTarball, portableSubappTarball } = require('./npm-tarball-fixture');
 
@@ -108,6 +109,48 @@ function fixture(t, options = {}) {
   };
 }
 
+test('headless portable packages install, select and rediscover without dummy UI or npm', async t => {
+  const archive = npmTarball({
+    'package.json': JSON.stringify({ name: PACKAGE, version: '0.1.33', main: 'index.js',
+      ailySubapp: { runtime: { headless: true }, app: { enabled: true } }, ailyPortable: { version: 1 } }),
+    'index.js': 'module.exports = {};',
+  });
+  const f = fixture(t, { archive });
+  await f.manager.install({ id: ID });
+  const installed = readInstalledState(f.rootDir, f.entry);
+  assert.equal(installed.installed, true);
+  assert.equal(installed.config.env.AILY_SUBAPP_SOURCE, 'version-store');
+  assert.deepEqual(installed.config.runtime, { headless: true });
+  assert.equal(installed.config.uiIndex, undefined);
+  assert.equal(installed.config.routePath, undefined);
+  assert.equal(installed.config.app.enabled, false);
+  assert.equal(installed.config.app.available, false);
+  assert.equal(fs.existsSync(path.join(installed.packagePath, 'ui')), false);
+  assert.equal(f.calls.length, 0);
+  assert.equal((await createSubappManager(f.managerOptions).list()).apps[0].installed, true);
+});
+
+test('headless declaration is explicit and cannot mask invalid backend or contradictory UI', t => {
+  const f = fixture(t), root = packagePathFor(f.rootDir, PACKAGE);
+  fs.mkdirSync(root, { recursive: true });
+  fs.writeFileSync(path.join(root, 'index.js'), 'module.exports = {};');
+  const check = (runtime, overrides = {}) => {
+    fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: PACKAGE, version: '0.1.33',
+      main: 'index.js', ailySubapp: { runtime, app: { enabled: false } }, ...overrides }));
+    return readInstalledState(f.rootDir, f.entry);
+  };
+  assert.equal(check({}).installed, false); // app.enabled:false does not mean headless.
+  assert.equal(check({ headless: false }).installed, false);
+  assert.equal(check({ headless: true }).installed, true);
+  for (const headless of ['true', 1, null]) assert.match(check({ headless }).installError, /must be a boolean/);
+  assert.match(check({ headless: true }, { aily: { uiIndex: 'ui/index.html' } }).installError, /cannot declare UI/);
+  assert.equal(check({ headless: true }, { main: 'missing.js' }).installed, false);
+  fs.mkdirSync(path.join(root, 'directory.js'));
+  assert.equal(check({ headless: true }, { main: 'directory.js' }).installed, false);
+  fs.writeFileSync(path.join(root, '../outside.js'), 'module.exports = {};');
+  assert.match(check({ headless: true }, { main: '../outside.js' }).installError, /Unsafe Subapp entry/);
+});
+
 test('reads a legacy B installation and emits the version-selected environment contract', (t) => {
   const f = fixture(t);
   const legacy = packagePathFor(f.rootDir, PACKAGE);
@@ -123,6 +166,44 @@ test('reads a legacy B installation and emits the version-selected environment c
     AILY_SUBAPP_BIN_ROUTER: path.join(f.rootDir, 'bin', 'subapp-bin-router.cjs'),
   });
   assert.equal(fs.existsSync(installed.config.env.AILY_SUBAPP_BIN_ROUTER), true);
+});
+
+test('catalog app policies survive validation, installation, and runtime config projection', async (t) => {
+  const f = fixture(t, { entry: {
+    app: { enabled: true, autoInstall: true, defaultToolbar: true, customPolicy: { keep: true } },
+  } });
+  const before = await f.manager.list();
+  assert.equal(before.apps[0].installed, false);
+  assert.equal(before.apps[0].app.autoInstall, true);
+  assert.equal(before.apps[0].app.defaultToolbar, true);
+  await f.manager.install({ id: ID });
+  const after = await f.manager.list();
+  assert.equal(after.apps[0].installed, true);
+  assert.equal(after.apps[0].config.app.autoInstall, true);
+  assert.equal(after.apps[0].config.app.defaultToolbar, true);
+  assert.deepEqual(after.apps[0].config.app.customPolicy, { keep: true });
+});
+
+test('Chat has no implicit install or toolbar policy and explicit false is honored', (t) => {
+  const f = fixture(t);
+  writeRunnablePackage(packagePathFor(f.rootDir, PACKAGE), '0.1.33');
+  for (const app of [{ enabled: true }, { enabled: true, autoInstall: false, defaultToolbar: false }]) {
+    const entry = validateIndex({ [ID]: { ...f.entry, app } })[ID];
+    const installed = readInstalledState(f.rootDir, entry);
+    assert.equal(entry.app.autoInstall, false);
+    assert.equal(installed.config.app.defaultToolbar, false);
+  }
+});
+
+test('catalog rejects non-boolean initialization flags', (t) => {
+  const f = fixture(t);
+  for (const flag of ['autoInstall', 'defaultToolbar']) {
+    for (const value of ['true', 1, null, {}]) {
+      assert.throws(() => validateIndex({ [ID]: {
+        ...f.entry, app: { ...f.entry.app, [flag]: value },
+      } }), new RegExp(`app\\.${flag} must be a boolean`));
+    }
+  }
 });
 
 test('portable install downloads and extracts directly to A without npm or changing root manifests', async (t) => {
@@ -389,7 +470,9 @@ test('uninstall removes B, every A version, cache and only this root dependency'
   const legacy = packagePathFor(f.rootDir, PACKAGE);
   writeRunnablePackage(legacy, '0.1.32');
   fs.mkdirSync(path.join(f.rootDir, 'node_modules', '.bin'), { recursive: true });
-  fs.symlinkSync(path.join(legacy, 'server/index.js'), path.join(f.rootDir, 'node_modules', '.bin', 'subapp-aily-chat'));
+  const bin = path.join(f.rootDir, 'node_modules', '.bin', 'subapp-aily-chat');
+  if (process.platform === 'win32') fs.writeFileSync(bin, `node "${path.join(legacy, 'server/index.js')}"`);
+  else fs.symlinkSync(path.join(legacy, 'server/index.js'), bin);
   fs.mkdirSync(path.join(f.rootDir, 'node_modules', 'other'), { recursive: true });
   fs.writeFileSync(path.join(f.rootDir, 'node_modules', 'other', 'keep'), 'keep');
   fs.writeFileSync(path.join(f.rootDir, 'package.json'), JSON.stringify({
@@ -449,6 +532,24 @@ test('a busy Windows preflight keeps the installation visible and a forced retry
   assert.ok(killed >= 1);
   assert.equal(versions.isUninstalling(f.rootDir, f.entry), false);
   assert.equal(fs.lstatSync(legacy, { throwIfNoEntry: false }), undefined);
+});
+
+test('Windows inventory never embeds the searched path or mistakes its scanner for a holder', async () => {
+  const packagePath = path.resolve('subapp inventory test');
+  const holders = await listProcessesUsingPath(packagePath, {
+    platform: 'win32',
+    execFileImpl: (command, args, options, callback) => {
+      assert.equal(command, 'powershell.exe');
+      assert.equal(args.join(' ').includes(packagePath), false);
+      assert.equal(options.windowsHide, true);
+      callback(null, JSON.stringify([
+        { ProcessId: 43212, Name: 'node.exe', CommandLine: `node "${packagePath}/server/index.js"` },
+        { ProcessId: 43213, Name: 'powershell.exe', CommandLine: args.join(' ') },
+        { ProcessId: process.pid, Name: 'host.exe', CommandLine: packagePath },
+      ]));
+    },
+  });
+  assert.deepEqual(holders.map(holder => holder.pid), [43212]);
 });
 
 test('macOS process inventory returns the PIDs whose command line uses the package path', async () => {

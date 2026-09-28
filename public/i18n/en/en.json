@@ -886,6 +886,7 @@
         "CANCEL": "Cancel"
     },
     "LOGIN": {
+        "EDU_LOGIN": "EDU login",
         "HEADER": "Log in to use our services",
         "PHONE": "Phone",
         "EMAIL": "Email",
@@ -1188,7 +1189,9 @@
         "PROJECT_CREATED": "Project created successfully",
         "CREATE_FAILED": "Project creation failed",
         "PATH_NOT_EXIST": "Project path does not exist, please select another project",
+        "DEPENDENCY_TASKS_STOPPED": "Project dependency tasks have been stopped",
         "SWITCHING_BOARD_CONFIG": "Switching board configuration...",
+        "SDK_CONFIG_NOT_READY": "SDK is not ready. Some board settings are temporarily unavailable.",
         "BOARD_SWITCH_COMPLETE": "Board switch complete",
         "BOARD_SWITCH_SUCCESS": "Board switched successfully",
         "SWITCHING_BOARD": "Switching board...",

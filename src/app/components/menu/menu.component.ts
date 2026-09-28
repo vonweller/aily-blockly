@@ -1,9 +1,12 @@
 import { CommonModule } from '@angular/common';
 import {
   AfterViewChecked,
+  afterRender,
+  ChangeDetectorRef,
   Component,
   ElementRef,
   EventEmitter,
+  HostListener,
   Input,
   Output,
   ViewChild,
@@ -102,6 +105,7 @@ export class MenuComponent implements AfterViewChecked {
   private pendingViewportAdjustment = false;
   private pendingAnchorAlignment = false;
   private pendingSubmenuGeometry = false;
+  private submenuViewChecked = false;
   private pendingMenuGeometryCorrection = false;
   private menuGeometryCorrectionTimeout: ReturnType<typeof setTimeout> | null = null;
 
@@ -111,10 +115,8 @@ export class MenuComponent implements AfterViewChecked {
   submenuPosition = { left: '0px', top: '0px' };
   submenuWidth = 'auto';
   submenuMaxWidth = 'none';
-  submenuMaxHeight = 'none';
-  submenuOverflow = 'visible';
+  submenuViewportTop = 8;
   private submenuInteractionVersion = 0;
-  private submenuGeometryTimeout: ReturnType<typeof setTimeout> | null = null;
   private activeSubmenuAnchor: {
     menuLeft: number;
     menuRight: number;
@@ -125,8 +127,17 @@ export class MenuComponent implements AfterViewChecked {
   constructor(
     private hostRef: ElementRef<HTMLElement>,
     private router: Router,
-    private platformService: PlatformService
-  ) { }
+    private platformService: PlatformService,
+    private changeDetector: ChangeDetectorRef,
+  ) {
+    // The renderer can retain removed rows until the end of a render pass.
+    // Measure only after that cleanup, especially when a long list becomes short.
+    afterRender(() => {
+      if (this.pendingSubmenuGeometry && this.submenuViewChecked) {
+        this.refineSubmenuPosition();
+      }
+    });
+  }
 
   /** 按平台格式化快捷键显示：macOS 显示 ⌘，Windows 显示 Ctrl */
   formatShortcutForDisplay(text: string): string {
@@ -327,14 +338,13 @@ export class MenuComponent implements AfterViewChecked {
   }
 
   ngAfterViewChecked(): void {
+    // An unrelated application render must not reveal options before this
+    // component has rendered the latest hover selection.
+    this.submenuViewChecked = true;
     if (this.pendingGlobalFilterFocus && this.globalFilterInput?.nativeElement) {
       this.globalFilterInput.nativeElement.focus();
       this.globalFilterInput.nativeElement.select();
       this.pendingGlobalFilterFocus = false;
-    }
-
-    if (this.pendingSubmenuGeometry) {
-      this.refineSubmenuPosition();
     }
 
     if (this.pendingAnchorAlignment || this.pendingViewportAdjustment) {
@@ -350,11 +360,15 @@ export class MenuComponent implements AfterViewChecked {
       this.menuGeometryCorrectionTimeout = null;
     }
     this.cancelSubmenuClose();
-    if (this.submenuGeometryTimeout) {
-      clearTimeout(this.submenuGeometryTimeout);
-      this.submenuGeometryTimeout = null;
-    }
     this.setModelSubmenuBodyState(false);
+  }
+
+  @HostListener('window:resize')
+  onViewportResize(): void {
+    if (!this.activeSubmenuItem) return;
+    const activeRow = this.menuItems.find(row => row.nativeElement.classList.contains('active'));
+    this.calculateSubmenuPosition(activeRow?.nativeElement ?? null);
+    this.changeDetector.markForCheck();
   }
 
   itemClick(item) {
@@ -391,11 +405,7 @@ export class MenuComponent implements AfterViewChecked {
   };
 
   closeMenu() {
-    this.activeSubmenuItem = null;
-    this.setModelSubmenuBodyState(false);
-    this.setSubmenuReady(false);
-    this.pendingSubmenuGeometry = false;
-    this.activeSubmenuAnchor = null;
+    this.clearSubmenu();
     this.closeEvent.emit('');
   }
 
@@ -811,12 +821,8 @@ export class MenuComponent implements AfterViewChecked {
   showSubMenu(event: MouseEvent, item: IMenuItem) {
     this.cancelSubmenuClose();
 
-    if (!this.hasSubmenuContent(item)) {
-      this.activeSubmenuItem = null;
-      this.setModelSubmenuBodyState(false);
-      this.setSubmenuReady(false);
-      this.pendingSubmenuGeometry = false;
-      this.activeSubmenuAnchor = null;
+    if (item.disabled || !this.hasSubmenuContent(item)) {
+      this.clearSubmenu();
       return;
     }
 
@@ -824,14 +830,23 @@ export class MenuComponent implements AfterViewChecked {
       const submenuElement = this.submenuBox?.nativeElement as HTMLElement | undefined;
       if (!submenuElement?.classList.contains('ready')) {
         this.calculateSubmenuPosition(event.currentTarget as HTMLElement | null);
+        this.changeDetector.markForCheck();
       }
       return;
     }
 
     this.activeSubmenuItem = item;
+    // Angular reuses the flyout when moving between groups. Start each list at
+    // its first option instead of inheriting the previous group's scroll offset.
+    if (this.submenuBox?.nativeElement) {
+      this.submenuBox.nativeElement.scrollTop = 0;
+    }
     this.setModelSubmenuBodyState(true);
     this.setSubmenuReady(false);
     this.calculateSubmenuPosition(event.currentTarget as HTMLElement | null);
+    // Menus may be created by an async host callback outside Angular's zone.
+    // Explicitly schedule rendering even when its hover listeners run there.
+    this.changeDetector.markForCheck();
   }
 
   // 计算子菜单位置
@@ -840,6 +855,14 @@ export class MenuComponent implements AfterViewChecked {
       const menuBoxElement = this.menuBox.nativeElement;
       const menuBoxRect = menuBoxElement.getBoundingClientRect();
       const itemRect = menuItemElement.getBoundingClientRect();
+      // Align tall host flyouts with the primary menu, while keeping them out
+      // of the native title-bar drag region.
+      const header = this.usesMainMenuParity()
+        ? this.hostRef.nativeElement.closest('app-header')?.querySelector('.header-box')
+        : null;
+      this.submenuViewportTop = this.usesMainMenuParity()
+        ? Math.max(8, menuBoxRect.top, header?.getBoundingClientRect().bottom ?? 40)
+        : 8;
       const primaryMenuWidth = menuBoxRect.width;
       const estimatedSubmenuWidth = Math.min(
         this.estimateSubmenuWidth(this.activeSubmenuItem),
@@ -859,29 +882,17 @@ export class MenuComponent implements AfterViewChecked {
 
       this.submenuWidth = 'max-content';
       this.submenuMaxWidth = `${primaryMenuWidth}px`;
-      this.submenuMaxHeight = 'none';
-      this.submenuOverflow = 'visible';
 
       this.submenuPosition = {
         left: left + 'px',
         top: top + 'px'
       };
       this.pendingSubmenuGeometry = true;
-      this.scheduleSubmenuGeometryRefinement(this.activeSubmenuItem);
+      this.submenuViewChecked = false;
+      // afterRender measures and reveals the newly rendered options.
+      // A zero-delay timer can run before coalesced change detection and expose
+      // the previous menu's options at this menu item's position.
     }
-  }
-
-  private scheduleSubmenuGeometryRefinement(item: IMenuItem | null): void {
-    if (this.submenuGeometryTimeout) {
-      clearTimeout(this.submenuGeometryTimeout);
-    }
-
-    this.submenuGeometryTimeout = setTimeout(() => {
-      this.submenuGeometryTimeout = null;
-      if (this.activeSubmenuItem === item && this.pendingSubmenuGeometry) {
-        this.refineSubmenuPosition();
-      }
-    }, 0);
   }
 
   private estimateSubmenuWidth(item: IMenuItem | null | undefined): number {
@@ -934,8 +945,8 @@ export class MenuComponent implements AfterViewChecked {
     const preferredTop = this.usesMainMenuParity()
       ? itemTop
       : Math.round(itemTop + itemHeight / 2 - submenuHeight / 2);
-    const maxTop = Math.max(viewportPadding, viewportHeight - submenuHeight - viewportPadding);
-    return Math.min(maxTop, Math.max(viewportPadding, preferredTop));
+    const maxTop = Math.max(this.submenuViewportTop, viewportHeight - submenuHeight - viewportPadding);
+    return Math.min(maxTop, Math.max(this.submenuViewportTop, preferredTop));
   }
 
   private usesMainMenuParity(): boolean {
@@ -963,8 +974,6 @@ export class MenuComponent implements AfterViewChecked {
 
     submenuElement.style.left = `${left}px`;
     submenuElement.style.top = `${top}px`;
-    submenuElement.style.maxHeight = 'none';
-    submenuElement.style.overflowY = 'visible';
     this.updateSubmenuHoverScrollDistances(submenuElement);
     this.setSubmenuReady(true);
     this.pendingSubmenuGeometry = false;
@@ -1042,12 +1051,18 @@ export class MenuComponent implements AfterViewChecked {
         return;
       }
 
-      this.activeSubmenuItem = null;
-      this.setModelSubmenuBodyState(false);
-      this.setSubmenuReady(false);
-      this.pendingSubmenuGeometry = false;
-      this.activeSubmenuAnchor = null;
+      this.clearSubmenu();
     }, 100);
+  }
+
+  private clearSubmenu(): void {
+    this.cancelSubmenuClose();
+    this.activeSubmenuItem = null;
+    this.setModelSubmenuBodyState(false);
+    this.setSubmenuReady(false);
+    this.pendingSubmenuGeometry = false;
+    this.activeSubmenuAnchor = null;
+    this.changeDetector.markForCheck();
   }
 
   // 保持子菜单打开

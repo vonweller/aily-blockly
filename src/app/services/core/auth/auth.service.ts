@@ -1,6 +1,6 @@
 import { Injectable, inject, ApplicationRef } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
-import { BehaviorSubject, Observable, ReplaySubject, Subject, throwError, from, firstValueFrom } from 'rxjs';
+import { HttpClient, HttpErrorResponse } from '@angular/common/http';
+import { BehaviorSubject, Observable, ReplaySubject, Subject, TimeoutError, throwError, from, firstValueFrom } from 'rxjs';
 import { catchError, map, switchMap, timeout } from 'rxjs/operators';
 import { API } from '../../../configs/api.config';
 import { ElectronService } from '@core/platform/public-api';
@@ -12,6 +12,7 @@ import type {
   AuthUserInfo,
 } from './models/auth-snapshot';
 import { isDetachedAilyChatRenderer } from './policies/detached-aily-chat-auth';
+import { normalizeCreditLedgerSnapshot } from './models/auth-credit-snapshot';
 
 export interface CommonResponse {
   status: number;
@@ -104,6 +105,7 @@ export interface AuthSessionInvalidationRequest {
   errorCode: 'AUTH_TOKEN_INVALID';
   source: 'http-401' | 'sub-window';
   requestedAt: number;
+  expectedAccessToken: string | null;
 }
 
 @Injectable({
@@ -159,7 +161,7 @@ export class AuthService {
   private authQuotaInfoSnapshotOverride: AuthQuotaInfoSnapshot | null = null;
   private authQuotaInfoRefreshRetryHandle: ReturnType<typeof setTimeout> | null = null;
   private authHydrationRetryHandle: ReturnType<typeof setTimeout> | null = null;
-  private readonly authQuotaInfoRefreshRetryDelaysMs = [0, 1000, 5000] as const;
+  private readonly authQuotaInfoRefreshRetryDelaysMs = [1000, 5000] as const;
   private readonly authHydrationRetryDelaysMs = [1000, 5000] as const;
   private readonly authRequestTimeoutMs = 12000;
   private readonly authQuotaRequestTimeoutMs = 8000;
@@ -219,6 +221,7 @@ export class AuthService {
   requestSessionInvalidation(
     errorCode: 'AUTH_TOKEN_INVALID',
     source: AuthSessionInvalidationRequest['source'] = 'http-401',
+    expectedAccessToken: string | null = null,
   ): boolean {
     if (this.authSessionInvalidating || this.authSessionInvalidationHandled) {
       return false;
@@ -235,6 +238,7 @@ export class AuthService {
       errorCode,
       source,
       requestedAt: Date.now(),
+      expectedAccessToken,
     });
     return true;
   }
@@ -426,9 +430,9 @@ export class AuthService {
     }
   }
 
-  /** Clear only this renderer/install's auth state without notifying logout. */
-  async clearLocalAuthSession(): Promise<void> {
-    await this.clearAuthData(true);
+  /** Clear shared credentials without server logout; automatic invalidation supplies its rejected token. */
+  async clearLocalAuthSession(expectedAccessToken?: string | null): Promise<void> {
+    await this.clearAuthData(true, expectedAccessToken);
   }
 
   /**
@@ -448,40 +452,31 @@ export class AuthService {
   /**
    * 获取当前登录用户信息
    */
-  private getMe(token: string): Promise<AuthUserInfo | null> {
-    return new Promise((resolve, reject) => {
-      this.http.get<CommonResponse>(API.me, {
-        headers: { Authorization: `Bearer ${token}` }
-      }).pipe(
-        timeout(this.authRequestTimeoutMs),
-      ).subscribe({
-        next: async (response) => {
-          if (response.status === 200 && response.data) {
-            const userData = this.mergeCurrentGithubInfo(response.data);
-            try {
-              const quotaInfoSnapshot = await this.getAuthQuotaInfoSnapshot(token);
-              this.setCurrentUserInfo(userData, quotaInfoSnapshot);
-            } catch (quotaError) {
-              console.warn('获取独立配额快照失败，回退到 auth/me:', quotaError);
-              const recoveredQuotaInfoSnapshot = await this.retryAuthQuotaInfoSnapshotImmediately(token);
-              if (recoveredQuotaInfoSnapshot) {
-                this.setCurrentUserInfo(userData, recoveredQuotaInfoSnapshot);
-              } else {
-                this.setCurrentUserInfo(userData, null);
-                if (this.getAuthSnapshot()?.quotaInfoSnapshot?.source !== 'token') {
-                  this.scheduleAuthQuotaInfoSnapshotRetry(token, userData, 1);
-                }
-              }
-            }
-            resolve(userData);
-          } else {
-            console.warn('获取用户信息失败:', response);
-            reject(null);
-          }
-        },
-        error: (error) => reject(error)
-      });
-    });
+  private async getMe(token: string): Promise<AuthUserInfo | null> {
+    const response = await firstValueFrom(this.http.get<CommonResponse>(API.me, {
+      headers: { Authorization: `Bearer ${token}` },
+    }).pipe(timeout(this.authRequestTimeoutMs)));
+    if (this.authSessionInvalidating) return null;
+    if (response.status !== 200 || !response.data) {
+      throw createApiError(response, '获取用户信息失败');
+    }
+
+    const userData = this.mergeCurrentGithubInfo(response.data);
+    this.clearPendingAuthQuotaInfoSnapshotRetry();
+    try {
+      const quotaInfoSnapshot = await this.getAuthQuotaInfoSnapshot(token);
+      if (this.authSessionInvalidating) return null;
+      this.setCurrentUserInfo(userData, quotaInfoSnapshot);
+    } catch (quotaError) {
+      if (this.authSessionInvalidating) return null;
+      console.warn('Credit 额度快照刷新失败，保留同账号已确认的额度:', quotaError);
+      this.setCurrentUserInfo(userData, null);
+      if (isRetryableCreditRequestError(quotaError)
+        && !this.authQuotaInfoSnapshotOverride?.creditSnapshot) {
+        this.scheduleAuthQuotaInfoSnapshotRetry(token, userData);
+      }
+    }
+    return userData;
   }
 
   async refreshCurrentUser(): Promise<any | null> {
@@ -684,7 +679,7 @@ export class AuthService {
         if (!fileExists && currentLoginStatus) {
           // 文件不存在但当前显示为登录状态，说明其他实例已登出
           // console.log('检测到其他实例已登出，同步登出当前实例');
-          await this.clearAuthData();
+          await this.clearAuthData(false, null);
         } else if (fileExists && !currentLoginStatus) {
           // 文件存在但当前显示为未登录状态，重新获取用户信息
           // console.log('检测到认证文件存在，重新获取登录状态');
@@ -698,7 +693,7 @@ export class AuthService {
             } catch (error) {
               console.error('获取用户信息失败:', error);
               // token可能已过期，清理文件
-              await this.clearAuthDataFile();
+              await this.clearAuthDataFile(false, token);
             }
           }
         }
@@ -740,18 +735,24 @@ export class AuthService {
     return localStorage.getItem('aily_auth_token');
   }
 
-  /** Clear this product's credentials without removing its migration marker. */
-  async clearAuthDataFile(throwOnError = false): Promise<void> {
-    if (isDetachedAilyChatRenderer()) return;
+  /** Clear the shared credentials only if an optional rejected token still matches. */
+  async clearAuthDataFile(throwOnError = false, expectedAccessToken?: string | null): Promise<boolean> {
+    if (isDetachedAilyChatRenderer()) return true;
     try {
-      if (this.authBridge) await this.authBridge.clear();
+      if (this.authBridge) return await this.authBridge.clear(expectedAccessToken) !== false;
       else {
+        if (expectedAccessToken !== undefined) {
+          const currentToken = await this.getToken2();
+          if (currentToken && currentToken !== expectedAccessToken) return false;
+        }
         localStorage.removeItem('aily_auth_token');
         localStorage.removeItem(this.REFRESH_TOKEN_KEY);
+        return true;
       }
     } catch (error) {
       console.error('清除认证数据失败:', error);
       if (throwOnError) throw error;
+      return false;
     }
   }
 
@@ -804,17 +805,28 @@ export class AuthService {
   /**
    * 清除所有认证数据
    */
-  private async clearAuthData(requireCredentialRemoval = false): Promise<void> {
-    this.authCredentialGeneration += 1;
-    localStorage.removeItem(this.TOKEN_KEY);
-    localStorage.removeItem(this.REFRESH_TOKEN_KEY);
-    localStorage.removeItem(this.USER_INFO_KEY);
-    this.clearPendingAuthQuotaInfoSnapshotRetry();
-    this.clearPendingAuthHydrationRetry();
-    this.isLoggedInSubject.next(false);
-    this.setCurrentUserInfo(null);
-    this.authInitializationStateSubject.next('signed_out');
-    await this.clearAuthDataFile(requireCredentialRemoval);
+  private async clearAuthData(requireCredentialRemoval = false, expectedAccessToken?: string | null): Promise<void> {
+    let cleared = true;
+    try {
+      cleared = await this.clearAuthDataFile(requireCredentialRemoval, expectedAccessToken);
+    } finally {
+      if (cleared || expectedAccessToken === undefined) {
+        this.authCredentialGeneration += 1;
+        localStorage.removeItem(this.TOKEN_KEY);
+        localStorage.removeItem(this.REFRESH_TOKEN_KEY);
+        localStorage.removeItem(this.USER_INFO_KEY);
+        this.clearPendingAuthQuotaInfoSnapshotRetry();
+        this.clearPendingAuthHydrationRetry();
+        this.isLoggedInSubject.next(false);
+        this.setCurrentUserInfo(null);
+        this.authInitializationStateSubject.next('signed_out');
+      }
+    }
+    if (!cleared && expectedAccessToken !== undefined) {
+      this.authSessionInvalidating = false;
+      this.authSessionInvalidationHandled = false;
+      void this.initializeAuth();
+    }
   }
 
   /**
@@ -893,35 +905,20 @@ export class AuthService {
     return Boolean(entitlements[entitlementKey]);
   }
 
-  private async getAuthQuotaInfoSnapshot(token: string): Promise<AuthQuotaInfoSnapshot | null> {
-    return new Promise((resolve, reject) => {
-      this.http.get<CommonResponse>(API.authQuotaInfo, {
-        headers: { Authorization: `Bearer ${token}` }
-      }).pipe(
-        timeout(this.authQuotaRequestTimeoutMs),
-      ).subscribe({
-        next: (response) => {
-          if (response.status !== 200 || !response.data) {
-            resolve(null);
-            return;
-          }
-
-          resolve(normalizeAuthQuotaInfoSnapshotPayload(response.data, { source: 'token' }) ?? null);
-        },
-        error: (error) => reject(error),
-      });
-    });
-  }
-
-  private async retryAuthQuotaInfoSnapshotImmediately(
-    token: string,
-  ): Promise<AuthQuotaInfoSnapshot | null> {
-    try {
-      return await this.getAuthQuotaInfoSnapshot(token);
-    } catch (error) {
-      console.warn('立即重试独立配额快照失败:', error);
-      return null;
+  private async getAuthQuotaInfoSnapshot(token: string): Promise<AuthQuotaInfoSnapshot> {
+    const response = await firstValueFrom(this.http.get<unknown>(API.creditSnapshot, {
+      headers: { Authorization: `Bearer ${token}` },
+    }).pipe(timeout(this.authQuotaRequestTimeoutMs)));
+    // The deployed ledger is unwrapped; some gateways use a success envelope.
+    // Unwrap only here, then apply the same strict integer-micros validation.
+    const payload = isRecord(response) && response['status'] === 200
+      ? response['data']
+      : response;
+    const creditSnapshot = normalizeCreditLedgerSnapshot(payload);
+    if (!creditSnapshot) {
+      throw new Error('Invalid Credit snapshot from /api/v1/credits/me: expected CreditSnapshotResponse with integer micros; legacy count quotas are not Credits.');
     }
+    return { source: 'token', creditSnapshot };
   }
 
   private scheduleAuthQuotaInfoSnapshotRetry(
@@ -937,7 +934,9 @@ export class AuthService {
     const retryDelay = this.authQuotaInfoRefreshRetryDelaysMs[attemptIndex];
     this.authQuotaInfoRefreshRetryHandle = setTimeout(() => {
       this.authQuotaInfoRefreshRetryHandle = null;
-      void this.refreshAuthQuotaInfoSnapshotForCurrentUser(token, expectedUserInfo, attemptIndex);
+      if (!this.authSessionInvalidating) {
+        void this.refreshAuthQuotaInfoSnapshotForCurrentUser(token, expectedUserInfo, attemptIndex);
+      }
     }, retryDelay);
   }
 
@@ -982,16 +981,13 @@ export class AuthService {
       return;
     }
 
-    if (this.authQuotaInfoSnapshotOverride?.source === 'token') {
+    if (this.authQuotaInfoSnapshotOverride?.creditSnapshot) {
       return;
     }
 
     try {
       const quotaInfoSnapshot = await this.getAuthQuotaInfoSnapshot(token);
-      if (!quotaInfoSnapshot) {
-        this.retryAuthQuotaInfoSnapshotIfStillPending(token, expectedUserInfo, attemptIndex + 1);
-        return;
-      }
+      if (this.authSessionInvalidating) return;
 
       const latestUserInfo = this.userInfoSubject.getValue();
       if (!latestUserInfo || !isSameAuthUser(latestUserInfo, expectedUserInfo)) {
@@ -1000,8 +996,11 @@ export class AuthService {
 
       this.setCurrentUserInfo(latestUserInfo, quotaInfoSnapshot);
     } catch (error) {
+      if (this.authSessionInvalidating) return;
       console.warn('后台刷新独立配额快照失败:', error);
-      this.retryAuthQuotaInfoSnapshotIfStillPending(token, expectedUserInfo, attemptIndex + 1);
+      if (isRetryableCreditRequestError(error)) {
+        this.retryAuthQuotaInfoSnapshotIfStillPending(token, expectedUserInfo, attemptIndex + 1);
+      }
     }
   }
 
@@ -1015,7 +1014,7 @@ export class AuthService {
       return;
     }
 
-    if (this.authQuotaInfoSnapshotOverride?.source === 'token') {
+    if (this.authQuotaInfoSnapshotOverride?.creditSnapshot) {
       return;
     }
 
@@ -1957,6 +1956,12 @@ export class AuthService {
   }
 }
 
+/** Retry transport failures only, never a deterministic schema or permission error. */
+function isRetryableCreditRequestError(error: unknown): boolean {
+  return error instanceof TimeoutError || (error instanceof HttpErrorResponse
+    && (error.status === 0 || error.status === 408 || error.status === 429 || error.status >= 500));
+}
+
 export function normalizeAuthQuotaInfoSnapshotPayload(
   value: unknown,
   options?: {
@@ -1966,6 +1971,11 @@ export function normalizeAuthQuotaInfoSnapshotPayload(
   },
 ): AuthQuotaInfoSnapshot | undefined {
   const detailRecord = isRecord(value) ? value : undefined;
+  if (detailRecord?.['unit'] === 'credits'
+    || (detailRecord && ('available_micros' in detailRecord || 'reserved_micros' in detailRecord))) {
+    const creditSnapshot = normalizeCreditLedgerSnapshot(detailRecord);
+    return creditSnapshot ? { source: options?.source ?? 'token', creditSnapshot } : undefined;
+  }
   const normalizedQuotaSnapshots = normalizeAuthQuotaSnapshots(
     detailRecord?.['quota_snapshots'] ?? detailRecord?.['quotaSnapshots'],
   );

@@ -36,6 +36,7 @@ type LaunchedAilyElectron = {
 
 export async function launchAilyElectron(options: {
   environment?: Readonly<Record<string, string>>;
+  config?: Readonly<Record<string, unknown>>;
 } = {}): Promise<LaunchedAilyElectron> {
   assertElectronCanLaunch();
 
@@ -64,6 +65,9 @@ export async function launchAilyElectron(options: {
         await mkdir(path.dirname(destination), {recursive: true});
         await cp(source, destination, {recursive: true, mode: constants.COPYFILE_FICLONE});
       }
+    }
+    if (options.config) {
+      await writeFile(path.join(userDataDir, 'config.json'), JSON.stringify(options.config), 'utf8');
     }
     app = await _electron.launch({
       args: ['.', `--user-data-dir=${userDataDir}`],

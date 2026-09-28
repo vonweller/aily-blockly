@@ -41,6 +41,9 @@ export function isAppAvailableForApplication(only: unknown, applicationName: str
 
 export interface ChildToolAppConfig extends Partial<AppItem> {
   available?: boolean;
+  /** Install in the background at startup whenever the app is missing. */
+  autoInstall?: boolean;
+  /** Suggest toolbar placement once on first installation, respecting later user edits. */
   defaultToolbar?: boolean;
 }
 
@@ -64,6 +67,10 @@ export interface ChildToolRuntimeResourceLifecycleConfig {
 }
 
 export interface ChildToolRuntimeConfig {
+  /** Native/headless runtime; no iframe entry or UI surfaces. */
+  headless?: boolean;
+  /** Host-projected observation UI. Never starts or retains the execution Runtime. */
+  observer?: boolean;
   apiServer?: 'optional' | 'required';
   processMessagePort?: {
     transport: 'node-ipc-v1';
@@ -95,6 +102,10 @@ export interface ChildToolAgentLifecycleRequestConfig {
 }
 
 export interface ChildToolAgentLifecycleConfig {
+  /** Called for each departing owner, with its sessionId in RPC context. */
+  ownerRelease?: ChildToolAgentLifecycleRequestConfig;
+  ownerLease?: ChildToolAgentLifecycleRequestConfig & { protocol: 'process-file-v1' };
+  /** Legacy cleanup after the final shared Agent owner leaves. */
   sessionRelease?: ChildToolAgentLifecycleRequestConfig;
 }
 
@@ -193,12 +204,6 @@ export function getChildToolAppItems(): AppItem[] {
 
 export function getChildToolAvailableAppIds(): string[] {
   return getChildToolAppItems().map(app => app.id);
-}
-
-export function getChildToolDefaultToolbarAppIds(): string[] {
-  return Object.values(getChildToolConfigs())
-    .filter(config => config.app?.available !== false && config.app?.defaultToolbar === true)
-    .map(config => config.app?.id || config.id);
 }
 
 function createChildToolAppItem(config: ChildToolConfig): AppItem {

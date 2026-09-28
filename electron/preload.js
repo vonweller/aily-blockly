@@ -11,6 +11,10 @@ const { tmpdir } = require("os");
 const nodeFsp = require("node:fs/promises");
 const { calculateDirectoryStats } = require("./directory-stats");
 const { createSafeStorageBridge } = require("./safe-storage-bridge");
+const { replaceProjectText, PROJECT_FILE_PUBLICATION_VERSION, PROJECT_SHADOW_IDENTITY_MIGRATION_VERSION } = require("./project-file-writer");
+const { openProjectSyncStorageBridge, PROJECT_SYNC_STORAGE_VERSION } = require("./project-sync-storage");
+const { copyProjectDirectory, importProjectDirectory } = require("./project-file-copy");
+const { publishArduinoGeneratedCode, patchBuildMetadata, captureBuildSource, canReuseBlocklyUpload } = require('./build-workspace-publication');
 
 // 单双杠虽不影响实用性，为了路径规范好看，还是单独使用
 const pt = process.platform === "win32" ? "\\" : "/"
@@ -229,7 +233,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ...require('./build-product').getProductAuthConfig(process.env.AILY_BUILD_PRODUCT),
     read: () => ipcRenderer.invoke('auth-credentials-read'),
     write: (record, expectedRefreshToken) => ipcRenderer.invoke('auth-credentials-write', record, expectedRefreshToken),
-    clear: () => ipcRenderer.invoke('auth-credentials-clear'),
+    clear: (expectedAccessToken) => ipcRenderer.invoke('auth-credentials-clear', expectedAccessToken),
   },
   ipcRenderer: {
     send: (channel, data) => ipcRenderer.send(channel, data),
@@ -469,6 +473,14 @@ contextBridge.exposeInMainWorld("electronAPI", {
     respond: (requestId, result) => ipcRenderer.send('child-app-host-command-response', { requestId, result }),
   },
   childToolSession: {
+    observeNative: (payload) => ipcRenderer.invoke('subapp-native-observer', payload),
+    onNativeObserverChanged: (callback) => {
+      const listener = () => callback();
+      ipcRenderer.on('subapp-native-observer-changed', listener);
+      return () => ipcRenderer.removeListener('subapp-native-observer-changed', listener);
+    },
+    invokeNativeAgent: (payload) => ipcRenderer.invoke('subapp-native-agent', payload),
+    superviseOwner: (payload) => ipcRenderer.invoke('subapp-owner-supervision', payload),
     onHostShutdown: (callback) => {
       const listener = () => callback();
       ipcRenderer.on("child-tool-host-shutdown", listener);
@@ -524,6 +536,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
     },
   },
   builder: {
+    publishArduinoGeneratedCode,
+    patchBuildMetadata,
+    captureBuildSource,
+    canReuseBlocklyUpload,
     status: () => ipcRenderer.invoke("aily-builder-status"),
     checkForUpdate: () => ipcRenderer.invoke("aily-builder-check-update"),
     update: () => ipcRenderer.invoke("aily-builder-update"),
@@ -618,6 +634,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
     upload: (data) => ipcRenderer.invoke("uploader-upload", data),
   },
   fs: {
+    projectFilePublicationVersion: PROJECT_FILE_PUBLICATION_VERSION,
+    projectShadowIdentityMigrationVersion: PROJECT_SHADOW_IDENTITY_MIGRATION_VERSION,
+    replaceProjectText: (request, assertCurrent) => replaceProjectText(request, assertCurrent),
+    projectSyncStorageVersion: PROJECT_SYNC_STORAGE_VERSION,
+    openProjectSyncStorage: (projectPath, assertCurrent) => openProjectSyncStorageBridge(projectPath, assertCurrent),
     readCodeDeclaration: (candidate, roots) => require('./code-suggestion-declarations').readCodeDeclaration(candidate, roots),
     readFileSync: (path, encoding = "utf8") => require("fs").readFileSync(path, encoding),
     readFileBufferAsync: async (path) => {
@@ -657,6 +678,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     },
     mkdirSync: (path) => require("fs").mkdirSync(path, { recursive: true }),
     copySync: (src, dest) => require("fs").cpSync(src, dest, { recursive: true }),
+    copyProjectDirectory: (src, dest) => copyProjectDirectory(src, dest),
+    importProjectDirectory: (src, dest, unwrapArchive) => importProjectDirectory(src, dest, unwrapArchive),
     existsSync: (path) => require("fs").existsSync(path),
     statSync: (path) => {
       const s = require("fs").statSync(path);
