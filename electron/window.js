@@ -758,7 +758,25 @@ function clampNumber(value, min, max) {
     return Math.min(Math.max(value, min), max);
 }
 
-function setCurrentWindowSize(senderWindow, requestedWidth, requestedHeight) {
+function waitForWindowEvent(senderWindow, event, action) {
+    let settle;
+    const happened = new Promise(resolve => {
+        settle = resolve;
+    });
+    senderWindow.once(event, settle);
+    try {
+        action();
+    } catch (error) {
+        senderWindow.removeListener(event, settle);
+        throw error;
+    }
+    return Promise.race([
+        happened,
+        new Promise(resolve => setTimeout(resolve, 1000)),
+    ]).finally(() => senderWindow.removeListener(event, settle));
+}
+
+async function setCurrentWindowSize(senderWindow, requestedWidth, requestedHeight) {
     if (!senderWindow || senderWindow.isDestroyed()) {
         return { success: false, error: 'window-not-found' };
     }
@@ -777,35 +795,47 @@ function setCurrentWindowSize(senderWindow, requestedWidth, requestedHeight) {
     const currentBounds = senderWindow.getBounds();
     const centerX = currentBounds.x + currentBounds.width / 2;
     const centerY = currentBounds.y + currentBounds.height / 2;
-    const nextX = clampNumber(
-        Math.round(centerX - nextWidth / 2),
-        workArea.x,
-        workArea.x + workArea.width - nextWidth
-    );
-    const nextY = clampNumber(
-        Math.round(centerY - nextHeight / 2),
-        workArea.y,
-        workArea.y + workArea.height - nextHeight
-    );
 
     if (senderWindow.isFullScreen()) {
-        senderWindow.setFullScreen(false);
+        await waitForWindowEvent(senderWindow, 'leave-full-screen', () => senderWindow.setFullScreen(false));
     }
     if (senderWindow.isMaximized()) {
-        senderWindow.unmaximize();
+        await waitForWindowEvent(senderWindow, 'unmaximize', () => senderWindow.unmaximize());
     }
 
-    senderWindow.setBounds({
-        x: nextX,
-        y: nextY,
-        width: nextWidth,
-        height: nextHeight,
-    });
+    // setBounds changes the outer frame. On a frameless Windows window the web
+    // page keeps its previous size, and getBounds is a couple of pixels larger
+    // than the requested content. Size the client area, then apply once more
+    // after the native resize has been processed.
+    const apply = () => {
+        senderWindow.setContentBounds({
+            x: clampNumber(
+                Math.round(centerX - nextWidth / 2),
+                workArea.x,
+                workArea.x + workArea.width - nextWidth
+            ),
+            y: clampNumber(
+                Math.round(centerY - nextHeight / 2),
+                workArea.y,
+                workArea.y + workArea.height - nextHeight
+            ),
+            width: nextWidth,
+            height: nextHeight,
+        });
+    };
+    apply();
+    if (process.platform === 'win32') {
+        await new Promise(resolve => setTimeout(resolve, 50));
+        if (!senderWindow.isDestroyed()) apply();
+    }
+    if (senderWindow.isDestroyed()) return { success: false, error: 'window-not-found' };
 
+    const [contentWidth, contentHeight] = senderWindow.getContentSize();
     return {
         success: true,
         requested: { width, height },
         bounds: senderWindow.getBounds(),
+        content: { width: contentWidth, height: contentHeight },
     };
 }
 
