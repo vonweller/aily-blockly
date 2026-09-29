@@ -2,7 +2,7 @@ import type * as Blockly from 'blockly';
 import { normalizeArduinoGeneratedCode, type BlockCodeMapping } from '../components/blockly/generators/arduino/arduino';
 import { runWithPreparedActiveProjectGenerator, type ProjectGenerator } from './blockly-generator-runtime.service';
 import { captureArduinoGeneratedArtifacts } from './generated-code-artifacts';
-import { canonicalJsonStringify } from '@domain/project/public-api';
+import { canonicalProjectJsonStringify } from '@domain/project/public-api';
 import { captureGeneratorProjectEffects, type GeneratorMacroEffect } from './generator-project-effects';
 
 export interface BlocklyCodeScope {
@@ -63,7 +63,7 @@ export class BlocklyProjectCodePreparation {
       const { document, ...stamp } = capture();
       if (!sameContext(before, stamp)) throw new Error('Project runtime changed during code preparation.');
       return { stamp, result: Object.freeze({ ...result, revision: stamp.revision,
-        ...(result.code !== null ? { sourceWorkspace: Object.freeze({ documentText: canonicalJsonStringify(document),
+        ...(result.code !== null ? { sourceWorkspace: Object.freeze({ documentText: canonicalProjectJsonStringify(document),
           revision: stamp.revision, runtimeRevision: stamp.runtimeRevision, pageId: stamp.pageId }) } : {}) }) };
     }, before.document);
     // Only the synchronous Generator phase may contribute model changes, not async continuations.

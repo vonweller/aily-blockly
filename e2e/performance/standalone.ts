@@ -7,7 +7,9 @@ import '../../src/app/editors/blockly-editor/components/blockly/renderer/aily-th
 declare const AILY_RENDERER: boolean;
 
 async function start() {
-  Blockly.setLocale(zh);
+  const messages: Record<string, string> = {};
+  for (const [key, value] of Object.entries(zh)) if (typeof value === 'string') messages[key] = value;
+  Blockly.setLocale(messages);
   const definitions = await (await fetch('definitions.json')).json();
   (window as any).__ailyBlockDefinitionsMap = new Map(definitions.map(definition => [definition.type, definition.icon]));
   for (const definition of definitions) {

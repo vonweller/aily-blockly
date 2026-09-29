@@ -1,3 +1,4 @@
+import { needsMainThreadAbiParse } from './utils/project-abi-transfer';
 import { ChangeDetectorRef, Component, NgZone, OnDestroy, OnInit } from '@angular/core';
 import { LibManagerComponent } from './components/lib-manager/lib-manager.component';
 import { NotificationComponent } from '../../components/notification/notification.component';
@@ -619,7 +620,7 @@ export class BlocklyEditorComponent implements OnInit, OnDestroy {
 
   private async parseProjectAbiContent(content: string, signal?: AbortSignal): Promise<any> {
     if (signal?.aborted) throw signal.reason;
-    if (typeof Worker === 'undefined') {
+    if (typeof Worker === 'undefined' || needsMainThreadAbiParse(content)) {
       return this.parseProjectAbiContentOnMainThread(content, signal);
     }
 

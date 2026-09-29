@@ -1,4 +1,4 @@
-import { canonicalJsonStringify } from '@domain/project/public-api';
+import { canonicalProjectJsonStringify } from '@domain/project/public-api';
 
 /** Observed persisted state, independent of code-generation events (which omit layout/UI state).
  * Deliberately compares content until every custom serializer has a reliable invalidation contract.
@@ -9,7 +9,7 @@ export class BlocklyProjectRevision {
   get current(): number { return this.revision; }
 
   observe(document: unknown): number {
-    const text = canonicalJsonStringify(document);
+    const text = canonicalProjectJsonStringify(document);
     if (this.text !== text) { this.text = text; this.revision++; }
     return this.revision;
   }

@@ -1,3 +1,8 @@
+overrides:
+  blockly: 'file:vendor/aily-project-blockly-13.3.0.tgz'
+  '@blockly/field-colour': 13.3.0
+  '@blockly/field-grid-dropdown': 13.3.0
+
 allowBuilds:
   '@parcel/watcher': true
   electron: true

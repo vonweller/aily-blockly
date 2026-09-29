@@ -4,6 +4,11 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  blockly: file:vendor/aily-project-blockly-13.3.0.tgz
+  '@blockly/field-colour': 13.3.0
+  '@blockly/field-grid-dropdown': 13.3.0
+
 importers:
 
   .:
@@ -188,7 +193,7 @@ importers:
     devDependencies:
       '@angular-devkit/build-angular':
         specifier: ^19.0.0
-        version: 19.2.27(@angular/compiler-cli@19.2.25(@angular/compiler@19.2.25)(typescript@5.6.3))(@angular/compiler@19.2.25)(@types/node@22.20.1)(chokidar@4.0.3)(jiti@1.21.7)(karma@6.4.4(debug@4.4.3))(typescript@5.6.3)(vite@6.4.2(@types/node@22.20.1)(jiti@1.21.7)(less@4.2.2)(sass@1.85.0)(terser@5.39.0))
+        version: 19.2.27(@angular/compiler-cli@19.2.25(@angular/compiler@19.2.25)(typescript@5.6.3))(@angular/compiler@19.2.25)(@types/node@22.20.1)(chokidar@4.0.3)(jiti@1.21.7)(karma@6.4.4)(typescript@5.6.3)(vite@6.4.2(@types/node@22.20.1)(jiti@1.21.7)(less@4.2.2)(sass@1.85.0)(terser@5.39.0))
       '@angular/cli':
         specifier: ^19.0.0
         version: 19.2.27(@types/node@22.20.1)(chokidar@4.0.3)
@@ -227,7 +232,7 @@ importers:
         version: 5.4.0
       karma:
         specifier: ~6.4.0
-        version: 6.4.4(debug@4.4.3)
+        version: 6.4.4
       karma-chrome-launcher:
         specifier: ~3.2.0
         version: 3.2.0
@@ -236,16 +241,16 @@ importers:
         version: 2.2.1
       karma-jasmine:
         specifier: ~5.1.0
-        version: 5.1.0(karma@6.4.4(debug@4.4.3))
+        version: 5.1.0(karma@6.4.4)
       karma-jasmine-html-reporter:
         specifier: ~2.1.0
-        version: 2.1.0(jasmine-core@5.4.0)(karma-jasmine@5.1.0(karma@6.4.4(debug@4.4.3)))(karma@6.4.4(debug@4.4.3))
+        version: 2.1.0(jasmine-core@5.4.0)(karma-jasmine@5.1.0(karma@6.4.4))(karma@6.4.4)
       typescript:
         specifier: ~5.6.2
         version: 5.6.3
       wait-on:
         specifier: ^9.0.10
-        version: 9.1.0(debug@4.4.3)
+        version: 9.1.0
     optionalDependencies:
       dmg-license:
         specifier: ^1.0.11
@@ -1026,19 +1031,17 @@ packages:
     peerDependencies:
       blockly: ^13.2.0
 
-  '@blockly/field-colour@6.0.12':
-    resolution: {integrity: sha512-sZUlMtn1Bnj3/inayhZAMJ1ZUxFfR8eISBWPgOvWMBlnUIeCWXJDc76a6JVEcZhnjHFjDI+ihOXYdrp5cedShA==}
-    version: 6.0.12
-    engines: {node: '>=8.0.0'}
+  '@blockly/field-colour@13.3.0':
+    resolution: {integrity: sha512-5Gm9dAyY3psU/JbEPh2CcWJ/01WtfxHV06PO3kYLGeStkr/eaZZD+AvnuBd7Q2opKh3X8uDvnceqrjgp3S7UvA==}
+    version: 13.3.0
     peerDependencies:
-      blockly: ^12.0.0
+      blockly: ^13.2.0
 
-  '@blockly/field-grid-dropdown@6.0.10':
-    resolution: {integrity: sha512-b54xLznsFb5OyAfpFYCFX52M7vRc9dITbLzTBIsETuXfVX8R4TFj3z0+QbJ1znlqNhr5+dgrfDfkUEm8+8zbxg==}
-    version: 6.0.10
-    engines: {node: '>=8.17.0'}
+  '@blockly/field-grid-dropdown@13.3.0':
+    resolution: {integrity: sha512-5q+CwaWOat9MQ5VuGcHEFT1yXtfFtgs89HRHZJ5cYs+UG2L2MUaCIvjnBgRDeKHwL5Jt+bJECfMlJd3B49c2IQ==}
+    version: 13.3.0
     peerDependencies:
-      blockly: ^12.0.0
+      blockly: ^13.2.0
 
   '@blockly/workspace-minimap@13.3.0':
     resolution: {integrity: sha512-M37OBL0EurryCyihtWJkvRhC3elsZa4yEvveApGiUhIQegqzPA8hOLK9drvaOQTzIyItX9zGDr1BaHx5257COQ==}
@@ -6811,13 +6814,13 @@ snapshots:
     transitivePeerDependencies:
       - chokidar
 
-  '@angular-devkit/build-angular@19.2.27(@angular/compiler-cli@19.2.25(@angular/compiler@19.2.25)(typescript@5.6.3))(@angular/compiler@19.2.25)(@types/node@22.20.1)(chokidar@4.0.3)(jiti@1.21.7)(karma@6.4.4(debug@4.4.3))(typescript@5.6.3)(vite@6.4.2(@types/node@22.20.1)(jiti@1.21.7)(less@4.2.2)(sass@1.85.0)(terser@5.39.0))':
+  '@angular-devkit/build-angular@19.2.27(@angular/compiler-cli@19.2.25(@angular/compiler@19.2.25)(typescript@5.6.3))(@angular/compiler@19.2.25)(@types/node@22.20.1)(chokidar@4.0.3)(jiti@1.21.7)(karma@6.4.4)(typescript@5.6.3)(vite@6.4.2(@types/node@22.20.1)(jiti@1.21.7)(less@4.2.2)(sass@1.85.0)(terser@5.39.0))':
     dependencies:
       '@ampproject/remapping': 2.3.0
       '@angular-devkit/architect': 0.1902.27(chokidar@4.0.3)
       '@angular-devkit/build-webpack': 0.1902.27(chokidar@4.0.3)(webpack-dev-server@5.2.2(webpack@5.105.0(esbuild@0.28.0)(postcss@8.5.12)))(webpack@5.105.0(esbuild@0.28.0)(postcss@8.5.12))
       '@angular-devkit/core': 19.2.27(chokidar@4.0.3)
-      '@angular/build': 19.2.27(@angular/compiler-cli@19.2.25(@angular/compiler@19.2.25)(typescript@5.6.3))(@angular/compiler@19.2.25)(@types/node@22.20.1)(chokidar@4.0.3)(jiti@1.21.7)(karma@6.4.4(debug@4.4.3))(less@4.2.2)(postcss@8.5.12)(terser@5.39.0)(typescript@5.6.3)
+      '@angular/build': 19.2.27(@angular/compiler-cli@19.2.25(@angular/compiler@19.2.25)(typescript@5.6.3))(@angular/compiler@19.2.25)(@types/node@22.20.1)(chokidar@4.0.3)(jiti@1.21.7)(karma@6.4.4)(less@4.2.2)(postcss@8.5.12)(terser@5.39.0)(typescript@5.6.3)
       '@angular/compiler-cli': 19.2.25(@angular/compiler@19.2.25)(typescript@5.6.3)
       '@babel/core': 7.26.10
       '@babel/generator': 7.26.10
@@ -6872,7 +6875,7 @@ snapshots:
       webpack-subresource-integrity: 5.1.0(webpack@5.105.0(esbuild@0.28.0)(postcss@8.5.12))
     optionalDependencies:
       esbuild: 0.28.0
-      karma: 6.4.4(debug@4.4.3)
+      karma: 6.4.4
     transitivePeerDependencies:
       - '@angular/compiler'
       - '@minify-html/node'
@@ -6939,7 +6942,7 @@ snapshots:
       '@angular/core': 19.2.25(rxjs@7.8.2)(zone.js@0.15.1)
       tslib: 2.8.1
 
-  '@angular/build@19.2.27(@angular/compiler-cli@19.2.25(@angular/compiler@19.2.25)(typescript@5.6.3))(@angular/compiler@19.2.25)(@types/node@22.20.1)(chokidar@4.0.3)(jiti@1.21.7)(karma@6.4.4(debug@4.4.3))(less@4.2.2)(postcss@8.5.12)(terser@5.39.0)(typescript@5.6.3)':
+  '@angular/build@19.2.27(@angular/compiler-cli@19.2.25(@angular/compiler@19.2.25)(typescript@5.6.3))(@angular/compiler@19.2.25)(@types/node@22.20.1)(chokidar@4.0.3)(jiti@1.21.7)(karma@6.4.4)(less@4.2.2)(postcss@8.5.12)(terser@5.39.0)(typescript@5.6.3)':
     dependencies:
       '@ampproject/remapping': 2.3.0
       '@angular-devkit/architect': 0.1902.27(chokidar@4.0.3)
@@ -6971,7 +6974,7 @@ snapshots:
       vite: 6.4.2(@types/node@22.20.1)(jiti@1.21.7)(less@4.2.2)(sass@1.85.0)(terser@5.39.0)
       watchpack: 2.4.2
     optionalDependencies:
-      karma: 6.4.4(debug@4.4.3)
+      karma: 6.4.4
       less: 4.2.2
       lmdb: 3.2.6
       postcss: 8.5.12
@@ -7877,15 +7880,15 @@ snapshots:
 
   '@blockly/field-colour-hsv-sliders@13.3.0(aily-project-blockly@file:vendor/aily-project-blockly-13.3.0.tgz(jsdom@29.1.1))':
     dependencies:
-      '@blockly/field-colour': 6.0.12(aily-project-blockly@file:vendor/aily-project-blockly-13.3.0.tgz(jsdom@29.1.1))
+      '@blockly/field-colour': 13.3.0(aily-project-blockly@file:vendor/aily-project-blockly-13.3.0.tgz(jsdom@29.1.1))
       blockly: aily-project-blockly@file:vendor/aily-project-blockly-13.3.0.tgz(jsdom@29.1.1)
 
-  '@blockly/field-colour@6.0.12(aily-project-blockly@file:vendor/aily-project-blockly-13.3.0.tgz(jsdom@29.1.1))':
+  '@blockly/field-colour@13.3.0(aily-project-blockly@file:vendor/aily-project-blockly-13.3.0.tgz(jsdom@29.1.1))':
     dependencies:
-      '@blockly/field-grid-dropdown': 6.0.10(aily-project-blockly@file:vendor/aily-project-blockly-13.3.0.tgz(jsdom@29.1.1))
+      '@blockly/field-grid-dropdown': 13.3.0(aily-project-blockly@file:vendor/aily-project-blockly-13.3.0.tgz(jsdom@29.1.1))
       blockly: aily-project-blockly@file:vendor/aily-project-blockly-13.3.0.tgz(jsdom@29.1.1)
 
-  '@blockly/field-grid-dropdown@6.0.10(aily-project-blockly@file:vendor/aily-project-blockly-13.3.0.tgz(jsdom@29.1.1))':
+  '@blockly/field-grid-dropdown@13.3.0(aily-project-blockly@file:vendor/aily-project-blockly-13.3.0.tgz(jsdom@29.1.1))':
     dependencies:
       blockly: aily-project-blockly@file:vendor/aily-project-blockly-13.3.0.tgz(jsdom@29.1.1)
 
@@ -9732,7 +9735,7 @@ snapshots:
       postcss: 8.5.12
       postcss-value-parser: 4.2.0
 
-  axios@1.20.0(debug@4.4.3):
+  axios@1.20.0:
     dependencies:
       follow-redirects: 1.16.0(debug@4.4.3)
       form-data: 4.0.6
@@ -11751,22 +11754,22 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  karma-jasmine-html-reporter@2.1.0(jasmine-core@5.4.0)(karma-jasmine@5.1.0(karma@6.4.4(debug@4.4.3)))(karma@6.4.4(debug@4.4.3)):
+  karma-jasmine-html-reporter@2.1.0(jasmine-core@5.4.0)(karma-jasmine@5.1.0(karma@6.4.4))(karma@6.4.4):
     dependencies:
       jasmine-core: 5.4.0
-      karma: 6.4.4(debug@4.4.3)
-      karma-jasmine: 5.1.0(karma@6.4.4(debug@4.4.3))
+      karma: 6.4.4
+      karma-jasmine: 5.1.0(karma@6.4.4)
 
-  karma-jasmine@5.1.0(karma@6.4.4(debug@4.4.3)):
+  karma-jasmine@5.1.0(karma@6.4.4):
     dependencies:
       jasmine-core: 4.6.1
-      karma: 6.4.4(debug@4.4.3)
+      karma: 6.4.4
 
   karma-source-map-support@1.4.0:
     dependencies:
       source-map-support: 0.5.21
 
-  karma@6.4.4(debug@4.4.3):
+  karma@6.4.4:
     dependencies:
       '@colors/colors': 1.5.0
       body-parser: 1.20.6
@@ -13716,9 +13719,9 @@ snapshots:
     dependencies:
       xml-name-validator: 5.0.0
 
-  wait-on@9.1.0(debug@4.4.3):
+  wait-on@9.1.0:
     dependencies:
-      axios: 1.20.0(debug@4.4.3)
+      axios: 1.20.0
       joi: 18.2.5
       lodash: 4.18.1
       minimist: 1.2.8

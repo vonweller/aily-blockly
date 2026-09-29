@@ -5,7 +5,7 @@ import { getActiveProjectGenerator, getActiveProjectGeneratorRevision } from './
 import { ElectronService, ProjectFilePublicationError } from '@core/platform/public-api';
 import {
   projectDataRuntime,
-  canonicalJsonStringify,
+  canonicalProjectJsonStringify,
   materializePreparedGenericProjectDataValues,
   materializeGenericProjectDataValues,
   type AilyDataRef,
@@ -87,7 +87,7 @@ export class _ProjectService {
     const { document, revision } = this.blocklyService.captureProjectSnapshot();
     const path = `${this.currentProjectPath}/project.abi`;
     const diskText = window['fs'].readFileSync(path, 'utf8');
-    const memory = canonicalJsonStringify(this.blocklyService.normalizeProjectAbi(this.blocklyService.getProjectAbiForSave(document)));
+    const memory = canonicalProjectJsonStringify(this.blocklyService.normalizeProjectAbi(this.blocklyService.getProjectAbiForSave(document)));
     const usedLibraries = Object.keys(this.blocklyService.getProjectUsedLibraryManifest(undefined, document));
 
     const assertCurrent = () => {
@@ -101,7 +101,7 @@ export class _ProjectService {
       resolve: async <TValue>(ref: AilyDataRef) => { const value = await projectDataRuntime.resolve<TValue>(ref); assertCurrent(); return value; },
     });
     assertCurrent();
-    const disk = canonicalJsonStringify(this.blocklyService.normalizeProjectAbi(materialized));
+    const disk = canonicalProjectJsonStringify(this.blocklyService.normalizeProjectAbi(materialized));
     const [memoryHash, diskHash] = await Promise.all([
       sha256Hex(memory),
       sha256Hex(disk),
@@ -133,8 +133,8 @@ export class _ProjectService {
     );
 
     return {
-      memory: canonicalJsonStringify(memoryAbi),
-      disk: canonicalJsonStringify(diskAbi),
+      memory: canonicalProjectJsonStringify(memoryAbi),
+      disk: canonicalProjectJsonStringify(diskAbi),
     };
   }
 
