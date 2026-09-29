@@ -1,5 +1,6 @@
 import { CodeEditorProProjectService } from '../../../editors/code-editor-pro/services/code-editor-pro-project.service';
 import { CoderProjectRuntimeService } from '../../../integrations/coder/coder-project-runtime.service';
+import { CoderEditorLayoutService } from '../../../integrations/coder/coder-editor-layout.service';
 import { CommonModule } from '@angular/common';
 import { ChangeDetectorRef, Component, ElementRef, isDevMode, NgZone, OnDestroy, OnInit, ViewChild, viewChild, inject } from '@angular/core';
 import { HEADER_BTNS, HEADER_BTNS_LINUX, HEADER_MENU, IMenuItem } from '../../../configs/menu.config';
@@ -81,6 +82,20 @@ interface NetworkOtaTarget {
   styleUrl: './header.component.scss',
 })
 export class HeaderComponent implements OnInit, OnDestroy {
+  private readonly coderLayout = inject(CoderEditorLayoutService);
+
+  get showCoderSidebarToggle(): boolean {
+    return this.router.url.includes('/main/code-editor-pro') && !!this.projectService.currentProjectPath;
+  }
+
+  get coderSidebarVisible(): boolean | null {
+    return this.coderLayout.sidebarVisible(this.projectService.currentProjectPath);
+  }
+
+  toggleCoderSidebar(): void {
+    this.coderLayout.toggleSidebar(this.projectService.currentProjectPath);
+  }
+
   private readonly coderRuntime = inject(CoderProjectRuntimeService);
   private readonly coderPersistence = inject(CodeEditorProProjectService);
   private readonly requiredSubapps = inject(RequiredSubappService);

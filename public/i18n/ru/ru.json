@@ -7,6 +7,8 @@
         "WORKSPACE_PROJECT_BUILD_REQUIRED": "Сначала соберите и синхронизируйте проект"
     },
     "MENU": {
+        "SHOW_CODER_SIDEBAR": "Показать боковую панель редактора",
+        "HIDE_CODER_SIDEBAR": "Скрыть боковую панель редактора",
         "MENU": "Меню",
         "PROJECT_NEW": "Новый проект",
         "PROJECT_OPEN": "Открыть проект",

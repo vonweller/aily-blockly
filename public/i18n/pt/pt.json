@@ -7,6 +7,8 @@
         "WORKSPACE_PROJECT_BUILD_REQUIRED": "Compile e sincronize o projeto primeiro"
     },
     "MENU": {
+        "SHOW_CODER_SIDEBAR": "Mostrar barra lateral do editor",
+        "HIDE_CODER_SIDEBAR": "Ocultar barra lateral do editor",
         "MENU": "Menu",
         "PROJECT_NEW": "Novo projeto",
         "PROJECT_OPEN": "Abrir projeto",

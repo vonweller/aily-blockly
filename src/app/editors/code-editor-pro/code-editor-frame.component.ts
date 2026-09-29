@@ -1,5 +1,6 @@
 import { CoderProjectRuntimeService } from '../../integrations/coder/coder-project-runtime.service';
-import { Component, ElementRef, OnInit, OnDestroy, AfterViewInit, ViewChild, Input, OnChanges, SimpleChanges } from '@angular/core';
+import { Component, ElementRef, OnInit, OnDestroy, AfterViewInit, ViewChild, Input, OnChanges, SimpleChanges, inject } from '@angular/core';
+import { CoderEditorLayoutService, CODER_SIDEBAR_STATE_CHANNEL } from '../../integrations/coder/coder-editor-layout.service';
 import { takeUntilDestroyed, toObservable } from '@angular/core/rxjs-interop';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { CommonModule } from '@angular/common';
@@ -172,6 +173,7 @@ function boundedCoderNativeSearchInteger(
   styleUrl: './code-editor-frame.component.scss',
 })
 export class CodeEditorFrameComponent implements OnInit, OnDestroy, AfterViewInit, OnChanges {
+  private readonly coderLayout = inject(CoderEditorLayoutService);
   @ViewChild('coderEmbedFrame') coderEmbedFrame?: ElementRef<HTMLIFrameElement>;
 
   @Input({ required: true }) projectPath = '';
@@ -798,6 +800,7 @@ export class CodeEditorFrameComponent implements OnInit, OnDestroy, AfterViewIni
    * iframe 每次加载完成后向 aily-coder-editor 同步宿主上下文（构建目录等），避免依赖 ProjectService 竞态。
    */
   onCoderEmbedFrameLoad(): void {
+    this.coderLayout.reset(this.projectPath);
     this.coderInitialContextFrame = null;
     this.coderInitialContextRoot = '';
     const frame = this.coderEmbedFrame?.nativeElement;
@@ -1379,6 +1382,7 @@ export class CodeEditorFrameComponent implements OnInit, OnDestroy, AfterViewIni
 
   /** iframe 重载或销毁前统一断开消息桥和其注册的宿主 watcher。 */
   private detachCoderEmbedFrame(): void {
+    this.coderLayout.reset(this.projectPath);
     this.stopAllCoderEmbedFsWatchers();
     this.stopAllCoderNativeSearches();
     this.codeSuggestionHostBridge.registerFrame(null);
@@ -2055,6 +2059,13 @@ export class CodeEditorFrameComponent implements OnInit, OnDestroy, AfterViewIni
   }
 
   private async onCoderNativeFsMessage(ev: MessageEvent): Promise<void> {
+    if (ev.data?.channel === CODER_SIDEBAR_STATE_CHANNEL) {
+      const frame = this.coderEmbedFrame?.nativeElement?.contentWindow;
+      if (frame && ev.source === frame && typeof ev.data.visible === 'boolean') {
+        this.coderLayout.updateSidebar(this.projectPath, frame, ev.data.visible);
+      }
+      return;
+    }
     if (this.codeSuggestionHostBridge.handleMessage(ev)) {
       return;
     }

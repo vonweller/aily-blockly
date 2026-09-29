@@ -7,6 +7,8 @@
         "WORKSPACE_PROJECT_BUILD_REQUIRED": "قم ببناء المشروع ومزامنته أولاً"
     },
     "MENU": {
+        "SHOW_CODER_SIDEBAR": "إظهار الشريط الجانبي للمحرر",
+        "HIDE_CODER_SIDEBAR": "إخفاء الشريط الجانبي للمحرر",
         "MENU": "قائمة الطعام",
         "PROJECT_NEW": "مشروع جديد",
         "PROJECT_OPEN": "فتح مشروع",
