@@ -1,5 +1,5 @@
 import { CoderProjectRuntimeService } from '../../integrations/coder/coder-project-runtime.service';
-import { Component, ElementRef, OnInit, OnDestroy, AfterViewInit, ViewChild, Input, OnChanges, SimpleChanges, inject } from '@angular/core';
+import { Component, ElementRef, OnInit, OnDestroy, AfterViewInit, ViewChild, Input, OnChanges, SimpleChanges, inject, isDevMode } from '@angular/core';
 import { CoderEditorLayoutService, CODER_SIDEBAR_STATE_CHANNEL } from '../../integrations/coder/coder-editor-layout.service';
 import { takeUntilDestroyed, toObservable } from '@angular/core/rxjs-interop';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
@@ -699,6 +699,9 @@ export class CodeEditorFrameComponent implements OnInit, OnDestroy, AfterViewIni
       u.searchParams.set('mode', 'full-workbench');
       u.searchParams.set('folder', projectPath);
       u.searchParams.set('theme', this.themeService.theme());
+      // Temporary C++ Blockly preview gate. The child Vite watch build also runs with production flags.
+      u.searchParams.delete('blocklyPreviewDev');
+      if (isDevMode()) u.searchParams.set('blocklyPreviewDev', 'true');
       const hostLanguage = this.translate.currentLang || this.translate.defaultLang || 'en';
       this.coderEmbedHostLanguage = normalizeAilyCoderHostLanguage(hostLanguage);
       u.searchParams.set('lang', hostLanguage);
