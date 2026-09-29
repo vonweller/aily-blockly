@@ -36,7 +36,7 @@ describe('FeedbackDialogComponent diagnostics submission', () => {
     getAuthInitializationState: jasmine.Spy;
     getAuthSnapshot: jasmine.Spy;
   };
-  let configService: { isCnRegion: boolean };
+  let configService: { isCnRegion: boolean; isCoderProduct: jasmine.Spy };
   let translate: {
     currentLang: string;
     defaultLang: string;
@@ -93,7 +93,10 @@ describe('FeedbackDialogComponent diagnostics submission', () => {
       getAuthInitializationState: jasmine.createSpy('getAuthInitializationState').and.returnValue('authenticated'),
       getAuthSnapshot: jasmine.createSpy('getAuthSnapshot').and.returnValue({ plan: 'Pro' }),
     };
-    configService = { isCnRegion: true };
+    configService = {
+      isCnRegion: true,
+      isCoderProduct: jasmine.createSpy('isCoderProduct').and.returnValue(false),
+    };
     translate = {
       currentLang: 'zh-CN',
       defaultLang: 'en',
@@ -155,6 +158,7 @@ describe('FeedbackDialogComponent diagnostics submission', () => {
     await component.submitFeedback();
 
     const payload = submittedPayload();
+    expect(payload.product).toBe('blockly');
     expect(payload.label).toBe('feature');
     expect(payload.title).toBe('Feature title');
     expect(payload.email).toBe('private@example.com');
@@ -168,6 +172,23 @@ describe('FeedbackDialogComponent diagnostics submission', () => {
     expect(payload.content).not.toContain('private@example.com');
     expect(Object.prototype.hasOwnProperty.call(payload, 'userAgent')).toBeFalse();
   });
+
+  for (const type of ['bug', 'library']) {
+    it(`submits Coder ${type} feedback with the product and opens its issue repository`, async () => {
+      configService.isCoderProduct.and.returnValue(true);
+      const component = createComponent();
+      prepareValidFeedback(component, type);
+
+      component.openUrl();
+      await component.submitFeedback();
+
+      expect(submittedPayload().product).toBe('coder');
+      expect(submittedPayload().label).toBe(type);
+      const repository = type === 'library' ? 'aily-coder-libraries' : 'aily-coder';
+      expect(TestBed.inject(ElectronService).openUrl)
+        .toHaveBeenCalledWith(`https://github.com/ailyProject/${repository}/issues`);
+    });
+  }
 
   it('does not read an account snapshot before authentication is complete', () => {
     authService.getAuthInitializationState.and.returnValue('signed_out');

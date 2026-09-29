@@ -628,6 +628,7 @@ export class FeedbackDialogComponent implements OnDestroy {
       const content = await this.buildIssueContent(feedbackTime);
       // 构建反馈数据
       const feedbackData = {
+        product: this.configService.isCoderProduct() ? 'coder' : 'blockly',
         label: this.feedbackType,
         title: this.feedbackTitle.trim(),
         content,
@@ -1409,6 +1410,9 @@ export class FeedbackDialogComponent implements OnDestroy {
   }
 
   openUrl() {
-    this.electronService.openUrl('https://github.com/ailyProject/aily-blockly/issues');
+    const repository = this.configService.isCoderProduct()
+      ? `aily-coder${this.feedbackType === 'library' ? '-libraries' : ''}`
+      : 'aily-blockly';
+    this.electronService.openUrl(`https://github.com/ailyProject/${repository}/issues`);
   }
 }
