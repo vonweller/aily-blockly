@@ -811,7 +811,10 @@ const {
   buildSubappIndexUrl,
   registerSubappManagerHandlers,
 } = require("./subapp-manager");
-const { shouldBeginRendererGeneration } = require("./renderer-lifecycle");
+const { shouldBeginRendererGeneration, createRendererCommandGate } = require("./renderer-lifecycle");
+const rendererCommandGate = createRendererCommandGate();
+// DOM 出现后，渲染进程还要等 ngOnInit 发来 renderer-ready。这段只覆盖启动握手，不占用整段操作超时。
+const RENDERER_STARTUP_WAIT_MS = 20000;
 
 let mainWindow;
 let userConf;
@@ -915,14 +918,38 @@ function getOpenedProjectPathFromWindow() {
   }
 }
 
+function rendererCommandAvailability() {
+  if (!mainWindow || !mainWindow.webContents || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) {
+    return 'closed';
+  }
+  return isCurrentRendererGenerationReady() ? 'ready' : '';
+}
+
 function requestMainWindow(channel, responseChannel, payload, timeoutMs = 12000, signal) {
-  return new Promise((resolve) => {
-    if (!mainWindow || !mainWindow.webContents || mainWindow.isDestroyed()) {
+  const deadline = Date.now() + timeoutMs;
+  const startupDeadline = Date.now() + Math.min(Math.max(timeoutMs, 0), RENDERER_STARTUP_WAIT_MS);
+
+  const dispatch = (resolve) => {
+    if (signal?.aborted) {
+      resolve({
+        ok: false,
+        errorCode: 'RENDERER_REQUEST_CANCELLED',
+        message: 'Renderer request was cancelled.',
+      });
+      return;
+    }
+    if (rendererCommandAvailability() === 'closed') {
       resolve({ ok: false, message: '主窗口不可用' });
       return;
     }
     if (!isCurrentRendererGenerationReady()) {
       resolve({ ok: false, message: '渲染进程尚未就绪' });
+      return;
+    }
+
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      resolve({ ok: false, message: '等待渲染进程响应超时' });
       return;
     }
 
@@ -932,7 +959,7 @@ function requestMainWindow(channel, responseChannel, payload, timeoutMs = 12000,
       signal?.removeEventListener('abort', onAbort);
       ipcMain.removeListener(responseChannel, listener);
       resolve({ ok: false, message: '等待渲染进程响应超时' });
-    }, timeoutMs);
+    }, remaining);
 
     const listener = (event, message) => {
       if (!isCurrentMainRenderer(event.sender)
@@ -971,6 +998,58 @@ function requestMainWindow(channel, responseChannel, payload, timeoutMs = 12000,
       requestId,
       rendererGeneration: requestGeneration,
     });
+  };
+
+  return new Promise((resolve) => {
+    const cancelled = () => resolve({
+      ok: false,
+      errorCode: 'RENDERER_REQUEST_CANCELLED',
+      message: 'Renderer request was cancelled.',
+    });
+
+    const waitUntilReady = () => {
+      if (signal?.aborted) {
+        cancelled();
+        return;
+      }
+      const availability = rendererCommandAvailability();
+      if (availability === 'closed') {
+        resolve({ ok: false, message: '主窗口不可用' });
+        return;
+      }
+      if (availability === 'ready') {
+        dispatch(resolve);
+        return;
+      }
+      const remaining = startupDeadline - Date.now();
+      if (remaining <= 0) {
+        resolve({ ok: false, message: '渲染进程尚未就绪' });
+        return;
+      }
+      console.info('[RendererLifecycle] command waiting for renderer', {
+        generation: rendererGeneration,
+        waitMs: remaining,
+      });
+      rendererCommandGate.wait(remaining, signal, rendererCommandAvailability).then((status) => {
+        if (status === 'aborted') {
+          cancelled();
+          return;
+        }
+        if (status === 'closed') {
+          resolve({ ok: false, message: '主窗口不可用' });
+          return;
+        }
+        if (status === 'ready') {
+          if (isCurrentRendererGenerationReady()) dispatch(resolve);
+          else if (Date.now() < startupDeadline) waitUntilReady();
+          else resolve({ ok: false, message: '渲染进程尚未就绪' });
+          return;
+        }
+        resolve({ ok: false, message: '渲染进程尚未就绪' });
+      });
+    };
+
+    waitUntilReady();
   });
 }
 
@@ -1419,6 +1498,7 @@ ipcMain.on('renderer-ready', (event, payload = {}) => {
 
   console.log('渲染进程已就绪', { generation: requestedGeneration });
   readyRendererGeneration = requestedGeneration;
+  rendererCommandGate.notify();
   event.sender.send('renderer-ready-ack', { generation: requestedGeneration });
   // Renderer may have reloaded while the machine was asleep or the screen was locked.
   // Replay the current pause state after the ack so the new renderer cannot start
@@ -2605,6 +2685,7 @@ function createWindow() {
   mainWindow.on("closed", () => {
     invalidateRendererGeneration('window-closed');
     mainWindow = null;
+    rendererCommandGate.notify();
     app.quit();
   });
 
