@@ -6,13 +6,16 @@ import { AbsAbiBlock, AbsAbiWorkspace, AbsSyncError } from './abs-state';
 export interface AbsReadbackOptions {
   fieldDefinition?: (type: string, field: string, id: string) => AbsFieldDefinition | undefined;
   mode?: 'complete' | 'requested';
+  /** Ordinary project loading has its own structural admission, not ABS syntax depth budgets. */
+  index?: (workspace: AbsAbiWorkspace) => Map<string, AbsAbiBlock>;
 }
 const BLOCK_DEFAULTS = { deletable: true, movable: true, editable: true, collapsed: false, data: '' };
 
 /** One policy for transitional requested values and complete baseline transactions. */
 export function assertAbsReadback(expected: AbsAbiWorkspace, actual: AbsAbiWorkspace, options: AbsReadbackOptions = {}): void {
-  const before = indexAbsAbi(expected);
-  const after = indexAbsAbi(actual);
+  const index = options.index ?? indexAbsAbi;
+  const before = index(expected);
+  const after = index(actual);
   const complete = options.mode !== 'requested';
   const fail = (path: string, id?: string): never => {
     throw new AbsSyncError('ABS_READBACK_MISMATCH', `Blockly changed or discarded persisted state at ${path}.`, undefined, id ? [id] : []);
@@ -27,15 +30,16 @@ export function assertAbsReadback(expected: AbsAbiWorkspace, actual: AbsAbiWorks
   };
   const owners = (workspace: AbsAbiWorkspace) => {
     const result = new Map<string, unknown>();
-    const visit = (block: AbsAbiBlock, owner: unknown) => {
+    const pending: Array<{ block: AbsAbiBlock; owner: unknown }> = workspace.blocks.blocks.map(block => ({ block, owner: null }));
+    while (pending.length) {
+      const { block, owner } = pending.pop()!;
       result.set(block.id, owner);
       for (const [name, input] of Object.entries(block.inputs ?? {})) {
-        if (input.block) visit(input.block, [block.id, name, 'block']);
-        if (input.shadow) visit(input.shadow, [block.id, name, 'shadow']);
+        if (input.block) pending.push({ block: input.block, owner: [block.id, name, 'block'] });
+        if (input.shadow) pending.push({ block: input.shadow, owner: [block.id, name, 'shadow'] });
       }
-      if (block.next?.block) visit(block.next.block, [block.id, 'next']);
-    };
-    workspace.blocks.blocks.forEach(block => visit(block, null));
+      if (block.next?.block) pending.push({ block: block.next.block, owner: [block.id, 'next'] });
+    }
     return result;
   };
   const expectedOwners = owners(expected);

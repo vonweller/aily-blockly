@@ -4,6 +4,7 @@ import type { AbsNativeModelDeclaration } from '../../../integrations/blockly/ab
 import type { NativeCandidateWorkspace } from './blockly-native-candidate-workspace';
 import { withNativeModelRegistrations } from './blockly-native-model-effects';
 import { nativeLoopVariable } from './blockly-native-loop-model';
+import { assertNativeBudget } from './blockly-native-budget';
 
 /** A bounded dependency worklist, not speculative full code generation. Invoke real
  * generators only for configured subtrees, before binding unresolved references.
@@ -32,7 +33,7 @@ export function prepareNativeModels(execution: NativeCandidateWorkspace, generat
     // Discovery and identity-bound replay must produce identical evidence.
     const effect = execution.models.declare(node.start, block.type, String(token.value), '', requestId);
     if (!declarations.has(effect.name.toLowerCase())) declarations.set(effect.name.toLowerCase(), { ...effect, kind: 'loop' });
-    if (declarations.size > 128) throw new Error('Native model preparation exceeds declaration limits.');
+    assertNativeBudget('declarations', declarations.size, 'model-preparation');
   }
   let unresolved = resolveReferences();
   const effects = () => [...declarations.values()].sort((a, b) => a.start - b.start || a.name.localeCompare(b.name));
@@ -50,7 +51,7 @@ export function prepareNativeModels(execution: NativeCandidateWorkspace, generat
       throw new AbsSyncError('ABS_MODEL_DECLARATION_CONFLICT', `Multiple initializers declare ${JSON.stringify(name)}. Keep one declaration per object.`, node);
     }
     declarations.set(key, effect); // Repeated registration by the same native producer is idempotent.
-    if (declarations.size > 128) throw new Error('Native model preparation exceeds declaration limits.');
+    assertNativeBudget('declarations', declarations.size, 'model-preparation');
   }, () => {
     generator.init(execution.workspace);
     const remaining = new Set([...blocks.values()].filter(block => !disabled(block)));

@@ -186,6 +186,59 @@ describe('v2 actual workspace generation coordinator', () => {
     return replay;
   };
 
+  /** Use the real post-commit acknowledgement rather than the coordinator's
+   * usual output spy, so the UI baseline is exercised across the transaction. */
+  const trackCleanState = () => {
+    window['fs'].readFileSync = path => {
+      if (path !== `${scope.projectKey}/project.abi`) throw new Error(`Unexpected read: ${path}`);
+      return disk.get('project.abi');
+    };
+    editor.normalizeProjectAbi = value => value;
+    editor.getWorkspaceLoadReadbackView = value => value;
+    editor.getProjectAbiForSave = (snapshot = editor.captureProjectSnapshot().document) => snapshot;
+    const document = editor.captureProjectSnapshot().document;
+    disk.set('project.abi', JSON.stringify(document));
+    project.rememberLoadedProject(scope.projectKey, disk.get('project.abi')!, document);
+    (project.publishPreparedSaveOutputs as jasmine.Spy).and.callThrough();
+    spyOn(project, 'syncUsedLibraryManifest').and.returnValue(false);
+  };
+
+  it('validation retains the loaded clean state; a complete ABS commit acknowledges only the committed snapshot', async () => {
+    trackCleanState();
+    const base = await baseline(), source = base.source.replace('TEXT="before"', 'TEXT="after"');
+    const committed = (await new AbsBaselineStore(port, scope).loadCommitted())!;
+    const { generationEvidence } = await import('./abs-generation-protocol');
+    const request = { version: 2 as const, requestId: crypto.randomUUID(), base: (await generationEvidence(committed, disk.get('project.abi')!)).binding,
+      candidate: { hash: await hashAbsText(source), bytes: new TextEncoder().encode(source).byteLength } };
+    const validation = await service.validateGeneration(source, request);
+    expect(await project.hasUnsavedChanges()).toBeFalse();
+    expect(project.publishPreparedSaveOutputs).not.toHaveBeenCalled();
+    expect((await service.applyGeneration(source, base.generation, {}, validation)).publication.status).toBe('COMMITTED');
+    expect(project.publishPreparedSaveOutputs).toHaveBeenCalledTimes(1);
+    expect(await project.hasUnsavedChanges()).toBeFalse();
+    roots().setFieldValue('later edit', 'TEXT'); expect(await project.hasUnsavedChanges()).toBeTrue();
+    roots().setFieldValue('after', 'TEXT'); expect(await project.hasUnsavedChanges()).toBeFalse();
+  });
+
+  it('pre-ABI failure restores unsaved edits without acknowledging them as saved', async () => {
+    trackCleanState();
+    roots().setFieldValue('unsaved', 'TEXT');
+    const base = await baseline(); failWrite = 'project.abi';
+    const result = await service.applyGeneration(base.source.replace('TEXT="unsaved"', 'TEXT="candidate"'), base.generation);
+    expect(result.publication.status).toBe('NOT_COMMITTED');
+    expect(roots().getFieldValue('TEXT')).toBe('unsaved');
+    expect(project.publishPreparedSaveOutputs).not.toHaveBeenCalled();
+    expect(await project.hasUnsavedChanges()).toBeTrue();
+  });
+
+  it('partial ABS publication cannot acknowledge a clean UI or bypass quarantine', async () => {
+    trackCleanState();
+    const base = await baseline(); failWrite = 'project.abs';
+    expect((await apply(base)).publication.status).toBe('MIRROR_PENDING');
+    expect(project.publishPreparedSaveOutputs).not.toHaveBeenCalled();
+    await expectAsync(project.hasUnsavedChanges()).toBeRejected();
+  });
+
   const enableDefaults = (extra = '') => {
     const replay = enableNative(), source = nativeDefaultSource + extra;
     new Function('Blockly', 'Arduino', source)(Blockly, { forBlock: {} });
@@ -943,6 +996,27 @@ describe('v2 actual workspace generation coordinator', () => {
       candidate: { hash: await hashAbsText(source), bytes: new TextEncoder().encode(source).byteLength } };
     return { tools, exported, source, request };
   };
+
+  it('rejects an over-budget whole ABS candidate without partially applying or rewriting its draft', async () => {
+    enableNative();
+    editor.workspace.getVariableMap().createVariable('retained model', '', 'retained-model');
+    const { tools, exported } = await wireBase();
+    const source = exported.abs + '\n' + Array(2001).fill('math_number(7)').join('\n');
+    disk.set('project.abs', source);
+    const request = { version: 2, requestId: crypto.randomUUID(), base: exported.receipt.base,
+      candidate: { hash: await hashAbsText(source), bytes: new TextEncoder().encode(source).byteLength } };
+    const files = [...disk], state = absJson(editor.captureProjectSnapshot().document), resources = [...values];
+    const result: any = await tools.execute('abs_validate', request, source);
+    expect(result.code).withContext(JSON.stringify(result)).toBe('ABS_LIMIT');
+    expect(result.diagnostic.capacity.actual).toBeGreaterThan(2000);
+    expect(result.diagnostic.capacity.limit).toBe(2000);
+    expect(result.recovery).toContain('local Blockly library'); expect(result.receipt).toBeUndefined();
+    expect([...disk]).toEqual(files); expect([...values]).toEqual(resources);
+    expect(absJson(editor.captureProjectSnapshot().document)).toBe(state);
+    expect(roots().isDeletable()).toBeFalse(); expect(editor.prepareProjectCode).not.toHaveBeenCalled();
+    expect(gate.blocked).toBeFalse(); expect(await service.inspectRecovery()).toBeNull();
+    expect(document.querySelectorAll('[data-blockly-native-candidate]').length).toBe(0);
+  });
 
   it('keeps candidate, mirrors and live blocks intact when native asset loading fails', async () => {
     enableNative();

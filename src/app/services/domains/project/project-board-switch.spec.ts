@@ -284,7 +284,7 @@ describe('board switch project persistence', () => {
       currentProjectPath: '/project', coderProjects: [{ path: '/project' }],
       dependencyLifecycle: new ProjectDependencyLifecycle(path => path),
       stopProjectCommands: jasmine.createSpy('stopProjectCommands').and.resolveTo(),
-      assertProjectDependencySession: () => {},
+      assertProjectDependencySession: (ProjectService.prototype as any).assertProjectDependencySession,
       isSameProjectPath: (a: string, b: string) => a === b,
       ensureProjectModeAllowed: async () => true, getProjectMode: () => 'coder', getCoderOperation: () => undefined,
       electronService: { exists: () => true, setTitle: () => {} },
@@ -303,6 +303,7 @@ describe('board switch project persistence', () => {
     const { service, context, open } = coderRouteFixture(true);
     expect(await open()).toBeTrue();
     expect(service.application.dispatchProjectSave).toHaveBeenCalledOnceWith('/project', 15000);
+    expect(service.stopProjectCommands).toHaveBeenCalledOnceWith('/project');
     expect(service.projectActivationSubject.next).toHaveBeenCalledOnceWith({ path: '/project', previousPath: '/project', reason: 'reload', sessionResource: null });
     expect(context.syncCurrentBoardConfig).toHaveBeenCalledTimes(1);
     expect(service.router.isActive).toHaveBeenCalledWith('coder-target', { paths: 'exact', queryParams: 'exact', fragment: 'ignored', matrixParams: 'ignored' });

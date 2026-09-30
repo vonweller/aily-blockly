@@ -107,6 +107,29 @@ function adaptLegacyTftSetup(block: Blockly.Block, savedFields: Record<string, a
   return { fields, inputs };
 }
 
+/** Read-only compatibility view for load admission. Reuses the same narrow
+ * adapters as native loading; no replay, generators or persistent state edits.
+ * Only adapter-created shadows obtain their assigned native IDs here. */
+export function nativeLoadedStateView<T>(state: T, workspace: Blockly.Workspace): T {
+  const view = structuredClone(state);
+  for (const { state: entry } of collectProjectBlocks(view)) {
+    const block = typeof entry['id'] === 'string' ? workspace.getBlockById(entry['id']) : null;
+    if (!block || block.type !== entry['type']) continue;
+    const fields = entry['fields'] as Record<string, any> | undefined;
+    const inputs = entry['inputs'] as Record<string, any> | undefined;
+    const adapted = adaptLegacyTftSetup(block, fields ?? {}, inputs ?? {});
+    const fieldView = adaptLegacyU8g2Font(block, adaptLegacyU8g2Begin(block, adapted.fields));
+    if (fields || Object.keys(fieldView).length) entry['fields'] = fieldView;
+    for (const [name, slot] of Object.entries(adapted.inputs)) {
+      if (inputs && Object.hasOwn(inputs, name) || !slot.shadow || slot.shadow.id) continue;
+      const shadow = block.getInput(name)?.connection?.getShadowState();
+      if (shadow?.id) slot.shadow.id = shadow.id;
+    }
+    if (inputs || Object.keys(adapted.inputs).length) entry['inputs'] = adapted.inputs;
+  }
+  return view;
+}
+
 /** Restore requested fields against the live shape, never a probe or a guessed slot.
  * A field is loaded once per actual Field instance. A selector may replace an
  * earlier field; that new instance must receive its saved value too.
