@@ -1026,6 +1026,9 @@
         "REINSTALL_CONFIRM": "重新安装"
     },
     "NPM": {
+        "DEPS_RETRY_REQUIRED": "依赖尚未安装完成，请在安装失败通知中点击“重试”",
+        "PREPARING_LIBRARY_SOURCES": "正在准备依赖库源码…",
+        "DEPENDENCY_INCOMPLETE": "{{name}} 安装后仍缺少必要文件，请重试",
         "INSTALLING": "正在安装{{name}}...",
         "INSTALLING_DEPENDENCY": "正在安装{{name}}依赖...",
         "INSTALL_COMPLETE": "{{name}}安装完成",

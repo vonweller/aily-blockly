@@ -1,6 +1,11 @@
 $header-height: 40px;
 $header-inner-height: 38px;
 
+app-act-btn.dependency-blocked {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
 .header-box {
   display: flex;
   justify-content: flex-start;

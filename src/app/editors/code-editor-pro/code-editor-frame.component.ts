@@ -647,7 +647,7 @@ export class CodeEditorFrameComponent implements OnInit, OnDestroy, AfterViewIni
   }
 
   /**
-   * 与 Blockly loadProject 对齐：工程依赖 await 检查；平台 sdk/tool 后台安装且已就绪则跳过。
+   * 等待 npm、SDK/工具链和库源码全部就绪；重试复用同一项目会话。
    */
   private ensureNpmDepsWithRetry(projectPath: string, session: ProjectDependencySession): Promise<void> {
     const refreshEmbedAfterDeps = async () => {

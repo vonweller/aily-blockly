@@ -768,6 +768,25 @@ export class ProjectService {
     return this.dependencyLifecycle.isBusy(projectPath);
   }
 
+  setProjectDependencyResult(session: ProjectDependencySession, ready: boolean): void {
+    this.dependencyLifecycle.setResult(session, ready);
+  }
+
+  getProjectDependencyStatus(projectPath = this.currentProjectPath) {
+    return this.dependencyLifecycle.getStatus(projectPath);
+  }
+
+  getProjectDependencyBlockMessage(projectPath = this.currentProjectPath): string | undefined {
+    if (!this.configService.isCoderProduct()) return undefined;
+    const status = this.dependencyLifecycle.getStatus(projectPath);
+    if (status === 'idle' || status === 'ready') return undefined;
+    // Blockly retains its existing editor preparation and compile workflow.
+    if (!this.isAilyCodeProject(projectPath)) return undefined;
+    if (status === 'installing') return this.translate.instant('BLOCKLY_EDITOR.INSTALLING_DEPS');
+    if (status === 'error') return this.translate.instant('NPM.DEPS_RETRY_REQUIRED');
+    return undefined;
+  }
+
   get projectDependencyChanges() {
     return this.dependencyLifecycle.changes;
   }

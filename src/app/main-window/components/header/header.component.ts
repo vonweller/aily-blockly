@@ -122,6 +122,7 @@ export class HeaderComponent implements OnInit, OnDestroy {
   private bleDevicesSubscription?: Subscription;
   private appStoreSubscription?: Subscription;
   private boardChangeSubscription?: Subscription;
+  private dependencySubscription?: Subscription;
   private blePortListRefreshTimer: ReturnType<typeof setTimeout> | null = null;
   private networkOtaDiscoveredTargets: NetworkOtaTarget[] = [];
   private networkOtaScanInProgress = false;
@@ -344,6 +345,11 @@ export class HeaderComponent implements OnInit, OnDestroy {
       document.addEventListener('pointerdown', this.onProjectTitleOutsidePointerDown, true);
     });
     this.loadHeaderButtons();
+    if (this.configService.isCoderProduct()) {
+      this.dependencySubscription = this.projectService.projectDependencyChanges.subscribe(() => {
+        this.cd.markForCheck();
+      });
+    }
 
     this.unregisterHeaderMenuAutomation = this.uiAutomationRegistry.registerMenuProvider('header', {
       list: (options) => this.createHeaderMenuAutomationSnapshot(options).items,
@@ -1184,7 +1190,20 @@ export class HeaderComponent implements OnInit, OnDestroy {
     }
   }
 
+  dependencyBlockMessage(item: IMenuItem): string | undefined {
+    if (!['compile', 'play', 'upload'].includes(item.action)) return undefined;
+    if (!this.configService.isCoderProduct()) return undefined;
+    // A running program must remain stoppable while dependencies are repaired.
+    if (['play', 'upload'].includes(item.action) && (this.connectorState.running || item.state === 'running')) return undefined;
+    return this.projectService.getProjectDependencyBlockMessage();
+  }
+
   async process(item: IMenuItem, event = null, source: 'manual' | 'ai' | 'system' = 'system') {
+    const dependencyBlock = this.dependencyBlockMessage(item);
+    if (dependencyBlock) {
+      this.message.info(dependencyBlock);
+      return;
+    }
     switch (item.action) {
       case 'project-new':
         if (this.isLoaded()) { // 只在已加载项目时检查
@@ -1449,6 +1468,7 @@ export class HeaderComponent implements OnInit, OnDestroy {
     this.unregisterHeaderMenuAutomation = null;
     this.appStoreSubscription?.unsubscribe();
     this.boardChangeSubscription?.unsubscribe();
+    this.dependencySubscription?.unsubscribe();
     this.connectorStateSubscription?.unsubscribe();
     if (this.bleDevicesSubscription) {
       this.bleDevicesSubscription.unsubscribe();

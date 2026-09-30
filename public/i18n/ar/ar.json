@@ -889,6 +889,9 @@
         "REINSTALL_CONFIRM": "إعادة التثبيت"
     },
     "NPM": {
+        "DEPS_RETRY_REQUIRED": "التبعيات غير جاهزة. انقر على إعادة المحاولة في إشعار فشل التثبيت.",
+        "PREPARING_LIBRARY_SOURCES": "جارٍ إعداد مصادر المكتبات المطلوبة…",
+        "DEPENDENCY_INCOMPLETE": "لا تزال ملفات مطلوبة مفقودة بعد تثبيت {{name}}. يرجى إعادة المحاولة.",
         "INSTALLING": "جاري تثبيت {{name}}...",
         "INSTALLING_DEPENDENCY": "جاري تثبيت التبعية {{name}}...",
         "INSTALL_COMPLETE": "تم تثبيت {{name}} بنجاح",

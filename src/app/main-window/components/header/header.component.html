@@ -49,7 +49,9 @@
       @for (btn of headerBtns; track $index) {
       @if(showInRouter(btn)){
       <app-act-btn [icon]="btn.icon" [color]="btn.color" [(state)]="btn.state" nz-tooltip
-        nzTooltipTitle="{{ headerButtonLabel(btn) }}({{btn.text}})" (click)="onClick(btn,$event)"
+        [nzTooltipTitle]="dependencyBlockMessage(btn) || headerButtonLabel(btn) + '(' + btn.text + ')'" (click)="onClick(btn,$event)"
+        [class.dependency-blocked]="!!dependencyBlockMessage(btn)"
+        [attr.aria-disabled]="dependencyBlockMessage(btn) ? 'true' : null"
         [attr.data-action]="btn.action">
       </app-act-btn>
       }

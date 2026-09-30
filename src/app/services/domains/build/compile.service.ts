@@ -12,6 +12,7 @@ import {
   PlatformService,
 } from '@core/platform/public-api';
 import { ProjectService } from '@domain/project/public-api';
+import { NpmService } from '@domain/dependencies/public-api';
 import { ConfigService } from '@core/preferences/public-api';
 import { CompileValidationService } from './compile-validation.service';
 import { CoderBuildInfoService } from './coder-build-info.service';
@@ -78,6 +79,7 @@ export class CompileService {
     private logService: LogService,
     private translate: TranslateService,
     private coderBuildInfo: CoderBuildInfoService,
+    private npmService: NpmService,
   ) { }
 
   cancel(): void {
@@ -103,6 +105,22 @@ export class CompileService {
         success: false,
         result: { state: 'warn', text: 'No project is currently open; build cannot start.' },
       };
+    }
+
+    const dependencyBlock = this.projectService.getProjectDependencyBlockMessage(root);
+    if (dependencyBlock) {
+      this.message.warning(dependencyBlock);
+      return { success: false, result: { state: 'warn', text: dependencyBlock } };
+    }
+
+    if (this.configService.isCoderProduct()) {
+      try {
+        await this.npmService.assertCoderDependenciesReady(root);
+      } catch (error) {
+        const text = error instanceof Error ? error.message : String(error);
+        this.message.warning(text);
+        return { success: false, result: { state: 'warn', text } };
+      }
     }
 
     if (!this.application.startBuild()) {

@@ -889,6 +889,9 @@
         "REINSTALL_CONFIRM": "Réinstaller"
     },
     "NPM": {
+        "DEPS_RETRY_REQUIRED": "Les dépendances ne sont pas prêtes. Cliquez sur Réessayer dans la notification d’échec de l’installation.",
+        "PREPARING_LIBRARY_SOURCES": "Préparation des sources des bibliothèques…",
+        "DEPENDENCY_INCOMPLETE": "Des fichiers requis manquent encore après l’installation de {{name}}. Veuillez réessayer.",
         "INSTALLING": "Installation de {{name}}...",
         "INSTALLING_DEPENDENCY": "Installation de la dépendance {{name}}...",
         "INSTALL_COMPLETE": "{{name}} installé avec succès",

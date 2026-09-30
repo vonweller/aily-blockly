@@ -889,6 +889,9 @@
         "REINSTALL_CONFIRM": "Переустановить"
     },
     "NPM": {
+        "DEPS_RETRY_REQUIRED": "Зависимости ещё не готовы. Нажмите «Повторить» в уведомлении об ошибке установки.",
+        "PREPARING_LIBRARY_SOURCES": "Подготовка исходного кода библиотек…",
+        "DEPENDENCY_INCOMPLETE": "После установки {{name}} всё ещё отсутствуют необходимые файлы. Повторите попытку.",
         "INSTALLING": "Установка {{name}}...",
         "INSTALLING_DEPENDENCY": "Установка зависимости {{name}}...",
         "INSTALL_COMPLETE": "{{name}} успешно установлен",
