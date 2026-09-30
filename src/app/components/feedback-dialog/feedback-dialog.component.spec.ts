@@ -19,6 +19,7 @@ describe('FeedbackDialogComponent diagnostics submission', () => {
   let feedbackService: jasmine.SpyObj<FeedbackService>;
   let message: jasmine.SpyObj<NzMessageService>;
   let modal: jasmine.SpyObj<NzModalRef>;
+  let electronService: { applicationVersion: string; openUrl: jasmine.Spy };
   let projectService: {
     currentProjectPath: string;
     currentBoardConfig: unknown;
@@ -66,6 +67,10 @@ describe('FeedbackDialogComponent diagnostics submission', () => {
       'remove',
     ]);
     modal = jasmine.createSpyObj<NzModalRef>('NzModalRef', ['close']);
+    electronService = {
+      applicationVersion: packageJson.version,
+      openUrl: jasmine.createSpy('openUrl'),
+    };
     projectService = {
       currentProjectPath: 'C:\\Users\\tester\\private-project',
       currentBoardConfig: { name: 'Test Board' },
@@ -113,7 +118,7 @@ describe('FeedbackDialogComponent diagnostics submission', () => {
         { provide: NzMessageService, useValue: message },
         { provide: NzModalRef, useValue: modal },
         { provide: NZ_MODAL_DATA, useValue: null },
-        { provide: ElectronService, useValue: { openUrl: jasmine.createSpy('openUrl') } },
+        { provide: ElectronService, useValue: electronService },
         { provide: ProjectService, useValue: projectService },
         { provide: LogService, useValue: logService },
         { provide: SerialService, useValue: serialService },
@@ -172,6 +177,28 @@ describe('FeedbackDialogComponent diagnostics submission', () => {
     expect(payload.content).not.toContain('private@example.com');
     expect(Object.prototype.hasOwnProperty.call(payload, 'userAgent')).toBeFalse();
   });
+
+  for (const { product, version } of [
+    { product: 'coder', version: '0.1.23' },
+    { product: 'blockly', version: '0.9.123' },
+  ]) {
+    for (const isCnRegion of [true, false]) {
+      it(`submits the running ${product} version for ${isCnRegion ? 'CN' : 'global'} feedback`, async () => {
+        configService.isCoderProduct.and.returnValue(product === 'coder');
+        configService.isCnRegion = isCnRegion;
+        electronService.applicationVersion = version;
+        const component = createComponent();
+        prepareValidFeedback(component, 'feature');
+
+        await component.submitFeedback();
+
+        const payload = submittedPayload();
+        expect(payload.product).toBe(product);
+        expect(payload.content).toContain(`| Software Version | ${version}${isCnRegion ? '-cn' : ''} |`);
+        expect(payload.content).not.toContain(`| Software Version | ${packageJson.version}`);
+      });
+    }
+  }
 
   for (const type of ['bug', 'library']) {
     it(`submits Coder ${type} feedback with the product and opens its issue repository`, async () => {

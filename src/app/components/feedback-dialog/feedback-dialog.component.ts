@@ -35,8 +35,6 @@ import {
   type ProjectUploadDiagnosticEvidence,
 } from '../../utils/project-log.utils';
 
-import packageJson from '../../../../package.json';
-
 type UnknownRecord = Record<string, unknown>;
 
 interface FeedbackResultSnapshot {
@@ -289,8 +287,9 @@ export class FeedbackDialogComponent implements OnDestroy {
   }
 
   getBasicInfo(feedbackTime: string): string {
-    let softwareVersion: string | null = String(packageJson.version || '').trim() || null;
+    let softwareVersion: string | null = null;
     try {
+      softwareVersion = String(this.electronService.applicationVersion || '').trim() || null;
       if (this.isCnRegion && softwareVersion !== null) {
         softwareVersion += '-cn';
       }
