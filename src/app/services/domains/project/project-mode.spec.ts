@@ -61,7 +61,7 @@ describe('project mode boundaries', () => {
     it(`still activates matching ${mode} projects through the correct editor`, async () => {
       const service = createService(mode);
       const originalIpc = window['ipcRenderer'];
-      window['ipcRenderer'] = { invoke: jasmine.createSpy('invoke').and.resolveTo() };
+      window['ipcRenderer'] = { invoke: jasmine.createSpy('invoke').and.resolveTo({ ok: true }) };
       service.routerService = {
         url: '/main/guide',
         createUrlTree: jasmine.createSpy('createUrlTree').and.returnValue({}),

@@ -121,17 +121,19 @@ function readSubWindowMinimumSize(win) {
     }
 }
 
-/** 首次 before-quit 即置位；池窗�?closed �?Electron �?app.isQuitting 在实测中仍为 false */
+/** Set only after the user accepts quit; a cancelled request must leave subapps alive. */
 let applicationIsQuitting = false;
-app.once('before-quit', () => {
+function beginWindowShutdown() {
+    if (applicationIsQuitting) return;
     applicationIsQuitting = true;
     // Notify every renderer in this host before main.js terminates its child processes.
     for (const win of BrowserWindow.getAllWindows()) {
         if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
-            win.webContents.send('child-tool-host-shutdown');
+            try { win.webContents.send('child-tool-host-shutdown'); }
+            catch (error) { console.warn('Shutdown notification failed:', error.message); }
         }
     }
-});
+}
 
 function isDevServeSubWindow() {
     return process.env.DEV === 'true' || process.env.DEV === true;
@@ -2047,7 +2049,7 @@ function registerWindowHandlers(mainWindow, options = {}) {
             app.quit();
         } else {
             authorizeRendererWindowClose(senderWindow);
-            senderWindow.close();
+            senderWindow?.close();
         }
     });
 
@@ -2055,22 +2057,8 @@ function registerWindowHandlers(mainWindow, options = {}) {
     mainWindow.on('close', (event) => {
         if (options.canCloseMainWindow?.()) return;
         event.preventDefault();
-        if (process.platform === 'darwin' && !applicationIsQuitting) {
-            mainWindow.webContents.send('window-close-request');
-        } else {
-            app.quit();
-        }
+        app.quit();
     });
-
-    if (process.platform === 'darwin') {
-        // 监听渲染进程返回的关闭确认结�?
-        ipcMain.on('window-close-confirmed', (event) => {
-            const senderWindow = BrowserWindow.fromWebContents(event.sender);
-            if (senderWindow === mainWindow) {
-                app.quit();
-            }
-        });
-    }
 
     // 修改为同步处理程�?
     ipcMain.on("window-is-maximized", (event) => {
@@ -2248,6 +2236,7 @@ function registerWindowHandlers(mainWindow, options = {}) {
 
 
 module.exports = {
+    beginWindowShutdown,
     registerWindowHandlers,
     forceStopChildToolByCatalogId,
     listChildToolHoldersForCatalogId,

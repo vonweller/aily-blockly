@@ -751,6 +751,15 @@ export class ProjectService {
     return this.dependencyLifecycle.ensure(projectPath);
   }
 
+  /** A delayed UI answer belongs to one activation, not just its reusable path. */
+  captureCurrentProjectGuard(): () => boolean {
+    const path = this.currentProjectPath;
+    const session = this.dependencyLifecycleState?.get(path);
+    return () => this.currentProjectPath === path
+      && this.dependencyLifecycleState?.get(path) === session
+      && !session?.signal.aborted;
+  }
+
   assertProjectDependencySession(session: ProjectDependencySession): void {
     this.dependencyLifecycle.assertCurrent(session);
   }
@@ -1183,6 +1192,7 @@ export class ProjectService {
     document: unknown,
     originalContent?: string,
     assertCurrent: () => void = () => {},
+    onPublished?: (text: string) => void,
   ): Promise<Record<string, unknown>> {
     const session = projectDataRuntime.getSessionToken();
     const currentPath = this.currentProjectPath;
@@ -1197,6 +1207,7 @@ export class ProjectService {
     const result = await normalizeProjectDataDocument({ projectPath, document, originalContent, materialize: true },
       this.createProjectDataStore(projectPath), check);
     this.reportProjectDataNormalization(projectPath, result);
+    if (result.persistedText !== undefined) onPublished?.(result.persistedText);
     return result.document;
   }
 
@@ -1652,7 +1663,8 @@ export class ProjectService {
   }
 
   // 保存项目
-  save(path = this.currentProjectPath, feedbackTimeoutMs = 5000) {
+  async save(path = this.currentProjectPath, feedbackTimeoutMs = 5000): Promise<{ success: boolean; error?: string; path?: string }> {
+    if (!path) return { success: false, error: '没有可保存的项目', path };
     if (this.isProjectOpening && this.getProjectMode(path) !== 'coder') {
       return Promise.resolve({
         success: false,
@@ -1675,21 +1687,31 @@ export class ProjectService {
       }
     }
 
-    return new Promise<{ success: boolean; error?: string; path?: string }>((resolve) => {
-      this.stateSubject.next('saving');
-      void this.application.dispatchProjectSave(path, feedbackTimeoutMs).then(async result => {
-        if (result.success) {
-          await this.copyPackageJsonToTemp(path);
-          this.currentPackageData = await this.getPackageJson();
-          this.stateSubject.next('saved');
-          resolve({ success: true, path });
-        } else {
-          console.warn('项目保存失败:', result.error);
-          this.stateSubject.next('error');
-          resolve({ success: false, error: result.error, path });
+    const session = this.dependencyLifecycle.get(path);
+    const current = () => this.currentProjectPath === path && this.dependencyLifecycle.get(path) === session;
+    if (current()) this.stateSubject.next('saving');
+    try {
+      const result = await this.application.dispatchProjectSave(path, feedbackTimeoutMs);
+      if (result?.success !== true) throw new Error(result?.error || '编辑器未确认保存成功');
+      // Saving an inactive Coder tab is valid. Its acknowledgement must not
+      // change a replacement project's status or read that project's manifest.
+      if (current()) {
+        await this.copyPackageJsonToTemp(path);
+        if (current()) {
+          const manifest = await this.getPackageJson();
+          if (current()) {
+            this.currentPackageData = manifest;
+            this.stateSubject.next('saved');
+          }
         }
-      });
-    });
+      }
+      return { success: true, path };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn('项目保存失败:', message);
+      if (current()) this.stateSubject.next('error');
+      return { success: false, error: message, path };
+    }
   }
 
 
@@ -1707,7 +1729,7 @@ export class ProjectService {
     };
     path = await this.resolveSaveAsTarget(sourceProjectPath, path);
     assertCurrent();
-    const saveResult = await this.save(sourceProjectPath);
+    const saveResult = await this.save(sourceProjectPath, 15_000);
     assertCurrent();
     if (!saveResult.success) {
       throw new Error(saveResult.error || '保存当前项目失败，无法另存为');
@@ -1726,30 +1748,37 @@ export class ProjectService {
     if (window['fs'].readFileSync(`${sourceProjectPath}/project.abi`, 'utf8') !== sourceContent) {
       throw new Error('资源校验期间 project.abi 已被修改，请重新执行另存为');
     }
-    //在当前路径下创建一个新的目录
-    window['fs'].mkdirSync(path);
-    // 复制项目目录到新路径
-    window['fs'].copyProjectDirectory(sourceProjectPath, path);
-    // 修改package.json文件
-    const packageJson = JSON.parse(window['fs'].readFileSync(`${path}/package.json`));
-    // 另存为时去掉cloudId
-    if (packageJson.cloudId) {
+    // Reserve a new directory; never merge into a concurrently created target.
+    await window['fsp'].mkdir(path);
+    try {
+      assertCurrent();
+      window['fs'].copyProjectDirectory(sourceProjectPath, path);
+      const packageJson = JSON.parse(window['fs'].readFileSync(`${path}/package.json`));
       delete packageJson.cloudId;
+      const name = window['path'].basename(path);
+      packageJson.name = deriveProjectPackageName(name);
+      packageJson.nickname = name;
+      if (Object.hasOwn(packageJson, 'path')) packageJson.path = path;
+      window['fs'].writeFileSync(`${path}/package.json`, JSON.stringify(packageJson, null, 2));
+      for (const directory of ['.temp', '.log', '.build']) {
+        await window['fsp'].rm(window['path'].join(path, directory), { recursive: true, force: true });
+      }
+    } catch (error) {
+      try { await window['fsp'].rm(path, { recursive: true, force: true }); }
+      catch (cleanupError) { console.warn('清理未完成的 Blockly 另存为目录失败:', path, cleanupError); }
+      throw error;
     }
-    // 获取新的项目名称（文件夹名）
-    const name = window['path'].basename(path);
-    packageJson.name = deriveProjectPackageName(name);
-    packageJson.nickname = name;
-    window['fs'].writeFileSync(`${path}/package.json`, JSON.stringify(packageJson, null, 2));
-    // 清除副本的旧配置快照、日志和编译缓存，避免重开时恢复源项目的 cloudId。
-    for (const directory of ['.temp', '.log', '.build']) {
-      await window['fsp'].rm(window['path'].join(path, directory), { recursive: true, force: true });
+    // A complete copy survives activation failure. Reopen through the normal
+    // lifecycle so route, locks, editor path, runtime and clean state agree.
+    assertCurrent();
+    const edited = await this.hasUnsavedChanges();
+    assertCurrent();
+    if (edited || window['fs'].readFileSync(`${sourceProjectPath}/project.abi`, 'utf8') !== sourceContent) {
+      throw new Error(`项目已复制至 ${path}，但原项目在复制期间有新修改，已保留当前工作区；请保存后重试或手动打开副本`);
     }
-    // 修改当前项目路径
-    this.currentProjectPath = path;
-    projectDataRuntime.configure(path);
-    this.currentPackageData = packageJson;
-    this.addRecentlyProject({ name: this.currentPackageData.name, path: path, nickname: this.currentPackageData.nickname || this.currentPackageData.name });
+    if (!(await this.projectOpen(path))) {
+      throw new Error(`项目已另存至 ${path}，但未能切换，请手动打开该项目`);
+    }
   }
 
   private async resolveSaveAsTarget(sourceProjectPath: string, targetPath: string): Promise<string> {

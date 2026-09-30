@@ -781,7 +781,9 @@ const {
   listChildToolHoldersForCatalogId,
   getRunningSubappConfig,
   nativeSubappRegistry,
+  beginWindowShutdown,
 } = require("./window");
+const { createApplicationQuitCoordinator } = require('./application-quit');
 const { registerNpmHandlers, killAllNpmProcesses, killOwnerProjectNpmProcesses, getActiveNpmProcesses, beginNpmShutdown } = require("./npm");
 const { cancelProjectTaskScope } = require('./project-task-scope');
 const { registerUpdaterHandlers } = require("./updater");
@@ -818,8 +820,6 @@ const RENDERER_STARTUP_WAIT_MS = 20000;
 
 let mainWindow;
 let userConf;
-let isProcessCleanupInProgress = false;
-let hasProcessCleanupCompleted = false;
 let processHealthDiagnosticsRegistered = false;
 let projectContextState = {
   workspace: null,
@@ -2695,7 +2695,7 @@ function createWindow() {
   registerWindowHandlers(mainWindow, {
     resolveRendererUrl: resolveAppRendererUrl,
     getRendererGeneration: () => rendererGeneration,
-    canCloseMainWindow: () => hasProcessCleanupCompleted,
+    canCloseMainWindow: () => applicationQuit.canClose(),
   });
   registerNpmHandlers(mainWindow);
   if (!buildDeliveryAuthority) {
@@ -3082,15 +3082,6 @@ app.on("ready", async () => {
   startCliBridgeIfPossible();
 });
 
-// 退出时关闭 CLI bridge 并清理发现文件
-app.on('before-quit', () => {
-  try {
-    if (cliBridge) cliBridge.close();
-  } catch (_) {
-    /* ignore */
-  }
-});
-
 // === Web Serial API 支持 ===
 // 渲染端选择串口路径后，通过 IPC 设置首选端口；随后调用 navigator.serial.requestPort()
 // 时由主进程 select-serial-port 事件按路径匹配并自动选中，与 ESPConnect 在浏览器内
@@ -3173,6 +3164,8 @@ app.on("window-all-closed", () => {
 });
 
 async function cleanupRegisteredChildProcesses() {
+  beginWindowShutdown();
+  try { cliBridge?.close(); } catch (error) { console.warn('CLI bridge shutdown:', error); }
   console.info('[PROC_TRACE][APP_CLEANUP_START]', {
     cmd: getActiveCmdProcesses(),
     npm: getActiveNpmProcesses(),
@@ -3197,26 +3190,21 @@ async function cleanupRegisteredChildProcesses() {
   releaseAllAuthCredentialsLocks();
 }
 
-app.on("before-quit", (event) => {
-  if (hasProcessCleanupCompleted) {
-    return;
-  }
-
-  event.preventDefault();
-  if (isProcessCleanupInProgress) {
-    return;
-  }
-
-  isProcessCleanupInProgress = true;
-  cleanupRegisteredChildProcesses()
-    .catch((error) => {
-      console.warn('[PROC_TRACE][APP_CLEANUP_ERROR]', error?.message || String(error));
-    })
-    .finally(() => {
-      hasProcessCleanupCompleted = true;
-      isProcessCleanupInProgress = false;
-      app.quit();
+const applicationQuit = createApplicationQuitCoordinator({
+  app, ipcMain,
+  getWindow: () => mainWindow,
+  canConfirm: () => isCurrentRendererGenerationReady(),
+  confirmUnavailable: async win => {
+    const result = await dialog.showMessageBox(win, {
+      type: 'warning', title: '无法确认保存状态',
+      message: '编辑器尚未就绪或已停止响应，无法检查未保存的更改。',
+      detail: '仍然退出可能丢失未保存的编辑。取消后可以等待界面恢复再重试。',
+      buttons: ['取消', '仍然退出'], defaultId: 0, cancelId: 0, noLink: true,
     });
+    return result.response === 1;
+  },
+  cleanup: cleanupRegisteredChildProcesses,
+  onError: error => console.warn('[PROC_TRACE][APP_CLEANUP_ERROR]', error?.message || String(error)),
 });
 
 app.on("will-quit", () => {

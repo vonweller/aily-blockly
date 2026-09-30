@@ -1,5 +1,6 @@
 import { ProjectService } from './project.service';
 import { ProjectLifecycleGate } from './project-lifecycle-gate';
+import { ProjectDependencyLifecycle } from './project-dependency-lifecycle';
 import { AiOperationRegistryService } from '@integration/automation/public-api';
 
 describe('board switch project persistence', () => {
@@ -239,6 +240,7 @@ describe('board switch project persistence', () => {
     registry.setActive('chat', true, { projectPath: '/project' });
     service.application.hasActiveProjectMutation = (path: string) => registry.hasBlocking(path);
     service.projectLifecycle = new ProjectLifecycleGate();
+    service.dependencyLifecycle = new ProjectDependencyLifecycle();
     service.copyPackageJsonToTemp = async () => true;
     service.getProjectMode = () => 'blockly';
     service.boardChangeSubject = { next: jasmine.createSpy('changed') };
@@ -280,6 +282,9 @@ describe('board switch project persistence', () => {
     const context = { currentPackageData: { name: 'fixture' }, syncCurrentBoardConfig: jasmine.createSpy('sync').and.resolveTo() };
     const service: any = {
       currentProjectPath: '/project', coderProjects: [{ path: '/project' }],
+      dependencyLifecycle: new ProjectDependencyLifecycle(),
+      stopProjectCommands: jasmine.createSpy('stopCommands').and.resolveTo(),
+      assertProjectDependencySession: (ProjectService.prototype as any).assertProjectDependencySession,
       isSameProjectPath: (a: string, b: string) => a === b,
       ensureProjectModeAllowed: async () => true, getProjectMode: () => 'coder', getCoderOperation: () => undefined,
       electronService: { exists: () => true, setTitle: () => {} },
@@ -298,6 +303,7 @@ describe('board switch project persistence', () => {
     const { service, context, open } = coderRouteFixture(true);
     expect(await open()).toBeTrue();
     expect(service.application.dispatchProjectSave).toHaveBeenCalledOnceWith('/project', 15000);
+    expect(service.stopProjectCommands).toHaveBeenCalledOnceWith('/project');
     expect(service.projectActivationSubject.next).toHaveBeenCalledOnceWith({ path: '/project', previousPath: '/project', reason: 'reload', sessionResource: null });
     expect(context.syncCurrentBoardConfig).toHaveBeenCalledTimes(1);
     expect(service.router.isActive).toHaveBeenCalledWith('coder-target', { paths: 'exact', queryParams: 'exact', fragment: 'ignored', matrixParams: 'ignored' });

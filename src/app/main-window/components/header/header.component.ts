@@ -386,14 +386,8 @@ export class HeaderComponent implements OnInit, OnDestroy {
         }, 0);
       });
 
-      // Mac 平台下监听系统关闭按钮的关闭请求
-      if (this.isMac && window['iWindow'] && window['iWindow'].onCloseRequest) {
-        this.unsubscribeCloseRequest = window['iWindow'].onCloseRequest(async () => {
-          const canClose = await this.checkUnsavedChanges('close');
-          if (canClose) {
-            window['iWindow'].confirmClose();
-          }
-        });
+      if (window['iWindow']?.onCloseRequest) {
+        this.unsubscribeCloseRequest = window['iWindow'].onCloseRequest(request => this.confirmWindowClose(request));
       }
     }
 
@@ -1148,16 +1142,16 @@ export class HeaderComponent implements OnInit, OnDestroy {
 
   updateSubscription: any = null;
   private workspaceImageExporting = false;
-  private coderProjectSavingAs = false;
+  private projectSavingAs = false;
 
-  private async saveCoderProjectAs(): Promise<void> {
-    if (this.coderProjectSavingAs) return;
-    this.coderProjectSavingAs = true;
-    const sourcePath = this.projectService.currentProjectPath;
+  private async saveProjectAs(): Promise<void> {
+    if (this.projectSavingAs) return;
+    this.projectSavingAs = true;
     try {
+      const unchanged = this.projectService.captureCurrentProjectGuard();
       const path = await this.selectSaveAsFolder();
       if (!path) return;
-      if (this.projectService.currentProjectPath !== sourcePath) {
+      if (!unchanged()) {
         throw new Error('当前项目已切换，请重新执行另存为');
       }
       await this.projectService.saveAs(path);
@@ -1165,7 +1159,7 @@ export class HeaderComponent implements OnInit, OnDestroy {
       const detail = error instanceof Error ? error.message : String(error);
       this.message.error(`另存为失败：${detail}`);
     } finally {
-      this.coderProjectSavingAs = false;
+      this.projectSavingAs = false;
     }
   }
 
@@ -1192,14 +1186,7 @@ export class HeaderComponent implements OnInit, OnDestroy {
         this.projectService.save();
         break;
       case 'project-save-as':
-        if (this.projectService.getProjectMode(this.projectService.currentProjectPath) === 'coder') {
-          await this.saveCoderProjectAs();
-          break;
-        }
-        const path = await this.selectSaveAsFolder();
-        if (path) {
-          await this.projectService.saveAs(path);
-        }
+        await this.saveProjectAs();
         break;
       case 'workspace-export-image':
         await this.exportWorkspaceImage();
@@ -1463,13 +1450,17 @@ export class HeaderComponent implements OnInit, OnDestroy {
     }
   }
 
-  async close(): Promise<boolean> {
-    const canClose = await this.checkUnsavedChanges('close');
-    if (!canClose) {
-      return false;
-    }
+  close(): void {
+    // Main owns the handshake, including native close and application-menu quit.
     window['iWindow'].close();
-    return true;
+  }
+
+  private async confirmWindowClose(request: { requestId?: string }): Promise<void> {
+    if (typeof request?.requestId !== 'string' || !request.requestId) return;
+    let allowed = false;
+    try { allowed = await this.checkUnsavedChanges('close'); }
+    catch (error) { this.message.error(`无法确认保存状态：${error instanceof Error ? error.message : String(error)}`); }
+    finally { window['iWindow'].confirmClose(request.requestId, allowed); }
   }
 
   // 快捷键功能，监听键盘事件,执行对应的操作
@@ -1618,15 +1609,20 @@ export class HeaderComponent implements OnInit, OnDestroy {
   }
 
   async checkUnsavedChanges(action: 'close' | 'open' | 'new'): Promise<boolean> {
+    const path = this.projectService.currentProjectPath;
     // Coder activation retains each iframe, including its unsaved editor buffers.
     if (action !== 'close' && this.projectService.getProjectMode(this.projectService.currentProjectPath) === 'coder') return true;
+    const unchanged = this.projectService.captureCurrentProjectGuard();
     // 检查项目是否有未保存的更改
-    if (!await this.projectService.hasUnsavedChanges()) {
-      return true;
+    try {
+      if (!await this.projectService.hasUnsavedChanges()) return unchanged();
+    } catch (error) {
+      this.message.error(`无法确认保存状态：${error instanceof Error ? error.message : String(error)}`);
+      return false;
     }
 
     // 如果弹窗已经打开，直接返回 false，避免重复弹出
-    if (this.unsaveDialogOpen) {
+    if (this.unsaveDialogOpen || !unchanged()) {
       return false;
     }
 
@@ -1651,7 +1647,7 @@ export class HeaderComponent implements OnInit, OnDestroy {
         // 弹窗关闭后重置标志位
         this.unsaveDialogOpen = false;
 
-        if (!result) {
+        if (!result || !unchanged()) {
           // 用户直接关闭对话框，视为取消操作
           resolve(false);
           return;
@@ -1661,8 +1657,11 @@ export class HeaderComponent implements OnInit, OnDestroy {
             // 保存项目并继续
             try {
               if (this.projectService.getProjectMode(this.projectService.currentProjectPath) === 'coder') await this.coderPersistence.saveAllOpenProjects();
-              else await this.projectService.save();
-              resolve(true);
+              else {
+                const saved = await this.projectService.save(path, 15_000);
+                if (saved?.success !== true) throw new Error(saved?.error || '编辑器未确认保存成功');
+              }
+              resolve(unchanged());
             } catch (error) {
               this.message.error(error instanceof Error ? error.message : String(error));
               resolve(false);
