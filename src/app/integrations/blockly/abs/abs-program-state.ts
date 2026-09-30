@@ -7,6 +7,14 @@ function withoutNumericLayout(value: Record<string, unknown>, keys: readonly str
   return result;
 }
 
+/** Root positions are presentation, not ABS semantics. Field/resource values
+ * named x/y and every nested connection remain part of the program. */
+export function absProgramWorkspace<T extends Record<string, any>>(workspace: T): T {
+  if (!Array.isArray(workspace['blocks']?.blocks)) return workspace;
+  return { ...workspace, blocks: { ...workspace['blocks'], blocks: workspace['blocks'].blocks
+    .map(block => withoutNumericLayout(block, ['x', 'y'])) } };
+}
+
 /** Only native root coordinates and viewport values are presentation. Connections,
  * root order, page ownership and extension state still belong to the program.
  * Projection hashes, disk CAS and persistence revisions remain byte-exact. */

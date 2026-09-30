@@ -3509,6 +3509,15 @@ export class ProjectService {
     if (!this.isSameProjectPath(projectPath, this.currentProjectPath)) {
       throw new ProjectLifecycleError('PROJECT_RELOAD_REJECTED', '切板重载前活动项目已改变；已停止后续操作。');
     }
+    // Installation leaves Blockly editable. Both watcher and direct switch
+    // paths save the latest canvas after all package IO, immediately before reload.
+    if (this.getProjectMode(projectPath) !== 'coder') {
+      const saved = await this.save(projectPath);
+      if (!saved.success) throw new ProjectLifecycleError('PROJECT_RELOAD_REJECTED', `切板重载前保存失败：${saved.error || '未确认保存完成'}`);
+      if (!this.isSameProjectPath(projectPath, this.currentProjectPath)) {
+        throw new ProjectLifecycleError('PROJECT_RELOAD_REJECTED', '切板保存期间活动项目已改变；已停止重载。');
+      }
+    }
     const opened = await this.projectOpen(projectPath, {
       reason: 'reload',
       ...(owner && this.isSameProjectPath(owner.projectPath, projectPath) ? { lifecycleOwner: owner.token } : {}),

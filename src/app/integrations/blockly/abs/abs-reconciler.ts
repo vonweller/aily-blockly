@@ -22,6 +22,8 @@ import { absIdentityPolicy } from './abs-identity-policy';
 import { retireEmptyProjectModels } from './abs-empty-project-models';
 
 export interface AbsReconcileOptions extends AbsSyntaxOptions {
+  /** Share declaration integrity checks only inside a pure synchronous traversal. */
+  withSynchronousRead?: <T>(read: () => T) => T;
   /** Exact text-edit provenance, replayed against the immutable generation. */
   sourceEdits?: AbsSourceEdits;
   /** Pure definitions captured for this runtime session, never a global Blockly lookup. */
@@ -83,6 +85,7 @@ export async function reconcileAbsDraft(
   const sourceEdits = options.sourceEdits ? structuredClone(options.sourceEdits) : undefined;
   if (nativeBinding && nativeBinding.source !== editedAbs) throw new AbsSyncError('ABS_NATIVE_BINDING_STALE', 'Native binding belongs to different ABS bytes.');
   await validateAbsProjection(baseline);
+  const readDefinitions = options.withSynchronousRead ?? (<T>(read: () => T) => read());
   const candidate: AbsAbiWorkspace = JSON.parse(absJson(baseline.workspace));
   const retiredModels = editedAbs !== baseline.abs ? retireEmptyProjectModels(baseline, candidate, editedAbs) : [];
   prepareAbsVariableCreations(candidate, variableCreation);
@@ -100,7 +103,7 @@ export async function reconcileAbsDraft(
     },
   });
   const original = parseAbsSyntax(baseline.abs, absSyntaxOptions(baseline.workspace, baseline.contracts));
-  const edited = nativeBinding?.syntax ?? parseAbsSyntax(editedAbs, syntax);
+  const edited = readDefinitions(() => nativeBinding?.syntax ?? parseAbsSyntax(editedAbs, syntax));
   const nativeInstances = new Map(nativeBinding?.instances.map(instance => [instance.start, instance]));
   const hostCalls = new Map(nativeBinding?.hostCalls?.map(call => [call.start, call]));
   if (nativeBinding && (nativeInstances.size !== nativeBinding.instances.length
@@ -121,10 +124,10 @@ export async function reconcileAbsDraft(
   const contracts = baseline.contracts;
   if (options.declaration) {
     const requestId = await absDeclarationRequestId(baseline.map.generation, editedAbs);
-    prepareAbsDeclarationIntents(edited, candidate, node => {
+    readDefinitions(() => prepareAbsDeclarationIntents(edited, candidate, node => {
       const old = matches.get(node);
       return old ? abiBlocks.get(originalIds.get(old)!) : undefined;
-    }, options.declaration, requestId);
+    }, options.declaration!, requestId));
   }
   for (const effect of options.nativeBinding?.modelDeclarations ?? []) {
     const owner = newEntries.find(({ node }) => node.start === effect.start && node.type === effect.blockType && !node.disabled)?.node;
@@ -231,7 +234,7 @@ export async function reconcileAbsDraft(
     if (!Object.keys(block.fields).length && !previous?.fields) delete block.fields;
     return block;
   };
-  candidate.blocks.blocks = edited.map(node => build(node, true));
+  candidate.blocks.blocks = readDefinitions(() => edited.map(node => build(node, true)));
   assertAbsProtectedBlocks(baseline.workspace, candidate);
   getAbsProcedureReferences(candidate, baseline.contracts.procedures);
   const afterIds = indexAbsAbi(candidate);

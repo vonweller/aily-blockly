@@ -5,6 +5,13 @@ import type { NativeUiTasks } from './blockly-native-ui-tasks';
  * Animation frames use the same bounded, semantics-checked queue as UI timers;
  * there is no browser frame race or arbitrary asynchronous library completion. */
 export function createNativeCandidateGraphics(native: typeof Blockly, tasks: NativeUiTasks): Blockly.WorkspaceSvg {
+  // Blockly renders also bump nearby disconnected roots. Deserialization turns
+  // connection tracking back on in a deferred task, so disabling it only while
+  // constructing blocks does not protect a later render of the saved layout.
+  // Candidates have no pointer interaction: retain their explicit coordinates.
+  // This prototype belongs to the disposable realm, never the live editor.
+  // Native rendering, connection checking and semantic readback remain enabled.
+  native.BlockSvg.prototype.bumpNeighbours = function() {};
   const queueRender = native.BlockSvg.prototype.queueRender;
   native.BlockSvg.prototype.queueRender = function() {
     return tasks.coreRender(() => queueRender.call(this));

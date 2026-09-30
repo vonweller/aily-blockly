@@ -24,8 +24,9 @@ export async function prepareAbsNativeReconciliation(baseline: AbsProjection, so
   const syntax = readAbsSyntax(source); // Reject a malformed document before replaying any library.
   baseline = structuredClone(baseline);
   const parseOptions = absSyntaxOptions(baseline.workspace, baseline.contracts, options);
+  const readDefinitions = options.withSynchronousRead ?? (<T>(read: () => T) => read());
   const hostCalls: NonNullable<NativeCandidateRequest['hostCalls']> = [];
-  for (const { node } of walkAbsRawSyntax(syntax)) if (options.prepareBlock && options.hostPrepared?.(node.type)) {
+  readDefinitions(() => { for (const { node } of walkAbsRawSyntax(syntax)) if (options.prepareBlock && options.hostPrepared?.(node.type)) {
     const fields = Object.fromEntries(node.parameters.filter(parameter => parameter.name && parameter.token)
       .map(parameter => [parameter.name!, parameter.token!.value]));
     const extraState = Object.hasOwn(node, 'extraState') ? node.extraState : parseOptions.prepareExtraState?.(node);
@@ -37,7 +38,7 @@ export async function prepareAbsNativeReconciliation(baseline: AbsProjection, so
     const argumentOrder = parseOptions.argumentOrder?.(node.type, extraState, fields);
     hostCalls.push({ start: node.start, type: node.type, ...(argumentOrder ? { argumentOrder } : {}),
       ...(extraState === undefined ? {} : { extraState }) });
-  }
+  } });
   const modelState = structuredClone(baseline.workspace);
   if (source !== baseline.abs) retireEmptyProjectModels(baseline, modelState, source);
   const modelRequestId = await absDeclarationRequestId(baseline.map.generation, source);
@@ -46,7 +47,7 @@ export async function prepareAbsNativeReconciliation(baseline: AbsProjection, so
   // These tentative inputs only unblock shape binding. Scope/identity/model
   // decisions remain with reconcileAbsDraft and replace this table below.
   if (options.declaration) {
-    prepareAbsNativeModelInputs(syntax, modelState, options, modelRequestId);
+    readDefinitions(() => prepareAbsNativeModelInputs(syntax, modelState, options, modelRequestId));
   }
   const values = await captureAbsNativeValues(syntax, assertCurrent);
   const run = async (request: Omit<NativeCandidateRequest, 'steps'>) => {

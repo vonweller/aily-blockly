@@ -35,14 +35,24 @@ export async function loadAbsWorkspaceState(
   assertCurrent();
 }
 
-export function captureAbsWorkspaceState(workspace: Blockly.Workspace, assertCurrent: () => void, definitions?: DeclarativeBlockSnapshot) {
+export function captureAbsWorkspaceState(workspace: Blockly.Workspace, assertCurrent: () => void,
+  definitions?: DeclarativeBlockSnapshot, assertScope: () => void = assertCurrent) {
+  const capture = () => captureAbsWorkspaceStateNow(workspace, assertCurrent, definitions, assertScope);
+  return definitions?.withSynchronousRead ? definitions.withSynchronousRead(capture) : capture();
+}
+
+function captureAbsWorkspaceStateNow(workspace: Blockly.Workspace, assertCurrent: () => void,
+  definitions: DeclarativeBlockSnapshot | undefined, assertScope: () => void) {
   assertCurrent();
   const runtime = window['Blockly'] as typeof Blockly;
   definitions?.customFunctions?.prepareSerialization(workspace);
   const state = normalizeAbsSerializedWorkspace(runtime.serialization.workspaces.save(workspace));
   const original = absJson(state);
-  const fields = captureAbsRuntimeContracts(workspace, state, assertCurrent, definitions);
-  fields.contracts.procedures = captureAbsProcedureContracts(workspace, state, assertCurrent, definitions);
+  // This capture is synchronous: no user event can interleave. Check the full
+  // document at both boundaries and read it back after callbacks; per-field
+  // checks only need scope/lease validity, not another whole-project snapshot.
+  const fields = captureAbsRuntimeContracts(workspace, state, assertScope, definitions);
+  fields.contracts.procedures = captureAbsProcedureContracts(workspace, state, assertScope, definitions);
   assertCurrent();
   if (absJson(normalizeAbsSerializedWorkspace(runtime.serialization.workspaces.save(workspace))) !== original) {
     throw new AbsSyncError('ABS_RUNTIME_CAPTURE_CHANGED', 'Runtime contract getters changed the workspace.');

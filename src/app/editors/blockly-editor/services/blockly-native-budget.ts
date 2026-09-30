@@ -3,7 +3,7 @@ import { AbsSyncError } from '../../../integrations/blockly/abs/abs-state';
 /** Operational bounds, shared by the host and the disposable native runtime.
  * Increasing a budget requires real full-pipeline measurements, not only a parser test. */
 export const NATIVE_CANDIDATE_LIMITS = Object.freeze({
-  blocks: 2000, identities: 2000, createdBlocks: 2000, defaultCreations: 2000,
+  blocks: 4096, identities: 4096, createdBlocks: 4096, defaultCreations: 4096,
   variables: 2000, hostCalls: 2000, arguments: 2000, resources: 2000,
   declarations: 128, requestCharacters: 16 * 1024 * 1024,
 });

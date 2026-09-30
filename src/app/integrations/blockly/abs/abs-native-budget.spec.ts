@@ -24,7 +24,7 @@ describe('native candidate operational budget', () => {
     ['blocks', {}, 'blocks'], ['identities', {}, 'identities'], ['creations', {}, 'defaultCreations'],
     ['variables', {}, 'variables'], ['hostCalls', {}, 'hostCalls'], ['values', {}, 'resources'],
   ] as const) it(`applies the same bound to request ${key}`, () => {
-    try { assertSynchronousNativeCandidate({ steps: [], blocks: [], [key]: Array(2001).fill(item) } as any); fail('over budget'); }
+    try { assertSynchronousNativeCandidate({ steps: [], blocks: [], [key]: Array(NATIVE_CANDIDATE_LIMITS[resource] + 1).fill(item) } as any); fail('over budget'); }
     catch (error) { expect(serializeAbsFailure(error).diagnostic!.capacity!.resource).toBe(resource); }
   });
   it('does not weaken malformed/duplicate identity validation below the limit', () => {
@@ -32,12 +32,13 @@ describe('native candidate operational budget', () => {
       identities: [{ start: 0, id: 'x' }, { start: 0, id: 'x' }] })).toThrowError(/uniquely/);
   });
   it('guides the agent at the real tool boundary without a success receipt', async () => {
-    const sync = { exportGeneration: async () => assertNativeBudget('blocks', 2001, 'creation') };
+    const limit = NATIVE_CANDIDATE_LIMITS.blocks;
+    const sync = { exportGeneration: async () => assertNativeBudget('blocks', limit + 1, 'creation') };
     const result: any = await new AbsGenerationToolsService(sync as any).execute('abs_projection', {
       version: 2, requestId: 'native-budget-diagnostic-request', expectedAbiHash: 'sha256:' + 'a'.repeat(64),
     });
     expect(result.ok).toBeFalse(); expect(result.code).toBe('ABS_LIMIT');
-    expect(result.diagnostic.capacity).toEqual({ resource: 'blocks', phase: 'creation', actual: 2001, limit: 2000 });
+    expect(result.diagnostic.capacity).toEqual({ resource: 'blocks', phase: 'creation', actual: limit + 1, limit });
     expect(result.recovery).toContain('local Blockly library'); expect(result.recovery).toContain('validate and build');
     expect(result.receipt).toBeUndefined();
   });

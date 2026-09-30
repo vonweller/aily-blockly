@@ -39,6 +39,28 @@ describe('native dynamic field loading without declaration JSON', () => {
   });
   afterEach(() => { workspace.dispose(); delete Blockly.Blocks[type]; delete Blockly.Blocks[parentType]; });
 
+  it('preserves malformed legacy JSON mutation input on failure and can reopen valid XML state afterwards', () => {
+    Blockly.Blocks[type] = {
+      init() { this.appendDummyInput().appendField(new Blockly.FieldTextInput(''), 'TEXT'); },
+      domToMutation(xml) { this.setFieldValue(xml.getAttribute('text') || '', 'TEXT'); },
+      mutationToDom() {
+        const xml = Blockly.utils.xml.createElement('mutation');
+        xml.setAttribute('text', this.getFieldValue('TEXT')); return xml;
+      },
+    };
+    const broken = { blocks: { blocks: [{ type, id: 'legacy', extraState: { text: 'saved' } }] } };
+    const before = absJson(broken);
+    expect(() => load(broken)).toThrowError(/DOMParser was unable to parse/);
+    expect(absJson(broken)).toBe(before);
+    // There is no generic, lossless JSON-to-XML conversion. Only a known valid
+    // archive supplied by the caller can replace this malformed legacy state.
+    const valid = { blocks: { blocks: [{ type, id: 'legacy', extraState: '<mutation text="saved"></mutation>' }] } };
+    load(valid);
+    expect(workspace.getBlockById('legacy')!.getFieldValue('TEXT')).toBe('saved');
+    load(Blockly.serialization.workspaces.save(workspace));
+    expect(workspace.getBlockById('legacy')!.getFieldValue('TEXT')).toBe('saved');
+  });
+
   it('restores multiple selector levels in the ordinary load entry, then saves and reopens', () => {
     const input = state(), before = absJson(input);
     expect(catalog.capture(Blockly.Blocks).get(type)).toBeUndefined();
