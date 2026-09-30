@@ -577,21 +577,10 @@ async function resolveProjectLockOrPrompt(projectDir, parentWindow) {
 }
 
 // File association and companion-app handoff both use the renderer's guarded open entry.
-function handleCommandLineArgs(argv) {
-  const openProjectArg = argv.find(arg => arg.startsWith('--open-project='));
-  if (openProjectArg) {
-    const projectPath = openProjectArg.slice('--open-project='.length);
-    if (projectPath && path.isAbsolute(projectPath) && fs.existsSync(projectPath) && fs.statSync(projectPath).isDirectory()) {
-      pendingFileToOpen = projectPath;
-      return true;
-    }
-  }
-  const abiFile = argv.find(arg => /\.(abi|aci)$/i.test(arg) && fs.existsSync(arg));
-  if (abiFile) {
-    const resolvedPath = path.resolve(abiFile);
-    pendingFileToOpen = path.dirname(resolvedPath);
-    console.log('Found .abi file to open:', resolvedPath);
-    console.log('Project directory:', pendingFileToOpen);
+function handleCommandLineArgs(argv, cwd = process.cwd()) {
+  const projectPath = require('./project-open-path').projectDirectoryFromArgs(argv, cwd);
+  if (projectPath) {
+    pendingFileToOpen = projectPath;
     return true;
   }
 
@@ -614,7 +603,7 @@ function handleCommandLineArgs(argv) {
     }
   }
 
-  return !!(abiFile || routeArg || queryArg);
+  return !!(routeArg || queryArg);
 }
 
 // 在应用启动时处理命令行参数
@@ -2890,7 +2879,7 @@ if (shouldUseMultiInstance()) {
       return;
     } else {
       // 处理其他类型的启动参数（如.abi文件、路由参数等）
-      handleCommandLineArgs(commandLine);
+      handleCommandLineArgs(commandLine, workingDirectory);
 
       void (async () => {
         // 如果有待处理的文件或路由，更新主窗口
@@ -2925,7 +2914,7 @@ if (shouldUseMultiInstance()) {
         handleProtocol(protocolUrl);
       } else {
         // 处理其他类型的启动参数（如.abi文件、路由参数等）
-        handleCommandLineArgs(commandLine);
+        handleCommandLineArgs(commandLine, workingDirectory);
 
         void (async () => {
           // 如果有待处理的文件或路由，更新主窗口
@@ -3281,8 +3270,8 @@ app.on('web-contents-created', (event, contents) => {
 // macOS下处理文件打开
 app.on('open-file', (event, filePath) => {
   event.preventDefault();
-  if (/\.(abi|aci)$/i.test(filePath) && fs.existsSync(filePath)) {
-    const projectDir = path.dirname(path.resolve(filePath));
+  const projectDir = require('./project-open-path').projectDirectoryForFile(filePath);
+  if (projectDir) {
     console.log('macOS open-file:', filePath);
     console.log('Project directory:', projectDir);
 

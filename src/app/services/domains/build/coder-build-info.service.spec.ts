@@ -86,6 +86,22 @@ describe('Coder build metadata', () => {
     expect(await metadata.updateCodeHash(root)).not.toBe(previous);
   });
 
+  it('hashes native Arduino tabs and recursive sources without hashing its own metadata or caches', async () => {
+    writeManifest({ ...readManifest(), arduinoSketch: true, entry: 'Blink.ino' });
+    files.set(`${root}/Blink.ino`, 'void setup() {}');
+    files.set(`${root}/Configuration.h`, '#define USER_SETTING 1');
+    files.set(`${root}/src/core.cpp`, 'void loop() {}');
+    const first = await metadata.updateCodeHash(root);
+    files.set(`${root}/sketch/preprocess.json`, 'generated');
+    files.set(`${root}/sketch/build-config.json`, 'generated');
+    files.set(`${root}/package-lock.json`, 'npm metadata');
+    files.set(`${root}/.log/compile/latest.log`, 'build output');
+    files.set(`${root}/.workspace-history/snapshot.ino`, 'editor history');
+    expect(await metadata.updateCodeHash(root)).toBe(first);
+    files.set(`${root}/src/core.cpp`, 'void loop() { delay(1); }');
+    expect(await metadata.updateCodeHash(root)).not.toBe(first);
+  });
+
   it('ignores generated caches and cloud metadata and normalizes manifest key order', async () => {
     const hash = await metadata.updateCodeHash(root);
     for (const path of ['sketch/build-config.json', 'sketch/preprocess.json', 'sketch/library-cache.json',

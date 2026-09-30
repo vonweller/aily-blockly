@@ -502,6 +502,7 @@ export class NpmService {
     return this.prjService.runProjectDependencyTask(session, async () => {
       if (!(await this.ensureProjectDependenciesInstalled(projectPath, options, session))) return false;
       this.assertDependencySession(session);
+      if (this.prjService.isAilyCodeProject(projectPath) && !await this.prjService.getBoardModule()) return true;
       await this.installBoardDeps(session);
       this.assertDependencySession(session);
       await options?.onBoardDepsSettled?.();

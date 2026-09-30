@@ -1,3 +1,4 @@
+import { normalizeProjectOpenPath, findArduinoSketchEntry, prepareArduinoSketchProject } from './coder/arduino-sketch';
 import { Injectable, Injector } from '@angular/core';
 import { ProjectLifecycleError, ProjectLifecycleGate, type ProjectLifecycleLease } from './project-lifecycle-gate';
 import { ProjectDependencyLifecycle, type ProjectDependencySession } from './project-dependency-lifecycle';
@@ -1228,6 +1229,7 @@ export class ProjectService {
 
   // 打开项目
   async projectOpen(projectPath = this.currentProjectPath, options: ProjectOpenOptions = {}) {
+    projectPath = normalizeProjectOpenPath(projectPath);
     if (this.projectOpenTask) {
       if (this.isSameProjectPath(this.projectOpenTask.path, projectPath)) {
         return this.projectOpenTask.promise;
@@ -1450,6 +1452,12 @@ export class ProjectService {
         if (window['projectLock']) {
           const lock = await window['projectLock'].tryAcquire(projectPath);
           if (!lock.ok) { this.message.error('工程已被其他窗口占用'); return false; }
+        }
+        try {
+          if (findArduinoSketchEntry(projectPath)) prepareArduinoSketchProject(projectPath);
+        } catch (error) {
+          await window['projectLock']?.release(projectPath);
+          throw error;
         }
         this.registerCoderProject(projectPath);
         await this.restoreCoderWorkspaceTabs(projectPath);
@@ -1985,6 +1993,7 @@ export class ProjectService {
   getProjectMode(projectPath: string): ProjectMode | null {
     if (!projectPath || !this.electronService.isElectron) return null;
     try {
+      projectPath = normalizeProjectOpenPath(projectPath);
       const packagePath = window['path'].join(projectPath, 'package.json');
       const manifest = window['fs'].existsSync(packagePath)
         ? JSON.parse(window['fs'].readFileSync(packagePath, 'utf8')) : undefined;
@@ -1992,6 +2001,7 @@ export class ProjectService {
         manifest,
         hasAbi: window['fs'].existsSync(window['path'].join(projectPath, 'project.abi')),
         hasAci: window['fs'].existsSync(window['path'].join(projectPath, 'project.aci')),
+        hasArduinoSketch: !!findArduinoSketchEntry(projectPath),
       });
     } catch {
       return null;
@@ -2417,6 +2427,12 @@ export class ProjectService {
   async syncCurrentBoardConfig(session?: ProjectDependencySession): Promise<boolean> {
     try {
       if (session) this.assertProjectDependencySession(session);
+      if (this.isAilyCodeProject() && !await this.getBoardModule()) {
+        this.currentBoardConfig = null;
+        window['boardConfig'] = null;
+        this.boardConfigUpdatedSubject.next(null);
+        return false;
+      }
       const boardJson = await this.getBoardJson();
       if (session) this.assertProjectDependencySession(session);
       this.currentBoardConfig = boardJson;

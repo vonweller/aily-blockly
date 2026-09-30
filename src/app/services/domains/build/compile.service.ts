@@ -1,3 +1,4 @@
+import { coderSourceDirectory } from '../project/coder/arduino-sketch';
 import { Inject, Injectable } from '@angular/core';
 import { TranslateService } from '@ngx-translate/core';
 import { NzMessageService } from 'ng-zorro-antd/message';
@@ -161,7 +162,7 @@ export class CompileService {
       assertManifest();
       if (!boardModule) {
         finishReason = 'Missing board module';
-        const text = 'Cannot resolve board module from the active project.';
+        const text = isAilyCodeProject ? '请先在顶部选择开发板，再编译或上传 Arduino 工程。' : 'Cannot resolve board module from the active project.';
         this.handleFailNotice(root, this.t('FAILED_TITLE'), text, text);
         return { success: false, result: { state: 'error', text } };
       }
@@ -368,7 +369,7 @@ export class CompileService {
         ) {
           return { success: false, error: `Invalid Coder entry outside sketch workspace: ${entryRel}` };
         }
-        const sourcePath = this.electronService.pathJoin(projectPath, 'sketch', ...segments);
+        const sourcePath = this.electronService.pathJoin(projectPath, coderSourceDirectory(manifest), ...segments);
         if (!window['path'].isExists(sourcePath)) {
           return { success: false, error: `Entry file does not exist: ${entryRel}` };
         }
