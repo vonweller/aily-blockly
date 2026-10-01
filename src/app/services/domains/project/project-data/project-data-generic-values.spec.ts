@@ -6,6 +6,22 @@ import * as Blockly from 'blockly';
 import { ProjectDataStore } from './project-data-store';
 
 describe('generic Project Data payload boundaries', () => {
+  it('preserves canonical bytes, repeated references, sparse arrays and numeric key ordering', () => {
+    const shared = { z: '界😀', a: -0 };
+    const value = { z: [shared, shared], a: { 10: true, 2: false }, b: new Array(2) };
+    expect(canonicalJsonStringify(value)).toBe('{"a":{"2":false,"10":true},"b":[null,null],"z":[{"a":0,"z":"界😀"},{"a":0,"z":"界😀"}]}');
+  });
+  it('retains precise escaped paths for invalid values and cycles with lazy error locations', () => {
+    for (const value of [undefined, Symbol('x'), BigInt(1), () => {}]) {
+      expect(() => canonicalJsonStringify({ valid: 1, 'a/~': [value] })).toThrowError(/Unsupported JSON member at \$\/a~1~0\/0\./);
+    }
+    expect(() => canonicalJsonStringify({ x: [Infinity] })).toThrowError(/Non-finite JSON number at \$\/x\/0\./);
+    const cyclic: any = { ok: { x: 1 } }; cyclic['a/~'] = cyclic;
+    expect(() => canonicalJsonStringify(cyclic)).toThrowError(/Circular JSON object at \$\/a~1~0\./);
+    let deep: unknown = 0;
+    for (let i = 0; i < 513; i++) deep = [deep];
+    expect(() => canonicalJsonStringify(deep)).toThrowError(/Canonical JSON exceeds the depth limit/);
+  });
   it('canonicalizes null-prototype serializer dictionaries without accepting class instances', () => {
     const data = Object.assign(Object.create(null), JSON.parse('{"z":1,"__proto__":{"safe":true}}'));
     expect(canonicalJsonStringify(data)).toBe('{"__proto__":{"safe":true},"z":1}');

@@ -317,7 +317,12 @@ export class _ProjectService {
     // codeSubject leaves the IPC viewer/map on the previous generation until a
     // later UI debounce happens to regenerate. Disk contention must not hide it.
     this.blocklyService.publishPreparedCodeView(generated.code, generated.blockCodeMapText);
-    await writePreparedArduinoGeneratedArtifacts(path, generated.artifacts);
+    // The artifact snapshot is the captured Arduino publication capability.
+    // Publish its sketch and headers together, as startup/build already do;
+    // otherwise a successful ABS save leaves the on-disk sketch one edit behind.
+    // Other generators have null artifacts and must not write Python into .ino.
+    await writePreparedArduinoGeneratedArtifacts(path, generated.artifacts,
+      generated.artifacts === null ? undefined : generated.code);
     assertCurrent();
     if (this.electronService?.calculateHash) {
       const codeHash = await this.electronService.calculateHash(generated.code);

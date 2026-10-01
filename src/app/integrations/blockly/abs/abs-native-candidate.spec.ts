@@ -16,6 +16,7 @@ describe('independent native candidate Realm', () => {
   afterEach(() => expect(document.querySelectorAll('[data-blockly-native-candidate]').length).toBe(0));
 
   it('fails asset loading before constructing a candidate realm', async () => {
+    spyOnProperty(document, 'baseURI', 'get').and.returnValue('http://cold-native-runtime.invalid/');
     spyOn(window, 'fetch').and.rejectWith(new TypeError('Failed to fetch'));
     const create = spyOn(document, 'createElement').and.callThrough();
     try { await run(candidate()); fail('accepted missing asset'); }
@@ -24,6 +25,7 @@ describe('independent native candidate Realm', () => {
   });
 
   it('rejects a stale or altered candidate asset before evaluating any code', async () => {
+    spyOnProperty(document, 'baseURI', 'get').and.returnValue('http://altered-native-runtime.invalid/');
     spyOn(window, 'fetch').and.resolveTo(new Response('window.alteredCandidateRan = true;'));
     await expectAsync(run(candidate())).toBeRejectedWithError(/does not match the host build/);
     expect(window['alteredCandidateRan']).toBeUndefined();

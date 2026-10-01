@@ -1,4 +1,5 @@
 import * as Blockly from 'blockly';
+import { NgZone } from '@angular/core';
 import 'blockly/blocks';
 import '../../../editors/blockly-editor/components/blockly/plugins/block-plus-minus/src/index.js';
 import { AbsWorkspaceSyncService } from './abs-workspace-sync.service';
@@ -186,6 +187,39 @@ describe('v2 actual workspace generation coordinator', () => {
     editor.captureNativeReplay = jasmine.createSpy('captureNativeReplay').and.returnValue(replay);
     return replay;
   };
+
+  it('externalizes only the authoritative native draft when a declarative new block needs native preparation', async () => {
+    const replay = enableNative();
+    replay.steps.push({ kind: 'definitions', definitions: [catalog.capture(Blockly.Blocks).get('abs_declared_text')!] });
+    replay.steps.push({ kind: 'script', label: 'text-generator', source: 'Arduino.forBlock.abs_declared_text = () => ["text", 0];' });
+    const base = await baseline(), large = 'payload'.repeat(6000);
+    const source = base.source + `\nabs_declared_text(${JSON.stringify(large)}, true)\n`;
+    const committed = (await new AbsBaselineStore(port, scope).loadCommitted())!;
+    const { generationEvidence } = await import('./abs-generation-protocol');
+    const request = { version: 2 as const, requestId: crypto.randomUUID(), base: (await generationEvidence(committed, null)).binding,
+      candidate: { hash: await hashAbsText(source), bytes: new TextEncoder().encode(source).byteLength } };
+    const before = absJson(nativeState()), files = [...disk];
+    (projectDataRuntime.put as jasmine.Spy).calls.reset();
+    const validation = await service.validateGeneration(source, request);
+    expect((projectDataRuntime.put as jasmine.Spy).calls.allArgs().filter(([request]) => request.value === large).length).toBe(1);
+    expect(absJson(nativeState())).toBe(before); expect([...disk]).toEqual(files);
+    expect((await service.applyGeneration(source, base.generation, {}, validation)).publication.status).toBe('COMMITTED');
+    expect(editor.workspace.getBlocksByType('abs_declared_text', false)[0].getFieldValue('TEXT')).toBe(large);
+    expect(disk.get('project.abs')).not.toContain(large);
+  });
+
+  it('retains resource failure before workspace mutation after deferring the provisional resource pass', async () => {
+    const replay = enableNative();
+    replay.steps.push({ kind: 'definitions', definitions: [catalog.capture(Blockly.Blocks).get('abs_declared_text')!] });
+    replay.steps.push({ kind: 'script', label: 'text-generator', source: 'Arduino.forBlock.abs_declared_text = () => ["text", 0];' });
+    const base = await baseline(), before = absJson(nativeState()), files = [...disk];
+    (projectDataRuntime.put as jasmine.Spy).and.rejectWith(new Error('injected resource failure'));
+    await expectAsync(service.applyGeneration(base.source + `\nabs_declared_text(${JSON.stringify('x'.repeat(40000))}, true)\n`, base.generation))
+      .toBeRejectedWithError('injected resource failure');
+    expect(absJson(nativeState())).toBe(before); expect([...disk]).toEqual(files);
+    expect(editor.prepareProjectCode).not.toHaveBeenCalled();
+    expect(editor.restoreProjectWorkspaceSnapshot).not.toHaveBeenCalled(); expect(gate.blocked).toBeFalse();
+  });
 
   /** Use the real post-commit acknowledgement rather than the coordinator's
    * usual output spy, so the UI baseline is exercised across the transaction. */
@@ -492,8 +526,92 @@ describe('v2 actual workspace generation coordinator', () => {
     const request = { version: 2 as const, requestId: crypto.randomUUID(), base: (await generationEvidence(committed, disk.get('project.abi') ?? null)).binding,
       candidate: { hash: await hashAbsText(source), bytes: new TextEncoder().encode(source).byteLength } };
     const validation = await service.validateGeneration(source, request);
-    return { replay, base, source, validation };
+    return { replay, base, source, request, validation };
   };
+
+  it('prepares the isolated native candidate outside Angular without changing publication ownership', async () => {
+    renderWorkspace();
+    const zone = new NgZone({ enableLongStackTrace: false });
+    const outside = jasmine.createSpy('isolatedPreparation').and.callFake(action => zone.runOutsideAngular(() => {
+      expect(NgZone.isInAngularZone()).toBeFalse();
+      return action();
+    }));
+    // NgZone itself also calls runOutsideAngular to schedule its own bookkeeping;
+    // observe only the explicit preparation boundary, not Angular internals.
+    service = new AbsWorkspaceSyncService(editor, project, { runOutsideAngular: outside, run: zone.run.bind(zone) } as unknown as NgZone);
+    editor.publishAbsContext.and.callFake(() => expect(NgZone.isInAngularZone()).toBeTrue());
+    await zone.run(async () => {
+      const { base, source, validation } = await validateNativeEdit();
+      expect(outside).toHaveBeenCalledTimes(1);
+      expect(NgZone.isInAngularZone()).toBeTrue();
+      const progress = jasmine.createSpy('progress').and.callFake(() => expect(NgZone.isInAngularZone()).toBeTrue());
+      expect((await service.applyGeneration(source, base.generation, { chunk: true, onProgress: progress }, validation)).publication.status).toBe('COMMITTED');
+      expect(outside).toHaveBeenCalledTimes(3); // Reuse checks and loading have separate scopes; publication stays in the caller.
+      expect(progress).toHaveBeenCalled();
+      expect(NgZone.isInAngularZone()).toBeTrue();
+      expect(editor.publishAbsContext).toHaveBeenCalled();
+    });
+  });
+
+  it('keeps pure candidate digests outside Angular and resumes the caller for publication', async () => {
+    const base = await baseline(), zone = new NgZone({ enableLongStackTrace: false });
+    service = new AbsWorkspaceSyncService(editor, project, zone);
+    const prepare = (service as any).prepareGeneration;
+    let preparing = false, digests = 0;
+    spyOn<any>(service, 'prepareGeneration').and.callFake(async (...args: any[]) => {
+      expect(NgZone.isInAngularZone()).toBeFalse(); preparing = true;
+      try { return await prepare.apply(service, args); } finally { preparing = false; }
+    });
+    const digest = crypto.subtle.digest.bind(crypto.subtle);
+    spyOn(crypto.subtle, 'digest').and.callFake((algorithm, data) => {
+      if (preparing) { digests++; expect(NgZone.isInAngularZone()).toBeFalse(); }
+      return digest(algorithm, data);
+    });
+    editor.prepareProjectCode.and.callFake(async () => { expect(NgZone.isInAngularZone()).toBeTrue(); return null; });
+    editor.publishAbsContext.and.callFake(() => expect(NgZone.isInAngularZone()).toBeTrue());
+    await zone.run(async () => {
+      expect((await apply(base)).publication.status).toBe('COMMITTED');
+      expect(NgZone.isInAngularZone()).toBeTrue();
+    });
+    expect(digests).toBeGreaterThan(0);
+    expect(roots().getFieldValue('TEXT')).toBe('after');
+    expect(editor.prepareProjectCode).toHaveBeenCalled();
+    expect(editor.publishAbsContext).toHaveBeenCalled();
+  });
+
+  it('returns preparation errors to the caller zone without applying or publishing', async () => {
+    const base = await baseline(), zone = new NgZone({ enableLongStackTrace: false });
+    service = new AbsWorkspaceSyncService(editor, project, zone);
+    const before = absJson(nativeState()), files = [...disk];
+    editor.publishAbsContext.calls.reset();
+    await zone.run(async () => {
+      await expectAsync(service.applyGeneration(base.source + '\nunfinished(', base.generation)).toBeRejected();
+      expect(NgZone.isInAngularZone()).toBeTrue();
+    });
+    expect(absJson(nativeState())).toBe(before); expect([...disk]).toEqual(files);
+    expect(editor.prepareProjectCode).not.toHaveBeenCalled();
+    expect(editor.restoreProjectWorkspaceSnapshot).not.toHaveBeenCalled();
+    expect(editor.publishAbsContext).not.toHaveBeenCalled(); expect(gate.blocked).toBeFalse();
+  });
+
+  it('restores the whole workspace when an Angular progress consumer fails during isolated loading', async () => {
+    renderWorkspace();
+    const zone = new NgZone({ enableLongStackTrace: false });
+    service = new AbsWorkspaceSyncService(editor, project, zone);
+    await zone.run(async () => {
+      const base = await baseline(), before = absJson(nativeState()), files = [...disk];
+      editor.publishAbsContext.calls.reset();
+      await expectAsync(apply(base, { chunk: true, onProgress: () => {
+        expect(NgZone.isInAngularZone()).toBeTrue();
+        throw new Error('progress consumer failed');
+      } })).toBeRejectedWithError('progress consumer failed');
+      expect(absJson(nativeState())).toBe(before); expect([...disk]).toEqual(files);
+      expect(editor.restoreProjectWorkspaceSnapshot).toHaveBeenCalledTimes(1);
+      expect(editor.publishAbsContext).not.toHaveBeenCalled();
+      expect(editor.requestWorkspaceVisualRefresh).toHaveBeenCalledTimes(1);
+      expect(gate.blocked).toBeFalse();
+    });
+  });
 
   it('hands off one validated native candidate to apply without repeating isolated preparation', async () => {
     const prepare = spyOn<any>(service, 'prepareGeneration').and.callThrough();
@@ -504,6 +622,163 @@ describe('v2 actual workspace generation coordinator', () => {
     expect(editor.workspace.getBlocksByType('native_commit_shape', false)[0].getFieldValue('MODE')).toBe('B');
     expect(editor.prepareProjectCode).toHaveBeenCalledTimes(1);
     await expectAsync(service.applyGeneration(source, base.generation, {}, validation)).toBeRejected();
+  });
+
+  for (const chunk of [false, true])
+  it(`preserves actual instances for an exact zero-delta formatting edit (chunk=${chunk})`, async () => {
+    const base = await baseline(), blocks = editor.workspace.getAllBlocks(false);
+    const state = absJson(nativeState());
+    const code = editor.prepareProjectCode;
+    code.calls.reset();
+    const result = await service.applyGeneration(base.source + '\n# formatting only\n', base.generation, { chunk });
+    expect(result.publication.status).toBe('COMMITTED');
+    expect(absJson(nativeState())).toBe(state);
+    for (const block of blocks) expect(editor.workspace.getBlockById(block.id)).toBe(block);
+    expect(disk.get('project.abs')).toBe(base.source);
+    expect(code).toHaveBeenCalledTimes(1); // Same existing preparation boundary, not another generator call.
+    expect(project.publishPreparedSaveOutputs).toHaveBeenCalled();
+  });
+
+  it('keeps a zero-delta edit independent of block construction side effects', async () => {
+    let initialized = 0;
+    const init = Blockly.Blocks['abs_sync_root'].init;
+    Blockly.Blocks['abs_sync_root'].init = function() { initialized++; init.call(this); };
+    const base = await baseline(), block = roots();
+    const before = initialized;
+    await service.applyGeneration(base.source + '\n# no new semantics', base.generation);
+    expect(initialized).toBe(before); expect(roots()).toBe(block);
+  });
+
+  it('still reloads for a real field delta, even when block IDs/types/counts are identical', async () => {
+    const base = await baseline(), before = roots();
+    await apply(base);
+    expect(roots()).not.toBe(before); expect(roots().getFieldValue('TEXT')).toBe('after');
+    expect(editor.workspace.getAllBlocks(false).length).toBe(2);
+  });
+
+  it('does not compare zero delta against an old projection layout', async () => {
+    const base = await baseline(), block = roots();
+    block.moveBy(200, 150);
+    const position = block.getRelativeToSurfaceXY();
+    await service.applyGeneration(base.source + '\n# keep current layout', base.generation);
+    expect(roots()).toBe(block); expect(block.getRelativeToSurfaceXY()).toEqual(position);
+    expect(JSON.parse(disk.get('project.abi')!).pages[0].content.blocks.blocks[0].x).toBe(position.x);
+  });
+
+  it('still restores a zero-delta application when generation mutates serialized state', async () => {
+    const base = await baseline(), before = absJson(nativeState()), files = [...disk];
+    editor.prepareProjectCode.and.callFake(async () => { roots().setFieldValue('unexpected', 'TEXT'); return null; });
+    await expectAsync(service.applyGeneration(base.source + '\n# no edit', base.generation))
+      .toBeRejectedWith(jasmine.objectContaining({ code: 'ABS_READBACK_MISMATCH' }));
+    expect(absJson(nativeState())).toBe(before); expect([...disk]).toEqual(files);
+    expect(editor.restoreProjectWorkspaceSnapshot).toHaveBeenCalledTimes(1);
+    expect(gate.blocked).toBeFalse();
+  });
+
+  it('restores a zero-delta application when save preparation fails before commit', async () => {
+    const base = await baseline(), before = absJson(nativeState()), files = [...disk];
+    spyOn(project, 'prepareSave').and.rejectWith(new Error('save preparation failed'));
+    await expectAsync(service.applyGeneration(base.source + '\n# no edit', base.generation)).toBeRejected();
+    expect(absJson(nativeState())).toBe(before); expect([...disk]).toEqual(files);
+    expect(editor.restoreProjectWorkspaceSnapshot).toHaveBeenCalledTimes(1);
+    expect(gate.blocked).toBeFalse();
+  });
+
+  it('preserves commit-failure quarantine after skipping a zero-delta load', async () => {
+    const base = await baseline(), before = absJson(nativeState()), abi = disk.get('project.abi');
+    failWrite = 'prepared.json';
+    await expectAsync(service.applyGeneration(base.source + '\n# no edit', base.generation)).toBeRejected();
+    expect(absJson(nativeState())).toBe(before); expect(disk.get('project.abi')).toBe(abi);
+    expect(disk.get('project.abs')).toBe(base.source);
+    expect(gate.blocked).toBeTrue();
+  });
+
+  it('reuses only pure analysis between different candidates and commits the selected native result', async () => {
+    const { base, source, request, replay } = await validateNativeEdit();
+    const prepare = spyOn<any>(service, 'prepareGeneration').and.callThrough();
+    const files = [...disk], before = absJson(nativeState());
+    // Both sources must exercise different native field state, not a transport retry.
+    const candidate = source.replace('"detail"', '"second detail"');
+    expect(candidate).not.toBe(source);
+    const nextRequest = { ...request, requestId: crypto.randomUUID(),
+      candidate: { hash: await hashAbsText(candidate), bytes: new TextEncoder().encode(candidate).byteLength } };
+    replay.assertCurrent.calls.reset();
+    const validation = await service.validateGeneration(candidate, nextRequest);
+    expect(prepare).toHaveBeenCalledTimes(1); expect(replay.assertCurrent).toHaveBeenCalled();
+    expect([...disk]).toEqual(files); expect(absJson(nativeState())).toBe(before);
+    expect((await service.applyGeneration(candidate, base.generation, {}, validation)).publication.status).toBe('COMMITTED');
+    expect(prepare).toHaveBeenCalledTimes(1);
+    // This fixture does not declare math_number's positional contract; export
+    // canonically names NUM and omits the input's trailing newline.
+    expect(disk.get('project.abs')).toBe(candidate.trimEnd().replace('math_number(7)', 'math_number(NUM=7)'));
+    expect(editor.workspace.getBlocksByType('native_commit_shape', false)[0].getFieldValue('DETAIL'))
+      .toBe('second detail');
+  });
+
+  it('rejects direct host changes during a detached native realm before accepting its result', async () => {
+    let changed = false;
+    const observer = new MutationObserver(records => {
+      if (changed || !records.some(record => [...record.addedNodes].some(node =>
+        node instanceof HTMLIFrameElement && node.hasAttribute('data-blockly-native-candidate')))) return;
+      changed = true; observer.disconnect();
+      roots().setFieldValue('changed during isolated execution', 'TEXT');
+    });
+    observer.observe(document.body, { childList: true });
+    try {
+      await expectAsync(validateNativeEdit()).toBeRejectedWith(jasmine.objectContaining({ code: 'ABS_REVISION_STALE' }));
+      expect(changed).toBeTrue();
+      expect(roots().getFieldValue('TEXT')).toBe('changed during isolated execution');
+      expect(editor.workspace.getBlocksByType('native_commit_shape', false).length).toBe(0);
+      expect(disk.get('project.abs')).not.toContain('native_commit_shape');
+      expect(editor.restoreProjectWorkspaceSnapshot).not.toHaveBeenCalled();
+      expect(gate.blocked).toBeFalse();
+    } finally { observer.disconnect(); }
+  });
+
+  it('reuses a dry-run for apply validation with a fresh transport nonce, then consumes it once', async () => {
+    const prepare = spyOn<any>(service, 'prepareGeneration').and.callThrough();
+    const { base, source, request, validation } = await validateNativeEdit();
+    const nextRequest = { ...request, requestId: crypto.randomUUID() }, files = [...disk];
+    const next = await service.validateGeneration(source, nextRequest);
+    expect(next.requestId).toBe(nextRequest.requestId); expect(next.requestId).not.toBe(validation.requestId);
+    expect(prepare).toHaveBeenCalledTimes(1); expect([...disk]).toEqual(files);
+    expect((await service.applyGeneration(source, base.generation, {}, next)).publication.status).toBe('COMMITTED');
+    expect(prepare).toHaveBeenCalledTimes(1);
+    await expectAsync(service.applyGeneration(source, base.generation, {}, next)).toBeRejected();
+  });
+
+  for (const change of ['program', 'disk', 'replay'])
+  it('rechecks ' + change + ' before reusing a dry-run for another validation request', async () => {
+    const { replay, source, request } = await validateNativeEdit();
+    if (change === 'program') roots().setFieldValue('user edit', 'TEXT');
+    if (change === 'disk') disk.set('project.abs', 'external draft');
+    if (change === 'replay') replay.assertCurrent.and.throwError('stale replay');
+    const state = absJson(nativeState()), files = [...disk];
+    await expectAsync(service.validateGeneration(source, { ...request, requestId: crypto.randomUUID() })).toBeRejected();
+    expect(absJson(nativeState())).toBe(state); expect([...disk]).toEqual(files);
+  });
+
+  it('reprepares an expired dry-run without renewing its lifetime on repeated validation', async () => {
+    const prepare = spyOn<any>(service, 'prepareGeneration').and.callThrough();
+    const { source, request } = await validateNativeEdit();
+    const now = Date.now(), clock = spyOn(Date, 'now').and.returnValue(now + 20000);
+    await service.validateGeneration(source, { ...request, requestId: crypto.randomUUID() });
+    expect(prepare).toHaveBeenCalledTimes(1);
+    clock.and.returnValue(now + 31000);
+    await service.validateGeneration(source, { ...request, requestId: crypto.randomUUID() });
+    expect(prepare).toHaveBeenCalledTimes(2);
+  });
+
+  it('never shares request-bound explicit parameter identities between validation requests', async () => {
+    const prepare = spyOn<any>(service, 'prepareGeneration').and.callThrough();
+    const base = await wireBase();
+    const source = base.source + '\nprocedures_defnoreturn(NAME="work") @extra:{"params":[{"name":"counter"}]}';
+    const request = { ...base.request, version: 2 as const, createVariables: [{ name: 'counter' }],
+      candidate: { hash: await hashAbsText(source), bytes: new TextEncoder().encode(source).byteLength } };
+    const first = await service.validateGeneration(source, request);
+    const second = await service.validateGeneration(source, { ...request, requestId: crypto.randomUUID() });
+    expect(prepare).toHaveBeenCalledTimes(2);
+    expect(first.preparedVariables![0].id).not.toBe(second.preparedVariables![0].id);
   });
 
   it('checks whole-project snapshots at handoff boundaries rather than once per field', async () => {
@@ -1077,6 +1352,38 @@ describe('v2 actual workspace generation coordinator', () => {
     return { tools, exported, source, request };
   };
 
+  for (const failureAt of ['preparation', 'generation', 'rollback', 'commit'] as const)
+    it(`reports the proven application boundary after ${failureAt} failure, without guessing from an error code`, async () => {
+      const { tools, request, source } = await wireBase();
+      const validated: any = await tools.execute('abs_validate', request, source);
+      expect(validated.ok).toBeTrue();
+      const before = absJson(nativeState()), abi = disk.get('project.abi');
+      if (failureAt === 'preparation') {
+        spyOn<any>(service, 'prepareApplication').and.rejectWith(Object.assign(new Error('injected preparation timeout'), { code: 'ABS_NATIVE_TIMEOUT' }));
+      } else if (failureAt === 'commit') {
+        const lock = port.withLock;
+        spyOn(port, 'withLock').and.callFake(async operation => {
+          const result = await lock(operation);
+          if (disk.get('project.abi') !== abi) throw Error('lost commit acknowledgement');
+          return result;
+        });
+      } else {
+        // Even a generator reusing the native timeout code cannot claim that no apply occurred.
+        editor.prepareProjectCode.and.rejectWith(Object.assign(new Error('injected generator failure'), { code: 'ABS_NATIVE_TIMEOUT' }));
+        if (failureAt === 'rollback') editor.restoreProjectWorkspaceSnapshot.and.throwError('rollback failed');
+      }
+      const result: any = await tools.execute('abs_apply', { version: 2, requestId: request.requestId, validation: validated.receipt }, source);
+      expect(result.ok).toBeFalse();
+      const known = failureAt === 'preparation' || failureAt === 'generation';
+      expect(result.publication.status).toBe(known ? 'NOT_COMMITTED' : 'UNKNOWN');
+      expect(result.application.status).toBe(failureAt === 'preparation' ? 'NOT_STARTED' : failureAt === 'generation' ? 'ROLLED_BACK' : 'UNKNOWN');
+      if (known) {
+        expect(absJson(nativeState())).toBe(before); expect(disk.get('project.abi')).toBe(abi);
+        expect(gate.blocked).toBeFalse();
+      } else expect(gate.blocked).toBeTrue();
+      expect(editor.restoreProjectWorkspaceSnapshot.calls.count()).toBe(failureAt === 'generation' || failureAt === 'rollback' ? 1 : 0);
+    });
+
   it('rejects an over-budget whole ABS candidate without partially applying or rewriting its draft', async () => {
     enableNative();
     editor.workspace.getVariableMap().createVariable('retained model', '', 'retained-model');
@@ -1099,6 +1406,8 @@ describe('v2 actual workspace generation coordinator', () => {
   });
 
   it('keeps candidate, mirrors and live blocks intact when native asset loading fails', async () => {
+    // A cold renderer origin: another test may already have verified its build.
+    spyOnProperty(document, 'baseURI', 'get').and.returnValue('http://cold-native-coordinator.invalid/');
     enableNative();
     const { tools, exported } = await wireBase();
     const source = exported.abs + '\nnative_commit_shape(B, math_number(7), "detail")';

@@ -5,6 +5,24 @@ import type { NativeCandidateRequest } from '../../../editors/blockly-editor/ser
 import { assertNativeGenerationStable } from '../../../editors/blockly-editor/services/blockly-native-generation-evidence';
 
 describe('native deferred UI effect boundary', () => {
+  it('does not treat layout-different generation inputs as identical program output evidence', () => {
+    const workspace = new Blockly.Workspace(), generator = new Blockly.CodeGenerator('layout-proof');
+    Blockly.Blocks['layout_order_probe'] = { init() { this.appendDummyInput(); } };
+    generator.forBlock['layout_order_probe'] = block => block.id + ';\n';
+    try {
+      Blockly.serialization.workspaces.load({ blocks: { blocks: [
+        { type: 'layout_order_probe', id: 'existing', x: 30, y: 500 },
+        { type: 'layout_order_probe', id: 'new', x: 30, y: 130 },
+      ] } }, workspace);
+      const before = generator.workspaceToCode(workspace);
+      workspace.getBlockById('new')!.moveBy(0, 600);
+      const after = generator.workspaceToCode(workspace);
+      expect(before).toBe('new;\n\nexisting;\n'); expect(after).toBe('existing;\n\nnew;\n');
+      // No fields, models, connections or IDs changed. Comparing raw code across
+      // these layouts would reject an ordinary host placement of a new root.
+      expect(before).not.toBe(after);
+    } finally { workspace.dispose(); delete Blockly.Blocks['layout_order_probe']; }
+  });
   it('checks each callback even when a later callback would restore the mutation', () => {
     const tasks = new NativeUiTasks(); let state = 'before', calls = 0;
     tasks.set(() => { state = 'changed'; calls++; });
