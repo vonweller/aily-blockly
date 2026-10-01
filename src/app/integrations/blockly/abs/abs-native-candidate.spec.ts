@@ -223,6 +223,23 @@ describe('independent native candidate Realm', () => {
     await expectAsync(evaluateNativeCandidate(candidate(), { assertCurrent: () => { if (++calls >= 3) throw Error('stale'); } })).toBeRejectedWithError('stale');
   });
 
+  it('cancels an already mounted candidate and leaves the host workspace untouched', async () => {
+    const host = new Blockly.Workspace(); host.newBlock('math_number', 'host-number').setFieldValue(17, 'NUM');
+    const before = Blockly.serialization.workspaces.save(host), abort = new AbortController();
+    let mounted = false;
+    const observer = new MutationObserver(() => {
+      if (document.querySelector('[data-blockly-native-candidate]')) {
+        mounted = true; abort.abort(new Error('user cancelled candidate'));
+      }
+    });
+    observer.observe(document.body, { childList: true });
+    try {
+      await expectAsync(evaluateNativeCandidate(candidate(), { signal: abort.signal, assertCurrent: () => {} }))
+        .toBeRejectedWithError('user cancelled candidate');
+      expect(mounted).toBeTrue(); expect(Blockly.serialization.workspaces.save(host)).toEqual(before);
+    } finally { observer.disconnect(); host.dispose(); }
+  });
+
   it('retains native extraState or rejects ignored state without manual input synthesis', async () => {
     const request = candidate([{ kind: 'script', label: 'mutator', source: `
       const oldInit = Blockly.Blocks.native_candidate_test.init;

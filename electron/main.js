@@ -577,21 +577,10 @@ async function resolveProjectLockOrPrompt(projectDir, parentWindow) {
 }
 
 // File association and companion-app handoff both use the renderer's guarded open entry.
-function handleCommandLineArgs(argv) {
-  const openProjectArg = argv.find(arg => arg.startsWith('--open-project='));
-  if (openProjectArg) {
-    const projectPath = openProjectArg.slice('--open-project='.length);
-    if (projectPath && path.isAbsolute(projectPath) && fs.existsSync(projectPath) && fs.statSync(projectPath).isDirectory()) {
-      pendingFileToOpen = projectPath;
-      return true;
-    }
-  }
-  const abiFile = argv.find(arg => /\.(abi|aci)$/i.test(arg) && fs.existsSync(arg));
-  if (abiFile) {
-    const resolvedPath = path.resolve(abiFile);
-    pendingFileToOpen = path.dirname(resolvedPath);
-    console.log('Found .abi file to open:', resolvedPath);
-    console.log('Project directory:', pendingFileToOpen);
+function handleCommandLineArgs(argv, cwd = process.cwd()) {
+  const projectPath = require('./project-open-path').projectDirectoryFromArgs(argv, cwd);
+  if (projectPath) {
+    pendingFileToOpen = projectPath;
     return true;
   }
 
@@ -614,7 +603,7 @@ function handleCommandLineArgs(argv) {
     }
   }
 
-  return !!(abiFile || routeArg || queryArg);
+  return !!(routeArg || queryArg);
 }
 
 // 在应用启动时处理命令行参数
@@ -781,8 +770,11 @@ const {
   listChildToolHoldersForCatalogId,
   getRunningSubappConfig,
   nativeSubappRegistry,
+  beginWindowShutdown,
 } = require("./window");
-const { registerNpmHandlers, killAllNpmProcesses, getActiveNpmProcesses } = require("./npm");
+const { createApplicationQuitCoordinator } = require('./application-quit');
+const { registerNpmHandlers, killAllNpmProcesses, killOwnerProjectNpmProcesses, getActiveNpmProcesses, beginNpmShutdown } = require("./npm");
+const { cancelProjectTaskScope } = require('./project-task-scope');
 const { registerUpdaterHandlers } = require("./updater");
 const { registerCmdHandlers, killAllCmdProcesses, killOwnerProjectCmdProcesses, getActiveCmdProcesses, beginCommandShutdown } = require("./cmd");
 const { registerAilyServicesStreamHandlers, cancelAllAilyServicesStreams, getActiveAilyServicesStreams } = require("./aily-services-stream");
@@ -794,7 +786,7 @@ const {
   wakeWebviewBridge,
 } = require("./webview-bridge");
 const { registerMCPHandlers } = require("./mcp");
-const { registerAppDataResourceLockHandlers, releaseAllAppDataResourceLocks, withAppDataResourceLock, beginAppDataResourceShutdown } = require("./appdata-resource-lock");
+const { withAuthCredentialsLock, beginAuthCredentialsShutdown, releaseAllAuthCredentialsLocks } = require('./auth-credentials-lock');
 const { registerAppDataResourceCleanupHandlers } = require('./appdata-resource-cleanup');
 const { createBuildDeliveryAuthority } = require('./build-delivery-authority');
 let buildDeliveryAuthority;
@@ -810,12 +802,13 @@ const {
   buildSubappIndexUrl,
   registerSubappManagerHandlers,
 } = require("./subapp-manager");
-const { shouldBeginRendererGeneration } = require("./renderer-lifecycle");
+const { shouldBeginRendererGeneration, createRendererCommandGate } = require("./renderer-lifecycle");
+const rendererCommandGate = createRendererCommandGate();
+// DOM 出现后，渲染进程还要等 ngOnInit 发来 renderer-ready。这段只覆盖启动握手，不占用整段操作超时。
+const RENDERER_STARTUP_WAIT_MS = 20000;
 
 let mainWindow;
 let userConf;
-let isProcessCleanupInProgress = false;
-let hasProcessCleanupCompleted = false;
 let processHealthDiagnosticsRegistered = false;
 let projectContextState = {
   workspace: null,
@@ -914,14 +907,38 @@ function getOpenedProjectPathFromWindow() {
   }
 }
 
+function rendererCommandAvailability() {
+  if (!mainWindow || !mainWindow.webContents || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) {
+    return 'closed';
+  }
+  return isCurrentRendererGenerationReady() ? 'ready' : '';
+}
+
 function requestMainWindow(channel, responseChannel, payload, timeoutMs = 12000, signal) {
-  return new Promise((resolve) => {
-    if (!mainWindow || !mainWindow.webContents || mainWindow.isDestroyed()) {
+  const deadline = Date.now() + timeoutMs;
+  const startupDeadline = Date.now() + Math.min(Math.max(timeoutMs, 0), RENDERER_STARTUP_WAIT_MS);
+
+  const dispatch = (resolve) => {
+    if (signal?.aborted) {
+      resolve({
+        ok: false,
+        errorCode: 'RENDERER_REQUEST_CANCELLED',
+        message: 'Renderer request was cancelled.',
+      });
+      return;
+    }
+    if (rendererCommandAvailability() === 'closed') {
       resolve({ ok: false, message: '主窗口不可用' });
       return;
     }
     if (!isCurrentRendererGenerationReady()) {
       resolve({ ok: false, message: '渲染进程尚未就绪' });
+      return;
+    }
+
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      resolve({ ok: false, message: '等待渲染进程响应超时' });
       return;
     }
 
@@ -931,7 +948,7 @@ function requestMainWindow(channel, responseChannel, payload, timeoutMs = 12000,
       signal?.removeEventListener('abort', onAbort);
       ipcMain.removeListener(responseChannel, listener);
       resolve({ ok: false, message: '等待渲染进程响应超时' });
-    }, timeoutMs);
+    }, remaining);
 
     const listener = (event, message) => {
       if (!isCurrentMainRenderer(event.sender)
@@ -970,6 +987,58 @@ function requestMainWindow(channel, responseChannel, payload, timeoutMs = 12000,
       requestId,
       rendererGeneration: requestGeneration,
     });
+  };
+
+  return new Promise((resolve) => {
+    const cancelled = () => resolve({
+      ok: false,
+      errorCode: 'RENDERER_REQUEST_CANCELLED',
+      message: 'Renderer request was cancelled.',
+    });
+
+    const waitUntilReady = () => {
+      if (signal?.aborted) {
+        cancelled();
+        return;
+      }
+      const availability = rendererCommandAvailability();
+      if (availability === 'closed') {
+        resolve({ ok: false, message: '主窗口不可用' });
+        return;
+      }
+      if (availability === 'ready') {
+        dispatch(resolve);
+        return;
+      }
+      const remaining = startupDeadline - Date.now();
+      if (remaining <= 0) {
+        resolve({ ok: false, message: '渲染进程尚未就绪' });
+        return;
+      }
+      console.info('[RendererLifecycle] command waiting for renderer', {
+        generation: rendererGeneration,
+        waitMs: remaining,
+      });
+      rendererCommandGate.wait(remaining, signal, rendererCommandAvailability).then((status) => {
+        if (status === 'aborted') {
+          cancelled();
+          return;
+        }
+        if (status === 'closed') {
+          resolve({ ok: false, message: '主窗口不可用' });
+          return;
+        }
+        if (status === 'ready') {
+          if (isCurrentRendererGenerationReady()) dispatch(resolve);
+          else if (Date.now() < startupDeadline) waitUntilReady();
+          else resolve({ ok: false, message: '渲染进程尚未就绪' });
+          return;
+        }
+        resolve({ ok: false, message: '渲染进程尚未就绪' });
+      });
+    };
+
+    waitUntilReady();
   });
 }
 
@@ -1418,6 +1487,7 @@ ipcMain.on('renderer-ready', (event, payload = {}) => {
 
   console.log('渲染进程已就绪', { generation: requestedGeneration });
   readyRendererGeneration = requestedGeneration;
+  rendererCommandGate.notify();
   event.sender.send('renderer-ready-ack', { generation: requestedGeneration });
   // Renderer may have reloaded while the machine was asleep or the screen was locked.
   // Replay the current pause state after the ack so the new renderer cannot start
@@ -2037,11 +2107,10 @@ function loadEnv() {
     console.error("initLogger error: ", error);
   }
 
-  registerAppDataResourceLockHandlers();
   registerAppDataResourceCleanupHandlers();
   const authStore = require('./auth-store').createAuthStore(
     process.env.AILY_APPDATA_PATH,
-    (operation) => withAppDataResourceLock('auth-credentials', operation),
+    withAuthCredentialsLock,
   );
   // loadEnv runs again when macOS recreates the main window.
   for (const operation of ['read', 'write', 'clear']) {
@@ -2605,6 +2674,7 @@ function createWindow() {
   mainWindow.on("closed", () => {
     invalidateRendererGeneration('window-closed');
     mainWindow = null;
+    rendererCommandGate.notify();
     app.quit();
   });
 
@@ -2614,7 +2684,7 @@ function createWindow() {
   registerWindowHandlers(mainWindow, {
     resolveRendererUrl: resolveAppRendererUrl,
     getRendererGeneration: () => rendererGeneration,
-    canCloseMainWindow: () => hasProcessCleanupCompleted,
+    canCloseMainWindow: () => applicationQuit.canClose(),
   });
   registerNpmHandlers(mainWindow);
   if (!buildDeliveryAuthority) {
@@ -2809,7 +2879,7 @@ if (shouldUseMultiInstance()) {
       return;
     } else {
       // 处理其他类型的启动参数（如.abi文件、路由参数等）
-      handleCommandLineArgs(commandLine);
+      handleCommandLineArgs(commandLine, workingDirectory);
 
       void (async () => {
         // 如果有待处理的文件或路由，更新主窗口
@@ -2844,7 +2914,7 @@ if (shouldUseMultiInstance()) {
         handleProtocol(protocolUrl);
       } else {
         // 处理其他类型的启动参数（如.abi文件、路由参数等）
-        handleCommandLineArgs(commandLine);
+        handleCommandLineArgs(commandLine, workingDirectory);
 
         void (async () => {
           // 如果有待处理的文件或路由，更新主窗口
@@ -3001,15 +3071,6 @@ app.on("ready", async () => {
   startCliBridgeIfPossible();
 });
 
-// 退出时关闭 CLI bridge 并清理发现文件
-app.on('before-quit', () => {
-  try {
-    if (cliBridge) cliBridge.close();
-  } catch (_) {
-    /* ignore */
-  }
-});
-
 // === Web Serial API 支持 ===
 // 渲染端选择串口路径后，通过 IPC 设置首选端口；随后调用 navigator.serial.requestPort()
 // 时由主进程 select-serial-port 事件按路径匹配并自动选中，与 ESPConnect 在浏览器内
@@ -3091,17 +3152,9 @@ app.on("window-all-closed", () => {
   }
 });
 
-async function waitForAppDataResourceCleanup(ownerWebContentsId) {
-  const deadline = Date.now() + 5000;
-  while (true) {
-    const result = releaseAllAppDataResourceLocks(ownerWebContentsId);
-    const remaining = deadline - Date.now();
-    if (result.ok || remaining <= 0) return result;
-    await new Promise(resolve => setTimeout(resolve, Math.min(500, remaining)));
-  }
-}
-
 async function cleanupRegisteredChildProcesses() {
+  beginWindowShutdown();
+  try { cliBridge?.close(); } catch (error) { console.warn('CLI bridge shutdown:', error); }
   console.info('[PROC_TRACE][APP_CLEANUP_START]', {
     cmd: getActiveCmdProcesses(),
     npm: getActiveNpmProcesses(),
@@ -3109,31 +3162,13 @@ async function cleanupRegisteredChildProcesses() {
     ailyServicesStreams: getActiveAilyServicesStreams()
   });
 
-  // Close admission before taking a process snapshot. AppData cleanup has a
-  // bounded wait; unfinished borrowers retain their locks after the UI closes.
   beginCommandShutdown();
-  beginAppDataResourceShutdown();
-  let resourceCleanupTimer;
-  try {
-    await Promise.race([
-      (async () => {
-        const results = await Promise.allSettled([killAllCmdProcesses(), killAllNpmProcesses()]);
-        if (results.some(result => result.status === 'rejected' || result.value === false)) {
-          throw new Error('部分任务未确认停止，保留其 AppData 锁。');
-        }
-        if (!(await waitForAppDataResourceCleanup()).ok) throw new Error('AppData 锁清理尚未完成。');
-      })(),
-      new Promise((_, reject) => {
-        resourceCleanupTimer = setTimeout(() => reject(new Error('AppData 清理等待已达 5 秒。')), 5000);
-      }),
-    ]);
-  } catch (error) {
-    console.warn('[PROC_TRACE][APP_RESOURCE_CLEANUP_DEFERRED]', error?.message || String(error));
-  } finally {
-    clearTimeout(resourceCleanupTimer);
-  }
+  beginNpmShutdown();
+  beginAuthCredentialsShutdown();
 
   await Promise.allSettled([
+    killAllCmdProcesses(),
+    killAllNpmProcesses(),
     killAllTerminals(),
     cancelAllAilyServicesStreams(),
     connector.shutdown(),
@@ -3141,28 +3176,24 @@ async function cleanupRegisteredChildProcesses() {
     simulatorSubappHost.defaultHost.stop(),
     packagedRendererServer.close(),
   ]);
+  releaseAllAuthCredentialsLocks();
 }
 
-app.on("before-quit", (event) => {
-  if (hasProcessCleanupCompleted) {
-    return;
-  }
-
-  event.preventDefault();
-  if (isProcessCleanupInProgress) {
-    return;
-  }
-
-  isProcessCleanupInProgress = true;
-  cleanupRegisteredChildProcesses()
-    .catch((error) => {
-      console.warn('[PROC_TRACE][APP_CLEANUP_ERROR]', error?.message || String(error));
-    })
-    .finally(() => {
-      hasProcessCleanupCompleted = true;
-      isProcessCleanupInProgress = false;
-      app.quit();
+const applicationQuit = createApplicationQuitCoordinator({
+  app, ipcMain,
+  getWindow: () => mainWindow,
+  canConfirm: () => isCurrentRendererGenerationReady(),
+  confirmUnavailable: async win => {
+    const result = await dialog.showMessageBox(win, {
+      type: 'warning', title: '无法确认保存状态',
+      message: '编辑器尚未就绪或已停止响应，无法检查未保存的更改。',
+      detail: '仍然退出可能丢失未保存的编辑。取消后可以等待界面恢复再重试。',
+      buttons: ['取消', '仍然退出'], defaultId: 0, cancelId: 0, noLink: true,
     });
+    return result.response === 1;
+  },
+  cleanup: cleanupRegisteredChildProcesses,
+  onError: error => console.warn('[PROC_TRACE][APP_CLEANUP_ERROR]', error?.message || String(error)),
 });
 
 app.on("will-quit", () => {
@@ -3173,7 +3204,7 @@ app.on("will-quit", () => {
     ailyServicesStreams: getActiveAilyServicesStreams()
   });
 
-  releaseAllAppDataResourceLocks();
+  releaseAllAuthCredentialsLocks();
 
   if (heldProjectLockNormalized) {
     try {
@@ -3227,8 +3258,8 @@ app.on('web-contents-created', (event, contents) => {
 // macOS下处理文件打开
 app.on('open-file', (event, filePath) => {
   event.preventDefault();
-  if (/\.(abi|aci)$/i.test(filePath) && fs.existsSync(filePath)) {
-    const projectDir = path.dirname(path.resolve(filePath));
+  const projectDir = require('./project-open-path').projectDirectoryForFile(filePath);
+  if (projectDir) {
     console.log('macOS open-file:', filePath);
     console.log('Project directory:', projectDir);
 
@@ -3282,14 +3313,14 @@ ipcMain.handle('project-commands-stop', async (event, data) => {
       || typeof data?.projectPath !== 'string' || !path.isAbsolute(data.projectPath)) {
     return { ok: false, error: 'Invalid project close owner.' };
   }
-  return { ok: await killOwnerProjectCmdProcesses(event.sender, data.projectPath) };
-});
-
-ipcMain.handle('project-appdata-drain', async (event) => {
-  if (!isCurrentMainRenderer(event.sender) || event.senderFrame !== mainWindow.webContents.mainFrame) {
-    return { ok: false, error: 'Invalid project close owner.' };
-  }
-  return waitForAppDataResourceCleanup(event.sender.id);
+  let scope;
+  try { scope = cancelProjectTaskScope(event.sender, data); }
+  catch { return { ok: false, error: 'Invalid project task scope.' }; }
+  const stopped = await Promise.all([
+    killOwnerProjectCmdProcesses(event.sender, scope.projectPath, scope.projectSessionId),
+    killOwnerProjectNpmProcesses(event.sender, scope.projectPath, scope.projectSessionId),
+  ]);
+  return { ok: stopped.every(Boolean) };
 });
 
 ipcMain.handle("project-lock-try", (event, data) => {

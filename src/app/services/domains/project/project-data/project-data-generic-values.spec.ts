@@ -1,4 +1,4 @@
-import { externalizeGenericProjectDataValues, materializeGenericProjectDataValues, materializePreparedGenericProjectDataValues } from './project-data-generic-values';
+import { externalizeGenericProjectDataValues, materializeGenericProjectDataValues, materializePreparedProjectDataPayload } from './project-data-generic-values';
 import { assertNoOversizedInlineValues, findOversizedInlineValues } from './project-data-policy';
 import { AilyDataRef, createAilyProjectDataValue } from './project-data.types';
 import { canonicalJsonStringify } from './project-data-codec.registry';
@@ -12,6 +12,15 @@ describe('generic Project Data payload boundaries', () => {
     for (const value of [new Date(), new Map(), new (class Payload { value = 1; })()]) {
       expect(() => canonicalJsonStringify(value)).toThrow();
     }
+  });
+  it('canonicalizes long Blockly next-block chains within the bounded depth', () => {
+    let block: Record<string, unknown> = { type: 'text' };
+    for (let index = 0; index < 190; index++) {
+      block = { type: 'text', next: { block } };
+    }
+    const document = { pages: [{ content: { blocks: { blocks: [block] } } }] };
+    const canonical = canonicalJsonStringify(document);
+    expect(JSON.parse(canonical).pages[0].content.blocks.blocks[0].type).toBe('text');
   });
   let values: Map<string, unknown>;
   let put: jasmine.Spy;
@@ -37,7 +46,6 @@ describe('generic Project Data payload boundaries', () => {
     expect(prepared.externalized.length).toBe(5);
     expect(() => assertNoOversizedInlineValues(prepared.document)).not.toThrow();
     expect(await materializeGenericProjectDataValues(prepared.document, reader)).toEqual(document);
-    expect(materializePreparedGenericProjectDataValues(prepared.document, read)).toEqual(document);
     expect(document.blocks.blocks[0]['data']).toBe(large);
     expect(prepared.document.blocks.blocks[0].id).toBe('a');
   });
@@ -71,7 +79,6 @@ describe('generic Project Data payload boundaries', () => {
     expect(prepared.externalized[0].blockId).toBeUndefined();
     expect(prepared.externalized[0].codec).toBe('canonical-json-v1');
     expect(await materializeGenericProjectDataValues(prepared.document, reader)).toEqual(document);
-    expect(materializePreparedGenericProjectDataValues(prepared.document, read)).toEqual(document);
   });
 
   it('handles inactive pages/shared block payloads while leaving page and document metadata alone', async () => {
@@ -143,9 +150,8 @@ describe('generic Project Data payload boundaries', () => {
 
   it('does not leak mutable prepared objects into field loadState', async () => {
     const ref = await put({ codec: 'canonical-json-v1', value: { frames: [1, 2] } });
-    const document = workspace({ extraState: createAilyProjectDataValue(ref) });
-    const restored = materializePreparedGenericProjectDataValues(document, read) as any;
-    restored.blocks.blocks[0].extraState.frames[0] = 999;
+    const restored = materializePreparedProjectDataPayload(createAilyProjectDataValue(ref), read) as any;
+    restored.frames[0] = 999;
     expect(read(ref)).toEqual({ frames: [1, 2] });
   });
 
@@ -168,7 +174,7 @@ describe('generic Project Data payload boundaries', () => {
     const text = await put({ codec: 'utf8-v1', value: 42 });
     await expectAsync(materializeGenericProjectDataValues(workspace({ data: createAilyProjectDataValue(text) }), reader)).toBeRejected();
     const nested = await put({ codec: 'canonical-json-v1', value: { ref: text } });
-    expect(() => materializePreparedGenericProjectDataValues(workspace({ extraState: createAilyProjectDataValue(nested) }), read)).toThrow();
+    expect(() => materializePreparedProjectDataPayload(createAilyProjectDataValue(nested), read)).toThrow();
     values.clear();
     await expectAsync(materializeGenericProjectDataValues(workspace({ data: createAilyProjectDataValue(text) }), reader)).toBeRejected();
   });

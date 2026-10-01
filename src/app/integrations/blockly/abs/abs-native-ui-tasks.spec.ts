@@ -5,6 +5,23 @@ import type { NativeCandidateRequest } from '../../../editors/blockly-editor/ser
 import { assertNativeGenerationStable } from '../../../editors/blockly-editor/services/blockly-native-generation-evidence';
 
 describe('native deferred UI effect boundary', () => {
+  it('checks each callback even when a later callback would restore the mutation', () => {
+    const tasks = new NativeUiTasks(); let state = 'before', calls = 0;
+    tasks.set(() => { state = 'changed'; calls++; });
+    tasks.set(() => { state = 'before'; calls++; });
+    expect(() => tasks.drain(() => state)).toThrowError(/changed persisted state/);
+    expect(calls).toBe(1);
+  });
+  it('bounds callback work after cancellations and shares adjacent semantic snapshots', () => {
+    const tasks = new NativeUiTasks(); let snapshots = 0;
+    for (let i = 0; i < 512; i++) tasks.set(() => {});
+    tasks.drain(() => { snapshots++; return 'same'; });
+    expect(snapshots).toBe(513);
+    expect(() => tasks.set(() => {})).toThrowError(/finite callback/);
+    const cancelled = new NativeUiTasks();
+    for (let i = 0; i < 512; i++) cancelled.clear(cancelled.set(() => {}));
+    expect(() => cancelled.set(() => {})).toThrowError(/finite callback/);
+  });
   for (const storage of ['generator', 'closure', 'global'])
   it('isolates first-generation state across UI verification passes: ' + storage, async () => {
     const counter = storage === 'generator' ? 'Arduino.callbackCounter' : storage === 'global' ? 'globalThis.callbackCounter' : 'callbackCounter';
