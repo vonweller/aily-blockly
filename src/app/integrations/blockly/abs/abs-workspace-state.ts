@@ -13,6 +13,7 @@ import type { AbsNativeInstance } from './abs-native-binding';
 import { withNativeStateLoading } from '../../../editors/blockly-editor/services/blockly-native-state-loading';
 import { sameAbsProgram } from './abs-program-state';
 import { assertAbsReadback } from './abs-readback';
+import { beginNativeFieldDependencies } from '../../../editors/blockly-editor/services/blockly-native-field-dependencies';
 
 export interface AbsWorkspaceLoadOptions { chunk?: boolean; onProgress?: (blocks: number, batches: number) => void }
 
@@ -26,13 +27,15 @@ export async function loadAbsWorkspaceState(
   const detached = JSON.parse(absJson(state));
   orderAbsNativeFields(detached, contracts);
   runtime.Events.disable();
+  const fields = beginNativeFieldDependencies(runtime, workspace);
   try {
     if (options.chunk) await loadAbsWorkspaceInChunks(detached, workspace, options.onProgress, assertCurrent);
     else {
       withNativeStateLoading(runtime, workspace, detached, () => runtime.serialization.workspaces.load(detached, workspace));
       workspace.render?.();
     }
-  } finally { runtime.Events.enable(); }
+    fields.finish();
+  } finally { fields.dispose(); runtime.Events.enable(); }
   assertCurrent();
 }
 

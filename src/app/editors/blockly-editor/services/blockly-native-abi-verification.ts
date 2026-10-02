@@ -13,6 +13,7 @@ import { captureGeneratorProjectEffects } from './generator-project-effects';
 import { retainAbsRootLayout } from '../../../integrations/blockly/abs/abs-program-state';
 import type { NativeCandidateProgress } from './blockly-native-progress';
 import { layoutAbsNewRoots } from '../../../integrations/blockly/abs/abs-new-root-layout';
+import { withNativeFieldDependencies } from './blockly-native-field-dependencies';
 
 /** Complete merged state, including dormant shadows and metadata, not the scratch tree. */
 export async function verifyNativeAbi(native: typeof Blockly, workspace: Blockly.Workspace,
@@ -26,7 +27,8 @@ export async function verifyNativeAbi(native: typeof Blockly, workspace: Blockly
   const detached = structuredClone(expected);
   progress('load');
   orderAbsNativeFields(detached, request.contracts);
-  withNativeStateLoading(native, workspace, detached, () => native.serialization.workspaces.load(detached, workspace));
+  withNativeFieldDependencies(native, workspace, () => withNativeStateLoading(native, workspace, detached,
+    () => native.serialization.workspaces.load(detached, workspace)), uiTasks);
   assertClean();
   const capture = () => uiTasks.withoutScheduling(() => {
     const state = normalizeAbsSerializedWorkspace(native.serialization.workspaces.save(workspace));
