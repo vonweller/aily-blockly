@@ -1,5 +1,15 @@
 import { absJson } from './abs-json';
-import type { AbsAbiWorkspace } from './abs-state';
+import type { AbsAbiWorkspace, AbsProjectionContracts } from './abs-state';
+
+/** Use the persistence ownership partition before native verification as well as load. */
+export function orderAbsSharedRoots(target: AbsAbiWorkspace, document: unknown, contracts: AbsProjectionContracts): void {
+  const shared = (document as { sharedModel?: { procedureBlocks?: Array<{ id: string }> } } | null)?.sharedModel?.procedureBlocks ?? [];
+  const ids = new Set(shared.map(block => block.id));
+  for (const [id, procedure] of Object.entries(contracts.procedures ?? {})) {
+    if (procedure.role === 'definition') ids.add(id);
+  }
+  target.blocks.blocks.sort((a, b) => Number(!ids.has(a.id)) - Number(!ids.has(b.id)));
+}
 
 function withoutNumericLayout(value: Record<string, unknown>, keys: readonly string[]) {
   const result = { ...value };

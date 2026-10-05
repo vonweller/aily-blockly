@@ -254,8 +254,35 @@ describe('prepared Blockly save boundary', () => {
         expect(editor.publishPreparedCodeView).toHaveBeenCalledOnceWith(generated.code, generated.blockCodeMapText);
       });
       await service.publishPreparedSaveOutputs('D:/project', prepared, generated, () => undefined);
-      expect(publishArtifacts).toHaveBeenCalledOnceWith('D:/project', { artifacts: [] });
+      expect(publishArtifacts).toHaveBeenCalledOnceWith('D:/project', { artifacts: [], sketchCode: generated.code });
       expect(editor.prepareProjectCode).not.toHaveBeenCalled();
+    });
+    it('publishes the same prepared sketch and headers together, including an empty sketch', async () => {
+      const artifacts = [{ fileName: 'variables_test-12345678.h', content: 'const int data[] = {1};', sourceTag: 'test' }];
+      publishArtifacts.and.callFake((path, request) => {
+        disk.set(`${path}/.temp/sketch/sketch.ino`, request.sketchCode);
+        for (const artifact of request.artifacts) disk.set(`${path}/src/${artifact.fileName}`, artifact.content);
+      });
+      disk.set('D:/project/.temp/sketch/sketch.ino', 'old code');
+      await service.publishPreparedSaveOutputs('D:/project', prepared, { ...generated, artifacts }, () => undefined);
+      expect(disk.get('D:/project/.temp/sketch/sketch.ino')).toBe(generated.code);
+      expect(disk.get('D:/project/src/variables_test-12345678.h')).toBe(artifacts[0].content);
+      await service.publishPreparedSaveOutputs('D:/project', prepared, { ...generated, code: '' }, () => undefined);
+      expect(disk.get('D:/project/.temp/sketch/sketch.ino')).toBe('');
+      expect(editor.prepareProjectCode).not.toHaveBeenCalled();
+    });
+    it('does not publish another generator language to an Arduino sketch', async () => {
+      disk.set('D:/project/.temp/sketch/sketch.ino', 'old Arduino code');
+      await service.publishPreparedSaveOutputs('D:/project', prepared, { ...generated, code: 'print(1)', artifacts: null }, () => undefined);
+      expect(publishArtifacts).not.toHaveBeenCalled();
+      expect(editor.publishPreparedCodeView).toHaveBeenCalledOnceWith('print(1)', generated.blockCodeMapText);
+      expect(disk.get('D:/project/.temp/sketch/sketch.ino')).toBe('old Arduino code');
+    });
+    it('does not overwrite the last sketch with an unsuccessful generation', async () => {
+      disk.set('D:/project/.temp/sketch/sketch.ino', 'last complete code');
+      await service.publishPreparedSaveOutputs('D:/project', prepared, { ...generated, code: null, artifacts: null }, () => undefined);
+      expect(publishArtifacts).not.toHaveBeenCalled(); expect(editor.publishPreparedCodeView).not.toHaveBeenCalled();
+      expect(disk.get('D:/project/.temp/sketch/sketch.ino')).toBe('last complete code');
     });
     it('keeps the committed view current even if artifact publication is busy', async () => {
       publishArtifacts.and.throwError('BUILD_WORKSPACE_BUSY: preprocessing');

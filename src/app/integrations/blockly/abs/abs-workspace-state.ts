@@ -12,6 +12,8 @@ import { orderAbsNativeFields } from './abs-native-field-order';
 import type { AbsNativeInstance } from './abs-native-binding';
 import { withNativeStateLoading } from '../../../editors/blockly-editor/services/blockly-native-state-loading';
 import { sameAbsProgram } from './abs-program-state';
+import { assertAbsReadback } from './abs-readback';
+import { beginNativeFieldDependencies } from '../../../editors/blockly-editor/services/blockly-native-field-dependencies';
 
 export interface AbsWorkspaceLoadOptions { chunk?: boolean; onProgress?: (blocks: number, batches: number) => void }
 
@@ -25,13 +27,15 @@ export async function loadAbsWorkspaceState(
   const detached = JSON.parse(absJson(state));
   orderAbsNativeFields(detached, contracts);
   runtime.Events.disable();
+  const fields = beginNativeFieldDependencies(runtime, workspace);
   try {
     if (options.chunk) await loadAbsWorkspaceInChunks(detached, workspace, options.onProgress, assertCurrent);
     else {
       withNativeStateLoading(runtime, workspace, detached, () => runtime.serialization.workspaces.load(detached, workspace));
       workspace.render?.();
     }
-  } finally { runtime.Events.enable(); }
+    fields.finish();
+  } finally { fields.dispose(); runtime.Events.enable(); }
   assertCurrent();
 }
 
@@ -39,6 +43,18 @@ export function captureAbsWorkspaceState(workspace: Blockly.Workspace, assertCur
   definitions?: DeclarativeBlockSnapshot, assertScope: () => void = assertCurrent) {
   const capture = () => captureAbsWorkspaceStateNow(workspace, assertCurrent, definitions, assertScope);
   return definitions?.withSynchronousRead ? definitions.withSynchronousRead(capture) : capture();
+}
+
+/** Complete detached-state comparison using the captured field lookup only.
+ * No native load, serializer, field getter or library callback runs here. Keep
+ * scope checks per field, but scan declarations at both synchronous boundaries
+ * instead of rescanning every used type for every expected/actual field.
+ * Do not use this boundary for arbitrary readback providers or native work. */
+export function assertAbsWorkspaceReadback(expected: AbsAbiWorkspace, actual: AbsAbiWorkspace,
+  captured: ReturnType<typeof captureAbsRuntimeContracts>, definitions?: DeclarativeBlockSnapshot): void {
+  const inspect = () => assertAbsReadback(expected, actual, captured);
+  if (definitions?.withSynchronousRead) definitions.withSynchronousRead(inspect);
+  else inspect();
 }
 
 function captureAbsWorkspaceStateNow(workspace: Blockly.Workspace, assertCurrent: () => void,

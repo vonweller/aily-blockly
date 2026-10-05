@@ -1,7 +1,8 @@
 import { Injectable } from '@angular/core';
 import { BehaviorSubject, Subject, debounceTime, filter, firstValueFrom, fromEvent, map, switchMap, take, takeUntil, timer } from 'rxjs';
 import * as Blockly from 'blockly';
-import { installBlocklyVariableComparator, loadBlocklyWorkspace } from '../utils/blockly-performance';
+import { loadBlocklyWorkspace } from '../utils/blockly-performance';
+import { installBlocklyVariableComparator } from '../utils/blockly-variable-order';
 import { processI18n, processJsonVar, processStaticFilePath, processToolboxI18n, resolveSerialPortValueAfterCdcDisabled } from '../components/blockly/abf';
 import { TranslateService } from '@ngx-translate/core';
 import { ElectronService, LogService } from '@core/platform/public-api';

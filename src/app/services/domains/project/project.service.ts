@@ -62,6 +62,7 @@ import {
 } from './project-root-path';
 import { detectProjectMode, getProjectApplicationName, type ProjectMode } from './project-mode';
 import { deriveProjectPackageName } from './project-package-name';
+import { normalizeBoardMcuDeclaration } from './board-mcu';
 import { ProjectBlockFieldUpdates } from './project-block-field-updates';
 
 interface ProjectPackageData {
@@ -2465,6 +2466,7 @@ export class ProjectService {
       throw new Error('开发板配置文件不存在: ' + boardJsonPath);
     }
     const board = JSON.parse(this.electronService.readFile(boardJsonPath));
+    normalizeBoardMcuDeclaration(board);
     this.runtimeBoardModules.set(board, boardModule);
     return board;
   }
@@ -2498,6 +2500,7 @@ export class ProjectService {
   async resolveBoardConfigForRuntime(rawBoardJson?: any): Promise<any> {
     const boardJson = rawBoardJson ?? await this.getBoardJson();
     const resolvedBoardJson = JSON.parse(JSON.stringify(boardJson));
+    normalizeBoardMcuDeclaration(resolvedBoardJson);
     const boardModule = this.runtimeBoardModules.get(boardJson);
     if (boardModule) this.runtimeBoardModules.set(resolvedBoardJson, boardModule);
     const cdcEnabled = await this.isCdcOnBootEnabledForProject(resolvedBoardJson);

@@ -1,4 +1,3 @@
-import { coderSourceDirectory } from '../project/coder/arduino-sketch';
 import { Inject, Injectable } from '@angular/core';
 import { TranslateService } from '@ngx-translate/core';
 import { NzMessageService } from 'ng-zorro-antd/message';
@@ -11,7 +10,7 @@ import {
   LogService,
   PlatformService,
 } from '@core/platform/public-api';
-import { ProjectService } from '@domain/project/public-api';
+import { ProjectService, coderSourceDirectory } from '@domain/project/public-api';
 import { NpmService } from '@domain/dependencies/public-api';
 import { ConfigService } from '@core/preferences/public-api';
 import { CompileValidationService } from './compile-validation.service';

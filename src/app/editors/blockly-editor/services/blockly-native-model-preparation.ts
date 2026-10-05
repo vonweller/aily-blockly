@@ -40,7 +40,10 @@ export function prepareNativeModels(execution: NativeCandidateWorkspace, generat
   // Without the library registration protocol only core lexical declarations
   // are preparable. Do not speculatively execute unrelated generators.
   if (typeof window['registerVariableToBlockly'] !== 'function') return effects();
-  const ready = (block: Blockly.Block) => !unresolved.has(block)
+  // Once all references are bound there can be no unresolved descendant. Do not
+  // repeatedly traverse complete input subtrees just to search an empty set.
+  // With pending references, retain live topology reads: generators may change it.
+  const ready = (block: Blockly.Block) => !unresolved.size || !unresolved.has(block)
     && block.inputList.every(input => !input.connection?.targetBlock()?.getDescendants(false).some(child => unresolved.has(child)));
   withNativeModelRegistrations(window, generator, (block, name, type) => {
     const node = nodes.get(block);
