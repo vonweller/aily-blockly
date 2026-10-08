@@ -2,6 +2,27 @@ import { BehaviorSubject, Subject } from 'rxjs';
 import { BlocklyEditorComponent } from './blockly-editor.component';
 import { ProjectService, projectDataRuntime } from '@domain/project/public-api';
 import { BlocklyService } from './services/blockly.service';
+import { canTransferProjectAbi } from './utils/project-abi-transfer';
+
+describe('deep project ABI parser transport', () => {
+  it('bypasses structured cloning of long graphs without parsing twice', async () => {
+    const component: any = Object.create(BlocklyEditorComponent.prototype);
+    const text = '['.repeat(2300) + '0' + ']'.repeat(2300);
+    component.waitForNextFrame = jasmine.createSpy('frame').and.resolveTo();
+    component.parseProjectAbiContentInWorker = jasmine.createSpy('worker').and.throwError('must not transfer');
+    const parsed = await component.parseProjectAbiContent(text);
+    let tail = parsed; for (let i = 0; i < 2300; i++) tail = tail[0];
+    expect(tail).toBe(0);
+    expect(component.parseProjectAbiContentInWorker).not.toHaveBeenCalled();
+    expect(component.waitForNextFrame).toHaveBeenCalledTimes(1);
+    await expectAsync(component.parseProjectAbiContent('['.repeat(2300))).toBeRejectedWithError(SyntaxError);
+  });
+  it('ignores braces, escaped quotes and backslashes inside saved strings', () => {
+    expect(canTransferProjectAbi(JSON.stringify({ text: '{[\\"'.repeat(3000) }))).toBeTrue();
+    expect(canTransferProjectAbi('['.repeat(256) + '0' + ']'.repeat(256))).toBeTrue();
+    expect(canTransferProjectAbi('['.repeat(257) + '0' + ']'.repeat(257))).toBeFalse();
+  });
+});
 
 describe('project load normalization context', () => {
   let component: any;

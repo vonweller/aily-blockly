@@ -43,6 +43,38 @@
   min-width: 0;
 }
 
+.function-view {
+  position: absolute;
+  z-index: 2;
+  top: 10px;
+  left: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100% - 72px);
+  padding: 4px 8px;
+  border: 1px solid var(--aily-border-secondary);
+  border-radius: 6px;
+  background: var(--aily-bg-secondary);
+  color: var(--aily-text-primary);
+  font-size: 12px;
+  box-shadow: 0 2px 6px #0002;
+
+  select {
+    min-width: 0;
+    max-width: 280px;
+    height: 26px;
+    border: 0;
+    background: var(--aily-bg-secondary);
+    color: inherit;
+    cursor: pointer;
+  }
+
+  select:focus-visible { outline: 1px solid var(--aily-bg-active); outline-offset: 2px; }
+}
+
+.function-view__count { white-space: nowrap; opacity: .7; }
+
 :host ::ng-deep .ant-tabs {
   margin-bottom: 0;
 }

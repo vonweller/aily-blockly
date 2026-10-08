@@ -32,6 +32,7 @@ import { BlocklyGeneratorRuntimeService } from './services/blockly-generator-run
 import { isBuildWorkspaceBusyError } from './services/generated-code-artifacts';
 import { AuthService } from '@core/auth/public-api';
 import { boardRequiresCloudAuth } from './board-auth-gate';
+import { canTransferProjectAbi } from './utils/project-abi-transfer';
 import {
   normalizeProjectMode,
 } from '@shared/public-api';
@@ -466,6 +467,11 @@ export class BlocklyEditorComponent implements OnInit, OnDestroy {
       );
     }
     this.blocklyService.loadProjectDocument(projectDocument, false);
+    // Native comment loading finishes pinning and bubble coordinates after the
+    // render batch. Admit the complete readback only once those continuations
+    // settle; an immediate snapshot can incorrectly report lost comment state.
+    await this.waitForNextFrame(session.signal);
+    assertCurrent();
     this._projectService.rememberLoadedProject(projectPath, diskText, projectDocument);
     if (!usedBoardTemplateAbi) {
       try {
@@ -626,7 +632,7 @@ export class BlocklyEditorComponent implements OnInit, OnDestroy {
 
   private async parseProjectAbiContent(content: string, signal?: AbortSignal): Promise<any> {
     if (signal?.aborted) throw signal.reason;
-    if (typeof Worker === 'undefined') {
+    if (typeof Worker === 'undefined' || !canTransferProjectAbi(content)) {
       return this.parseProjectAbiContentOnMainThread(content, signal);
     }
 

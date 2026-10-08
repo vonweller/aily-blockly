@@ -396,6 +396,12 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
     sections: Record<string, {tag: string; code: string}[]>
   ): void {
     const lines = finalCode.split('\n');
+    const trimmedLines = lines.map(line => line.trim());
+    const lineIndex = new Map<string, number[]>();
+    trimmedLines.forEach((line, index) => {
+      const entries = lineIndex.get(line);
+      if (entries) entries.push(index); else lineIndex.set(line, [index]);
+    });
 
     // tag → 行号范围
     const tagLineRanges = new Map<string, CodeLineRange>();
@@ -409,12 +415,12 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
         if (!firstLine) continue;
 
         // 在最终代码中搜索该片段首行
-        for (let i = 0; i < lines.length; i++) {
-          if (lines[i].trim() === firstLine) {
+        for (const i of lineIndex.get(firstLine) ?? []) {
+          if (trimmedLines[i] === firstLine) {
             // 验证后续行也匹配
             let match = true;
             for (let j = 1; j < codeLines.length; j++) {
-              if (i + j >= lines.length || lines[i + j].trim() !== codeLines[j].trim()) {
+              if (i + j >= lines.length || trimmedLines[i + j] !== codeLines[j].trim()) {
                 match = false;
                 break;
               }
@@ -489,9 +495,8 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
 
       // 在最终代码中查找该行（跳过已被其他块占用的行）
       let matchedRange: CodeLineRange | null = null;
-      for (let i = 0; i < lines.length; i++) {
+      for (const i of lineIndex.get(firstSigLine) ?? []) {
         if (usedLines.has(i)) continue;
-        if (lines[i].trim() !== firstSigLine) continue;
 
         // 对于多行 body 代码，验证后续行是否也匹配
         if (bodyLines.length > 1) {
@@ -509,7 +514,7 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
               sigSearchIdx++;
               continue;
             }
-            if (lines[finalSearchIdx].trim() === bodySig) {
+            if (trimmedLines[finalSearchIdx] === bodySig) {
               lastMatchedIdx = finalSearchIdx;
               sigSearchIdx++;
               finalSearchIdx++;

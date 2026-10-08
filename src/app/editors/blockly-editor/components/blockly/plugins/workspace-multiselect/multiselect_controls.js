@@ -478,7 +478,8 @@ export class MultiselectControls {
     this.dragSelect_.Selection.filterSelected = (
         {selectorRect, select: _select, unselect: _unselect}) => {
       const select = _select; const unselect = _unselect;
-      const toRemove = filterParent(select, selectorRect);
+      const toRemove = [...filterParent(select, selectorRect),
+        ...[...select.keys()].filter(el => el.closest('[data-aily-function-hidden="true"]'))];
       toRemove.forEach((el) => {
         const rect = select.get(el);
         select.delete(el);

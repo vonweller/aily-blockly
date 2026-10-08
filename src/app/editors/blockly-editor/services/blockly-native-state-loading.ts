@@ -1,4 +1,5 @@
 import type * as Blockly from 'blockly';
+import { cloneProjectJson } from '@domain/project/project-document-json';
 import { collectProjectBlocks } from '@domain/project/project-data/public-api';
 import { absJson } from '../../../integrations/blockly/abs/abs-json';
 import { serializeRuntimeFieldContract } from './blockly-runtime-block-metadata';
@@ -113,7 +114,7 @@ function adaptLegacyTftSetup(block: Blockly.Block, savedFields: Record<string, a
  * adapters as native loading; no replay, generators or persistent state edits.
  * Only adapter-created shadows obtain their assigned native IDs here. */
 export function nativeLoadedStateView<T>(state: T, workspace: Blockly.Workspace): T {
-  const view = structuredClone(state);
+  const view = cloneProjectJson(state);
   for (const { state: entry } of collectProjectBlocks(view)) {
     const block = typeof entry['id'] === 'string' ? workspace.getBlockById(entry['id']) : null;
     if (!block || block.type !== entry['type']) continue;

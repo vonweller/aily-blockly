@@ -9,6 +9,7 @@
  */
 
 import * as Blockly from 'blockly/core';
+import {isBlocklyFunctionViewBlockVisible} from '../../../../utils/blockly-function-view';
 import {
   dragSelectionWeakMap, hasSelectedParent, copyData, connectionDBList,
   dataCopyToStorage, dataCopyFromStorage, registeredShortcut,
@@ -490,6 +491,7 @@ const registerSelectAll = function() {
     },
     check: function(block) {
       return block &&
+            isBlocklyFunctionViewBlockVisible(block) &&
             (block.isDeletable() || block.isMovable()) &&
             !block.isInsertionMarker();
     },

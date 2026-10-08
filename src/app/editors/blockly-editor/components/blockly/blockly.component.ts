@@ -85,7 +85,7 @@ import { HttpErrorResponse } from '@angular/common/http';
 import { ConfigService, type ThemeMode, ThemeService } from '@core/preferences/public-api';
 import { CmdService, ElectronService, CrossPlatformCmdService, PlatformService } from '@core/platform/public-api';
 import { PasteInstallDialogComponent, MissingLibInfo } from '../paste-install-dialog/paste-install-dialog.component';
-import { Minimap } from '@blockly/workspace-minimap';
+import { WorkspaceMinimap } from '../../utils/workspace-minimap';
 import {
   BLOCKLY_GRID_COLOUR_DARK,
   DarkTheme,
@@ -300,14 +300,9 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
   private generatedArtifactRetryTimer: ReturnType<typeof setTimeout> | null = null;
   private generatedArtifactRetryToken = 0;
   private unregisterCodeViewerPublisher: (() => void) | null = null;
-  private minimapSyncSubject = new Subject<void>();
   private destroy$ = new Subject<void>();
   private resizeObserver: ResizeObserver | null = null;
-  private minimap: Minimap | null = null;
-  private minimapDirtyVersion = 0;
-  private minimapSyncedVersion = 0;
-  private minimapSyncInProgress = false;
-  private minimapSyncQueued = false;
+  private minimap: WorkspaceMinimap | null = null;
   private readonly codeGenerationEventTypes = new Set([
     'create',
     'delete',
@@ -318,17 +313,6 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
     'var_rename',
   ]);
   private readonly codeChangeTracker = new WorkspaceCodeChangeTracker();
-  private readonly minimapSyncEventTypes = new Set([
-    'finished_loading',
-    'create',
-    'delete',
-    'change',
-    'move',
-    'comment_create',
-    'comment_delete',
-    'comment_change',
-    'comment_move',
-  ]);
   /** Flyout 右上角固钉控件（foreignObject 根节点，便于挂在嵌套 SVG 内） */
   private flyoutPinForeignObject: SVGForeignObjectElement | null = null;
   private flyoutPinResizeObserver: ResizeObserver | null = null;
@@ -396,6 +380,13 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
 
   get pages() {
     return this.blocklyService.getPages();
+  }
+
+  get functionViewState() { return this.blocklyService.functionViewSubject.value; }
+  get functionViewDisabled() { return this.aiWriting || this.blocklyService.isWorkspaceEditBlocked(); }
+
+  onFunctionViewSelected(scopeId: string): void {
+    this.blocklyService.setFunctionView(scopeId);
   }
 
   get activePageId() {
@@ -524,6 +515,9 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
     this.initMinimapSyncDebounce();
     this.initCodeViewerRefreshRequests();
     this.initWorkspaceBlockSearchSubscription();
+    this.blocklyService.functionViewSubject.pipe(takeUntil(this.destroy$)).subscribe(() => {
+      this.ngZone.run(() => this.cdr.markForCheck());
+    });
     this.initProjectDebugConfigurationSubscription();
     this.bitmapUploadService.uploadRequestSubject.subscribe((request) => {
       const modalRef = this.modal.create({
@@ -569,6 +563,8 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
     this.cancelToolboxResizeAnimationFrame();
     this.cancelWorkspaceResizeAnimationFrame();
     this.workspacePaneComponent?.blocklyHostElement?.removeEventListener('pointerdown', this.onWorkspacePointerDownBound, true);
+    this.minimap?.dispose();
+    this.minimap = null;
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
     this.unregisterCodeViewerPublisher?.();
@@ -925,15 +921,9 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
       };
 
       if (this.configData.blockly.minimap) {
-        this.minimap = new Minimap(this.workspace);
-        this.minimap.init();
-        this.applyMinimapTheme(currentTheme);
-        // 禁用 minimap 内置的 mirror（Events.fromJson 重放会触发 custom field 的 "associated block is undefined"）
-        // 仅使用 syncMinimap 的全量 XML 同步，避免 Events.fromJson 与 custom field 的兼容性问题
-        (this.minimap as any).mirror = () => { };
-        // 将 focus region 的 update 替换为空实现：mirror 禁用后 minimap 仅由 syncMinimap 更新，空内容时原 update 会算出 NaN 导致 translate(NaN,NaN)；disableFocusRegion 会留下未移除的 resize 监听导致 "must be initialized" 报错
-        const fr = (this.minimap as any).focusRegion;
-        if (fr) fr.update = () => { };
+        this.ngZone.runOutsideAngular(() => {
+          this.minimap = new WorkspaceMinimap(this.workspace, () => this.blocklyService.isWorkspaceEditBlocked());
+        });
       }
 
       this.workspace.addChangeListener(BlockDynamicConnection.finalizeConnections);
@@ -1276,8 +1266,7 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   private applyMinimapTheme(mode: ThemeMode): void {
-    const minimapWorkspace = (this.minimap as any)?.minimapWorkspace as Blockly.WorkspaceSvg | undefined;
-    minimapWorkspace?.setTheme(this.blocklyThemeForMode(mode));
+    this.requestMinimapSync();
   }
 
   /** 根据配置应用 flyout 自动关闭，支持初始化及配置重载时实时生效 */
@@ -2189,19 +2178,7 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
       .subscribe(workspace => {
         if (workspace === this.workspace) this.requestMinimapSync();
       });
-    this.minimapSyncSubject.pipe(
-      debounceTime(500),
-      takeUntil(this.destroy$)
-    ).subscribe(() => {
-      // Recheck at execution time: a second drag/editor may have opened while
-      // this request was waiting. Only pending work retries, with no idle timer.
-      if (this.workspace && (this.blocklyService.isWorkspaceEditBlocked()
-        || isBlocklyWorkspaceInteracting(this.workspace))) {
-        this.minimapSyncSubject.next();
-        return;
-      }
-      this.syncMinimap();
-    });
+
   }
 
   private initCodeViewerRefreshRequests(): void {
@@ -2245,79 +2222,7 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   private requestMinimapSync(event?: BlocklyWorkspaceEvent): void {
-    if (!this.minimap || !this.workspace || !this.shouldSyncMinimapForEvent(event)) {
-      return;
-    }
-
-    this.minimapDirtyVersion++;
-    this.minimapSyncSubject.next();
-  }
-
-  private shouldSyncMinimapForEvent(event?: BlocklyWorkspaceEvent): boolean {
-    if (!event?.type) {
-      return true;
-    }
-
-    return this.minimapSyncEventTypes.has(event.type);
-  }
-
-  /**
-   * 将主工作区状态全量同步到 Minimap
-   * 使用 Xml 路径加载，避免 serialization.load 触发的 BLOCK_MOVE 事件导致 "block could not be found" 错误
-   * 同步时禁用事件，避免 custom field 在反序列化时因 "associated block is undefined" 报错
-   */
-  private syncMinimap(): void {
-    const m = this.minimap as any;
-    if (!m?.minimapWorkspace || !this.workspace) return;
-
-    const syncVersion = this.minimapDirtyVersion;
-    if (syncVersion === this.minimapSyncedVersion) {
-      return;
-    }
-
-    if (this.minimapSyncInProgress) {
-      this.minimapSyncQueued = true;
-      return;
-    }
-
-    this.minimapSyncInProgress = true;
-    let renderPromise: Promise<unknown> | null = null;
-    try {
-      Blockly.Events.disable();
-      const xml = Blockly.Xml.workspaceToDom(this.workspace, true);
-      m.minimapWorkspace.clear();
-      Blockly.Xml.domToWorkspace(xml, m.minimapWorkspace);
-      renderPromise = Blockly.renderManagement.finishQueuedRenders().then(() => {
-        try {
-          if (m?.minimapWorkspace) m.minimapWorkspace.zoomToFit();
-        } catch (e) {
-          console.warn('[Blockly] Minimap zoomToFit failed:', e);
-        }
-      }).catch((e) => {
-        console.warn('[Blockly] Minimap render failed:', e);
-      });
-    } catch (e) {
-      console.warn('[Blockly] Minimap sync failed:', e);
-    } finally {
-      // Events.disable is a nesting counter; release exactly our own level.
-      Blockly.Events.enable();
-    }
-
-    if (renderPromise) {
-      renderPromise.finally(() => this.completeMinimapSync(syncVersion));
-    } else {
-      this.completeMinimapSync(syncVersion);
-    }
-  }
-
-  private completeMinimapSync(syncVersion: number): void {
-    this.minimapSyncedVersion = syncVersion;
-    this.minimapSyncInProgress = false;
-
-    if (this.minimapSyncQueued || this.minimapDirtyVersion !== syncVersion) {
-      this.minimapSyncQueued = false;
-      this.minimapSyncSubject.next();
-    }
+    this.ngZone.runOutsideAngular(() => this.minimap?.requestSync(event));
   }
 
   /**

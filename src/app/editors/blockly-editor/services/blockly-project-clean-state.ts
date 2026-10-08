@@ -1,11 +1,11 @@
-import { canonicalJsonStringify } from '@domain/project/public-api';
+import { canonicalProjectJsonStringify, cloneProjectJson } from '@domain/project/project-document-json';
 import { collectProjectBlocks } from '@domain/project/project-data/public-api';
 import { assertAbsReadback } from '../../../integrations/blockly/abs/abs-readback';
 import type { AbsAbiBlock, AbsAbiWorkspace } from '../../../integrations/blockly/abs/abs-state';
 import { BlocklyProjectDocument, composeBlocklyPage } from './blockly-project-model';
 
 const same = (a: unknown, b: unknown) => a === undefined || b === undefined
-  ? a === b : canonicalJsonStringify(a) === canonicalJsonStringify(b);
+  ? a === b : canonicalProjectJsonStringify(a) === canonicalProjectJsonStringify(b);
 type RuntimeView = (workspace: AbsAbiWorkspace) => AbsAbiWorkspace;
 
 const indexLoadedBlocks = (workspace: AbsAbiWorkspace): Map<string, AbsAbiBlock> => {
@@ -53,7 +53,7 @@ export class BlocklyProjectCleanState {
   clear(): void { this.accepted = undefined; this.failure = undefined; }
 
   remember(scope: readonly unknown[], disk: string, document: BlocklyProjectDocument): void {
-    this.accepted = { scope: [...scope], disk, document: structuredClone(document) };
+    this.accepted = { scope: [...scope], disk, document: cloneProjectJson(document) };
     this.failure = undefined;
   }
 
@@ -82,14 +82,14 @@ export class BlocklyProjectCleanState {
     const original = baseline.pages.find(page => page.id === id);
     if (!source || !target || !original || !same(original.content, source.content)
       || !same(baseline.sharedModel, before.sharedModel)) return;
-    original.content = structuredClone(target.content);
+    original.content = cloneProjectJson(target.content);
     // First activation may initialize an omitted viewport. Only accept it
     // when no user layout change was present before this load.
     if (same(original.viewState, source.viewState)) {
-      if (target.viewState) original.viewState = structuredClone(target.viewState);
+      if (target.viewState) original.viewState = cloneProjectJson(target.viewState);
       else delete original.viewState;
     }
-    baseline.sharedModel = structuredClone(after.sharedModel);
+    baseline.sharedModel = cloneProjectJson(after.sharedModel);
   }
 
   private matches(scope: readonly unknown[]): boolean {

@@ -421,7 +421,9 @@
     transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
 
     .blocklySvg {
-        background-color: var(--aily-blockly-minimap-bg) !important;
+        // The overview canvas sits below the SVG viewport overlay. Keep the
+        // overlay transparent; the wrapper already provides the themed fill.
+        background-color: transparent !important;
     }
 
     .blocklyMainBackground {

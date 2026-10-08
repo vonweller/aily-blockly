@@ -81,6 +81,24 @@ describe('owned generator project effects', () => {
     expect(effects.capture(workspace(['child']))).toEqual([{ name: 'CHILD', value: 'CHILD=1' }]);
   });
 
+  it('checks deep shared ancestors once per capture and ignores blocks without effects', () => {
+    const realm: any = {Promise, projectService: {}}, effects = new GeneratorProjectEffects(realm);
+    let reads = 0, parent: any = null;
+    const blocks: any[] = [];
+    for (let i = 0; i < 6000; i++) {
+      const ancestor = parent;
+      parent = {id: `b${i}`, isEnabled: () => true, getParent: () => { reads++; return ancestor; }};
+      blocks.push(parent);
+    }
+    effects.run('b5998', () => { realm.projectService.addMacro('FIRST=1'); });
+    effects.run('b5999', () => { realm.projectService.addMacro('SECOND=2'); });
+    expect(effects.capture({getAllBlocks: () => blocks} as any)).toHaveSize(2);
+    expect(reads).toBe(6000);
+    blocks[0].isEnabled = () => false; reads = 0;
+    expect(effects.capture({getAllBlocks: () => blocks} as any)).toEqual([]);
+    expect(reads).toBe(6000);
+  });
+
   it('validates a real isolated generator using the legacy Promise/macro interface', async () => {
     const result = await evaluateNativeCandidate({ blocks: [],
       steps: [{ kind: 'context', mode: 'arduino' }, { kind: 'definitions', definitions: [{ type: 'macro_setup', message0: 'setup', previousStatement: null, nextStatement: null }] },

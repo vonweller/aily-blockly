@@ -38,6 +38,20 @@
   </div> -->
 
   <div class="workspace-stage">
+    <div class="function-view" (keydown)="$event.stopPropagation()">
+      <i class="fa-light fa-layer-group" aria-hidden="true"></i>
+      <select [attr.aria-label]="'BLOCKLY_FUNCTION_VIEW.LABEL' | translate" [title]="'BLOCKLY_FUNCTION_VIEW.LABEL' | translate"
+              [value]="functionView.scopeId" [disabled]="functionViewDisabled"
+              (change)="functionSelected.emit($any($event.target).value)">
+        <option value="">{{ 'BLOCKLY_FUNCTION_VIEW.ALL' | translate }} · {{ functionView.totalCount }} {{ 'BLOCKLY_FUNCTION_VIEW.BLOCKS' | translate }}</option>
+        @for (item of functionView.options; track item.id) {
+          <option [value]="item.id">{{ item.label | translate }} · {{ item.count }} {{ 'BLOCKLY_FUNCTION_VIEW.BLOCKS' | translate }}</option>
+        }
+      </select>
+      @if (functionView.scopeId) {
+        <span class="function-view__count">{{ functionView.visibleCount }} / {{ functionView.totalCount }} {{ 'BLOCKLY_FUNCTION_VIEW.BLOCKS' | translate }}</span>
+      }
+    </div>
     <div class="blocklyBox" #blocklyDiv></div>
 
     <div class="blockly-spin"

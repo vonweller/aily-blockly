@@ -12,6 +12,9 @@ test.describe('终端工具', () => {
       has: mainWindow.locator('i.fa-square-terminal'),
     });
     await expect(terminalBtn).toBeVisible();
+    // This fixture has fresh signed-out data: dismiss the startup login prompt
+    // before exercising the actual footer interaction.
+    await mainWindow.locator('app-login .login-close').click();
     await terminalBtn.click();
 
     // 底部面板出现，终端组件与 xterm 容器渲染。

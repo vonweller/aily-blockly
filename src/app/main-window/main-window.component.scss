@@ -62,7 +62,7 @@ ngx-simplebar {
 }
 
 // Routed pages must use the space left after the resizable bottom panel.
-:host ::ng-deep .middle-box > router-outlet + * {
+:host ::ng-deep .middle-box > .aily-routed-content {
   display: block;
   width: 100%;
   height: 100%;

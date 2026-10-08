@@ -6,7 +6,7 @@ import { getActiveProjectGenerator, getActiveProjectGeneratorRevision } from './
 import { ElectronService, ProjectFilePublicationError } from '@core/platform/public-api';
 import {
   projectDataRuntime,
-  canonicalJsonStringify,
+  canonicalProjectJsonStringify,
   materializeGenericProjectDataValues,
   type AilyDataRef,
 } from '@domain/project/public-api';
@@ -79,7 +79,7 @@ export class _ProjectService {
     if (this.blocklyService.captureProjectSnapshot().revision !== revision || window['fs'].readFileSync(path, 'utf8') !== diskText) {
       throw new Error('Project changed while checking unsaved state. Please retry.');
     }
-    return canonicalJsonStringify(memory) !== canonicalJsonStringify(this.blocklyService.normalizeProjectAbi(materialized));
+    return canonicalProjectJsonStringify(memory) !== canonicalProjectJsonStringify(this.blocklyService.normalizeProjectAbi(materialized));
   }
 
   /** Called only by the authoritative open path, never an ABS draft/rollback. */
@@ -171,7 +171,7 @@ export class _ProjectService {
     const { document, revision } = this.blocklyService.captureProjectSnapshot();
     const path = `${this.currentProjectPath}/project.abi`;
     const diskText = window['fs'].readFileSync(path, 'utf8');
-    const memory = canonicalJsonStringify(this.blocklyService.normalizeProjectAbi(this.blocklyService.getProjectAbiForSave(document)));
+    const memory = canonicalProjectJsonStringify(this.blocklyService.normalizeProjectAbi(this.blocklyService.getProjectAbiForSave(document)));
     const usedLibraries = Object.keys(this.blocklyService.getProjectUsedLibraryManifest(undefined, document));
 
     const assertCurrent = () => {
@@ -187,7 +187,7 @@ export class _ProjectService {
       resolve: async <TValue>(ref: AilyDataRef) => { const value = await projectDataRuntime.resolve<TValue>(ref); context.assertCurrent(); return value; },
     });
     assertCurrent();
-    const disk = canonicalJsonStringify(this.blocklyService.normalizeProjectAbi(materialized));
+    const disk = canonicalProjectJsonStringify(this.blocklyService.normalizeProjectAbi(materialized));
     const [memoryHash, diskHash] = await Promise.all([
       sha256Hex(memory),
       sha256Hex(disk),

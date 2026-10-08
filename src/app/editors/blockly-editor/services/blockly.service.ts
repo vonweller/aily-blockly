@@ -1,7 +1,9 @@
+import { cloneBlocklyJson } from '@domain/project/project-document-json';
 import { Injectable } from '@angular/core';
 import { BehaviorSubject, Subject, debounceTime, filter, firstValueFrom, fromEvent, map, switchMap, take, takeUntil, timer } from 'rxjs';
 import * as Blockly from 'blockly';
-import { loadBlocklyWorkspace } from '../utils/blockly-performance';
+import { loadBlocklyWorkspace, isBlocklyWorkspaceInteracting } from '../utils/blockly-performance';
+import { BlocklyFunctionView, emptyBlocklyFunctionView, isBlocklyFunctionViewBlockVisible } from '../utils/blockly-function-view';
 import { installBlocklyVariableComparator } from '../utils/blockly-variable-order';
 import { processI18n, processJsonVar, processStaticFilePath, processToolboxI18n, resolveSerialPortValueAfterCdcDisabled } from '../components/blockly/abf';
 import { TranslateService } from '@ngx-translate/core';
@@ -23,6 +25,7 @@ import {
   dragSelectionWeakMap,
   registerFieldInputIncrementPolicy,
 } from '../components/blockly/plugins/workspace-multiselect/index.js';
+import { multiDraggableWeakMap } from '../components/blockly/plugins/workspace-multiselect/global';
 import { exportWorkspaceToSvg } from './workspace-svg-exporter';
 import {
   createProjectDataMarker,
@@ -134,6 +137,7 @@ interface CodeViewerPublisher {
     blockCodeMap: Map<string, BlockCodeMapping>,
     selectedBlockId: string | null,
     selectedBlockIds: readonly string[],
+    isInteracting?: () => boolean,
   ): void;
 }
 
@@ -154,6 +158,42 @@ export class BlocklyService {
 
   private _workspace: Blockly.WorkspaceSvg | null = null;
   private workspaceReadySubject = new BehaviorSubject<Blockly.WorkspaceSvg | null>(null);
+  private functionView: BlocklyFunctionView | null = null;
+  readonly functionViewSubject = new BehaviorSubject(emptyBlocklyFunctionView());
+
+  setFunctionView(scopeId: string): void {
+    this.assertWorkspaceEditAvailable();
+    this.hideChaff(true);
+    this.clearFunctionViewSelection();
+    this.functionView?.setScope(scopeId);
+    // Complete the explicit navigation gesture. A focused selector/comment
+    // otherwise keeps background code/minimap refresh waiting for an editor.
+    this.workspace?.markFocused();
+  }
+
+  private clearFunctionViewSelection(): void {
+    const selected = Blockly.getSelected();
+    if (selected?.workspace === this.workspace) selected.unselect();
+    multiDraggableWeakMap.get(this.workspace)?.clearAll_();
+    if (Blockly.getSelected()?.workspace === this.workspace) Blockly.common.setSelected(null);
+    dragSelectionWeakMap.get(this.workspace)?.clear();
+    this.selectedBlockSubject.next(null); this.selectedBlockIdsSubject.next([]);
+  }
+
+  private clearHiddenFunctionViewSelection(): void {
+    const selected = Blockly.getSelected();
+    const hidden = (block: Blockly.BlockSvg | null) => !!block && !isBlocklyFunctionViewBlockVisible(block);
+    const group = dragSelectionWeakMap.get(this.workspace) as Set<string> | undefined;
+    if (!(selected instanceof Blockly.BlockSvg && selected.workspace === this.workspace && hidden(selected))
+      && ![...(group ?? [])].some(id => hidden(this.workspace.getBlockById(id)))) return;
+    // Search/code/debug navigation can switch scope without using the selector.
+    // Retain its visible target, but retire any previous hidden multi-selection.
+    const target = selected instanceof Blockly.BlockSvg && selected.workspace === this.workspace && !hidden(selected) ? selected : null;
+    this.clearFunctionViewSelection();
+    target?.select();
+    this.selectedBlockSubject.next(target?.id ?? null);
+    this.selectedBlockIdsSubject.next(target ? [target.id] : []);
+  }
 
   get workspace(): Blockly.WorkspaceSvg {
     return this._workspace as Blockly.WorkspaceSvg;
@@ -161,6 +201,9 @@ export class BlocklyService {
 
   set workspace(workspace: Blockly.WorkspaceSvg | null) {
     if (workspace !== this._workspace) {
+      this.functionView?.dispose();
+      this.functionView = null;
+      this.functionViewSubject.next(emptyBlocklyFunctionView());
       this.releaseWorkspaceInputFence?.();
       this.workspaceEditGate.reset();
       this.projectRevision.invalidate();
@@ -168,6 +211,13 @@ export class BlocklyService {
       this.pageReferenceContracts.clear();
     }
     this._workspace = workspace;
+    if (workspace?.rendered && !this.functionView) {
+      this.functionView = new BlocklyFunctionView(workspace, state => {
+        this.clearHiddenFunctionViewSelection();
+        this.functionViewSubject.next(state);
+        this.workspaceVisualRefreshRequestSubject.next(workspace);
+      });
+    }
     this.workspaceReadySubject.next(workspace);
     if (workspace) {
       this.syncSerialDynamicToolboxBlocks(workspace);
@@ -412,6 +462,9 @@ export class BlocklyService {
   }
 
   requestWorkspaceVisualRefresh(): void {
+    // ABS reconciliation suppresses native events and may change roots without
+    // calling loadWorkspaceJson. Keep the display projection current as well.
+    this.functionView?.refresh();
     if (this.workspace) this.workspaceVisualRefreshRequestSubject.next(this.workspace);
   }
 
@@ -424,6 +477,7 @@ export class BlocklyService {
       this.blockCodeMapSubject.value,
       this.selectedBlockSubject.value,
       this.selectedBlockIdsSubject.value,
+      () => this.isWorkspaceEditBlocked() || (!!this.workspace && isBlocklyWorkspaceInteracting(this.workspace)),
     );
   }
 
@@ -549,7 +603,7 @@ export class BlocklyService {
   async createWorkspaceImageExportSvg(): Promise<string | null> {
     const workspace = await this.waitForWorkspace();
     this.hideChaff(true);
-    return exportWorkspaceToSvg(workspace);
+    return this.functionView ? this.functionView.withAllVisible(() => exportWorkspaceToSvg(workspace)) : exportWorkspaceToSvg(workspace);
   }
 
   registerExternalToolboxHost(host: HTMLElement | null) {
@@ -1102,7 +1156,9 @@ export class BlocklyService {
 
   getProjectDocument(owner?: BlocklyWorkspaceEditLease): BlocklyProjectDocument {
     this.assertWorkspaceEditAvailable(owner);
-    const document = this.getStoredProjectDocument();
+    // Ownership normalization already detaches its input. Do not first clone
+    // the previous large active page only to clone it again and replace it.
+    const document = this.workspace ? this.readStoredProjectDocument() : this.getStoredProjectDocument();
     return this.workspace ? replaceBlocklyPageWorkspace(
       document, document.activePageId, this.getWorkspaceJson(),
       captureBlocklyRootClassifier(this.workspace, Blockly.Blocks), this.captureWorkspaceViewState(),
@@ -1259,15 +1315,19 @@ export class BlocklyService {
     return lease;
   }
 
-  private getStoredProjectDocument(): BlocklyProjectDocument {
+  private readStoredProjectDocument(): BlocklyProjectDocument {
     return {
-      ...this.cloneJson(this.documentMetadata),
+      ...this.documentMetadata,
       schemaVersion: this.projectDocumentSchemaVersion,
       activePageId: this.activePageIdSubject.value,
-      openedPageIds: this.cloneJson(this.openedPageIdsSubject.value),
-      pages: this.cloneJson(this.pagesSubject.value),
-      sharedModel: this.cloneJson(this.sharedModelSubject.value),
+      openedPageIds: this.openedPageIdsSubject.value,
+      pages: this.pagesSubject.value,
+      sharedModel: this.sharedModelSubject.value,
     };
+  }
+
+  private getStoredProjectDocument(): BlocklyProjectDocument {
+    return this.cloneJson(this.readStoredProjectDocument());
   }
 
   getProjectAbiForSave(document = this.getProjectDocument()): any {
@@ -1365,6 +1425,7 @@ export class BlocklyService {
       () => loadBlocklyWorkspace(this.workspace, workspaceJson),
       block => nativeFieldOrder(block, definitions));
     captureCustomFunctionRegistration(Blockly.Blocks)?.prepareSerialization(this.workspace, true);
+    this.functionView?.loaded();
   }
 
   // 通过node_modules加载库
@@ -2191,6 +2252,8 @@ export class BlocklyService {
     // Workspace dispose may call project-defined callbacks, so it must happen
     // before the iframe and host registry snapshot are released.
     if (this.workspace) {
+      this.functionView?.dispose();
+      this.functionView = null;
       this.workspace.dispose();
       this.workspace = null;
     }
@@ -2958,7 +3021,7 @@ export class BlocklyService {
       return value;
     }
 
-    return JSON.parse(JSON.stringify(value));
+    return cloneBlocklyJson(value);
   }
 
   // 创建变量用

@@ -6,6 +6,7 @@ import { createAilyProjectDataValue, projectDataRuntime } from '@domain/project/
 import { ProjectApplicationAdapter } from '../../project/project-application.adapter';
 import { HeaderComponent } from '../../../main-window/components/header/header.component';
 import { ProjectNewComponent } from '../../../pages/project-new/project-new.component';
+import { cloneProjectJson } from '@domain/project/project-document-json';
 
 const source = (): BlocklyProjectDocument => ({ schemaVersion: 3, activePageId: 'main', openedPageIds: ['main'],
   $ailyProjectData: { schemaVersion: 1, mode: 'external-only' },
@@ -47,10 +48,16 @@ describe('project loaded-state admission and comparison', () => {
   });
   it('does not impose ABS syntax depth on ordinary loaded project chains', () => {
     let block = before.pages[0].content.blocks.blocks[0];
-    for (let n = 0; n < 200; n++) {
+    for (let n = 0; n < 1500; n++) {
       block.next = { block: { id: `chain-${n}`, type: 'text_print' } }; block = block.next.block;
     }
-    expect(() => assertProjectLoadPreserved(before, structuredClone(before))).not.toThrow();
+    const copy = cloneProjectJson(before);
+    expect(() => assertProjectLoadPreserved(before, copy)).not.toThrow();
+    state.remember(['deep'], 'disk', copy);
+    expect(state.compare(['deep'], 'disk', before)).toBeFalse();
+    block.fields = { TEXT: 'edit at deepest node' };
+    expect(state.compare(['deep'], 'disk', before)).toBeTrue();
+    expect(() => assertProjectLoadPreserved(before, copy)).toThrow();
   });
   it('never reuses a record for an external file write or another runtime', () => {
     state.remember(['project', 1], 'disk', after);

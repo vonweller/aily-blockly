@@ -163,7 +163,13 @@ test(`startup, toolbox and passive notices preserve Blockly interaction (${entry
     expect(await scroll()).not.toEqual(heldPan); await win.mouse.up();
     await win.evaluate(() => { (window as any).__startupProbe.phase = 'consecutive-drag'; });
     for (const id of ['second', 'first', 'second']) {
-      await win.evaluate(id => (window as any).blocklyWorkspace.centerOnBlock(id), id);
+      // Center this pointer target, even if a previous drag snapped it into a
+      // much taller statement stack (the native second argument is blockOnly).
+      await win.evaluate(async id => {
+        const B = (window as any).Blockly, ws = (window as any).blocklyWorkspace;
+        await B.renderManagement.finishQueuedRenders();
+        ws.centerOnBlock(id, true);
+      }, id);
       const label = win.locator(`[data-startup-block="${id}"] .blocklyText`).first();
       await label.hover(); const rect = await label.boundingBox();
       if (!rect) throw new Error('Probe not rendered.');
@@ -174,7 +180,11 @@ test(`startup, toolbox and passive notices preserve Blockly interaction (${entry
       expect(await win.evaluate(() => (window as any).blocklyWorkspace.isDragging())).toBe(true);
       await win.mouse.up();
     }
-    await win.evaluate(() => { (window as any).__startupProbe.phase = 'editing'; (window as any).blocklyWorkspace.centerOnBlock('second'); });
+    await win.evaluate(async () => {
+      (window as any).__startupProbe.phase = 'editing';
+      await (window as any).Blockly.renderManagement.finishQueuedRenders();
+      (window as any).blocklyWorkspace.centerOnBlock('second', true);
+    });
     for (const field of ['TEXT', 'NUM']) {
       await win.locator(`[data-startup-field="second-${field}"]`).click();
       const input = win.locator('.blocklyHtmlInput');
