@@ -15,8 +15,7 @@ const environment = {
   GITHUB_OUTPUT: 'output', CODER_RELEASE_REPOSITORY: 'target/repo',
   RELEASE_TAG: 'v0.1.7', RELEASE_VERSION: '0.1.7', RELEASE_CHANNEL: 'stable',
 };
-const marker = `<!-- coder-run:source/repo:123:${environment.GITHUB_SHA} -->`;
-function run(job, name, modules, env = {}) {
+function run(job, name, modules, env = {}, globals = {}) {
   const source = step(job, name).run.match(/node <<'NODE'\n([\s\S]*?)\nNODE/)[1];
   return vm.runInNewContext(source, {
     Buffer, process: { env: { ...environment, ...env } },
@@ -26,41 +25,43 @@ function run(job, name, modules, env = {}) {
       if (name === './scripts/coder-release-manifest.cjs') return { releaseFiles };
       throw new Error(`Unexpected dependency: ${name}`);
     },
+    ...globals,
   });
 }
 
-function guard(releases = [], tags = []) {
+function guard(releases = []) {
   const written = {};
-  run('publish-release', 'Reject reused tags or older channel versions', {
-    './releases.json': [releases], './tags.json': tags,
+  run('publish-release', 'Resolve existing release and reject channel rollback', {
+    './releases.json': [releases],
     'node:fs': {
-      readFileSync: () => 'Archived changelog',
-      writeFileSync: (name, value) => { written[name] = value; },
       appendFileSync: (name, value) => { written[name] = value; },
     },
   });
   return written;
 }
 
-test('new releases and same-run drafts can publish; same-run published releases only verify', () => {
+test('same-version releases from previous runs and tags without releases can be reused', () => {
   assert.match(guard().output, /published=false/);
-  const own = { id: 7, tag_name: 'v0.1.7', body: marker, draft: true, prerelease: false };
-  const tags = [{ ref: 'refs/tags/v0.1.7' }];
-  const recovered = guard([own], tags);
-  assert.match(recovered.output, /published=false\nrelease_id=7/);
-  assert.equal(recovered['release-body.md'], `Archived changelog\n\n${marker}\n`);
-  assert.match(guard([{ ...own, draft: false }], tags).output, /published=true\nrelease_id=7/);
-  assert.equal(step('publish-release', 'Upload all four packages and product manifests to a draft').if,
-    "steps.release.outputs.published != 'true'");
+  for (const draft of [true, false]) {
+    const existing = { id: 7, tag_name: 'v0.1.7', body: 'Published by an earlier run', draft, prerelease: false };
+    assert.equal(guard([existing]).output, `published=${!draft}\nrelease_id=7\n`);
+  }
+  assert.doesNotMatch(step('publish-release', 'Resolve existing release and reject channel rollback').run,
+    /tags\.json|git\/matching-refs|coder-run:/);
+  const upload = step('publish-release', 'Upload or replace Coder release assets');
+  assert.equal(upload.if, undefined);
+  assert.equal(upload.with.overwrite_files, true);
+  assert.equal(upload.with.body_path, 'release/CHANGELOG_CODER.md');
+  assert.equal(upload.with.draft, "${{ steps.release.outputs.published != 'true' }}");
+  assert.equal(upload.with.make_latest,
+    "${{ steps.release.outputs.published == 'true' && needs.prepare.outputs.make_latest || 'false' }}");
 });
 
-test('foreign releases, orphan tags, and newer published versions cannot be overwritten', () => {
-  const tags = [{ ref: 'refs/tags/v0.1.7' }];
-  assert.throws(() => guard([], tags), /another run/);
-  for (const draft of [true, false]) {
-    assert.throws(() => guard([{ tag_name: 'v0.1.7', body: marker.replace(':123:', ':124:'), draft }], tags), /another run/);
-  }
-  assert.throws(() => guard([{ tag_name: 'v0.1.8', draft: false, prerelease: false }]), /newer than published/);
+test('reusing an existing release still cannot roll back a newer published channel version', () => {
+  assert.throws(() => guard([
+    { id: 7, tag_name: 'v0.1.7', draft: false, prerelease: false },
+    { id: 8, tag_name: 'v0.1.8', draft: false, prerelease: false },
+  ]), /older than published/);
 });
 
 async function finishRelease({ published = false, channel = 'stable', alter = () => {} } = {}) {
@@ -90,7 +91,7 @@ async function finishRelease({ published = false, channel = 'stable', alter = ()
   return updates;
 }
 
-test('publish only complete matching assets; a lost publication response needs no external mutation', async () => {
+test('new drafts publish after asset verification and existing public releases are verified again', async () => {
   assert.deepEqual(await finishRelease(), [{ draft: false, prerelease: false, make_latest: 'true' }]);
   assert.deepEqual(await finishRelease({ channel: 'beta' }), [{ draft: false, prerelease: true, make_latest: 'false' }]);
   assert.deepEqual(await finishRelease({ published: true }), []);
@@ -98,6 +99,48 @@ test('publish only complete matching assets; a lost publication response needs n
     assets => { assets[0].state = 'starter'; }]) {
     await assert.rejects(finishRelease({ alter }), /Release asset/);
     await assert.rejects(finishRelease({ published: true, alter }), /Release asset/);
+  }
+});
+
+test('same-version feed contents may change while both endpoints reject lower release versions', async () => {
+  const config = { regions: {
+    eu: { updater: 'https://source.invalid/blockly/' },
+    cn: { updater: 'https://mirror.invalid/blockly' },
+  } };
+  const expected = [
+    'https://source.invalid/blockly/latest-coder-cn.yml',
+    'https://source.invalid/blockly/latest-coder.yml',
+    'https://source.invalid/blockly/latest-coder-mac-cn.yml',
+    'https://source.invalid/blockly/latest-coder-mac.yml',
+    'https://mirror.invalid/blockly/latest-coder.yml',
+    'https://mirror.invalid/blockly/latest-coder-mac.yml',
+  ];
+  async function inspect(newerUrl) {
+    const calls = [], errors = [];
+    const processState = { env: environment, exitCode: 0 };
+    await run('upload-stable-feed', 'Check final files and reject public feed rollback', {
+      'js-yaml': yaml, './electron/config/config.json': config,
+    }, {}, {
+      process: processState, AbortSignal,
+      console: { error: message => errors.push(message) },
+      async fetch(url) {
+        calls.push(url);
+        return { status: 200, ok: true, arrayBuffer: async () => Buffer.from(yaml.dump({
+          version: url === newerUrl ? '0.1.8' : '0.1.7',
+          files: [{ url: 'previous-build.zip', sha512: 'previous-digest', size: 10 }],
+        })) };
+      },
+    });
+    return { calls, errors, exitCode: processState.exitCode };
+  }
+  const sameVersion = await inspect();
+  assert.equal(sameVersion.exitCode, 0, sameVersion.errors.join('\n'));
+  assert.deepEqual(sameVersion.calls, expected);
+  for (const newerUrl of [expected[0], expected[4]]) {
+    const rollback = await inspect(newerUrl);
+    assert.equal(rollback.exitCode, 1);
+    assert.match(rollback.errors.join('\n'), /Refusing feed rollback/);
+    assert.ok(rollback.calls.includes(newerUrl));
   }
 });
 
@@ -154,7 +197,6 @@ test('artifacts support same-run retries and stable verification waits for domes
   assert.equal(workflow.jobs['prepare-release'].needs, 'prepare');
   assert.ok(!workflow.jobs['prepare-release'].steps.some(step => step.uses === 'actions/download-artifact@v4'));
   assert.ok(workflow.jobs['publish-release'].needs.includes('prepare-release'));
-  assert.equal(step('publish-release', 'Upload all four packages and product manifests to a draft').with.draft, true);
   assert.deepEqual(workflow.jobs['sync-stable-feed'].needs, ['prepare', 'upload-stable-feed']);
   assert.equal(workflow.jobs['sync-stable-feed'].if, "needs.prepare.outputs.channel == 'stable'");
   assert.deepEqual(workflow.jobs['verify-stable-feed'].needs, ['prepare', 'sync-stable-feed']);

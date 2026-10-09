@@ -377,37 +377,29 @@ jobs:
               node scripts/coder-release-manifest.cjs verify release "$platform" "$flavor" "$RELEASE_VERSION"
             done
           done
-      - name: Reject reused tags or older channel versions
+      - name: Resolve existing release and reject channel rollback
         id: release
         env:
           GH_TOKEN: ${{ secrets.AILY_CODER_RELEASE_TOKEN }}
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
         run: |
-          gh api "repos/$CODER_RELEASE_REPOSITORY/git/matching-refs/tags/$RELEASE_TAG" > tags.json
           gh api --paginate --slurp "repos/$CODER_RELEASE_REPOSITORY/releases?per_page=100" > releases.json
           node <<'NODE'
           const fs = require('node:fs');
           const semver = require('semver');
-          const marker = `<!-- coder-run:${process.env.GITHUB_REPOSITORY}:${process.env.GITHUB_RUN_ID}:${process.env.GITHUB_SHA} -->`;
           const releases = require('./releases.json').flat();
           const existing = releases.find(release => release.tag_name === process.env.RELEASE_TAG);
-          const tagExists = require('./tags.json').some(ref => ref.ref === `refs/tags/${process.env.RELEASE_TAG}`);
-          if ((existing && !existing.body?.includes(marker)) || (tagExists && !existing)) {
-            throw new Error('Release tag belongs to another run; select a new version');
-          }
           for (const release of releases) {
             const previous = semver.valid(release.tag_name);
             if (release !== existing && !release.draft && release.prerelease === (process.env.RELEASE_CHANNEL === 'beta') && previous &&
-                !semver.gt(process.env.RELEASE_VERSION, previous)) {
-              throw new Error(`Release must be newer than published ${release.tag_name}`);
+                semver.lt(process.env.RELEASE_VERSION, previous)) {
+              throw new Error(`Release cannot be older than published ${release.tag_name}`);
             }
           }
-          fs.writeFileSync('release-body.md', `${fs.readFileSync('release/CHANGELOG_CODER.md', 'utf8')}\n\n${marker}\n`);
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `published=${Boolean(existing && !existing.draft)}\nrelease_id=${existing?.id || ''}\n`);
           NODE
-      - name: Upload all four packages and product manifests to a draft
+      - name: Upload or replace Coder release assets
         id: draft
-        if: steps.release.outputs.published != 'true'
         uses: softprops/action-gh-release@v3
         with:
           repository: ${{ env.CODER_RELEASE_REPOSITORY }}
@@ -415,7 +407,7 @@ jobs:
           tag_name: ${{ needs.prepare.outputs.tag }}
           target_commitish: ${{ needs.prepare.outputs.target_branch }}
           name: aily coder ${{ needs.prepare.outputs.tag }}
-          body_path: release-body.md
+          body_path: release/CHANGELOG_CODER.md
           files: |
             release/aily-coder-*.exe
             release/aily-coder-*.dmg
@@ -424,9 +416,10 @@ jobs:
             release/CHANGELOG_CODER.md
             release/CHANGELOG_CODER_ZH.md
           fail_on_unmatched_files: true
-          draft: true
+          overwrite_files: true
+          draft: ${{ steps.release.outputs.published != 'true' }}
           prerelease: ${{ needs.prepare.outputs.prerelease == 'true' }}
-          make_latest: 'false'
+          make_latest: ${{ steps.release.outputs.published == 'true' && needs.prepare.outputs.make_latest || 'false' }}
       - name: Verify complete Release assets before publication
         env:
           GH_TOKEN: ${{ secrets.AILY_CODER_RELEASE_TOKEN }}
@@ -457,7 +450,7 @@ jobs:
                 throw new Error(`Release asset verification failed: ${name}`);
               }
             }
-            // An acknowledged publication can be lost on a runner failure; never rewrite its assets.
+            // Existing releases stay public; publish new drafts only after asset verification.
             if (process.env.ALREADY_PUBLISHED !== 'true') {
               execFileSync('gh', ['api', url, '--method', 'PATCH', '--input', '-'], {
                 input: JSON.stringify({ draft: false, prerelease: process.env.RELEASE_CHANNEL === 'beta',
@@ -503,7 +496,6 @@ jobs:
             done
           done
           node <<'NODE'
-          const fs = require('node:fs');
           const yaml = require('js-yaml');
           const semver = require('semver');
           const config = require('./electron/config/config.json');
@@ -520,9 +512,8 @@ jobs:
                 if (!response.ok) throw new Error(`Cannot inspect current feed: ${response.status}`);
                 const published = Buffer.from(await response.arrayBuffer());
                 const previous = yaml.load(published.toString('utf8')).version;
-                if (!semver.valid(previous) || semver.lt(process.env.RELEASE_VERSION, previous) ||
-                    (semver.eq(process.env.RELEASE_VERSION, previous) && !published.equals(fs.readFileSync(`release/${manifest}`)))) {
-                  throw new Error(`Refusing feed rollback or replacement: ${manifest} at ${previous}`);
+                if (!semver.valid(previous) || semver.lt(process.env.RELEASE_VERSION, previous)) {
+                  throw new Error(`Refusing feed rollback: ${manifest} at ${previous}`);
                 }
               }
             }
