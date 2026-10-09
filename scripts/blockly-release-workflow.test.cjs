@@ -15,6 +15,22 @@ const environment = {
   RELEASE_VERSION: '0.9.105', RELEASE_TAG: 'v0.9.105',
 };
 const marker = `<!-- blockly-run:source/repo:123:${environment.GITHUB_SHA} -->`;
+
+test('macOS manifests refresh final DMG metadata after stapling and before rename or upload', () => {
+  for (const [job, suffix] of [['build-macos', ''], ['build-macos-cn', ' (CN)']]) {
+    const steps = workflow.jobs[job].steps;
+    const refresh = step(job, `Refresh DMG update metadata after stapling${suffix}`);
+    assert.equal(refresh.run, 'for manifest in dist/aily-blockly/*-mac.yml; do\n' +
+      '  node scripts/refresh-macos-dmg-manifest.cjs "$manifest"\ndone\n');
+    const orderedNames = [
+      `Manual Notarization (if needed)${suffix}`, `Final Verification${suffix}`, refresh.name,
+      ...(suffix ? ['Rename latest-mac manifest (CN)'] : []), `Archive macOS Artifact${suffix}`,
+    ];
+    const indexes = orderedNames.map(name => steps.findIndex(step => step.name === name));
+    assert.ok(indexes.every((index, i) => index >= 0 && (i === 0 || index > indexes[i - 1])));
+  }
+});
+
 function run(job, name, modules, env = {}) {
   const source = step(job, name).run.match(/node <<'NODE'\n([\s\S]*?)\nNODE/)[1];
   return vm.runInNewContext(source, {

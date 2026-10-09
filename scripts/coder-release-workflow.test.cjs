@@ -158,8 +158,11 @@ test('artifacts support same-run retries and stable verification waits for domes
   assert.deepEqual(workflow.jobs['sync-stable-feed'].needs, ['prepare', 'upload-stable-feed']);
   assert.equal(workflow.jobs['sync-stable-feed'].if, "needs.prepare.outputs.channel == 'stable'");
   assert.deepEqual(workflow.jobs['verify-stable-feed'].needs, ['prepare', 'sync-stable-feed']);
-  assert.deepEqual(workflow.jobs['sync-stable-feed'].steps[0].env, {
-    SERVER_HOST: '${{ secrets.TRIGGER_SERVER_HOST }}', SERVER_USER: '${{ secrets.TRIGGER_SERVER_USER }}',
-    SERVER_PASSWORD: '${{ secrets.TRIGGER_SERVER_PASSWORD }}', SERVER_SCRIPT_PATH: '${{ secrets.TRIGGER_SERVER_SCRIPT_PATH }}',
-  });
+  const syncWorkflow = yaml.load(fs.readFileSync(path.join(__dirname, '../.github/workflows/coder-sync.yml'), 'utf8'));
+  for (const source of [workflow, syncWorkflow]) {
+    assert.deepEqual(source.jobs['sync-stable-feed'].steps[0].env, {
+      SERVER_HOST: '${{ secrets.TRIGGER_SERVER_HOST }}', SERVER_USER: '${{ secrets.TRIGGER_SERVER_USER }}',
+      SERVER_PASSWORD: '${{ secrets.TRIGGER_SERVER_PASSWORD }}', SERVER_SCRIPT_PATH: '${{ secrets.TRIGGER_CODER_SERVER_SCRIPT_PATH }}',
+    });
+  }
 });

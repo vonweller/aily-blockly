@@ -407,6 +407,12 @@ jobs:
             xcrun stapler validate "$DMG_PATH" && echo "✅ Notarized: $DMG_PATH" || echo "⚠️ Not notarized: $DMG_PATH"
           done < <(find dist/aily-blockly -name "*.dmg" -type f)
       
+      - name: Refresh DMG update metadata after stapling
+        run: |
+          for manifest in dist/aily-blockly/*-mac.yml; do
+            node scripts/refresh-macos-dmg-manifest.cjs "$manifest"
+          done
+
       - name: Archive macOS Artifact
         uses: actions/upload-artifact@v4
         with:
@@ -511,6 +517,12 @@ jobs:
           while IFS= read -r DMG_PATH; do
             xcrun stapler validate "$DMG_PATH" && echo "✅ Notarized: $DMG_PATH" || echo "⚠️ Not notarized: $DMG_PATH"
           done < <(find dist/aily-blockly -name "aily-blockly-CN-*.dmg" -type f)
+
+      - name: Refresh DMG update metadata after stapling (CN)
+        run: |
+          for manifest in dist/aily-blockly/*-mac.yml; do
+            node scripts/refresh-macos-dmg-manifest.cjs "$manifest"
+          done
 
       - name: Rename latest-mac manifest (CN)
         run: |
