@@ -156,6 +156,7 @@ export class BlocklyFunctionView {
 
   refresh(rebuild = true): void {
     if (this.disposed) return;
+    let visibilityChanged = false;
     const roots = this.workspace.getTopBlocks(false).filter(block => !block.isInsertionMarker());
     if (rebuild || this.topologyDirty) {
       this.trees.clear(); this.rootsByBlock = new WeakMap();
@@ -183,6 +184,7 @@ export class BlocklyFunctionView {
     }
     for (const [block, display] of this.hidden) {
       if (!roots.includes(block) || visibleRoots.has(block)) {
+        visibilityChanged = true;
         block.getSvgRoot()?.style.setProperty('display', display);
         block.getSvgRoot()?.removeAttribute(HIDDEN); this.hidden.delete(block);
       }
@@ -190,10 +192,12 @@ export class BlocklyFunctionView {
     for (const block of roots) {
       const svg = block.getSvgRoot();
       if (!svg || visibleRoots.has(block) || this.hidden.has(block)) continue;
+      visibilityChanged = true;
       this.hidden.set(block, svg.style.display);
       svg.style.display = 'none'; svg.setAttribute(HIDDEN, 'true');
     }
     this.refreshBubbles();
+    if (visibilityChanged) this.workspace.getViewportRenderer()?.schedule();
     this.visibleIds.clear();
     for (const root of visibleRoots) {
       for (const block of this.trees.get(root) ?? []) this.visibleIds.add(block.id);
@@ -238,11 +242,14 @@ export class BlocklyFunctionView {
     for (const [svg, display] of this.hiddenBubbles) svg.style.setProperty('display', display);
     const bounds = this.workspace.getBlocksBoundingBox;
     this.workspace.getBlocksBoundingBox = this.originalBounds;
+    this.workspace.getViewportRenderer()?.schedule();
     try { return operation(); }
     finally {
       this.workspace.getBlocksBoundingBox = bounds;
       for (const block of this.hidden.keys()) block.getSvgRoot()?.style.setProperty('display', 'none');
       for (const svg of this.hiddenBubbles.keys()) svg.style.display = 'none';
+      this.workspace.getViewportRenderer()?.schedule();
+      this.workspace.getViewportRenderer()?.refresh();
     }
   }
 
@@ -255,6 +262,7 @@ export class BlocklyFunctionView {
     this.workspace.getBlocksBoundingBox = this.originalBounds;
     this.workspace.centerOnBlock = this.originalCenter;
     this.workspace.connectionChecker.doDragChecks = this.originalDragChecks;
+    this.workspace.getViewportRenderer()?.schedule();
     this.trees.clear();
   }
 }

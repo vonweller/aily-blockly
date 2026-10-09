@@ -2,7 +2,7 @@ import * as Blockly from 'blockly';
 import {MultiselectDraggable} from '../components/blockly/plugins/workspace-multiselect/multiselect_draggable';
 import {dragSelectionWeakMap, inMultipleSelectionModeWeakMap} from '../components/blockly/plugins/workspace-multiselect/global';
 
-describe('Blockly v13 rendered multiselect', () => {
+for (const virtual of [false, true]) describe(`Blockly v13 rendered multiselect (virtual=${virtual})`, () => {
   let workspace: Blockly.WorkspaceSvg;
   let div: HTMLDivElement;
   let selection: any;
@@ -12,6 +12,7 @@ describe('Blockly v13 rendered multiselect', () => {
     div.style.cssText = 'width:800px;height:600px';
     document.body.appendChild(div);
     workspace = Blockly.inject(div, {media: '', sounds: false});
+    workspace.setViewportRendering(virtual);
     Blockly.Blocks['multiselect_probe'] = {init() {
       this.appendDummyInput().appendField('probe');
       this.setPreviousStatement(true);

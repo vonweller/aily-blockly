@@ -138,26 +138,31 @@ export class WorkspaceMinimap {
       this.wrapper.className = ['blockly-minimap', ...this.workspace.getInjectionDiv().classList]
         .filter(name => name !== 'injectionDiv').join(' ');
       this.svg.classList.add('blocklySvg');
-      for (const source of sources) {
-        if (!source.id) source.id = `aily-minimap-source-${++nextSourceId}`;
-        const reference = source.cloneNode(true) as SVGElement;
-        reference.dataset['minimapSource'] = source.id;
-        // cloneNode copies canvas dimensions, not its bitmap. Custom fields
-        // embedded in foreignObject must retain their rendered preview too.
-        const canvases = source.querySelectorAll('canvas');
-        reference.querySelectorAll('canvas').forEach((canvas, index) => {
-          if (canvases[index].width && canvases[index].height) {
-            canvas.getContext('2d')?.drawImage(canvases[index], 0, 0);
+      const captureSnapshots = () => {
+        for (const source of sources) {
+          if (!source.id) source.id = `aily-minimap-source-${++nextSourceId}`;
+          const reference = source.cloneNode(true) as SVGElement;
+          reference.dataset['minimapSource'] = source.id;
+          // cloneNode copies canvas dimensions, not its bitmap. Custom fields
+          // embedded in foreignObject must retain their rendered preview too.
+          const canvases = source.querySelectorAll('canvas');
+          reference.querySelectorAll('canvas').forEach((canvas, index) => {
+            if (canvases[index].width && canvases[index].height) {
+              canvas.getContext('2d')?.drawImage(canvases[index], 0, 0);
+            }
+          });
+          for (const element of [reference, ...reference.querySelectorAll('*')]) {
+            element.removeAttribute('id');
+            element.removeAttribute('tabindex');
+            element.classList.remove('blocklyDraggable', 'blocklySelected', 'blocklyDragging');
+            if (element.matches('input,textarea,select,button,[contenteditable],a')) element.setAttribute('tabindex', '-1');
           }
-        });
-        for (const element of [reference, ...reference.querySelectorAll('*')]) {
-          element.removeAttribute('id');
-          element.removeAttribute('tabindex');
-          element.classList.remove('blocklyDraggable', 'blocklySelected', 'blocklyDragging');
-          if (element.matches('input,textarea,select,button,[contenteditable],a')) element.setAttribute('tabindex', '-1');
+          this.content.append(reference);
         }
-        this.content.append(reference);
-      }
+      };
+      const viewport = this.workspace.getViewportRenderer();
+      if (!overview && viewport) viewport.withAllBlocksRendered(captureSnapshots);
+      else captureSnapshots();
       const box = this.workspace.getBlocksBoundingBox();
       const width = Math.max(1, this.wrapper.clientWidth);
       const height = Math.max(1, this.wrapper.clientHeight);
@@ -190,21 +195,6 @@ export class WorkspaceMinimap {
     this.wrapper.dataset['minimapReady'] = 'false';
     const pending = this.workspace.getTopBlocks(false).reverse();
     const shapes: MinimapShape[] = [];
-    // Resolve each SVG ancestor once per capture. Native per-block position
-    // queries re-walk deep statement stacks and allocate layer sets repeatedly.
-    const positions = new Map<Element, Blockly.utils.Coordinate>();
-    const layers = this.workspace.getLayerManager();
-    const positionOf = (svg: Element): Blockly.utils.Coordinate => {
-      const ancestors: Element[] = [];
-      let node: Element | null = svg;
-      while (node && !positions.has(node) && !layers.hasLayer(node as SVGElement)) { ancestors.push(node); node = node.parentElement; }
-      let point = node && positions.get(node) || new Blockly.utils.Coordinate(0, 0);
-      for (let i = ancestors.length - 1; i >= 0; i--) {
-        point = Blockly.utils.Coordinate.sum(point, Blockly.utils.svgMath.getRelativeXY(ancestors[i]));
-        positions.set(ancestors[i], point);
-      }
-      return point;
-    };
     const collect = () => {
       this.captureFrame = null;
       if (this.disposed || version !== this.sceneVersion || this.deferCaptureForInteraction()) return;
@@ -213,7 +203,7 @@ export class WorkspaceMinimap {
         const block = pending.pop();
         if (!block) break;
         if (block.isDisposed() || block.getSvgRoot().style.display === 'none') continue;
-        const point = positionOf(block.getSvgRoot());
+        const point = block.getRelativeToSurfaceXY();
         shapes.push({id: block.id, path: block.pathObject.svgPath.getAttribute('d') || '',
           colour: block.getColour(), x: point.x, y: point.y, opacity: block.isEnabled() ? 1 : 0.45});
         const children = block.getChildren(false);

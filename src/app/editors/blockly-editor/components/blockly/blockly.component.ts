@@ -826,6 +826,7 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
       applyWindowsBlocklyScrollbarThickness(this.platformService.isWindows());
       this.ngZone.runOutsideAngular(() => {
         this.workspace = Blockly.inject(this.workspacePaneComponent.blocklyHostElement, this.options);
+        this.workspace.setViewportRendering(this.configData.blockly.viewportRendering !== false);
         this.workspacePaneComponent.blocklyHostElement.addEventListener('pointerdown', this.onWorkspacePointerDownBound, true);
       });
       this.workspace.updateToolbox(this.toolbox);

@@ -7,7 +7,7 @@ import { exportWorkspaceToSvg } from '../services/workspace-svg-exporter';
 import { loadBlocklyWorkspace } from './blockly-performance';
 import { withNativeStateLoading } from '../services/blockly-native-state-loading';
 
-describe('Blockly function display preserves the complete native workspace', () => {
+for (const virtual of [false, true]) describe(`Blockly function display preserves the complete native workspace (virtual=${virtual})`, () => {
   let host: HTMLDivElement, workspace: Blockly.WorkspaceSvg, view: BlocklyFunctionView;
   let state: BlocklyFunctionViewState;
   let first: Blockly.BlockSvg, second: Blockly.BlockSvg, line: Blockly.BlockSvg;
@@ -33,6 +33,7 @@ describe('Blockly function display preserves the complete native workspace', () 
     } };
     host = document.createElement('div'); host.style.cssText = 'width:800px;height:600px'; document.body.append(host);
     workspace = Blockly.inject(host, { scrollbars: true, comments: true });
+    workspace.setViewportRendering(virtual);
     first = make('function_view_def', 'first'); first.moveBy(40, 80);
     second = make('function_view_def', 'second'); second.setFieldValue('other', 'NAME'); second.moveBy(1400, 80);
     line = make('function_view_line', 'line'); first.getInput('BODY')!.connection!.connect(line.previousConnection!);

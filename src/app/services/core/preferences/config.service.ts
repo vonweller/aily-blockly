@@ -2042,6 +2042,7 @@ interface AppConfig {
 
   blockly: {
     renderer: string; // Blockly渲染器
+    viewportRendering?: boolean;
   }
 
   /** Coder 模式开关（由 electron/config/config.json 控制） */

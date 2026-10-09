@@ -1,7 +1,7 @@
 import * as Blockly from 'blockly';
 import { WorkspaceMinimap } from './workspace-minimap';
 
-describe('WorkspaceMinimap projection', () => {
+for (const virtual of [false, true]) describe(`WorkspaceMinimap projection (virtual=${virtual})`, () => {
   let host: HTMLDivElement;
   let workspace: Blockly.WorkspaceSvg;
   let minimap: WorkspaceMinimap;
@@ -11,6 +11,7 @@ describe('WorkspaceMinimap projection', () => {
     host.style.cssText = 'position:relative;width:800px;height:600px';
     document.body.append(host);
     workspace = Blockly.inject(host, {scrollbars: true});
+    workspace.setViewportRendering(virtual);
     Blockly.Blocks['minimap_test'] = {init() {this.appendDummyInput().appendField('visible label');}};
     minimap = new WorkspaceMinimap(workspace);
   });

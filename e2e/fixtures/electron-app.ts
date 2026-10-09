@@ -74,7 +74,7 @@ export async function launchAilyElectron(options: {
       await writeFile(path.join(userDataDir, 'config.json'), JSON.stringify(options.config), 'utf8');
     }
     app = await _electron.launch({
-      args: ['.', `--user-data-dir=${userDataDir}`],
+      args: ['.', ...(process.env['AILY_E2E_DEV_URL'] ? ['--serve'] : []), `--user-data-dir=${userDataDir}`],
       cwd: ROOT,
       timeout: 60_000,
       env: {
@@ -85,6 +85,11 @@ export async function launchAilyElectron(options: {
         AILY_APPDATA_PATH: userDataDir,
       },
     });
+    if (process.env['AILY_E2E_DEV_URL']) {
+      await app.context().route('http://localhost:4200/**', route => route.fulfill({
+        status: 302, headers: { location: process.env['AILY_E2E_DEV_URL']! },
+      }));
+    }
   } catch (error) {
     await rm(userDataDir, { recursive: true, force: true }).catch(() => {});
     throw error;

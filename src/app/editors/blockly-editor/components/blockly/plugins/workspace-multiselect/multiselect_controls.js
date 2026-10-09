@@ -453,6 +453,18 @@ export class MultiselectControls {
       usePointerEvents: true,
       multiSelectKeys: this.multiSelectKeys_,
     });
+    const viewport = this.workspace_.getViewportRenderer();
+    if (viewport) {
+      this.refreshViewportSelectables_ = () => {
+        if (!this.dragSelect_) return;
+        const visible = new Set(this.workspace_.getInjectionDiv().querySelectorAll(
+            'g.blocklyDraggable:not(.blocklyInsertionMarker)>path.blocklyPath, g.blocklyDraggable>rect.blocklyCommentHighlight'));
+        const previous = new Set(this.dragSelect_.getSelectables());
+        this.dragSelect_.removeSelectables([...previous].filter(element => !visible.has(element)), false, false);
+        this.dragSelect_.addSelectables([...visible].filter(element => !previous.has(element)), false, false);
+      };
+      viewport.addViewChangeListener(this.refreshViewportSelectables_);
+    }
     // Filter out the parent block when selecting child blocks
     // to mitigate the invisible rectangles issue.
     const filterParent = (list, rect) => {
@@ -460,10 +472,14 @@ export class MultiselectControls {
       for (const [parent, parentRect] of list.entries()) {
         for (const [child, childRect] of list.entries()) {
           if (parent === child ||
-            !DragSelect.isCollision(childRect, parentRect, 0) ||
-                  parent.parentNode === null || child.parentNode === null ||
-                  parent.parentNode === child.parentNode) continue;
-          else if (parent.parentNode.contains(child.parentNode) &&
+              !DragSelect.isCollision(childRect, parentRect, 0) ||
+                  parent.parentNode === null || child.parentNode === null) continue;
+          const parentBlock = this.workspace_.getBlockById(parent.parentNode.getAttribute('data-id'));
+          const childBlock = this.workspace_.getBlockById(child.parentNode.getAttribute('data-id'));
+          const contains = viewport && parentBlock && childBlock
+            ? viewport.contains(parentBlock, childBlock)
+            : parent.parentNode !== child.parentNode && parent.parentNode.contains(child.parentNode);
+          if (contains &&
                   // Continue to select if user draws a rectangle that
                   // covers more than the child itself
                   DragSelect.isCollision(rect, childRect, 1)) {
@@ -516,6 +532,10 @@ export class MultiselectControls {
    * @param {!boolean} byIcon Whether to simulate a keyboard event.
    */
   disableMultiselect(byIcon = false) {
+    if (this.refreshViewportSelectables_) {
+      this.workspace_.getViewportRenderer()?.removeViewChangeListener(this.refreshViewportSelectables_);
+      this.refreshViewportSelectables_ = null;
+    }
     inMultipleSelectionModeWeakMap.set(this.workspace_, false);
     if (this.dragSelect_) {
       if (byIcon) {
