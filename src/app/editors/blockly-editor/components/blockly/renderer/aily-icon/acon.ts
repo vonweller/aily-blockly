@@ -50,10 +50,29 @@ export class AilyIcon extends Blockly.icons.Icon {
     return new Blockly.utils.Size(this.state.width, this.state.height);
   }
 
+  // Library icons describe the block; they are not independent controls.
+  override canBeFocused(): boolean {
+    return false;
+  }
+
+  override isClickableInFlyout(_autoClosingFlyout: boolean): boolean {
+    return false;
+  }
+
+  protected override recomputeAriaContext(): void {
+    if (!this.svgRoot) return;
+    Blockly.utils.aria.setState(this.svgRoot, Blockly.utils.aria.State.HIDDEN, true);
+  }
+
   override initView(pointerdownListener: (e: PointerEvent) => void): void {
     if (this.svgRoot) return;
 
     super.initView(pointerdownListener);
+
+    // Hit the block underneath, including through foreignObject font icons.
+    // Otherwise Blockly starts an icon gesture, focuses it and uses its
+    // default cursor instead of the block's grab/drag interaction.
+    this.svgRoot!.style.pointerEvents = 'none';
 
     this.createIconContent();
   }

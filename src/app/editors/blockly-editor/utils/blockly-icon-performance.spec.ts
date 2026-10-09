@@ -24,3 +24,64 @@ describe('Aily icon render reuse', () => {
     } finally {workspace.dispose(); host.remove(); delete Blockly.Blocks['icon_reuse_probe'];}
   });
 });
+
+describe('Aily decorative icon interaction', () => {
+  let host: HTMLDivElement;
+  let workspace: Blockly.WorkspaceSvg;
+
+  beforeEach(() => {
+    host = document.createElement('div');
+    host.style.cssText = 'width:600px;height:400px';
+    document.body.append(host);
+    workspace = Blockly.inject(host, {});
+    Blockly.Blocks['decorative_icon_probe'] = {
+      init() { this.appendDummyInput().appendField(new Blockly.FieldTextInput('editable'), 'TEXT'); },
+    };
+  });
+
+  afterEach(() => {
+    workspace.dispose(); host.remove();
+    delete Blockly.Blocks['decorative_icon_probe'];
+  });
+
+  for (const type of ['i', 'svg', 'image'] as const) {
+    it(`${type} passes hit testing to the block and stays outside focus navigation after updates`, () => {
+      const block = workspace.newBlock('decorative_icon_probe'); block.initSvg();
+      const icon = addAilyIconToBlock(block, { type, src: type === 'svg' ? '<path d="M0 0 H512 V512 H0 Z" />'
+        : type === 'image' ? 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg"/%3E' : 'fa-solid fa-play' });
+      block.render(); block.moveBy(40, 40);
+      const element = icon.getFocusableElement();
+      expect(icon.canBeFocused()).toBe(false);
+      expect(icon.isClickableInFlyout(true)).toBe(false);
+      expect(icon.isClickableInFlyout(false)).toBe(false);
+      expect(element.getAttribute('aria-hidden')).toBe('true');
+      expect(element.getAttribute('role')).not.toBe('button');
+      expect(element.hasAttribute('tabindex')).toBe(false);
+      const rect = element.getBoundingClientRect();
+      const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+      expect(hit).toBe(block.pathObject.svgPath);
+      expect(getComputedStyle(hit!).cursor).toBe('grab');
+
+      icon.setState({ width: 24, color: '#123456' }); block.render();
+      expect(icon.canBeFocused()).toBe(false);
+      expect(getComputedStyle(element).pointerEvents).toBe('none');
+      expect(element.getAttribute('aria-hidden')).toBe('true');
+      expect(element.querySelector('[tabindex]')).toBeNull();
+    });
+  }
+
+  it('preserves native block, field and comment focus', () => {
+    const block = workspace.newBlock('decorative_icon_probe'); block.initSvg();
+    addAilyIconToBlock(block, 'fa-solid fa-play');
+    block.setCommentText('interactive comment'); block.render();
+    const comment = block.getIcon(Blockly.icons.CommentIcon.TYPE)!;
+    for (const node of [block, block.getField('TEXT')!, comment]) {
+      expect(node.canBeFocused()).toBe(true);
+      Blockly.getFocusManager().focusNode(node);
+      expect(document.activeElement).toBe(node.getFocusableElement());
+    }
+    expect(comment.getFocusableElement().getAttribute('aria-hidden')).not.toBe('true');
+    expect(comment.getFocusableElement().getAttribute('role')).toBe('button');
+    expect(getComputedStyle(comment.getFocusableElement()).pointerEvents).not.toBe('none');
+  });
+});
