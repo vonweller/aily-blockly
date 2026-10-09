@@ -2040,6 +2040,9 @@ interface AppConfig {
     autoSave: boolean;
   };
 
+  /** Floating project toolbar offset from the editor's left and bottom edges. */
+  devToolPosition?: { x: number; y: number };
+
   blockly: {
     renderer: string; // Blockly渲染器
     viewportRendering?: boolean;

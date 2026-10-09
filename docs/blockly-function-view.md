@@ -54,3 +54,30 @@ AILY_E2E_PROJECT=/absolute/path/to/installed/project \
 ```
 
 E2E 项目需已安装 `lib-core-functions`、`lib-core-time` 和 `lib-core-math`。测试在临时副本及隔离应用数据中写入，结束后清理。此次没有进行 Windows 实机、正式安装包发布或硬件上传验收。
+
+## 2026-10-09 路由布局与底部工具栏回归
+
+页面切换时 Angular 动画可能暂时保留旧页面，`router-outlet.nextElementSibling` 因而仍指向旧宿主。原布局指令会把 `aily-routed-content` 标记加到旧页面，使新 Blockly 编辑器保持 `display: inline`，`clientWidth/clientHeight` 均为 0，浮动工具栏被限制在左下角。
+
+指令现在从 `ViewContainerRef` 取得刚激活或重新挂载的视图根节点，不依赖相邻 DOM 顺序，保留原有窄范围布局选择器。
+
+验证：带真实 Router 和动画提供器的页面切换用例在修复前复现 0×0，修复后首次加载、切页/父容器缩放、重新挂载全部通过；连同原有 DevTool Blockly/Coder 用例共 7 项通过，`tsconfig.app.json` 类型检查通过。
+
+```sh
+TMPDIR=/private/tmp node node_modules/@angular/cli/bin/ng.js test --watch=false --browsers=ChromeHeadless \
+  --include=src/app/directives/routed-content.directive.spec.ts \
+  --include=src/app/editors/blockly-editor/components/dev-tool/dev-tool-coder.spec.ts
+node node_modules/typescript/bin/tsc --noEmit -p tsconfig.app.json
+```
+
+当前 macOS Electron 35.7.5 开发实例（localhost:4200）热更新后，编辑器实际尺寸从 0×0 恢复为 1918×1340（开发者工具打开时），工具栏从 x=0 恢复居中至 x=788。真实鼠标操作验证了横向/纵向拖动、松手后再次拖动、拖至右侧边界及移回底部。验证中误触的积木拖动已通过产品撤销恢复，工作区恢复为 7765 块、撤销栈为空；误触的架构图会话已停止。未做 Windows 或正式安装包验收。
+
+同日后续优化：拖动区域及其图标使用 `grab`，拖动期间使用 `grabbing`。历史实现仅在组件内保存坐标，每次创建组件都会重新居中；现在完成拖动后通过 `ConfigService.save()` 将距编辑器左边、底边的偏移写入用户配置 `devToolPosition`，项目重载时恢复。窗口或面板缩小只限制显示位置，不覆盖保存的偏好；无效配置回退到底部居中，单击手柄、初始化和销毁不写配置。
+
+新增位置回归 6 项，覆盖完成拖动才保存、最后一帧前松手、重建后恢复、缩小/单击/再放大、边界、失焦和销毁，连同上述用例共 13 项通过；应用类型检查通过。测试命令增加：
+
+```sh
+--include=src/app/editors/blockly-editor/components/dev-tool/dev-tool-position.spec.ts
+```
+
+真实 Electron 在 `leg4-spider-V4` 上拖动后，内存及磁盘配置均为 `{ "x": 660, "y": 56 }`。打开开发者工具压缩编辑器时，显示 x 临时限制为 527，保存值仍为 660；关闭面板后恢复。点击产品工具栏“重新加载项目”后核对旧工具栏宿主已断开、新宿主和积木实例均已重建，加载结束、积木数仍为 2800、保存位置保持不变。本次验证覆盖项目重载和本地配置写入，未重启整个应用进程。
