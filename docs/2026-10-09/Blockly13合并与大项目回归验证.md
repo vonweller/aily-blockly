@@ -4,7 +4,7 @@
 
 ## 分支与交付范围
 
-来源 `downeyin-re-blockly13`，冻结提交 `0a53b7fb8d1b0014865a8e3b03d69f586a96972a`；目标 `downeyin-subapp-aily`，初始提交 `ba08a8f3b06656830a2afa65ce55d175ed0327d2`。验证期间目标新增 `1721d0252d11b029a81a39072841ac104be81cd0`（库标签搜索和 MCP/ABS 诊断），最终交付须同时保留三者。
+来源 `downeyin-re-blockly13`，冻结提交 `0a53b7fb8d1b0014865a8e3b03d69f586a96972a`；目标 `downeyin-subapp-aily`，初始提交 `ba08a8f3b06656830a2afa65ce55d175ed0327d2`。验证期间目标新增 `1721d0252d11b029a81a39072841ac104be81cd0`（库标签搜索和 MCP/ABS 诊断），最终集成树同时保留三者，先合入 Blockly 13 来源，再合入目标后续提交；两个合并均保留原始提交历史。
 
 在隔离 worktree 集成，保留目标已有的函数/全部文件切换、完整项目模型、持久化、操作租约、Coder 模式边界和库依赖生命周期。未推送或发布安装包。
 
@@ -45,7 +45,7 @@
 
 ## 已执行验证
 
-- 宿主完整 Angular 测试：2390 项通过；最终目标新增提交组合还需补测其新增用例。
+- 宿主完整 Angular 测试：最终目标新增提交组合 2391 项全部通过（先前冻结目标组合 2390 项也通过）。
 - 完整 `tsconfig.spec.json` 类型检查通过；生产 Angular/native bundle 构建通过；原生 bundle 不包含 Angular，架构检查 199 个文件、0 循环、0 新债务。
 - Node：46 个测试文件、358 项，357 通过、1 个平台条件跳过、0 失败。
 - 定制 Blockly 核心完整 CI：7 组通过，包括严格构建、4046 项 Mocha（5 个原有 pending）、5 种官方生成器 golden、类型定义及高级编译浏览器检查；新增改动 lint 通过。
@@ -53,7 +53,7 @@
 - Electron 相关 GUI：37 个不同场景分批覆盖，失败前置修正后逐项通过；包括 7765 原项目副本、8265 扩展项目、函数展示、连续手势与编辑、字段、注释持久化、JSON/XML、撤销重做、多选、坏库恢复、未使用库卸载、启动及布局。
 - 新建 ESP32-S3 项目通过真实向导和依赖安装，连续两次编译得到成功时间戳及真实 `.build/sketch.bin`；工具链复制至隔离 appdata，未清空共享缓存。
 - Coder 独立 CPP 预览/库转换测试 68/68 通过，包含真实古文工程文件；Coder 使用自己的 Blockly 13 投影，未修改其源码。
-- npm 干净消费环境的完整安装检查仍在进行；首次默认仓库访问超时，Aily 私有仓库不提供全部公共依赖。pnpm 已安装并用于以上构建与运行验证。
+- npm 干净消费环境：`npm ci --offline --ignore-scripts` 从校验缓存安装 1617 个包成功；所有宿主 Blockly 插件解析到同一 `13.3.0` 核心。此检查验证锁文件和 JS 依赖装配，没有执行 Electron/native postinstall，不能替代安装包验收。首次联网访问超时、私有仓库缺少公共包，最终使用公开包缓存完成。原有 `app-builder-bin@5.0.0-alpha.10` 锁条目缺少 resolved/integrity；仅在隔离目录由 npm 重建该条目并补回两项元数据，版本和其他条目保持不变。
 
 GUI 首轮失败分别来自未等待保存/依赖就绪、未激活惰性库、错误的主题颜色假设、把编辑器间空闲间隙也当作编辑期、卸载时未指定私有 registry、使用 runner 时钟暂停 renderer 和侧栏投影层级选择器。修正后仍保留了基线一致性、实际交互中禁止生成、恢复后继续刷新、原生焦点样式、原位 realm 重建和真实编译等断言。
 
@@ -65,4 +65,4 @@ GUI 首轮失败分别来自未等待保存/依赖就绪、未激活惰性库、
 
 本次证据是 macOS 源码、生产渲染层的隔离 Electron、原生核心和真实编译。未验证登录后模型服务、实物上传/烧录、Windows/macOS 安装包升级或所有第三方库。剩余 7005 块整段拖动性能和上述设备/发布层不应计入“全部已通过”。
 
-原始性能、GUI 截图和日志附件位于 `/Users/downey/.codex/visualizations/2026/10/08/01a1194d-8a6c-7dc3-8076-994d2825ed48/blockly13-merge/`：`sizing-performance`、`e2e-complete`、`e2e-repaired`、`e2e-compile-and-recovery`、`e2e-unused-library-final`。各批次包含重复回归，37 为不同场景数，并非简单相加通过数。
+原始性能、GUI 截图和日志附件位于 `/Users/downey/.codex/visualizations/2026/10/08/01a1194d-8a6c-7dc3-8076-994d2825ed48/blockly13-merge/`：`sizing-performance`、`e2e-complete`、`e2e-repaired`、`e2e-compile-and-recovery`、`e2e-unused-library-final`、`e2e-current-target-abs` 及 `npm-clean-consumer`。各批次包含重复回归，37 为不同场景数，并非简单相加通过数。
