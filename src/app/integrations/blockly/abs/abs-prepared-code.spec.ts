@@ -33,6 +33,35 @@ describe('prepared project code boundary', () => {
   });
   afterEach(() => { workspace.dispose(); runtime.destroy(); });
 
+  it('reuses canonical bytes from a full capture and refreshes them after event-free edits', async () => {
+    const captureText = () => {
+      const snapshot = capture();
+      return {...snapshot, documentText: revision.documentText};
+    };
+    const before = await preparation.prepare(captureText);
+    Blockly.Events.disable();
+    try {workspace.getVariableMap().createVariable('event-free edit');}
+    finally {Blockly.Events.enable();}
+    const after = await preparation.prepare(captureText);
+    expect(after!.revision).toBeGreaterThan(before!.revision);
+    expect(after!.sourceWorkspace!.documentText).toContain('event-free edit');
+    expect(after!.sourceWorkspace!.documentText).toBe(revision.documentText);
+  });
+
+  it('rejects edits during a cooperative yield before generating or publishing stale code', async () => {
+    await expectAsync(preparation.prepare(capture, false, async () => {
+      workspace.getVariableMap().createVariable('edited while yielding');
+    })).toBeRejectedWithError(/Project changed before code preparation/);
+    expect(generator.workspaceToCode).not.toHaveBeenCalled();
+  });
+
+  it('rejects changes after generation at a cooperative yield', async () => {
+    let yields = 0;
+    await expectAsync(preparation.prepare(capture, false, async () => {
+      if (++yields === 2) workspace.getVariableMap().createVariable('edited after generation');
+    })).toBeRejectedWithError(/Project changed after code preparation/);
+  });
+
   const productEditor = () => {
     const editor = Object.create(BlocklyService.prototype) as BlocklyService;
     const gate = new BlocklyWorkspaceEditGate();

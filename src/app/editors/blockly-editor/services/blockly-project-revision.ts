@@ -7,6 +7,8 @@ export class BlocklyProjectRevision {
   private revision = 0;
   private text: string | undefined;
   get current(): number { return this.revision; }
+  /** Canonical bytes from the most recent complete observation, never a new read. */
+  get documentText(): string | undefined { return this.text; }
 
   observe(document: unknown): number {
     const text = canonicalProjectJsonStringify(document);

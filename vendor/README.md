@@ -1,27 +1,26 @@
 # Blockly fork artifact
 
-`aily-project-blockly-13.3.0-aily.5d59fc955336.tgz` 是 Aily 定制核心源码构建的 npm 发行包，
-不是修改 `node_modules` 后复制的临时依赖。`package-lock.json` 固定其 SHA-512 integrity。
+当前依赖 `aily-project-blockly-13.3.0-aily.9691554019cf.tgz` 是 Aily 定制核心源码构建的 npm 发行包，
+对应 `aily-npm-blockly` 提交 `154bdcad7`，无需邻接源码目录或 npm link 即可安装。
+`package-lock.json`、`pnpm-lock.yaml` 固定其 integrity，pnpm override 保证主程序和插件共用一份核心。
 
-源码仓库：`aily-npm-blockly`；上游基线：
+该包包含浅层 SVG 视口渲染，以及大项目加载和深层字段编辑优化。
+构建入口见源码 `AILY_FORK.md`；实际 Electron 性能、功能和安装包验证见
+[性能报告](../docs/blockly-causal-performance-2026-10-09.md)。上游基线为
 [Blockly 13.3.0](https://github.com/RaspberryPiFoundation/blockly/releases/tag/blockly-v13.3.0)。
-具体补丁与构建入口见源码根目录 `AILY_FORK.md`。
-
-本次额外修复使用原生 `moveBefore` 调整单个积木层级，保留旧浏览器回退；
-隔离字段和气泡焦点样式，避免工作区焦点变化扫描隐藏函数；拖拽字段、图标样式
-只匹配所属积木的直接子节点；HTML 尺寸重置排除深层 SVG，工作区及拖拽 SVG
-显式保留原有尺寸规则。原有焦点类、键盘焦点、模型及事件契约保持兼容。
-完整补丁见 `patches/blockly13-large-project.patch`，基于源码 `fbee0c44d`，
-包含原发行包已有的大项目优化以及本次新增回归测试，对应核心提交 `2f7663280`。
+`patches/blockly13-large-project.patch` 是旧版本补丁快照，当前完整实现以源码提交为准。
 
 更新本地发行包：
 
 ```sh
 npm run blockly:sync -- /absolute/path/to/aily-npm-blockly
+# pnpm 调用时直接传路径，不额外传 --：
+pnpm run blockly:sync /absolute/path/to/aily-npm-blockly
 ```
 
-更新后必须同时提交 tarball、package.json、两份 lockfile 及 pnpm-workspace.yaml，
-清理已替换的旧发行包，并运行完整回归。文件名包含内容哈希，避免同版本包缓存失效。
-当前没有发布 npm；全新检出可通过 `npm ci` 直接安装本 tarball，无需邻接源码目录。
-`blockly` 的 npm override 保证官方插件与 Aily 库共享同一核心实例。
-颜色插件的间接依赖也锁定 13.3.0，避免 HSV 插件声明遗留范围引入 v12 插件。
+更新后同时提交 tarball、package.json、两份 lockfile 及 pnpm-workspace.yaml，并验证实际安装目录。
+文件名包含内容哈希，避免同版本包缓存失效。颜色插件的间接依赖也锁定 13.3.0，避免引入 v12。
+
+串口库的定时刷新修复在独立 `aily-blockly-libraries` 提交 `97250664`。
+旧项目若仍安装旧 `lib-core-serial`，需要同步升级该库；仅替换 Blockly 核心不会替换项目依赖。
+本仓库没有代为发布 npm，也不在加载项目时偷偷改写其库代码。

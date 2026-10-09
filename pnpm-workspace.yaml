@@ -1,5 +1,5 @@
 overrides:
-  blockly: 'file:vendor/aily-project-blockly-13.3.0-aily.2a08a3dfe223.tgz'
+  blockly: 'file:vendor/aily-project-blockly-13.3.0-aily.9691554019cf.tgz'
   '@blockly/field-colour': 13.3.0
   '@blockly/field-grid-dropdown': 13.3.0
 

@@ -454,7 +454,8 @@ export async function exerciseViewport(page: Page) {
     w.viewportSavedCode = w.realCode();
     B.Events.disable();
     try {
-      w.loadForBenchmark(w.viewportSaved);
+      if (w.loadForBenchmark) w.loadForBenchmark(w.viewportSaved);
+      else B.serialization.workspaces.load(w.viewportSaved, ws);
     } finally {
       B.Events.enable();
     }

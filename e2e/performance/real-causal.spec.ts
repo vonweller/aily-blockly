@@ -4,6 +4,8 @@ import { execFileSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { exerciseViewport } from './viewport-interactions';
+import { exerciseEditingLatency } from './editing-latency';
+import { exerciseSerialRefresh } from './serial-refresh';
 import {
   ROOT,
   getMainWindow,
@@ -37,6 +39,20 @@ for (const item of cases)
       await cp(path.join(fixtures, 'project-expanded'), project, {
         recursive: true,
       });
+      // Test a freshly packed serial library only in the disposable project.
+      // The captured real project and its installed dependencies stay intact.
+      if (process.env.BLOCKLY_CAUSAL_SERIAL_PACKAGE) {
+        execFileSync('tar', [
+          '-xzf',
+          process.env.BLOCKLY_CAUSAL_SERIAL_PACKAGE,
+          '--strip-components=1',
+          '-C',
+          path.join(project, 'node_modules/@aily-project/lib-core-serial'),
+        ]);
+        report.serialPackage = path.basename(
+          process.env.BLOCKLY_CAUSAL_SERIAL_PACKAGE,
+        );
+      }
       execFileSync(process.execPath, [
         path.join(ROOT, 'scripts/migrate-project-data-v1.mjs'),
         project,
@@ -193,6 +209,11 @@ for (const item of cases)
         getComputedStyle(document.querySelector('.injectionDiv')!)
           .getPropertyValue('--aily-source-link-probe')
           .trim(),
+      );
+      report.cachedFieldMeasurement = await win.evaluate(
+        () =>
+          typeof (window as any).Blockly.Field.prototype
+            .canMeasureWithoutDom === 'function',
       );
       if (process.env.BLOCKLY_CAUSAL_LINK_PROBE)
         expect(report.sourceLinkProbe).toBe(
@@ -431,6 +452,22 @@ for (const item of cases)
         Buffer.from(shot, 'base64'),
       );
       if (process.env.BLOCKLY_VISUAL_CHECK === '1') {
+        // The faster load can leave the success toast and async title-bar
+        // buttons visible during the first shot. Wait for the toast naturally
+        // and compare the complete editor SVG, excluding unrelated app chrome.
+        if (host)
+          await expect(win.locator('.ant-message-notice')).toHaveCount(0);
+        const clip = await win.evaluate(() => {
+          const rect = (window as any).blocklyWorkspace
+            .getParentSvg()
+            .getBoundingClientRect();
+          return {
+            x: rect.x,
+            y: rect.y,
+            width: rect.width,
+            height: rect.height,
+          };
+        });
         await win.evaluate(() => {
           const w = window as any;
           w.Blockly.getFocusManager().focusNode(
@@ -444,6 +481,7 @@ for (const item of cases)
             ),
         );
         const virtualImage = await win.screenshot({
+          clip,
           path: path.join(
             output,
             `${variant}-${diagnostic}-virtual-parity.png`,
@@ -459,6 +497,7 @@ for (const item of cases)
             ),
         );
         const nativeImage = await win.screenshot({
+          clip,
           path: path.join(
             output,
             `${variant}-${diagnostic}-native-restored.png`,
@@ -478,6 +517,15 @@ for (const item of cases)
       }
       if (process.env.BLOCKLY_VIEWPORT_INTERACTIONS === '1')
         report.interactions = await exerciseViewport(win);
+      if (process.env.BLOCKLY_EDIT_LATENCY === '1')
+        report.editing = await exerciseEditingLatency(
+          win,
+          output,
+          process.env.BLOCKLY_EDIT_PROFILE === '1',
+        );
+      if (process.env.BLOCKLY_CAUSAL_SERIAL_PACKAGE)
+        report.serialRefresh = await exerciseSerialRefresh(win);
+      expect(errors).toEqual([]);
       report.passed = true;
     } catch (e) {
       report.failure = String(e);

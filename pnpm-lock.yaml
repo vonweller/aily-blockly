@@ -5,7 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  blockly: file:vendor/aily-project-blockly-13.3.0-aily.2a08a3dfe223.tgz
+  blockly: file:vendor/aily-project-blockly-13.3.0-aily.9691554019cf.tgz
   '@blockly/field-colour': 13.3.0
   '@blockly/field-grid-dropdown': 13.3.0
 
@@ -42,13 +42,13 @@ importers:
         version: 19.2.25(@angular/common@19.2.25(@angular/core@19.2.25(rxjs@7.8.2)(zone.js@0.15.1))(rxjs@7.8.2))(@angular/core@19.2.25(rxjs@7.8.2)(zone.js@0.15.1))(@angular/platform-browser@19.2.25(@angular/animations@19.2.25(@angular/common@19.2.25(@angular/core@19.2.25(rxjs@7.8.2)(zone.js@0.15.1))(rxjs@7.8.2))(@angular/core@19.2.25(rxjs@7.8.2)(zone.js@0.15.1)))(@angular/common@19.2.25(@angular/core@19.2.25(rxjs@7.8.2)(zone.js@0.15.1))(rxjs@7.8.2))(@angular/core@19.2.25(rxjs@7.8.2)(zone.js@0.15.1)))(rxjs@7.8.2)
       '@blockly/block-dynamic-connection':
         specifier: 13.3.0
-        version: 13.3.0(aily-project-blockly@file:vendor/aily-project-blockly-13.3.0-aily.2a08a3dfe223.tgz(jsdom@29.1.1))
+        version: 13.3.0(aily-project-blockly@file:vendor/aily-project-blockly-13.3.0-aily.9691554019cf.tgz(jsdom@29.1.1))
       '@blockly/field-colour-hsv-sliders':
         specifier: 13.3.0
-        version: 13.3.0(aily-project-blockly@file:vendor/aily-project-blockly-13.3.0-aily.2a08a3dfe223.tgz(jsdom@29.1.1))
+        version: 13.3.0(aily-project-blockly@file:vendor/aily-project-blockly-13.3.0-aily.9691554019cf.tgz(jsdom@29.1.1))
       '@blockly/workspace-minimap':
         specifier: 13.3.0
-        version: 13.3.0(aily-project-blockly@file:vendor/aily-project-blockly-13.3.0-aily.2a08a3dfe223.tgz(jsdom@29.1.1))
+        version: 13.3.0(aily-project-blockly@file:vendor/aily-project-blockly-13.3.0-aily.9691554019cf.tgz(jsdom@29.1.1))
       '@breezystack/lamejs':
         specifier: ^1.2.7
         version: 1.2.7
@@ -98,8 +98,8 @@ importers:
         specifier: ^4.1.1
         version: 4.1.1
       blockly:
-        specifier: file:vendor/aily-project-blockly-13.3.0-aily.2a08a3dfe223.tgz
-        version: aily-project-blockly@file:vendor/aily-project-blockly-13.3.0-aily.2a08a3dfe223.tgz(jsdom@29.1.1)
+        specifier: file:vendor/aily-project-blockly-13.3.0-aily.9691554019cf.tgz
+        version: aily-project-blockly@file:vendor/aily-project-blockly-13.3.0-aily.9691554019cf.tgz(jsdom@29.1.1)
       buffer:
         specifier: ^6.0.3
         version: 6.0.3
@@ -2943,8 +2943,8 @@ packages:
     resolution: {integrity: sha512-4I7Td01quW/RpocfNayFdFVk1qSuoh0E7JrbRJ16nH01HhKFQ88INq9Sd+nd72zqRySlr9BmDA8xlEJ6vJMrYA==}
     engines: {node: '>=8'}
 
-  aily-project-blockly@file:vendor/aily-project-blockly-13.3.0-aily.2a08a3dfe223.tgz:
-    resolution: {integrity: sha512-661Lk1ubug6bDabimvcP0eDaCypWgwg+z6DKteaBnGmHeT7CpNYaZ3G8nKbMEz4lggtGlH9M7RJs4PNtCoBkEA==, tarball: file:vendor/aily-project-blockly-13.3.0-aily.2a08a3dfe223.tgz}
+  aily-project-blockly@file:vendor/aily-project-blockly-13.3.0-aily.9691554019cf.tgz:
+    resolution: {integrity: sha512-dcQ9KX/yga40cNnGx5h9gl/wp6kbAbDAkGoJUdCYFFMOn92mlGZiWqqXMVIWmmhY48TCdF86BJb6nEyGeGLOQA==, tarball: file:vendor/aily-project-blockly-13.3.0-aily.9691554019cf.tgz}
     version: 13.3.0
     engines: {node: '>=22'}
     peerDependencies:
@@ -7874,27 +7874,27 @@ snapshots:
       '@babel/helper-string-parser': 7.29.7
       '@babel/helper-validator-identifier': 7.29.7
 
-  '@blockly/block-dynamic-connection@13.3.0(aily-project-blockly@file:vendor/aily-project-blockly-13.3.0-aily.2a08a3dfe223.tgz(jsdom@29.1.1))':
+  '@blockly/block-dynamic-connection@13.3.0(aily-project-blockly@file:vendor/aily-project-blockly-13.3.0-aily.9691554019cf.tgz(jsdom@29.1.1))':
     dependencies:
-      blockly: aily-project-blockly@file:vendor/aily-project-blockly-13.3.0-aily.2a08a3dfe223.tgz(jsdom@29.1.1)
+      blockly: aily-project-blockly@file:vendor/aily-project-blockly-13.3.0-aily.9691554019cf.tgz(jsdom@29.1.1)
 
-  '@blockly/field-colour-hsv-sliders@13.3.0(aily-project-blockly@file:vendor/aily-project-blockly-13.3.0-aily.2a08a3dfe223.tgz(jsdom@29.1.1))':
+  '@blockly/field-colour-hsv-sliders@13.3.0(aily-project-blockly@file:vendor/aily-project-blockly-13.3.0-aily.9691554019cf.tgz(jsdom@29.1.1))':
     dependencies:
-      '@blockly/field-colour': 13.3.0(aily-project-blockly@file:vendor/aily-project-blockly-13.3.0-aily.2a08a3dfe223.tgz(jsdom@29.1.1))
-      blockly: aily-project-blockly@file:vendor/aily-project-blockly-13.3.0-aily.2a08a3dfe223.tgz(jsdom@29.1.1)
+      '@blockly/field-colour': 13.3.0(aily-project-blockly@file:vendor/aily-project-blockly-13.3.0-aily.9691554019cf.tgz(jsdom@29.1.1))
+      blockly: aily-project-blockly@file:vendor/aily-project-blockly-13.3.0-aily.9691554019cf.tgz(jsdom@29.1.1)
 
-  '@blockly/field-colour@13.3.0(aily-project-blockly@file:vendor/aily-project-blockly-13.3.0-aily.2a08a3dfe223.tgz(jsdom@29.1.1))':
+  '@blockly/field-colour@13.3.0(aily-project-blockly@file:vendor/aily-project-blockly-13.3.0-aily.9691554019cf.tgz(jsdom@29.1.1))':
     dependencies:
-      '@blockly/field-grid-dropdown': 13.3.0(aily-project-blockly@file:vendor/aily-project-blockly-13.3.0-aily.2a08a3dfe223.tgz(jsdom@29.1.1))
-      blockly: aily-project-blockly@file:vendor/aily-project-blockly-13.3.0-aily.2a08a3dfe223.tgz(jsdom@29.1.1)
+      '@blockly/field-grid-dropdown': 13.3.0(aily-project-blockly@file:vendor/aily-project-blockly-13.3.0-aily.9691554019cf.tgz(jsdom@29.1.1))
+      blockly: aily-project-blockly@file:vendor/aily-project-blockly-13.3.0-aily.9691554019cf.tgz(jsdom@29.1.1)
 
-  '@blockly/field-grid-dropdown@13.3.0(aily-project-blockly@file:vendor/aily-project-blockly-13.3.0-aily.2a08a3dfe223.tgz(jsdom@29.1.1))':
+  '@blockly/field-grid-dropdown@13.3.0(aily-project-blockly@file:vendor/aily-project-blockly-13.3.0-aily.9691554019cf.tgz(jsdom@29.1.1))':
     dependencies:
-      blockly: aily-project-blockly@file:vendor/aily-project-blockly-13.3.0-aily.2a08a3dfe223.tgz(jsdom@29.1.1)
+      blockly: aily-project-blockly@file:vendor/aily-project-blockly-13.3.0-aily.9691554019cf.tgz(jsdom@29.1.1)
 
-  '@blockly/workspace-minimap@13.3.0(aily-project-blockly@file:vendor/aily-project-blockly-13.3.0-aily.2a08a3dfe223.tgz(jsdom@29.1.1))':
+  '@blockly/workspace-minimap@13.3.0(aily-project-blockly@file:vendor/aily-project-blockly-13.3.0-aily.9691554019cf.tgz(jsdom@29.1.1))':
     dependencies:
-      blockly: aily-project-blockly@file:vendor/aily-project-blockly-13.3.0-aily.2a08a3dfe223.tgz(jsdom@29.1.1)
+      blockly: aily-project-blockly@file:vendor/aily-project-blockly-13.3.0-aily.9691554019cf.tgz(jsdom@29.1.1)
 
   '@braintree/sanitize-url@7.1.2': {}
 
@@ -9539,7 +9539,7 @@ snapshots:
       clean-stack: 2.2.0
       indent-string: 4.0.0
 
-  aily-project-blockly@file:vendor/aily-project-blockly-13.3.0-aily.2a08a3dfe223.tgz(jsdom@29.1.1):
+  aily-project-blockly@file:vendor/aily-project-blockly-13.3.0-aily.9691554019cf.tgz(jsdom@29.1.1):
     dependencies:
       jsdom: 29.1.1
 

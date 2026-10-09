@@ -1177,7 +1177,8 @@ export class BlocklyService {
 
   captureProjectSnapshot(owner?: BlocklyWorkspaceEditLease) {
     const document = this.getProjectDocument(owner);
-    return { document, revision: this.projectRevision.observe(document) };
+    const revision = this.projectRevision.observe(document);
+    return { document, revision, documentText: this.projectRevision.documentText };
   }
 
   /** Call inside the existing operation queue with explicit edit ownership. */
@@ -1253,8 +1254,10 @@ export class BlocklyService {
           return { ...this.captureProjectSnapshot(), workspace, generator, dataSession: session,
             runtimeRevision, pageId };
         };
-        const prepared = await this.projectCodePreparation.prepare(capture, force);
+        const yieldToBrowser = () => new Promise<void>(resolve => setTimeout(resolve, 0));
+        const prepared = await this.projectCodePreparation.prepare(capture, force, yieldToBrowser);
         if (!prepared || prepared.code === null) throw new Error(prepared?.error ?? 'Blockly generator runtime is not active');
+        await yieldToBrowser();
         const assertCurrent = () => {
           assertContext();
           if (prepared.revision !== this.captureProjectSnapshot().revision) {
