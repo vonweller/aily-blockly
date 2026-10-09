@@ -16,6 +16,7 @@ import { patchBuildMetadata } from '../../../utils/build-publication.utils';
 import type { PreparedBlocklyCode } from './prepared-project-code';
 import { publishGeneratorMacros } from './prepared-generator-config';
 import { PreparedBlocklySave, prepareBlocklySave, commitPreparedBlocklySave } from './prepared-project-save';
+import type { BlocklyWorkspaceEditLease } from './blockly-workspace-edit-lease';
 import { assertProjectLoadPreserved, BlocklyProjectCleanState } from './blockly-project-clean-state';
 
 
@@ -83,13 +84,13 @@ export class _ProjectService {
   }
 
   /** Called only by the authoritative open path, never an ABS draft/rollback. */
-  rememberLoadedProject(path: string, diskText: string, source: BlocklyProjectDocument): void {
+  rememberLoadedProject(path: string, diskText: string, source: BlocklyProjectDocument, owner?: BlocklyWorkspaceEditLease): void {
     const context = this.captureSaveContext(path);
     context.assertCurrent(); // A stale caller must not erase a newer project's record.
     this.cleanState.clear();
     try {
       if (window['fs'].readFileSync(`${path}/project.abi`, 'utf8') !== diskText) throw new Error('Project changed during loading.');
-      const document = this.blocklyService.getProjectAbiForSave();
+      const document = this.blocklyService.getProjectAbiForSave(owner ? this.blocklyService.getProjectDocument(owner) : undefined);
       assertProjectLoadPreserved(this.blocklyService.getProjectAbiForSave(source), document,
         workspace => this.blocklyService.getWorkspaceLoadReadbackView(workspace));
       context.assertCurrent();

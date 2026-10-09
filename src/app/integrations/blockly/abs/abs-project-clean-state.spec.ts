@@ -1,4 +1,5 @@
 import { Subject } from 'rxjs';
+import { BlocklyWorkspaceEditGate } from '../../../editors/blockly-editor/services/blockly-workspace-edit-lease';
 import { assertProjectLoadPreserved, BlocklyProjectCleanState } from '../../../editors/blockly-editor/services/blockly-project-clean-state';
 import { BlocklyProjectDocument } from '../../../editors/blockly-editor/services/blockly-project-model';
 import { _ProjectService } from '../../../editors/blockly-editor/services/project.service';
@@ -139,6 +140,20 @@ describe('editor unsaved-state resource and lifecycle boundary', () => {
     for (let n = 0; n < 3; n++) expect(await service.hasUnsavedChanges()).toBeFalse();
     document.pages[1].title = 'user edit'; expect(await service.hasUnsavedChanges()).toBeTrue();
     expect(projectDataRuntime.getPrepared).not.toHaveBeenCalled();
+  });
+  it('admits the load owner while keeping concurrent project reads blocked', () => {
+    const gate = new BlocklyWorkspaceEditGate(), owner = gate.acquire();
+    editor.getProjectDocument = lease => { gate.assertAvailable(lease); return document; };
+    editor.getProjectAbiForSave = value => value ?? editor.getProjectDocument();
+    try {
+      expect(() => service.rememberLoadedProject('D:/project', disk, structuredClone(document))).toThrow();
+      expect(() => service.rememberLoadedProject('D:/project', disk, structuredClone(document), owner)).not.toThrow();
+      const original = structuredClone(document);
+      document.pages[0].content.blocks.blocks[0].fields.TEST = 'changed';
+      expect(() => service.rememberLoadedProject('D:/project', disk, original, owner)).toThrow();
+      expect(() => editor.getProjectDocument()).toThrow();
+    } finally { owner.release(); }
+    expect(() => editor.getProjectDocument()).not.toThrow();
   });
   it('accepts only the explicit board-template load, not global empty equivalence', async () => {
     disk = JSON.stringify({ blocks: { blocks: [] } });

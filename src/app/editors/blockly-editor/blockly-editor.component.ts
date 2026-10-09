@@ -466,13 +466,18 @@ export class BlocklyEditorComponent implements OnInit, OnDestroy {
         `积木定义缺失：${missingBlockDefinitions.join(', ')}。已加载可用工具箱；请恢复对应积木库后重新打开项目。`,
       );
     }
-    this.blocklyService.loadProjectDocument(projectDocument, false);
-    // Native comment loading finishes pinning and bubble coordinates after the
-    // render batch. Admit the complete readback only once those continuations
-    // settle; an immediate snapshot can incorrectly report lost comment state.
-    await this.waitForNextFrame(session.signal);
-    assertCurrent();
-    this._projectService.rememberLoadedProject(projectPath, diskText, projectDocument);
+    const loadLease = this.blocklyService.acquireWorkspaceEditLease();
+    try {
+      this.blocklyService.loadProjectDocument(projectDocument, false, loadLease);
+      // Comments settle after rendering. Keep queued pointer/keyboard input out
+      // of this frame gap: a drag can detach a child before /roots admission.
+      await this.waitForNextFrame(session.signal);
+      assertCurrent();
+      loadLease.assertCurrent();
+      this._projectService.rememberLoadedProject(projectPath, diskText, projectDocument, loadLease);
+    } finally {
+      loadLease.release();
+    }
     if (!usedBoardTemplateAbi) {
       try {
         const cleanup = projectResourceGc.cleanupUnreferencedFiles(projectPath, [projectDocument, packageJson]);

@@ -20,6 +20,8 @@ export class AilyIcon extends Blockly.icons.Icon {
 
   // static readonly WEIGHT = -1;
 
+  private cancelDeferredView?: () => void;
+
   private state: AilyIconState = {
     type: 'i',
     width: 20,
@@ -74,7 +76,24 @@ export class AilyIcon extends Blockly.icons.Icon {
     // default cursor instead of the block's grab/drag interaction.
     this.svgRoot!.style.pointerEvents = 'none';
 
-    this.createIconContent();
+    const viewport = this.sourceBlock.workspace.getViewportRenderer();
+    if (viewport) {
+      // Decorative contents have an explicit size. Offscreen font/image DOM
+      // can wait until first visibility without changing fields or geometry.
+      this.cancelDeferredView = viewport.deferView(this.sourceBlock, () => {
+        this.cancelDeferredView = undefined;
+        this.createIconContent();
+        this.applyColour();
+      });
+    } else {
+      this.createIconContent();
+    }
+  }
+
+  override dispose(): void {
+    this.cancelDeferredView?.();
+    this.cancelDeferredView = undefined;
+    super.dispose();
   }
 
   /**
@@ -196,7 +215,7 @@ export class AilyIcon extends Blockly.icons.Icon {
     if (keys.length === Object.keys(this.state).length && keys.every(key => next[key] === this.state[key])) return;
     this.state = next;
 
-    if (this.svgRoot) {
+    if (this.svgRoot && !this.cancelDeferredView) {
       this.svgRoot.innerHTML = '';
       this.createIconContent();
       this.applyColour();

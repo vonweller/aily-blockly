@@ -44,6 +44,29 @@ describe('Aily decorative icon interaction', () => {
     delete Blockly.Blocks['decorative_icon_probe'];
   });
 
+  it('defers offscreen contents, uses the latest state on reveal and restores contents when disabled', () => {
+    workspace.setViewportRendering(true);
+    spyOn(workspace.getMetricsManager(), 'getViewMetrics').and.returnValue({top: 0, left: 0, width: 600, height: 400});
+    const block = workspace.newBlock('decorative_icon_probe'); block.initSvg(); block.moveBy(0, 10000);
+    const icon = addAilyIconToBlock(block, 'fa-solid fa-play'); block.render();
+    const renderer = workspace.getViewportRenderer()!;
+    renderer.refresh();
+    expect(icon.getFocusableElement().childElementCount).toBe(0);
+    expect(icon.getSize().width).toBe(20);
+    icon.setState({src: 'fa-solid fa-stop', color: '#123456', width: 24});
+    expect(icon.getFocusableElement().childElementCount).toBe(0);
+    expect(icon.getSize().width).toBe(24);
+    renderer.withAllBlocksRendered(() => {
+      expect(icon.getFocusableElement().querySelector('i')!.className).toContain('fa-stop');
+      expect(icon.canBeFocused()).toBeFalse();
+    });
+    const other = workspace.newBlock('decorative_icon_probe'); other.initSvg(); other.moveBy(0, 20000);
+    const second = addAilyIconToBlock(other, 'fa-solid fa-play'); other.render(); renderer.refresh();
+    expect(second.getFocusableElement().childElementCount).toBe(0);
+    workspace.setViewportRendering(false);
+    expect(second.getFocusableElement().querySelector('i')).not.toBeNull();
+  });
+
   for (const type of ['i', 'svg', 'image'] as const) {
     it(`${type} passes hit testing to the block and stays outside focus navigation after updates`, () => {
       const block = workspace.newBlock('decorative_icon_probe'); block.initSvg();
