@@ -40,6 +40,9 @@ test('four platform/flavor manifests reference complete final artifacts, includi
       assert.deepEqual(manifest.files.map(file => file.url), names.packages);
       assert.equal(names.manifest, manifestNames[platform][flavor]);
       assert.ok(manifest.files.every(file => Buffer.from(file.sha512, 'base64').length === 64));
+      const text = fs.readFileSync(path.join(directory, names.manifest), 'utf8');
+      assert.deepEqual([...text.matchAll(/^[ \t]*sha512:[ \t]*(.+)$/gm)].map(match => match[1].trim()),
+        [...manifest.files.map(file => file.sha512), manifest.sha512]);
     }
   }
 });

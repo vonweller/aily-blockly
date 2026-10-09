@@ -48,7 +48,10 @@ test('refreshes final stapled DMG hashes and sizes without changing ZIP or other
   }
   const result = run();
   assert.equal(result.status, 0, result.stdout + result.stderr);
-  assert.deepEqual(yaml.load(fs.readFileSync(manifestPath, 'utf8')), expected);
+  const text = fs.readFileSync(manifestPath, 'utf8');
+  assert.deepEqual(yaml.load(text), expected);
+  assert.deepEqual([...text.matchAll(/^[ \t]*sha512:[ \t]*(.+)$/gm)].map(match => match[1].trim()),
+    [...expected.files.map(file => file.sha512), expected.sha512]);
 });
 
 test('missing or empty DMGs fail without partially changing the manifest', t => {

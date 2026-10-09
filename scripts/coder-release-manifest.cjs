@@ -46,7 +46,8 @@ async function writeManifest(directory, platform, flavor, version, ...archives) 
     sha512: files[0].sha512,
     releaseDate: new Date().toISOString(),
   };
-  fs.writeFileSync(path.join(directory, names.manifest), yaml.dump(manifest));
+  // The server sync scripts read SHA512 values from the same line as the key.
+  fs.writeFileSync(path.join(directory, names.manifest), yaml.dump(manifest, { lineWidth: -1 }));
   await verifyManifest(directory, platform, flavor, version);
 }
 

@@ -22,7 +22,8 @@ async function main() {
     if (manifest.path === file.url) manifest.sha512 = file.sha512;
   }
 
-  fs.writeFileSync(manifestPath, yaml.dump(manifest));
+  // Preserve the single-line SHA512 format used by the server sync scripts.
+  fs.writeFileSync(manifestPath, yaml.dump(manifest, { lineWidth: -1 }));
 }
 
 main().catch(error => {
