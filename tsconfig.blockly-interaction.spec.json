@@ -5,6 +5,7 @@
     "src/app/integrations/blockly/abs/abs-prepared-code.spec.ts",
     "src/app/editors/blockly-editor/utils/blockly-performance.spec.ts",
     "src/app/editors/blockly-editor/utils/blockly-function-view.spec.ts",
+    "src/app/editors/blockly-editor/utils/blockly-drag-render-batch.spec.ts",
     "src/app/editors/blockly-editor/utils/workspace-minimap.spec.ts",
     "src/app/editors/blockly-editor/utils/blockly-text-measurement.spec.ts",
     "src/app/editors/blockly-editor/services/builder.service.spec.ts",

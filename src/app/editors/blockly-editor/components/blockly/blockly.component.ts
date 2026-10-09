@@ -49,6 +49,7 @@ const BLOCKLY_LOCALES: Record<SupportedLanguageCode, any> = {
 import './plugins/toolbox-search/src/index';
 import './blockly-native-registrations';
 import { registerProjectBlockPaster } from '../../services/blockly-copy-identities';
+import { batchBlocklyDragRenders } from '../../utils/blockly-drag-render-batch';
 import './plugins/stable-comment-icon';
 import { BlocklyService, WorkspaceBlockSearchState } from '../../services/blockly.service';
 import {
@@ -274,6 +275,7 @@ class ExternalToolboxDeleteArea extends Blockly.DeleteArea {
 })
 export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
   private releaseProjectBlockPaster?: () => void;
+  private releaseDragRenderBatch?: () => void;
   @ViewChild(BlocklyWorkspacePagesComponent, { static: true }) workspacePaneComponent!: BlocklyWorkspacePagesComponent;
   @ViewChild('workspaceSearchInput') private workspaceSearchInputRef?: ElementRef<HTMLInputElement>;
   @ViewChild('layoutElement', { static: true }) private layoutElementRef!: ElementRef<HTMLDivElement>;
@@ -552,6 +554,7 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.releaseDragRenderBatch?.();
     this.minimap?.dispose();
     this.minimap = null;
     this.releaseProjectBlockPaster?.();
@@ -817,6 +820,10 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
       this.setupBlockRegistryInterception();
       // 获取当前blockly渲染器
       this.options.renderer = this.configData.blockly.renderer ? ('aily-' + this.configData.blockly.renderer) : 'thrasos';
+      // Both Aily renderers retain native connection geometry. Opt them into
+      // SVG-only previews: cloning a library block runs its extensions and
+      // dispose hooks on every hovered connection (UART/I2C/SPI side effects).
+      Blockly.InsertionMarkerPreviewer.useFastInsertionMarkers = true;
 
       // 根据当前主题设置 Blockly 主题与网格颜色（浅色 #ddd / 深色 #393939，见 theme.config）
       const currentTheme = this.themeService.theme();
@@ -826,6 +833,7 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
       applyWindowsBlocklyScrollbarThickness(this.platformService.isWindows());
       this.ngZone.runOutsideAngular(() => {
         this.workspace = Blockly.inject(this.workspacePaneComponent.blocklyHostElement, this.options);
+        this.releaseDragRenderBatch = batchBlocklyDragRenders(this.workspace);
         this.workspace.setViewportRendering(this.configData.blockly.viewportRendering !== false);
         this.workspacePaneComponent.blocklyHostElement.addEventListener('pointerdown', this.onWorkspacePointerDownBound, true);
       });

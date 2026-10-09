@@ -4,6 +4,7 @@ import {cp, mkdtemp, readFile, rm, writeFile} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {expect, getMainWindow, launchAilyElectron, openBlocklyProject, test} from '../fixtures/electron-app';
+import {selectFunctionView} from '../fixtures/function-view';
 
 import {seedPlatform} from '../fixtures/platform-seed';
 
@@ -31,7 +32,7 @@ for (const scopeType of ['arduino_global', 'arduino_loop']) test(`${scopeType} r
     await expect(win.locator('iframe[data-runtime-ready="true"]')).toHaveCount(1, {timeout: 120_000});
     await expect.poll(() => win.evaluate(() => (window as any).blocklyWorkspace?.getAllBlocks(false).length)).toBe(7765);
     const globalId = await win.evaluate(type => (window as any).blocklyWorkspace.getTopBlocks(false).find(block => block.type === type).id, scopeType);
-    await win.locator('.function-view select').selectOption(globalId);
+    await selectFunctionView(win, globalId);
     await expect(win.locator('.blockly-minimap')).toHaveAttribute('data-minimap-shapes', scopeType === 'arduino_loop' ? '715' : '45', {timeout: 45_000});
     const targetId = await win.evaluate(id => {
       const ws = (window as any).blocklyWorkspace;

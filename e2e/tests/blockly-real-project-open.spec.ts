@@ -3,6 +3,7 @@ import { cp, mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { expect, getMainWindow, launchAilyElectron, openBlocklyProject, test } from '../fixtures/electron-app';
+import {selectFunctionView} from '../fixtures/function-view';
 
 import {seedPlatform} from '../fixtures/platform-seed';
 
@@ -107,9 +108,8 @@ test('opens the real large project without dropping its program and records nati
     await expect(win.locator('.blockly-minimap')).toHaveAttribute('data-minimap-shapes', '7765');
     await expect(win.locator('.blockly-minimap > svg')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
     const before = await win.evaluate(() => JSON.stringify((window as any).Blockly.serialization.workspaces.save((window as any).blocklyWorkspace)));
-    const select = win.locator('.function-view select');
     const loop = JSON.parse(originalAbi).blocks.blocks.find(block => block.type === 'arduino_loop');
-    await select.selectOption(loop.id);
+    await selectFunctionView(win, loop.id);
     const scopedCount = graph({ blocks: { blocks: [loop] } }).blocks.length;
     await expect(win.locator('.blockly-minimap')).toHaveAttribute('data-minimap-shapes', String(scopedCount));
     expect(await win.evaluate(() => JSON.stringify((window as any).Blockly.serialization.workspaces.save((window as any).blocklyWorkspace)))).toBe(before);
@@ -136,7 +136,7 @@ test('opens the real large project without dropping its program and records nati
       await realm.projectService.save(project);
     }, project);
     expect(await readFile(path.join(project, '.temp/sketch/sketch.ino'), 'utf8')).toBe(code);
-    await select.selectOption('');
+    await selectFunctionView(win, '');
     await expect(win.locator('.blockly-minimap')).toHaveAttribute('data-minimap-shapes', '7765', { timeout: 45_000 });
     expect(hash(await readFile(path.join(SOURCE!, 'project.abi'), 'utf8'))).toBe(hash(originalAbi));
     expect(hash(await readFile(path.join(SOURCE!, 'project.abs'), 'utf8'))).toBe(hash(originalAbs));
