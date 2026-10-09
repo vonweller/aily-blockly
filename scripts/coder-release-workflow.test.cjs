@@ -160,6 +160,6 @@ test('artifacts support same-run retries and stable verification waits for domes
   assert.deepEqual(workflow.jobs['verify-stable-feed'].needs, ['prepare', 'sync-stable-feed']);
   assert.deepEqual(workflow.jobs['sync-stable-feed'].steps[0].env, {
     SERVER_HOST: '${{ secrets.TRIGGER_SERVER_HOST }}', SERVER_USER: '${{ secrets.TRIGGER_SERVER_USER }}',
-    SSHPASS: '${{ secrets.TRIGGER_SERVER_PASSWORD }}', SERVER_SCRIPT_PATH: '${{ secrets.TRIGGER_SERVER_SCRIPT_PATH }}',
+    SERVER_PASSWORD: '${{ secrets.TRIGGER_SERVER_PASSWORD }}', SERVER_SCRIPT_PATH: '${{ secrets.TRIGGER_SERVER_SCRIPT_PATH }}',
   });
 });
