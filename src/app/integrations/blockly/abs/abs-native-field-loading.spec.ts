@@ -1,4 +1,5 @@
 import * as Blockly from 'blockly';
+import '@blockly/field-colour-hsv-sliders';
 import { BlocklyService } from '../../../editors/blockly-editor/services/blockly.service';
 import { BlocklyDeclarativeBlockCatalog } from '../../../editors/blockly-editor/services/blockly-declarative-block-catalog';
 import { observeNativeBlockDefinition } from '../../../editors/blockly-editor/services/blockly-native-structure';
@@ -59,6 +60,17 @@ describe('native dynamic field loading without declaration JSON', () => {
     expect(workspace.getBlockById('legacy')!.getFieldValue('TEXT')).toBe('saved');
     load(Blockly.serialization.workspaces.save(workspace));
     expect(workspace.getBlockById('legacy')!.getFieldValue('TEXT')).toBe('saved');
+  });
+
+  it('restores and reopens real LVGL HSV colours outside the preset palette', () => {
+    Blockly.Blocks[type] = { init() {
+      this.jsonInit({ message0: '%1', args0: [{ type: 'field_colour_hsv_sliders', name: 'COLOR', colour: '#ffffff' }] });
+    } };
+    const input = { blocks: { blocks: [{ type, id: 'lvgl-colour', fields: { COLOR: '#3a1f6b' } }] } };
+    load(input);
+    expect(workspace.getBlockById('lvgl-colour')!.getFieldValue('COLOR')).toBe('#3a1f6b');
+    load(Blockly.serialization.workspaces.save(workspace));
+    expect(workspace.getBlockById('lvgl-colour')!.getFieldValue('COLOR')).toBe('#3a1f6b');
   });
 
   it('restores multiple selector levels in the ordinary load entry, then saves and reopens', () => {
@@ -259,6 +271,7 @@ describe('native dynamic field loading without declaration JSON', () => {
     const names = ['WIDTH', 'HEIGHT', 'MISO', 'MOSI', 'SCLK', 'CS', 'DC', 'RST', 'BL'];
     const values = [240, 240, 0, 10, 12, 13, 14, 11, 16];
     const base = { VAR: 'tft', MODEL: 'GC9A01_DRIVER' };
+    const previousNumber = Blockly.Blocks['math_number'];
     Blockly.Blocks['math_number'] = { init() {
       this.appendDummyInput().appendField(new Blockly.FieldNumber(0), 'NUM'); this.setOutput(true);
     } };

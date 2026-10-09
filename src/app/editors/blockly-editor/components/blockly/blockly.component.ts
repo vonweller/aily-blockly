@@ -498,7 +498,7 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
         this.workspace.setTheme(this.blocklyThemeForMode(mode));
         this.applyBlocklyGridColour(mode);
       }
-      this.applyMinimapTheme(mode);
+      this.requestMinimapSync();
     });
   }
 
@@ -512,7 +512,7 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
     this.initBlocklyDialogs();
     this.unregisterCodeViewerPublisher = this.blocklyService.registerCodeViewerPublisher(this.codeViewerIpcService);
     this.initCodeGenerationDebounce();
-    this.initMinimapSyncDebounce();
+    this.initMinimapVisualRefresh();
     this.initCodeViewerRefreshRequests();
     this.initWorkspaceBlockSearchSubscription();
     this.blocklyService.functionViewSubject.pipe(takeUntil(this.destroy$)).subscribe(() => {
@@ -552,6 +552,8 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.minimap?.dispose();
+    this.minimap = null;
     this.releaseProjectBlockPaster?.();
     document.removeEventListener('keydown', this.onDocumentKeyDownBound, true);
     this.closeWorkspaceBlockSearch();
@@ -1263,10 +1265,6 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
 
   private blocklyThemeForMode(mode: ThemeMode) {
     return mode === 'light' ? LightTheme : DarkTheme;
-  }
-
-  private applyMinimapTheme(mode: ThemeMode): void {
-    this.requestMinimapSync();
   }
 
   /** 根据配置应用 flyout 自动关闭，支持初始化及配置重载时实时生效 */
@@ -2168,11 +2166,8 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
 
-  /**
-   * 初始化 Minimap 同步防抖
-   * 工作区变更时（含 AI 批量修改）同步更新 Minimap，避免小地图不刷新
-   */
-  private initMinimapSyncDebounce(): void {
+  /** Refresh after event-suppressed AI transactions as well as native edits. */
+  private initMinimapVisualRefresh(): void {
     this.blocklyService.workspaceVisualRefreshRequested$
       .pipe(takeUntil(this.destroy$))
       .subscribe(workspace => {
@@ -2329,9 +2324,15 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
     const startedAt = Date.now();
     const attempt = async () => {
       if (token !== this.generatedArtifactRetryToken || this.destroy$.isStopped) return;
+      if (projectPath !== this.projectService.currentProjectPath) return;
+      // Revision capture serializes the full project. Even a disk-only retry
+      // must defer that work while a small function is being dragged/edited.
+      if (this.workspace && isBlocklyWorkspaceInteracting(this.workspace)) {
+        this.generatedArtifactRetryTimer = setTimeout(() => void attempt(), 1000);
+        return;
+      }
       if (
-        projectPath !== this.projectService.currentProjectPath
-        || revision !== this.blocklyService.getWorkspaceContentRevision()
+        revision !== this.blocklyService.getWorkspaceContentRevision()
       ) return;
       try {
         await writePreparedArduinoGeneratedArtifacts(projectPath, artifacts);

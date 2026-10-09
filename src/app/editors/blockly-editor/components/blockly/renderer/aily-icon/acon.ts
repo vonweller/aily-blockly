@@ -204,7 +204,9 @@ export class AilyIcon extends Blockly.icons.Icon {
  * 这样可以通过 block.addIcon() 或 XML 序列化使用
  */
 export function registerAilyIcon(): void {
-  Blockly.icons.registry.register(AILY_ICON_TYPE, AilyIcon);
+  if (!Blockly.registry.hasItem(Blockly.registry.Type.ICON, AILY_ICON_TYPE.toString())) {
+    Blockly.icons.registry.register(AILY_ICON_TYPE, AilyIcon);
+  }
 }
 
 /**
@@ -217,10 +219,7 @@ export function addAilyIconToBlock(
   block: BlockSvg,
   state?: Partial<AilyIconState> | string
 ): AilyIcon {
-  try {
-    Blockly.icons.registry.register(AILY_ICON_TYPE, AilyIcon);
-  } catch (e) {
-  }
+  registerAilyIcon();
   const existingIcon = block.getIcon(AILY_ICON_TYPE);
   if (existingIcon instanceof AilyIcon) {
     if (state) {

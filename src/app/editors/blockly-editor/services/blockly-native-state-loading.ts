@@ -1,5 +1,5 @@
 import type * as Blockly from 'blockly';
-import { cloneProjectJson } from '@domain/project/project-document-json';
+import { cloneProjectJson } from '@domain/project/project-document/public-api';
 import { collectProjectBlocks } from '@domain/project/project-data/public-api';
 import { absJson } from '../../../integrations/blockly/abs/abs-json';
 import { serializeRuntimeFieldContract } from './blockly-runtime-block-metadata';

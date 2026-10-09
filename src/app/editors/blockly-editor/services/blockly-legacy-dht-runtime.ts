@@ -1,5 +1,5 @@
 import { collectProjectBlocks } from '@domain/project/project-data/public-api';
-import { cloneProjectJson } from '@domain/project/project-document-json';
+import { cloneProjectJson } from '@domain/project/project-document/public-api';
 import { DeclarativeBlockSnapshot } from './blockly-declarative-block-catalog';
 
 const READ_TYPES = ['dht_read_temperature', 'dht_read_humidity', 'dht_read_success'] as const;

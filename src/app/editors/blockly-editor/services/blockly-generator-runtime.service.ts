@@ -8,6 +8,7 @@ import { AbsSyncError } from '../../../integrations/blockly/abs/abs-state';
 import { installProjectDataImageCache } from '@domain/project/project-data/public-api';
 import type { NativeCandidateBlock, NativeCandidateOptions } from './blockly-native-candidate-protocol';
 import * as Blockly from 'blockly';
+import '../utils/blockly-legacy-library-compat';
 import { adaptBundledArduinoProcedureCalls } from './blockly-bundled-procedure-generator';
 import { adaptArduinoTextLiterals } from './blockly-arduino-text-literals';
 import { GeneratorProjectEffects } from './generator-project-effects';

@@ -1,3 +1,5 @@
+import {Subject} from 'rxjs';
+import {BlocklyService} from '../services/blockly.service';
 import * as Blockly from 'blockly';
 import { BlocklyFunctionView, BlocklyFunctionViewState, isBlocklyFunctionViewBlockVisible } from './blockly-function-view';
 import { ArduinoGenerator } from '../components/blockly/generators/arduino/arduino';
@@ -43,7 +45,7 @@ describe('Blockly function display preserves the complete native workspace', () 
   });
 
   it('switches only SVG visibility and keeps serialization, positions, variables and top-level order exact', () => {
-    workspace.createVariable('global', 'int', 'variable');
+    workspace.getVariableMap().createVariable('global', 'int', 'variable');
     const before = Blockly.serialization.workspaces.save(workspace);
     const order = workspace.getTopBlocks(true).map(block => block.id);
     view.setScope(first.id);
@@ -95,6 +97,21 @@ describe('Blockly function display preserves the complete native workspace', () 
   it('does not let stale queued selection events revert a manual view switch', async () => {
     line.select(); line.unselect(); view.setScope(second.id); await settle();
     expect(state.scopeId).toBe(second.id);
+  });
+
+  it('clears native remembered focus across function navigation instead of revealing the previous function', async () => {
+    const editor: any = Object.create(BlocklyService.prototype);
+    Object.assign(editor, { _workspace: workspace, functionView: view,
+      selectedBlockSubject: new Subject(), selectedBlockIdsSubject: new Subject(),
+      assertWorkspaceEditAvailable() {}, hideChaff() {} });
+    Blockly.getFocusManager().focusNode(line);
+    editor.setFunctionView(second.id); await settle();
+    expect(state.scopeId).toBe(second.id);
+    expect(Blockly.getSelected()).toBeNull();
+    workspace.centerOnBlock(line.id, true); await settle();
+    expect(state.scopeId).toBe(first.id);
+    expect(isBlocklyFunctionViewBlockVisible(line)).toBeTrue();
+    expect(Blockly.getSelected()).toBeNull();
   });
 
   it('keeps newly pasted and disconnected blocks visible as scratch blocks', async () => {

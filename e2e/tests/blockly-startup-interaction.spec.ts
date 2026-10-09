@@ -186,12 +186,12 @@ test(`startup, toolbox and passive notices preserve Blockly interaction (${entry
       (window as any).blocklyWorkspace.centerOnBlock('second', true);
     });
     for (const field of ['TEXT', 'NUM']) {
-      await win.locator(`[data-startup-field="second-${field}"]`).click();
+      await win.locator(`.injectionDiv [data-startup-field="second-${field}"]`).click();
       const input = win.locator('.blocklyHtmlInput');
       await input.fill(field === 'TEXT' ? '连续输入' : '42');
       await win.waitForTimeout(1200); await expect(input).toBeFocused(); await input.press('Enter');
     }
-    await win.locator('[data-startup-field="second-CHOICE"]').click();
+    await win.locator('.injectionDiv [data-startup-field="second-CHOICE"]').click();
     await win.waitForTimeout(1200); await expect(win.locator('.blocklyDropDownDiv')).toBeVisible();
     await win.locator('.blocklyDropDownDiv').getByText('two', { exact: true }).click();
     await win.evaluate(() => {

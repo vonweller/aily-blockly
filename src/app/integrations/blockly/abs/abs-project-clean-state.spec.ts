@@ -6,7 +6,7 @@ import { createAilyProjectDataValue, projectDataRuntime } from '@domain/project/
 import { ProjectApplicationAdapter } from '../../project/project-application.adapter';
 import { HeaderComponent } from '../../../main-window/components/header/header.component';
 import { ProjectNewComponent } from '../../../pages/project-new/project-new.component';
-import { cloneProjectJson } from '@domain/project/project-document-json';
+import { cloneProjectJson } from '@domain/project/project-document/public-api';
 
 const source = (): BlocklyProjectDocument => ({ schemaVersion: 3, activePageId: 'main', openedPageIds: ['main'],
   $ailyProjectData: { schemaVersion: 1, mode: 'external-only' },

@@ -1,4 +1,5 @@
 import {createHash} from 'node:crypto';
+import {existsSync} from 'node:fs';
 import {cp, mkdtemp, readFile, rm, writeFile} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -84,12 +85,14 @@ for (const scopeType of ['arduino_global', 'arduino_loop']) test(`${scopeType} r
         };
       }
     }, targetId);
-    await win.evaluate(async project => {
+    const initialSave = await win.evaluate(async project => {
       const realm = (document.querySelector('iframe[data-blockly-generator-runtime]') as HTMLIFrameElement).contentWindow as any;
-      await realm.projectService.save(project);
+      const result = await realm.projectService.save(project, 30_000);
       await (window as any).Blockly.renderManagement.finishQueuedRenders();
       (window as any).blocklyWorkspace.clearUndo();
+      return result;
     }, project);
+    expect(initialSave.success, JSON.stringify(initialSave)).toBe(true);
     const baseline = await win.evaluate(() => JSON.stringify((window as any).Blockly.serialization.workspaces.save((window as any).blocklyWorkspace)));
     const baselineCode = await readFile(path.join(project, '.temp/sketch/sketch.ino'), 'utf8');
     const baselineMap = await win.evaluate(() => JSON.stringify([...(document.querySelector('iframe[data-blockly-generator-runtime]') as HTMLIFrameElement).contentWindow['Arduino'].blockCodeMap]));
@@ -107,17 +110,28 @@ for (const scopeType of ['arduino_global', 'arduino_loop']) test(`${scopeType} r
     if (process.env['AILY_E2E_DRAG_TIMELINE']) await cdp.send('Tracing.start', {categories: 'devtools.timeline,disabled-by-default-devtools.timeline,disabled-by-default-devtools.timeline.invalidationTracking,v8', transferMode: 'ReturnAsStream'});
     await cdp.send('Profiler.enable'); await cdp.send('Profiler.start');
     const latencies: number[] = [];
+    const emptyPoint = await win.evaluate(() => {
+      const box = (window as any).blocklyWorkspace.getInjectionDiv().getBoundingClientRect();
+      return {x: box.left + box.width * .72, y: box.top + box.height * .35};
+    });
     console.log('[scoped-drag:start]', {targetId, scopeType});
     await win.evaluate(() => { (window as any).__dragProbe.active = true; });
     await win.mouse.move(start.x, start.y); await win.mouse.down();
     for (let i = 1; i <= 90; i++) {
       const started = Date.now();
-      await win.mouse.move(start.x + 80 + Math.sin(i / 5) * 30, start.y + 20 + Math.cos(i / 5) * 20);
+      // Keep the first drop away from live value inputs. Subsequent gestures
+      // probe the same detached block rather than accidentally replacing a
+      // shadow inside another statement and then clicking its old position.
+      const goal = i <= 30 ? emptyPoint : {x: start.x + 80, y: start.y + 20};
+      await win.mouse.move(goal.x + Math.sin(i / 5) * 30, goal.y + Math.cos(i / 5) * 20);
       latencies.push(Date.now() - started);
-      if (i === 1 || i === 31 || i === 61) expect(await win.evaluate(id => {
+      if (i === 1 || i === 31 || i === 61) {
+        const gesture = await win.evaluate(id => {
         const ws = (window as any).blocklyWorkspace;
-        return ws.isDragging() && ws.currentGesture_.targetBlock?.id === id;
-      }, targetId)).toBe(true);
+        return {dragging: ws.isDragging(), target: ws.currentGesture_?.targetBlock?.id, expected: id, scroll: [ws.scrollX, ws.scrollY]};
+        }, targetId);
+        expect(gesture, JSON.stringify({i, gesture})).toMatchObject({dragging: true, target: targetId});
+      }
       if (i === 30 || i === 60) {
         await win.mouse.up();
         await new Promise(resolve => setTimeout(resolve, 650));
@@ -174,10 +188,27 @@ for (const scopeType of ['arduino_global', 'arduino_loop']) test(`${scopeType} r
     }
     expect(undoGroups).toBeGreaterThanOrEqual(3);
     expect(await win.evaluate(() => JSON.stringify((window as any).Blockly.serialization.workspaces.save((window as any).blocklyWorkspace)))).toBe(baseline);
-    await win.evaluate(async project => {
+    const undoCode = await win.evaluate(() => {
       const realm = (document.querySelector('iframe[data-blockly-generator-runtime]') as HTMLIFrameElement).contentWindow as any;
-      await realm.projectService.save(project);
+      return realm.Arduino.workspaceToCode((window as any).blocklyWorkspace);
+    });
+    expect(undoCode).toBe(baselineCode);
+    // Preprocessing owns the derived sketch while it is running. Complete
+    // that real job before validating save's on-disk code publication.
+    await expect.poll(() => win.evaluate(() => {
+      const realm = (document.querySelector('iframe[data-blockly-generator-runtime]') as HTMLIFrameElement).contentWindow as any;
+      const builder = [...realm.projectService.injector.records.values()].map((record: any) => record?.value)
+        .find(value => typeof value?.isPreprocessing === 'function');
+      if (!builder) throw new Error('Blockly builder unavailable');
+      return !builder.isPreprocessing() && !builder.pendingPrecompile;
+    }), {timeout: 60_000}).toBe(true);
+    await expect.poll(() => existsSync(path.join(project, '.build', 'aily-workspace.lock'))
+      || existsSync(path.join(project, '.build', 'aily-builder.lock')), {timeout: 60_000}).toBe(false);
+    const finalSave = await win.evaluate(async project => {
+      const realm = (document.querySelector('iframe[data-blockly-generator-runtime]') as HTMLIFrameElement).contentWindow as any;
+      return realm.projectService.save(project, 30_000);
     }, project);
+    expect(finalSave.success, JSON.stringify(finalSave)).toBe(true);
     expect(await readFile(path.join(project, '.temp/sketch/sketch.ino'), 'utf8')).toBe(baselineCode);
     expect(await win.evaluate(() => JSON.stringify([...(document.querySelector('iframe[data-blockly-generator-runtime]') as HTMLIFrameElement).contentWindow['Arduino'].blockCodeMap]))).toBe(baselineMap);
     await win.screenshot({path: testInfo.outputPath('scoped-drag.png')});

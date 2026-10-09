@@ -34,19 +34,9 @@ export function loadBlocklyWorkspace(workspace: Blockly.WorkspaceSvg, state: obj
     };
   }
   Blockly.utils.dom.startTextWidthCache();
-  let nativeLoaded = false;
   try {
     Blockly.serialization.workspaces.load(state, workspace);
-    nativeLoaded = true;
     Blockly.renderManagement.triggerQueuedRenders();
-  } catch (error) {
-    // The bundled 1.0.2 loader does not close its own cache or resize batch on
-    // serializer errors. Newer native loaders already do so in finally.
-    if (!nativeLoaded && String(Blockly.VERSION) === '1.0.2') {
-      Blockly.utils.dom.stopTextWidthCache();
-      if (workspace.rendered) workspace.setResizesEnabled(true);
-    }
-    throw error;
   } finally {
     if (useBatch) {
       if (ownLoad) Object.defineProperty(serializer, 'load', ownLoad);

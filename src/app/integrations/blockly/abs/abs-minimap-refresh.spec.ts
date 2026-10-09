@@ -1,6 +1,5 @@
 import { Subject } from 'rxjs';
 import * as Blockly from 'blockly';
-import 'blockly/blocks';
 import { BlocklyComponent } from '../../../editors/blockly-editor/components/blockly/blockly.component';
 import { WorkspaceMinimap } from '../../../editors/blockly-editor/utils/workspace-minimap';
 import { BlocklyService } from '../../../editors/blockly-editor/services/blockly.service';
@@ -20,23 +19,20 @@ describe('bulk workspace minimap refresh', () => {
     minimap = new WorkspaceMinimap(workspace, () => blocked);
     const refresh = new Subject<Blockly.WorkspaceSvg>();
     editor = Object.create(BlocklyService.prototype);
-    Object.defineProperty(editor, 'workspace', { value: workspace });
-    Object.assign(editor, { workspaceVisualRefreshRequestSubject: refresh,
-      workspaceVisualRefreshRequested$: refresh.asObservable(), isWorkspaceEditBlocked: () => blocked });
+    Object.defineProperty(editor, 'workspace', {value: workspace, writable: true});
+    Object.assign(editor, {workspaceVisualRefreshRequestSubject: refresh, workspaceVisualRefreshRequested$: refresh.asObservable()});
     component = Object.create(BlocklyComponent.prototype);
     Object.assign(component, { blocklyService: editor, minimap,
       ngZone: { runOutsideAngular: fn => fn() }, destroy$: new Subject<void>() });
     spyOn(Blockly.WidgetDiv, 'isVisible').and.returnValue(false);
     spyOn(Blockly.DropDownDiv, 'isVisible').and.returnValue(false);
     input = document.createElement('input'); document.body.append(input);
-    component.initMinimapSyncDebounce();
+    component.initMinimapVisualRefresh();
   });
-
   afterEach(() => {
     component.destroy$.next(); component.destroy$.complete();
     minimap.dispose(); input.remove(); workspace.dispose(); host.remove();
   });
-
   const changeSilently = (value: number) => {
     Blockly.Events.disable();
     try {

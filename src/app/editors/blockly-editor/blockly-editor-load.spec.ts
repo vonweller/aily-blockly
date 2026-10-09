@@ -1,4 +1,5 @@
 import { BehaviorSubject, Subject } from 'rxjs';
+import * as Blockly from 'blockly';
 import { BlocklyEditorComponent } from './blockly-editor.component';
 import { ProjectService, projectDataRuntime } from '@domain/project/public-api';
 import { BlocklyService } from './services/blockly.service';
@@ -101,6 +102,25 @@ describe('project load normalization context', () => {
 });
 
 describe('Blockly dependency preparation cancellation', () => {
+  it('restores an unchanged viewport without closing a category opened during startup', async () => {
+    const host = document.createElement('div');
+    host.style.cssText = 'width:800px;height:600px'; document.body.append(host);
+    Blockly.Blocks['startup_view_probe'] = {init() {this.appendDummyInput().appendField('probe');}};
+    const workspace = Blockly.inject(host, {toolbox: {kind: 'categoryToolbox', contents: [
+      {kind: 'category', name: 'Probe', contents: [{kind: 'block', type: 'startup_view_probe'}]},
+    ]}, zoom: {startScale: 1, minScale: 0.5, maxScale: 2}, move: {scrollbars: true}});
+    const service: any = Object.create(BlocklyService.prototype);
+    Object.defineProperty(service, 'workspace', {value: workspace});
+    try {
+      workspace.getToolbox()!.selectItemByPosition(0);
+      await Blockly.renderManagement.finishQueuedRenders();
+      expect(workspace.getFlyout()!.isVisible()).toBeTrue();
+      service.restoreWorkspaceViewState({scale: 1, scrollX: 0, scrollY: 0});
+      expect(workspace.getFlyout()!.isVisible()).toBeTrue();
+      service.restoreWorkspaceViewState({scale: 0.75, scrollX: 0, scrollY: 0});
+      expect(workspace.scale).toBe(0.75);
+    } finally {workspace.dispose(); host.remove(); delete Blockly.Blocks['startup_view_probe'];}
+  });
   it('unsubscribes a workspace readiness wait when its session is aborted', async () => {
     const service: any = Object.create(BlocklyService.prototype);
     const ready = new BehaviorSubject(null);

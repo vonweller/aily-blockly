@@ -1,4 +1,4 @@
-import { canonicalProjectJsonStringify, cloneProjectJson } from '@domain/project/project-document-json';
+import { canonicalProjectJsonStringify, cloneProjectJson } from '@domain/project/project-document/public-api';
 import { collectProjectBlocks } from '@domain/project/project-data/public-api';
 import { assertAbsReadback } from '../../../integrations/blockly/abs/abs-readback';
 import type { AbsAbiBlock, AbsAbiWorkspace } from '../../../integrations/blockly/abs/abs-state';

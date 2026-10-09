@@ -1,4 +1,4 @@
-import { cloneBlocklyJson } from '@domain/project/project-document-json';
+import { cloneBlocklyJson } from '@domain/project/project-document/public-api';
 import { Injectable } from '@angular/core';
 import { BehaviorSubject, Subject, debounceTime, filter, firstValueFrom, fromEvent, map, switchMap, take, takeUntil, timer } from 'rxjs';
 import * as Blockly from 'blockly';
@@ -168,14 +168,19 @@ export class BlocklyService {
     this.functionView?.setScope(scopeId);
     // Complete the explicit navigation gesture. A focused selector/comment
     // otherwise keeps background code/minimap refresh waiting for an editor.
-    this.workspace?.markFocused();
+    if (this.workspace) Blockly.getFocusManager().focusNode(this.workspace.getRootFocusableNode());
   }
 
   private clearFunctionViewSelection(): void {
     const selected = Blockly.getSelected();
-    if (selected?.workspace === this.workspace) selected.unselect();
+    const ownsSelection = selected?.workspace === this.workspace;
+    if (ownsSelection) selected.unselect();
     multiDraggableWeakMap.get(this.workspace)?.clearAll_();
-    if (Blockly.getSelected()?.workspace === this.workspace) Blockly.common.setSelected(null);
+    if (ownsSelection) {
+      // v13 selection is owned by its focus manager. Clearing the legacy
+      // selected value leaves the hidden group as the tree's remembered node.
+      Blockly.getFocusManager().focusNode(this.workspace.getRootFocusableNode());
+    }
     dragSelectionWeakMap.get(this.workspace)?.clear();
     this.selectedBlockSubject.next(null); this.selectedBlockIdsSubject.next([]);
   }
@@ -1419,7 +1424,6 @@ export class BlocklyService {
       }
     });
 
-    installBlocklyVariableComparator();
     definitions.assertCurrent();
     withNativeStateLoading(Blockly, this.workspace, workspaceJson,
       () => loadBlocklyWorkspace(this.workspace, workspaceJson),
@@ -2463,7 +2467,7 @@ export class BlocklyService {
   private mountExternalToolbox() {
     if (!this.nativeToolboxElement && this.workspace) {
       const injectionDiv = (this.workspace as any).getInjectionDiv?.() as HTMLElement | undefined;
-      const currentNativeToolbox = injectionDiv?.querySelector<HTMLElement>('.blocklyToolboxDiv') || null;
+      const currentNativeToolbox = injectionDiv?.querySelector<HTMLElement>('.blocklyToolbox') || null;
       if (currentNativeToolbox) {
         this.nativeToolboxElement = currentNativeToolbox;
       }
@@ -3003,12 +3007,15 @@ export class BlocklyService {
 
     const workspace = this.workspace as any;
 
-    if (typeof workspace.setScale === 'function') {
-      workspace.setScale(viewState.scale || 1);
+    const scale = viewState.scale || 1;
+    // In v13 setScale closes the flyout even when the scale is unchanged.
+    // Startup can finish after the user has already opened a category.
+    if (typeof workspace.setScale === 'function' && workspace.scale !== scale) {
+      workspace.setScale(scale);
     }
 
     if (typeof workspace.scroll === 'function') {
-      workspace.scroll(viewState.scrollX || 0, viewState.scrollY || 0);
+      workspace.scroll(viewState.scrollX || 0, viewState.scrollY || 0, false);
       return;
     }
 

@@ -27,6 +27,10 @@ for (const minimap of [true, false]) {
     try {
       await openBlocklyProject(win, project);
       await expect(win.locator('iframe[data-runtime-ready="true"]')).toHaveCount(1, { timeout: 60_000 });
+      await expect.poll(() => win.evaluate(project => {
+        const realm = (document.querySelector('iframe[data-blockly-generator-runtime]') as HTMLIFrameElement).contentWindow as any;
+        return realm.projectService.getBlocklyProjectLoadStatus(project).ready;
+      }, project), {timeout: 60_000}).toBe(true);
       const windowHandle = await launched.app.browserWindow(win);
       const contentsId = await windowHandle.evaluate(window => window.webContents.id);
       // The same host bridge used by Agent tools; receipts are issued by the real
@@ -44,7 +48,7 @@ for (const minimap of [true, false]) {
         }), { contentsId, requestId: randomUUID(), path: project, operation, params });
       };
 
-      await win.evaluate(async project => {
+      const saved = await win.evaluate(async project => {
         const B = (window as any).Blockly, ws = (window as any).blocklyWorkspace;
         // Reuse installed libraries but start with only the board's entry roots.
         const state = B.serialization.workspaces.save(ws);
@@ -61,9 +65,12 @@ for (const minimap of [true, false]) {
         while (connection?.targetBlock()) connection = connection.targetBlock().nextConnection;
         if (!connection) throw new Error('Fixture setup has no free statement connection.');
         connection.connect(delay.previousConnection);
+        await B.renderManagement.finishQueuedRenders();
+        await new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 50)));
         const realm = (document.querySelector('iframe[data-blockly-generator-runtime]') as HTMLIFrameElement).contentWindow as any;
-        await realm.projectService.save(project);
+        return realm.projectService.save(project, 30_000);
       }, project);
+      expect(saved.success, JSON.stringify(saved)).toBe(true);
 
       const snapshot = () => win.evaluate(() => {
         const B = (window as any).Blockly, main = (window as any).blocklyWorkspace;
@@ -82,7 +89,7 @@ for (const minimap of [true, false]) {
           const copy = copies.find(element => element.getAttribute('data-id') === block.id);
           return { ...block, text: copy ? text(copy) : null, transform: copy?.getAttribute('transform') ?? null };
         }) : null;
-        return { main: blocks(main), mini: projection, eventsEnabled: B.Events.isEnabled(),
+        return { main: blocks(main), mini: projection, duplicateModel: B.common.getAllWorkspaces().some(ws => ws.getInjectionDiv?.()?.closest('.blockly-minimap')), eventsEnabled: B.Events.isEnabled(),
           mainNumber: main.getBlockById('minimap-number')?.getFieldValue('NUM') };
       });
       if (minimap) {
@@ -157,8 +164,10 @@ for (const minimap of [true, false]) {
         const current = await snapshot();
         expect(current.mainNumber).toBe(next);
         expect(current.eventsEnabled).toBe(true);
+        expect(current.duplicateModel).toBe(false);
         if (minimap) {
-          await expect.poll(async () => (await snapshot()).mini).toEqual(current.main);
+          await expect(async () => { const state = await snapshot();
+            expect(state.mini).toEqual(state.main); }).toPass({timeout: 15_000});
           const visibleNumber = await win.evaluate(next => {
             return document.querySelector('.blockly-minimap')?.textContent;
           }, next);

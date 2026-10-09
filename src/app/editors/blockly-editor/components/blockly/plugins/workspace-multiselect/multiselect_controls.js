@@ -387,7 +387,6 @@ export class MultiselectControls {
         }
         this.multiDraggable.clearAll_();
         this.dragSelection.clear();
-        Blockly.common.setSelected(null);
       } else if (Blockly.getSelected() &&
           !(Blockly.getSelected() instanceof MultiselectDraggable)) {
         // Blockly.getSelected() is not a multiselectDraggable
@@ -415,7 +414,7 @@ export class MultiselectControls {
           MultiselectDraggable)) {
         if (Blockly.getSelected() instanceof Blockly.BlockSvg &&
             !Blockly.getSelected().isShadow()) {
-          Blockly.common.setSelected(null);
+          Blockly.getFocusManager().focusNode(this.workspace_.getRootFocusableNode());
         }
         // TODO: Look into this after gesture has been updated at Blockly
         // Currently, the setSelected is called twice even with selection of
