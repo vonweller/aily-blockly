@@ -180,7 +180,7 @@ export function installNativeCandidateRealm(): void {
       progress('binding');
       const binding = request.abs !== undefined ? withNativeFieldDependencies(native, workspace, () => bindNativeAbs(request.abs!, execution, declarations, request.identities, values.materialize, request.hostCalls,
         request.modelRequestId && generator
-          ? { generator, requestId: request.modelRequestId } : undefined), uiTasks) : undefined;
+          ? { generator, requestId: request.modelRequestId, retainedCalls: request.retainedModelCalls, retainedIds: request.retainedModelIds } : undefined), uiTasks) : undefined;
       if (!request.verify && !binding) for (const operation of request.blocks) execution.create(operation);
       if (!request.verify) {
         progress('views');
