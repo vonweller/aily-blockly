@@ -93,6 +93,21 @@ function adaptLegacyU8g2Font(block: Blockly.Block, values: Record<string, any>):
 
 const TFT_SPI_NUMBERS = ['WIDTH', 'HEIGHT', 'MISO', 'MOSI', 'SCLK', 'CS', 'DC', 'RST', 'BL'] as const;
 
+/** The GC9A01 SPI generator does not consume QSPI pins. Its board initializer
+ * mirrors the active SPI pins into previously unset QSPI defaults. Admit only
+ * that exact initialization, not arbitrary changes to saved or active pins. */
+function initializedTftDefaults(block: Blockly.Block, fields: Record<string, any>): Record<string, any> {
+  if (block.type !== 'tftespi_setup' || fields['MODEL'] !== 'GC9A01_DRIVER'
+    || block.getFieldValue('MODEL') !== fields['MODEL']) return fields;
+  const view = { ...fields };
+  for (const [inactive, active] of [['QSPI_CS', 'CS'], ['QSPI_SCLK', 'SCLK'], ['QSPI_RST', 'RST']]) {
+    if (fields[inactive] === '-1' && typeof fields[active] === 'string'
+      && block.getFieldValue(active) === fields[active]
+      && block.getFieldValue(inactive) === fields[active]) view[inactive] = fields[active];
+  }
+  return view;
+}
+
 /** lib-tft-espi published both field-based and value-input-based setup blocks.
  * Adapt only scalar number children/fields to the shape actually installed for
  * this project. The saved ABI and library definition remain untouched. */
@@ -153,7 +168,7 @@ export function nativeLoadedStateView<T>(state: T, workspace: Blockly.Workspace)
     const fields = entry['fields'] as Record<string, any> | undefined;
     const inputs = entry['inputs'] as Record<string, any> | undefined;
     const adapted = adaptLegacyTftSetup(block, fields ?? {}, inputs ?? {});
-    const fieldView = adaptLegacyU8g2Font(block, adaptLegacyU8g2Begin(block, adapted.fields));
+    const fieldView = initializedTftDefaults(block, adaptLegacyU8g2Font(block, adaptLegacyU8g2Begin(block, adapted.fields)));
     if (fields || Object.keys(fieldView).length) entry['fields'] = fieldView;
     for (const [name, slot] of Object.entries(adapted.inputs)) {
       if (inputs && Object.hasOwn(inputs, name) || !slot.shadow || slot.shadow.id) continue;
