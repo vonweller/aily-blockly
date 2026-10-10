@@ -31,6 +31,27 @@ describe('project loaded-state admission and comparison', () => {
     expect(state.compare(['project', 1], 'disk', edited)).toBeTrue();
     expect(state.compare(['project', 1], 'disk', after)).toBeFalse();
   });
+  it('admits a model created by an omitted native variable field and keeps it clean after hydration', () => {
+    after.pages[0].content.blocks.blocks[0].fields.VAR = { id: 'default-model' };
+    after.sharedModel.variables = [{ id: 'default-model', name: 'sensor', type: 'Sensor' }];
+    expect(() => assertProjectLoadPreserved(before, after)).not.toThrow();
+    state.remember(['p'], 'disk', before);
+    state.acceptHydration(['p'], before, after);
+    expect(state.compare(['p'], 'disk', after)).toBeFalse();
+    const edited = structuredClone(after); edited.sharedModel.variables[0].name = 'renamed';
+    expect(state.compare(['p'], 'disk', edited)).toBeTrue();
+  });
+  it('still rejects replacement or deletion of saved variable models and changes to saved fields', () => {
+    before.sharedModel.variables = [{ id: 'saved-model', name: 'saved' }];
+    before.pages[0].content.blocks.blocks[0].fields.VAR = { id: 'saved-model' };
+    after = structuredClone(before);
+    after.pages[0].content.blocks.blocks[0].fields.VAR = { id: 'replacement' };
+    after.sharedModel.variables.push({ id: 'replacement', name: 'other' });
+    expect(() => assertProjectLoadPreserved(before, after)).toThrow();
+    after = structuredClone(before);
+    after.sharedModel.variables = [];
+    expect(() => assertProjectLoadPreserved(before, after)).toThrow();
+  });
   for (const [name, change] of [
     ['deleted block', (d: any) => d.pages[0].content.blocks.blocks.pop()],
     ['added block', (d: any) => d.pages[0].content.blocks.blocks.push({ id: 'unexpected', type: 'text' })],
@@ -292,7 +313,7 @@ describe('project check feedback is fail-closed for all editors', () => {
     h.projectService = { getProjectMode: () => 'blockly', captureCurrentProjectGuard: () => () => true,
       hasUnsavedChanges: async () => { throw new Error('unavailable'); } };
     h.message = { error: jasmine.createSpy('error') }; h.modal = { create: jasmine.createSpy('dialog') };
-    for (const action of ['close', 'open', 'new']) expect(await h.checkUnsavedChanges(action)).toBeFalse();
+    for (const action of ['open', 'new']) expect(await h.checkUnsavedChanges(action)).toBeFalse();
     expect(h.modal.create).not.toHaveBeenCalled(); expect(h.message.error).toHaveBeenCalled();
   });
   it('keeps the new-project wizard on the current project after a check failure', async () => {

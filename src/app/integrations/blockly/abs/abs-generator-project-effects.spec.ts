@@ -40,6 +40,14 @@ describe('owned generator project effects', () => {
     expect(original.MACROS.length).toBe(3);
     expect(mergeGeneratorMacros(result, []).MACROS).toEqual([['USER=1'], ['EDITED=9']]);
   });
+  it('keeps first legacy macro adoption identical to later background publications', () => {
+    const original = { MACROS: [['Z_GENERATED=2'], ['USER=1'], ['A_GENERATED=3']] };
+    const effects = [{ name: 'Z_GENERATED', value: 'Z_GENERATED=2' }, { name: 'A_GENERATED', value: 'A_GENERATED=3' }];
+    const captured = mergeGeneratorMacros(original, effects);
+    expect(captured.MACROS).toEqual([['USER=1'], ['A_GENERATED=3'], ['Z_GENERATED=2']]);
+    expect(mergeGeneratorMacros(captured, [...effects].reverse())).toEqual(captured);
+    expect(original.MACROS).toEqual([['Z_GENERATED=2'], ['USER=1'], ['A_GENERATED=3']]);
+  });
 
   it('discards partially captured effects after a failed generator invocation', () => {
     const realm: any = { Promise, projectService: {} }, effects = new GeneratorProjectEffects(realm);

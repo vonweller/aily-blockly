@@ -4,6 +4,82 @@ import { BlocklyEditorComponent } from './blockly-editor.component';
 import { ProjectService, projectDataRuntime } from '@domain/project/public-api';
 import { BlocklyService } from './services/blockly.service';
 import { canTransferProjectAbi } from './utils/project-abi-transfer';
+import { BlocklyLibraryPackageService } from '@domain/dependencies/public-api';
+
+describe('legacy native-procedure library validation', () => {
+  function fixture() {
+    const service: any = Object.create(BlocklyLibraryPackageService.prototype);
+    service.electronService = { exists: () => true, readFile: () => 'Arduino.forBlock.procedures_defnoreturn = () => "";' };
+    const snapshot: any = { readErrors: [], packageJson: { name: '@aily-project/lib-core-functions', version: '0.0.1' },
+      blockJson: [], toolboxJson: { kind: 'category', name: '函数定义', custom: 'PROCEDURE' },
+      paths: { packageJson: 'package.json', blockJson: 'block.json', toolboxJson: 'toolbox.json', generatorJs: 'generator.js' } };
+    snapshot.toolboxRoot = snapshot.toolboxJson;
+    return { service, snapshot };
+  }
+  it('accepts the published dynamic native-procedure category without declarative shapes or static contents', () => {
+    const { service, snapshot } = fixture();
+    expect(service.validateLibraryPackage(snapshot).errors).toEqual([]);
+  });
+  it('still rejects an empty shape list from an ordinary or new functions library', () => {
+    const { service, snapshot } = fixture();
+    snapshot.packageJson.version = '1.0.1';
+    expect(service.validateLibraryPackage(snapshot).valid).toBeFalse();
+  });
+  it('keeps malformed static categories and unknown dynamic callbacks invalid', () => {
+    const { service, snapshot } = fixture();
+    snapshot.toolboxJson.custom = 'UNKNOWN';
+    expect(service.validateLibraryPackage(snapshot).valid).toBeFalse();
+  });
+  it('keeps a broken generator invalid even for the legacy native library', () => {
+    const { service, snapshot } = fixture();
+    service.electronService.readFile = () => 'Arduino.forBlock.broken = ;';
+    expect(service.validateLibraryPackage(snapshot).valid).toBeFalse();
+  });
+});
+
+describe('failed Blockly open recovery', () => {
+  for (const toolboxReady of [false, true]) {
+    it(`${toolboxReady ? 'preserves a loaded toolbox' : 'disposes an unprepared runtime'} after program load failure`, async () => {
+      const route = new Subject<any>(); const board = new Subject<any>();
+      const component: any = Object.create(BlocklyEditorComponent.prototype);
+      Object.assign(component, {
+        projectLoadSequence: 0, activatedRoute: { queryParams: route },
+        _projectService: { init() {} }, _builderService: { init() {} }, _uploadService: { init() {} },
+        projectService: { boardConfigUpdatedSubject: board, beginBlocklyProjectLoad() {},
+          markBlocklyProjectLoadFailed: jasmine.createSpy('failed') },
+        uiService: { updateFooterState: jasmine.createSpy('footer') },
+        message: { error: jasmine.createSpy('error') },
+        localLibrarySyncService: { stop: jasmine.createSpy('stop') },
+        clearProjectLoadedCodeRefreshTimer: jasmine.createSpy('clearRefresh'),
+        stopPackageJsonDependencyWatch: jasmine.createSpy('stopWatch'),
+        abortFailedProjectLoad: jasmine.createSpy('abort'),
+        loadProject: async () => {
+          if (toolboxReady) component.toolboxReadyProjectPath = '/failed';
+          throw new Error('Blockly changed or discarded persisted state at /attributes/extraState.');
+        },
+      });
+      spyOn(projectDataRuntime, 'configure');
+      spyOn(projectDataRuntime, 'getSessionToken').and.returnValue('session');
+      spyOn(window.history, 'replaceState'); spyOn(window.history, 'pushState');
+      component.ngOnInit();
+      try {
+        route.next({ path: '/failed' });
+        await new Promise(resolve => setTimeout(resolve, 0));
+        expect(component.loadedProjectPath).toBeUndefined();
+        expect(component.projectService.markBlocklyProjectLoadFailed).toHaveBeenCalledWith('/failed', jasmine.stringMatching(/extraState/));
+        expect(component.uiService.updateFooterState).toHaveBeenCalledWith(jasmine.objectContaining({ state: 'error' }));
+        if (toolboxReady) {
+          expect(component.abortFailedProjectLoad).not.toHaveBeenCalled();
+          expect(component.toolboxOnlyProjectPath).toBe('/failed');
+          expect(component.stopPackageJsonDependencyWatch).toHaveBeenCalled();
+        } else {
+          expect(component.abortFailedProjectLoad).toHaveBeenCalled();
+        }
+      } finally { component.projectRouteSubscription.unsubscribe(); component.boardConfigUpdatedSubscription.unsubscribe(); }
+    });
+  }
+
+});
 
 describe('deep project ABI parser transport', () => {
   it('bypasses structured cloning of long graphs without parsing twice', async () => {

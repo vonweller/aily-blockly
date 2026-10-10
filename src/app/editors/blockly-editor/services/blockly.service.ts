@@ -1423,7 +1423,7 @@ export class BlocklyService {
     workspaceJson.blocks?.blocks?.forEach((block) => {
       const ailyIcons = this.iconsMap.get(block.type);
       if (ailyIcons) {
-        block.icons = ailyIcons;
+        block.icons = { ...ailyIcons, ...block.icons };
       }
     });
 
@@ -1600,15 +1600,18 @@ export class BlocklyService {
         // 替换block中静态图片路径
         const staticFileIsExist = this.electronService.exists(this.electronService.pathJoin(libPackagePath, 'static'));
         this.loadLibBlocks(blocks, staticFileIsExist ? this.electronService.pathJoin(libPackagePath, 'static') : null, libPackageName, libVersion, libLocalPath, owner);
-        for (const blockType of runtimeDefinedBlockTypes) {
-          this.runtimeDefinedLibraryBlockTypes.add(blockType);
+        for (const blockType of runtimeDefinedBlockTypes) this.runtimeDefinedLibraryBlockTypes.add(blockType);
+        // Native procedure shapes already belong to Blockly. Legacy libraries
+        // supply only their generators, so block.json alone cannot track usage.
+        const generatorBlockTypes = Array.from(this.loadedGenerators.get(generatorFilePath) || []);
+        for (const blockType of new Set([...runtimeDefinedBlockTypes, ...generatorBlockTypes])) {
           this.blockTypeToLibMap.set(blockType, {
             name: libPackageName,
             version: libVersion,
             localPath: libLocalPath,
           });
         }
-        loadedBlockTypes = Array.from(new Set([...loadedBlockTypes, ...runtimeDefinedBlockTypes]));
+        loadedBlockTypes = Array.from(new Set([...loadedBlockTypes, ...runtimeDefinedBlockTypes, ...generatorBlockTypes]));
         // 加载toolbox
         if (librarySnapshot.toolboxRoot) {
           let toolbox = this.cloneJson(librarySnapshot.toolboxRoot);
@@ -2157,28 +2160,23 @@ export class BlocklyService {
       return false;
     }
 
+    const libraryBlockTypes = new Set([
+      ...(this.loadedLibraryInfos.get(libPackagePath)?.blockTypes || []),
+      ...this.getFailedLegacyProcedureBlockTypes(this.failedLibraryLoads.get(libPackagePath)?.snapshot),
+    ]);
     const libBlockPath = this.electronService.pathJoin(libPackagePath, 'block.json');
-    if (!this.electronService.exists(libBlockPath)) {
-      return false;
-    }
-
     try {
-      const blocksData = JSON.parse(this.electronService.readFile(libBlockPath));
-      const libraryBlockTypes = Array.isArray(blocksData)
-        ? blocksData
-          .map((block: any) => block?.type)
-          .filter((blockType): blockType is string => typeof blockType === 'string' && blockType.length > 0)
-        : [];
-      if (libraryBlockTypes.length === 0) {
-        return false;
+      if (this.electronService.exists(libBlockPath)) {
+        const blocksData = JSON.parse(this.electronService.readFile(libBlockPath));
+        for (const block of Array.isArray(blocksData) ? blocksData : []) {
+          if (typeof block?.type === 'string' && block.type.length > 0) libraryBlockTypes.add(block.type);
+        }
       }
-
-      const usedBlockTypes = new Set(this.collectBlockTypesFromProjectDocument(this.getProjectDocument()));
-      return libraryBlockTypes.some((blockType) => usedBlockTypes.has(blockType));
     } catch (error) {
       console.error('检查库使用情况失败:', libPackagePath, error);
-      return false;
     }
+    const usedBlockTypes = new Set(this.collectBlockTypesFromProjectDocument(this.getProjectDocument()));
+    return Array.from(libraryBlockTypes).some(blockType => usedBlockTypes.has(blockType));
   }
 
   // 通过包名检查库是否被当前项目使用（适用于跨实例复制粘贴时携带库元信息的场景）
@@ -2190,6 +2188,11 @@ export class BlocklyService {
     const blockTypes = Array.from(this.blockTypeToLibMap.entries())
       .filter(([, lib]) => lib?.name === packageName)
       .map(([blockType]) => blockType);
+    for (const failure of this.failedLibraryLoads.values()) {
+      if (failure.snapshot.ref.name === packageName) {
+        blockTypes.push(...this.getFailedLegacyProcedureBlockTypes(failure.snapshot));
+      }
+    }
 
     if (blockTypes.length === 0) {
       return false;
@@ -2197,6 +2200,15 @@ export class BlocklyService {
 
     const usedBlockTypes = new Set(this.collectBlockTypesFromProjectDocument(this.getProjectDocument()));
     return blockTypes.some((blockType) => usedBlockTypes.has(blockType));
+  }
+
+  private getFailedLegacyProcedureBlockTypes(snapshot?: BlocklyLibraryPackageSnapshot): string[] {
+    // A red legacy category still belongs to these native shapes, even though
+    // its generator never loaded and therefore has no successful runtime entry.
+    if (snapshot?.packageJson?.name !== '@aily-project/lib-core-functions'
+      || snapshot.packageJson.version !== '0.0.1' || snapshot.toolboxRoot?.custom !== 'PROCEDURE') return [];
+    return ['procedures_defnoreturn', 'procedures_defreturn', 'procedures_callnoreturn',
+      'procedures_callreturn', 'procedures_ifreturn'];
   }
 
   loadLibGenerator(filePath, owner?: BlocklyWorkspaceEditLease): Promise<boolean> {
@@ -2219,12 +2231,7 @@ export class BlocklyService {
       const result = this.generatorRuntime.loadGenerator(filePath, source);
       await result.contractsReady;
       if (this.generatorRuntime.getActiveGenerator() !== owner) return false;
-      const registered = Array.from(new Set([
-        ...result.arduinoBlockTypes,
-        ...result.micropythonBlockTypes,
-        ...result.pythonBlockTypes,
-      ]));
-      this.loadedGenerators.set(filePath, new Set(registered));
+      this.loadedGenerators.set(filePath, new Set(result.registeredBlockTypes));
       return true;
     } catch (error) {
       console.error(`Generator loading failed: ${filePath}`, error);

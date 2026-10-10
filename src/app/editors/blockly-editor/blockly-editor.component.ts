@@ -91,6 +91,7 @@ export class BlocklyEditorComponent implements OnInit, OnDestroy {
   private runtimeCdcEnabled: boolean | undefined;
   private loadedProjectPath: string | null = null;
   private toolboxOnlyProjectPath: string | null = null;
+  private toolboxReadyProjectPath: string | null = null;
   private projectLoadSequence = 0;
   private projectRouteSubscription: Subscription | null = null;
 
@@ -156,6 +157,7 @@ export class BlocklyEditorComponent implements OnInit, OnDestroy {
             return;
           }
           this._projectService.currentProjectPath = requestedProjectPath;
+          this.toolboxReadyProjectPath = null;
           this.projectService.currentProjectPath = requestedProjectPath;
           this.projectService.beginBlocklyProjectLoad(requestedProjectPath);
           projectDataRuntime.configure(params['path']);
@@ -170,14 +172,15 @@ export class BlocklyEditorComponent implements OnInit, OnDestroy {
           if ((error as { code?: string })?.code === 'PROJECT_DEPENDENCY_CANCELLED') return;
           console.error('加载项目失败', error);
           const detail = this.formatProjectLoadError(error);
-          if (error instanceof ProjectToolboxOnlyLoadError) {
+          if (error instanceof ProjectToolboxOnlyLoadError || this.toolboxReadyProjectPath === requestedProjectPath) {
             this.toolboxOnlyProjectPath = requestedProjectPath;
             this.clearProjectLoadedCodeRefreshTimer();
             this.stopPackageJsonDependencyWatch();
             this.localLibrarySyncService.stop();
-            this.uiService.updateFooterState({ state: 'error', text: error.message });
+            this.uiService.updateFooterState({ state: 'error', text: detail });
           } else {
             this.abortFailedProjectLoad();
+            this.uiService.updateFooterState({ state: 'error', text: detail });
           }
           this.projectService.markBlocklyProjectLoadFailed(requestedProjectPath, detail);
           this.message.error(detail);
@@ -201,6 +204,7 @@ export class BlocklyEditorComponent implements OnInit, OnDestroy {
 
   private abortFailedProjectLoad(): void {
     this.loadedProjectPath = null;
+    this.toolboxReadyProjectPath = null;
     this.clearProjectLoadedCodeRefreshTimer();
     this.stopPackageJsonDependencyWatch();
     this.localLibrarySyncService.stop();
@@ -431,6 +435,7 @@ export class BlocklyEditorComponent implements OnInit, OnDestroy {
       await this.blocklyService.loadLibrary(libPackageName, projectPath);
       assertCurrent();
     }
+    this.toolboxReadyProjectPath = projectPath;
     // 5. 加载project.abi数据
     this.uiService.updateFooterState({
       state: 'doing',

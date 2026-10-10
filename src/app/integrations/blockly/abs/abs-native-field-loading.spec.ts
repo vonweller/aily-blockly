@@ -1,5 +1,6 @@
 import * as Blockly from 'blockly';
 import '@blockly/field-colour-hsv-sliders';
+import '../../../editors/blockly-editor/components/blockly/plugins/block-plus-minus/src/index.js';
 import { BlocklyService } from '../../../editors/blockly-editor/services/blockly.service';
 import { BlocklyDeclarativeBlockCatalog } from '../../../editors/blockly-editor/services/blockly-declarative-block-catalog';
 import { observeNativeBlockDefinition } from '../../../editors/blockly-editor/services/blockly-native-structure';
@@ -12,6 +13,12 @@ describe('native dynamic field loading without declaration JSON', () => {
   let workspace: Blockly.Workspace, catalog: BlocklyDeclarativeBlockCatalog;
   const blockState = (id = 'kept') => ({ type, id, fields: { A_TEXT: 'saved text', M_CHOICE: 'C', Z_MODE: 'B' }, deletable: false });
   const state = () => ({ blocks: { blocks: [blockState()] } });
+  const legacyIfElse = { init() { this.jsonInit({
+    message0: '%1', args0: [{ type: 'input_value', name: 'IF0' }],
+    message1: '%1', args1: [{ type: 'input_statement', name: 'DO0' }],
+    message2: '%1', args2: [{ type: 'input_statement', name: 'ELSE' }],
+    mutator: 'controls_if_mutator', previousStatement: null, nextStatement: null,
+  }); } };
   const load = (value: any) => BlocklyService.prototype.loadWorkspaceJson.call({
     adaptWorkspaceToRuntime: BlocklyService.prototype.adaptWorkspaceToRuntime,
     workspace, iconsMap: new Map(), cloneJson: value => structuredClone(value), assertWorkspaceEditAvailable() {},
@@ -39,6 +46,63 @@ describe('native dynamic field loading without declaration JSON', () => {
     Blockly.Blocks[parentType] = { init() { this.appendValueInput('VALUE'); } };
   });
   afterEach(() => { workspace.dispose(); delete Blockly.Blocks[type]; delete Blockly.Blocks[parentType]; });
+
+  it('preserves legacy procedure parameter IDs while allowing rename, removal, save and reopen', () => {
+    const input = { variables: [{ name: 'x', id: 'param-model' }], blocks: { blocks: [{
+      type: 'procedures_defnoreturn', id: 'legacy-definition', fields: { NAME: 'pickDigit' },
+      extraState: { params: [{ name: 'x', id: 'param-model', argId: 'legacy-connection' }] },
+    }] } };
+    load(input);
+    let saved: any = Blockly.serialization.workspaces.save(workspace);
+    assertAbsReadback(input as any, saved, { mode: 'requested' });
+    workspace.getVariableMap().renameVariable(workspace.getVariableMap().getVariableById('param-model')!, 'renamed');
+    saved = Blockly.serialization.workspaces.save(workspace);
+    expect(saved.blocks.blocks[0].extraState.params).toEqual([{ name: 'renamed', id: 'param-model', argId: 'legacy-connection' }]);
+    load(saved);
+    expect((Blockly.serialization.workspaces.save(workspace) as any).blocks.blocks[0].extraState.params[0].argId).toBe('legacy-connection');
+    (workspace.getBlockById('legacy-definition') as any).loadExtraState({});
+    expect((Blockly.serialization.workspaces.save(workspace) as any).blocks.blocks[0].extraState).toBeUndefined();
+    expect(input.blocks.blocks[0].extraState.params[0].name).toBe('x');
+  });
+
+  it('admits the native false ELSE default in old if/else state without changing the archive', () => {
+    const previous = Blockly.Blocks['controls_ifelse'];
+    Blockly.Blocks['controls_ifelse'] = legacyIfElse;
+    try {
+      const input = { blocks: { blocks: [{ type: 'controls_ifelse', id: 'old-if', extraState: { elseIfCount: 3 } }] } };
+      load(input);
+      const saved: any = Blockly.serialization.workspaces.save(workspace);
+      assertAbsReadback(nativeLoadedStateView(input, workspace) as any, saved, { mode: 'requested' });
+      expect(workspace.getBlockById('old-if')!.getInput('IF3')).not.toBeNull();
+      expect(workspace.getBlockById('old-if')!.getInput('ELSE')).toBeNull();
+      expect(input.blocks.blocks[0].extraState).toEqual({ elseIfCount: 3 });
+      load(saved);
+      assertAbsReadback(saved as any, Blockly.serialization.workspaces.save(workspace) as any, { mode: 'requested' });
+    } finally {
+      if (previous) Blockly.Blocks['controls_ifelse'] = previous;
+      else delete Blockly.Blocks['controls_ifelse'];
+    }
+  });
+
+  it('still rejects lost ELSE topology and unknown legacy if/else metadata', () => {
+    const previous = Blockly.Blocks['controls_ifelse'];
+    Blockly.Blocks['controls_ifelse'] = legacyIfElse;
+    try {
+      const input = { blocks: { blocks: [{ type: 'controls_ifelse', id: 'if', extraState: { elseIfCount: 1, hasElse: true } }] } };
+      load(input);
+      assertAbsReadback(nativeLoadedStateView(input, workspace) as any,
+        Blockly.serialization.workspaces.save(workspace) as any, { mode: 'requested' });
+      (workspace.getBlockById('if') as any).loadExtraState({ elseIfCount: 1 });
+      expect(() => assertAbsReadback(nativeLoadedStateView(input, workspace) as any,
+        Blockly.serialization.workspaces.save(workspace) as any, { mode: 'requested' })).toThrow();
+      const unknown = { blocks: { blocks: [{ type: 'controls_ifelse', id: 'if', extraState: { elseIfCount: 1, unknown: 'kept' } }] } };
+      expect(() => assertAbsReadback(nativeLoadedStateView(unknown, workspace) as any,
+        Blockly.serialization.workspaces.save(workspace) as any, { mode: 'requested' })).toThrow();
+    } finally {
+      if (previous) Blockly.Blocks['controls_ifelse'] = previous;
+      else delete Blockly.Blocks['controls_ifelse'];
+    }
+  });
 
   it('preserves malformed legacy JSON mutation input on failure and can reopen valid XML state afterwards', () => {
     Blockly.Blocks[type] = {

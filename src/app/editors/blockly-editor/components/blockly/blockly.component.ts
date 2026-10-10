@@ -2239,6 +2239,7 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
       takeUntil(this.destroy$)
     ).subscribe(async () => {
       if (!this.workspace || this.destroy$.isStopped) return;
+      if (!this.projectService.getBlocklyProjectLoadStatus().ready) return;
       if (this.backgroundCodeGenerationInProgress || isBlocklyWorkspaceInteracting(this.workspace)) {
         this.codeGenerationSubject.next();
         return;

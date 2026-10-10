@@ -8,6 +8,38 @@ const same = (a: unknown, b: unknown) => a === undefined || b === undefined
   ? a === b : canonicalProjectJsonStringify(a) === canonicalProjectJsonStringify(b);
 type RuntimeView = (workspace: AbsAbiWorkspace) => AbsAbiWorkspace;
 
+/** A newly introduced variable field may create its default model when an old
+ * archive omitted that field. Accept only models referenced by those omitted
+ * fields, never missing/replaced saved models or unrelated new variables. */
+const loadedDefaultVariableIds = (expected: AbsAbiWorkspace, actual: AbsAbiWorkspace): Set<string> => {
+  const defaults = new Set<string>();
+  const blocks = indexLoadedBlocks(actual);
+  for (const [id, saved] of indexLoadedBlocks(expected)) {
+    const loaded = blocks.get(id);
+    for (const [name, value] of Object.entries(loaded?.fields ?? {})) {
+      if (!Object.hasOwn(saved.fields ?? {}, name) && value && typeof value === 'object'
+        && !Array.isArray(value) && typeof value['id'] === 'string') defaults.add(value['id']);
+    }
+  }
+  return defaults;
+};
+const assertLoadedVariables = (expected: AbsAbiWorkspace, actual: AbsAbiWorkspace, defaults: ReadonlySet<string>): void => {
+  const variableIds = (state: AbsAbiWorkspace): Set<string> => {
+    const models = state['variables'] ?? [];
+    if (!Array.isArray(models) || models.some(model => typeof model?.id !== 'string' || !model.id)) {
+      throw new Error('Invalid variable identities in the loaded project.');
+    }
+    const ids = new Set<string>(models.map(model => model.id));
+    if (ids.size !== models.length) throw new Error('Duplicate variable identities in the loaded project.');
+    return ids;
+  };
+  const expectedIds = variableIds(expected), actualIds = variableIds(actual);
+  if ([...expectedIds].some(id => !actualIds.has(id))
+    || [...actualIds].some(id => !expectedIds.has(id) && !defaults.has(id))) {
+    throw new Error('Project variable identities changed during loading.');
+  }
+};
+
 const indexLoadedBlocks = (workspace: AbsAbiWorkspace): Map<string, AbsAbiBlock> => {
   const result = new Map<string, AbsAbiBlock>();
   for (const { state } of collectProjectBlocks(workspace)) {
@@ -27,6 +59,8 @@ export function assertProjectLoadPreserved(before: BlocklyProjectDocument, after
   const envelope = ({ pages, sharedModel, ...document }: BlocklyProjectDocument) => ({ ...document,
     pages: pages.map(({ content, viewState, ...page }) => page) });
   if (!same(envelope(before), envelope(after))) throw new Error('Project metadata changed during loading.');
+  const defaultVariables = loadedDefaultVariableIds(runtimeView(composeBlocklyPage(before, before.activePageId)),
+    composeBlocklyPage(after, before.activePageId));
   for (const page of before.pages) {
     const source = composeBlocklyPage(before, page.id), actual = composeBlocklyPage(after, page.id);
     // Only the active page was loaded. Reuse the loader's compatibility view;
@@ -35,8 +69,7 @@ export function assertProjectLoadPreserved(before: BlocklyProjectDocument, after
     if (!same([...indexLoadedBlocks(expected).keys()].sort(), [...indexLoadedBlocks(actual).keys()].sort())) {
       throw new Error('Project block identities changed during loading.');
     }
-    const variables = (state: any) => (state.variables ?? []).map((model: any) => model.id).sort();
-    if (!same(variables(expected), variables(actual))) throw new Error('Project variable identities changed during loading.');
+    assertLoadedVariables(expected, actual, defaultVariables);
     assertAbsReadback(expected, actual, { mode: 'requested', index: indexLoadedBlocks });
   }
   const extensions = ({ variables, procedureBlocks, ...rest }: any) => rest;

@@ -1,5 +1,15 @@
 import * as Blockly from 'blockly';
 
+/** Published variable generators assumed every category had static contents.
+ * Native procedure/variable callbacks return a string instead. Apply the same
+ * array guard as the maintained library, only to this known legacy lookup;
+ * keep on-disk libraries and native dynamic-category callbacks unchanged. */
+export function normalizeLegacyVariableToolboxSource(filePath: string, source: string): string {
+  if (!/(?:^|[/\\])(?:@aily-project[/\\])?lib-core-variables[/\\]generator\.js$/.test(filePath)) return source;
+  return source.replace(/item\.getContents\s*&&\s*item\.getContents\(\)\.some\((\w+)\s*=>\s*\1\.type\s*===\s*(["'])variable_define\2\)/g,
+    match => `item.getContents && Array.isArray(item.getContents()) && ${match.slice(match.indexOf('item.getContents()'))}`);
+}
+
 /**
  * Published Aily generator libraries are independently versioned. Keep their
  * v11 entry points backed by v13's variable map, without a second Blockly copy

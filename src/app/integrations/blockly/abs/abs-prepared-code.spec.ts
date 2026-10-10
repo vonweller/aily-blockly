@@ -1,4 +1,5 @@
 import * as Blockly from 'blockly';
+import 'blockly/blocks';
 import { projectDataRuntime } from '@domain/project/public-api';
 import { BlocklyGeneratorRuntimeService, getActiveProjectGenerator, getActiveProjectGeneratorRevision } from '../../../editors/blockly-editor/services/blockly-generator-runtime.service';
 import { BlocklyProjectCodePreparation } from '../../../editors/blockly-editor/services/prepared-project-code';
@@ -271,6 +272,33 @@ describe('prepared project code boundary', () => {
     preparation.clear();
     await preparation.prepare(capture);
     expect(generator.workspaceToCode).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects compiling native functions without their library while keeping the document editable', async () => {
+    generator.workspaceToCode.and.callThrough();
+    const definition = workspace.newBlock('procedures_defnoreturn');
+    const consume = jasmine.createSpy('compile');
+    const editor = productEditor();
+    const result = await preparation.prepare(capture);
+    expect(result!.code).toBeNull(); expect(result!.artifacts).toBeNull();
+    expect(result!.error).toContain('BLOCKLY_GENERATOR_MISSING');
+    expect(result!.error).toContain('procedures_defnoreturn');
+    await expectAsync(editor.runWithPreparedProjectCode(consume)).toBeRejectedWithError(/procedures_defnoreturn/);
+    expect(consume).not.toHaveBeenCalled(); expect(editor.isWorkspaceEditBlocked()).toBeFalse();
+    definition.setFieldValue('still editable', 'NAME');
+    expect(JSON.stringify(Blockly.serialization.workspaces.save(workspace))).toContain('still editable');
+    // Installing the library invalidates the failure without changing workspace bytes.
+    runtime.loadGenerator('restored-functions/generator.js', 'Arduino.forBlock.procedures_defnoreturn = () => "";');
+    expect((await preparation.prepare(capture))!.code).toContain('void setup()');
+    await editor.runWithPreparedProjectCode(consume);
+    expect(consume).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows explicitly disabled blocks without generators to remain in the editable project', async () => {
+    generator.workspaceToCode.and.callThrough();
+    workspace.newBlock('procedures_defnoreturn').setDisabledReason(true, 'MANUALLY_DISABLED');
+    const result = await preparation.prepare(capture);
+    expect(result!.error).toBeUndefined(); expect(result!.code).toContain('void setup()');
   });
   it('does not publish an asynchronous generator return value as code', async () => {
     generator.workspaceToCode.and.returnValue(Promise.resolve('too late'));
