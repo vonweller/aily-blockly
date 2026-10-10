@@ -47,6 +47,86 @@ describe('native dynamic field loading without declaration JSON', () => {
   });
   afterEach(() => { workspace.dispose(); delete Blockly.Blocks[type]; delete Blockly.Blocks[parentType]; });
 
+  it('retains legacy dynamic-input metadata without inventing ports, through edits, save and reopen', () => {
+    const name = 'legacy_dynamic_inputs_probe';
+    Blockly.Blocks[name] = { init() { this.jsonInit({ message0: '%1',
+      args0: [{ type: 'input_value', name: 'INPUT0' }], mutator: 'dynamic_inputs_mutator' }); } };
+    try {
+      const input = { blocks: { blocks: [{ type: name, id: 'legacy-inputs', extraState: { itemCount: 2 },
+        inputs: { INPUT0: { block: { type, id: 'kept-child', fields: { Z_MODE: 'A' } } } } }] } };
+      const original = absJson(input);
+      load(input);
+      let block: any = workspace.getBlockById('legacy-inputs');
+      expect(block.getInput('INPUT1')).toBeNull();
+      assertAbsReadback(input as any, Blockly.serialization.workspaces.save(workspace) as any, { mode: 'requested' });
+      block.plus();
+      let saved: any = Blockly.serialization.workspaces.save(workspace);
+      expect(saved.blocks.blocks[0].extraState).toEqual({ itemCount: 2, extraCount: 1 });
+      load(saved); block = workspace.getBlockById('legacy-inputs');
+      expect(block.getInput('INPUT1')).not.toBeNull();
+      expect(block.getInputTargetBlock('INPUT0')!.id).toBe('kept-child');
+      assertAbsReadback(saved, Blockly.serialization.workspaces.save(workspace) as any, { mode: 'requested' });
+      block.minus(2);
+      saved = Blockly.serialization.workspaces.save(workspace);
+      expect(saved.blocks.blocks[0].extraState).toEqual({ itemCount: 2 });
+      block.loadExtraState({});
+      expect(block.saveExtraState()).toBeNull();
+      expect(absJson(input)).toBe(original);
+    } finally { delete Blockly.Blocks[name]; }
+  });
+
+  it('still rejects unknown dynamic-input metadata or a lost saved connection', () => {
+    const name = 'legacy_dynamic_inputs_strict_probe';
+    Blockly.Blocks[name] = { init() { this.jsonInit({ message0: '%1',
+      args0: [{ type: 'input_value', name: 'INPUT0' }], mutator: 'dynamic_inputs_mutator' }); } };
+    try {
+      for (const extraState of [{ itemCount: '2' }, { itemCount: 2, unknown: true }]) {
+        const input = { blocks: { blocks: [{ type: name, id: 'legacy-inputs', extraState }] } };
+        load(input);
+        expect(() => assertAbsReadback(input as any, Blockly.serialization.workspaces.save(workspace) as any,
+          { mode: 'requested' })).toThrow();
+      }
+      const input = { blocks: { blocks: [{ type: name, id: 'legacy-inputs', extraState: { itemCount: 2 },
+        inputs: { INPUT0: { block: { type, id: 'kept-child', fields: { Z_MODE: 'A' } } } } }] } };
+      load(input); workspace.getBlockById('kept-child')!.dispose();
+      expect(() => assertAbsReadback(input as any, Blockly.serialization.workspaces.save(workspace) as any,
+        { mode: 'requested' })).toThrow();
+    } finally { delete Blockly.Blocks[name]; }
+  });
+
+  it('admits only board-initialized inactive GC9A01 QSPI defaults while keeping effective pins strict', () => {
+    const previous = Blockly.Blocks['tftespi_setup'];
+    Blockly.Blocks['tftespi_setup'] = { init() {
+      this.appendDummyInput('config');
+      for (const name of ['MODEL', 'CS', 'SCLK', 'RST', 'QSPI_CS', 'QSPI_SCLK', 'QSPI_RST']) {
+        this.getInput('config')!.appendField(new Blockly.FieldTextInput(''), name);
+      }
+    } };
+    try {
+      const input = { blocks: { blocks: [{ type: 'tftespi_setup', id: 'display', fields: {
+        MODEL: 'GC9A01_DRIVER', CS: '13', SCLK: '12', RST: '11', QSPI_CS: '-1', QSPI_SCLK: '-1', QSPI_RST: '-1',
+      } }] } };
+      const original = absJson(input);
+      load(input); const block = workspace.getBlockById('display')!;
+      for (const [inactive, active] of [['QSPI_CS', 'CS'], ['QSPI_SCLK', 'SCLK'], ['QSPI_RST', 'RST']]) {
+        block.setFieldValue(block.getFieldValue(active), inactive);
+      }
+      const readback = () => assertAbsReadback(nativeLoadedStateView(input, workspace) as any,
+        Blockly.serialization.workspaces.save(workspace) as any, { mode: 'requested' });
+      expect(readback).not.toThrow();
+      block.setFieldValue('99', 'QSPI_CS'); expect(readback).toThrow(); block.setFieldValue('13', 'QSPI_CS');
+      block.setFieldValue('99', 'CS'); expect(readback).toThrow(); block.setFieldValue('13', 'CS');
+      input.blocks.blocks[0].fields.QSPI_CS = '27'; expect(readback).toThrow();
+      input.blocks.blocks[0].fields.QSPI_CS = '-1';
+      input.blocks.blocks[0].fields.MODEL = 'CH13613_DRIVER'; block.setFieldValue('CH13613_DRIVER', 'MODEL');
+      expect(readback).toThrow();
+      input.blocks.blocks[0].fields.MODEL = 'GC9A01_DRIVER'; expect(absJson(input)).toBe(original);
+    } finally {
+      if (previous) Blockly.Blocks['tftespi_setup'] = previous;
+      else delete Blockly.Blocks['tftespi_setup'];
+    }
+  });
+
   it('preserves legacy procedure parameter IDs while allowing rename, removal, save and reopen', () => {
     const input = { variables: [{ name: 'x', id: 'param-model' }], blocks: { blocks: [{
       type: 'procedures_defnoreturn', id: 'legacy-definition', fields: { NAME: 'pickDigit' },
