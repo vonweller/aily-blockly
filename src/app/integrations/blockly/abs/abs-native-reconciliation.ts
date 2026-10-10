@@ -1,4 +1,5 @@
 import type { NativeCandidateRequest, NativeCandidateResult } from '../../../editors/blockly-editor/services/blockly-native-candidate-protocol';
+import { cloneBlocklyJson } from '@domain/project/public-api';
 import { absJson } from './abs-json';
 import { indexAbsAbi } from './abs-abi-index';
 import { AbsSyncError } from './abs-state';
@@ -41,7 +42,7 @@ export async function prepareAbsNativeReconciliation(reconciler: ReturnType<type
     hostCalls.push({ start: node.start, type: node.type, ...(argumentOrder ? { argumentOrder } : {}),
       ...(extraState === undefined ? {} : { extraState }) });
   } });
-  const modelState = structuredClone(baseline.workspace);
+  const modelState = cloneBlocklyJson(baseline.workspace);
   if (source !== baseline.abs) retireEmptyProjectModels(baseline, modelState, source);
   const modelRequestId = await absDeclarationRequestId(baseline.map.generation, source);
   assertCurrent();

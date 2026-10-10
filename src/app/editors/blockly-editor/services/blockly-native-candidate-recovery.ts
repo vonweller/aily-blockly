@@ -1,4 +1,5 @@
 import type { NativeCandidateOptions, NativeCandidateRequest, NativeCandidateResult } from './blockly-native-candidate-protocol';
+import { cloneNativeCandidateRequest } from './blockly-native-transfer';
 
 /** One recovery allowance for an entire preparation, shared by binding and
  * verification. Only disposable executions may use this; never wrap apply/save.
@@ -9,10 +10,10 @@ export function createNativeCandidateRecovery(
 ) {
   let recovered = false;
   return async (request: NativeCandidateRequest): Promise<NativeCandidateResult> => {
-    const snapshot = structuredClone(request);
+    const snapshot = cloneNativeCandidateRequest(request);
     assertCurrent();
     try {
-      return await execute(structuredClone(snapshot), { assertCurrent });
+      return await execute(cloneNativeCandidateRequest(snapshot), { assertCurrent });
     } catch (error) {
       if (error?.code !== 'ABS_NATIVE_TIMEOUT' || recovered) throw error;
       // A stale project, cancellation or changed program must not get another run.
