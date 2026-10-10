@@ -597,7 +597,8 @@ export class ProjectService {
   }
 
   markBlocklyProjectLoaded(projectPath: string): void {
-    if (!this.isSameProjectPath(projectPath, this.currentProjectPath)) {
+    if (!this.isSameProjectPath(projectPath, this.currentProjectPath)
+      || this.dependencyLifecycleState?.get(projectPath)?.signal.aborted) {
       return;
     }
     this.loadingBlocklyProjectPath = '';
@@ -607,6 +608,9 @@ export class ProjectService {
   }
 
   markBlocklyProjectLoadFailed(projectPath: string, error: string): void {
+    if ((!this.isSameProjectPath(projectPath, this.currentProjectPath)
+      && !this.isSameProjectPath(projectPath, this.loadingBlocklyProjectPath))
+      || this.dependencyLifecycleState?.get(projectPath)?.signal.aborted) return;
     if (this.isSameProjectPath(projectPath, this.loadingBlocklyProjectPath)) {
       this.loadingBlocklyProjectPath = '';
     }
@@ -758,9 +762,10 @@ export class ProjectService {
   captureCurrentProjectGuard(): () => boolean {
     const path = this.currentProjectPath;
     const session = this.dependencyLifecycleState?.get(path);
+    const aborted = session?.signal.aborted;
     return () => this.currentProjectPath === path
       && this.dependencyLifecycleState?.get(path) === session
-      && !session?.signal.aborted;
+      && session?.signal.aborted === aborted;
   }
 
   assertProjectDependencySession(session: ProjectDependencySession): void {
@@ -2169,6 +2174,15 @@ export class ProjectService {
     if (this.stateSubject.value === 'default' || !this.currentProjectPath) {
       return false;
     }
+
+    // Loading/rejected opens have no admitted editable workspace. Identify
+    // them from the activation, even when a broken manifest cannot report a mode.
+    // A loaded workspace's serialization error still needs the user's decision.
+    const path = this.currentProjectPath;
+    const status = this.getBlocklyProjectLoadStatus(path);
+    if (!status.ready && (this.stateSubject.value === 'loading'
+      && this.isSameProjectPath(path, this.loadingBlocklyProjectPath)
+      || this.isSameProjectPath(path, this.blocklyProjectLoadFailure?.path))) return false;
 
     return this.application.hasUnsavedBlocklyChanges();
   }
