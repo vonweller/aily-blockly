@@ -56,8 +56,10 @@ CPU 采样中重复声明完整性检查的自身耗时约从 1480 ms 降到 750
 
 ## 交付与运行层级
 
-Blockly 源码提交：`c9c283018`。主软件通过本地 vendor tarball、npm/pnpm 锁文件消费同一构建；本地源码稳定镜像用于后续热更新联调。
+Blockly 源码提交：`c9c283018`。本轮验证时，主软件通过本地发行包及 npm/pnpm 锁文件消费同一构建；当时本地源码稳定镜像用于热更新联调。
 
-已实际安装 `vendor/aily-project-blockly-13.3.0-aily.d03c2b00635f.tgz`，主程序及三个插件解析到同一个非源码链接目录；压缩核心 SHA-256 与源码构建一致：`7dcaeb9db5dabc75e7a126e82929323d5c8dad3d442489c7eb4d0749d63d072b`。实际安装包路径验证记录在 `e2e/.artifacts/blockly-initialization-2026-10-09/installed-package.json`。
+当时实际安装包的内容哈希为 `d03c2b00635f`，主程序及三个插件解析到同一个非源码链接目录；压缩核心 SHA-256 与源码构建一致：`7dcaeb9db5dabc75e7a126e82929323d5c8dad3d442489c7eb4d0749d63d072b`。实际安装包路径验证记录在 `e2e/.artifacts/blockly-initialization-2026-10-09/installed-package.json`。
+
+2026-10-10 起，宿主已改为 `blockly: npm:aily-project-blockly@1.0.3`（上游 Blockly 13.3.0），本地发行包和源码同步入口已移除。本文数据保留原验证版本；当前安装方式见 [开发人员须知](../develop.md#开发打包)。
 
 取消源码链接后的实际 npm 包再次通过 102 项主软件测试。四次打开均在原有竞争窗口派发拖动事件，输入被拦截且根块不变；首次打开后在深层真实数字输入框编辑、撤销、重做并保存，后三次重开均读到修改值。`installed-final/result.json` 中无错误。该轮原生加载为 4.213–5.083 s，完整就绪为 9.750–11.870 s，说明完整就绪仍存在启动及运行时波动，不能保证每次都是性能对照组的 7.388 s 中位数。当前证据层级是源码、npm 包、主软件 Electron 开发运行链，不等于新的 macOS/Windows 桌面安装程序或硬件验收。

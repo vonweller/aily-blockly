@@ -11,9 +11,12 @@
 核心源码现在位于 `aily-npm-blockly/packages/blockly/core`。核心本地升级提交
 `fbee0c44d` 保留旧 Aily 分支为祖先；`AILY_FORK.md` 记录全部旧补丁的责任映射。
 
-宿主使用 `vendor/aily-project-blockly-13.3.0.tgz`，package-lock 记录完整性哈希。
+2026-10-10 起，宿主通过 `blockly: npm:aily-project-blockly@1.0.3` 安装
+[线上发行包](https://www.npmjs.com/package/aily-project-blockly)，其上游基线和运行时版本均为 13.3.0。
+npm/pnpm 锁文件记录线上包的完整性哈希，override 保证插件共用宿主核心。
+本地 tarball、补丁快照和源码同步脚本已移除；安装宿主无需邻接核心源码仓库。
 三个官方插件同步到 13.3.0，并强制 field-colour/grid-dropdown 使用 13.3.0。
-`npm ls --all` 确认所有插件共享同一核心，无 11/12/13 多副本混用。未向 npm 发布。
+升级时 `npm ls --all` 确认所有插件共享同一核心，无 11/12/13 多副本混用。下文验收数据保留原验证时间和版本。
 
 Node.js 最低 22；本次构建 Node 24.16.0，宿主内置 Node 22.21.0。
 
@@ -189,7 +192,8 @@ npm ci
 npm run test:aily
 
 # 宿主：在源码 checkout 执行
-npm run blockly:sync -- /absolute/path/to/aily-npm-blockly
+npm ci
+# pnpm 用户使用 pnpm install --frozen-lockfile
 npm run test:unit:ci
 node --test electron/*.test.js electron/tests/*.test.js
 node scripts/verify-blockly-generator-parity.mjs /absolute/path/to/old/node_modules/blockly

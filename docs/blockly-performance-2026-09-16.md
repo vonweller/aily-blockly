@@ -72,7 +72,7 @@ npm run package
 npm run test-mocha-node --workspace=blockly
 
 # 主软件（本工作树）
-pnpm run blockly:sync /Users/downey/Projects/ZCK/aily-npm-blockly
+pnpm install --frozen-lockfile
 pnpm run test:unit:ci
 
 # 使用已安装依赖的项目作为只读来源，夹具自动克隆

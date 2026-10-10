@@ -1,5 +1,7 @@
 # Blockly 大项目加载与拖动性能分析
 
+2026-10-10 起，宿主使用 `blockly: npm:aily-project-blockly@1.0.3`（上游 Blockly 13.3.0），本地发行包、补丁快照和源码同步入口均已移除。本文保留切换前的包哈希和性能记录；当前安装方式见 [开发人员须知](../develop.md#开发打包)。
+
 ## 本轮复查：加载、编辑与延迟刷新
 
 继续使用同一 8,265 块真实项目（最大拖动栈 7,505 块），保留主题、图标和小地图。当前 Blockly 核心提交为 `154bdcad7`（包含加载优化 `3cfd8ca15`），串口库修复位于独立仓库 `aily-blockly-libraries` 的 `97250664`。下方“第一阶段记录”保留此前虚拟化实施过程及旧包数据，本节是本轮最终结果。
@@ -15,7 +17,7 @@
 
 ### 最终实测
 
-最终包为 `vendor/aily-project-blockly-13.3.0-aily.9691554019cf.tgz`。取消源码链接、实际安装并重启独立 4211 服务后，在主软件 Electron 35.7.5 / Chromium 134 / GPU 开启环境运行。主程序和三个插件解析到同一实际目录；压缩核心 SHA-256 与源码构建一致：`32de0cf3d0b39d17dc69a860813c1ce814e0094681e602d67f92671e8908b9ec`。
+当时最终本地发行包的内容哈希为 `9691554019cf`。取消源码链接、实际安装并重启独立 4211 服务后，在主软件 Electron 35.7.5 / Chromium 134 / GPU 开启环境运行。主程序和三个插件解析到同一实际目录；压缩核心 SHA-256 与源码构建一致：`32de0cf3d0b39d17dc69a860813c1ce814e0094681e602d67f92671e8908b9ec`。
 
 | 指标 | 本轮起始虚拟化版本 | 最终实际包 |
 | --- | ---: | ---: |
@@ -76,7 +78,7 @@ BLOCKLY_CAUSAL_HOST_URL=http://localhost:4211/ \
 - `4501221bd`：可选的块级视口渲染及核心契约测试。
 - `c7aa7af66`：修复跨父 SVG 挂载后的绘制状态、焦点保留和关闭虚拟化时的坐标恢复。
 
-主软件依赖已更新为 `vendor/aily-project-blockly-13.3.0-aily.2a08a3dfe223.tgz`，同步更新 `package.json`、npm/pnpm 锁文件及 pnpm override。已验证未链接的安装目录与源码构建产物一致，主程序和三个 Blockly 插件解析到同一核心。`blockly_compressed.js` SHA-256 为 `13699c46044de86f2dbe997b655e774651a231f9753b0ab52b2750ac8e140655`。
+该阶段主软件依赖使用内容哈希为 `2a08a3dfe223` 的本地发行包，同步更新了 `package.json`、npm/pnpm 锁文件及 pnpm override。当时已验证未链接的安装目录与源码构建产物一致，主程序和三个 Blockly 插件解析到同一核心。`blockly_compressed.js` SHA-256 为 `13699c46044de86f2dbe997b655e774651a231f9753b0ab52b2750ac8e140655`。
 
 ### 最终安装包性能对照
 
@@ -120,7 +122,7 @@ Trace 的 `UpdateLayoutTree` 从 8,814ms 降至 4.3–5.4ms，`Layout` 从 2,827
 复现最终安装包对照（串行执行，期间不跑构建或其他重测试）：
 
 ```sh
-pnpm run blockly:sync /Users/downey/Projects/ZCK/aily-npm-blockly
+pnpm install --frozen-lockfile
 node scripts/run-angular.cjs serve --port 4211 --prebundle=false
 # 另一个终端：
 BLOCKLY_CAUSAL_HOST_URL=http://localhost:4211/ \
@@ -221,26 +223,19 @@ BLOCKLY_CAUSAL_HOST_URL=http://localhost:4211/ \
 
 在诊断阶段，浅层 SVG 代码只位于性能夹具的 `diagnostic=flat-svg` 分支。产品接入需要验证拖出中间块、拆接和吸附、折叠展开、拖入工具箱删除、变量／字段编辑、键盘和屏幕阅读器焦点、气泡和 mutator、多选、撤销重做，以及保存重新打开后的几何一致性。该诊断阶段的成功证据限定为真实鼠标整栈移动。
 
-## 本地联通与复现
+## 历史本地联通记录与当前复现
 
-源码构建输出的稳定镜像已链接到主软件实际依赖目录，原依赖目录保留为备份。具体路径和 baseline hash 记录在 `e2e/.artifacts/blockly-causal-2026-10-09/local-source-link.json`；分析阶段的包清单及 lockfile 不因这个本地链接而改写；实施阶段已另行更新可复现的 vendor tarball 和锁文件。
+分析阶段曾将源码构建输出的稳定镜像链接到主软件实际依赖目录，原依赖目录保留为备份。具体路径和 baseline hash 记录在 `e2e/.artifacts/blockly-causal-2026-10-09/local-source-link.json`；当时包清单及 lockfile 不因这个本地链接而改写；实施阶段另行更新了可复现的本地发行包和锁文件。
 
-直接链接 `packages/blockly/dist` 存在实测问题：`gulp pack` 会先删除整个目录，Angular 编译器随后报模块丢失，目录恢复后也未自动恢复。因此使用 `scripts/watch-blockly-source.cjs` 串行构建，成功后逐文件原子更新稳定镜像，跳过相同内容；构建失败保留上一份有效输出。该脚本不删除镜像根目录。它是本地开发发布工具，不改 Blockly 的发行打包方式。
+当时直接链接 `packages/blockly/dist` 存在实测问题：`gulp pack` 会先删除整个目录，Angular 编译器随后报模块丢失，目录恢复后也未自动恢复。因此曾使用本地监听工具串行构建，成功后逐文件原子更新稳定镜像，跳过相同内容；构建失败保留上一份有效输出。2026-10-10 切换线上发行包时已删除该工具及本地链接入口。
 
-在主软件仓库执行一次构建并更新镜像：
-
-```sh
-node scripts/watch-blockly-source.cjs /Users/downey/Projects/ZCK/aily-npm-blockly
-```
-
-在 macOS 上持续跟随核心、块、生成器和消息目录改动构建：
+当前在主软件仓库安装锁定的线上发行包：
 
 ```sh
-node scripts/watch-blockly-source.cjs \
-  /Users/downey/Projects/ZCK/aily-npm-blockly --watch
+pnpm install --frozen-lockfile
 ```
 
-主软件的独立开发服务使用以下命令，关闭依赖预构建缓存以便直接跟随本地包：
+主软件的独立性能验证开发服务使用以下命令：
 
 ```sh
 node scripts/run-angular.cjs serve --port 4211 --prebundle=false
@@ -248,7 +243,7 @@ node scripts/run-angular.cjs serve --port 4211 --prebundle=false
 
 联通链已用真实 Electron 编辑器验证：临时给核心 CSS 加入无视觉影响的自定义属性，观察源码自动构建、镜像更新和 Angular 自动重载，再在主编辑器读取到该属性。8,265 块加载及整栈拖动检查通过，模型与代码保持一致，全部块坐标不一致数为 0。随后移除属性，再次自动构建并重载；源码工作区干净，源码输出和镜像核心的 SHA-256 均恢复到上述基线。记录位于 `stable-link/host-no-minimap.json`。本次新增和移除标记后的 Angular 增量编译分别约 3.96 秒、1.82 秒。
 
-分析阶段保留源码监听和 `4211` 开发服务。监听日志为 `/tmp/blockly-20261009-stable-watch.log`，主软件编译日志为 `/tmp/blockly-20261009-linked-dev-stable.log`。重新安装依赖可能替换本地链接；届时按 `local-source-link.json` 记录重建链接，并重新核对插件与主软件解析到同一核心。
+分析阶段曾保留源码监听和 `4211` 开发服务。监听日志为 `/tmp/blockly-20261009-stable-watch.log`，主软件编译日志为 `/tmp/blockly-20261009-linked-dev-stable.log`。当前复现使用线上依赖；更新依赖后重启开发服务，并核对插件与主软件解析到同一核心。
 
 重新准备独立页面并运行对照：
 

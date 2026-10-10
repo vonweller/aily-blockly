@@ -8,7 +8,9 @@
 
 在隔离 worktree 集成，保留目标已有的函数/全部文件切换、完整项目模型、持久化、操作租约、Coder 模式边界和库依赖生命周期。未推送或发布安装包。
 
-核心源码提交为 `aily-npm-blockly` 的 `2f7663280ecb13c4b1ebc6801d7eeb0706ea200b`，原始核心工作区的未提交内容保持原样。宿主使用内容哈希命名的 `vendor/aily-project-blockly-13.3.0-aily.5d59fc955336.tgz`，完整源码补丁为 `vendor/patches/blockly13-large-project.patch`，基于 `fbee0c44d`。两份 lockfile 和 override 保持同一核心实例；兼容库没有引入第二份 Blockly。
+核心源码提交为 `aily-npm-blockly` 的 `2f7663280ecb13c4b1ebc6801d7eeb0706ea200b`，原始核心工作区的未提交内容保持原样。当时宿主使用内容哈希为 `5d59fc955336` 的本地发行包及基于 `fbee0c44d` 的源码补丁快照。两份 lockfile 和 override 保持同一核心实例；兼容库没有引入第二份 Blockly。
+
+2026-10-10 起已切换为 `blockly: npm:aily-project-blockly@1.0.3`（上游 Blockly 13.3.0），本地发行包、补丁快照和源码同步脚本均已移除。本文保留切换前的回归记录；当前安装方式见 [版本与交付方式](../blockly-v13-upgrade-2026-09-16.md#版本与交付方式)。
 
 ## 双方功能保留与影响
 
