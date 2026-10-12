@@ -35,7 +35,7 @@ import {
   ToolI18nService,
 } from '@core/preferences/public-api';
 import { BlocklyService } from '../../editors/blockly-editor/services/blockly.service';
-import { ElectronService, LogService } from '@core/platform/public-api';
+import { ElectronService, LogService, PlatformService } from '@core/platform/public-api';
 import { MainUiAutomationService, AiOperationRegistryService } from '@integration/automation/public-api';
 import { NoticeService, UiService } from '@core/app-shell/public-api';
 import { ProjectService, type CoderWorkspaceContext } from '@domain/project/public-api';
@@ -122,6 +122,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   subappUpdateProgress = 0;
   subappRestartInProgress = false;
   uiHealthFailed = false;
+  readonly standaloneWinBtns: string[];
 
   private config: ChildToolConfig | null = null;
   private initialized = false;
@@ -201,7 +202,11 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     private subappActivityService: SubappActivityService,
     private requiredSubapps: RequiredSubappService,
     private aiOperationRegistry: AiOperationRegistryService,
+    platformService: PlatformService,
   ) {
+    this.standaloneWinBtns = platformService.isWindows()
+      ? ['go-main', 'minimize', 'maximize', 'close']
+      : ['go-main'];
     this.langSubscription = this.translate.onLangChange.subscribe(() => this.syncHostContext());
     this.themeSubscription = this.themeService.themeChanged$.subscribe(() => this.syncHostContext());
     this.projectPathSubscription = combineLatest([
