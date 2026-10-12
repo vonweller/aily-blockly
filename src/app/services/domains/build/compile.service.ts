@@ -269,7 +269,10 @@ export class CompileService {
         }
 
         buildStatus = 'success';
-        return { success: true, result: { state: 'done', text: '预处理完成' } };
+        const completeText = this.t('PRECOMPILE_COMPLETE_TITLE');
+        this.application.updateNotice({ title: completeText, text: completeText,
+          state: 'done', progress: 100, setTimeout: 3000 });
+        return { success: true, result: { state: 'done', text: completeText } };
       }
 
       const compileScriptPath = this.electronService.pathJoin(ailyChildPath, 'scripts', 'compile.js');

@@ -104,7 +104,11 @@ function applyAppIdentity(product) {
 }
 
 registerSafeStorageIpc(ipcMain, safeStorage);
-require('./project-companion').registerProjectCompanionIpc(ipcMain, shell);
+require('./project-companion').registerProjectCompanionIpc(ipcMain, shell, {
+  development: !app.isPackaged && process.argv.includes('--serve')
+    ? { executable: process.execPath, entry: path.join(__dirname, 'main.js') }
+    : undefined,
+});
 
 // 设置应用名称，用于 Windows 系统通知显示
 applyAppIdentity(getBuildProduct());

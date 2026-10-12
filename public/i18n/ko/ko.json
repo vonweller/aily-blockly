@@ -941,6 +941,7 @@
             "BUSY_RETRY_LATER": "{{message}}, 잠시 후 다시 시도하세요",
             "BUSY_WAIT": "{{message}}, 잠시 기다려 주세요",
             "PREPARING_TITLE": "빌드 준비 중",
+            "PRECOMPILE_COMPLETE_TITLE": "Preprocessing complete",
             "PRECOMPILE_RUNNING": "사전 빌드가 실행 중입니다",
             "PRECOMPILE_FAILED_TITLE": "사전 빌드 실패",
             "PRECOMPILE_FAILED_DETAIL": "의존성 분석 중 오류가 발생했습니다. 자세한 내용은 로그를 확인하세요.",
@@ -1040,6 +1041,14 @@
         "NO_TUTORIAL_PROVIDED": "라이브러리 작성자가 튜토리얼을 제공하지 않았습니다"
     },
     "PROJECT": {
+      "OPEN_IN_CODER": "Open in Aily Coder",
+      "CONVERT_CODER_TITLE": "Convert to a Coder project",
+      "CONVERT_CODER_CONTENT": "This file belongs to a Blockly project. A Coder copy will be created with its dependencies. The copy may no longer support block editing. The original project will be kept.",
+      "CONVERT_CODER_BUTTON": "Convert and open",
+      "CONVERT_CODER_FAILED": "Conversion failed: {{error}}",
+      "CONVERT_CODER_INSTALLING": "Installing Coder project dependencies",
+      "CONVERT_CODER_DEPENDENCIES_FAILED": "Dependency preparation failed. Check the installation log and try again.",
+      "CONVERT_CODER_OPEN_FAILED": "The Coder project was saved to {{path}}. Open it with Aily Coder.",
       "MODE_UNKNOWN": "프로젝트 유형을 확인할 수 없습니다. 유효한 Aily Blockly 또는 Aily Coder 프로젝트를 선택하세요.",
       "MODE_CREATE_RESTRICTED": "현재 {{application}} 모드에서는 이 유형의 프로젝트를 만들 수 없습니다. {{targetApplication}}을 사용하세요.",
       "MODE_MISMATCH_TITLE": "프로젝트 모드 불일치",

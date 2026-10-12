@@ -1,4 +1,4 @@
-import { BehaviorSubject, Subject } from 'rxjs';
+import { BehaviorSubject, Subject, of } from 'rxjs';
 import { ProjectService } from './project.service';
 import { detectProjectMode, getProjectCreationModeError, type ProjectMode } from './project-mode';
 import { getGuideRecentProjects } from './recent-projects';
@@ -28,7 +28,8 @@ describe('project mode boundaries', () => {
     service.electronService = { isElectron: true, exists: () => true, setTitle: () => {} };
     service.messageService = { error: jasmine.createSpy('error'), warning: jasmine.createSpy('warning') };
     service.modalService = { confirm: jasmine.createSpy('confirm') };
-    service.translate = { instant: (key: string) => key };
+    service.translate = { instant: (key: string) => key, get: (key: string) => of(key) };
+    service.injector = { get: () => ({getSelectedLanguage: () => 'en', setLanguage: async () => {}}) };
     spyOn(service, 'getProjectMode').and.callFake((path: string) => path.includes('code') ? 'coder' : path.includes('blocks') ? 'blockly' : null);
     service.getCoderProjectContext = () => ({ currentPackageData: { name: 'Code' }, stateSubject: new BehaviorSubject('loaded'), syncCurrentBoardConfig: async () => true });
     spyOn(service, 'acquireProjectLifecycle').and.returnValue({ token: Symbol(), release: () => {} });
@@ -205,5 +206,68 @@ describe('project mode boundaries', () => {
     expect(getProjectCreationModeError('coder', { developmentMode: 'coder', devmode: 'arduino' })).toBeNull();
     expect(getProjectCreationModeError('coder', { projectType: 'blockly' })).toContain('Aily Coder');
     expect(getProjectCreationModeError('blockly', { developmentMode: 'unknown' })).toContain('Aily Blockly');
+  });
+
+  it('deduplicates the Coder conversion dialog and cancels without creating a project', async () => {
+    const service = createService('coder');
+    const close = new Subject();
+    service.modalService.confirm.and.returnValue({ afterClose: close });
+    const convert = spyOn(service, 'convertAndOpenCoderProject');
+    const first = service.openProjectInCoder(blockly.path);
+    const second = service.openProjectInCoder(blockly.path);
+    await new Promise(resolve => setTimeout(resolve));
+    expect(service.modalService.confirm).toHaveBeenCalledTimes(1);
+    const dialog = service.modalService.confirm.calls.mostRecent().args[0];
+    expect(dialog.nzContent).toBe('PROJECT.CONVERT_CODER_CONTENT');
+    close.next(undefined);
+    expect(await first).toBeFalse(); expect(await second).toBeFalse();
+    expect(convert).not.toHaveBeenCalled(); expect(service.currentProjectPath).toBe(blockly.path);
+  });
+
+  for (const installed of [true, false]) {
+    it(`saves the original, installs the Coder copy and ${installed ? 'opens it' : 'cleans up only the failed copy'}`, async () => {
+      const service = createService('coder');
+      const originalFs = window['fs'], originalFsp = window['fsp'];
+      const events: string[] = [];
+      const target = '/projects/blocks_coder';
+      const sourceEntry = `${blockly.path}/.temp/sketch/sketch.ino`;
+      window['fs'] = { convertBlocklyProjectToCoder: (source: string, entry: string) => {
+        expect(source).toBe(blockly.path); expect(entry).toBe(sourceEntry); events.push('copy'); return target;
+      } };
+      const rm = jasmine.createSpy('rm').and.resolveTo(); window['fsp'] = { rm };
+      service.save = async (source: string) => { expect(source).toBe(blockly.path); events.push('save'); return { success: true }; };
+      service.projectOpen = async (path: string) => { expect(path).toBe(target); events.push('open'); return true; };
+      Object.defineProperty(service, 'application', { value: {
+        updateFooterState: () => {},
+        reinstallAilyCodeDependencies: async (path: string) => { expect(path).toBe(target); events.push('install'); return installed; },
+      } });
+      try {
+        if (installed) {
+          expect(await service.convertAndOpenCoderProject(blockly.path, sourceEntry)).toBeTrue();
+          expect(events).toEqual(['save', 'copy', 'install', 'open']); expect(rm).not.toHaveBeenCalled();
+        } else {
+          await expectAsync(service.convertAndOpenCoderProject(blockly.path, sourceEntry)).toBeRejected();
+          expect(events).toEqual(['save', 'copy', 'install']);
+          expect(rm).toHaveBeenCalledOnceWith(target, { recursive: true, force: true });
+        }
+        expect(service.currentProjectPath).toBe(blockly.path);
+      } finally { window['fs'] = originalFs; window['fsp'] = originalFsp; }
+    });
+  }
+
+  it('routes a Blockly ino opened in Coder through conversion before any project activation', async () => {
+    const service = createService('coder');
+    const entry = `${blockly.path}/.temp/sketch/sketch.ino`;
+    const originalFs = window['fs'], originalPath = window['path'];
+    const directory = (value: string) => value.slice(0, value.lastIndexOf('/')) || '/';
+    window['path'] = { dirname: directory, join: (...parts: string[]) => parts.join('/').replace(/\/+/g, '/') };
+    window['fs'] = { existsSync: (value: string) => value === entry || value === `${blockly.path}/project.abi`, statSync: () => ({ _isFile: true }) };
+    const convert = spyOn(service, 'openProjectInCoder').and.resolveTo(true);
+    try {
+      expect(await service.projectOpen(entry)).toBeTrue();
+      expect(convert).toHaveBeenCalledOnceWith(entry);
+      expect(service.acquireProjectLifecycle).not.toHaveBeenCalled();
+      expect(service.currentProjectPath).toBe(blockly.path);
+    } finally { window['fs'] = originalFs; window['path'] = originalPath; }
   });
 });

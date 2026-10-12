@@ -2,7 +2,7 @@ import { normalizeProjectOpenPath, findArduinoSketchEntry, prepareArduinoSketchP
 import { Injectable, Injector } from '@angular/core';
 import { ProjectLifecycleError, ProjectLifecycleGate, type ProjectLifecycleLease } from './project-lifecycle-gate';
 import { ProjectDependencyLifecycle, type ProjectDependencySession } from './project-dependency-lifecycle';
-import { BehaviorSubject, Subject } from 'rxjs';
+import { BehaviorSubject, Subject, firstValueFrom } from 'rxjs';
 import {
   CmdService,
   ElectronService,
@@ -13,7 +13,7 @@ import { NzMessageService } from 'ng-zorro-antd/message';
 import { Router } from '@angular/router';
 import { generateDateString } from '../../../func/func';
 import { sha256Hex } from '../../../utils/crypto.utils';
-import { ConfigService } from '@core/preferences/public-api';
+import { ConfigService, TranslationService } from '@core/preferences/public-api';
 import type { IMenuItem } from '../../../configs/menu.config';
 import type { NewProjectData } from '../../../types/project-new';
 import { TranslateService } from '@ngx-translate/core';
@@ -867,10 +867,12 @@ export class ProjectService {
       this.registerProjectRootPathSettingListener();
       window['ipcRenderer'].on('window-receive', async (event, message) => {
         // console.log('window-receive', message);
-        if (message.data.action == 'open-project') {
+        if (message.data.action == 'open-project' || message.data.action === 'open-project-in-coder') {
           let opened = false;
           try {
-            opened = await this.projectOpen(message.data.path, {
+            opened = message.data.action === 'open-project-in-coder'
+              ? await this.openProjectInCoder(message.data.path || this.currentProjectPath)
+              : await this.projectOpen(message.data.path, {
               reason: this.parseProjectActivationReason(message.data.reason),
               sessionResource: typeof message.data.sessionResource === 'string' ? message.data.sessionResource : null,
             });
@@ -1281,7 +1283,14 @@ export class ProjectService {
 
   // 打开项目
   async projectOpen(projectPath = this.currentProjectPath, options: ProjectOpenOptions = {}) {
+    const selectedSketch = /\.ino$/i.test(projectPath) ? projectPath : undefined;
     projectPath = normalizeProjectOpenPath(projectPath);
+    if (selectedSketch && this.getProjectMode(projectPath) === 'blockly') {
+      await this.configService.init();
+      if (this.configService.getPreferredChatAgentRuntimeMode() === 'coder') {
+        return this.openProjectInCoder(selectedSketch);
+      }
+    }
     if (this.projectOpenTask) {
       if (this.isSameProjectPath(this.projectOpenTask.path, projectPath)) {
         return this.projectOpenTask.promise;
@@ -2076,6 +2085,111 @@ export class ProjectService {
     } catch {
       return null;
     }
+  }
+
+  private coderConversionTask: Promise<boolean> | null = null;
+
+  /** Shared by file associations and both Code Viewer surfaces. The original stays Blockly. */
+  async openProjectInCoder(sourcePath = this.currentProjectPath): Promise<boolean> {
+    if (this.coderConversionTask) return this.coderConversionTask;
+    const task = this.requestOpenProjectInCoder(sourcePath);
+    this.coderConversionTask = task;
+    try { return await task; }
+    finally { if (this.coderConversionTask === task) this.coderConversionTask = null; }
+  }
+
+  private async requestOpenProjectInCoder(sourcePath: string): Promise<boolean> {
+    const projectPath = normalizeProjectOpenPath(sourcePath);
+    await this.configService.init();
+    const mode = this.getProjectMode(projectPath);
+    if (mode === 'coder') return this.openCoderProject(projectPath);
+    if (mode !== 'blockly') {
+      this.message.error(this.translate.instant('PROJECT.MODE_UNKNOWN'));
+      return false;
+    }
+    // File associations can arrive while the initial language bundle is loading.
+    // TranslationService loads JSON itself before calling TranslateService.use,
+    // so TranslateService.get alone may still return keys during that interval.
+    const locale = this.injector.get(TranslationService);
+    await locale.setLanguage(locale.getSelectedLanguage(), { persist: false });
+    await firstValueFrom(this.translate.get('PROJECT.CONVERT_CODER_TITLE'));
+    return new Promise<boolean>((resolve) => {
+      const ref = this.modal.confirm({
+        nzClassName: 'project-coder-conversion-modal',
+        nzCentered: true,
+        nzWidth: 480,
+        nzMaskClosable: false,
+        nzTitle: this.translate.instant('PROJECT.CONVERT_CODER_TITLE'),
+        nzContent: this.translate.instant('PROJECT.CONVERT_CODER_CONTENT'),
+        nzOkText: this.translate.instant('PROJECT.CONVERT_CODER_BUTTON'),
+        nzCancelText: this.translate.instant('PROJECT.LOCK_CANCEL'),
+        nzOnOk: async () => {
+          ref.updateConfig({ nzCancelDisabled: true, nzKeyboard: false });
+          try {
+            const opened = await this.convertAndOpenCoderProject(projectPath,
+              /\.ino$/i.test(sourcePath) ? sourcePath : undefined);
+            return opened;
+          } catch (error) {
+            console.warn('Blockly to Coder conversion failed:', error);
+            this.message.error(this.translate.instant('PROJECT.CONVERT_CODER_FAILED', {
+              error: error instanceof Error ? error.message : String(error),
+            }));
+            return false;
+          } finally {
+            ref.updateConfig({ nzCancelDisabled: false, nzKeyboard: true });
+          }
+        },
+      });
+      ref.afterClose.subscribe(result => resolve(result === true));
+    });
+  }
+
+  private async convertAndOpenCoderProject(projectPath: string, selectedSketch?: string): Promise<boolean> {
+    let lease: ProjectLifecycleLease | undefined;
+    let target: string | undefined;
+    let prepared = false;
+    try {
+      lease = this.acquireProjectLifecycle([projectPath]);
+      if (this.isSameProjectPath(projectPath, this.currentProjectPath)) {
+        const saved = await this.save(projectPath, 15_000);
+        if (!saved.success) throw new Error(saved.error || this.translate.instant('PROJECT.SAVE_FAILED'));
+        if (!this.isSameProjectPath(projectPath, this.currentProjectPath)) throw new Error('当前项目已切换，请重试');
+      }
+      if (typeof window['fs'].convertBlocklyProjectToCoder !== 'function') {
+        throw new Error('请重启应用后再转换项目');
+      }
+      target = window['fs'].convertBlocklyProjectToCoder(projectPath, selectedSketch);
+      this.application.updateFooterState({ state: 'doing', text: this.translate.instant('PROJECT.CONVERT_CODER_INSTALLING') });
+      if (!await this.application.reinstallAilyCodeDependencies(target)) {
+        throw new Error(this.translate.instant('PROJECT.CONVERT_CODER_DEPENDENCIES_FAILED'));
+      }
+      prepared = true;
+    } catch (error) {
+      // Only this call's newly reserved, incomplete copy can be removed.
+      if (target && !prepared) await window['fsp'].rm(target, { recursive: true, force: true });
+      this.application.updateFooterState({ state: 'error', text: this.translate.instant('PROJECT.CONVERT_CODER_TITLE') });
+      throw error;
+    } finally { lease?.release(); }
+    this.application.updateFooterState({ state: 'done', text: this.translate.instant('PROJECT.PROJECT_CREATED') });
+    try {
+      if (await this.openCoderProject(target!)) return true;
+    } catch (error) {
+      console.warn('Converted Coder project could not be opened:', target, error);
+    }
+    this.message.warning(this.translate.instant('PROJECT.CONVERT_CODER_OPEN_FAILED', { path: target }));
+    // Conversion is complete. Close this dialog instead of offering another
+    // conversion of the same source; the download/open prompt owns recovery.
+    return true;
+  }
+
+  private async openCoderProject(projectPath: string): Promise<boolean> {
+    if (this.configService.getPreferredChatAgentRuntimeMode() === 'coder') return this.projectOpen(projectPath);
+    const result = await window['ipcRenderer'].invoke('project-companion-open', { mode: 'coder', projectPath });
+    if (result?.ok === true) return true;
+    if (result?.reason !== 'not_installed') throw new Error(result?.error || 'Aily Coder 启动失败');
+    // The prepared copy remains available even if Coder has not been installed yet.
+    await this.ensureProjectModeAllowed(projectPath);
+    return false;
   }
 
   private async assertProjectCreationMode(mode: ProjectMode): Promise<void> {

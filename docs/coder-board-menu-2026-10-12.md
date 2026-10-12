@@ -61,3 +61,31 @@ Coder 的独立工程上下文只加载 `board.json`，未加载主板包根目�
 - `npm run test:coder-board-menu`：66/66 ChromeHeadless Angular 定向测试通过，覆盖源码词法保护、CDC/引脚迁移、多源文件、写入回滚、保存失败、并发保护、工程菜单隔离、SDK 未就绪与恢复、Header 模式分发、自定义分区、已有 Coder 多工程行为。
 - 架构检查发现现有 `update-dialog.component.spec.ts` 直接导入 `ConfigService` 的基线外违规；该导入已存在于修复前提交，本轮没有修改它。
 - 本轮属于源码和浏览器测试层验证；未安装发布包，未执行物理主板编译上传或 SoftDevice 烧录。
+
+## 转换工程实测反馈与后续修复
+
+用户反馈的实际执行路径是 `release-20260930-01/artifacts/hosts/coder/mac-arm64/aily coder.app`。核对该包的 `app.asar` 后确认，它没有上述 10 月 12 日菜单上下文修复。开发版 Blockly 原先通过 macOS 索引寻找已安装的 Coder，因此转换成功后仍打开了 9 月 30 日旧包。开发模式现在使用当前仓库的 Electron 入口，以目标产品模式启动配套窗口；发布包仍使用已安装应用。主进程变更需要重启开发宿主才生效，渲染层热更新不能替代这一步。
+
+实测工程 `AI-VOX3yuyinkongzhiLED_314036_coder_1` 使用 `@aily-project/board-ai-vox@3.2.1`，其配置为 `PartitionScheme=custom`，但原 Blockly 工程和转换后的源码目录均没有项目分区文件。所选主板包根目录自带所需的 `partitions.csv`。转换现在把该文件放到 Coder 的 `sketch/src/partitions.csv`；预处理也对已转换但缺文件的工程提供同一补全路径。项目源码、旧项目根目录及显式配置的 CSV 优先于主板默认文件，用户已有 CSV 不被覆盖。构建哈希把待补全文件作为源输入计算，避免第一次预处理后立即变成过期构建。
+
+同时修复主板入口重复开关的点击冒泡，以及配置预处理成功后仍显示“编译准备中”的提示状态。已为用户现有 Coder 工程补齐缺失 CSV，未改写其 `main.cpp` 或 `package.json`。原 Blockly 工程保持不变。
+
+后续验证：
+
+- 23 项 Node 测试通过：转换目录、分区来源优先级、依赖预处理以及开发版/发布版配套应用启动隔离。
+- 67 项主板菜单定向 Angular 测试、26 项 Coder 构建信息定向测试通过；应用 TypeScript 检查通过。
+- 使用该 AI-VOX 工程的隔离副本，开发版 Electron 已完成菜单显示、保存烧录速度、分区补全和完整编译，生成 `.build/main.bin`。副本移除原分区文件和构建记录后开始测试。
+- 本地 Coder 应用使用 `CSC_IDENTITY_AUTO_DISCOVERY=false node scripts/build-electron.js --product coder --flavor cn --dir` 构建，路径为 `dist/aily-coder/mac-arm64/aily coder.app`。`app.asar` SHA-256：`a85fd95f35de1eb0276e73da1913b0f43088017f01f6c81b1b4e4c061fc9e66b`。
+- 对该 `.app` 的 AI-VOX 用例通过（45.7 秒，完整编译 21.19 秒）：核对全部 8 个配置菜单和“切换开发板”、保存 `UploadSpeed=115200` 并重新展开核对勾选、缺失 CSV 从主板包恢复、生成 `main.bin`，构建记录成功且哈希一致。截图位于 `e2e/.artifacts/aivox-conversion/blockly-coder-conversion-c-32fc1-its-board-custom-partitions/` 的 `aivox-board-menu.png` 和 `aivox-compiled.png`。
+- `e2e/tests/blockly-coder-conversion.spec.ts` 另外 3 个转换入口用例通过：直接打开生成的 `.ino`、内嵌 Code Viewer、独立 Code Viewer。覆盖取消/确认、弹窗非透明背景、原项目保留、最新代码保存、`sketch/src/main.cpp` 结构和外层依赖安装；直接打开用例额外完成 Arduino UNO 编译。Viewer 用例仅拦截最后的操作系统启动调用。
+
+复现 AI-VOX 包验证（已有本机工具链和该用户工程时）：
+
+```sh
+AILY_CONVERSION_SEED=/Users/downey/Library/aily-project \
+AILY_CONVERSION_AIVOX_PROJECT=/Users/downey/Documents/aily-code-project/AI-VOX3yuyinkongzhiLED_314036_coder_1 \
+AILY_CONVERSION_CODER_EXECUTABLE='/Users/downey/Projects/OutSource/aily--blockly/dist/aily-coder/mac-arm64/aily coder.app/Contents/MacOS/aily coder' \
+npx playwright test --config=e2e/coder-conversion.config.ts --grep='converted AI-VOX' --output=e2e/.artifacts/aivox-conversion
+```
+
+这是本地 macOS arm64 宿主验证，未替换用户 9 月 30 日发布包，未执行物理主板烧录。Coder 子应用使用本机已有 `0.1.15-dev`，不作为全部子应用重新发布验收。`--dir` 包没有 `app-update.yml` 的更新检查日志与本次菜单、编译链无关。

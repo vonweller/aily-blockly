@@ -1018,6 +1018,7 @@
             "BUSY_RETRY_LATER": "{{message}}，請稍後再試",
             "BUSY_WAIT": "{{message}}，請稍後",
             "PREPARING_TITLE": "編譯準備中",
+            "PRECOMPILE_COMPLETE_TITLE": "預處理完成",
             "PRECOMPILE_RUNNING": "預編譯正在執行",
             "PRECOMPILE_FAILED_TITLE": "預編譯失敗",
             "PRECOMPILE_FAILED_DETAIL": "依賴分析時發生錯誤，請查看日誌了解詳情",
@@ -1117,6 +1118,14 @@
         "NO_TUTORIAL_PROVIDED": "庫作者未提供教程"
     },
     "PROJECT": {
+      "OPEN_IN_CODER": "使用 Aily Coder 開啟",
+      "CONVERT_CODER_TITLE": "轉換為 Coder 專案",
+      "CONVERT_CODER_CONTENT": "此檔案屬於 Blockly 專案。將建立 Coder 副本並安裝依賴；副本可能無法再使用積木編輯。原專案保留。",
+      "CONVERT_CODER_BUTTON": "轉換並開啟",
+      "CONVERT_CODER_FAILED": "轉換失敗：{{error}}",
+      "CONVERT_CODER_INSTALLING": "正在安裝 Coder 專案依賴",
+      "CONVERT_CODER_DEPENDENCIES_FAILED": "依賴準備失敗，請檢查安裝日誌後重試",
+      "CONVERT_CODER_OPEN_FAILED": "Coder 專案已儲存至 {{path}}，請使用 Aily Coder 開啟。",
       "MODE_UNKNOWN": "無法識別專案類型，請選擇有效的 Aily Blockly 或 Aily Coder 專案。",
       "MODE_CREATE_RESTRICTED": "目前 {{application}} 模式無法建立此類專案，請使用 {{targetApplication}} 建立。",
       "MODE_MISMATCH_TITLE": "專案模式不符",

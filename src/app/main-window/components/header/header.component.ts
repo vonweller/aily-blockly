@@ -707,6 +707,13 @@ export class HeaderComponent implements OnInit, OnDestroy {
   }
   openPortList(event?: MouseEvent) {
     if (event) {
+      // A cached menu can mount before this click bubbles to document. Keep the
+      // opening click out of the menu's outside-click listener and toggle here.
+      event.stopPropagation();
+      if (this.showPortList) {
+        this.closePortList();
+        return;
+      }
       this.calculatePortListPosition(event);
     } else {
       // 快捷键触发时，查找上传按钮元素获取位置

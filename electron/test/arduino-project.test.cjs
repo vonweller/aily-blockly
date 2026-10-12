@@ -61,11 +61,22 @@ test('ambiguous sketches and existing manifests are never silently converted',t=
 });
 test('file launch resolves paths with spaces, relative second-instance paths, and rejects directories ending ino',t=>{
  const {root}=fixture(t,'Arduino 空格'); const file=path.join(root,'Arduino 空格.ino'); fs.writeFileSync(file,'');
- assert.equal(projectDirectoryForFile(file),root);
- assert.equal(projectDirectoryFromArgs(['coder',path.basename(file)],root),root);
- assert.equal(projectDirectoryFromArgs(['coder',`--open-project=${file}`]),root);
+ assert.equal(projectDirectoryForFile(file),file);
+ assert.equal(projectDirectoryFromArgs(['coder',path.basename(file)],root),file);
+ assert.equal(projectDirectoryFromArgs(['coder',`--open-project=${file}`]),file);
  assert.equal(projectDirectoryFromArgs(['coder',`--open-project=${root}`]),root);
  fs.mkdirSync(path.join(root,'fake.ino')); assert.equal(projectDirectoryForFile(path.join(root,'fake.ino')),null);
+});
+test('nested sketches resolve to their outer Blockly or Coder project before any stub is written', t => {
+ const {root,api}=fixture(t);
+ fs.mkdirSync(path.join(root,'.temp','sketch'),{recursive:true});
+ const file=path.join(root,'.temp','sketch','sketch.ino'); fs.writeFileSync(file,'void setup(){}');
+ fs.writeFileSync(path.join(root,'project.abi'),'{}');
+ fs.writeFileSync(path.join(root,'.temp','sketch','package.json'),'{}');
+ assert.equal(api.normalizeProjectOpenPath(file),root);
+ fs.unlinkSync(path.join(root,'project.abi'));
+ fs.writeFileSync(path.join(root,'package.json'),'{"type":"coder"}');
+ assert.equal(api.normalizeProjectOpenPath(file),root);
 });
 test('Coder packages register ino on all platforms without giving Blockly the association',()=>{
  const config={regions:{cn:{updater:'https://example.test/blockly'}}};

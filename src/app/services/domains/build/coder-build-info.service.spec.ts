@@ -132,6 +132,19 @@ describe('Coder build metadata', () => {
     expect(await metadata.updateCodeHash(root)).not.toBe(hash);
   });
 
+  it('hashes the selected board custom partition fallback and preserves project overrides', async () => {
+    writeManifest({ ...readManifest(), projectConfig: { PartitionScheme: 'custom' } });
+    const boardCsv = `${root}/node_modules/@aily-project/board-test/partitions.csv`;
+    files.set(boardCsv, 'board partitions');
+    const before = await metadata.updateCodeHash(root);
+    files.set(`${root}/sketch/src/partitions.csv`, 'board partitions');
+    expect(await metadata.updateCodeHash(root)).toBe(before);
+    files.set(boardCsv, 'new board default');
+    expect(await metadata.updateCodeHash(root)).toBe(before);
+    files.set(`${root}/sketch/src/partitions.csv`, 'user partitions');
+    expect(await metadata.updateCodeHash(root)).not.toBe(before);
+  });
+
   function createCompiler(command: (call: number, service: CompileService) => number) {
     const service = new CompileService(
       project, {} as any, { createDirectory: async () => {} } as any, electron,
@@ -244,10 +257,12 @@ describe('Coder build metadata', () => {
   it('records preprocess-only completion as successful and releases the build lock once', async () => {
     const service = createCompiler(() => 0);
     const finish = spyOn((service as any).application, 'finishBuild');
+    const notice = spyOn((service as any).application, 'updateNotice');
 
     expect((await service.runCompileFromDisk({ preprocessOnly: true })).success).toBeTrue();
     expect(readManifest().buildInfo.lastBuildStatus).toBe('success');
     expect(finish).toHaveBeenCalledOnceWith(true, undefined);
+    expect(notice.calls.mostRecent().args[0]).toEqual(jasmine.objectContaining({ state: 'done', progress: 100, setTimeout: 3000 }));
   });
 
   it('holds the build lock until build metadata has been persisted', async () => {

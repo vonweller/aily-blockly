@@ -682,6 +682,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     copySync: (src, dest) => require("fs").cpSync(src, dest, { recursive: true }),
     copyProjectDirectory: (src, dest) => copyProjectDirectory(src, dest),
     importProjectDirectory: (src, dest, unwrapArchive) => importProjectDirectory(src, dest, unwrapArchive),
+    convertBlocklyProjectToCoder: (src, entry) => require('./blockly-coder-conversion').convertBlocklyProjectToCoder(src, entry),
     existsSync: (path) => require("fs").existsSync(path),
     statSync: (path) => {
       const s = require("fs").statSync(path);

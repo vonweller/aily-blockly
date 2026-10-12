@@ -74,7 +74,8 @@ img {
 }
 
 .subapp-service-confirm-modal,
-.project-mode-mismatch-modal {
+.project-mode-mismatch-modal,
+.project-coder-conversion-modal {
   .ant-modal-content {
     overflow: hidden;
     border: 1px solid var(--aily-border-input);

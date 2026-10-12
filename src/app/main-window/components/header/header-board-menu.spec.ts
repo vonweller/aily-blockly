@@ -32,6 +32,22 @@ describe('Header board configuration in Coder and Blockly', () => {
     expect(coder.configList).toEqual(blockly.configList);
     expect(coder.configList.some((item: any) => item.key === 'CDCOnBoot')).toBeTrue();
   });
+  it('can reopen a cached board menu without its opening click reaching the outside-click closer', () => {
+    const header = fixture();
+    header.calculatePortListPosition = () => {};
+    header.getDevicePortList = () => {};
+    header.closePortList = () => { header.showPortList = false; };
+    const button = document.createElement('button');
+    const outside = jasmine.createSpy('outside click');
+    button.addEventListener('click', event => header.openPortList(event));
+    document.body.append(button); document.addEventListener('click', outside);
+    try {
+      button.click(); expect(header.showPortList).toBeTrue();
+      button.click(); expect(header.showPortList).toBeFalse();
+      button.click(); expect(header.showPortList).toBeTrue();
+      expect(outside).not.toHaveBeenCalled();
+    } finally { document.removeEventListener('click', outside); button.remove(); }
+  });
   it('dispatches Coder selection to saved-source synchronization, and Blockly to its existing effects', fakeAsync(() => {
     for (const coder of [true, false]) {
       const header = fixture(coder);
