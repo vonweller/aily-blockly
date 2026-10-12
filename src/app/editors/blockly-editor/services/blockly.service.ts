@@ -1031,7 +1031,7 @@ export class BlocklyService {
       const fields = beginNativeFieldDependencies(Blockly, workspace);
       try {
         await loadAbsWorkspaceInChunks(workspaceJson, workspace, undefined, check,
-          block => nativeFieldOrder(block, definitions));
+          block => nativeFieldOrder(block, definitions), definitions.withSynchronousLoad);
         check();
         fields.finish();
         captureCustomFunctionRegistration(Blockly.Blocks)?.prepareSerialization(workspace, true);
@@ -2640,7 +2640,29 @@ export class BlocklyService {
     return `toolbox-item-${path.join('-')}-${safeName}`;
   }
 
+  private toolboxRefreshBatches = new WeakMap<Blockly.WorkspaceSvg, { depth: number; pending: boolean }>();
+
+  /** Register libraries in order, but render/search the final toolbox once.
+   * Scope to the workspace so a cancelled open cannot flush into a new editor. */
+  async withToolboxRefreshBatch<T>(load: () => Promise<T>): Promise<T> {
+    const workspace = this.workspace;
+    if (!workspace) return load();
+    this.toolboxRefreshBatches ??= new WeakMap();
+    let batch = this.toolboxRefreshBatches.get(workspace);
+    if (!batch) this.toolboxRefreshBatches.set(workspace, batch = { depth: 0, pending: false });
+    batch.depth++;
+    try { return await load(); }
+    finally {
+      if (--batch.depth === 0) {
+        this.toolboxRefreshBatches.delete(workspace);
+        if (batch.pending && this.workspace === workspace) this.refreshToolboxFromContents();
+      }
+    }
+  }
+
   private refreshToolboxFromContents() {
+    const batch = this.workspace && this.toolboxRefreshBatches?.get(this.workspace);
+    if (batch) { batch.pending = true; return; }
     this.ensureToolboxItemIds(this.toolbox.contents);
     if (this.workspace) {
       this.workspace.updateToolbox(this.toolbox);
