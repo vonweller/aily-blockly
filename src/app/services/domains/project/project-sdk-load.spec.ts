@@ -33,6 +33,7 @@ describe('board configuration menu SDK readiness', () => {
   function fixture() {
     const service: any = Object.create(ProjectService.prototype);
     const manifest: any = { projectConfig: { CDCOnBoot: 'cdc' } };
+    service.isAilyCodeProject = () => false;
     service.currentBoardConfig = { type: 'esp32:esp32:esp32s3' };
     service.currentBoardMenuConfig = [
       { name: 'USB CDC On Boot', key: 'CDCOnBoot', children: [], extra: { selectFirstByDefault: true } },

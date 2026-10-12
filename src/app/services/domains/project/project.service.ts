@@ -170,6 +170,8 @@ export class ProjectService {
       currentProjectPathSubject: new BehaviorSubject(path),
       currentPackageData: JSON.parse(this.electronService.readFile(window['path'].join(path, 'package.json'))),
       currentBoardConfig: undefined,
+      currentBoardMenuConfig: [],
+      currentBoardMenuI18nDir: '',
       currentBoardPinConfig: { board: null, variant: null, variant_h: null },
       stateSubject: new BehaviorSubject('loaded'),
       boardChangeSubject: new Subject<void>(),
@@ -182,13 +184,18 @@ export class ProjectService {
     context.syncCurrentBoardConfig = async (session?: ProjectDependencySession) => {
       try {
         if (session) context.assertProjectDependencySession(session);
-        const board = await context.getBoardJson();
+        const board = await context.resolveBoardConfigForRuntime();
+        await context.loadBoardMenuConfig();
         if (session) context.assertProjectDependencySession(session);
         context.currentBoardConfig = board;
         context.boardConfigUpdatedSubject.next(context.currentBoardConfig);
         return true;
       } catch (error) {
         if (session) context.assertProjectDependencySession(session);
+        context.currentBoardConfig = null;
+        context.currentBoardMenuConfig = [];
+        context.currentBoardMenuI18nDir = '';
+        context.boardConfigUpdatedSubject.next(null);
         return false;
       }
     };
@@ -210,6 +217,8 @@ export class ProjectService {
     this.currentPackageData = context.currentPackageData;
     this.currentBoardConfig = context.currentBoardConfig;
     this.currentBoardPinConfig = context.currentBoardPinConfig;
+    this.currentBoardMenuConfig = context.currentBoardMenuConfig;
+    this.currentBoardMenuI18nDir = context.currentBoardMenuI18nDir;
     window['boardConfig'] = context.currentBoardConfig;
     this.stateSubject.next(context.stateSubject.value);
   }
@@ -808,6 +817,13 @@ export class ProjectService {
 
   isProjectTransitionInProgress(projectPath = this.currentProjectPath): boolean {
     return this.projectLifecycle.hasActive(projectPath) || this.dependencyLifecycle.isStopping(projectPath);
+  }
+
+  async withCoderBoardConfigMutation<T>(path: string, apply: () => Promise<T>): Promise<T> {
+    if (this.getCoderOperation(path)) throw new Error('工程正在编译或上传，请完成后再修改主板配置。');
+    const lease = this.acquireProjectLifecycle([path]);
+    try { return await apply(); }
+    finally { lease.release(); }
   }
 
   private acquireProjectLifecycle(paths: string[], owner?: symbol, checkMutation = true): ProjectLifecycleLease {
@@ -2524,7 +2540,7 @@ export class ProjectService {
   async refreshRuntimeBoardConfig(): Promise<any> {
     const resolvedBoardJson = await this.resolveBoardConfigForRuntime();
     this.currentBoardConfig = resolvedBoardJson;
-    window['boardConfig'] = resolvedBoardJson;
+    if (!this.isCoderProjectContext) window['boardConfig'] = resolvedBoardJson;
     this.boardConfigUpdatedSubject.next(resolvedBoardJson);
     return resolvedBoardJson;
   }
@@ -2636,6 +2652,16 @@ export class ProjectService {
     const boardJsonPath = `${this.currentProjectPath}/node_modules/${boardModule}/board.json`;
     if (!window['fs'].existsSync(boardJsonPath)) {
       throw new Error('开发板配置文件不存在: ' + boardJsonPath);
+    }
+
+    // Coder owns persistent source files. Updating pins must not reopen its
+    // iframe (or activate a background tab) while a menu transaction is running.
+    if (this.isCoderProjectContext) {
+      const boardJson = JSON.parse(this.electronService.readFile(boardJsonPath));
+      window['fs'].writeFileSync(boardJsonPath, JSON.stringify({ ...boardJson, ...data }, null, 2));
+      await this.syncCurrentBoardConfig();
+      this.boardChangeSubject.next();
+      return;
     }
 
     // 保存当前项目
@@ -2926,7 +2952,16 @@ export class ProjectService {
 
   /** Build the current board's configuration menu from its root menu.json. */
   async getBoardConfigMenu(options: { persistDefaults?: boolean } = {}): Promise<IMenuItem[]> {
-    let persistDefaults = options.persistDefaults !== false;
+    if (!this.isCoderProjectContext && this.isAilyCodeProject()) {
+      const path = this.currentProjectPath;
+      const context = this.getCoderProjectContext(path);
+      const menu = await context.getBoardConfigMenu(options);
+      if (path === this.currentProjectPath) this.currentPackageData = context.currentPackageData;
+      return menu;
+    }
+    // Merely opening Coder's menu must not change its board/source outside the
+    // saved-editor transaction. boards.txt's first option remains checked below.
+    let persistDefaults = options.persistDefaults !== false && !this.isCoderProjectContext;
     const menu = this.cloneCurrentBoardMenuConfig();
     if (menu.length === 0) {
       return [];
@@ -3095,7 +3130,8 @@ export class ProjectService {
     // console.log('Comparing board pin config:', pinConfig, "||", this.currentBoardPinConfig);
     if (pinConfig.data == this.currentBoardPinConfig.board) {
       return true;
-    } else if (pinConfig.extra?.build.variant == this.currentBoardPinConfig.variant) {
+    } else if (pinConfig.extra?.build?.variant == this.currentBoardPinConfig.variant
+      && pinConfig.extra?.build?.variant_h == this.currentBoardPinConfig.variant_h) {
       this.currentBoardPinConfig.board = pinConfig.data;
       return true;
     } else {
@@ -3109,6 +3145,9 @@ export class ProjectService {
       let variant_h = newPinConfig.extra?.build.variant_h || 'variant_generic.h';
 
       const setPinConfig = await this.getVariantConfig(variant, variant_h);
+      if (this.isCoderProjectContext && !setPinConfig) {
+        throw new Error('无法读取目标型号的引脚配置，请等待 SDK 就绪后重试。');
+      }
       const currentBoardJson = await this.getBoardJson();
 
       let isChanged = false;

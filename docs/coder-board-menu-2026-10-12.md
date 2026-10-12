@@ -1,0 +1,63 @@
+# Coder 主板扩展菜单与源码同步
+
+基线：`downeyin-subapp-aily`，修复前先拉取至 `4fdf3e938`。核对日期：2026-10-12。
+
+## 原因与修复
+
+Coder 的独立工程上下文只加载 `board.json`，未加载主板包根目录的 `menu.json` 和翻译；因此同一主板在 Blockly 可见的额外配置在 Coder 中缺失。上下文克隆还可能继承前一个工程的菜单缓存。现在每个 Coder 工程独立加载、保存并向活动窗口投影菜单；依赖安装完成后重新同步，切换工程和主板缺失时不会继续显示旧菜单。
+
+打开 Coder 菜单本身不写默认值或修改引脚，默认首项仍按 SDK 规则显示。菜单配置保存后，Coder 先同步持久源码，再通过自己的预处理执行器更新编译环境。原来的 `preprocess-trigger` 只存在 Blockly 监听器，不能用于 Coder。自定义分区仍打开分区管理器，SoftDevice 仍沿用显式选项的烧录动作。
+
+## 所有已确认会改变生成源码的菜单
+
+| 菜单 | Blockly 行为 | Coder 源码同步 |
+| --- | --- | --- |
+| ESP32 `CDCOnBoot` | 开启后增加 USB CDC 串口选项；关闭时把 `Serial0` 字段还原为主板声明的 CDC 串口值，通常是 `Serial`。其他仍有效的字段值保持不变。 | 关闭 CDC 时把项目源码里的同名串口引用还原，如 `Serial0.begin(...)` → `Serial.begin(...)`；使用主板 `cdcSerialPort` 的实际值。开启 CDC 保持仍有效的引用，与 Blockly 一致。 |
+| STM32 `pnum` | 根据 SDK variant 更新数字、模拟、PWM、舵机、中断引脚选项，重新加载后失效选项回退到相应列表首项；有效选项不变。 | 更新失效的主板引脚标识符；`pinMode`、`digitalRead`、`digitalWrite`、`analogRead`、`analogWrite`、`digitalPinToInterrupt` 的直接引脚参数按对应类别回退。一般数值常量不全局替换。 |
+
+源码扫描覆盖普通 Coder 的 `sketch/` 和工程声明的 `sourceRoots`，以及原生 Arduino 工程根目录的 `.ino`、C/C++ 源文件与头文件。排除第三方库、依赖、构建目录和符号链接。注释、字符串、原始字符串、include 路径、对象成员和命名空间成员不参与替换。遇到与待迁移主板符号同名的自定义声明/宏会报错并恢复配置；任意自定义函数中的裸数字、宏计算、复杂 C++ 符号语义不作推断。
+
+先通过既有编辑器保存通道保存文件；写入前再次检查编辑器未保存状态和文件基线。保存失败、期间切换工程、配置失效或文件写入失败会中止或回滚本轮配置/源码。源码同步使用工程生命周期锁阻止同工程切换主板、关闭和启动编译；操作完成后执行预处理。预处理失败保留已保存的配置/源码并显示错误，不伪装为编译成功。
+
+## 扫描到的完整菜单键清单
+
+来源：本机已安装的 17 个主板包的 `menu.json`，共 25 个不同键；这是可复核的本地包快照，不表示线上所有历史/未来主板包的全集。具体选项仍由所安装 SDK 的 `boards.txt` 提供，宿主没有另建 Coder 专用菜单表。
+
+以下除 `CDCOnBoot` 和 `pnum` 外，均通过 `projectConfig` 传入编译/上传工具链，不由宿主直接改写 C++ 文件。`PartitionScheme=custom` 额外打开分区管理器编辑 CSV；`PinNumbers` 会影响 SDK 对引脚编号的解释，但现有 Blockly 菜单没有源码替换钩子。
+
+| 配置键 | 本机声明该菜单的主板 |
+| --- | --- |
+| `Algorithm` | `ci1302`, `ci1303`, `ci1306` |
+| `CDCOnBoot` | `beginner_a1`, `esp32s3`, `esp32s3dev`, `esp_mosaico`, `linkbit`, `xiao_esp32s3`, `xiao_esp32s3_sense` |
+| `Clock` | `ci1302`, `ci1303`, `ci1306` |
+| `DFUOnBoot` | `esp_mosaico` |
+| `DebugLevel` | `esp_mosaico` |
+| `EraseFlash` | `esp_mosaico` |
+| `FlashMode` | `beginner_a1`, `esp32`, `esp32s3`, `esp32s3dev`, `linkbit`, `xiao_esp32s3`, `xiao_esp32s3_sense` |
+| `FlashSize` | `beginner_a1`, `esp32`, `esp32s3`, `esp32s3dev`, `esp_mosaico`, `linkbit`, `xiao_esp32s3`, `xiao_esp32s3_sense` |
+| `JTAGAdapter` | `esp_mosaico` |
+| `MSCOnBoot` | `esp_mosaico` |
+| `Microphone` | `ci1306` |
+| `PSRAM` | `esp32`, `esp32s3`, `esp32s3dev`, `xiao_esp32s3`, `xiao_esp32s3_sense` |
+| `PartitionScheme` | `arduino_nano_esp32`, `beginner_a1`, `esp32`, `esp32s3`, `esp32s3dev`, `esp_mosaico`, `linkbit`, `xiao_esp32s3`, `xiao_esp32s3_sense` |
+| `PinNumbers` | `arduino_nano_esp32` |
+| `USBMode` | `arduino_nano_esp32`, `esp32s3`, `esp32s3dev`, `esp_mosaico`, `xiao_esp32s3`, `xiao_esp32s3_sense` |
+| `UploadMode` | `esp32s3`, `esp32s3dev`, `esp_mosaico`, `xiao_esp32s3`, `xiao_esp32s3_sense` |
+| `UploadSpeed` | `beginner_a1`, `esp32`, `esp32s3`, `esp32s3dev`, `esp_mosaico`, `linkbit`, `xiao_esp32s3`, `xiao_esp32s3_sense` |
+| `ZigbeeMode` | `esp_mosaico` |
+| `clock` | `ai8051u_34k16`, `ai8051u_34k32`, `ai8051u_34k64` |
+| `cppcore` | `ai8051u_34k16`, `ai8051u_34k32`, `ai8051u_34k64` |
+| `cpu` | `arduino_nano` |
+| `execution` | `ai8051u_34k16`, `ai8051u_34k32`, `ai8051u_34k64` |
+| `memory` | `ai8051u_34k16`, `ai8051u_34k32`, `ai8051u_34k64` |
+| `pnum` | `stm32f103c8` |
+| `usb` | `stm32f103c8` |
+
+此外宿主支持主板包以 `extra.selectAction=flash-softdevice` 声明 SoftDevice 烧录；它属于设备操作，不改源码。该动作不在这次 17 个本地菜单包中。
+
+## 验证
+
+- TypeScript 应用检查：`node node_modules/typescript/bin/tsc -p tsconfig.app.json --noEmit`。
+- `npm run test:coder-board-menu`：66/66 ChromeHeadless Angular 定向测试通过，覆盖源码词法保护、CDC/引脚迁移、多源文件、写入回滚、保存失败、并发保护、工程菜单隔离、SDK 未就绪与恢复、Header 模式分发、自定义分区、已有 Coder 多工程行为。
+- 架构检查发现现有 `update-dialog.component.spec.ts` 直接导入 `ConfigService` 的基线外违规；该导入已存在于修复前提交，本轮没有修改它。
+- 本轮属于源码和浏览器测试层验证；未安装发布包，未执行物理主板编译上传或 SoftDevice 烧录。

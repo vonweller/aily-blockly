@@ -1,5 +1,6 @@
 import { CodeEditorProProjectService } from '../../../editors/code-editor-pro/services/code-editor-pro-project.service';
 import { CoderProjectRuntimeService } from '../../../integrations/coder/coder-project-runtime.service';
+import { CoderBoardConfigService } from '../../../integrations/coder/coder-board-config.service';
 import { CoderEditorLayoutService } from '../../../integrations/coder/coder-editor-layout.service';
 import { CommonModule } from '@angular/common';
 import { ChangeDetectorRef, Component, ElementRef, isDevMode, NgZone, OnDestroy, OnInit, ViewChild, viewChild, inject } from '@angular/core';
@@ -97,6 +98,7 @@ export class HeaderComponent implements OnInit, OnDestroy {
   }
 
   private readonly coderRuntime = inject(CoderProjectRuntimeService);
+  private readonly coderBoardConfig = inject(CoderBoardConfigService);
   private readonly coderPersistence = inject(CodeEditorProProjectService);
   private readonly requiredSubapps = inject(RequiredSubappService);
   private readonly coderHeaderButtons = new Map<string, IMenuItem[]>();
@@ -804,6 +806,7 @@ export class HeaderComponent implements OnInit, OnDestroy {
 
   async getDevicePortList(skipDetect = false) {
     const generation = ++this.portListGeneration;
+    const projectPath = this.projectService.currentProjectPath;
     // Linux 菜单严格按 board.json.connector 组合；没有 Linux 执行路由时走后面的 Arduino 端口菜单。
     const supportsSsh = this.supportsLinuxBoardConnector('ssh');
     const supportsSerial = this.supportsLinuxBoardConnector('serial');
@@ -965,6 +968,7 @@ export class HeaderComponent implements OnInit, OnDestroy {
       action: 'board-select',
       // children: boardList
     })
+    if (generation !== this.portListGeneration || projectPath !== this.projectService.currentProjectPath) return;
     this.configList = portList0;
     // 使用 setTimeout 将变更检测推迟到下一个变更检测周期，避免 ExpressionChangedAfterItHasBeenCheckedError
     setTimeout(() => {
@@ -1988,6 +1992,9 @@ export class HeaderComponent implements OnInit, OnDestroy {
 
   // 选择子菜单项-修改编译上传配置
   async selectSubItem(subItem: IMenuItem) {
+    if (subItem.disabled) return;
+    const projectPath = this.projectService.currentProjectPath;
+    const boardConfig = this.projectService.currentBoardConfig;
     // console.log('选择子菜单项:', subItem);
     if (this.selectDebounceTimer !== null) {
       clearTimeout(this.selectDebounceTimer);
@@ -2001,35 +2008,50 @@ export class HeaderComponent implements OnInit, OnDestroy {
 
     this.selectDebounceTimer = setTimeout(async () => {
       this.selectDebounceTimer = null;
+      if (this.destroyed || projectPath !== this.projectService.currentProjectPath
+        || boardConfig !== this.projectService.currentBoardConfig) return;
+      try {
+        const coder = this.projectService.isAilyCodeProject(projectPath);
 
-      const configChanged = await persistBoardConfigSelection(this.projectService, subItem);
-      const shouldRunEffects = shouldRunBoardConfigSelectionEffects(
-        configChanged,
-        subItem,
-      );
-      if (!shouldRunEffects) {
-        return;
-      }
-
-      if (subItem.extra?.refreshRuntimeBoardConfig) {
-        await this.projectService.refreshRuntimeBoardConfig();
-      }
-
-      if (configChanged && subItem.extra?.syncPinConfig) {
-        await this.projectService.syncBoardPinConfig(subItem);
-      }
-
-      if (subItem.extra?.selectAction === 'flash-softdevice') {
-        if (!this.serialService.currentPort) {
-          const messageKey = subItem.extra?.selectPortMessage;
-          this.message.warning(messageKey ? this.translate.instant(messageKey) : 'Please select a port first');
+        const configChanged = coder
+          ? await this.coderBoardConfig.select(projectPath, subItem)
+          : await persistBoardConfigSelection(this.projectService, subItem);
+        const shouldRunEffects = shouldRunBoardConfigSelectionEffects(
+          configChanged,
+          subItem,
+        );
+        if (!shouldRunEffects) {
           return;
         }
-        await this.uploaderService.flashSoftdevice(subItem.data, this.serialService.currentPort);
-      }
 
-      if (configChanged) {
-        this.builderService.triggerPreprocess('config-changed');
+        if (!coder && subItem.extra?.refreshRuntimeBoardConfig) {
+          await this.projectService.refreshRuntimeBoardConfig();
+        }
+
+        if (!coder && configChanged && subItem.extra?.syncPinConfig) {
+          await this.projectService.syncBoardPinConfig(subItem);
+        }
+
+        if (subItem.extra?.selectAction === 'flash-softdevice') {
+          if (projectPath !== this.projectService.currentProjectPath) return;
+          if (!this.serialService.currentPort) {
+            const messageKey = subItem.extra?.selectPortMessage;
+            this.message.warning(messageKey ? this.translate.instant(messageKey) : 'Please select a port first');
+            return;
+          }
+          await this.uploaderService.flashSoftdevice(subItem.data, this.serialService.currentPort);
+          if (coder && configChanged) await this.coderRuntime.build(projectPath, { preprocessOnly: true });
+        }
+
+        if (configChanged && !coder) {
+          this.builderService.triggerPreprocess('config-changed');
+        }
+      } catch (error) {
+        this.message.error(error instanceof Error ? error.message : String(error));
+      } finally {
+        if (!this.destroyed && this.showPortList && projectPath === this.projectService.currentProjectPath) {
+          await this.getDevicePortList(true).catch(error => console.warn('刷新主板配置菜单失败:', error));
+        }
       }
     }, 500);
   }

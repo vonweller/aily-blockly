@@ -175,7 +175,8 @@
     "perf:blockly:test": "playwright test -c e2e/performance.config.ts",
     "perf:blockly:real:fixture": "node scripts/prepare-blockly-real-fixture.cjs",
     "perf:blockly:real:prepare": "node scripts/prepare-blockly-real-performance.cjs",
-    "perf:blockly:real:test": "playwright test -c e2e/real-performance.config.ts"
+    "perf:blockly:real:test": "playwright test -c e2e/real-performance.config.ts",
+    "test:coder-board-menu": "node scripts/run-angular.cjs test --configuration=coder-board-menu --watch=false --browsers=ChromeHeadless"
   },
   "private": true,
   "dependencies": {
