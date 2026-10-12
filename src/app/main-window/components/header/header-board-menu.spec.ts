@@ -48,6 +48,22 @@ describe('Header board configuration in Coder and Blockly', () => {
       expect(outside).not.toHaveBeenCalled();
     } finally { document.removeEventListener('click', outside); button.remove(); }
   });
+  it('keeps the main and board menus mutually exclusive', () => {
+    const header = fixture();
+    header.calculatePortListPosition = () => {};
+    header.getDevicePortList = () => {};
+    header.closePortList = () => { header.showPortList = false; };
+    header.refreshHeaderRecentProjectsMenu = () => {};
+    const click = new MouseEvent('click');
+    header.openMenu(click);
+    expect(header.showMenu).toBeTrue();
+    header.openPortList(click);
+    expect(header.showMenu).toBeFalse(); expect(header.showPortList).toBeTrue();
+    header.openMenu(click);
+    expect(header.showMenu).toBeTrue(); expect(header.showPortList).toBeFalse();
+    header.openMenu(click);
+    expect(header.showMenu).toBeFalse();
+  });
   it('dispatches Coder selection to saved-source synchronization, and Blockly to its existing effects', fakeAsync(() => {
     for (const coder of [true, false]) {
       const header = fixture(coder);

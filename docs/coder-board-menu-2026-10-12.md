@@ -89,3 +89,12 @@ npx playwright test --config=e2e/coder-conversion.config.ts --grep='converted AI
 ```
 
 这是本地 macOS arm64 宿主验证，未替换用户 9 月 30 日发布包，未执行物理主板烧录。Coder 子应用使用本机已有 `0.1.15-dev`，不作为全部子应用重新发布验收。`--dir` 包没有 `app-update.yml` 的更新检查日志与本次菜单、编译链无关。
+
+## 菜单外部点击关闭
+
+Coder 的编辑区位于跨源 iframe 中，点击不会冒泡到宿主 `document`。修复前实际 Electron 回归复现：点击编辑区后，左上角主菜单仍保留。共享菜单现在监听宿主窗口失焦，并在下一轮事件中确认焦点是否移入菜单外的 iframe，再关闭菜单；保持原点击进入编辑区，组件销毁时清理监听及定时器。宿主普通区域沿用既有外部点击处理。主菜单和主板菜单明确互斥，点击另一个入口会关闭原菜单，同一入口仍能重复开关。
+
+- 菜单组件 16 项、主板菜单 68 项定向测试通过，覆盖 iframe 焦点延迟、菜单内部焦点、普通窗口失焦、销毁清理和菜单互斥。
+- 实际 macOS Coder 修复包和 Blockly 开发窗口共 2 项 Electron 流程通过（38.1 秒）。两个菜单均验证：内部点击保留、宿主空白点击关闭、工作区点击关闭、连续重开后再次关闭，以及相互切换。Coder 额外确认焦点保留在编辑 iframe；既有转换和 UNO 编译流程也通过。
+- 本地修复包：`dist/aily-coder-menu-fix/mac-arm64/aily coder.app`，使用与前述构建相同的步骤，额外传入 `-c.directories.output=dist/aily-coder-menu-fix`，避免覆盖正在运行的应用。`app.asar` SHA-256：`554043ea22d36445741bb9118f415da44d3a250b64f6ba15681eb51350b53e3a`。
+- 截图：`e2e/.artifacts/menu-dismiss-packaged/blockly-coder-conversion-o-38307-pens-an-independent-project/coder-menus-dismissed.png`；`e2e/.artifacts/menu-dismiss-packaged/blockly-coder-conversion-C-26471-verts-and-hands-it-to-Coder/blockly-menus-dismissed.png`。

@@ -1,4 +1,4 @@
-import { test, expect, _electron } from '@playwright/test';
+import { test, expect, _electron, type Locator, type Page } from '@playwright/test';
 import { constants, existsSync } from 'node:fs';
 import { cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
@@ -8,6 +8,35 @@ import { seedPlatform } from '../fixtures/platform-seed';
 const {developmentCompanionLaunch} = require('../../electron/project-companion');
 
 const SEED = process.env['AILY_CONVERSION_SEED'];
+
+async function verifyHeaderMenuDismissal(win: Page, workArea: Locator) {
+  await win.locator('app-header .menu').click();
+  await expect(win.locator('app-header app-menu:not(.ports) .menu-box:not(.submenu-box)')).toBeVisible();
+  await win.locator('app-header .board').click();
+  await expect(win.locator('app-header app-menu:not(.ports)')).toHaveCount(0);
+  await expect(win.locator('app-header app-menu.ports .menu-box:not(.submenu-box)')).toBeVisible();
+  await win.locator('app-header .menu').click();
+  await expect(win.locator('app-header app-menu.ports')).toHaveCount(0);
+  await win.locator('app-footer .footer-box').click({position: {x: 600, y: 10}});
+  await expect(win.locator('app-header app-menu')).toHaveCount(0);
+  for (const [trigger, selector] of [
+    ['app-header .menu', 'app-header app-menu:not(.ports)'],
+    ['app-header .board', 'app-header app-menu.ports'],
+  ]) {
+    const menu = win.locator(selector);
+    for (const outside of [win.locator('app-footer .footer-box'), workArea, workArea]) {
+      await win.locator(trigger).click();
+      const panel = menu.locator('.menu-box:not(.submenu-box)');
+      await expect(panel).toBeVisible();
+      await panel.click({position: {x: 2, y: 2}});
+      await expect(panel).toBeVisible();
+      await outside.click({position: {x: 600, y: outside === workArea ? 200 : 10}});
+      await expect(menu).toHaveCount(0);
+      const coderFrame = win.locator('iframe.coder-embed-frame.is-ready');
+      if (outside === workArea && await coderFrame.count()) await expect(coderFrame).toBeFocused();
+    }
+  }
+}
 
 test('converted AI-VOX project exposes board menus, persists options and compiles its board custom partitions', async ({}, info) => {
   const original=process.env['AILY_CONVERSION_AIVOX_PROJECT'];
@@ -35,6 +64,7 @@ test('converted AI-VOX project exposes board menus, persists options and compile
     await win.getByText('稍后登录',{exact:true}).click({timeout:10_000}).catch(()=>{});
     await expect(win.locator('iframe.coder-embed-frame.is-ready')).toHaveCount(1,{timeout:90_000});
     await expect(win.locator('app-coder-loading .coder-loader')).toBeHidden();
+    await verifyHeaderMenuDismissal(win, win.frameLocator('iframe.coder-embed-frame.is-ready').locator('.monaco-editor').first());
     await win.locator('app-header .board').click();
     const menu=win.locator('app-menu.ports');
     for(const label of ['烧录速度','烧录方式','闪存模式','闪存大小','分区方案','USB 模式','USB模拟串口','PSRAM','切换开发板']) {
@@ -123,7 +153,9 @@ test('opening a generated ino in Coder confirms, installs outer dependencies and
   await write('Blockly 示例/src/user.h','#define USER_PIN 13\n');
   const entry = path.join(source,'.temp/sketch/sketch.ino');
   const {ELECTRON_RUN_AS_NODE,...env}=process.env;
-  const app = await _electron.launch({cwd:ROOT, args:['.','--serve',entry,`--user-data-dir=${path.join(root,'profile')}`],
+  const executablePath=process.env['AILY_CONVERSION_CODER_EXECUTABLE'];
+  const app = await _electron.launch({cwd:ROOT, ...(executablePath?{executablePath}:{}),
+    args:[...(executablePath?[]:['.','--serve']),entry,`--user-data-dir=${path.join(root,'profile')}`],
     env:{...env,AILY_BUILD_PRODUCT:'coder',AILY_APPDATA_PATH:appdata,AILY_E2E:'1'},timeout:60_000});
   const win = await getMainWindow(app);
   const errors: string[]=[];
@@ -169,6 +201,8 @@ test('opening a generated ino in Coder confirms, installs outer dependencies and
     await expect(win.locator('iframe.coder-embed-frame.is-ready')).toHaveCount(1,{timeout:90_000});
     await expect(win.locator('app-coder-loading .coder-loader')).toBeHidden();
     await expect.poll(()=>win.url()).toContain(encodeURIComponent(target));
+    await verifyHeaderMenuDismissal(win, win.frameLocator('iframe.coder-embed-frame.is-ready').locator('.monaco-editor').first());
+    await win.screenshot({path:info.outputPath('coder-menus-dismissed.png')});
     await win.locator('app-header app-act-btn[data-action="compile"]').click();
     await expect.poll(async () => {
       const pkg=JSON.parse(await readFile(path.join(target,'package.json'),'utf8'));
@@ -228,6 +262,10 @@ test(`Code Viewer ${surface} icon saves the latest Blockly code, converts and ha
     await win.getByText('稍后登录',{exact:true}).click({timeout:10_000}).catch(()=>{});
     await expect(win.getByText('稍后登录',{exact:true})).toBeHidden();
     await expect(win.locator('iframe[data-runtime-ready="true"]')).toHaveCount(1,{timeout:60_000});
+    if (surface === 'embedded') {
+      await verifyHeaderMenuDismissal(win, win.locator('.blocklyMainBackground').first());
+      await win.screenshot({path:info.outputPath('blockly-menus-dismissed.png')});
+    }
     // Only the OS launcher is intercepted: conversion, save, npm, source
     // materialization and target validation all use the real application.
     await app.evaluate(({ipcMain})=>{

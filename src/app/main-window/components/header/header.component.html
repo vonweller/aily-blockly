@@ -1,5 +1,5 @@
 <div class="header-box" [class.darwin]="isMac" [class.full-screen]="isMacFullScreen">
-  <div class="menu ccenter" (click)="openMenu()">
+  <div class="menu ccenter" (click)="openMenu($event)">
     <div class="btn ccenter" nz-tooltip nzTooltipTitle="{{ 'MENU.MENU' | translate }}">
       <i class="fa-regular fa-bars"></i>
     </div>

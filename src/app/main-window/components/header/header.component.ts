@@ -513,10 +513,12 @@ export class HeaderComponent implements OnInit, OnDestroy {
   }
 
   showMenu = false;
-  openMenu() {
+  openMenu(event?: MouseEvent) {
+    event?.stopPropagation();
     this.showMenu = !this.showMenu;
     // 展开主菜单时刷新「最近的项目」二级列表（来自配置中的 recentlyProjects）
     if (this.showMenu) {
+      this.closePortList();
       this.refreshHeaderRecentProjectsMenu();
     }
   }
@@ -734,6 +736,7 @@ export class HeaderComponent implements OnInit, OnDestroy {
     const boardname = boardLabel.replace(' 2560', ' ').replace(' R3', '');
     this.boardKeywords = boardname ? [boardname] : [];
     // 如果已有缓存列表，先展示旧数据，再后台刷新
+    this.closeMenu();
     this.showPortList = true;
     this.getDevicePortList();
   }
