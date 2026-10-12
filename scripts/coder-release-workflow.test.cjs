@@ -52,6 +52,10 @@ test('same-version releases from previous runs and tags without releases can be 
   assert.equal(upload.if, undefined);
   assert.equal(upload.with.overwrite_files, true);
   assert.equal(upload.with.body_path, 'release/CHANGELOG_CODER.md');
+  assert.deepEqual(upload.with.files.trim().split('\n'), [
+    'release/aily-coder-*.exe', 'release/aily-coder-*.dmg',
+    'release/CHANGELOG_CODER.md', 'release/CHANGELOG_CODER_ZH.md',
+  ]);
   assert.equal(upload.with.draft, "${{ steps.release.outputs.published != 'true' }}");
   assert.equal(upload.with.make_latest,
     "${{ steps.release.outputs.published == 'true' && needs.prepare.outputs.make_latest || 'false' }}");
@@ -70,7 +74,7 @@ async function finishRelease({ published = false, channel = 'stable', alter = ()
     const { manifest, packages } = releaseFiles(platform, flavor, environment.RELEASE_VERSION);
     for (const name of [manifest, ...packages]) files.set(name, Buffer.from(name));
   }
-  const assets = [...files].map(([name, content]) => ({ name, size: content.length, state: 'uploaded',
+  const assets = [...files].filter(([name]) => /\.(exe|dmg|md)$/.test(name)).map(([name, content]) => ({ name, size: content.length, state: 'uploaded',
     digest: `sha256:${crypto.createHash('sha256').update(content).digest('hex')}` }));
   alter(assets);
   const updates = [];
@@ -95,8 +99,11 @@ test('new drafts publish after asset verification and existing public releases a
   assert.deepEqual(await finishRelease(), [{ draft: false, prerelease: false, make_latest: 'true' }]);
   assert.deepEqual(await finishRelease({ channel: 'beta' }), [{ draft: false, prerelease: true, make_latest: 'false' }]);
   assert.deepEqual(await finishRelease({ published: true }), []);
+  assert.deepEqual(await finishRelease({ published: true,
+    alter: assets => assets.push({ name: 'previous-build.zip' }, { name: 'latest-coder.yml' }),
+  }), []);
   for (const alter of [assets => assets.pop(), assets => { assets[0].digest = 'sha256:wrong'; },
-    assets => { assets[0].state = 'starter'; }]) {
+    assets => { assets[0].state = 'starter'; }, assets => assets.push({ name: 'unexpected.txt' })]) {
     await assert.rejects(finishRelease({ alter }), /Release asset/);
     await assert.rejects(finishRelease({ published: true, alter }), /Release asset/);
   }
