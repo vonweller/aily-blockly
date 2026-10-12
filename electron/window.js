@@ -1324,22 +1324,28 @@ function registerWindowHandlers(mainWindow, options = {}) {
         return new Promise((resolve) => {
             const requestId = `child-app-host-${Date.now()}-${Math.random().toString(16).slice(2)}`;
             const responseChannel = 'child-app-host-command-response';
-            const timer = setTimeout(() => {
+            const finish = result => {
+                clearTimeout(timer);
                 ipcMain.removeListener(responseChannel, listener);
-                resolve({ ok: false, message: `子应用宿主命令超时: ${command?.action || 'unknown'}` });
+                targetWindow.removeListener('closed', onClosed);
+                resolve(result);
+            };
+            // A confirmed close can destroy the renderer before its IPC reply arrives.
+            const onClosed = () => finish({ ok: command?.action === 'close' || command?.action === 'closeAll' });
+            const timer = setTimeout(() => {
+                finish({ ok: false, message: `子应用宿主命令超时: ${command?.action || 'unknown'}` });
             }, timeoutMs);
             const listener = (event, payload = {}) => {
                 if (event.sender !== targetWindow.webContents || payload.requestId !== requestId) {
                     return;
                 }
-                clearTimeout(timer);
-                ipcMain.removeListener(responseChannel, listener);
-                resolve(payload.result && typeof payload.result === 'object'
+                finish(payload.result && typeof payload.result === 'object'
                     ? payload.result
                     : { ok: false, message: '子应用宿主返回了无效结果' });
             };
 
             ipcMain.on(responseChannel, listener);
+            targetWindow.once('closed', onClosed);
             targetWindow.webContents.send('child-app-host-command', { requestId, command });
         });
     };

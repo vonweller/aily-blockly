@@ -599,6 +599,23 @@ export class UiService {
     }
   }
 
+  /** Settle every partition draft confirmation before application cleanup stops its Runtime. */
+  async closePartitionManagerBeforeQuit(): Promise<boolean> {
+    const toolId = 'ffs-manager-child';
+    const embedded = await this.childHostRegistry.closeAll(toolId);
+    if (embedded['ok'] !== true) return false;
+    for (const route of [...this.openWindowPathList]) {
+      if (this.resolveToolNameFromWindowPath(route) !== toolId) continue;
+      if (typeof window['subWindow']?.command !== 'function') return false;
+      await window['subWindow'].control?.(route, 'focus');
+      const result = await window['subWindow'].command(route, { toolId, action: 'closeAll' });
+      if (result?.ok !== true) return false;
+    }
+    // Let Angular destroy embedded/compact frames before main starts app.quit().
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    return true;
+  }
+
   async closeConnectionGraphWindows(): Promise<boolean> {
     if (!this.electronService.isElectron) return true;
 

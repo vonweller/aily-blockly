@@ -1493,7 +1493,11 @@ export class HeaderComponent implements OnInit, OnDestroy {
   private async confirmWindowClose(request: { requestId?: string }): Promise<void> {
     if (typeof request?.requestId !== 'string' || !request.requestId) return;
     let allowed = false;
-    try { allowed = await this.checkUnsavedChanges('close'); }
+    try {
+      if (await this.uiService.closePartitionManagerBeforeQuit()) {
+        allowed = await this.checkUnsavedChanges('close');
+      }
+    }
     catch (error) { this.message.error(`无法确认保存状态：${error instanceof Error ? error.message : String(error)}`); }
     finally { window['iWindow'].confirmClose(request.requestId, allowed); }
   }

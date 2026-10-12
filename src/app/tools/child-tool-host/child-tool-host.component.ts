@@ -20,6 +20,7 @@ import {
   type SubappInstallProgress,
   SubappManagerService,
   ChildAppHostRegistryService,
+  resolveChildCloseDecision,
   type ChildAppLifecycleOptions,
   type ChildAppWindowPlacement,
   RequiredSubappService,
@@ -49,6 +50,7 @@ import {
 
 type HostStatus = 'idle' | 'starting' | 'ready' | 'error' | 'closed';
 type HostMessageState = 'success' | 'info' | 'warning' | 'error' | 'loading';
+
 type ChildLifecycleReason = 'close' | 'restart' | 'update';
 
 interface HostProjectContext {
@@ -456,6 +458,10 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   async close(): Promise<Record<string, unknown>> {
     if (this.closing) return { ok: false, message: '子应用正在关闭' };
     this.closing = true;
+
+    if (this.resolvedToolId === 'ffs-manager-child' && !this.isStandalone) {
+      this.uiService.openToolEmbedded(this.resolvedToolId);
+    }
 
     const canClose = await this.notifyChildBeforeClose('close');
     if (!canClose) {
@@ -1603,12 +1609,13 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       const result = await this.withTimeout(
         Promise.resolve(beforeClose({
           reason,
+          waitForDecision: true,
           toolId: this.resolvedToolId,
           context: this.createHostContext()
         })),
         reason === 'restart' || reason === 'update' ? 10_000 : 1500
       );
-      const canClose = result !== false && result?.canClose !== false;
+      const canClose = await resolveChildCloseDecision(this.remoteApi, result);
 
       if (!canClose) {
         const message = this.stringifyHostMessageValue(result?.message || result?.reason)
@@ -1639,7 +1646,8 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
         'beforeClose failed',
         `reason=${reason}${errorCode ? ` code=${errorCode}` : ''} error=${errorMessage}`
       );
-      return !strict;
+      // A lost partition UI handshake must never silently discard its draft.
+      return !strict && this.resolvedToolId !== 'ffs-manager-child';
     }
   }
 
