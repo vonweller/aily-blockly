@@ -15,6 +15,7 @@ describe('CodeEditorFrameComponent dependency preparation', () => {
       assertProjectDependencySession: (current: any) => lifecycle.assertCurrent(current),
       runProjectDependencyTask: (current: any, work: () => Promise<any>) => lifecycle.run(current, work),
       finishProjectDependencyPreparation: (current: any) => lifecycle.finishPreparation(current),
+      discardLibraryChanges: jasmine.createSpy('discardLibraries').and.resolveTo(),
     };
     component.beginCoderEmbedLoading = () => {};
     component.ensureProjectPackageJsonExists = async () => {};
@@ -30,6 +31,7 @@ describe('CodeEditorFrameComponent dependency preparation', () => {
       component.bootstrap('/project').then(() => { complete = true; });
       flushMicrotasks();
       expect(component.initCoderEmbed).toHaveBeenCalled();
+      expect(component.projectService.discardLibraryChanges).toHaveBeenCalledOnceWith('/project', true);
       expect(component.setupBuildOutputsWatch).toHaveBeenCalledOnceWith('/project');
       expect(lifecycle.isBusy('/project')).toBeTrue();
       expect(complete).toBeFalse();

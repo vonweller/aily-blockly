@@ -114,6 +114,7 @@ export interface CoderWorkspaceContext {
 
 interface ProjectOpenOptions {
   reason?: ProjectActivationReason;
+  saveBeforeReload?: boolean;
   sessionResource?: string | null;
   /** In-process ownership only; never accepted from IPC/Agent parameters. */
   lifecycleOwner?: symbol;
@@ -158,6 +159,7 @@ export class ProjectService {
 
   private readonly libraryChanges = new Map<string, any>();
   readonly libraryChangesChanged = new Subject<void>();
+  private disposeLibraryChanges?: () => void;
 
   private acceptLibraryStatus(projectPath: string, status: { dirty: boolean; manifest: any }): any {
     const key = this.normalizeProjectPath(projectPath);
@@ -168,6 +170,8 @@ export class ProjectService {
       this.currentPackageData = status.manifest;
       window['packageJson'] = status.manifest;
     }
+    const context = this.coderProjectContexts.get(key);
+    if (context) context.currentPackageData = status.manifest;
     if (wasDirty !== status.dirty) this.libraryChangesChanged?.next();
     return status.manifest;
   }
@@ -214,7 +218,10 @@ export class ProjectService {
 
   async discardLibraryChanges(projectPath = this.currentProjectPath, reconcile = false): Promise<void> {
     if (!projectPath || !window['libraryDependencies']) return;
+    const restoreCoderSources = !reconcile && this.hasCachedLibraryChanges(projectPath)
+      && this.getProjectMode(projectPath) === 'coder';
     this.acceptLibraryStatus(projectPath, await window['libraryDependencies'].discard(projectPath, { reconcile }));
+    if (restoreCoderSources) await this.application.materializeCoderProjectLibraries(projectPath);
     this.libraryChangesChanged?.next();
   }
 
@@ -223,7 +230,8 @@ export class ProjectService {
     for (const path of new Set([this.currentProjectPath, ...this.coderProjects.map(project => project.path)].filter(Boolean))) {
       await this.discardLibraryChanges(path);
     }
-    if (refresh && this.getBlocklyProjectLoadStatus(this.currentProjectPath).ready) await this.rebuildBlocklyRuntimeAfterLibraryChange();
+    if (refresh && this.getProjectMode(this.currentProjectPath) === 'blockly'
+      && this.getBlocklyProjectLoadStatus(this.currentProjectPath).ready) await this.rebuildBlocklyRuntimeAfterLibraryChange();
   }
 
   /** Each open iframe and executor keeps a stable project context across tab changes. */
@@ -237,6 +245,7 @@ export class ProjectService {
     const context: ProjectService = Object.assign(Object.create(ProjectService.prototype), this);
     Object.assign(context, {
       isCoderProjectContext: true,
+      disposeLibraryChanges: undefined,
       currentProjectPathSubject: new BehaviorSubject(path),
       currentPackageData: JSON.parse(this.electronService.readFile(window['path'].join(path, 'package.json'))),
       currentBoardConfig: undefined,
@@ -816,9 +825,17 @@ export class ProjectService {
     private injector: Injector,
     private logService: LogService,
   ) {
+    this.disposeLibraryChanges = window['libraryDependencies']?.onChanged?.(status => {
+      this.acceptLibraryStatus(status.projectPath, status);
+      this.libraryChangesChanged.next();
+    });
     this.translate.onLangChange.subscribe((event) => {
       void this.loadCurrentBoardMenuTranslations(event.lang);
     });
+  }
+
+  ngOnDestroy(): void {
+    this.disposeLibraryChanges?.();
   }
 
   private get application(): ProjectApplicationPort {
@@ -1574,8 +1591,10 @@ export class ProjectService {
       const reload = activationReason === 'reload' || activationReason === 'chat-tool-reload';
       if (reload && this.coderProjects.some(project => this.isSameProjectPath(project.path, projectPath))) {
         if (this.getCoderOperation(projectPath)) throw new Error('工程正在编译或上传，请等待完成后重新加载');
-        const saved = await this.application.dispatchProjectSave(projectPath, 15_000);
-        if (!saved.success) throw new Error(saved.error || '重新加载前保存工程失败');
+        if (activationReason !== 'chat-tool-reload' && options.saveBeforeReload !== false) {
+          const saved = await this.application.dispatchProjectSave(projectPath, 15_000);
+          if (!saved.success) throw new Error(saved.error || '重新加载前保存工程失败');
+        }
         await this.stopProjectCommands(projectPath);
       }
       const retained = this.coderProjects.some(project => this.isSameProjectPath(project.path, projectPath));

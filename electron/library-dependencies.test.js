@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { LibraryDependencies, runDependencyWorker } = require('./library-dependencies');
+const { LibraryDependencySessions } = require('./library-dependency-sessions');
 
 async function fixture(t) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'aily-library-save-')));
@@ -24,6 +25,39 @@ async function fixture(t) {
   const remove = name => api.mutate(root, { action: 'remove', packages: [`test-${name}`] });
   return { root, read, write, installed, api, install, remove };
 }
+
+test('Coder source preparation holds saves, and a failed operation restores the previous unsaved tree', async t => {
+  const f = await fixture(t), sessions = new LibraryDependencySessions(f.api);
+  await f.install('c');
+  const baseline = f.read('package.json');
+  const { transaction } = await sessions.run('begin', f.root);
+  await sessions.run('mutate', f.root, { action: 'remove', packages: ['test-b'] }, transaction);
+  assert.equal((await sessions.run('status', f.root)).busy, true);
+  let saved = false;
+  const saving = sessions.run('save', f.root).then(() => { saved = true; });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(saved, false);
+  assert.equal(f.read('package.json'), baseline);
+  await sessions.run('abort', f.root, undefined, transaction);
+  await saving;
+  assert.deepEqual(f.installed(), ['test-a', 'test-b', 'test-c']);
+  assert.equal(f.api.status(f.root).dirty, false);
+  assert.deepEqual(Object.keys(JSON.parse(f.read('package.json')).dependencies).sort(), ['test-a', 'test-b', 'test-c']);
+  await assert.rejects(sessions.run('mutate', f.root, { action: 'remove', packages: ['test-a'] }, transaction), /expired/);
+});
+
+test('Coder metadata-only edit and expired child transaction can be discarded without manifest backups', async t => {
+  const f = await fixture(t), sessions = new LibraryDependencySessions(f.api, { timeoutMs: 80 });
+  const baseline = f.read('package.json');
+  const { transaction } = await sessions.run('begin', f.root);
+  await sessions.run('patch', f.root, { coderBoardTemplateDependencies: { schemaVersion: 1, dependencies: {} } }, transaction);
+  assert.equal(f.api.status(f.root).dirty, true);
+  await new Promise(resolve => setTimeout(resolve, 100));
+  // Abort waits for real npm reconciliation; a later discard waits for that too.
+  await sessions.run('discard', f.root);
+  assert.equal(f.api.status(f.root).dirty, false);
+  assert.equal(f.read('package.json'), baseline);
+});
 
 test('real npm: cumulative installs/removals, save, discard and no draft files', async t => {
   const f = await fixture(t), { root, api } = f;

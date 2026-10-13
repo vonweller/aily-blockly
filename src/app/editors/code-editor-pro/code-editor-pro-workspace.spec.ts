@@ -1,4 +1,4 @@
-import { BehaviorSubject, Subject } from 'rxjs';
+import { BehaviorSubject, Subject, of } from 'rxjs';
 import { ProjectService } from '@domain/project/public-api';
 import { CodeEditorProComponent } from './code-editor-pro.component';
 import { CodeEditorFrameComponent } from './code-editor-frame.component';
@@ -298,12 +298,29 @@ describe('Coder retained project workspaces', () => {
     const component: any = Object.create(CodeEditorProComponent.prototype);
     component.projectService = service;
     component.closing = new Set();
-    component.persistence = { saveAll: jasmine.createSpy('save').and.resolveTo() };
+    component.persistence = { hasSavedProject: async () => false, saveAll: jasmine.createSpy('save').and.resolveTo() };
+    component.modal = { create: () => ({ afterClose: of({ result: 'save' }) }) };
     component.message = { error: jasmine.createSpy('error') };
     await component.closeCoderProject('/work/device-b', new Event('click'));
     expect(component.persistence.saveAll).toHaveBeenCalledOnceWith('/work/device-b');
     expect(service.coderProjects.length).toBe(1);
     expect(service.currentProjectPath).toBe('/work/device-a');
+  });
+
+  it('discards only the closing tab and does not save another project', async () => {
+    await service.addCoderProject('/work/device-b');
+    const component: any = Object.create(CodeEditorProComponent.prototype);
+    component.projectService = service;
+    component.closing = new Set();
+    component.persistence = { hasSavedProject: async () => false, saveAll: jasmine.createSpy('save') };
+    component.modal = { create: () => ({ afterClose: of({ result: 'continue' }) }) };
+    component.message = { error: jasmine.createSpy('error') };
+    spyOn(service, 'discardLibraryChanges').and.resolveTo();
+    await component.closeCoderProject('/work/device-b', new Event('click'));
+    expect(service.discardLibraryChanges).toHaveBeenCalledOnceWith('/work/device-b');
+    expect(component.persistence.saveAll).not.toHaveBeenCalled();
+    expect(service.currentProjectPath).toBe('/work/device-a');
+    expect(service.coderProjects.length).toBe(1);
   });
 
   it('routes simultaneous saves to their matching iframe and includes inactive dirty editors when closing', async () => {

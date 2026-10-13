@@ -316,6 +316,15 @@ describe('board switch project persistence', () => {
     expect(service.router.navigate).toHaveBeenCalledOnceWith(['/main/code-editor-pro'], { queryParams: { path: '/project' }, replaceUrl: true });
   });
 
+  it('does not save over a Chat restore or an explicit discard reload', async () => {
+    for (const options of [{ reason: 'chat-tool-reload' }, { reason: 'reload', saveBeforeReload: false }]) {
+      const { service } = coderRouteFixture(true);
+      expect(await (ProjectService.prototype as any).projectOpenInternal.call(service, '/project', options)).toBeTrue();
+      expect(service.application.dispatchProjectSave).not.toHaveBeenCalled();
+      expect(service.projectActivationSubject.next).toHaveBeenCalled();
+    }
+  });
+
   it('does not publish a reload or navigate when saving the retained Coder editor fails', async () => {
     const { service, open } = coderRouteFixture(true);
     service.application.dispatchProjectSave.and.resolveTo({ success: false, error: 'unsaved source' });

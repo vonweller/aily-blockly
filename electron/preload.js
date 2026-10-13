@@ -800,6 +800,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
     run: (data) => ipcRenderer.invoke("npm-run", data),
   },
   libraryDependencies: {
+    onChanged: callback => {
+      const listener = (_event, status) => callback(status);
+      ipcRenderer.on('library-dependencies:changed', listener);
+      return () => ipcRenderer.removeListener('library-dependencies:changed', listener);
+    },
     status: projectPath => ipcRenderer.invoke('library-dependencies', { operation: 'status', projectPath }),
     mutate: (projectPath, request) => ipcRenderer.invoke('library-dependencies', { operation: 'mutate', projectPath, request }),
     patch: (projectPath, request) => ipcRenderer.invoke('library-dependencies', { operation: 'patch', projectPath, request }),

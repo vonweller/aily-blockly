@@ -128,15 +128,26 @@ class LibraryDependencies {
 
   patch(project, manifest) {
     return this.queue(project, root => {
-      const state = this.states.get(root);
-      if (!state) throw new Error('No unsaved dependency session');
+      const disk = this.read(root);
+      const state = this.states.get(root) || { base: disk, manifest: clone(disk), metadata: {} };
       const current = this.effective(root);
       for (const [key, value] of Object.entries(manifest)) {
         if (fields.includes(key) && !same(value, current[key])) throw new Error('请先保存或放弃库变更，再修改项目依赖配置。');
         if (!same(value, current[key]) && !fields.includes(key) && key !== 'ailyLocalLibrarySources') state.metadata[key] = value;
       }
+      if (Object.keys(state.metadata).length) this.states.set(root, state);
       return this.status(root);
     });
+  }
+
+  restore(project, snapshot) {
+    return this.queue(project, root => this.locked(root, async () => {
+      const disk = this.read(root);
+      await this.run(root, { ...this.plan(disk, snapshot.manifest), options: snapshot.state?.options });
+      if (snapshot.state) this.states.set(root, clone(snapshot.state));
+      else this.states.delete(root);
+      return this.status(root);
+    }));
   }
 
   save(project) {

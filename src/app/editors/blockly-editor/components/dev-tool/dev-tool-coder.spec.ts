@@ -29,7 +29,7 @@ describe('DevToolComponent in Coder mode', () => {
     const component = Object.create(DevToolComponent.prototype) as DevToolComponent;
     Object.assign(component, {
       projectService, builderService, actionService, electronService, messageService,
-      configService: { data: { devmode: { enabled: false, autoSave: true } } },
+      configService: { data: { devmode: { enabled: false, autoSave: true } }, save: () => {} },
       ailyChatDemandSession: { diagramGenerationState$: new BehaviorSubject({ architecture: null, schematic: null }) },
       ngZone: { run: (fn: () => void) => fn() },
     });
@@ -51,6 +51,15 @@ describe('DevToolComponent in Coder mode', () => {
     await component.reload();
     expect(projectService.save).toHaveBeenCalledOnceWith(projectPath);
     expect(projectService.projectOpen).toHaveBeenCalledOnceWith(projectPath, { reason: 'reload' });
+    component.ngOnDestroy();
+  });
+
+  it('discards Coder changes when reload auto-save is disabled', async () => {
+    const { component, projectService } = createHarness();
+    component.autoSave = false;
+    await component.reload();
+    expect(projectService.save).not.toHaveBeenCalled();
+    expect(projectService.projectOpen).toHaveBeenCalledOnceWith(projectPath, { reason: 'reload', saveBeforeReload: false });
     component.ngOnDestroy();
   });
 

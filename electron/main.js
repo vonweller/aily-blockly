@@ -778,6 +778,18 @@ const {
 } = require("./window");
 const { createApplicationQuitCoordinator } = require('./application-quit');
 let libraryDependenciesRegistered = false;
+const projectLibraries = new (require('./library-dependencies').LibraryDependencies)();
+const librarySessions = new (require('./library-dependency-sessions').LibraryDependencySessions)(projectLibraries);
+
+async function runProjectLibraryOperation(operation, projectPath, request, transaction) {
+  try {
+    return await librarySessions.run(operation, projectPath, request, transaction);
+  } finally {
+    if (operation !== 'status' && !librarySessions.sessions.has(projectLibraries.root(projectPath)) && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('library-dependencies:changed', { projectPath, ...projectLibraries.status(projectPath) });
+    }
+  }
+}
 const { registerNpmHandlers, killAllNpmProcesses, killOwnerProjectNpmProcesses, getActiveNpmProcesses, beginNpmShutdown } = require("./npm");
 const { cancelProjectTaskScope } = require('./project-task-scope');
 const { registerUpdaterHandlers } = require("./updater");
@@ -1051,6 +1063,10 @@ function requestMainWindow(channel, responseChannel, payload, timeoutMs = 12000,
 async function handleCliBridgeCommand(action, payload) {
   const requestedPath = payload && typeof payload.path === 'string' ? payload.path : '';
   switch (action) {
+    case 'library-dependencies': {
+      const result = await runProjectLibraryOperation(payload.operation, payload.projectPath, payload.request, payload.transaction);
+      return { ok: true, ...result };
+    }
     case 'open': {
       if (!requestedPath) return { ok: false, message: '缺少 path 参数' };
       if (!fs.existsSync(requestedPath)) return { ok: false, message: `项目目录不存在: ${requestedPath}` };
@@ -1297,6 +1313,8 @@ function getCliBridgeStatus() {
 
 function startCliBridgeIfPossible() {
   if (cliBridge) return;
+  // Child runtimes discover this exact authenticated host, never another instance.
+  process.env.AILY_LIBRARY_HOST_PID = String(process.pid);
   try {
     cliBridge = startCliBridge({
       handleCommand: handleCliBridgeCommand,
@@ -2693,16 +2711,13 @@ function createWindow() {
   });
   registerNpmHandlers(mainWindow);
   if (!libraryDependenciesRegistered) {
-    const { LibraryDependencies } = require('./library-dependencies');
-    const libraries = new LibraryDependencies();
     // Register once; the memory belongs to the process, not a renderer generation.
     libraryDependenciesRegistered = true;
     ipcMain.handle('library-dependencies', async (event, { operation, projectPath, request }) => {
       if (!isCurrentMainRenderer(event.sender) || event.senderFrame !== event.sender.mainFrame) {
         throw new Error('Library operations require the current main frame.');
       }
-      if (!['status', 'mutate', 'patch', 'save', 'discard'].includes(operation)) throw new Error('Invalid library operation');
-      return libraries[operation](projectPath, request);
+      return runProjectLibraryOperation(operation, projectPath, request);
     });
   }
   if (!buildDeliveryAuthority) {

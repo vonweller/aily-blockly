@@ -278,7 +278,9 @@ export class DevToolComponent implements OnInit, AfterViewInit, OnDestroy {
         }
       }
 
-      await this.projectService.projectOpen(projectPath, { reason: 'reload' });
+      await this.projectService.projectOpen(projectPath, {
+        reason: 'reload', ...(this.autoSave ? {} : { saveBeforeReload: false }),
+      });
       this.loadBoardInfo();
     } catch (error) {
       console.error('Reload project failed:', error);
