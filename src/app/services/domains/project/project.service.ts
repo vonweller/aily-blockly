@@ -2107,6 +2107,13 @@ export class ProjectService {
       this.message.error(this.translate.instant('PROJECT.MODE_UNKNOWN'));
       return false;
     }
+    if (this.configService.getPreferredChatAgentRuntimeMode() !== 'coder') {
+      const status = await window['ipcRenderer'].invoke('project-companion-status', { mode: 'coder' });
+      if (status?.installed === false) {
+        await this.downloadCompanionApplication('coder');
+        return false;
+      }
+    }
     // File associations can arrive while the initial language bundle is loading.
     // TranslationService loads JSON itself before calling TranslateService.use,
     // so TranslateService.get alone may still return keys during that interval.
@@ -2187,9 +2194,17 @@ export class ProjectService {
     const result = await window['ipcRenderer'].invoke('project-companion-open', { mode: 'coder', projectPath });
     if (result?.ok === true) return true;
     if (result?.reason !== 'not_installed') throw new Error(result?.error || 'Aily Coder 启动失败');
-    // The prepared copy remains available even if Coder has not been installed yet.
-    await this.ensureProjectModeAllowed(projectPath);
+    // Coder may have been removed after the preflight check. Keep the prepared copy.
+    await this.downloadCompanionApplication('coder');
     return false;
+  }
+
+  private async downloadCompanionApplication(mode: ProjectMode): Promise<void> {
+    const result = await window['ipcRenderer'].invoke('project-companion-download', {
+      mode,
+      webUrl: this.configService.getWebUrl(),
+    });
+    if (result?.ok !== true) throw new Error(result?.error || 'Application download page could not be opened');
   }
 
   private async assertProjectCreationMode(mode: ProjectMode): Promise<void> {
@@ -2230,11 +2245,12 @@ export class ProjectService {
       nzCancelText: this.translate.instant('PROJECT.LOCK_CANCEL'),
       nzOnOk: async () => {
         try {
-          const result = await window['ipcRenderer'].invoke(
-            installed ? 'project-companion-open' : 'project-companion-download',
-            { mode, projectPath },
-          );
-          if (result?.ok !== true) throw new Error(result?.error || 'Application launch failed');
+          if (installed) {
+            const result = await window['ipcRenderer'].invoke('project-companion-open', { mode, projectPath });
+            if (result?.ok !== true) throw new Error(result?.error || 'Application launch failed');
+          } else {
+            await this.downloadCompanionApplication(mode);
+          }
           return true;
         } catch (error) {
           console.warn('Companion application action failed:', error);

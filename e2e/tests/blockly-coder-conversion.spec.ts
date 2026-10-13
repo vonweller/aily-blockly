@@ -286,6 +286,36 @@ test(`Code Viewer ${surface} icon saves the latest Blockly code, converts and ha
     await expect(button).toBeVisible(); await expect(button).toHaveAccessibleName('使用 Aily Coder 打开');
     const size=await button.boundingBox(); expect(size?.width).toBeGreaterThanOrEqual(28);
     await viewer.screenshot({path:info.outputPath(`${surface}-viewer-icon.png`)});
+    // Exercise the real viewer -> main window -> download IPC path, controlling
+    // only installed-app discovery and the final OS browser launch.
+    await app.evaluate(({ipcMain, shell})=>{
+      ipcMain.removeHandler('project-companion-status');
+      ipcMain.handle('project-companion-status',()=>({installed:false}));
+      (globalThis as any).__downloadUrls=[];
+      shell.openExternal=async url=>{ (globalThis as any).__downloadUrls.push(url); };
+    });
+    const originalRegion=await win.evaluate(()=>
+      (window as any).ng.getComponent(document.querySelector('app-header')).configService.data.region);
+    for(const [region, homepage] of [['cn','https://yiyu.pro/'],['eu','https://aily.pro/']]) {
+      await win.evaluate(region=>{
+        (window as any).ng.getComponent(document.querySelector('app-header')).configService.data.region=region;
+      },region);
+      await expect(button).toBeEnabled(); await button.click();
+      await expect.poll(()=>app.evaluate(()=> (globalThis as any).__downloadUrls.at(-1))).toBe(homepage);
+      await expect(win.locator('.project-coder-conversion-modal')).toHaveCount(0);
+      await expect(win.locator('.project-mode-mismatch-modal')).toHaveCount(0);
+      expect(existsSync(`${source}_coder`)).toBe(false);
+      expect(await app.evaluate(()=> (globalThis as any).__conversionLaunch)).toBeUndefined();
+    }
+    expect(await app.evaluate(()=> (globalThis as any).__downloadUrls)).toEqual(['https://yiyu.pro/','https://aily.pro/']);
+    await win.evaluate(region=>{
+      (window as any).ng.getComponent(document.querySelector('app-header')).configService.data.region=region;
+    },originalRegion);
+    await app.evaluate(({ipcMain})=>{
+      ipcMain.removeHandler('project-companion-status');
+      ipcMain.handle('project-companion-status',()=>({installed:true}));
+    });
+    await expect(button).toBeEnabled();
     await button.click();
     const dialog=win.locator('.project-coder-conversion-modal'); await expect(dialog).toBeVisible();
     await dialog.getByRole('button',{name:'取消',exact:true}).click();

@@ -4,7 +4,20 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const {EventEmitter} = require('node:events');
-const {openCompanionProject, companionLaunch} = require('./project-companion');
+const {openCompanionProject, companionLaunch, registerProjectCompanionIpc} = require('./project-companion');
+
+test('companion downloads open the current region homepage and reject non-web URLs', async () => {
+  const handlers = new Map();
+  const opened = [];
+  registerProjectCompanionIpc({ handle: (channel, handler) => handlers.set(channel, handler) },
+    { openExternal: async url => opened.push(url) });
+  const download = handlers.get('project-companion-download');
+  for (const webUrl of ['https://yiyu.pro', 'https://aily.pro']) {
+    assert.deepEqual(await download(null, { webUrl }), { ok: true });
+  }
+  await assert.rejects(download(null, { webUrl: 'file:///tmp/download' }), /Invalid application download URL/);
+  assert.deepEqual(opened, ['https://yiyu.pro/', 'https://aily.pro/']);
+});
 
 test('development conversion launches the current host source as Coder instead of a stale installed app', async t => {
   const project = fs.mkdtempSync(path.join(os.tmpdir(),'aily-companion-'));

@@ -9,7 +9,6 @@ const APPLICATIONS = {
   blockly: { name: 'Aily Blockly', bundleId: 'blockly.aily.pro', names: ['aily blockly', 'aily-blockly'] },
   coder: { name: 'Aily Coder', bundleId: 'coder.aily.pro', names: ['Aily Coder', 'aily-coder'] },
 };
-const DOWNLOAD_URL = 'https://aily.pro';
 
 function applicationForMode(mode) {
   if (!Object.hasOwn(APPLICATIONS, mode)) throw new Error('Invalid project mode');
@@ -172,8 +171,10 @@ function registerProjectCompanionIpc(ipcMain, shell, options = {}) {
     try { return await openCompanionProject(mode, projectPath, options); }
     catch (error) { return { ok: false, error: error.message }; }
   });
-  ipcMain.handle('project-companion-download', async () => {
-    await shell.openExternal(DOWNLOAD_URL);
+  ipcMain.handle('project-companion-download', async (_event, { webUrl } = {}) => {
+    const url = new URL(webUrl);
+    if (!['https:', 'http:'].includes(url.protocol)) throw new Error('Invalid application download URL');
+    await shell.openExternal(url.href);
     return { ok: true };
   });
 }
