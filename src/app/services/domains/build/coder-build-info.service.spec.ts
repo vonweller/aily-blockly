@@ -57,7 +57,7 @@ describe('Coder build metadata', () => {
         return [...new Uint8Array(bytes)].map(byte => byte.toString(16).padStart(2, '0')).join('');
       },
     };
-    project = { currentProjectPath: root, isAilyCodeProject: () => true, copyPackageJsonToTemp: async () => true,
+    project = { currentProjectPath: root, isAilyCodeProject: () => true,
       getProjectDependencyBlockMessage: () => undefined };
     metadata = new CoderBuildInfoService(electron);
     window['builder'] = { captureBuildSource: jasmine.createSpy('captureBuildSource').and.returnValue({ digest: 'captured' }),

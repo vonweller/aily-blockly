@@ -1,5 +1,5 @@
 import { cloneBlocklyJson } from '@domain/project/project-document/public-api';
-import { Injectable } from '@angular/core';
+import { Injectable, NgZone } from '@angular/core';
 import { BehaviorSubject, Subject, debounceTime, filter, firstValueFrom, fromEvent, map, switchMap, take, takeUntil, timer } from 'rxjs';
 import * as Blockly from 'blockly';
 import { loadBlocklyWorkspace, isBlocklyWorkspaceInteracting } from '../utils/blockly-performance';
@@ -46,6 +46,7 @@ import {
 import { captureBlocklyRootClassifier } from './blockly-root-role';
 import { captureCustomFunctionRegistration } from './blockly-custom-function-contract';
 import { BlocklyProjectRevision } from './blockly-project-revision';
+import { BlocklyProjectDirtyState } from './blockly-project-dirty-state';
 import { assertProjectLoadPreserved } from './blockly-project-clean-state';
 import { BlocklyCodePreparationInvalidatedError, BlocklyProjectCodePreparation, type PreparedBlocklyCode } from './prepared-project-code';
 import { BlocklyWorkspaceEditGate, BlocklyWorkspaceEditLease, fenceBlocklyWorkspaceInput } from './blockly-workspace-edit-lease';
@@ -148,6 +149,12 @@ interface CodeViewerPublisher {
   providedIn: 'root'
 })
 export class BlocklyService {
+  readonly projectDirtyState = new BlocklyProjectDirtyState(
+    () => this.getProjectDocument(),
+    () => this.workspace?.getUndoStack().at(-1),
+    () => this.isWorkspaceEditBlocked() || !!this.workspace && isBlocklyWorkspaceInteracting(this.workspace),
+    action => this.ngZone.runOutsideAngular(action),
+  );
   readonly projectPageHydrated = new Subject<{ before: BlocklyProjectDocument; after: BlocklyProjectDocument }>();
   private readonly projectDocumentSchemaVersion = 3;
   private readonly projectOperations = new SerialOperationQueue();
@@ -215,6 +222,7 @@ export class BlocklyService {
       this.releaseWorkspaceInputFence?.();
       this.workspaceEditGate.reset();
       this.projectRevision.invalidate();
+      this.projectDirtyState?.reset();
       this.projectCodePreparation.clear();
       this.pageReferenceContracts.clear();
     }
@@ -503,6 +511,7 @@ export class BlocklyService {
     private noticeService: NoticeService,
     private blocklyLibraryPackageService: BlocklyLibraryPackageService,
     private generatorRuntime: BlocklyGeneratorRuntimeService,
+    private ngZone: NgZone,
   ) {
     (window as any).__ailyBlockDefinitionsMap = this.blockDefinitionsMap;
     (window as any).__ailyBlockTypeToLibMap = this.blockTypeToLibMap;
@@ -1219,6 +1228,7 @@ export class BlocklyService {
   captureProjectSnapshot(owner?: BlocklyWorkspaceEditLease) {
     const document = this.getProjectDocument(owner);
     const revision = this.projectRevision.observe(document);
+    this.projectDirtyState?.observeSnapshot(this.projectRevision.documentText);
     return { document, revision, documentText: this.projectRevision.documentText };
   }
 
@@ -3039,6 +3049,14 @@ export class BlocklyService {
       scrollX: this.workspace.scrollX || 0,
       scrollY: this.workspace.scrollY || 0,
     });
+  }
+
+  notifyProjectWorkspaceChange(event: Blockly.Events.Abstract): void {
+    if (event.type === Blockly.Events.VIEWPORT_CHANGE) {
+      this.projectDirtyState.viewport(this.getActivePageId(), this.captureWorkspaceViewState());
+    } else if (!event.isUiEvent && event.type !== Blockly.Events.FINISHED_LOADING) {
+      this.projectDirtyState.edited(event.recordUndo);
+    }
   }
 
   private loadActivePageIntoWorkspace(owner?: BlocklyWorkspaceEditLease, rootOrder?: readonly string[],

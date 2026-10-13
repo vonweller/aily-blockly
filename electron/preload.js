@@ -799,6 +799,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
   npm: {
     run: (data) => ipcRenderer.invoke("npm-run", data),
   },
+  libraryDependencies: {
+    status: projectPath => ipcRenderer.invoke('library-dependencies', { operation: 'status', projectPath }),
+    mutate: (projectPath, request) => ipcRenderer.invoke('library-dependencies', { operation: 'mutate', projectPath, request }),
+    patch: (projectPath, request) => ipcRenderer.invoke('library-dependencies', { operation: 'patch', projectPath, request }),
+    save: projectPath => ipcRenderer.invoke('library-dependencies', { operation: 'save', projectPath }),
+    discard: (projectPath, request) => ipcRenderer.invoke('library-dependencies', { operation: 'discard', projectPath, request }),
+  },
   // 执行命令行命令
   cmd: {
     run: (options) => ipcRenderer.invoke('cmd-run', options),

@@ -4,6 +4,23 @@ import { CodeEditorProComponent } from './code-editor-pro.component';
 import { CodeEditorFrameComponent } from './code-editor-frame.component';
 import { CodeEditorProProjectService } from './services/code-editor-pro-project.service';
 
+describe('Coder title cached library state', () => {
+  it('uses cached libraries for title polling while preserving authoritative close checks', async () => {
+    const project: any = {hasCachedLibraryChanges:jasmine.createSpy('cached').and.returnValue(false),
+      hasUnsavedLibraryChanges:jasmine.createSpy('authoritative').and.resolveTo(false)};
+    const service = new CodeEditorProProjectService({} as any,project,{} as any);
+    const bridge = {saveAll:async()=>({ok:true}),hasUnsavedChanges:jasmine.createSpy('editors').and.resolveTo(false)};
+    service.registerPersistenceBridge('/project',bridge);
+    expect(await service.hasSavedProject('/project',true)).toBeTrue();
+    expect(project.hasUnsavedLibraryChanges).not.toHaveBeenCalled();
+    project.hasCachedLibraryChanges.and.returnValue(true);
+    expect(await service.hasSavedProject('/project',true)).toBeFalse();
+    expect(bridge.hasUnsavedChanges).toHaveBeenCalledTimes(1);
+    expect(await service.hasSavedProject('/project')).toBeTrue();
+    expect(project.hasUnsavedLibraryChanges).toHaveBeenCalledOnceWith('/project');
+  });
+});
+
 describe('Coder retained project workspaces', () => {
   let service: any;
   let originals: any;
@@ -317,7 +334,7 @@ describe('Coder retained project workspaces', () => {
     const project = {
       currentProjectPath: '/work/device-a',
       isAilyCodeProject: () => true,
-      copyPackageJsonToTemp: jasmine.createSpy('copyPackageJsonToTemp').and.resolveTo(true),
+      saveLibraryChanges: jasmine.createSpy('saveLibraryChanges').and.resolveTo(),
     };
     const persistence = new CodeEditorProProjectService(
       {
@@ -343,6 +360,5 @@ describe('Coder retained project workspaces', () => {
 
     finishHash('hash');
     expect(await save).toEqual({ success: true, path: '/work/device-a' });
-    expect(project.copyPackageJsonToTemp).toHaveBeenCalledOnceWith('/work/device-a');
   });
 });

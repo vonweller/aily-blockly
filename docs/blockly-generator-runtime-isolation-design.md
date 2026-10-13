@@ -59,7 +59,7 @@ E2E 会在 Playwright 当前运行的输出目录生成 `library-failure.png` �
 - 项目切换、同路由 query 参数复用、close 路由均改为可 await 的 SPA 生命周期。
 - 浏览器单测覆盖 Realm 共享/隔离、宿主状态与原型恢复、timer 取消、tainted Realm。
 - Electron 生产渲染层 E2E 覆盖两个真实项目连续打开和 runtime session identity 变化。
-- 库删除在依赖变更成功后同步 `.temp/package.json`，原地重建库注册层与 generator iframe runtime；编辑器、workspace 和 Router 均不重建，全程禁止 `projectOpen()`、`location.reload()` 或 Electron `webContents.reload()`。
+- 库安装/删除立即作用于 `node_modules`，根 `package.json` 在显式保存时才更新；不再创建或读取 `.temp/package.json`。依赖变更成功后原地重建库注册层与 generator iframe runtime；编辑器、workspace 和 Router 均不重建，全程禁止 `projectOpen()`、`location.reload()` 或 Electron `webContents.reload()`。
 - Electron E2E 覆盖真实项目卸载未使用库，验证 runtime session 更新、目标 generator 消失、剩余代码仍可生成，同时 Renderer、`app-blockly-editor` 与 `.blocklyBox` DOM identity 均保持不变。
 - `Blockly.getMainWorkspace()` 和 runtime global 入参使用 workspace facade 跟踪库脚本注册的 change listener；旧 session 销毁前统一解绑，避免残留回调访问 inactive Realm。
 

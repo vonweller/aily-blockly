@@ -242,7 +242,6 @@ describe('board switch project persistence', () => {
     service.application.hasActiveProjectMutation = (path: string) => registry.hasBlocking(path);
     service.projectLifecycle = new ProjectLifecycleGate();
     service.dependencyLifecycle = new ProjectDependencyLifecycle();
-    service.copyPackageJsonToTemp = async () => true;
     service.getProjectMode = () => 'blockly';
     service.boardChangeSubject = { next: jasmine.createSpy('changed') };
     service.message.warning = jasmine.createSpy('warning');

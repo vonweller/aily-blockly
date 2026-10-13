@@ -597,6 +597,7 @@ export class BlocklyLiveOperationBridgeService {
     return {
       ok: true,
       operation: 'project_abi_check',
+      unsavedLibraryChanges: await this.projectService.hasUnsavedLibraryChanges(),
       project: this.projectService.currentProjectPath,
       ...snapshot,
     };

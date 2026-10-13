@@ -777,6 +777,7 @@ const {
   beginWindowShutdown,
 } = require("./window");
 const { createApplicationQuitCoordinator } = require('./application-quit');
+let libraryDependenciesRegistered = false;
 const { registerNpmHandlers, killAllNpmProcesses, killOwnerProjectNpmProcesses, getActiveNpmProcesses, beginNpmShutdown } = require("./npm");
 const { cancelProjectTaskScope } = require('./project-task-scope');
 const { registerUpdaterHandlers } = require("./updater");
@@ -2691,6 +2692,19 @@ function createWindow() {
     canCloseMainWindow: () => applicationQuit.canClose(),
   });
   registerNpmHandlers(mainWindow);
+  if (!libraryDependenciesRegistered) {
+    const { LibraryDependencies } = require('./library-dependencies');
+    const libraries = new LibraryDependencies();
+    // Register once; the memory belongs to the process, not a renderer generation.
+    libraryDependenciesRegistered = true;
+    ipcMain.handle('library-dependencies', async (event, { operation, projectPath, request }) => {
+      if (!isCurrentMainRenderer(event.sender) || event.senderFrame !== event.sender.mainFrame) {
+        throw new Error('Library operations require the current main frame.');
+      }
+      if (!['status', 'mutate', 'patch', 'save', 'discard'].includes(operation)) throw new Error('Invalid library operation');
+      return libraries[operation](projectPath, request);
+    });
+  }
   if (!buildDeliveryAuthority) {
     const deliveryChildRoot = process.env.AILY_CHILD_PATH || path.join(__dirname, '..', 'child');
     buildDeliveryAuthority = createBuildDeliveryAuthority({
@@ -3171,6 +3185,7 @@ async function cleanupRegisteredChildProcesses() {
   beginAuthCredentialsShutdown();
 
   await Promise.allSettled([
+    require('./library-dependencies').stopLibraryDependencyWorkers(),
     killAllCmdProcesses(),
     killAllNpmProcesses(),
     killAllTerminals(),

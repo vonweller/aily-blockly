@@ -156,6 +156,76 @@ export class ProjectService {
   readonly isCoderProjectContext = false;
   private readonly coderProjectContexts = new Map<string, ProjectService>();
 
+  private readonly libraryChanges = new Map<string, any>();
+  readonly libraryChangesChanged = new Subject<void>();
+
+  private acceptLibraryStatus(projectPath: string, status: { dirty: boolean; manifest: any }): any {
+    const key = this.normalizeProjectPath(projectPath);
+    const wasDirty = this.libraryChanges.has(key);
+    if (status.dirty) this.libraryChanges.set(key, status.manifest);
+    else this.libraryChanges.delete(key);
+    if (this.isSameProjectPath(projectPath, this.currentProjectPath)) {
+      this.currentPackageData = status.manifest;
+      window['packageJson'] = status.manifest;
+    }
+    if (wasDirty !== status.dirty) this.libraryChangesChanged?.next();
+    return status.manifest;
+  }
+
+  /** UI hint from acknowledged library operations; no IPC or filesystem reads.
+   * Save/close checks still refresh the authoritative main-process status. */
+  hasCachedLibraryChanges(projectPath = this.currentProjectPath): boolean {
+    return this.libraryChanges.has(this.normalizeProjectPath(projectPath));
+  }
+
+  /** Disk remains the saved baseline; only an active library edit overlays it. */
+  getEffectivePackageText(projectPath = this.currentProjectPath): string {
+    const pending = this.libraryChanges.get(this.normalizeProjectPath(projectPath));
+    return pending ? JSON.stringify(pending) : window['fs'].readFileSync(window['path'].join(projectPath, 'package.json'), 'utf8');
+  }
+
+  async hasUnsavedLibraryChanges(projectPath = this.currentProjectPath): Promise<boolean> {
+    if (!projectPath || !window['libraryDependencies']) return false;
+    const status = await window['libraryDependencies'].status(projectPath);
+    this.acceptLibraryStatus(projectPath, status);
+    return status.dirty || status.busy;
+  }
+
+  async changeLibraries(action: 'install' | 'remove', packages: string[], localSources?: Record<string, string>): Promise<void> {
+    const projectPath = this.currentProjectPath;
+    if (!window['libraryDependencies']) throw new Error('库管理通道尚未就绪，请重新启动软件。');
+    const registry = this.configService.getNpmRegistryForProject(this.currentPackageData);
+    const options = { installLinks: false, ...(registry ? { [AILY_LINUX_NPM_SCOPE + ':registry']: registry } : {}) };
+    try {
+      this.acceptLibraryStatus(projectPath, await window['libraryDependencies'].mutate(projectPath, { action, packages, options, localSources }));
+    } catch (error) {
+      await this.hasUnsavedLibraryChanges(projectPath);
+      throw error;
+    } finally {
+      this.libraryChangesChanged?.next();
+    }
+  }
+
+  async saveLibraryChanges(projectPath = this.currentProjectPath): Promise<void> {
+    if (!projectPath || !window['libraryDependencies']) return;
+    this.acceptLibraryStatus(projectPath, await window['libraryDependencies'].save(projectPath));
+    this.libraryChangesChanged?.next();
+  }
+
+  async discardLibraryChanges(projectPath = this.currentProjectPath, reconcile = false): Promise<void> {
+    if (!projectPath || !window['libraryDependencies']) return;
+    this.acceptLibraryStatus(projectPath, await window['libraryDependencies'].discard(projectPath, { reconcile }));
+    this.libraryChangesChanged?.next();
+  }
+
+  async discardAllLibraryChanges(): Promise<void> {
+    const refresh = this.libraryChanges.has(this.normalizeProjectPath(this.currentProjectPath));
+    for (const path of new Set([this.currentProjectPath, ...this.coderProjects.map(project => project.path)].filter(Boolean))) {
+      await this.discardLibraryChanges(path);
+    }
+    if (refresh && this.getBlocklyProjectLoadStatus(this.currentProjectPath).ready) await this.rebuildBlocklyRuntimeAfterLibraryChange();
+  }
+
   /** Each open iframe and executor keeps a stable project context across tab changes. */
   getCoderProjectContext(path: string): ProjectService {
     const key = this.normalizeProjectPath(path);
@@ -1333,13 +1403,8 @@ export class ProjectService {
     if (!projectPath) {
       return;
     }
-    const packageSnapshotUpdated = await this.copyPackageJsonToTemp(projectPath);
-    if (!packageSnapshotUpdated) {
-      throw new Error(`无法同步项目依赖快照: ${projectPath}`);
-    }
-
-    const packageJsonPath = window['path'].join(projectPath, 'package.json');
-    const packageContent = window['fs'].readFileSync(packageJsonPath, 'utf8');
+    await this.getPackageJson(projectPath);
+    const packageContent = this.getEffectivePackageText(projectPath);
     const runtimeSignature = this.getBlocklyLibraryRuntimeSignature(projectPath, packageContent);
     const activeTask = this.blocklyLibraryRuntimeRebuildTask;
     if (activeTask?.path === projectPath && activeTask.runtimeSignature === runtimeSignature) {
@@ -1373,8 +1438,7 @@ export class ProjectService {
     }
 
     try {
-      const packageJsonPath = window['path'].join(projectPath, 'package.json');
-      const packageContent = window['fs'].readFileSync(packageJsonPath, 'utf8');
+      const packageContent = this.getEffectivePackageText(projectPath);
       this.blocklyLibraryRuntimeSignatures.set(
         projectPath,
         this.getBlocklyLibraryRuntimeSignature(projectPath, packageContent),
@@ -1391,8 +1455,8 @@ export class ProjectService {
       return null;
     }
 
-    const packageJsonPath = window['path'].join(projectPath, 'package.json');
-    const packageContent = window['fs'].readFileSync(packageJsonPath, 'utf8');
+    await this.getPackageJson(projectPath);
+    const packageContent = this.getEffectivePackageText(projectPath);
     const signature = this.getBlocklyLibraryRuntimeSignature(projectPath, packageContent);
 
     return this.blocklyLibraryRuntimeSignatures.get(projectPath) === signature ? sha256Hex(signature) : null;
@@ -1404,8 +1468,8 @@ export class ProjectService {
       return;
     }
 
-    const packageJsonPath = window['path'].join(projectPath, 'package.json');
-    const packageContent = window['fs'].readFileSync(packageJsonPath, 'utf8');
+    await this.getPackageJson(projectPath);
+    const packageContent = this.getEffectivePackageText(projectPath);
     const runtimeSignature = this.getBlocklyLibraryRuntimeSignature(projectPath, packageContent);
     const activeTask = this.blocklyLibraryRuntimeRebuildTask;
     if (activeTask?.path === projectPath && activeTask.runtimeSignature === runtimeSignature) {
@@ -1497,6 +1561,12 @@ export class ProjectService {
 
     // Reject before acquiring locks, closing windows, changing routes or publishing activation.
     if (!(await this.ensureProjectModeAllowed(projectPath))) return false;
+
+    if (activationReason === 'chat-tool-reload' && this.getProjectMode(projectPath) !== 'coder') {
+      // History has already restored the root manifest. Reconcile node_modules
+      // to that version, including removals, without publishing a saved edit.
+      await this.discardLibraryChanges(projectPath, true);
+    }
 
     // Coder tabs keep their iframe and in-flight operations. Activating another
     // project only changes the host projection; it does not save or recreate editors.
@@ -1754,13 +1824,10 @@ export class ProjectService {
       // Saving an inactive Coder tab is valid. Its acknowledgement must not
       // change a replacement project's status or read that project's manifest.
       if (current()) {
-        await this.copyPackageJsonToTemp(path);
+        const manifest = await this.getPackageJson();
         if (current()) {
-          const manifest = await this.getPackageJson();
-          if (current()) {
-            this.currentPackageData = manifest;
-            this.stateSubject.next('saved');
-          }
+          this.currentPackageData = manifest;
+          this.stateSubject.next('saved');
         }
       }
       return { success: true, path };
@@ -1956,6 +2023,7 @@ export class ProjectService {
         const saved = await this.save(path);
         if (!saved.success) throw new ProjectLifecycleError('PROJECT_SAVE_FAILED', `关闭项目前保存失败：${saved.error || '未知错误'}`);
       }
+      for (const project of closingPaths) await this.discardLibraryChanges(project);
       return await this.closeInternal(closingPaths);
     } finally { lease.release(); }
   }
@@ -2329,48 +2397,19 @@ export class ProjectService {
       && this.isSameProjectPath(path, this.loadingBlocklyProjectPath)
       || this.isSameProjectPath(path, this.blocklyProjectLoadFailure?.path))) return false;
 
+    if (await this.hasUnsavedLibraryChanges(path)) return true;
     return this.application.hasUnsavedBlocklyChanges();
   }
 
   // 获取当前项目的package.json
-  async getPackageJson() {
-    if (!this.currentProjectPath) {
+  async getPackageJson(projectPath = this.currentProjectPath) {
+    if (!projectPath) {
       return null;
     }
-    const packageJsonPath = `${this.currentProjectPath}/package.json`;
-    return JSON.parse(window['fs'].readFileSync(packageJsonPath, 'utf8'));
-  }
-
-  /**
-   * 主项目 package.json 是配置的唯一事实源；普通打开只刷新 temp 镜像。
-   * 旧镜像不能撤销 npm 安装或显式事务恢复，node_modules 仍由 npm 维护。
-   */
-  async syncPackageJsonWithTemp(projectPath: string): Promise<void> {
-    await this.copyPackageJsonToTemp(projectPath);
-  }
-
-  /** 打开或保存时刷新 Blockly 的 package.json 镜像；Coder 不创建 .temp。 */
-  async copyPackageJsonToTemp(projectPath: string): Promise<boolean> {
-    if (this.isAilyCodeProject(projectPath)) {
-      return true;
+    if (window['libraryDependencies']) {
+      return this.acceptLibraryStatus(projectPath, await window['libraryDependencies'].status(projectPath));
     }
-    const mainPackagePath = window['path'].join(projectPath, 'package.json');
-    const tempDir = window['path'].join(projectPath, '.temp');
-    const tempPackagePath = window['path'].join(tempDir, 'package.json');
-    if (!window['fs'].existsSync(mainPackagePath)) {
-      return false;
-    }
-    try {
-      if (!window['fs'].existsSync(tempDir)) {
-        window['fs'].mkdirSync(tempDir, { recursive: true });
-      }
-      const mainContent = window['fs'].readFileSync(mainPackagePath, 'utf8');
-      window['fs'].writeFileSync(tempPackagePath, mainContent);
-      return true;
-    } catch (error) {
-      console.warn('复制 package.json 到 temp 失败:', error);
-      return false;
-    }
+    return JSON.parse(this.getEffectivePackageText(projectPath));
   }
 
   async setPackageJson(data: any) {
@@ -2390,6 +2429,11 @@ export class ProjectService {
       data = { ...currentPackageJson, ...data };
     }
 
+    if (this.libraryChanges.has(this.normalizeProjectPath(this.currentProjectPath))) {
+      this.acceptLibraryStatus(this.currentProjectPath, await window['libraryDependencies'].patch(this.currentProjectPath, data));
+      this.libraryChangesChanged?.next();
+      return;
+    }
     const packageJsonPath = `${this.currentProjectPath}/package.json`;
 
     try {
@@ -2397,19 +2441,6 @@ export class ProjectService {
     } catch (error) {
       console.error('写入package.json失败:', error);
       throw error;
-    }
-
-    if (!this.isAilyCodeProject(this.currentProjectPath)) {
-      const tempPackageJsonPath = window['path'].join(this.currentProjectPath, '.temp', 'package.json');
-      try {
-        const tempDir = window['path'].dirname(tempPackageJsonPath);
-        if (!window['fs'].existsSync(tempDir)) {
-          window['fs'].mkdirSync(tempDir, { recursive: true });
-        }
-        this.writePackageJsonFile(tempPackageJsonPath, data);
-      } catch (error) {
-        console.warn('同步 package.json 到 temp 失败:', error);
-      }
     }
 
     // 更新当前packageData
@@ -3729,15 +3760,13 @@ export class ProjectService {
     }
   }
 
-  /** package.json watcher 不活跃时，使用原流程完成旧开发板卸载、temp 同步和项目重载。 */
+  /** package.json watcher 不活跃时，使用原流程完成旧开发板卸载和项目重载。 */
   private async finishBoardSwitchWithoutPackageWatcher(currentBoardModule: string | undefined, nextBoardModule: string, projectPath = this.currentProjectPath): Promise<void> {
     if (currentBoardModule && currentBoardModule !== nextBoardModule) {
       console.log('卸载当前开发板模块:', currentBoardModule);
       this.application.updateFooterState({ state: 'doing', text: this.translate.instant('PROJECT.UNINSTALLING_CURRENT_BOARD') });
       await this.cmdService.runAsyncChecked(`npm uninstall ${currentBoardModule}`, projectPath);
     }
-    if (this.currentProjectPath !== projectPath) throw new Error('切换开发板期间项目已改变');
-    await this.copyPackageJsonToTemp(projectPath);
     if (this.currentProjectPath !== projectPath) throw new Error('切换开发板期间项目已改变');
 
     if (this.isAilyCodeProject()) {

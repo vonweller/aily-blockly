@@ -313,6 +313,32 @@ export async function openBlocklyProject(win: Page, projectPath: string): Promis
   await navigate(win, `/main/blockly-editor?path=${encoded}`);
 }
 
+export async function readAilyHostOperation(
+  app: ElectronApplication,
+  operation: string,
+  projectPath: string,
+  params: Record<string, unknown> = {},
+  timeoutMs = 12_000,
+): Promise<Record<string, any>> {
+  const discoveryPath = path.join(os.homedir(), '.aily-blockly', 'cli-bridge', `${app.process().pid}.json`);
+  const connection = JSON.parse(await readFile(discoveryPath, 'utf8'));
+  const response = await app.context().request.post(`http://127.0.0.1:${connection.port}/command`, {
+    data: {
+      token: connection.token,
+      action: 'blockly-live-operation',
+      operation,
+      path: projectPath,
+      params,
+    },
+    timeout: timeoutMs,
+  });
+  const status = await response.json();
+  if (!response.ok() || status.ok !== true) {
+    throw new Error(`[e2e] ${operation} 失败：${status.message || `HTTP ${response.status()}`}`);
+  }
+  return status;
+}
+
 export const test = base.extend<AilyFixtures>({
   electronApp: async ({}, use) => {
     const launched = await launchAilyElectron();
