@@ -216,11 +216,11 @@ export class ProjectService {
     this.libraryChangesChanged?.next();
   }
 
-  async discardLibraryChanges(projectPath = this.currentProjectPath, reconcile = false): Promise<void> {
+  async discardLibraryChanges(projectPath = this.currentProjectPath, reconcile = false, historyRestored = false): Promise<void> {
     if (!projectPath || !window['libraryDependencies']) return;
     const restoreCoderSources = !reconcile && this.hasCachedLibraryChanges(projectPath)
       && this.getProjectMode(projectPath) === 'coder';
-    this.acceptLibraryStatus(projectPath, await window['libraryDependencies'].discard(projectPath, { reconcile }));
+    this.acceptLibraryStatus(projectPath, await window['libraryDependencies'].discard(projectPath, { reconcile, historyRestored }));
     if (restoreCoderSources) await this.application.materializeCoderProjectLibraries(projectPath);
     this.libraryChangesChanged?.next();
   }

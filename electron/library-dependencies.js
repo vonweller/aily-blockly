@@ -14,10 +14,11 @@ let shuttingDown = false;
 /** Process-owned memory survives a renderer refresh so reopen can restore the
  * saved dependency tree. package.json is authoritative outside this edit session. */
 class LibraryDependencies {
-  constructor({ run = runDependencyWorker } = {}) {
+  constructor({ run = runDependencyWorker, trashLocalDirectory } = {}) {
     this.run = run;
     this.states = new Map();
     this.queues = new Map();
+    this.locals = new (require('./library-local-changes').LocalLibraryChanges)({ trash: trashLocalDirectory });
   }
 
   root(project) { return fs.realpathSync(project); }
@@ -43,7 +44,7 @@ class LibraryDependencies {
 
   status(project) {
     const root = this.root(project);
-    return { dirty: this.states.has(root), busy: this.queues.has(root), manifest: this.effective(root) };
+    return { dirty: this.states.has(root) || this.locals.dirty(root), busy: this.queues.has(root), manifest: this.effective(root) };
   }
 
   queue(project, operation) {
@@ -140,12 +141,22 @@ class LibraryDependencies {
     });
   }
 
+  removeLocal(project, { folderName }) {
+    return this.queue(project, root => this.locked(root, async () => {
+      await this.locals.remove(root, folderName);
+      return this.status(root);
+    }));
+  }
+
   restore(project, snapshot) {
     return this.queue(project, root => this.locked(root, async () => {
       const disk = this.read(root);
-      await this.run(root, { ...this.plan(disk, snapshot.manifest), options: snapshot.state?.options });
+      if (!same(this.states.get(root), snapshot.state)) {
+        await this.run(root, { ...this.plan(disk, snapshot.manifest), options: snapshot.state?.options });
+      }
       if (snapshot.state) this.states.set(root, clone(snapshot.state));
       else this.states.delete(root);
+      await this.locals.restore(root, snapshot.locals);
       return this.status(root);
     }));
   }
@@ -153,7 +164,7 @@ class LibraryDependencies {
   save(project) {
     return this.queue(project, root => this.locked(root, async assertCurrent => {
       const state = this.states.get(root);
-      if (!state) return this.status(root);
+      if (!state) { this.locals.save(root); return this.status(root); }
       const disk = this.read(root), effective = this.effective(root);
       // npm owns lockfile creation and resolution. Only this explicit save is
       // permitted to write the root manifest/lockfile; no installation is deferred.
@@ -169,18 +180,24 @@ class LibraryDependencies {
       try { fs.writeFileSync(temp, JSON.stringify(saved, null, 2) + '\n', { flag: 'wx' }); assertCurrent(); fs.renameSync(temp, path.join(root, 'package.json')); }
       finally { fs.rmSync(temp, { force: true }); }
       this.states.delete(root);
+      this.locals.save(root);
       return this.status(root);
     }));
   }
 
-  discard(project, { reconcile = false } = {}) {
+  discard(project, { reconcile = false, historyRestored = false } = {}) {
     return this.queue(project, root => this.locked(root, async () => {
       const state = this.states.get(root);
-      if (!state && !reconcile) return this.status(root);
+      if (historyRestored) this.locals.save(root);
+      if (!state && !reconcile) {
+        await this.locals.restore(root);
+        return this.status(root);
+      }
       // Read the CURRENT saved manifest: Chat restore/external edits are never
       // overwritten with an old in-memory baseline.
       await this.run(root, { add: [], remove: [], options: state?.options });
       this.states.delete(root);
+      await this.locals.restore(root);
       return this.status(root);
     }));
   }

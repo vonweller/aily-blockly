@@ -335,7 +335,7 @@ export class CodeEditorFrameComponent implements OnInit, OnDestroy, AfterViewIni
     );
     this.componentSubscriptions.add(this.projectService.projectActivation$.subscribe(event => {
       if (event.path === this.projectPath && (event.reason === 'reload' || event.reason === 'chat-tool-reload')) {
-        void this.bootstrap(this.projectPath);
+        void this.bootstrap(this.projectPath, event.reason === 'chat-tool-reload');
       }
     }));
     window.addEventListener('message', this.coderNativeFsBridgeListener);
@@ -467,7 +467,7 @@ export class CodeEditorFrameComponent implements OnInit, OnDestroy, AfterViewIni
   /**
    * 先 loadProject 设置 currentProjectPath，再安装依赖；最后启动 iframe（避免 installBoardDeps 读错工程路径）。
    */
-  private async bootstrap(projectPath: string) {
+  private async bootstrap(projectPath: string, historyRestored = false) {
     const generation = ++this.coderBootstrapGeneration;
     let session: ProjectDependencySession;
     try {
@@ -491,7 +491,7 @@ export class CodeEditorFrameComponent implements OnInit, OnDestroy, AfterViewIni
         if (!isCurrent()) return;
         // Reopening (including a renderer refresh / Chat history restore) uses
         // the saved manifest. Reify also repairs an unsaved uninstall on restart.
-        await this.projectService.discardLibraryChanges(resolved, true);
+        await this.projectService.discardLibraryChanges(resolved, true, historyRestored);
         if (!isCurrent()) return;
         await this.loadProject(resolved, session);
         if (!isCurrent()) return;

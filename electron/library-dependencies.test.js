@@ -20,7 +20,7 @@ async function fixture(t) {
   await runDependencyWorker(root, { save: true });
   await runDependencyWorker(root, {});
   const installed = () => fs.readdirSync(path.join(root, 'node_modules')).filter(name => !name.startsWith('.')).sort();
-  const api = new LibraryDependencies();
+  const api = new LibraryDependencies({ trashLocalDirectory: target => fs.promises.rm(target, { recursive: true }) });
   const install = name => api.mutate(root, { action: 'install', packages: [`test-${name === 'c2' ? 'c' : name}@file:local-libraries/${name}`] });
   const remove = name => api.mutate(root, { action: 'remove', packages: [`test-${name}`] });
   return { root, read, write, installed, api, install, remove };
@@ -44,6 +44,39 @@ test('Coder source preparation holds saves, and a failed operation restores the 
   assert.equal(f.api.status(f.root).dirty, false);
   assert.deepEqual(Object.keys(JSON.parse(f.read('package.json')).dependencies).sort(), ['test-a', 'test-b', 'test-c']);
   await assert.rejects(sessions.run('mutate', f.root, { action: 'remove', packages: ['test-a'] }, transaction), /expired/);
+});
+
+test('local and legacy Coder library removal restores bytes without draft directories', async t => {
+  const f = await fixture(t), sessions = new LibraryDependencySessions(f.api);
+  const directory = name => path.join(f.root, 'sketch/libraries', name);
+  for (const name of ['UserLibrary', 'LegacyLibrary']) {
+    fs.mkdirSync(path.join(directory(name), 'src'), { recursive: true });
+    fs.writeFileSync(path.join(directory(name), 'src/data.bin'), Buffer.from([0, 255, 17]));
+    fs.writeFileSync(path.join(directory(name), 'library.properties'), `name=${name}\nversion=1.0.0`);
+  }
+  const disk = f.read('package.json'), lock = f.read('package-lock.json');
+  await sessions.run('removeLocal', f.root, { folderName: 'UserLibrary' });
+  assert.equal(f.api.status(f.root).dirty, true);
+  await assert.rejects(sessions.run('begin', f.root, { requireClean: true }), /LIBRARY_CHANGES_UNSAVED/);
+  const { transaction } = await sessions.run('begin', f.root);
+  await sessions.run('removeLocal', f.root, { folderName: 'LegacyLibrary' }, transaction);
+  await sessions.run('abort', f.root, undefined, transaction);
+  assert.equal(fs.existsSync(directory('UserLibrary')), false);
+  assert.equal(fs.existsSync(directory('LegacyLibrary')), true);
+  await f.api.discard(f.root, { reconcile: true });
+  assert.deepEqual(fs.readFileSync(path.join(directory('UserLibrary'), 'src/data.bin')), Buffer.from([0, 255, 17]));
+  assert.equal(f.api.status(f.root).dirty, false);
+  await f.api.removeLocal(f.root, { folderName: 'LegacyLibrary' });
+  await f.api.save(f.root);
+  await f.api.discard(f.root, { reconcile: true });
+  assert.equal(fs.existsSync(directory('LegacyLibrary')), false);
+  assert.equal(f.read('package.json'), disk);
+  assert.equal(f.read('package-lock.json'), lock);
+  assert.equal(fs.existsSync(path.join(f.root, '.temp')), false);
+  await assert.rejects(f.api.removeLocal(f.root, { folderName: '../UserLibrary' }), /Invalid/);
+  fs.symlinkSync(directory('UserLibrary'), directory('LinkedLibrary'), 'dir');
+  await assert.rejects(f.api.removeLocal(f.root, { folderName: 'LinkedLibrary' }), /links/);
+  assert.equal(fs.existsSync(directory('UserLibrary')), true);
 });
 
 test('Coder metadata-only edit and expired child transaction can be discarded without manifest backups', async t => {

@@ -31,7 +31,7 @@ describe('CodeEditorFrameComponent dependency preparation', () => {
       component.bootstrap('/project').then(() => { complete = true; });
       flushMicrotasks();
       expect(component.initCoderEmbed).toHaveBeenCalled();
-      expect(component.projectService.discardLibraryChanges).toHaveBeenCalledOnceWith('/project', true);
+      expect(component.projectService.discardLibraryChanges).toHaveBeenCalledOnceWith('/project', true, false);
       expect(component.setupBuildOutputsWatch).toHaveBeenCalledOnceWith('/project');
       expect(lifecycle.isBusy('/project')).toBeTrue();
       expect(complete).toBeFalse();

@@ -29,6 +29,7 @@ class LibraryDependencySessions {
           throw new Error('LIBRARY_CHANGES_UNSAVED: 请先保存或放弃手动库变更。');
         }
         session.snapshot = JSON.parse(JSON.stringify({ manifest: this.libraries.effective(root), state: this.libraries.states.get(root) }));
+        session.snapshot.locals = this.libraries.locals.snapshot(root);
         session.timer = setTimeout(() => {
           void this.run('abort', root, undefined, session.token).catch(() => {});
         }, this.timeoutMs);
@@ -43,14 +44,15 @@ class LibraryDependencySessions {
       session.closing = true;
       try {
         await this.libraries.queues.get(root)?.catch(() => {});
-        if (operation === 'abort' && JSON.stringify(this.libraries.states.get(root)) !== JSON.stringify(session.snapshot.state)) {
+        if (operation === 'abort' && (JSON.stringify(this.libraries.states.get(root)) !== JSON.stringify(session.snapshot.state)
+          || this.libraries.locals.snapshot(root).size !== session.snapshot.locals.size)) {
           await this.libraries.restore(root, session.snapshot);
         }
       } finally { this.finish(root, session); }
       return this.libraries.status(root);
     }
-    if (!['mutate', 'patch', 'save', 'discard'].includes(operation)) throw new Error('Invalid library operation');
-    if (token && !['mutate', 'patch'].includes(operation)) throw new Error('Invalid transaction operation');
+    if (!['mutate', 'patch', 'removeLocal', 'save', 'discard'].includes(operation)) throw new Error('Invalid library operation');
+    if (token && !['mutate', 'patch', 'removeLocal'].includes(operation)) throw new Error('Invalid transaction operation');
     if (session && !token) {
       await session.done;
       return this.run(operation, root, request);
