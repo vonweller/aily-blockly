@@ -392,8 +392,16 @@ nz-sider {
     color: inherit !important;
   }
 
+  .blocklyMenuItemCheckbox,
   .goog-menuitem-checkbox {
-    display: none;
+    display: none !important;
+  }
+
+  .blocklyMenuSeparator {
+    height: 1px;
+    margin: 5px 13px;
+    border: 0;
+    background-color: var(--aily-border-subtle);
   }
 
   // 底部/顶部小箭头与容器同色
