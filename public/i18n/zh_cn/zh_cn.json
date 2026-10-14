@@ -1085,6 +1085,7 @@
             "BUSY_RETRY_LATER": "{{message}}，请稍后再试",
             "BUSY_WAIT": "{{message}}，请稍后",
             "PREPARING_TITLE": "编译准备中",
+            "PRECOMPILE_COMPLETE_TITLE": "预处理完成",
             "PRECOMPILE_RUNNING": "预编译正在运行",
             "PRECOMPILE_FAILED_TITLE": "预编译失败",
             "PRECOMPILE_FAILED_DETAIL": "依赖分析时发生错误，请查看日志了解详情",
@@ -1184,6 +1185,14 @@
         "NO_TUTORIAL_PROVIDED": "库作者未提供教程"
     },
     "PROJECT": {
+      "OPEN_IN_CODER": "使用 Aily Coder 打开",
+      "CONVERT_CODER_TITLE": "转换为 Coder 项目",
+      "CONVERT_CODER_CONTENT": "此文件属于 Blockly 项目。将创建 Coder 副本并安装依赖；副本可能无法再使用积木编辑。原项目保留。",
+      "CONVERT_CODER_BUTTON": "转换并打开",
+      "CONVERT_CODER_FAILED": "转换失败：{{error}}",
+      "CONVERT_CODER_INSTALLING": "正在安装 Coder 项目依赖",
+      "CONVERT_CODER_DEPENDENCIES_FAILED": "依赖准备失败，请检查安装日志后重试",
+      "CONVERT_CODER_OPEN_FAILED": "Coder 项目已保存至 {{path}}，请使用 Aily Coder 打开。",
       "MODE_UNKNOWN": "无法识别项目类型，请选择有效的 Aily Blockly 或 Aily Coder 项目。",
       "MODE_CREATE_RESTRICTED": "当前 {{application}} 模式不能创建此类项目，请使用 {{targetApplication}} 创建。",
       "MODE_MISMATCH_TITLE": "项目模式不匹配",

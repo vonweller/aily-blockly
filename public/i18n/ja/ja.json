@@ -941,6 +941,7 @@
             "BUSY_RETRY_LATER": "{{message}}。しばらくしてから再試行してください",
             "BUSY_WAIT": "{{message}}。しばらくお待ちください",
             "PREPARING_TITLE": "ビルドを準備中",
+            "PRECOMPILE_COMPLETE_TITLE": "Preprocessing complete",
             "PRECOMPILE_RUNNING": "プリビルドを実行中",
             "PRECOMPILE_FAILED_TITLE": "プリビルドに失敗しました",
             "PRECOMPILE_FAILED_DETAIL": "依存関係の解析中にエラーが発生しました。詳細はログを確認してください。",
@@ -1040,6 +1041,14 @@
         "NO_TUTORIAL_PROVIDED": "ライブラリ作者がチュートリアルを提供していません"
     },
     "PROJECT": {
+      "OPEN_IN_CODER": "Open in Aily Coder",
+      "CONVERT_CODER_TITLE": "Convert to a Coder project",
+      "CONVERT_CODER_CONTENT": "This file belongs to a Blockly project. A Coder copy will be created with its dependencies. The copy may no longer support block editing. The original project will be kept.",
+      "CONVERT_CODER_BUTTON": "Convert and open",
+      "CONVERT_CODER_FAILED": "Conversion failed: {{error}}",
+      "CONVERT_CODER_INSTALLING": "Installing Coder project dependencies",
+      "CONVERT_CODER_DEPENDENCIES_FAILED": "Dependency preparation failed. Check the installation log and try again.",
+      "CONVERT_CODER_OPEN_FAILED": "The Coder project was saved to {{path}}. Open it with Aily Coder.",
       "MODE_UNKNOWN": "プロジェクトの種類を識別できません。有効な Aily Blockly または Aily Coder プロジェクトを選択してください。",
       "MODE_CREATE_RESTRICTED": "現在の {{application}} モードではこの種類のプロジェクトを作成できません。{{targetApplication}} を使用してください。",
       "MODE_MISMATCH_TITLE": "プロジェクトモードが一致しません",

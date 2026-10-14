@@ -941,6 +941,7 @@
             "BUSY_RETRY_LATER": "{{message}}، يرجى المحاولة لاحقًا",
             "BUSY_WAIT": "{{message}}، يرجى الانتظار",
             "PREPARING_TITLE": "جاري تجهيز البناء",
+            "PRECOMPILE_COMPLETE_TITLE": "Preprocessing complete",
             "PRECOMPILE_RUNNING": "التحضير للبناء قيد التشغيل",
             "PRECOMPILE_FAILED_TITLE": "فشل التحضير للبناء",
             "PRECOMPILE_FAILED_DETAIL": "حدث خطأ أثناء تحليل التبعيات. راجع السجل للتفاصيل.",
@@ -1040,6 +1041,14 @@
         "NO_TUTORIAL_PROVIDED": "لم يقدم مؤلف المكتبة أي دليل تعليمي"
     },
     "PROJECT": {
+      "OPEN_IN_CODER": "Open in Aily Coder",
+      "CONVERT_CODER_TITLE": "Convert to a Coder project",
+      "CONVERT_CODER_CONTENT": "This file belongs to a Blockly project. A Coder copy will be created with its dependencies. The copy may no longer support block editing. The original project will be kept.",
+      "CONVERT_CODER_BUTTON": "Convert and open",
+      "CONVERT_CODER_FAILED": "Conversion failed: {{error}}",
+      "CONVERT_CODER_INSTALLING": "Installing Coder project dependencies",
+      "CONVERT_CODER_DEPENDENCIES_FAILED": "Dependency preparation failed. Check the installation log and try again.",
+      "CONVERT_CODER_OPEN_FAILED": "The Coder project was saved to {{path}}. Open it with Aily Coder.",
       "MODE_UNKNOWN": "نوع المشروع غير معروف. اختر مشروع Aily Blockly أو Aily Coder صالحًا.",
       "MODE_CREATE_RESTRICTED": "لا يمكن لوضع {{application}} الحالي إنشاء هذا النوع من المشاريع. استخدم {{targetApplication}}.",
       "MODE_MISMATCH_TITLE": "وضع المشروع غير متوافق",

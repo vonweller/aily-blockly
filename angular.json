@@ -222,6 +222,19 @@
                 "src/app/editors/blockly-editor/blockly-editor-load.spec.ts",
                 "src/app/pages/playground/example-list/example-list-import.spec.ts"
               ]
+            },
+            "coder-board-menu": {
+              "tsConfig": "tsconfig.coder-board-menu.spec.json",
+              "include": [
+                "src/app/integrations/coder/board-config/*.spec.ts",
+                "src/app/integrations/coder/coder-board-config.service.spec.ts",
+                "src/app/integrations/coder/coder-project-runtime.service.spec.ts",
+                "src/app/services/domains/project/project-coder-menu.spec.ts",
+                "src/app/services/domains/project/project-sdk-load.spec.ts",
+                "src/app/main-window/components/header/header-partition-manager.spec.ts",
+                "src/app/editors/code-editor-pro/code-editor-pro-workspace.spec.ts",
+                "src/app/main-window/components/header/header-board-menu.spec.ts"
+              ]
             }
           }
         }

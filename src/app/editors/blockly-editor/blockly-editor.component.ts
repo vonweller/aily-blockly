@@ -424,17 +424,19 @@ export class BlocklyEditorComponent implements OnInit, OnDestroy {
       projectService: this.projectService,
     });
 
-    for (let index = 0; index < libraryModuleList.length; index++) {
-      const libPackageName = libraryModuleList[index];
-      this.uiService.updateFooterState({
-        state: 'doing',
-        text: this.translate.instant('BLOCKLY_EDITOR.LOADING_LIB', {
-          name: libPackageName,
-        }),
-      });
-      await this.blocklyService.loadLibrary(libPackageName, projectPath);
-      assertCurrent();
-    }
+    await this.blocklyService.withToolboxRefreshBatch(async () => {
+      for (let index = 0; index < libraryModuleList.length; index++) {
+        const libPackageName = libraryModuleList[index];
+        this.uiService.updateFooterState({
+          state: 'doing',
+          text: this.translate.instant('BLOCKLY_EDITOR.LOADING_LIB', {
+            name: libPackageName,
+          }),
+        });
+        await this.blocklyService.loadLibrary(libPackageName, projectPath);
+        assertCurrent();
+      }
+    });
     this.toolboxReadyProjectPath = projectPath;
     // 5. 加载project.abi数据
     this.uiService.updateFooterState({
@@ -473,7 +475,8 @@ export class BlocklyEditorComponent implements OnInit, OnDestroy {
     }
     const loadLease = this.blocklyService.acquireWorkspaceEditLease();
     try {
-      this.blocklyService.loadProjectDocument(projectDocument, false, loadLease);
+      await this.ngZone.runOutsideAngular(() =>
+        this.blocklyService.loadProjectDocumentForOpen(projectDocument, loadLease, assertCurrent));
       // Comments settle after rendering. Keep queued pointer/keyboard input out
       // of this frame gap: a drag can detach a child before /roots admission.
       await this.waitForNextFrame(session.signal);

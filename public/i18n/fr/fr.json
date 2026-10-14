@@ -941,6 +941,7 @@
             "BUSY_RETRY_LATER": "{{message}}, veuillez réessayer plus tard",
             "BUSY_WAIT": "{{message}}, veuillez patienter",
             "PREPARING_TITLE": "Préparation de la compilation",
+            "PRECOMPILE_COMPLETE_TITLE": "Preprocessing complete",
             "PRECOMPILE_RUNNING": "La précompilation est en cours",
             "PRECOMPILE_FAILED_TITLE": "Échec de la précompilation",
             "PRECOMPILE_FAILED_DETAIL": "Une erreur est survenue pendant l’analyse des dépendances. Consultez le journal pour plus de détails.",
@@ -1040,6 +1041,14 @@
         "NO_TUTORIAL_PROVIDED": "L'auteur de la bibliothèque n'a pas fourni de tutoriel"
     },
     "PROJECT": {
+      "OPEN_IN_CODER": "Open in Aily Coder",
+      "CONVERT_CODER_TITLE": "Convert to a Coder project",
+      "CONVERT_CODER_CONTENT": "This file belongs to a Blockly project. A Coder copy will be created with its dependencies. The copy may no longer support block editing. The original project will be kept.",
+      "CONVERT_CODER_BUTTON": "Convert and open",
+      "CONVERT_CODER_FAILED": "Conversion failed: {{error}}",
+      "CONVERT_CODER_INSTALLING": "Installing Coder project dependencies",
+      "CONVERT_CODER_DEPENDENCIES_FAILED": "Dependency preparation failed. Check the installation log and try again.",
+      "CONVERT_CODER_OPEN_FAILED": "The Coder project was saved to {{path}}. Open it with Aily Coder.",
       "MODE_UNKNOWN": "Type de projet inconnu. Sélectionnez un projet Aily Blockly ou Aily Coder valide.",
       "MODE_CREATE_RESTRICTED": "Le mode actuel de {{application}} ne peut pas créer ce type de projet. Utilisez {{targetApplication}}.",
       "MODE_MISMATCH_TITLE": "Mode de projet incompatible",
