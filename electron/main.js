@@ -2771,6 +2771,8 @@ function createWindow() {
   registerProbeRsHandlers(mainWindow);
   registerBleHandlers();
   registerSubappManagerHandlers(() => mainWindow, {
+    isCoderProjectOpen: () => getBuildProduct() === 'coder'
+      && !!(projectContextState.workspace || heldProjectLockNormalized || coderOpenProjects.length),
     canMutateSharedTree: () => !hasOtherRunningInstances(),
     getRunningSubappConfig,
     forceStopChildToolByCatalogId,
