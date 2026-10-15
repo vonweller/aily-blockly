@@ -64,8 +64,19 @@ export class NativeCandidateWorkspace {
     const block = this.owned(operation.id, () => this.workspace.newBlock(operation.type, operation.id));
     this.assertClean();
     if (Object.hasOwn(operation, 'extraState')) {
-      if (typeof block.loadExtraState !== 'function') throw new Error('Block does not support extraState.');
-      this.owned(block.id, () => block.loadExtraState!(structuredClone(request.extraState))); this.assertClean();
+      this.owned(block.id, () => {
+        if (typeof block.loadExtraState === 'function') {
+          block.loadExtraState(structuredClone(request.extraState));
+        } else if (typeof block.domToMutation === 'function') {
+          // Blockly serializes legacy mutators as XML strings in extraState.
+          // Use the same native loader; never discard state or guess JSON-to-XML mappings.
+          if (typeof request.extraState !== 'string') throw new Error(`Block ${operation.type} requires XML mutation state.`);
+          block.domToMutation(this.native.utils.xml.textToDom(request.extraState));
+        } else {
+          throw new Error(`Block ${operation.type} does not support extraState.`);
+        }
+      });
+      this.assertClean();
     }
     for (const field of operation.fields) this.field(block, field.name, field.value);
     return block;

@@ -1,6 +1,6 @@
 import { Injectable, Injector } from '@angular/core';
 import { ActionService, UiService } from '@core/app-shell/public-api';
-import { NpmService } from '@domain/dependencies/public-api';
+import { DEPENDENCY_APPLICATION_PORT, NpmService } from '@domain/dependencies/public-api';
 import {
   BlocklyLibraryRuntimeRebuildInput,
   ProjectApplicationPort,
@@ -30,6 +30,10 @@ export class ProjectApplicationAdapter implements ProjectApplicationPort {
 
   updateFooterState(state: { state: string; text: string; timeout?: number }): void {
     this.uiService.updateFooterState(state);
+  }
+
+  materializeCoderProjectLibraries(projectPath: string): Promise<void> {
+    return this.injector.get(DEPENDENCY_APPLICATION_PORT).materializeCoderProjectLibraries(projectPath);
   }
 
   closeTerminal(): void {

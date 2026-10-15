@@ -953,6 +953,7 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
       // 设置全局工作区引用，供 editBlockTool 使用
       (window as any)['blocklyWorkspace'] = this.workspace;
       this.workspace.addChangeListener((event: any) => {
+        this.blocklyService.notifyProjectWorkspaceChange(event);
         this.handleProjectBreakpointWorkspaceEvent(event);
         this.requestCodeGeneration(event);
         // 工作区变更时同步 Minimap（含 AI 批量修改 blocks 的场景）

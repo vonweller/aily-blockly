@@ -258,6 +258,7 @@ export class CodeEditorFrameComponent implements OnInit, OnDestroy, AfterViewIni
   private readonly componentSubscriptions = new Subscription();
   /** 内嵌 Coder nativeFsWatchStart 注册的宿主 fs.watch 句柄 */
   private coderEmbedFsWatchers = new Map<number, () => void>();
+  private coderEmbedFsWatchRoots = new Map<number, string>();
   private coderEmbedFsWatchSeq = 0;
   /** Windows 原子 rename 的稳定态重发定时器（按 watcher + 文件合并）。 */
   private coderEmbedFsWatchSettleTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -311,6 +312,15 @@ export class CodeEditorFrameComponent implements OnInit, OnDestroy, AfterViewIni
     this.npmService = session.injector.get(NpmService);
     this.topBuilderService = session.injector.get(TopBuilderService);
     this.proProject.registerPersistenceBridge(this.projectPath, this.coderPersistenceBridge);
+    this.componentSubscriptions.add(this.projectService.libraryChangesChanged.subscribe(() => {
+      const manifestPath = window['path'].join(this.projectPath, 'package.json');
+      for (const [watchId, root] of this.coderEmbedFsWatchRoots) {
+        const relative = window['path'].relative(root, manifestPath);
+        if (!relative.startsWith('..') && !window['path'].isAbsolute(relative)) {
+          this.pushCoderNativeFsWatchEvent(watchId, { eventType: 'change', filename: relative || 'package.json' });
+        }
+      }
+    }));
     this.unregisterCoderEditorUpdateClient = this.coderEditorUpdates.registerClient({
       prepareForUpdate: async () => {
         await this.proProject.saveAll(this.projectPath);
@@ -325,7 +335,7 @@ export class CodeEditorFrameComponent implements OnInit, OnDestroy, AfterViewIni
     );
     this.componentSubscriptions.add(this.projectService.projectActivation$.subscribe(event => {
       if (event.path === this.projectPath && (event.reason === 'reload' || event.reason === 'chat-tool-reload')) {
-        void this.bootstrap(this.projectPath);
+        void this.bootstrap(this.projectPath, event.reason === 'chat-tool-reload');
       }
     }));
     window.addEventListener('message', this.coderNativeFsBridgeListener);
@@ -457,7 +467,7 @@ export class CodeEditorFrameComponent implements OnInit, OnDestroy, AfterViewIni
   /**
    * 先 loadProject 设置 currentProjectPath，再安装依赖；最后启动 iframe（避免 installBoardDeps 读错工程路径）。
    */
-  private async bootstrap(projectPath: string) {
+  private async bootstrap(projectPath: string, historyRestored = false) {
     const generation = ++this.coderBootstrapGeneration;
     let session: ProjectDependencySession;
     try {
@@ -478,6 +488,10 @@ export class CodeEditorFrameComponent implements OnInit, OnDestroy, AfterViewIni
         this.coderEmbedWorkspaceRoot = resolved;
         if (this.active) this.aiCoderDiffBridge.setWorkspaceRoot(resolved);
         await this.ensureProjectPackageJsonExists(resolved);
+        if (!isCurrent()) return;
+        // Reopening (including a renderer refresh / Chat history restore) uses
+        // the saved manifest. Reify also repairs an unsaved uninstall on restart.
+        await this.projectService.discardLibraryChanges(resolved, true, historyRestored);
         if (!isCurrent()) return;
         await this.loadProject(resolved, session);
         if (!isCurrent()) return;
@@ -1370,6 +1384,7 @@ export class CodeEditorFrameComponent implements OnInit, OnDestroy, AfterViewIni
     const dispose = this.coderEmbedFsWatchers.get(watchId);
     if (!dispose) return;
     this.coderEmbedFsWatchers.delete(watchId);
+    this.coderEmbedFsWatchRoots.delete(watchId);
     const timerPrefix = `${watchId}\0`;
     for (const [key, timer] of this.coderEmbedFsWatchSettleTimers) {
       if (!key.startsWith(timerPrefix)) continue;
@@ -2062,6 +2077,12 @@ export class CodeEditorFrameComponent implements OnInit, OnDestroy, AfterViewIni
   }
 
   private async onCoderNativeFsMessage(ev: MessageEvent): Promise<void> {
+    if (ev.data?.channel === 'aily-coder-editor-project-save') {
+      if (ev.source !== this.coderEmbedFrame?.nativeElement?.contentWindow) return;
+      try { await this.proProject.saveAll(this.projectPath); }
+      catch (error) { this.message.error(error instanceof Error ? error.message : String(error)); }
+      return;
+    }
     if (ev.data?.channel === CODER_SIDEBAR_STATE_CHANNEL) {
       const frame = this.coderEmbedFrame?.nativeElement?.contentWindow;
       if (frame && ev.source === frame && typeof ev.data.visible === 'boolean') {
@@ -2292,7 +2313,12 @@ export class CodeEditorFrameComponent implements OnInit, OnDestroy, AfterViewIni
         }
         case 'nativeFsReadBinary': {
           const abs = this.assertPathAllowedForCoderNativeFsRead(String(payload['path']));
-          const base64 = fsAny['readFileAsBase64'](abs) as string;
+          // The installed-library explorer consumes the effective dependency
+          // graph. The real file remains the saved baseline until manual save.
+          const isManifest = abs === window['path'].join(this.projectPath, 'package.json');
+          const base64 = isManifest && this.projectService.hasCachedLibraryChanges(this.projectPath)
+            ? btoa(Array.from(new TextEncoder().encode(this.projectService.getEffectivePackageText(this.projectPath)), byte => String.fromCharCode(byte)).join(''))
+            : fsAny['readFileAsBase64'](abs) as string;
           this.replyCoderNativeFs(ev.source as Window, msg.id!, { base64 });
           break;
         }
@@ -2393,6 +2419,7 @@ export class CodeEditorFrameComponent implements OnInit, OnDestroy, AfterViewIni
               dispose();
             } else {
               this.coderEmbedFsWatchers.set(watchId, dispose);
+              this.coderEmbedFsWatchRoots.set(watchId, abs);
             }
             this.replyCoderNativeFs(ev.source as Window, msg.id!, { watchId });
           } catch (e: unknown) {

@@ -202,7 +202,6 @@ export async function handlePartitionManagerRequest(
     ];
     const isCoder = project.isAilyCodeProject(context.projectPath);
     const coderContext = isCoder && !project.isCoderProjectContext ? project.getCoderProjectContext(context.projectPath) : null;
-    if (!isCoder) files.push({ path: path.join(context.projectPath, '.temp', 'package.json'), content: JSON.stringify(next, null, 2) });
     // No awaits after the final context check: a project activation cannot interleave this commit.
     writePartitionTransaction(fs, path, files);
     project.currentPackageData = next;

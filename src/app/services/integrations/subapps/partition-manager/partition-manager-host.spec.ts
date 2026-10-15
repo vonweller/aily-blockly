@@ -56,14 +56,15 @@ describe('Partition manager project persistence', () => {
     expect(result.context['projectConfig']).toBeUndefined();
   });
 
-  it('commits CSV, project config, and Blockly temp config together, merging unrelated edits', async () => {
+  it('commits CSV and root project config together, leaving legacy backups untouched', async () => {
+    const legacy = files.get('/project/.temp/package.json');
     const loaded = await load();
     const latest = JSON.parse(files.get(pkgPath)!); latest.nickname = 'Renamed'; files.set(pkgPath, JSON.stringify(latest));
     const result = await save(loaded.context.token);
     expect(result.success).toBeTrue();
     const stored = JSON.parse(files.get(pkgPath)!);
     expect(stored.projectConfig.PartitionScheme).toBe('custom'); expect(stored.nickname).toBe('Renamed');
-    expect(files.get('/project/.temp/package.json')).toBe(files.get(pkgPath));
+    expect(files.get('/project/.temp/package.json')).toBe(legacy);
     expect(project.currentPackageData).toEqual(stored);
     expect(builder.triggerPreprocess).toHaveBeenCalledOnceWith('config-changed');
     expect((await save(loaded.context.token)).success).toBeFalse();
@@ -83,8 +84,12 @@ describe('Partition manager project persistence', () => {
     const loaded = await load();
     expect((await save(loaded.context.token, { flashBytes: 16 * MIB })).success).toBeFalse();
     expect((await save(loaded.context.token, { csv: 'broken csv' })).success).toBeFalse();
-    expect((await save(loaded.context.token, { draft: createPreset('xiaozhi', 8 * MIB) })).success).toBeFalse();
     expect(builder.triggerPreprocess).not.toHaveBeenCalled();
+    // A mismatched UI hint is discarded; the host-validated CSV remains authoritative.
+    expect((await save(loaded.context.token, { draft: createPreset('xiaozhi', 8 * MIB) })).success).toBeTrue();
+    expect(JSON.parse(files.get(pkgPath)!).ailyPartitionManager.draft).toBeNull();
+    expect(files.get(csvPath)).toBe(csv());
+    expect(builder.triggerPreprocess).toHaveBeenCalledOnceWith('config-changed');
   });
 
   it('keeps the draft retryable while a build or upload is running', async () => {
@@ -113,9 +118,9 @@ describe('Partition manager project persistence', () => {
 
   it('restores all original files when the final rename fails', async () => {
     const before = [...files]; let failed = false;
-    failRename = (a, b) => { if (!failed && a.endsWith('.tmp') && b === '/project/.temp/package.json') { failed = true; return true; } return false; };
+    failRename = (a, b) => { if (!failed && a.endsWith('.tmp') && b === pkgPath) { failed = true; return true; } return false; };
     expect(() => writePartitionTransaction(fs, paths, [
-      { path: csvPath, content: 'new csv' }, { path: pkgPath, content: 'new package' }, { path: '/project/.temp/package.json', content: 'new temp' },
+      { path: csvPath, content: 'new csv' }, { path: pkgPath, content: 'new package' },
     ])).toThrowError('write failed');
     expect([...files].sort()).toEqual(before.sort());
   });

@@ -527,6 +527,83 @@ test('uninstall removes B, every A version, cache and only this root dependency'
   assert.equal(readInstalledState(f.rootDir, f.entry).installed, false);
 });
 
+function coderUninstallFixture(t, managerOptions = {}) {
+  const id = 'aily-coder-editor';
+  const packageName = '@aily-project/subapp-aily-coder-editor';
+  const archive = portableSubappTarball({ packageName, version: '0.1.33', id });
+  const entry = catalogEntry('0.1.33', archive, { id, package: packageName });
+  const f = fixture(t, {
+    archive, entry,
+    managerOptions: {
+      fetchImpl: async () => ({ ok: true, text: async () => JSON.stringify({ [id]: entry }) }),
+      ...managerOptions,
+    },
+  });
+  return { ...f, id };
+}
+
+test('an open Coder project blocks normal and forced editor uninstall without stopping or deleting it', async t => {
+  let projectOpen = true;
+  let stops = 0;
+  const f = coderUninstallFixture(t, {
+    isCoderProjectOpen: () => projectOpen,
+    forceStopChildToolByCatalogId: async () => { stops += 1; return { success: true }; },
+  });
+  // Installation and repair remain available while the editor is required.
+  await f.manager.install({ id: f.id });
+  const installed = readInstalledState(f.rootDir, f.entry);
+  for (const forceClose of [false, true]) {
+    await assert.rejects(f.manager.uninstall({ id: f.id, forceClose }), {
+      code: 'SUBAPP_REQUIRED_BY_PROJECT',
+    });
+    assert.equal(readInstalledState(f.rootDir, f.entry).installed, true);
+    assert.equal(versions.isUninstalling(f.rootDir, f.entry), false);
+    assert.ok(fs.existsSync(path.join(installed.packagePath, 'package.json')));
+  }
+  assert.equal(stops, 0);
+
+  projectOpen = false;
+  await f.manager.uninstall({ id: f.id });
+  assert.equal(stops, 1);
+  assert.equal(readInstalledState(f.rootDir, f.entry).installed, false);
+});
+
+test('editor uninstall rechecks project state after awaiting catalog access', async t => {
+  let projectOpen = false;
+  let stops = 0;
+  let loadCatalog;
+  const catalogLoaded = new Promise(resolve => { loadCatalog = resolve; });
+  let releaseCatalog;
+  const catalogGate = new Promise(resolve => { releaseCatalog = resolve; });
+  const f = coderUninstallFixture(t, {
+    isCoderProjectOpen: () => projectOpen,
+    forceStopChildToolByCatalogId: async () => { stops += 1; return { success: true }; },
+    fetchImpl: async () => {
+      loadCatalog();
+      await catalogGate;
+      return { ok: true, text: async () => JSON.stringify({ [f.id]: f.entry }) };
+    },
+  });
+  const legacy = packagePathFor(f.rootDir, f.entry.package);
+  writeRunnablePackage(legacy, '0.1.32', { name: f.entry.package });
+  const pending = f.manager.uninstall({ id: f.id, forceClose: true });
+  const rejected = assert.rejects(pending, { code: 'SUBAPP_REQUIRED_BY_PROJECT' });
+  await catalogLoaded;
+  projectOpen = true;
+  releaseCatalog();
+  await rejected;
+  assert.equal(stops, 0);
+  assert.equal(versions.isUninstalling(f.rootDir, f.entry), false);
+  assert.ok(fs.existsSync(path.join(legacy, 'package.json')));
+});
+
+test('an open Coder project does not block uninstalling other subapps', async t => {
+  const f = fixture(t, { managerOptions: { isCoderProjectOpen: () => true } });
+  await f.manager.install({ id: ID });
+  await f.manager.uninstall({ id: ID });
+  assert.equal(readInstalledState(f.rootDir, f.entry).installed, false);
+});
+
 test('a busy Windows preflight keeps the installation visible and a forced retry finishes cleanup', async (t) => {
   let killed = 0;
   const f = fixture(t, {

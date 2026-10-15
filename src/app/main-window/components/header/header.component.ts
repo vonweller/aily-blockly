@@ -32,7 +32,7 @@ import { AuthService } from '@core/auth/public-api';
 import { AppItem } from '../../../configs/tool.config';
 import { AppStoreService } from '../../../tools/app-store/app-store.service';
 import { RequiredSubappService } from '@integration/subapps/public-api';
-import { Subscription } from 'rxjs';
+import { Subscription, merge } from 'rxjs';
 import { BlocklyService } from '../../../editors/blockly-editor/services/blockly.service';
 import {
   UiAutomationRegistryService,
@@ -160,6 +160,83 @@ export class HeaderComponent implements OnInit, OnDestroy {
       : applicationName;
   }
 
+  hasUnsavedProjectChanges = false;
+  private unsavedSubscriptions = new Subscription();
+  private unsavedCheckTimer?: ReturnType<typeof setTimeout>;
+  private coderUnsavedPoll?: ReturnType<typeof setInterval>;
+  private unsavedCheckRevision = 0;
+  private unsavedCheckRunning = false;
+
+  private watchProjectUnsavedState(): void {
+    this.unsavedSubscriptions.add(this.projectService.currentProjectPath$.subscribe(() => {
+      this.setProjectUnsaved(false);
+      this.scheduleUnsavedCheck();
+    }));
+    this.unsavedSubscriptions.add(this.projectService.stateSubject.subscribe(state => {
+      if (state === 'default' || state === 'loading') this.setProjectUnsaved(false);
+      this.scheduleUnsavedCheck();
+    }));
+    this.unsavedSubscriptions.add(merge(
+      this.projectService.libraryChangesChanged,
+      this.blocklyService.projectDirtyState.changed,
+      this.router.events,
+    ).subscribe(() => this.scheduleUnsavedCheck()));
+    // The embedded Coder exposes a cheap dirty-editor count through its existing
+    // bridge. Blockly is event-driven; never serialize an idle canvas on a timer.
+    this.ngZone.runOutsideAngular(() => {
+      this.coderUnsavedPoll = setInterval(() => {
+        if (this.showCoderSidebarToggle
+          && !this.unsavedCheckRunning) this.scheduleUnsavedCheck();
+      }, 1000);
+    });
+  }
+
+  private scheduleUnsavedCheck(): void {
+    this.unsavedCheckRevision++;
+    clearTimeout(this.unsavedCheckTimer);
+    this.ngZone.runOutsideAngular(() => {
+      this.unsavedCheckTimer = setTimeout(() => {
+        this.unsavedCheckTimer = undefined;
+        void this.refreshProjectUnsavedState();
+      }, 200);
+    });
+  }
+
+  private setProjectUnsaved(value: boolean): void {
+    if (this.destroyed || value === this.hasUnsavedProjectChanges) return;
+    this.ngZone.run(() => {
+      this.hasUnsavedProjectChanges = value;
+      this.cd.markForCheck();
+    });
+  }
+
+  private async refreshProjectUnsavedState(): Promise<void> {
+    if (this.destroyed || this.unsavedCheckRunning) return;
+    const path = this.projectService.currentProjectPath;
+    if (!path || ['default', 'loading'].includes(this.projectService.stateSubject.value)) {
+      this.setProjectUnsaved(false);
+      return;
+    }
+    const revision = this.unsavedCheckRevision;
+    this.unsavedCheckRunning = true;
+    try {
+      const dirty = this.showCoderSidebarToggle
+        ? !await this.coderPersistence.hasSavedProject(path, true)
+        : this.projectService.hasCachedLibraryChanges(path) || this.blocklyService.projectDirtyState.changed.value;
+      if (revision === this.unsavedCheckRevision && path === this.projectService.currentProjectPath) {
+        this.setProjectUnsaved(dirty);
+      }
+    } catch {
+      // Busy edits or a failed save are not proof of a clean project. Keep the
+      // previous marker until the next content/lifecycle event gives a valid reply.
+    } finally {
+      this.unsavedCheckRunning = false;
+      if (!this.destroyed && revision !== this.unsavedCheckRevision && !this.unsavedCheckTimer) {
+        this.scheduleUnsavedCheck();
+      }
+    }
+  }
+
   @ViewChild('projectTitleInput') projectTitleInput?: ElementRef<HTMLInputElement>;
   isEditingProjectTitle = false;
   isSavingProjectTitle = false;
@@ -215,7 +292,7 @@ export class HeaderComponent implements OnInit, OnDestroy {
 
     this.isSavingProjectTitle = true;
     try {
-      // 只提交昵称，让服务合并磁盘上的最新配置并同步 .temp 快照。
+      // 只提交昵称，让服务合并当前项目配置；库变更未保存时一并保留在内存。
       await this.projectService.setPackageJson({ nickname });
       if (projectPath === this.projectService.currentProjectPath) {
         this.projectService.addRecentlyProject({
@@ -346,6 +423,7 @@ export class HeaderComponent implements OnInit, OnDestroy {
     this.ngZone.runOutsideAngular(() => {
       document.addEventListener('pointerdown', this.onProjectTitleOutsidePointerDown, true);
     });
+    this.watchProjectUnsavedState();
     this.loadHeaderButtons();
     if (this.configService.isCoderProduct()) {
       this.dependencySubscription = this.projectService.projectDependencyChanges.subscribe(() => {
@@ -1463,6 +1541,9 @@ export class HeaderComponent implements OnInit, OnDestroy {
 
   ngOnDestroy() {
     this.destroyed = true;
+    this.unsavedSubscriptions?.unsubscribe();
+    clearTimeout(this.unsavedCheckTimer);
+    clearInterval(this.coderUnsavedPoll);
     this.clearPartitionInstallNotice();
     document.removeEventListener('pointerdown', this.onProjectTitleOutsidePointerDown, true);
     this.unregisterHeaderMenuAutomation?.();
@@ -1734,8 +1815,13 @@ export class HeaderComponent implements OnInit, OnDestroy {
             }
             break;
           case 'continue':
-            // 不保存，但继续操作
-            resolve(true);
+            try {
+              await this.projectService.discardAllLibraryChanges();
+              resolve(unchanged());
+            } catch (error) {
+              this.message.error(error instanceof Error ? error.message : String(error));
+              resolve(false);
+            }
             break;
           case 'cancel':
           default:
